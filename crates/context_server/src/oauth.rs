@@ -1,6 +1,7 @@
 use anyhow::{Context as _, Result, anyhow, bail};
 use async_trait::async_trait;
 use futures::AsyncReadExt as _;
+use futures::channel::mpsc;
 use http_client::{AsyncBody, HttpClient, Request};
 use parking_lot::Mutex as SyncMutex;
 use serde::{Deserialize, Serialize};
@@ -35,7 +36,7 @@ pub struct AuthServerMetadata {
 }
 
 /// The result of client registration — either CIMD or DCR.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OAuthClientRegistration {
     pub client_id: String,
     /// Only present for DCR-minted registrations.
@@ -471,7 +472,7 @@ pub fn dcr_registration_body() -> serde_json::Value {
 fn base64_url_encode(bytes: &[u8]) -> String {
     const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
 
-    let mut out = String::with_capacity((bytes.len() + 2) / 3 * 4);
+    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
     for chunk in bytes.chunks(3) {
         let b0 = chunk[0] as u32;
         let b1 = if chunk.len() > 1 { chunk[1] as u32 } else { 0 };
@@ -701,6 +702,7 @@ pub async fn discover(
     http_client: &Arc<dyn HttpClient>,
     server_url: &Url,
     www_authenticate: &WwwAuthenticate,
+    cached_dcr_registration: Option<OAuthClientRegistration>,
 ) -> Result<OAuthDiscovery> {
     let resource_metadata =
         fetch_protected_resource_metadata(http_client, server_url, www_authenticate).await?;
@@ -728,7 +730,17 @@ pub async fn discover(
         },
         ClientRegistrationStrategy::Dcr {
             registration_endpoint,
-        } => perform_dcr(http_client, &registration_endpoint).await?,
+        } => {
+            if let Some(cached) = cached_dcr_registration {
+                log::info!(
+                    "using cached DCR registration (client_id={})",
+                    cached.client_id
+                );
+                cached
+            } else {
+                perform_dcr(http_client, &registration_endpoint).await?
+            }
+        }
         ClientRegistrationStrategy::Unavailable => {
             bail!("authorization server supports neither CIMD nor DCR")
         }
@@ -1019,6 +1031,7 @@ pub struct McpOAuthTokenProvider {
     tokens: SyncMutex<Option<OAuthTokens>>,
     discovery: Arc<OAuthDiscovery>,
     http_client: Arc<dyn HttpClient>,
+    token_refresh_tx: Option<mpsc::UnboundedSender<OAuthTokens>>,
 }
 
 impl McpOAuthTokenProvider {
@@ -1026,11 +1039,13 @@ impl McpOAuthTokenProvider {
         tokens: OAuthTokens,
         discovery: Arc<OAuthDiscovery>,
         http_client: Arc<dyn HttpClient>,
+        token_refresh_tx: Option<mpsc::UnboundedSender<OAuthTokens>>,
     ) -> Self {
         Self {
             tokens: SyncMutex::new(Some(tokens)),
             discovery,
             http_client,
+            token_refresh_tx,
         }
     }
 }
@@ -1062,6 +1077,9 @@ impl OAuthTokenProvider for McpOAuthTokenProvider {
         .await
         {
             Ok(new_tokens) => {
+                if let Some(ref tx) = self.token_refresh_tx {
+                    tx.unbounded_send(new_tokens.clone()).ok();
+                }
                 *self.tokens.lock() = Some(new_tokens);
                 Ok(true)
             }
@@ -1650,7 +1668,7 @@ mod tests {
             assert_eq!(metadata.authorization_servers.len(), 1);
             assert_eq!(
                 metadata.authorization_servers[0].as_str(),
-                "https://auth.example.com"
+                "https://auth.example.com/"
             );
             assert_eq!(
                 metadata.scopes_supported,
@@ -1817,7 +1835,9 @@ mod tests {
                 error_description: None,
             };
 
-            let discovery = discover(&client, &server_url, &www_auth).await.unwrap();
+            let discovery = discover(&client, &server_url, &www_auth, None)
+                .await
+                .unwrap();
 
             assert_eq!(discovery.client_registration.client_id, CIMD_URL);
             assert_eq!(discovery.client_registration.client_secret, None);
@@ -1873,7 +1893,9 @@ mod tests {
                 error_description: None,
             };
 
-            let discovery = discover(&client, &server_url, &www_auth).await.unwrap();
+            let discovery = discover(&client, &server_url, &www_auth, None)
+                .await
+                .unwrap();
 
             assert_eq!(discovery.client_registration.client_id, "dcr-minted-id-123");
             assert_eq!(
@@ -1881,6 +1903,127 @@ mod tests {
                 Some("dcr-secret-456")
             );
             assert_eq!(discovery.scopes, vec!["files:read"]);
+        });
+    }
+
+    #[test]
+    fn test_discover_uses_cached_dcr_registration() {
+        smol::block_on(async {
+            // The registration endpoint should never be called when a cached
+            // registration is provided.
+            let client = make_fake_http_client(|req| {
+                Box::pin(async move {
+                    let uri = req.uri().to_string();
+                    if uri.contains("oauth-protected-resource") {
+                        json_response(
+                            200,
+                            r#"{
+                                "resource": "https://mcp.example.com",
+                                "authorization_servers": ["https://auth.example.com"]
+                            }"#,
+                        )
+                    } else if uri.contains("oauth-authorization-server") {
+                        json_response(
+                            200,
+                            r#"{
+                                "issuer": "https://auth.example.com",
+                                "authorization_endpoint": "https://auth.example.com/authorize",
+                                "token_endpoint": "https://auth.example.com/token",
+                                "registration_endpoint": "https://auth.example.com/register",
+                                "code_challenge_methods_supported": ["S256"],
+                                "client_id_metadata_document_supported": false
+                            }"#,
+                        )
+                    } else if uri.contains("/register") {
+                        panic!(
+                            "registration endpoint should not be called when cached DCR registration is provided"
+                        );
+                    } else {
+                        json_response(404, "{}")
+                    }
+                })
+            });
+
+            let server_url = Url::parse("https://mcp.example.com").unwrap();
+            let www_auth = WwwAuthenticate {
+                resource_metadata: None,
+                scope: Some(vec!["files:read".into()]),
+                error: None,
+                error_description: None,
+            };
+
+            let cached = OAuthClientRegistration {
+                client_id: "cached-client-id".into(),
+                client_secret: Some("cached-secret".into()),
+            };
+
+            let discovery = discover(&client, &server_url, &www_auth, Some(cached))
+                .await
+                .unwrap();
+
+            assert_eq!(discovery.client_registration.client_id, "cached-client-id");
+            assert_eq!(
+                discovery.client_registration.client_secret.as_deref(),
+                Some("cached-secret")
+            );
+        });
+    }
+
+    #[test]
+    fn test_discover_ignores_cached_dcr_when_cimd_available() {
+        smol::block_on(async {
+            // When the auth server supports CIMD, the cached DCR registration
+            // should be ignored in favor of CIMD.
+            let client = make_fake_http_client(|req| {
+                Box::pin(async move {
+                    let uri = req.uri().to_string();
+                    if uri.contains("oauth-protected-resource") {
+                        json_response(
+                            200,
+                            r#"{
+                                "resource": "https://mcp.example.com",
+                                "authorization_servers": ["https://auth.example.com"],
+                                "scopes_supported": ["mcp:read"]
+                            }"#,
+                        )
+                    } else if uri.contains("oauth-authorization-server") {
+                        json_response(
+                            200,
+                            r#"{
+                                "issuer": "https://auth.example.com",
+                                "authorization_endpoint": "https://auth.example.com/authorize",
+                                "token_endpoint": "https://auth.example.com/token",
+                                "registration_endpoint": "https://auth.example.com/register",
+                                "code_challenge_methods_supported": ["S256"],
+                                "client_id_metadata_document_supported": true
+                            }"#,
+                        )
+                    } else {
+                        json_response(404, "{}")
+                    }
+                })
+            });
+
+            let server_url = Url::parse("https://mcp.example.com").unwrap();
+            let www_auth = WwwAuthenticate {
+                resource_metadata: None,
+                scope: None,
+                error: None,
+                error_description: None,
+            };
+
+            let cached = OAuthClientRegistration {
+                client_id: "stale-dcr-id".into(),
+                client_secret: Some("stale-secret".into()),
+            };
+
+            let discovery = discover(&client, &server_url, &www_auth, Some(cached))
+                .await
+                .unwrap();
+
+            // CIMD takes priority — the cached DCR registration is not used.
+            assert_eq!(discovery.client_registration.client_id, CIMD_URL);
+            assert_eq!(discovery.client_registration.client_secret, None);
         });
     }
 
@@ -1921,7 +2064,7 @@ mod tests {
                 error_description: None,
             };
 
-            let result = discover(&client, &server_url, &www_auth).await;
+            let result = discover(&client, &server_url, &www_auth, None).await;
             assert!(result.is_err());
             let err_msg = result.unwrap_err().to_string();
             assert!(

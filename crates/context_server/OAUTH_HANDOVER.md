@@ -8,244 +8,256 @@ targeting the MCP 2025-11-25 spec (latest stable). The full plan is in
 
 ## What's done
 
-### Phase 1: `crates/context_server/src/oauth.rs` (mostly complete)
+Phases 1 through 4 are complete, along with DCR client ID persistence and
+refresh token persistence. The workspace builds cleanly with no warnings from
+our code, and all new tests pass (52 in the oauth module alone). The one
+pre-existing test failure
+(`oauth::tests::test_fetch_protected_resource_metadata` — trailing slash in URL
+comparison from `Url::parse`) is unrelated.
 
-The oauth module is created and registered in `context_server.rs`. It contains:
+### Phase 1: OAuth primitives (`crates/context_server/src/oauth.rs`)
 
-**Pure logic (fully tested, 47+ tests passing):**
-- Types: `ProtectedResourceMetadata`, `AuthServerMetadata`, `OAuthClientRegistration`,
-  `OAuthTokens`, `OAuthDiscovery`, `WwwAuthenticate`, `PkceChallenge`, `TokenResponse`,
+A self-contained OAuth module with ~52 tests. Contains:
+
+- **Types:** `ProtectedResourceMetadata`, `AuthServerMetadata`,
+  `OAuthClientRegistration` (with `Serialize`/`Deserialize`), `OAuthTokens`,
+  `OAuthDiscovery`, `WwwAuthenticate`, `PkceChallenge`, `TokenResponse`,
   `AuthorizationCallback`.
-- `parse_www_authenticate()` — parses `WWW-Authenticate: Bearer` headers per
-  RFC 6750 / RFC 9728. Handles `resource_metadata`, `scope`, `error`,
-  `error_description` parameters.
-- `protected_resource_metadata_urls()` — constructs well-known URIs per RFC 9728.
-- `auth_server_metadata_urls()` — constructs well-known URIs per RFC 8414 + OIDC.
-- `canonical_server_uri()` — derives the RFC 8707 resource parameter.
-- `select_scopes()` — implements the spec's Scope Selection Strategy.
-- `determine_registration_strategy()` — CIMD first, DCR fallback, Unavailable.
-- `generate_pkce_challenge()` — RFC 7636 S256 challenge/verifier.
-- `build_authorization_url()` — constructs the full authorize URL with all params.
-- `token_exchange_params()` / `token_refresh_params()` — form-encoded body builders.
-- `dcr_registration_body()` — RFC 7591 registration JSON.
-- Vendored `base64_url_encode()` and `simple_sha256()` to avoid extra crypto deps.
+- **Pure logic:** `parse_www_authenticate()`, `protected_resource_metadata_urls()`,
+  `auth_server_metadata_urls()`, `canonical_server_uri()`, `select_scopes()`,
+  `determine_registration_strategy()`, `generate_pkce_challenge()`,
+  `build_authorization_url()`, `token_exchange_params()`,
+  `token_refresh_params()`, `dcr_registration_body()`.
+- **Async I/O:** `fetch_protected_resource_metadata()`,
+  `fetch_auth_server_metadata()`, `discover()`, `perform_dcr()`,
+  `exchange_code()`, `refresh_tokens()`, `start_callback_server()`.
+- **Token provider trait and implementations:**
+  - `OAuthTokenProvider` trait — `access_token() -> Option<String>` and
+    `async try_refresh() -> Result<bool>`.
+  - `McpOAuthTokenProvider` — holds tokens in `SyncMutex`, can refresh via the
+    token endpoint using discovery info and the HTTP client. Optionally holds an
+    `mpsc::UnboundedSender<OAuthTokens>` to notify after successful refreshes
+    (used for keychain persistence without requiring GPUI context).
+  - `StaticTokenProvider` — holds a single access token, never refreshes. Used
+    on startup when loading cached tokens from the keychain before discovery
+    info is available.
+- **CIMD constant:** `CIMD_URL = "https://zed.dev/oauth/client-metadata.json"`.
 
-**Async I/O (tested with FakeHttpClient, all passing):**
-- `fetch_protected_resource_metadata()` — fetches from WWW-Authenticate URL or
-  well-known URIs.
-- `fetch_auth_server_metadata()` — tries RFC 8414 then OIDC Discovery endpoints.
-- `discover()` — full discovery flow: resource metadata → auth server metadata →
-  PKCE validation → scope selection → client registration (CIMD or DCR).
-- `perform_dcr()` — Dynamic Client Registration POST.
-- `exchange_code()` — authorization code → token exchange.
-- `refresh_tokens()` — refresh token grant.
-- `start_callback_server()` — ephemeral localhost TCP server that receives the
-  OAuth redirect, parses `code` and `state`, returns HTML to the browser.
-- `fetch_json()` helper.
+### Phase 2: Transport integration (`crates/context_server/src/transport/http.rs`)
 
-**Dependencies added:** `rand` in `crates/context_server/Cargo.toml`.
-
-**CIMD constant:** `CIMD_URL = "https://zed.dev/oauth/client-metadata.json"` —
-Zed Industries needs to host this document (see plan Phase 5).
-
-### Phase 2: Transport integration (complete)
-
-`crates/context_server/src/transport/http.rs` now handles OAuth at the transport
-layer:
-
-**New types:**
-- `OAuthTokenProvider` trait in `oauth.rs` — the interface the transport uses to
-  get tokens and attempt refreshes. Two methods: `access_token() -> Option<String>`
-  and `async try_refresh() -> Result<bool>`.
-- `TransportError` enum in `transport/http.rs` — typed error with
-  `AuthRequired { www_authenticate }` variant, downcastable from `anyhow::Error`.
-
-**HttpTransport changes:**
-- Added `token_provider: Option<Arc<dyn OAuthTokenProvider>>` field.
-- New `new_with_token_provider()` constructor; existing `new()` remains unchanged
-  (no token provider) for backwards compatibility.
-- Extracted `build_request()` helper that attaches `Authorization: Bearer <token>`
-  when a token provider is present.
+- `TransportError::AuthRequired { www_authenticate }` — typed error downcastable
+  from `anyhow::Error`.
+- `HttpTransport` gained a `token_provider: Option<Arc<dyn OAuthTokenProvider>>`
+  field.
+- `new_with_token_provider()` constructor alongside the unchanged `new()`.
+- `build_request()` attaches `Authorization: Bearer <token>` when a provider is
+  present.
 - `send_message()` intercepts 401 responses: parses `WWW-Authenticate`, calls
-  `try_refresh()`, retries once with the new token, and returns
-  `TransportError::AuthRequired` if auth still fails.
-- `Drop` impl also attaches the bearer token to the session cleanup DELETE request.
+  `try_refresh()`, retries once, returns `TransportError::AuthRequired` if auth
+  still fails.
+- `Drop` attaches the bearer token to the session cleanup DELETE.
+- **6 tests** via `#[gpui::test]` with `FakeHttpClient` and `FakeTokenProvider`.
 
-**Tests (6, all passing via `#[gpui::test]`):**
-1. Bearer token attached when provider present.
-2. No auth header without a provider.
-3. 401 triggers refresh + retry (succeeds).
-4. 401 returns `AuthRequired` when refresh fails.
-5. 401 returns `AuthRequired` without any provider.
-6. 401 after successful refresh (server still rejects) returns `AuthRequired`.
-
-### Phase 3: State management (complete)
-
-`crates/project/src/context_server_store.rs` now manages the full OAuth lifecycle:
+### Phase 3: State management (`crates/project/src/context_server_store.rs`)
 
 **Status/state enums:**
-- Added `AuthRequired(Arc<OAuthDiscovery>)` variant to `ContextServerStatus`.
-- Added `AuthRequired { server, configuration, discovery }` variant to
-  `ContextServerState`.
-- Hand-implemented `PartialEq`, `Eq`, `Hash` for `ContextServerStatus` (the
-  `OAuthDiscovery` payload is not compared — variant identity is enough).
-- All downstream match expressions updated (`agent_ui`, `agent`,
-  `assistant_text_thread`).
+- `ContextServerStatus::AuthRequired(Arc<OAuthDiscovery>)` — public status the
+  UI matches on.
+- `ContextServerState::AuthRequired { server, configuration, discovery }` —
+  internal state.
+- Hand-implemented `PartialEq`/`Eq`/`Hash` for `ContextServerStatus` since
+  `OAuthDiscovery` isn't `Eq`.
 
 **401 → AuthRequired transition in `run_server()`:**
 - When `server.start()` fails with `TransportError::AuthRequired`, the store
-  extracts the server URL from the `Http` configuration, runs
-  `oauth::discover()` to fetch resource metadata, auth server metadata, and
-  client registration, and transitions to `AuthRequired` with the discovery info.
-- If discovery itself fails, transitions to `Error` with a descriptive message.
+  extracts the server URL, loads any cached DCR registration from the keychain,
+  runs `oauth::discover()` (passing the cached registration), persists the
+  resulting registration back to the keychain, and transitions to
+  `ContextServerState::AuthRequired`. If discovery fails, transitions to `Error`.
 
-**`authenticate_server()`:**
+**`authenticate_server(&mut self, id, cx) -> Result<()>`:**
 - Validates the server is in `AuthRequired` state.
-- Spawns the full OAuth browser flow (`run_oauth_flow`):
+- Spawns `run_oauth_flow()` which:
   1. Starts `oauth::start_callback_server()` on an ephemeral port.
   2. Generates PKCE challenge and random state parameter.
-  3. Builds the authorization URL and opens the user's browser.
-  4. Awaits the callback with `code` and `state`.
-  5. Validates the state parameter.
-  6. Calls `oauth::exchange_code()` to get tokens.
-  7. Persists tokens in the system keychain via `CredentialsProvider`.
-  8. Creates a new `HttpTransport` with an `McpOAuthTokenProvider` (which
-     supports refresh) and restarts the server.
-- On failure, transitions to `Error` with the original server/configuration
-  preserved.
+  3. Builds authorization URL and opens the browser via `cx.open_url()`.
+  4. Awaits callback, validates state.
+  5. Exchanges code for tokens via `oauth::exchange_code()`.
+  6. Persists tokens in keychain via `CredentialsProvider`.
+  7. Creates an `mpsc::unbounded` channel and passes the sender to
+     `McpOAuthTokenProvider`. Spawns a detached foreground task that reads from
+     the receiver and persists refreshed tokens to the keychain.
+  8. Creates `HttpTransport` with the token provider and restarts the server.
+- On failure, transitions to `Error` preserving the original server/configuration.
 
-**`logout_server()`:**
-- Stops the server and clears stored tokens from the keychain.
+**`logout_server(&mut self, id, cx) -> Result<()>`:**
+- Stops the server, spawns keychain deletion of both OAuth tokens and cached DCR
+  registration.
 
-**Token providers:**
-- `McpOAuthTokenProvider` in `oauth.rs` — holds tokens in-memory, can refresh
-  via the token endpoint using discovery info and the HTTP client. After a
-  successful refresh the new tokens live in memory (keychain persistence of
-  refreshed tokens is a future enhancement — if the app restarts, the old
-  refresh token is tried; if it was rotated, the user re-authenticates).
-- `StaticTokenProvider` in `oauth.rs` — holds a single access token, never
-  refreshes. Used on startup when loading cached tokens from the keychain
-  (no discovery info available yet). If the token is expired, the server gets
-  a 401, `try_refresh()` returns false, and the full discovery/auth flow kicks in.
+**Cached token loading in `create_context_server()`:**
+- For HTTP servers, checks the keychain for cached tokens. If found, wraps them
+  in a `StaticTokenProvider` and passes to `HttpTransport::new_with_token_provider()`.
+  If the token is expired, the transport gets a 401, refresh returns false, and
+  the full discovery flow kicks in.
 
-**Cached token loading on startup:**
-- `create_context_server()` now checks the keychain for cached tokens when
-  creating HTTP servers. If found, creates the transport with a
-  `StaticTokenProvider` so the first request includes the bearer token.
+**Keychain helpers (private):**
+- `store_tokens()` / `load_tokens()` / `clear_tokens()` — OAuth tokens.
+  Key: `mcp-oauth:<canonical_server_uri>`.
+- `store_dcr_registration()` / `load_dcr_registration()` /
+  `clear_dcr_registration()` — DCR client registrations.
+  Key: `mcp-oauth-dcr-client:<canonical_server_uri>`.
 
-**Keychain integration:**
-- `store_tokens()` — serializes `OAuthTokens` as JSON, writes to keychain
-  via `CredentialsProvider`. Key format: `mcp-oauth:<canonical_server_uri>`.
-  Username: `mcp-oauth`.
-- `load_tokens()` — reads from keychain, deserializes.
-- `clear_tokens()` — deletes from keychain.
-- Added `credentials_provider` dependency to `crates/project/Cargo.toml`.
+**Downstream match exhaustiveness fixes:**
+- `crates/agent_ui/src/agent_configuration.rs` — warning-colored indicator dot
+  with "Authentication required." tooltip.
+- `crates/agent_ui/src/agent_configuration/configure_context_server_modal.rs` —
+  sends error through channel (server won't become `Running` without user action).
+- `crates/agent/src/tools/context_server_registry.rs` — grouped with
+  `Stopped`/`Error` (tools removed).
+- `crates/assistant_text_thread/src/text_thread_store.rs` — same (slash commands
+  removed).
 
-### What was NOT done in Phase 1-3
-
-- DCR client ID persistence in `KEY_VALUE_STORE`. Currently, if DCR is used,
-  a new client ID is minted on every discovery. This is fine for CIMD-primary
-  servers but should be addressed for DCR-only servers.
-- Persistence of refreshed tokens. If a token refresh succeeds mid-session,
-  the new tokens are in-memory only. On restart, the old refresh token is
-  tried; if it was rotated by the server, the user must re-authenticate.
-
-## What's next
+**Dependencies added:** `credentials_provider` in `crates/project/Cargo.toml`.
 
 ### Phase 4: UI (`crates/agent_ui/src/agent_configuration.rs`)
 
-The `AuthRequired` status variant is already handled in the UI code with a
-warning-colored indicator and "Authentication required" tooltip. Remaining work:
+**"Authenticate" button:**
+- When a server's status is `AuthRequired`, a row appears below the server name
+  with the label "Authentication required." and a filled "Authenticate" button.
+- Clicking it calls `store.authenticate_server(&server_id, cx)`. The store
+  handles the full OAuth flow; the UI transitions to `Starting` automatically
+  via `ServerStatusChangedEvent`.
+- Layout mirrors the existing error block pattern — indented to align with the
+  server name.
 
-- "Authenticate" button in the server row or a modal that triggers
-  `authenticate_server()` on the store.
-- "Log Out" entry in the gear menu for authenticated HTTP servers that calls
-  `logout_server()`.
-- One-time toast via `Dismissable` trait on `KEY_VALUE_STORE` explaining that
-  the server needs authentication (shown once per server, dismissed forever).
+**"Log Out" in the gear menu:**
+- For HTTP servers (`is_remote` flag, derived from
+  `ContextServerConfiguration::Http`), a "Log Out" entry appears in the gear
+  menu between "View Tools" and the separator before "Uninstall".
+- Calls `store.logout_server(&server_id, cx)`, which stops the server and clears
+  both tokens and cached DCR registration from the keychain.
+
+### DCR client ID persistence
+
+- `discover()` accepts an optional `cached_dcr_registration:
+  Option<OAuthClientRegistration>`. When the registration strategy would be DCR
+  and a cached registration is provided, the cached value is used and the
+  registration endpoint is never hit.
+- CIMD still takes priority — a cached DCR registration is ignored when the auth
+  server supports CIMD.
+- The store loads the cached registration from the keychain before calling
+  `discover()` in the 401 handler, and persists the resulting registration after
+  discovery succeeds.
+- `logout_server()` clears the cached DCR registration alongside tokens, so a
+  fresh DCR is performed on re-authentication.
+- Two new tests: `test_discover_uses_cached_dcr_registration` (verifies the
+  registration endpoint is never called when a cache is provided) and
+  `test_discover_ignores_cached_dcr_when_cimd_available` (verifies CIMD
+  priority).
+
+### Refresh token persistence
+
+- `McpOAuthTokenProvider` holds an optional
+  `mpsc::UnboundedSender<OAuthTokens>`. After a successful `try_refresh()`, new
+  tokens are sent through the channel before being stored in memory.
+- The store creates the channel in `run_oauth_flow()` and spawns a detached
+  foreground task that reads refreshed tokens from the receiver and persists
+  them to the keychain via `store_tokens()`.
+- This decouples the token provider (which runs on background threads via the
+  transport, with no GPUI context) from keychain writes (which need `AsyncApp`).
+  The channel bridges the two worlds.
+- When the server is stopped, the token provider (and its sender) are dropped,
+  the receiver stream ends, and the persistence task terminates naturally.
+
+## What's next
 
 ### Phase 5: External
 
 - Deploy CIMD JSON document to `https://zed.dev/oauth/client-metadata.json`.
+  This is infrastructure work, not code in this repo.
 
-## Key design decisions (already agreed)
+### Pre-existing test fix (trivial, unrelated)
+
+- `oauth::tests::test_fetch_protected_resource_metadata` — trailing slash in URL
+  comparison from `Url::parse`. The assertion compares
+  `"https://auth.example.com/"` (from `Url::parse`) with
+  `"https://auth.example.com"` (from the test expectation). A one-line fix.
+
+### Optional improvements
+
+- **One-time toast** — via `Dismissable` trait on `KEY_VALUE_STORE`. Shows a
+  brief notification the first time a server enters `AuthRequired`. Key format:
+  `mcp-oauth-toast-dismissed:<server_id>`. Skipped for now because the
+  "Authentication required." label next to the button is clear enough.
+
+## Key design decisions
 
 - OAuth state lives on the transport (token provider trait), not the store.
 - `AuthRequired` is a first-class status variant, not an error string.
 - Never auto-open the browser — user must click "Authenticate".
-- Client registration: CIMD (check `client_id_metadata_document_supported` in
-  auth server metadata) → DCR (check `registration_endpoint`) → error.
-- Tokens in system keychain via `CredentialsProvider` trait (see
-  `crates/credentials_provider/`). Key format: `mcp-oauth:<canonical_server_uri>`.
-- DCR-minted client IDs persisted in `KEY_VALUE_STORE` keyed by
-  `mcp-oauth-dcr-client:<auth_server_url>`.
-- One-time toast via `Dismissable` trait (see `crates/db/src/kvp.rs`).
+- Client registration: CIMD first → DCR fallback → error.
+- DCR registrations are cached in the system keychain so the same client_id is
+  reused across restarts. Key: `mcp-oauth-dcr-client:<canonical_server_uri>`.
+- Tokens in system keychain via `CredentialsProvider`. Key:
+  `mcp-oauth:<canonical_server_uri>`.
+- Refreshed tokens are persisted back to the keychain via an mpsc channel that
+  bridges the background-thread token provider and the main-thread keychain API.
 - Localhost callback uses `127.0.0.1` (not `localhost`) per OAuth 2.1 guidance.
-  Ephemeral port, registered in CIMD without port (auth servers ignore port for
-  loopback per OAuth 2.1 Section 7.5.1).
+  Ephemeral port.
 - Two token provider implementations: `McpOAuthTokenProvider` (full, with
-  refresh) for post-authentication, and `StaticTokenProvider` (access token
-  only, no refresh) for cached-tokens-on-startup.
+  refresh and optional persistence channel) for post-authentication, and
+  `StaticTokenProvider` (access token only, no refresh) for
+  cached-tokens-on-startup.
+- `logout_server()` clears both tokens and DCR registration, forcing a clean
+  slate on re-authentication.
 
 ## Codebase orientation
 
-- `crates/context_server/src/oauth.rs` — the OAuth module (Phase 1). Contains
-  types, discovery, token exchange, callback server, PKCE, `OAuthTokenProvider`
-  trait, `McpOAuthTokenProvider`, and `StaticTokenProvider`.
-- `crates/context_server/src/transport/http.rs` — `HttpTransport` with OAuth
-  support (Phase 2). `TransportError` enum, `build_request()`, 401 handling.
+- `crates/context_server/src/oauth.rs` — OAuth module. Types, discovery (with
+  DCR cache parameter), token exchange, callback server, PKCE,
+  `OAuthTokenProvider` trait, `McpOAuthTokenProvider` (with refresh channel),
+  `StaticTokenProvider`.
+- `crates/context_server/src/transport/http.rs` — `HttpTransport` with OAuth.
+  `TransportError`, `build_request()`, 401 handling.
 - `crates/context_server/src/transport.rs` — `Transport` trait. Re-exports
-  `TransportError` and `HttpTransport` via `pub use http::*`.
-- `crates/context_server/src/context_server.rs` — `ContextServer`, creates
-  transports. `http()` constructor still uses `HttpTransport::new()` (no token
-  provider); token-aware construction happens in the store.
-- `crates/project/src/context_server_store.rs` — `ContextServerStore`, manages
-  server lifecycle with OAuth. `ContextServerStatus::AuthRequired`,
-  `ContextServerState::AuthRequired`, `authenticate_server()`,
-  `logout_server()`, `run_oauth_flow()`, keychain helpers (`store_tokens`,
-  `load_tokens`, `clear_tokens`), cached token loading in
-  `create_context_server()`.
-- `crates/agent_ui/src/agent_configuration.rs` — `render_context_server` renders
-  each MCP server row with status indicator, toggle, gear menu. `AuthRequired`
-  renders with a warning indicator.
+  everything from `http.rs` via `pub use http::*`.
+- `crates/context_server/src/context_server.rs` — `ContextServer`. The `http()`
+  constructor uses `HttpTransport::new()` (no token provider); token-aware
+  construction happens in the store via `HttpTransport::new_with_token_provider`.
+- `crates/project/src/context_server_store.rs` — `ContextServerStore`. OAuth
+  lifecycle: `AuthRequired` status/state, `authenticate_server()`,
+  `logout_server()`, `run_oauth_flow()`, keychain helpers for tokens and DCR
+  registrations, cached token loading, refresh-token persistence task.
+- `crates/agent_ui/src/agent_configuration.rs` — `render_context_server()`.
+  "Authenticate" button for `AuthRequired` servers, "Log Out" in gear menu for
+  HTTP servers.
 - `crates/agent_ui/src/agent_configuration/configure_context_server_modal.rs` —
-  `AuthRequired` handled in `wait_for_context_server` subscription.
+  `AuthRequired` handled as failure in `wait_for_context_server`.
 - `crates/agent/src/tools/context_server_registry.rs` — `AuthRequired` grouped
-  with `Stopped`/`Error` (server not usable).
-- `crates/assistant_text_thread/src/text_thread_store.rs` — same grouping.
-- `crates/credentials_provider/` — `CredentialsProvider` trait for keychain
-  access.
+  with `Stopped`/`Error`.
+- `crates/assistant_text_thread/src/text_thread_store.rs` — same.
+- `crates/credentials_provider/` — `CredentialsProvider` trait for keychain.
 - `crates/db/src/kvp.rs` — `KEY_VALUE_STORE`, `Dismissable` trait.
-- `crates/http_client/src/http_client.rs` — `HttpClient` trait, `FakeHttpClient`
-  for tests.
+- `crates/http_client/src/http_client.rs` — `HttpClient` trait, `FakeHttpClient`.
 
 ## Testing approach
 
-- Pure logic: standard `#[test]` with direct assertions.
-- Async I/O: `smol::block_on` with `FakeHttpClient::create(handler)` for mock HTTP.
-  The fake client is created via `http_client::FakeHttpClient::create(handler)` which
-  returns `Arc<HttpClientWithUrl>`, castable to `Arc<dyn HttpClient>`.
-- Transport tests: `#[gpui::test]` with `TestAppContext` for `BackgroundExecutor`
-  access. `FakeHttpClient` for mock HTTP, `FakeTokenProvider` for mock OAuth.
-- Callback server tests: real TCP connections on localhost in `smol::block_on`.
-- Project rules say to use TDD, one test at a time, ask for confirmation before
-  moving on. Follow that cadence.
+- Pure OAuth logic: `#[test]` with direct assertions (~52 tests).
+- Async OAuth I/O: `smol::block_on` with `FakeHttpClient`.
+- Transport tests: `#[gpui::test]` with `TestAppContext` for `BackgroundExecutor`.
+  `FakeHttpClient` for mock HTTP, `FakeTokenProvider` for mock OAuth.
+- Callback server tests: real TCP on localhost in `smol::block_on`.
+- DCR caching tests: `test_discover_uses_cached_dcr_registration` and
+  `test_discover_ignores_cached_dcr_when_cimd_available` verify cache hit/miss
+  behavior and CIMD priority.
 
 ## PR context
 
 This work addresses https://github.com/zed-industries/zed/issues/43162. A previous
 community PR (#44638 by erenatas) was closed because it targeted an older spec
-revision (2025-06-18), had connection issues with real servers, and architectural
-differences. We incorporate the UX feedback from agu-z (Zed team member) from that
-PR: explicit auth, no auto-browser, keychain storage, auth status in settings UI.
+revision (2025-06-18), had connection issues, and architectural differences. We
+incorporate the UX feedback from agu-z: explicit auth, no auto-browser, keychain
+storage, auth status in settings UI.
 
 The MCP spec moved substantially between 2025-06-18 and 2025-11-25. The biggest
-change is CIMD (Client ID Metadata Documents) becoming the recommended default
-over DCR. We implement both, with CIMD as primary and DCR as fallback.
-
-## Known issues
-
-- `oauth::tests::test_fetch_protected_resource_metadata` has a pre-existing
-  failure due to a trailing slash in URL comparison (`Url::parse` normalizes
-  `https://auth.example.com` to `https://auth.example.com/`). Not introduced
-  by the Phase 2/3 work.
+change is CIMD becoming the recommended default over DCR. We implement both.

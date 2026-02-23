@@ -17,6 +17,7 @@ use collections::HashSet;
 use db::kvp::{Dismissable, KeyValueStore};
 use itertools::Itertools;
 use project::AgentId;
+use notifications::status_toast::{StatusToast, ToastIcon};
 use serde::{Deserialize, Serialize};
 use settings::{LanguageModelProviderSetting, LanguageModelSelection};
 
@@ -1029,6 +1030,49 @@ impl AgentPanel {
                 cx,
             )
         });
+
+        // Show a one-time toast when a context server transitions to AuthRequired.
+        let context_server_store = project.read(cx).context_server_store();
+        cx.subscribe(
+            &context_server_store,
+            |this, _, event: &ServerStatusChangedEvent, cx| {
+                if let ContextServerStatus::AuthRequired(_) = &event.status {
+                    let server_id = event.server_id.clone();
+                    let key = format!("mcp-oauth-auth-required-toast:{}", server_id.0);
+                    let already_shown = KEY_VALUE_STORE
+                        .read_kvp(&key)
+                        .log_err()
+                        .is_some_and(|v| v.is_some());
+                    if !already_shown {
+                        db::write_and_log(cx, move || async move {
+                            KEY_VALUE_STORE
+                                .write_kvp(key, "1".to_string())
+                                .await
+                        });
+                        let name = server_id.0;
+                        this.workspace
+                            .update(cx, |workspace, cx| {
+                                let status_toast = StatusToast::new(
+                                    format!(
+                                        "MCP server '{}' requires authentication. Open settings to sign in.",
+                                        name
+                                    ),
+                                    cx,
+                                    |this, _cx| {
+                                        this.icon(
+                                            ToastIcon::new(IconName::LockOutlined).color(Color::Warning),
+                                        )
+                                        .dismiss_button(true)
+                                    },
+                                );
+                                workspace.toggle_status_toast(status_toast, cx);
+                            })
+                            .log_err();
+                    }
+                }
+            },
+        )
+        .detach();
 
         // Subscribe to extension events to sync agent servers when extensions change
         let extension_subscription = if let Some(extension_events) = ExtensionEvents::try_global(cx)

@@ -646,6 +646,8 @@ impl AgentConfiguration {
         } else {
             None
         };
+        let auth_required = matches!(server_status, ContextServerStatus::AuthRequired(_));
+        let context_server_store = self.context_server_store.clone();
 
         let tool_count = self
             .context_server_registry
@@ -712,6 +714,7 @@ impl AgentConfiguration {
                 let language_registry = self.language_registry.clone();
                 let workspace = self.workspace.clone();
                 let context_server_registry = self.context_server_registry.clone();
+                let context_server_store = context_server_store.clone();
 
                 move |window, cx| {
                     Some(ContextMenu::build(window, cx, |menu, _window, _cx| {
@@ -758,6 +761,17 @@ impl AgentConfiguration {
                                 .ok();
                             }
                         }))
+                        .when(is_remote, |this| {
+                            this.entry("Log Out", None, {
+                                let context_server_store = context_server_store.clone();
+                                let context_server_id = context_server_id.clone();
+                                move |_window, cx| {
+                                    context_server_store.update(cx, |store, cx| {
+                                        store.logout_server(&context_server_id, cx).log_err();
+                                    });
+                                }
+                            })
+                        })
                         .separator()
                         .entry("Uninstall", None, {
                             let fs = fs.clone();
@@ -872,6 +886,7 @@ impl AgentConfiguration {
                                 .on_click({
                                     let context_server_manager = self.context_server_store.clone();
                                     let fs = self.fs.clone();
+                                    let context_server_id = context_server_id.clone();
 
                                     move |state, _window, cx| {
                                         let is_enabled = match state {
@@ -942,6 +957,37 @@ impl AgentConfiguration {
                                         .color(Color::Muted)
                                         .size(LabelSize::Small),
                                 ),
+                            ),
+                    );
+                }
+                if auth_required {
+                    return parent.child(
+                        h_flex()
+                            .gap_2()
+                            .pr_4()
+                            .py_0p5()
+                            .items_center()
+                            .child(h_flex().flex_none().w_3().mr_2())
+                            .child(
+                                Label::new("Authentication required.")
+                                    .color(Color::Muted)
+                                    .size(LabelSize::Small),
+                            )
+                            .child(
+                                Button::new("authenticate-server", "Authenticate")
+                                    .style(ButtonStyle::Filled)
+                                    .label_size(LabelSize::Small)
+                                    .on_click({
+                                        let context_server_store = context_server_store.clone();
+                                        let context_server_id = context_server_id.clone();
+                                        move |_event, _window, cx| {
+                                            context_server_store.update(cx, |store, cx| {
+                                                store
+                                                    .authenticate_server(&context_server_id, cx)
+                                                    .log_err();
+                                            });
+                                        }
+                                    }),
                             ),
                     );
                 }

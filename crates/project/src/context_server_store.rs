@@ -7,12 +7,14 @@ use std::time::Duration;
 
 use anyhow::{Context as _, Result};
 use collections::{HashMap, HashSet};
-use context_server::oauth::{self, McpOAuthTokenProvider, OAuthDiscovery, OAuthTokens};
+use context_server::oauth::{
+    self, McpOAuthTokenProvider, OAuthClientRegistration, OAuthDiscovery, OAuthTokens,
+};
 use context_server::transport::{HttpTransport, TransportError};
 use context_server::{ContextServer, ContextServerCommand, ContextServerId};
 use futures::{FutureExt as _, future::join_all};
 use credentials_provider::CredentialsProvider;
-use futures::{FutureExt as _, future::join_all};
+use futures::{FutureExt as _, StreamExt as _, future::join_all};
 use gpui::{App, AsyncApp, Context, Entity, EventEmitter, Subscription, Task, WeakEntity, actions};
 use itertools::Itertools;
 use registry::ContextServerDescriptorRegistry;
@@ -691,14 +693,42 @@ impl ContextServerStore {
 
                                 let http_client = cx.update(|cx| cx.http_client());
 
+                                let credentials_provider =
+                                    cx.update(|cx| <dyn CredentialsProvider>::global(cx));
+                                let cached_dcr = Self::load_dcr_registration(
+                                    &credentials_provider,
+                                    &server_url,
+                                    &cx,
+                                )
+                                .await
+                                .ok()
+                                .flatten();
+
                                 match context_server::oauth::discover(
                                     &http_client,
                                     &server_url,
                                     www_authenticate,
+                                    cached_dcr,
                                 )
                                 .await
                                 {
                                     Ok(discovery) => {
+                                        // Persist the DCR registration so we
+                                        // don't mint a new client_id next time.
+                                        if let Err(err) = Self::store_dcr_registration(
+                                            &credentials_provider,
+                                            &server_url,
+                                            &discovery.client_registration,
+                                            &cx,
+                                        )
+                                        .await
+                                        {
+                                            log::warn!(
+                                                "{} failed to cache DCR registration: {}",
+                                                id,
+                                                err,
+                                            );
+                                        }
                                         log::info!(
                                             "{} requires OAuth authorization (auth server: {})",
                                             id,
@@ -1130,10 +1160,41 @@ impl ContextServerStore {
         };
         Self::store_tokens(&credentials_provider, &server_url, &tokens, cx).await?;
 
-        // Create a token provider and restart the server with it.
-        let token_provider: Arc<dyn oauth::OAuthTokenProvider> = Arc::new(
-            McpOAuthTokenProvider::new(tokens, discovery.clone(), http_client.clone()),
-        );
+        // Create a token provider and restart the server with it. The channel
+        // lets us persist refreshed tokens back to the keychain without the
+        // token provider needing access to GPUI or the credentials provider.
+        let (token_refresh_tx, token_refresh_rx) = futures::channel::mpsc::unbounded();
+        let token_provider: Arc<dyn oauth::OAuthTokenProvider> =
+            Arc::new(McpOAuthTokenProvider::new(
+                tokens,
+                discovery.clone(),
+                http_client.clone(),
+                Some(token_refresh_tx),
+            ));
+
+        // Spawn a fire-and-forget task that persists tokens whenever the
+        // provider successfully refreshes them mid-session.
+        {
+            let credentials_provider = credentials_provider.clone();
+            let server_url = server_url.clone();
+            let id = id.clone();
+            cx.spawn(async move |cx| {
+                let mut token_refresh_rx = token_refresh_rx;
+                while let Some(refreshed_tokens) = token_refresh_rx.next().await {
+                    if let Err(err) = Self::store_tokens(
+                        &credentials_provider,
+                        &server_url,
+                        &refreshed_tokens,
+                        &cx,
+                    )
+                    .await
+                    {
+                        log::warn!("{} failed to persist refreshed tokens: {}", id, err);
+                    }
+                }
+            })
+            .detach();
+        }
 
         let new_server = this.update(cx, |this, cx| {
             let global_timeout =
@@ -1216,6 +1277,55 @@ impl ContextServerStore {
         format!("mcp-oauth:{}", oauth::canonical_server_uri(server_url))
     }
 
+    fn dcr_keychain_key(server_url: &url::Url) -> String {
+        format!(
+            "mcp-oauth-dcr-client:{}",
+            oauth::canonical_server_uri(server_url)
+        )
+    }
+
+    /// Persist a DCR client registration in the system keychain so we reuse the
+    /// same client_id across restarts instead of minting a new one each time.
+    async fn store_dcr_registration(
+        credentials_provider: &Arc<dyn CredentialsProvider>,
+        server_url: &url::Url,
+        registration: &OAuthClientRegistration,
+        cx: &AsyncApp,
+    ) -> Result<()> {
+        let key = Self::dcr_keychain_key(server_url);
+        let json = serde_json::to_string(registration)?;
+        credentials_provider
+            .write_credentials(&key, "mcp-oauth-dcr", json.as_bytes(), cx)
+            .await
+    }
+
+    /// Load a previously cached DCR client registration from the keychain.
+    async fn load_dcr_registration(
+        credentials_provider: &Arc<dyn CredentialsProvider>,
+        server_url: &url::Url,
+        cx: &AsyncApp,
+    ) -> Result<Option<OAuthClientRegistration>> {
+        let key = Self::dcr_keychain_key(server_url);
+        match credentials_provider.read_credentials(&key, cx).await? {
+            Some((_username, password_bytes)) => {
+                let registration: OAuthClientRegistration =
+                    serde_json::from_slice(&password_bytes)?;
+                Ok(Some(registration))
+            }
+            None => Ok(None),
+        }
+    }
+
+    /// Clear the cached DCR client registration from the keychain.
+    async fn clear_dcr_registration(
+        credentials_provider: &Arc<dyn CredentialsProvider>,
+        server_url: &url::Url,
+        cx: &AsyncApp,
+    ) -> Result<()> {
+        let key = Self::dcr_keychain_key(server_url);
+        credentials_provider.delete_credentials(&key, cx).await
+    }
+
     /// Log out of an OAuth-authenticated MCP server: clear stored tokens from
     /// the keychain and stop the server.
     pub fn logout_server(&mut self, id: &ContextServerId, cx: &mut Context<Self>) -> Result<()> {
@@ -1234,6 +1344,11 @@ impl ContextServerStore {
             let credentials_provider = cx.update(|cx| <dyn CredentialsProvider>::global(cx));
             if let Err(err) = Self::clear_tokens(&credentials_provider, &server_url, &cx).await {
                 log::error!("{} failed to clear OAuth tokens: {}", id, err);
+            }
+            if let Err(err) =
+                Self::clear_dcr_registration(&credentials_provider, &server_url, &cx).await
+            {
+                log::error!("{} failed to clear cached DCR registration: {}", id, err);
             }
         })
         .detach();
