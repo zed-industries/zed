@@ -4099,10 +4099,10 @@ impl EditorElement {
                     Self::checkerboard_size(f32::from(line_height) * scale, target_size * scale);
                 let color = cx.theme().colors().panel_background;
 
-                pattern_slash(color, 2.0, pattern_size)
+                pattern_slash(color, 2.0, pattern_size - 2.0)
             }))
             // todo! cameron - only padding when 
-            .when(Settings::try_read_global(cx, f), then)
+            // .when(Settings::try_read_global(cx, f), then)
             .pl_1()
             .into_any()
     }
