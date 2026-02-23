@@ -92,31 +92,35 @@ impl WorkspaceThreadEntry {
     }
 
     fn thread_info(workspace: &Entity<Workspace>, cx: &App) -> Option<AgentThreadInfo> {
-        let agent_panel = workspace.read(cx).panel::<AgentPanel>(cx)?;
-        let agent_panel_ref = agent_panel.read(cx);
-
-        let thread_view = agent_panel_ref.as_active_thread_view(cx)?.read(cx);
-        let thread = thread_view.thread.read(cx);
-
-        let icon = thread_view.agent_icon;
-        let title = thread.title();
-
-        let status = if thread.is_waiting_for_confirmation() {
-            AgentThreadStatus::WaitingForConfirmation
-        } else if thread.had_error() {
-            AgentThreadStatus::Error
-        } else {
-            match thread.status() {
-                ThreadStatus::Generating => AgentThreadStatus::Running,
-                ThreadStatus::Idle => AgentThreadStatus::Completed,
-            }
-        };
-        Some(AgentThreadInfo {
-            title,
-            status,
-            icon,
-        })
+        workspace_thread_info(workspace, cx)
     }
+}
+
+fn workspace_thread_info(workspace: &Entity<Workspace>, cx: &App) -> Option<AgentThreadInfo> {
+    let agent_panel = workspace.read(cx).panel::<AgentPanel>(cx)?;
+    let agent_panel_ref = agent_panel.read(cx);
+
+    let thread_view = agent_panel_ref.as_active_thread_view(cx)?.read(cx);
+    let thread = thread_view.thread.read(cx);
+
+    let icon = thread_view.agent_icon;
+    let title = thread.title();
+
+    let status = if thread.is_waiting_for_confirmation() {
+        AgentThreadStatus::WaitingForConfirmation
+    } else if thread.had_error() {
+        AgentThreadStatus::Error
+    } else {
+        match thread.status() {
+            ThreadStatus::Generating => AgentThreadStatus::Running,
+            ThreadStatus::Idle => AgentThreadStatus::Completed,
+        }
+    };
+    Some(AgentThreadInfo {
+        title,
+        status,
+        icon,
+    })
 }
 
 #[derive(Clone)]
@@ -142,209 +146,24 @@ struct SidebarMatch {
     positions: Vec<usize>,
 }
 
-struct WorkspacePickerDelegate {
-    multi_workspace: Entity<MultiWorkspace>,
-    entries: Vec<SidebarEntry>,
-    active_workspace_index: usize,
-    workspace_thread_count: usize,
-    /// All recent projects including what's filtered out of entries
-    /// used to add unopened projects to entries on rebuild
-    recent_projects: Vec<RecentProjectEntry>,
-    recent_project_thread_titles: HashMap<SharedString, SharedString>,
-    matches: Vec<SidebarMatch>,
-    selected_index: usize,
-    query: String,
-    hovered_thread_item: Option<usize>,
-    notified_workspaces: HashSet<usize>,
+/// A ProjectGroup is a group of workspaces, each one associated with a specific
+/// git worktree or the main worktree.
+#[derive(Default)]
+struct ProjectGroup {
+    workspaces: Vec<Entity<Workspace>>,
 }
 
-impl WorkspacePickerDelegate {
+struct ActiveProjectsDelegate {
+    multi_workspace: Entity<MultiWorkspace>,
+    /// The primary list of things shown in the sidebar.
+    active_projects: Vec<ProjectGroup>,
+}
+
+impl ActiveProjectsDelegate {
     fn new(multi_workspace: Entity<MultiWorkspace>) -> Self {
         Self {
             multi_workspace,
-            entries: Vec::new(),
-            active_workspace_index: 0,
-            workspace_thread_count: 0,
-            recent_projects: Vec::new(),
-            recent_project_thread_titles: HashMap::new(),
-            matches: Vec::new(),
-            selected_index: 0,
-            query: String::new(),
-            hovered_thread_item: None,
-            notified_workspaces: HashSet::new(),
-        }
-    }
-
-    fn set_entries(
-        &mut self,
-        workspace_threads: Vec<WorkspaceThreadEntry>,
-        active_workspace_index: usize,
-        cx: &App,
-    ) {
-        if let Some(hovered_index) = self.hovered_thread_item {
-            let still_exists = workspace_threads
-                .iter()
-                .any(|thread| thread.index == hovered_index);
-            if !still_exists {
-                self.hovered_thread_item = None;
-            }
-        }
-
-        let old_statuses: HashMap<usize, AgentThreadStatus> = self
-            .entries
-            .iter()
-            .filter_map(|entry| match entry {
-                SidebarEntry::WorkspaceThread(thread) => thread
-                    .thread_info
-                    .as_ref()
-                    .map(|info| (thread.index, info.status)),
-                _ => None,
-            })
-            .collect();
-
-        for thread in &workspace_threads {
-            if let Some(info) = &thread.thread_info {
-                if info.status == AgentThreadStatus::Completed
-                    && thread.index != active_workspace_index
-                {
-                    if old_statuses.get(&thread.index) == Some(&AgentThreadStatus::Running) {
-                        self.notified_workspaces.insert(thread.index);
-                    }
-                }
-            }
-        }
-
-        if self.active_workspace_index != active_workspace_index {
-            self.notified_workspaces.remove(&active_workspace_index);
-        }
-        self.active_workspace_index = active_workspace_index;
-        self.workspace_thread_count = workspace_threads.len();
-        self.rebuild_entries(workspace_threads, cx);
-    }
-
-    fn set_recent_projects(&mut self, recent_projects: Vec<RecentProjectEntry>, cx: &App) {
-        self.recent_project_thread_titles.clear();
-
-        self.recent_projects = recent_projects;
-
-        let workspace_threads: Vec<WorkspaceThreadEntry> = self
-            .entries
-            .iter()
-            .filter_map(|entry| match entry {
-                SidebarEntry::WorkspaceThread(thread) => Some(thread.clone()),
-                _ => None,
-            })
-            .collect();
-        self.rebuild_entries(workspace_threads, cx);
-    }
-
-    fn open_workspace_path_sets(&self, cx: &App) -> Vec<Vec<Arc<Path>>> {
-        self.multi_workspace
-            .read(cx)
-            .workspaces()
-            .iter()
-            .map(|workspace| {
-                let mut paths = workspace.read(cx).root_paths(cx);
-                paths.sort();
-                paths
-            })
-            .collect()
-    }
-
-    fn rebuild_entries(&mut self, workspace_threads: Vec<WorkspaceThreadEntry>, cx: &App) {
-        let open_path_sets = self.open_workspace_path_sets(cx);
-
-        self.entries.clear();
-
-        if !workspace_threads.is_empty() {
-            self.entries
-                .push(SidebarEntry::Separator("Active Workspaces".into()));
-            for thread in workspace_threads {
-                self.entries.push(SidebarEntry::WorkspaceThread(thread));
-            }
-        }
-
-        let recent: Vec<_> = self
-            .recent_projects
-            .iter()
-            .filter(|project| {
-                let mut project_paths: Vec<&Path> =
-                    project.paths.iter().map(|p| p.as_path()).collect();
-                project_paths.sort();
-                !open_path_sets.iter().any(|open_paths| {
-                    open_paths.len() == project_paths.len()
-                        && open_paths
-                            .iter()
-                            .zip(&project_paths)
-                            .all(|(a, b)| a.as_ref() == *b)
-                })
-            })
-            .cloned()
-            .collect();
-
-        if !recent.is_empty() {
-            let today = Local::now().naive_local().date();
-            let mut current_bucket: Option<TimeBucket> = None;
-
-            for project in recent {
-                let entry_date = project.timestamp.with_timezone(&Local).naive_local().date();
-                let bucket = TimeBucket::from_dates(today, entry_date);
-
-                if current_bucket != Some(bucket) {
-                    current_bucket = Some(bucket);
-                    self.entries
-                        .push(SidebarEntry::Separator(bucket.to_string().into()));
-                }
-
-                self.entries.push(SidebarEntry::RecentProject(project));
-            }
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum TimeBucket {
-    Today,
-    Yesterday,
-    ThisWeek,
-    PastWeek,
-    All,
-}
-
-impl TimeBucket {
-    fn from_dates(reference: NaiveDate, date: NaiveDate) -> Self {
-        if date == reference {
-            return TimeBucket::Today;
-        }
-
-        if date == reference - TimeDelta::days(1) {
-            return TimeBucket::Yesterday;
-        }
-
-        let week = date.iso_week();
-
-        if reference.iso_week() == week {
-            return TimeBucket::ThisWeek;
-        }
-
-        let last_week = (reference - TimeDelta::days(7)).iso_week();
-
-        if week == last_week {
-            return TimeBucket::PastWeek;
-        }
-
-        TimeBucket::All
-    }
-}
-
-impl Display for TimeBucket {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            TimeBucket::Today => write!(f, "Today"),
-            TimeBucket::Yesterday => write!(f, "Yesterday"),
-            TimeBucket::ThisWeek => write!(f, "This Week"),
-            TimeBucket::PastWeek => write!(f, "Past Week"),
-            TimeBucket::All => write!(f, "All"),
+            active_projects: Vec::new(),
         }
     }
 }
@@ -366,15 +185,15 @@ fn open_recent_project(paths: Vec<PathBuf>, window: &mut Window, cx: &mut App) {
     });
 }
 
-impl PickerDelegate for WorkspacePickerDelegate {
+impl PickerDelegate for ActiveProjectsDelegate {
     type ListItem = AnyElement;
 
     fn match_count(&self) -> usize {
-        self.matches.len()
+        0
     }
 
     fn selected_index(&self) -> usize {
-        self.selected_index
+        0
     }
 
     fn set_selected_index(
@@ -383,22 +202,15 @@ impl PickerDelegate for WorkspacePickerDelegate {
         _window: &mut Window,
         _cx: &mut Context<Picker<Self>>,
     ) {
-        self.selected_index = ix;
     }
 
     fn can_select(
         &mut self,
-        ix: usize,
+        _ix: usize,
         _window: &mut Window,
         _cx: &mut Context<Picker<Self>>,
     ) -> bool {
-        match self.matches.get(ix) {
-            Some(SidebarMatch {
-                entry: SidebarEntry::Separator(_),
-                ..
-            }) => false,
-            _ => true,
-        }
+        false
     }
 
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
@@ -406,11 +218,7 @@ impl PickerDelegate for WorkspacePickerDelegate {
     }
 
     fn no_matches_text(&self, _window: &mut Window, _cx: &mut App) -> Option<SharedString> {
-        if self.query.is_empty() {
-            None
-        } else {
-            Some("No threads match your search.".into())
-        }
+        None
     }
 
     fn update_matches(
@@ -419,137 +227,10 @@ impl PickerDelegate for WorkspacePickerDelegate {
         window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Task<()> {
-        let query_changed = self.query != query;
-        self.query = query.clone();
-        if query_changed {
-            self.hovered_thread_item = None;
-        }
-        let entries = self.entries.clone();
-
-        if query.is_empty() {
-            self.matches = entries
-                .into_iter()
-                .map(|entry| SidebarMatch {
-                    entry,
-                    positions: Vec::new(),
-                })
-                .collect();
-
-            let separator_offset = if self.workspace_thread_count > 0 {
-                1
-            } else {
-                0
-            };
-            self.selected_index = (self.active_workspace_index + separator_offset)
-                .min(self.matches.len().saturating_sub(1));
-            return Task::ready(());
-        }
-
-        let executor = cx.background_executor().clone();
-        cx.spawn_in(window, async move |picker, cx| {
-            let matches = cx
-                .background_spawn(async move {
-                    let data_entries: Vec<(usize, &SidebarEntry)> = entries
-                        .iter()
-                        .enumerate()
-                        .filter(|(_, entry)| !matches!(entry, SidebarEntry::Separator(_)))
-                        .collect();
-
-                    let candidates: Vec<StringMatchCandidate> = data_entries
-                        .iter()
-                        .enumerate()
-                        .map(|(candidate_index, (_, entry))| {
-                            StringMatchCandidate::new(candidate_index, entry.searchable_text())
-                        })
-                        .collect();
-
-                    let search_matches = fuzzy::match_strings(
-                        &candidates,
-                        &query,
-                        false,
-                        true,
-                        MAX_MATCHES,
-                        &Default::default(),
-                        executor,
-                    )
-                    .await;
-
-                    let mut workspace_matches = Vec::new();
-                    let mut project_matches = Vec::new();
-
-                    for search_match in search_matches {
-                        let (original_index, _) = data_entries[search_match.candidate_id];
-                        let entry = entries[original_index].clone();
-                        let sidebar_match = SidebarMatch {
-                            positions: search_match.positions,
-                            entry: entry.clone(),
-                        };
-                        match entry {
-                            SidebarEntry::WorkspaceThread(_) => {
-                                workspace_matches.push(sidebar_match)
-                            }
-                            SidebarEntry::RecentProject(_) => project_matches.push(sidebar_match),
-                            SidebarEntry::Separator(_) => {}
-                        }
-                    }
-
-                    let mut result = Vec::new();
-                    if !workspace_matches.is_empty() {
-                        result.push(SidebarMatch {
-                            entry: SidebarEntry::Separator("Active Workspaces".into()),
-                            positions: Vec::new(),
-                        });
-                        result.extend(workspace_matches);
-                    }
-                    if !project_matches.is_empty() {
-                        result.push(SidebarMatch {
-                            entry: SidebarEntry::Separator("Recent Projects".into()),
-                            positions: Vec::new(),
-                        });
-                        result.extend(project_matches);
-                    }
-                    result
-                })
-                .await;
-
-            picker
-                .update_in(cx, |picker, _window, _cx| {
-                    picker.delegate.matches = matches;
-                    if picker.delegate.matches.is_empty() {
-                        picker.delegate.selected_index = 0;
-                    } else {
-                        let first_selectable = picker
-                            .delegate
-                            .matches
-                            .iter()
-                            .position(|m| !matches!(m.entry, SidebarEntry::Separator(_)))
-                            .unwrap_or(0);
-                        picker.delegate.selected_index = first_selectable;
-                    }
-                })
-                .log_err();
-        })
+        cx.spawn_in(window, async move |_picker, cx| {})
     }
 
-    fn confirm(&mut self, _secondary: bool, window: &mut Window, cx: &mut Context<Picker<Self>>) {
-        let Some(selected_match) = self.matches.get(self.selected_index) else {
-            return;
-        };
-
-        match &selected_match.entry {
-            SidebarEntry::Separator(_) => {}
-            SidebarEntry::WorkspaceThread(thread_entry) => {
-                let target_index = thread_entry.index;
-                self.multi_workspace.update(cx, |multi_workspace, cx| {
-                    multi_workspace.activate_index(target_index, window, cx);
-                });
-            }
-            SidebarEntry::RecentProject(project_entry) => {
-                let paths = project_entry.paths.clone();
-                open_recent_project(paths, window, cx);
-            }
-        }
-    }
+    fn confirm(&mut self, _secondary: bool, window: &mut Window, cx: &mut Context<Picker<Self>>) {}
 
     fn dismissed(&mut self, _window: &mut Window, _cx: &mut Context<Picker<Self>>) {}
 
@@ -560,114 +241,7 @@ impl PickerDelegate for WorkspacePickerDelegate {
         _window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
-        let match_entry = self.matches.get(index)?;
-        let SidebarMatch { entry, positions } = match_entry;
-
-        match entry {
-            SidebarEntry::Separator(title) => Some(
-                v_flex()
-                    .when(index > 0, |this| {
-                        this.mt_1()
-                            .gap_2()
-                            .child(Divider::horizontal().color(DividerColor::BorderFaded))
-                    })
-                    .child(ListSubHeader::new(title.clone()).inset(true))
-                    .into_any_element(),
-            ),
-            SidebarEntry::WorkspaceThread(thread_entry) => {
-                let worktree_label = thread_entry.worktree_label.clone();
-                let full_path = thread_entry.full_path.clone();
-                let thread_info = thread_entry.thread_info.clone();
-                let workspace_index = thread_entry.index;
-                let multi_workspace = self.multi_workspace.clone();
-                let workspace_count = self.multi_workspace.read(cx).workspaces().len();
-                let is_hovered = self.hovered_thread_item == Some(workspace_index);
-
-                let remove_btn = IconButton::new(
-                    format!("remove-workspace-{}", workspace_index),
-                    IconName::Close,
-                )
-                .icon_size(IconSize::Small)
-                .icon_color(Color::Muted)
-                .tooltip(Tooltip::text("Remove Workspace"))
-                .on_click({
-                    let multi_workspace = multi_workspace;
-                    move |_, window, cx| {
-                        multi_workspace.update(cx, |mw, cx| {
-                            mw.remove_workspace(workspace_index, window, cx);
-                        });
-                    }
-                });
-
-                let has_notification = self.notified_workspaces.contains(&workspace_index);
-                let thread_subtitle = thread_info.as_ref().map(|info| info.title.clone());
-                let status = thread_info
-                    .as_ref()
-                    .map_or(AgentThreadStatus::default(), |info| info.status);
-                let running = matches!(
-                    status,
-                    AgentThreadStatus::Running | AgentThreadStatus::WaitingForConfirmation
-                );
-
-                Some(
-                    ThreadItem::new(
-                        ("workspace-item", thread_entry.index),
-                        thread_subtitle.unwrap_or("New Thread".into()),
-                    )
-                    .icon(
-                        thread_info
-                            .as_ref()
-                            .map_or(IconName::ZedAgent, |info| info.icon),
-                    )
-                    .running(running)
-                    .generation_done(has_notification)
-                    .status(status)
-                    .selected(selected)
-                    .worktree(worktree_label.clone())
-                    .worktree_highlight_positions(positions.clone())
-                    .when(workspace_count > 1, |item| item.action_slot(remove_btn))
-                    .hovered(is_hovered)
-                    .on_hover(cx.listener(move |picker, is_hovered, _window, cx| {
-                        let mut changed = false;
-                        if *is_hovered {
-                            if picker.delegate.hovered_thread_item != Some(workspace_index) {
-                                picker.delegate.hovered_thread_item = Some(workspace_index);
-                                changed = true;
-                            }
-                        } else if picker.delegate.hovered_thread_item == Some(workspace_index) {
-                            picker.delegate.hovered_thread_item = None;
-                            changed = true;
-                        }
-                        if changed {
-                            cx.notify();
-                        }
-                    }))
-                    .when(!full_path.is_empty(), |this| {
-                        this.tooltip(move |_, cx| {
-                            Tooltip::with_meta(worktree_label.clone(), None, full_path.clone(), cx)
-                        })
-                    })
-                    .into_any_element(),
-                )
-            }
-            SidebarEntry::RecentProject(project_entry) => {
-                let name = project_entry.name.clone();
-                let full_path = project_entry.full_path.clone();
-                let item_id: SharedString =
-                    format!("recent-project-{:?}", project_entry.workspace_id).into();
-
-                Some(
-                    ThreadItem::new(item_id, name.clone())
-                        .icon(IconName::Folder)
-                        .selected(selected)
-                        .highlight_positions(positions.clone())
-                        .tooltip(move |_, cx| {
-                            Tooltip::with_meta(name.clone(), None, full_path.clone(), cx)
-                        })
-                        .into_any_element(),
-                )
-            }
-        }
+        None
     }
 
     fn render_editor(
@@ -696,7 +270,7 @@ impl PickerDelegate for WorkspacePickerDelegate {
 pub struct Sidebar {
     multi_workspace: Entity<MultiWorkspace>,
     width: Pixels,
-    picker: Entity<Picker<WorkspacePickerDelegate>>,
+    picker: Entity<Picker<ActiveProjectsDelegate>>,
     _subscription: Subscription,
     _project_subscriptions: Vec<Subscription>,
     _agent_panel_subscriptions: Vec<Subscription>,
@@ -705,7 +279,6 @@ pub struct Sidebar {
     test_thread_infos: HashMap<usize, AgentThreadInfo>,
     #[cfg(any(test, feature = "test-support"))]
     test_recent_project_thread_titles: HashMap<SharedString, SharedString>,
-    _fetch_recent_projects: Task<()>,
 }
 
 impl EventEmitter<SidebarEvent> for Sidebar {}
@@ -716,7 +289,7 @@ impl Sidebar {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let delegate = WorkspacePickerDelegate::new(multi_workspace.clone());
+        let delegate = ActiveProjectsDelegate::new(multi_workspace.clone());
         let picker = cx.new(|cx| {
             Picker::list(delegate, window, cx)
                 .max_height(None)
@@ -732,25 +305,6 @@ impl Sidebar {
             },
         );
 
-        let fetch_recent_projects = {
-            let picker = picker.downgrade();
-            let fs = <dyn Fs>::global(cx);
-            cx.spawn_in(window, async move |_this, cx| {
-                let projects = get_recent_projects(None, None, fs).await;
-
-                cx.update(|window, cx| {
-                    if let Some(picker) = picker.upgrade() {
-                        picker.update(cx, |picker, cx| {
-                            picker.delegate.set_recent_projects(projects, cx);
-                            let query = picker.query(cx);
-                            picker.update_matches(query, window, cx);
-                        });
-                    }
-                })
-                .log_err();
-            })
-        };
-
         let mut this = Self {
             multi_workspace,
             width: DEFAULT_WIDTH,
@@ -763,7 +317,6 @@ impl Sidebar {
             test_thread_infos: HashMap::new(),
             #[cfg(any(test, feature = "test-support"))]
             test_recent_project_thread_titles: HashMap::new(),
-            _fetch_recent_projects: fetch_recent_projects,
         };
         this.update_entries(window, cx);
         this
@@ -830,9 +383,6 @@ impl Sidebar {
         projects: Vec<RecentProjectEntry>,
         cx: &mut Context<Self>,
     ) {
-        self.picker.update(cx, |picker, _cx| {
-            picker.delegate.recent_projects = projects;
-        });
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -859,14 +409,6 @@ impl Sidebar {
         title: SharedString,
         cx: &mut Context<Self>,
     ) {
-        self.test_recent_project_thread_titles
-            .insert(full_path.clone(), title.clone());
-        self.picker.update(cx, |picker, _cx| {
-            picker
-                .delegate
-                .recent_project_thread_titles
-                .insert(full_path, title);
-        });
     }
 
     fn subscribe_to_agent_panels(
@@ -919,32 +461,7 @@ impl Sidebar {
 
     /// Reconciles the sidebar's displayed entries with the current state of all
     /// workspaces and their agent threads.
-    fn update_entries(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let multi_workspace = self.multi_workspace.clone();
-        cx.defer_in(window, move |this, window, cx| {
-            if !this.multi_workspace.read(cx).multi_workspace_enabled(cx) {
-                return;
-            }
-
-            this._project_subscriptions = this.subscribe_to_projects(window, cx);
-            this._agent_panel_subscriptions = this.subscribe_to_agent_panels(window, cx);
-            this._thread_subscriptions = this.subscribe_to_threads(window, cx);
-            let (entries, active_index) = multi_workspace.read_with(cx, |multi_workspace, cx| {
-                this.build_workspace_thread_entries(multi_workspace, cx)
-            });
-
-            let had_notifications = !this.picker.read(cx).delegate.notified_workspaces.is_empty();
-            this.picker.update(cx, |picker, cx| {
-                picker.delegate.set_entries(entries, active_index, cx);
-                let query = picker.query(cx);
-                picker.update_matches(query, window, cx);
-            });
-            let has_notifications = !this.picker.read(cx).delegate.notified_workspaces.is_empty();
-            if had_notifications != has_notifications {
-                multi_workspace.update(cx, |_, cx| cx.notify());
-            }
-        });
-    }
+    fn update_entries(&mut self, window: &mut Window, cx: &mut Context<Self>) {}
 }
 
 impl WorkspaceSidebar for Sidebar {
@@ -958,7 +475,7 @@ impl WorkspaceSidebar for Sidebar {
     }
 
     fn has_notifications(&self, cx: &App) -> bool {
-        !self.picker.read(cx).delegate.notified_workspaces.is_empty()
+        false
     }
 }
 
@@ -989,75 +506,91 @@ impl Render for Sidebar {
             .bg(cx.theme().colors().surface_background)
             .border_r_1()
             .border_color(cx.theme().colors().border)
-            .child(
-                h_flex()
-                    .flex_none()
-                    .h(titlebar_height)
-                    .w_full()
-                    .mt_px()
-                    .pb_px()
-                    .pr_1()
-                    .when_else(
-                        cfg!(target_os = "macos") && !window.is_fullscreen(),
-                        |this| this.pl(px(TRAFFIC_LIGHT_PADDING)),
-                        |this| this.pl_2(),
-                    )
-                    .justify_between()
-                    .border_b_1()
-                    .border_color(cx.theme().colors().border)
-                    .child({
-                        let focus_handle = cx.focus_handle();
-                        IconButton::new("close-sidebar", IconName::WorkspaceNavOpen)
-                            .icon_size(IconSize::Small)
-                            .tooltip(Tooltip::element(move |_, cx| {
-                                v_flex()
-                                    .gap_1()
-                                    .child(
-                                        h_flex()
-                                            .gap_2()
-                                            .justify_between()
-                                            .child(Label::new("Close Sidebar"))
-                                            .child(KeyBinding::for_action_in(
-                                                &ToggleWorkspaceSidebar,
-                                                &focus_handle,
-                                                cx,
-                                            )),
-                                    )
-                                    .child(
-                                        h_flex()
-                                            .pt_1()
-                                            .gap_2()
-                                            .border_t_1()
-                                            .border_color(cx.theme().colors().border_variant)
-                                            .justify_between()
-                                            .child(Label::new(focus_tooltip_label))
-                                            .child(KeyBinding::for_action_in(
-                                                &FocusWorkspaceSidebar,
-                                                &focus_handle,
-                                                cx,
-                                            )),
-                                    )
-                                    .into_any_element()
-                            }))
-                            .on_click(cx.listener(|_this, _, _window, cx| {
-                                cx.emit(SidebarEvent::Close);
-                            }))
-                    })
-                    .child(
-                        IconButton::new("new-workspace", IconName::Plus)
-                            .icon_size(IconSize::Small)
-                            .tooltip(|_window, cx| {
-                                Tooltip::for_action("New Workspace", &NewWorkspaceInWindow, cx)
-                            })
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.multi_workspace.update(cx, |multi_workspace, cx| {
-                                    multi_workspace.create_workspace(window, cx);
-                                });
-                            })),
-                    ),
-            )
+            .child(sidebar_header(
+                window,
+                cx,
+                titlebar_height,
+                focus_tooltip_label,
+            ))
             .child(self.picker.clone())
     }
+}
+
+/// Renders the sidebar header, including the expand/collapse button and the new
+/// thread button.
+fn sidebar_header(
+    window: &mut Window,
+    cx: &mut Context<'_, Sidebar>,
+    titlebar_height: Pixels,
+    focus_tooltip_label: impl Into<SharedString>,
+) -> impl IntoElement {
+    let focus_tooltip_label = focus_tooltip_label.into();
+
+    h_flex()
+        .flex_none()
+        .h(titlebar_height)
+        .w_full()
+        .mt_px()
+        .pb_px()
+        .pr_1()
+        .when_else(
+            cfg!(target_os = "macos") && !window.is_fullscreen(),
+            |this| this.pl(px(TRAFFIC_LIGHT_PADDING)),
+            |this| this.pl_2(),
+        )
+        .justify_between()
+        .border_b_1()
+        .border_color(cx.theme().colors().border)
+        .child({
+            let focus_handle = cx.focus_handle();
+            IconButton::new("close-sidebar", IconName::WorkspaceNavOpen)
+                .icon_size(IconSize::Small)
+                .tooltip(Tooltip::element(move |_, cx| {
+                    v_flex()
+                        .gap_1()
+                        .child(
+                            h_flex()
+                                .gap_2()
+                                .justify_between()
+                                .child(Label::new("Close Sidebar"))
+                                .child(KeyBinding::for_action_in(
+                                    &ToggleWorkspaceSidebar,
+                                    &focus_handle,
+                                    cx,
+                                )),
+                        )
+                        .child(
+                            h_flex()
+                                .pt_1()
+                                .gap_2()
+                                .border_t_1()
+                                .border_color(cx.theme().colors().border_variant)
+                                .justify_between()
+                                .child(Label::new(focus_tooltip_label.clone()))
+                                .child(KeyBinding::for_action_in(
+                                    &FocusWorkspaceSidebar,
+                                    &focus_handle,
+                                    cx,
+                                )),
+                        )
+                        .into_any_element()
+                }))
+                .on_click(cx.listener(|_this, _, _window, cx| {
+                    cx.emit(SidebarEvent::Close);
+                }))
+        })
+        .child(
+            IconButton::new("new-workspace", IconName::Plus)
+                .icon_size(IconSize::Small)
+                .tooltip(|_window, cx| {
+                    Tooltip::for_action("New Workspace", &NewWorkspaceInWindow, cx)
+                })
+                .on_click(cx.listener(|this, _, window, cx| {
+                    this.multi_workspace.update(cx, |multi_workspace, cx| {
+                        multi_workspace.create_workspace(window, cx);
+                    });
+                })),
+        )
 }
 
 #[cfg(test)]
