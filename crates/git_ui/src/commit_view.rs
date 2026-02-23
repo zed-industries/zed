@@ -2,7 +2,8 @@ use anyhow::{Context as _, Result};
 use buffer_diff::BufferDiff;
 use collections::HashMap;
 use editor::display_map::{BlockPlacement, BlockProperties, BlockStyle};
-use editor::{Addon, Direction, Editor, EditorEvent, ExcerptRange, MultiBuffer, multibuffer_context_lines};
+use editor::scroll::Autoscroll;
+use editor::{Addon, Direction, Editor, EditorEvent, ExcerptRange, MultiBuffer, SelectionEffects, multibuffer_context_lines};
 use git::repository::{CommitDetails, CommitDiff, RepoPath, is_binary_content};
 use git::status::{FileStatus, StatusCode, TrackedStatus};
 use git::{
@@ -66,6 +67,7 @@ pub struct CommitView {
     multibuffer: Entity<MultiBuffer>,
     repository: Entity<Repository>,
     remote: Option<GitRemote>,
+    pending_focus_file: Option<RepoPath>,
     _subscription: Subscription,
 }
 
@@ -104,31 +106,60 @@ impl CommitView {
         repo: WeakEntity<Repository>,
         workspace: WeakEntity<Workspace>,
         stash: Option<usize>,
-        file_filter: Option<RepoPath>,
+        focus_file: Option<RepoPath>,
         window: &mut Window,
         cx: &mut App,
     ) {
-        let commit_diff = repo
-            .update(cx, |repo, _| repo.load_commit_diff(commit_sha.clone()))
-            .ok();
-        let commit_details = repo
-            .update(cx, |repo, _| repo.show(commit_sha.clone()))
-            .ok();
+        Self::open_with_cached_diff(commit_sha, repo, workspace, stash, focus_file, None, None, window, cx);
+    }
+
+    pub fn open_with_cached_diff(
+        commit_sha: String,
+        repo: WeakEntity<Repository>,
+        workspace: WeakEntity<Workspace>,
+        stash: Option<usize>,
+        focus_file: Option<RepoPath>,
+        cached_diff: Option<CommitDiff>,
+        cached_details: Option<CommitDetails>,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        let commit_diff_future = if cached_diff.is_none() {
+            repo.update(cx, |repo, _| repo.load_commit_diff(commit_sha.clone()))
+                .ok()
+        } else {
+            None
+        };
+        let commit_details_future = if cached_details.is_none() {
+            repo.update(cx, |repo, _| repo.show(commit_sha.clone()))
+                .ok()
+        } else {
+            None
+        };
 
         window
             .spawn(cx, async move |cx| {
-                let (commit_diff, commit_details) = futures::join!(commit_diff?, commit_details?);
-                let mut commit_diff = commit_diff.log_err()?.log_err()?;
-                let commit_details = commit_details.log_err()?.log_err()?;
+                let commit_diff: Result<CommitDiff> = if let Some(diff) = cached_diff {
+                    Ok(diff)
+                } else if let Some(receiver) = commit_diff_future {
+                    receiver.await.context("Failed to load commit diff")?.context("Commit diff error")
+                } else {
+                    anyhow::bail!("No diff available");
+                };
 
-                // Filter to specific file if requested
-                if let Some(ref filter_path) = file_filter {
-                    commit_diff.files.retain(|f| &f.path == filter_path);
-                }
+                let commit_details: Result<CommitDetails> = if let Some(details) = cached_details {
+                    Ok(details)
+                } else if let Some(receiver) = commit_details_future {
+                    receiver.await.context("Failed to load commit details")?.context("Commit details error")
+                } else {
+                    anyhow::bail!("No details available");
+                };
 
-                let repo = repo.upgrade()?;
+                let commit_diff = commit_diff?;
+                let commit_details = commit_details?;
+                let repo = repo.upgrade().ok_or_else(|| anyhow::anyhow!("Repository dropped"))?;
 
-                workspace
+                Ok(workspace
                     .update_in(cx, |workspace, window, cx| {
                         let project = workspace.project();
                         let commit_view = cx.new(|cx| {
@@ -143,26 +174,28 @@ impl CommitView {
                             )
                         });
 
+                        // Store the focus file to scroll after files are loaded
+                        if let Some(focus_path) = focus_file {
+                            commit_view.update(cx, |view, _cx| {
+                                view.pending_focus_file = Some(focus_path);
+                            });
+                        }
+
                         let pane = workspace.active_pane();
                         pane.update(cx, |pane, cx| {
-                            // For single-file view, always add a new item instead of reusing existing one
-                            if file_filter.is_some() {
-                                pane.add_item(Box::new(commit_view), true, true, None, window, cx);
+                            let ix = pane.items().position(|item| {
+                                let commit_view = item.downcast::<CommitView>();
+                                commit_view
+                                    .is_some_and(|view| view.read(cx).commit.sha == commit_sha)
+                            });
+                            if let Some(ix) = ix {
+                                pane.activate_item(ix, true, true, window, cx);
                             } else {
-                                let ix = pane.items().position(|item| {
-                                    let commit_view = item.downcast::<CommitView>();
-                                    commit_view
-                                        .is_some_and(|view| view.read(cx).commit.sha == commit_sha)
-                                });
-                                if let Some(ix) = ix {
-                                    pane.activate_item(ix, true, true, window, cx);
-                                } else {
-                                    pane.add_item(Box::new(commit_view), true, true, None, window, cx);
-                                }
+                                pane.add_item(Box::new(commit_view), true, true, None, window, cx);
                             }
                         })
                     })
-                    .log_err()
+                    .log_err())
             })
             .detach();
     }
@@ -257,7 +290,7 @@ impl CommitView {
 
         let repository_clone = repository.clone();
 
-        cx.spawn(async move |this, cx| {
+        cx.spawn_in(window, async move |this, cx| {
             let mut binary_buffer_ids: HashSet<language::BufferId> = HashSet::default();
             let mut file_statuses: HashMap<language::BufferId, FileStatus> = HashMap::default();
 
@@ -304,7 +337,7 @@ impl CommitView {
                 }) as Arc<dyn language::File>;
 
                 let buffer = build_buffer(new_text, file, &language_registry, cx).await?;
-                let buffer_id = cx.update(|cx| buffer.read(cx).remote_id());
+                let buffer_id = cx.update(|_window, cx| buffer.read(cx).remote_id())?;
 
                 let status_code = if is_created {
                     StatusCode::Added
@@ -367,7 +400,7 @@ impl CommitView {
                 })?;
             }
 
-            this.update(cx, |this, cx| {
+            this.update_in(cx, |this, window, cx| {
                 this.editor.update(cx, |editor, _cx| {
                     editor.register_addon(CommitDiffAddon { file_statuses });
                 });
@@ -375,6 +408,13 @@ impl CommitView {
                     this.editor.update(cx, |editor, cx| {
                         editor.fold_buffers(binary_buffer_ids, cx);
                     });
+                }
+
+                // Scroll to the pending focus file if set
+                if let Some(ref focus_path) = this.pending_focus_file {
+                    let focus_path = focus_path.clone();
+                    this.pending_focus_file = None;
+                    this.scroll_to_file(&focus_path, window, cx);
                 }
             })?;
 
@@ -425,6 +465,7 @@ impl CommitView {
             stash,
             repository,
             remote,
+            pending_focus_file: None,
             _subscription,
         }
     }
@@ -502,6 +543,23 @@ impl CommitView {
                 });
             });
         }
+    }
+
+    fn scroll_to_file(&mut self, file_path: &RepoPath, window: &mut Window, cx: &mut App) {
+        // Create a PathKey from the RepoPath
+        let path_key = PathKey::with_sort_prefix(FILE_NAMESPACE_SORT_PREFIX, file_path.as_ref().clone());
+
+        // Get the anchor for this path from the multibuffer
+        let Some(location) = self.multibuffer.read(cx).location_for_path(&path_key, cx) else {
+            return;
+        };
+
+        // Scroll to that location
+        self.editor.update(cx, |editor, cx| {
+            editor.change_selections(SelectionEffects::scroll(Autoscroll::center()), window, cx, |s| {
+                s.select_ranges([location..location]);
+            });
+        });
     }
 
     fn render_commit_avatar(
@@ -1198,6 +1256,7 @@ impl Item for CommitView {
                 stash: self.stash,
                 repository: self.repository.clone(),
                 remote: self.remote.clone(),
+                pending_focus_file: None,
                 _subscription,
             }
         })))

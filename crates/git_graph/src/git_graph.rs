@@ -3,7 +3,7 @@ use feature_flags::{FeatureFlag, FeatureFlagAppExt as _};
 use git::{
     BuildCommitPermalinkParams, GitHostingProviderRegistry, GitRemote, Oid, ParsedGitRemote,
     parse_git_remote_url,
-    repository::{CommitDiff, InitialGraphCommitData, LogOrder, LogSource},
+    repository::{CommitDetails, CommitDiff, InitialGraphCommitData, LogOrder, LogSource},
 };
 use git_ui::{commit_tooltip::CommitAvatar, commit_view::CommitView};
 use gpui::{
@@ -695,6 +695,7 @@ pub struct GitGraph {
     log_source: LogSource,
     log_order: LogOrder,
     selected_commit_diff: Option<CommitDiff>,
+    selected_commit_details: Option<CommitDetails>,
     _commit_diff_task: Option<Task<()>>,
     _load_task: Option<Task<()>>,
     commit_details_split_state: Entity<SplitState>,
@@ -797,6 +798,7 @@ impl GitGraph {
             graph_viewport_width: px(88.),
             selected_entry_idx: None,
             selected_commit_diff: None,
+            selected_commit_details: None,
             log_source,
             log_order,
             commit_details_split_state: cx.new(|_cx| SplitState::new()),
@@ -1178,6 +1180,7 @@ impl GitGraph {
 
         self.selected_entry_idx = Some(idx);
         self.selected_commit_diff = None;
+        self.selected_commit_details = None;
         self.table_interaction_state.update(cx, |state, cx| {
             state
                 .scroll_handle
@@ -1198,16 +1201,23 @@ impl GitGraph {
             return;
         };
 
-        let diff_receiver = repository.update(cx, |repo, _| repo.load_commit_diff(sha));
+        let diff_receiver = repository.update(cx, |repo, _| repo.load_commit_diff(sha.clone()));
+        let details_receiver = repository.update(cx, |repo, _| repo.show(sha));
 
         self._commit_diff_task = Some(cx.spawn(async move |this, cx| {
-            if let Ok(Ok(diff)) = diff_receiver.await {
-                this.update(cx, |this, cx| {
+            let diff_result = diff_receiver.await;
+            let details_result = details_receiver.await;
+
+            this.update(cx, |this, cx| {
+                if let Ok(Ok(diff)) = diff_result {
                     this.selected_commit_diff = Some(diff);
-                    cx.notify();
-                })
-                .ok();
-            }
+                }
+                if let Ok(Ok(details)) = details_result {
+                    this.selected_commit_details = Some(details);
+                }
+                cx.notify();
+            })
+            .ok();
         }));
 
         cx.notify();
@@ -1913,6 +1923,8 @@ impl GitGraph {
                                                     .map(|entry| entry.data.sha.to_string());
                                                 let project = self.project.clone();
                                                 let workspace = self.workspace.clone();
+                                                let cached_diff = diff.clone();
+                                                let cached_details = self.selected_commit_details.clone();
 
                                                 v_flex().gap_1().children(diff.files.iter().enumerate().map(|(idx, file)| {
                                                     let file_name: String = file
@@ -1929,6 +1941,8 @@ impl GitGraph {
                                                     let commit_sha = commit_sha.clone();
                                                     let project = project.clone();
                                                     let workspace = workspace.clone();
+                                                    let cached_diff = cached_diff.clone();
+                                                    let cached_details = cached_details.clone();
 
                                                     h_flex()
                                                         .gap_1()
@@ -1952,12 +1966,14 @@ impl GitGraph {
                                                                     let Some(repository) = project.read_with(cx, |project, cx| project.active_repository(cx)) else {
                                                                         return;
                                                                     };
-                                                                    CommitView::open(
+                                                                    CommitView::open_with_cached_diff(
                                                                         commit_sha,
                                                                         repository.downgrade(),
                                                                         workspace.clone(),
                                                                         None,
                                                                         Some(file_path.clone()),
+                                                                        Some(cached_diff.clone()),
+                                                                        cached_details.clone(),
                                                                         window,
                                                                         cx,
                                                                     );
