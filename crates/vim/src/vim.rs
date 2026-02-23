@@ -751,6 +751,7 @@ impl Vim {
                         Operator::ChangeSurrounds {
                             target: action.target,
                             opening: false,
+                            bracket_anchors: Vec::new(),
                         },
                         window,
                         cx,
@@ -1944,10 +1945,14 @@ impl Vim {
                 }
                 _ => self.clear_operator(window, cx),
             },
-            Some(Operator::ChangeSurrounds { target, opening }) => match self.mode {
+            Some(Operator::ChangeSurrounds {
+                target,
+                opening,
+                bracket_anchors,
+            }) => match self.mode {
                 Mode::Normal => {
                     if let Some(target) = target {
-                        self.change_surrounds(text, target, opening, window, cx);
+                        self.change_surrounds(text, target, opening, bracket_anchors, window, cx);
                         self.clear_operator(window, cx);
                     }
                 }
