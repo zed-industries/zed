@@ -1240,26 +1240,10 @@ impl GitGraph {
             } else {
                 Some(author_email.clone())
             };
-            let avatar = CommitAvatar::new(&full_sha, author_email_for_avatar, remote.as_ref());
-            v_flex()
-                .w(px(64.))
-                .h(px(64.))
-                .border_1()
-                .border_color(cx.theme().colors().border)
-                .rounded_full()
-                .justify_center()
-                .items_center()
-                .child(
-                    avatar
-                        .avatar(window, cx)
-                        .map(|a| a.size(px(64.)).into_any_element())
-                        .unwrap_or_else(|| {
-                            Icon::new(IconName::Person)
-                                .color(Color::Muted)
-                                .size(IconSize::XLarge)
-                                .into_any_element()
-                        }),
-                )
+
+            CommitAvatar::new(&full_sha, author_email_for_avatar, remote.as_ref())
+                .size(px(40.))
+                .render(window, cx)
         };
 
         let changed_files_count = self
