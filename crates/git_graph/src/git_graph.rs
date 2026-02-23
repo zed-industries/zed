@@ -780,6 +780,11 @@ impl GitGraph {
         })
         .detach();
 
+        let active_repository = project
+            .read(cx)
+            .active_repository(cx)
+            .map(|repo| repo.read(cx).id);
+
         let mut git_graph = GitGraph {
             focus_handle,
             project,
@@ -810,10 +815,10 @@ impl GitGraph {
             _branch_commits_task: None,
             branch_commits_cache: HashMap::default(),
             branch_commits_cache_order: Vec::new(),
-            selected_repo_id: None,
+            selected_repo_id: active_repository,
         };
 
-        // Fetch branches and update commit filtering on initialization
+        // Fetch branches (also loads initial commit data if needed)
         git_graph.fetch_branches(cx);
 
         git_graph
