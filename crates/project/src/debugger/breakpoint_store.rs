@@ -156,7 +156,7 @@ pub struct BreakpointStore {
     breakpoints: BTreeMap<Arc<Path>, BreakpointsInFile>,
     downstream_client: Option<(AnyProtoClient, u64)>,
     active_stack_frame: Option<ActiveStackFrame>,
-    debug_pane_id: Option<EntityId>,
+    active_debug_line_pane_id: Option<EntityId>,
     // E.g ssh
     mode: BreakpointStoreMode,
 }
@@ -174,7 +174,7 @@ impl BreakpointStore {
             worktree_store,
             downstream_client: None,
             active_stack_frame: Default::default(),
-            debug_pane_id: None,
+            active_debug_line_pane_id: None,
         }
     }
 
@@ -194,7 +194,7 @@ impl BreakpointStore {
             worktree_store,
             downstream_client: None,
             active_stack_frame: Default::default(),
-            debug_pane_id: None,
+            active_debug_line_pane_id: None,
         }
     }
 
@@ -652,12 +652,12 @@ impl BreakpointStore {
         self.active_stack_frame.as_ref()
     }
 
-    pub fn debug_pane_id(&self) -> Option<EntityId> {
-        self.debug_pane_id
+    pub fn active_debug_line_pane_id(&self) -> Option<EntityId> {
+        self.active_debug_line_pane_id
     }
 
-    pub fn set_debug_pane_id(&mut self, pane_id: EntityId) {
-        self.debug_pane_id = Some(pane_id);
+    pub fn set_active_debug_pane_id(&mut self, pane_id: EntityId) {
+        self.active_debug_line_pane_id = Some(pane_id);
     }
 
     pub fn remove_active_position(
@@ -671,11 +671,11 @@ impl BreakpointStore {
                 .take_if(|active_stack_frame| active_stack_frame.session_id == session_id)
                 .is_some()
             {
-                self.debug_pane_id = None;
+                self.active_debug_line_pane_id = None;
             }
         } else {
             self.active_stack_frame.take();
-            self.debug_pane_id = None;
+            self.active_debug_line_pane_id = None;
         }
 
         cx.emit(BreakpointStoreEvent::ClearDebugLines);

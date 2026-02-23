@@ -446,15 +446,15 @@ impl StackFrameList {
                             })
                             .unwrap_or_default();
 
-                        let stored_debug_pane = workspace
+                        let active_debug_line_pane = workspace
                             .project()
                             .read(cx)
                             .breakpoint_store()
                             .read(cx)
-                            .debug_pane_id()
+                            .active_debug_line_pane_id()
                             .and_then(|id| workspace.pane_for_entity_id(id));
 
-                        let debug_pane = if let Some(pane) = stored_debug_pane {
+                        let debug_pane = if let Some(pane) = active_debug_line_pane {
                             Some(pane.downgrade())
                         } else {
                             // No debug pane set yet. Find a pane where the target file
@@ -488,14 +488,16 @@ impl StackFrameList {
                 })??;
 
                 this.workspace.update(cx, |workspace, cx| {
-                    if let Some(pane) = workspace.pane_for(&*opened_item) {
-                        let pane_entity_id = pane.entity_id();
+                    if let Some(pane_id) = workspace
+                        .pane_for(&*opened_item)
+                        .map(|pane| pane.entity_id())
+                    {
                         workspace
                             .project()
                             .read(cx)
                             .breakpoint_store()
                             .update(cx, |store, _cx| {
-                                store.set_debug_pane_id(pane_entity_id);
+                                store.set_active_debug_pane_id(pane_id);
                             });
                     }
 

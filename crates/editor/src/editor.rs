@@ -22709,11 +22709,11 @@ impl Editor {
         maybe!({
             let breakpoint_store = self.breakpoint_store.as_ref()?;
 
-            let (active_stack_frame, debug_pane_id) = {
+            let (active_stack_frame, debug_line_pane_id) = {
                 let store = breakpoint_store.read(cx);
                 let active_stack_frame = store.active_position().cloned();
-                let debug_pane_id = store.debug_pane_id();
-                (active_stack_frame, debug_pane_id)
+                let debug_line_pane_id = store.active_debug_line_pane_id();
+                (active_stack_frame, debug_line_pane_id)
             };
 
             let Some(active_stack_frame) = active_stack_frame else {
@@ -22721,18 +22721,20 @@ impl Editor {
                 return None;
             };
 
-            if let Some(debug_pane_id) = debug_pane_id {
-                if let Some((workspace, _)) = self.workspace.as_ref() {
-                    if let Some(workspace) = workspace.upgrade() {
-                        let my_pane_entity_id = workspace
-                            .read(cx)
-                            .pane_for_item_id(cx.entity_id())
-                            .map(|pane| pane.entity_id());
+            if let Some(debug_line_pane_id) = debug_line_pane_id {
+                if let Some(workspace) = self
+                    .workspace
+                    .as_ref()
+                    .and_then(|(workspace, _)| workspace.upgrade())
+                {
+                    let editor_pane_id = workspace
+                        .read(cx)
+                        .pane_for_item_id(cx.entity_id())
+                        .map(|pane| pane.entity_id());
 
-                        if my_pane_entity_id.is_some_and(|id| id != debug_pane_id) {
-                            self.clear_row_highlights::<ActiveDebugLine>();
-                            return None;
-                        }
+                    if editor_pane_id.is_some_and(|id| id != debug_line_pane_id) {
+                        self.clear_row_highlights::<ActiveDebugLine>();
+                        return None;
                     }
                 }
             }
