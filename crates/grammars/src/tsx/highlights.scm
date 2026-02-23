@@ -389,26 +389,26 @@
 
 (jsx_opening_element
   [
-    (identifier) @type
+    (identifier) @tag.component.type.constructor.jsx
     (member_expression
-      object: (identifier) @type
-      property: (property_identifier) @type)
+      object: (identifier) @tag.component.type.constructor.jsx
+      property: (property_identifier) @tag.component.type.constructor.jsx)
   ])
 
 (jsx_closing_element
   [
-    (identifier) @type
+    (identifier) @tag.component.type.constructor.jsx
     (member_expression
-      object: (identifier) @type
-      property: (property_identifier) @type)
+      object: (identifier) @tag.component.type.constructor.jsx
+      property: (property_identifier) @tag.component.type.constructor.jsx)
   ])
 
 (jsx_self_closing_element
   [
-    (identifier) @type
+    (identifier) @tag.component.type.constructor.jsx
     (member_expression
-      object: (identifier) @type
-      property: (property_identifier) @type)
+      object: (identifier) @tag.component.type.constructor.jsx
+      property: (property_identifier) @tag.component.type.constructor.jsx)
   ])
 
 (jsx_opening_element
