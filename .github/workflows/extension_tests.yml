@@ -98,6 +98,11 @@ jobs:
       run: |
         wget --quiet "https://zed-extension-cli.nyc3.digitaloceanspaces.com/$ZED_EXTENSION_CLI_SHA/x86_64-unknown-linux-gnu/zed-extension"
         chmod +x zed-extension
+    - name: steps::cache_rust_dependencies_namespace
+      uses: namespacelabs/nscloud-cache-action@v1
+      with:
+        cache: rust
+        path: ~/.rustup
     - name: extension_tests::check
       run: |
         mkdir -p /tmp/ext-scratch
