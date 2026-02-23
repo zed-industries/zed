@@ -628,6 +628,10 @@ impl BreakpointStore {
                 file_breakpoints.breakpoints.iter().filter_map({
                     let range = range.clone();
                     move |bp| {
+                        if !buffer_snapshot.can_resolve(bp.position()) {
+                            return None;
+                        }
+
                         if let Some(range) = &range
                             && (bp.position().cmp(&range.start, buffer_snapshot).is_lt()
                                 || bp.position().cmp(&range.end, buffer_snapshot).is_gt())
