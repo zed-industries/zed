@@ -1560,6 +1560,17 @@ impl GitGraph {
                             .vertical_scrollbar_for(&self.changed_files_scroll_handle, window, cx),
                     ),
             )
+            .child(Divider::horizontal())
+            .child(
+                h_flex().p_1p5().w_full().child(
+                    Button::new("view-commit", "View Commit")
+                        .full_width()
+                        .style(ButtonStyle::Outlined)
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.open_selected_commit_view(window, cx);
+                        })),
+                ),
+            )
             .into_any_element()
     }
 
