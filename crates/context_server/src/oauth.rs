@@ -1,7 +1,8 @@
 use anyhow::{Context as _, Result, anyhow, bail};
 use async_trait::async_trait;
 use futures::AsyncReadExt as _;
-use http_client::{AsyncBody, HttpClient, Request, Response};
+use http_client::{AsyncBody, HttpClient, Request};
+use parking_lot::Mutex as SyncMutex;
 use serde::{Deserialize, Serialize};
 use smol::net::TcpListener;
 use std::sync::Arc;
@@ -1011,9 +1012,97 @@ pub trait OAuthTokenProvider: Send + Sync {
     async fn try_refresh(&self) -> Result<bool>;
 }
 
+/// Concrete `OAuthTokenProvider` backed by in-memory tokens and an HTTP client
+/// for token refresh. Created by the store after successful authentication or
+/// when loading cached tokens from the keychain.
+pub struct McpOAuthTokenProvider {
+    tokens: SyncMutex<Option<OAuthTokens>>,
+    discovery: Arc<OAuthDiscovery>,
+    http_client: Arc<dyn HttpClient>,
+}
+
+impl McpOAuthTokenProvider {
+    pub fn new(
+        tokens: OAuthTokens,
+        discovery: Arc<OAuthDiscovery>,
+        http_client: Arc<dyn HttpClient>,
+    ) -> Self {
+        Self {
+            tokens: SyncMutex::new(Some(tokens)),
+            discovery,
+            http_client,
+        }
+    }
+}
+
+#[async_trait]
+impl OAuthTokenProvider for McpOAuthTokenProvider {
+    fn access_token(&self) -> Option<String> {
+        self.tokens.lock().as_ref().map(|t| t.access_token.clone())
+    }
+
+    async fn try_refresh(&self) -> Result<bool> {
+        let refresh_token = {
+            let guard = self.tokens.lock();
+            match guard.as_ref().and_then(|t| t.refresh_token.clone()) {
+                Some(rt) => rt,
+                None => return Ok(false),
+            }
+        };
+
+        let resource = canonical_server_uri(&self.discovery.resource_metadata.resource);
+
+        match refresh_tokens(
+            &self.http_client,
+            &self.discovery.auth_server_metadata,
+            &refresh_token,
+            &self.discovery.client_registration.client_id,
+            &resource,
+        )
+        .await
+        {
+            Ok(new_tokens) => {
+                *self.tokens.lock() = Some(new_tokens);
+                Ok(true)
+            }
+            Err(err) => {
+                log::warn!("OAuth token refresh failed: {}", err);
+                Ok(false)
+            }
+        }
+    }
+}
+
+/// A simple token provider that holds a static access token and never
+/// refreshes. Used on startup when we have cached tokens from the keychain
+/// but no discovery info yet. If the token is expired, the transport will
+/// get a 401 and transition to `AuthRequired`, triggering a full discovery
+/// and re-authentication flow.
+pub struct StaticTokenProvider {
+    access_token: String,
+}
+
+impl StaticTokenProvider {
+    pub fn new(access_token: String) -> Self {
+        Self { access_token }
+    }
+}
+
+#[async_trait]
+impl OAuthTokenProvider for StaticTokenProvider {
+    fn access_token(&self) -> Option<String> {
+        Some(self.access_token.clone())
+    }
+
+    async fn try_refresh(&self) -> Result<bool> {
+        Ok(false)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use http_client::Response;
 
     #[test]
     fn test_parse_www_authenticate_with_resource_metadata_and_scope() {

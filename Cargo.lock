@@ -13190,6 +13190,7 @@ dependencies = [
  "clock",
  "collections",
  "context_server",
+ "credentials_provider",
  "dap",
  "encoding_rs",
  "extension",

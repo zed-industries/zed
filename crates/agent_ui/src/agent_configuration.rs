@@ -689,6 +689,10 @@ impl AgentConfiguration {
                 Indicator::dot().color(Color::Muted).into_any_element(),
                 "Server is stopped.",
             ),
+            ContextServerStatus::AuthRequired(_) => (
+                Indicator::dot().color(Color::Warning).into_any_element(),
+                "Authentication required.",
+            ),
         };
         let is_remote = server_configuration
             .as_ref()
