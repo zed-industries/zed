@@ -4,7 +4,7 @@ use collections::HashMap;
 use editor::display_map::{BlockPlacement, BlockProperties, BlockStyle};
 use editor::scroll::Autoscroll;
 use editor::{Addon, Direction, Editor, EditorEvent, ExcerptRange, MultiBuffer, SelectionEffects, multibuffer_context_lines};
-use git::repository::{CommitDetails, CommitDiff, RepoPath, is_binary_content};
+use git::repository::{CommitDetails, CommitDiff, CommitFile, RepoPath, is_binary_content};
 use git::status::{FileStatus, StatusCode, TrackedStatus};
 use git::{
     BuildCommitPermalinkParams, GitHostingProviderRegistry, GitRemote, ParsedGitRemote,
@@ -196,6 +196,125 @@ impl CommitView {
                         })
                     })
                     .log_err())
+            })
+            .detach();
+    }
+
+    pub fn open_single_file_diff(
+        commit_sha: String,
+        repo: WeakEntity<Repository>,
+        workspace: WeakEntity<Workspace>,
+        file: CommitFile,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        let Some(workspace_entity) = workspace.upgrade() else {
+            return;
+        };
+        let project = workspace_entity.read(cx).project().clone();
+        let language_registry = project.read(cx).languages().clone();
+
+        let first_worktree_id = project
+            .read(cx)
+            .worktrees(cx)
+            .next()
+            .map(|worktree| worktree.read(cx).id());
+
+        let is_deleted = file.new_text.is_none();
+        let raw_new_text = file.new_text.unwrap_or_default();
+        let raw_old_text = file.old_text;
+
+        let is_binary = file.is_binary
+            || is_binary_content(raw_new_text.as_bytes())
+            || raw_old_text
+                .as_ref()
+                .is_some_and(|text| is_binary_content(text.as_bytes()));
+
+        let new_text = if is_binary {
+            "(binary file not shown)".to_string()
+        } else {
+            raw_new_text
+        };
+        let old_text = if is_binary { None } else { raw_old_text };
+
+        let worktree_id = repo
+            .read_with(cx, |repo, cx| {
+                repo.repo_path_to_project_path(&file.path, cx)
+                    .map(|path| path.worktree_id)
+                    .or(first_worktree_id)
+            })
+            .ok()
+            .flatten();
+
+        let Some(worktree_id) = worktree_id else {
+            return;
+        };
+
+        let short_sha = commit_sha.get(0..7).unwrap_or(&commit_sha);
+        let file_name = file
+            .path
+            .file_name()
+            .map(|name| name.to_string())
+            .unwrap_or_else(|| file.path.display(util::paths::PathStyle::local()).to_string());
+        let display_name = format!("{short_sha} - {file_name}");
+
+        let file_info = Arc::new(GitBlob {
+            path: file.path.clone(),
+            is_deleted,
+            is_binary,
+            worktree_id,
+            display_name,
+        }) as Arc<dyn language::File>;
+
+        window
+            .spawn(cx, async move |cx| {
+                let buffer = build_buffer(new_text, file_info, &language_registry, cx).await.ok()?;
+                let buffer_diff = if is_binary {
+                    None
+                } else {
+                    Some(build_buffer_diff(old_text, &buffer, &language_registry, cx).await.ok()?)
+                };
+
+                workspace
+                    .update_in(cx, |workspace, window, cx| {
+                        let project = workspace.project();
+                        let pane = workspace.active_pane();
+
+                        let new_multibuffer = cx.new(|cx| {
+                            let mut multibuffer = MultiBuffer::singleton(buffer, cx);
+                            multibuffer.set_all_diff_hunks_expanded(cx);
+                            if let Some(buffer_diff) = buffer_diff {
+                                multibuffer.add_diff(buffer_diff, cx);
+                            }
+                            multibuffer
+                        });
+
+                        let new_editor = cx.new(|cx| {
+                            let mut editor =
+                                Editor::for_multibuffer(new_multibuffer, Some(project.clone()), window, cx);
+                            editor.start_temporary_diff_override();
+                            editor.set_expand_all_diff_hunks(cx);
+                            editor.set_read_only(true);
+                            editor
+                        });
+
+                        new_editor.update(cx, |editor, cx| {
+                            editor.go_to_hunk_before_or_after_position(
+                                &editor.snapshot(window, cx),
+                                language::Point::zero(),
+                                Direction::Next,
+                                window,
+                                cx,
+                            );
+                        });
+
+                        pane.update(cx, |pane, cx| {
+                            pane.add_item(Box::new(new_editor), true, true, None, window, cx);
+                        });
+                    })
+                    .log_err();
+
+                Some(())
             })
             .detach();
     }

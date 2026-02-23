@@ -1921,10 +1921,7 @@ impl GitGraph {
                                                 let commit_sha = self.graph_data.commits
                                                     .get(self.selected_entry_idx.unwrap_or(0))
                                                     .map(|entry| entry.data.sha.to_string());
-                                                let project = self.project.clone();
                                                 let workspace = self.workspace.clone();
-                                                let cached_diff = diff.clone();
-                                                let cached_details = self.selected_commit_details.clone();
 
                                                 v_flex().gap_1().children(diff.files.iter().enumerate().map(|(idx, file)| {
                                                     let file_name: String = file
@@ -1937,12 +1934,9 @@ impl GitGraph {
                                                         .parent()
                                                         .map(|p| p.as_unix_str().to_string())
                                                         .unwrap_or_default();
-                                                    let file_path = file.path.clone();
+                                                    let commit_file = file.clone();
                                                     let commit_sha = commit_sha.clone();
-                                                    let project = project.clone();
                                                     let workspace = workspace.clone();
-                                                    let cached_diff = cached_diff.clone();
-                                                    let cached_details = cached_details.clone();
 
                                                     h_flex()
                                                         .gap_1()
@@ -1963,17 +1957,17 @@ impl GitGraph {
                                                                     let Some(commit_sha) = commit_sha.clone() else {
                                                                         return;
                                                                     };
-                                                                    let Some(repository) = project.read_with(cx, |project, cx| project.active_repository(cx)) else {
+                                                                    let Some(workspace_entity) = workspace.upgrade() else {
                                                                         return;
                                                                     };
-                                                                    CommitView::open_with_cached_diff(
+                                                                    let Some(repository) = workspace_entity.read(cx).project().read(cx).active_repository(cx) else {
+                                                                        return;
+                                                                    };
+                                                                    CommitView::open_single_file_diff(
                                                                         commit_sha,
                                                                         repository.downgrade(),
                                                                         workspace.clone(),
-                                                                        None,
-                                                                        Some(file_path.clone()),
-                                                                        Some(cached_diff.clone()),
-                                                                        cached_details.clone(),
+                                                                        commit_file.clone(),
                                                                         window,
                                                                         cx,
                                                                     );
