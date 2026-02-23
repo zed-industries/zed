@@ -1931,109 +1931,161 @@ impl GitGraph {
                             .min_h_0()
                             .min_w_0()
                             .flex_1()
-                            .child(
+                            .child({
+                                let commit = self.graph_data.commits
+                                    .get(self.selected_entry_idx.unwrap_or(0))
+                                    .cloned();
+                                let workspace = self.workspace.clone();
+
                                 div()
                                     .p_3()
                                     .border_b_1()
                                     .border_color(cx.theme().colors().border)
                                     .child(
-                                        Label::new(format!(
-                                            "{} Changed Files",
-                                            changed_files_count
-                                        ))
-                                        .size(LabelSize::Small)
-                                        .color(Color::Muted),
-                                    ),
-                            )
-                            .child(
+                                        h_flex()
+                                            .justify_between()
+                                            .items_center()
+                                            .child(
+                                                Label::new(format!(
+                                                    "{} Changed Files",
+                                                    changed_files_count
+                                                ))
+                                                .size(LabelSize::Small)
+                                                .color(Color::Muted),
+                                            )
+                                            .child(
+                                                Button::new("show-all-files", "Show All")
+                                                    .style(ButtonStyle::Filled)
+                                                    .label_size(LabelSize::Small)
+                                                    .on_click(move |_, window, cx| {
+                                                        let Some(commit) = commit.clone() else {
+                                                            return;
+                                                        };
+                                                        let Some(workspace_entity) = workspace.upgrade() else {
+                                                            return;
+                                                        };
+                                                        let Some(repository) = workspace_entity
+                                                            .read(cx)
+                                                            .project()
+                                                            .read(cx)
+                                                            .active_repository(cx)
+                                                        else {
+                                                            return;
+                                                        };
+                                                        CommitView::open(
+                                                            commit.data.sha.to_string(),
+                                                            repository.downgrade(),
+                                                            workspace_entity.downgrade(),
+                                                            None,
+                                                            None,
+                                                            window,
+                                                            cx,
+                                                        );
+                                                    }),
+                                            ),
+                                    )
+                            })
+                            .child({
+                                const MAX_VISIBLE_FILES: usize = 50;
+                                let total_files = changed_files_count;
+                                let show_all_button = total_files > MAX_VISIBLE_FILES;
+
                                 div()
-                                    .id("commit-files-scroll")
+                                    .id("commit-files-list")
                                     .flex_1()
                                     .min_h_0()
                                     .p_3()
-                                    .child(v_flex().gap_1().children(
-                                        self.selected_commit_diff.as_ref().map(|diff| {
-                                            let commit_sha = self
-                                                .graph_data
-                                                .commits
-                                                .get(self.selected_entry_idx.unwrap_or(0))
-                                                .map(|entry| entry.data.sha.to_string());
-                                            let workspace = self.workspace.clone();
+                                    .child(
+                                        v_flex()
+                                            .gap_1()
+                                            .children(
+                                                self.selected_commit_diff.as_ref().map(|diff| {
+                                                    let commit_sha = self
+                                                        .graph_data
+                                                        .commits
+                                                        .get(self.selected_entry_idx.unwrap_or(0))
+                                                        .map(|entry| entry.data.sha.to_string());
+                                                    let workspace = self.workspace.clone();
 
-                                            v_flex().gap_1().children(
-                                                diff.files.iter().enumerate().map(|(idx, file)| {
-                                                    let file_name: String = file
-                                                        .path
-                                                        .file_name()
-                                                        .map(|n| n.to_string())
-                                                        .unwrap_or_default();
-                                                    let dir_path: String = file
-                                                        .path
-                                                        .parent()
-                                                        .map(|p| p.as_unix_str().to_string())
-                                                        .unwrap_or_default();
-                                                    let commit_file = file.clone();
-                                                    let commit_sha = commit_sha.clone();
-                                                    let workspace = workspace.clone();
+                                                    let files_to_show: Vec<_> = if show_all_button {
+                                                        diff.files.iter().take(MAX_VISIBLE_FILES).enumerate().collect()
+                                                    } else {
+                                                        diff.files.iter().enumerate().collect()
+                                                    };
 
-                                                    h_flex()
-                                                    .gap_1()
-                                                    .overflow_hidden()
-                                                    .px_2()
-                                                    .py_1()
-                                                    .rounded_md()
-                                                    .child(
-                                                        Icon::new(IconName::File)
-                                                            .size(IconSize::Small)
-                                                            .color(Color::Accent),
-                                                    )
-                                                    .child(
-                                                        Button::new(("file", idx), file_name)
-                                                            .style(ButtonStyle::Transparent)
-                                                            .label_size(LabelSize::Small)
-                                                            .on_click(move |_, window, cx| {
-                                                                let Some(commit_sha) =
-                                                                    commit_sha.clone()
-                                                                else {
-                                                                    return;
-                                                                };
-                                                                let Some(workspace_entity) =
-                                                                    workspace.upgrade()
-                                                                else {
-                                                                    return;
-                                                                };
-                                                                let Some(repository) =
-                                                                    workspace_entity
-                                                                        .read(cx)
-                                                                        .project()
-                                                                        .read(cx)
-                                                                        .active_repository(cx)
-                                                                else {
-                                                                    return;
-                                                                };
-                                                                CommitView::open_single_file_diff(
-                                                                    commit_sha,
-                                                                    repository.downgrade(),
-                                                                    workspace.clone(),
-                                                                    commit_file.clone(),
-                                                                    window,
-                                                                    cx,
-                                                                );
-                                                            }),
-                                                    )
-                                                    .when(!dir_path.is_empty(), |this| {
-                                                        this.child(
-                                                            Label::new(dir_path)
-                                                                .size(LabelSize::Small)
-                                                                .color(Color::Muted)
-                                                                .single_line(),
-                                                        )
-                                                    })
-                                                }),
+                                                    files_to_show.into_iter().map(move |(idx, file)| {
+                                                        let file_name: String = file
+                                                            .path
+                                                            .file_name()
+                                                            .map(|n| n.to_string())
+                                                            .unwrap_or_default();
+                                                        let dir_path: String = file
+                                                            .path
+                                                            .parent()
+                                                            .map(|p| p.as_unix_str().to_string())
+                                                            .unwrap_or_default();
+                                                        let commit_file = file.clone();
+                                                        let commit_sha = commit_sha.clone();
+                                                        let workspace = workspace.clone();
+
+                                                        h_flex()
+                                                            .gap_1()
+                                                            .overflow_hidden()
+                                                            .px_2()
+                                                            .py_1()
+                                                            .rounded_md()
+                                                            .child(
+                                                                Icon::new(IconName::File)
+                                                                    .size(IconSize::Small)
+                                                                    .color(Color::Accent),
+                                                            )
+                                                            .child(
+                                                                Button::new(("file", idx), file_name)
+                                                                    .style(ButtonStyle::Transparent)
+                                                                    .label_size(LabelSize::Small)
+                                                                    .on_click(move |_, window, cx| {
+                                                                        let Some(commit_sha) =
+                                                                            commit_sha.clone()
+                                                                        else {
+                                                                            return;
+                                                                        };
+                                                                        let Some(workspace_entity) =
+                                                                            workspace.upgrade()
+                                                                        else {
+                                                                            return;
+                                                                        };
+                                                                        let Some(repository) =
+                                                                            workspace_entity
+                                                                                .read(cx)
+                                                                                .project()
+                                                                                .read(cx)
+                                                                                .active_repository(cx)
+                                                                        else {
+                                                                            return;
+                                                                        };
+                                                                        CommitView::open_single_file_diff(
+                                                                            commit_sha,
+                                                                            repository.downgrade(),
+                                                                            workspace.clone(),
+                                                                            commit_file.clone(),
+                                                                            window,
+                                                                            cx,
+                                                                        );
+                                                                    }),
+                                                            )
+                                                            .when(!dir_path.is_empty(), |this| {
+                                                                this.child(
+                                                                    Label::new(dir_path)
+                                                                        .size(LabelSize::Small)
+                                                                        .color(Color::Muted)
+                                                                        .single_line(),
+                                                                )
+                                                            })
+                                                    }).collect::<Vec<_>>()
+                                                }).unwrap_or_default(),
                                             )
-                                        }),
-                                    )),
-                            ),
+                                    )
+                            })
                     ),
             )
             .into_any_element()
