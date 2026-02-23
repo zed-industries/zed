@@ -1,17 +1,16 @@
 use anyhow::{Context as _, Result};
 use futures::{
-    AsyncBufReadExt as _, FutureExt as _, StreamExt as _,
+    AsyncBufReadExt as _, StreamExt as _,
     channel::mpsc::{self},
     io::BufReader,
-    stream::FuturesUnordered,
 };
-use gpui::{App, AppContext as _, ClipboardItem, Entity, EntityId, Task, Window};
+use gpui::{App, Entity, EntityId, Task, Window};
 use jupyter_protocol::{
-    ExecutionState, JupyterKernelspec, JupyterMessage, JupyterMessageContent, KernelInfoReply,
+    ExecutionState, JupyterKernelspec, JupyterMessage, KernelInfoReply,
     connection_info::{ConnectionInfo, Transport},
 };
 use project::Fs;
-use runtimelib::{RuntimeError, dirs};
+use runtimelib::dirs;
 use smol::net::TcpListener;
 use std::{
     env,
@@ -23,7 +22,7 @@ use std::{
 use util::command::Command;
 use uuid::Uuid;
 
-use super::{KernelSession, RunningKernel};
+use super::{KernelSession, RunningKernel, start_kernel_tasks};
 
 #[derive(Debug, Clone)]
 pub struct LocalKernelSpecification {
@@ -64,7 +63,13 @@ impl LocalKernelSpecification {
         }
 
         if let Some(env) = &self.kernelspec.env {
+            log::info!(
+                "LocalKernelSpecification: applying env to command: {:?}",
+                env.keys()
+            );
             cmd.envs(env);
+        } else {
+            log::info!("LocalKernelSpecification: no env in kernelspec");
         }
 
         Ok(cmd)
@@ -160,13 +165,12 @@ impl NativeRunningKernel {
                 runtimelib::create_client_control_connection(&connection_info, &session_id).await?;
 
             let peer_identity = runtimelib::peer_identity_for_session(&session_id)?;
-            let shell_socket =
-                runtimelib::create_client_shell_connection_with_identity(
-                    &connection_info,
-                    &session_id,
-                    peer_identity.clone(),
-                )
-                .await?;
+            let shell_socket = runtimelib::create_client_shell_connection_with_identity(
+                &connection_info,
+                &session_id,
+                peer_identity.clone(),
+            )
+            .await?;
             let stdin_socket = runtimelib::create_client_stdin_connection_with_identity(
                 &connection_info,
                 &session_id,
@@ -174,112 +178,14 @@ impl NativeRunningKernel {
             )
             .await?;
 
-            let (mut shell_send, shell_recv) = shell_socket.split();
-            let (mut control_send, control_recv) = control_socket.split();
-            let (mut stdin_send, stdin_recv) = stdin_socket.split();
-
-            let (request_tx, mut request_rx) =
-                futures::channel::mpsc::channel::<JupyterMessage>(100);
-            let (stdin_tx, mut stdin_rx) =
-                futures::channel::mpsc::channel::<JupyterMessage>(100);
-
-            let recv_task = cx.spawn({
-                let session = session.clone();
-                let mut iopub = iopub_socket;
-                let mut shell = shell_recv;
-                let mut control = control_recv;
-                let mut stdin = stdin_recv;
-
-                async move |cx| -> anyhow::Result<()> {
-                    loop {
-                        let (channel, result) = futures::select! {
-                            msg = iopub.read().fuse() => ("iopub", msg),
-                            msg = shell.read().fuse() => ("shell", msg),
-                            msg = control.read().fuse() => ("control", msg),
-                            msg = stdin.read().fuse() => ("stdin", msg),
-                        };
-                        match result {
-                            Ok(message) => {
-                                session
-                                    .update_in(cx, |session, window, cx| {
-                                        session.route(&message, window, cx);
-                                    })
-                                    .ok();
-                            }
-                            Err(
-                                ref err @ (RuntimeError::ParseError { .. }
-                                | RuntimeError::SerdeError(_)),
-                            ) => {
-                                let error_detail =
-                                    format!("Kernel issue on {channel} channel\n\n{err}");
-                                log::warn!("kernel: {error_detail}");
-                                let workspace_window = session
-                                    .update_in(cx, |_, window, _cx| {
-                                        window
-                                            .window_handle()
-                                            .downcast::<workspace::Workspace>()
-                                    })
-                                    .ok()
-                                    .flatten();
-                                if let Some(workspace_window) = workspace_window {
-                                    workspace_window
-                                        .update(cx, |workspace, _window, cx| {
-                                            struct KernelReadError;
-                                            workspace.show_toast(
-                                                workspace::Toast::new(
-                                                    workspace::notifications::NotificationId::unique::<KernelReadError>(),
-                                                    error_detail.clone(),
-                                                )
-                                                .on_click(
-                                                    "Copy Error",
-                                                    move |_window, cx| {
-                                                        cx.write_to_clipboard(
-                                                            ClipboardItem::new_string(
-                                                                error_detail.clone(),
-                                                            ),
-                                                        );
-                                                    },
-                                                ),
-                                                cx,
-                                            );
-                                        })
-                                        .ok();
-                                }
-                            }
-                            Err(err) => {
-                                anyhow::bail!("{channel} recv: {err}");
-                            }
-                        }
-                    }
-                }
-            });
-
-            let routing_task = cx.background_spawn({
-                async move {
-                    while let Some(message) = request_rx.next().await {
-                        match message.content {
-                            JupyterMessageContent::DebugRequest(_)
-                            | JupyterMessageContent::InterruptRequest(_)
-                            | JupyterMessageContent::ShutdownRequest(_) => {
-                                control_send.send(message).await?;
-                            }
-                            _ => {
-                                shell_send.send(message).await?;
-                            }
-                        }
-                    }
-                    anyhow::Ok(())
-                }
-            });
-
-            let stdin_routing_task = cx.background_spawn({
-                async move {
-                    while let Some(message) = stdin_rx.next().await {
-                        stdin_send.send(message).await?;
-                    }
-                    anyhow::Ok(())
-                }
-            });
+            let (request_tx, stdin_tx) = start_kernel_tasks(
+                session.clone(),
+                iopub_socket,
+                shell_socket,
+                control_socket,
+                stdin_socket,
+                cx,
+            );
 
             let stderr = process.stderr.take();
             let stdout = process.stdout.take();
@@ -306,38 +212,6 @@ impl NativeRunningKernel {
                 let mut lines = futures::stream::select(stderr_lines, stdout_lines);
                 while let Some((level, Ok(line))) = lines.next().await {
                     log::log!(level, "kernel: {}", line);
-                }
-            })
-            .detach();
-
-            cx.spawn({
-                let session = session.clone();
-                async move |cx| {
-                    async fn with_name(
-                        name: &'static str,
-                        task: Task<Result<()>>,
-                    ) -> (&'static str, Result<()>) {
-                        (name, task.await)
-                    }
-
-                    let mut tasks = FuturesUnordered::new();
-                    tasks.push(with_name("recv task", recv_task));
-                    tasks.push(with_name("routing task", routing_task));
-                    tasks.push(with_name("stdin routing task", stdin_routing_task));
-
-                    while let Some((name, result)) = tasks.next().await {
-                        if let Err(err) = result {
-                            log::error!("kernel: handling failed for {name}: {err:?}");
-
-                            session.update(cx, |session, cx| {
-                                session.kernel_errored(
-                                    format!("handling failed for {name}: {err}"),
-                                    cx,
-                                );
-                                cx.notify();
-                            });
-                        }
-                    }
                 }
             })
             .detach();

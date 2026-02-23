@@ -4,7 +4,6 @@ use super::tool_permissions::{
 };
 use crate::AgentTool;
 use agent_client_protocol::ToolKind;
-use anyhow::{Context as _, Result};
 use futures::FutureExt as _;
 use gpui::{App, AppContext as _, Entity, SharedString, Task};
 use project::Project;
@@ -65,7 +64,7 @@ impl AgentTool for OpenTool {
         input: Self::Input,
         event_stream: crate::ToolCallEventStream,
         cx: &mut App,
-    ) -> Task<Result<Self::Output>> {
+    ) -> Task<Result<Self::Output, Self::Output>> {
         // If path_or_url turns out to be a path in the project, make it absolute.
         let abs_path = to_absolute_path(&input.path_or_url, self.project.clone(), cx);
         let initial_title = self.initial_title(Ok(input.clone()), cx);
@@ -114,9 +113,9 @@ impl AgentTool for OpenTool {
             };
 
             futures::select! {
-                result = authorize.fuse() => result?,
+                result = authorize.fuse() => result.map_err(|e| e.to_string())?,
                 _ = event_stream.cancelled_by_user().fuse() => {
-                    anyhow::bail!("Open cancelled by user");
+                    return Err("Open cancelled by user".to_string());
                 }
             }
 
@@ -126,7 +125,7 @@ impl AgentTool for OpenTool {
                     Some(path) => open::that(path),
                     None => open::that(path_or_url),
                 }
-                .context("Failed to open URL or file path")
+                .map_err(|e| format!("Failed to open URL or file path: {e}"))
             })
             .await?;
 

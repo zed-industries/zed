@@ -49,23 +49,17 @@ async fn test_edit_file_tool_in_thread_context(cx: &mut TestAppContext) {
         );
         // Add just the tools we need for this test
         let language_registry = project.read(cx).languages().clone();
-        thread.add_tool(
-            crate::ReadFileTool::new(
-                cx.weak_entity(),
-                project.clone(),
-                thread.action_log().clone(),
-            ),
-            None,
-        );
-        thread.add_tool(
-            crate::EditFileTool::new(
-                project.clone(),
-                cx.weak_entity(),
-                language_registry,
-                crate::Templates::new(),
-            ),
-            None,
-        );
+        thread.add_tool(crate::ReadFileTool::new(
+            cx.weak_entity(),
+            project.clone(),
+            thread.action_log().clone(),
+        ));
+        thread.add_tool(crate::EditFileTool::new(
+            project.clone(),
+            cx.weak_entity(),
+            language_registry,
+            crate::Templates::new(),
+        ));
         thread
     });
 

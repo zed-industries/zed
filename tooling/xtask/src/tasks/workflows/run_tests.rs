@@ -105,6 +105,7 @@ fn orchestrate_impl(rules: &[&PathCondition], include_package_filter: bool) -> N
     let mut script = String::new();
 
     script.push_str(indoc::indoc! {r#"
+        set -euo pipefail
         if [ -z "$GITHUB_BASE_REF" ]; then
           echo "Not in a PR context (i.e., push to main/stable/preview)"
           COMPARE_REV="$(git rev-parse HEAD~1)"

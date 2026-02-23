@@ -14,7 +14,7 @@ pub(crate) struct Nextest(Step<Run>);
 pub(crate) fn cargo_nextest(platform: Platform) -> Nextest {
     Nextest(named::run(
         platform,
-        "cargo nextest run --workspace --no-fail-fast",
+        "cargo nextest run --workspace --no-fail-fast --no-tests=warn",
     ))
 }
 

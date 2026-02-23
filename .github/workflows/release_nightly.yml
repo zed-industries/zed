@@ -62,7 +62,7 @@ jobs:
         R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
         SCCACHE_BUCKET: sccache-zed
     - name: steps::cargo_nextest
-      run: cargo nextest run --workspace --no-fail-fast
+      run: cargo nextest run --workspace --no-fail-fast --no-tests=warn
       shell: pwsh
     - name: steps::show_sccache_stats
       run: if ($env:RUSTC_WRAPPER) { & $env:RUSTC_WRAPPER --show-stats }; exit 0
@@ -517,18 +517,64 @@ jobs:
         mv ./artifacts/zed-remote-server-windows-x86_64.zip/zed-remote-server-windows-x86_64.zip release-artifacts/zed-remote-server-windows-x86_64.zip
     - name: release_nightly::update_nightly_tag_job::upload_to_github_release
       run: |
-        # Delete all existing assets from nightly release to keep only latest
-        echo "Deleting existing assets from nightly release..."
+        # Get current date for versioning artifacts
+        DATE_STAMP=$(date +%Y%m%d)
+        echo "Date stamp: $DATE_STAMP"
+
+        # Delete old assets, keeping last 3 days (keep assets from today and 2 previous days)
+        echo "Cleaning up old nightly assets (keeping last 3 days)..."
+        KEEP_DATES=""
+        for i in 0 1 2; do
+          KEEP_DATE=$(date -d "$i days ago" +%Y%m%d 2>/dev/null || date -v-${i}d +%Y%m%d)
+          KEEP_DATES="$KEEP_DATES $KEEP_DATE"
+        done
+        echo "Keeping assets with dates: $KEEP_DATES"
+
         gh release view nightly --json assets --jq '.assets[].name' 2>/dev/null | while read asset; do
-          echo "Deleting $asset..."
-          gh release delete-asset nightly "$asset" --yes || true
+          ASSET_DATE=$(echo "$asset" | grep -oE '[0-9]{8}' | head -1)
+          if [ -n "$ASSET_DATE" ]; then
+            SHOULD_DELETE=true
+            for keep_date in $KEEP_DATES; do
+              if [ "$ASSET_DATE" = "$keep_date" ]; then
+                SHOULD_DELETE=false
+                break
+              fi
+            done
+            if [ "$SHOULD_DELETE" = true ]; then
+              echo "Deleting old asset: $asset (date: $ASSET_DATE)"
+              gh release delete-asset nightly "$asset" --yes || true
+            else
+              echo "Keeping asset: $asset"
+            fi
+          else
+            # Assets without date stamp - delete them (old format)
+            echo "Deleting asset without date stamp: $asset"
+            gh release delete-asset nightly "$asset" --yes || true
+          fi
         done
 
-        # Upload all new release artifacts to GitHub Releases
+        # Upload all new release artifacts with date stamp to GitHub Releases
         for file in ./release-artifacts/*; do
           if [ -f "$file" ]; then
-            echo "Uploading $file to GitHub Release..."
-            gh release upload nightly "$file" || true
+            filename=$(basename "$file")
+            # Insert date stamp before the extension(s)
+            # Handle compound extensions like .tar.gz, .dmg, .exe, .gz, .zip
+            if [[ "$filename" == *.tar.gz ]]; then
+              new_name="${filename%.tar.gz}-${DATE_STAMP}.tar.gz"
+            elif [[ "$filename" == *.dmg ]]; then
+              new_name="${filename%.dmg}-${DATE_STAMP}.dmg"
+            elif [[ "$filename" == *.exe ]]; then
+              new_name="${filename%.exe}-${DATE_STAMP}.exe"
+            elif [[ "$filename" == *.gz ]]; then
+              new_name="${filename%.gz}-${DATE_STAMP}.gz"
+            elif [[ "$filename" == *.zip ]]; then
+              new_name="${filename%.zip}-${DATE_STAMP}.zip"
+            else
+              new_name="${filename}-${DATE_STAMP}"
+            fi
+            cp "$file" "./release-artifacts/$new_name"
+            echo "Uploading $new_name to GitHub Release..."
+            gh release upload nightly "./release-artifacts/$new_name" || true
           fi
         done
     - name: release_nightly::update_nightly_tag_job::update_nightly_tag

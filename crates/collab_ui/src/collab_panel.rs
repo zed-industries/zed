@@ -2324,6 +2324,12 @@ impl CollabPanel {
 
     fn render_signed_out(&mut self, cx: &mut Context<Self>) -> Div {
         let collab_blurb = "Work with your team in realtime with collaborative editing, voice, shared notes and more.";
+        let is_signing_in = self.client.status().borrow().is_signing_in();
+        let button_label = if is_signing_in {
+            "Signing in…"
+        } else {
+            "Sign in"
+        };
 
         v_flex()
             .gap_6()
@@ -2333,12 +2339,13 @@ impl CollabPanel {
                 v_flex()
                     .gap_2()
                     .child(
-                        Button::new("sign_in", "Sign in")
+                        Button::new("sign_in", button_label)
                             .icon_color(Color::Muted)
                             .icon(IconName::Github)
                             .icon_position(IconPosition::Start)
                             .style(ButtonStyle::Filled)
                             .full_width()
+                            .disabled(is_signing_in)
                             .on_click(cx.listener(|this, _, window, cx| {
                                 let client = this.client.clone();
                                 let workspace = this.workspace.clone();
@@ -3107,6 +3114,8 @@ fn render_participant_name_and_handle(user: &User) -> impl IntoElement {
 
 impl Render for CollabPanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let status = *self.client.status().borrow();
+
         v_flex()
             .key_context(self.dispatch_context(window, cx))
             .on_action(cx.listener(CollabPanel::cancel))
@@ -3125,7 +3134,7 @@ impl Render for CollabPanel {
             .on_action(cx.listener(CollabPanel::move_channel_down))
             .track_focus(&self.focus_handle)
             .size_full()
-            .child(if !self.client.status().borrow().is_or_was_connected() {
+            .child(if !status.is_or_was_connected() || status.is_signing_in() {
                 self.render_signed_out(cx)
             } else {
                 self.render_signed_in(window, cx)

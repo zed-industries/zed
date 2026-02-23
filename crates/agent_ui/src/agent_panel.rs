@@ -1,6 +1,6 @@
 use std::{ops::Range, path::Path, rc::Rc, sync::Arc, time::Duration};
 
-use acp_thread::{AcpThread, AgentSessionInfo};
+use acp_thread::{AcpThread, AgentSessionInfo, MentionUri};
 use agent::{ContextServerRegistry, SharedThread, ThreadStore};
 use agent_client_protocol as acp;
 use agent_servers::AgentServer;
@@ -12,7 +12,7 @@ use project::{
 use serde::{Deserialize, Serialize};
 use settings::{LanguageModelProviderSetting, LanguageModelSelection};
 
-use zed_actions::agent::{OpenClaudeAgentOnboardingModal, ReauthenticateAgent};
+use zed_actions::agent::{OpenClaudeAgentOnboardingModal, ReauthenticateAgent, ReviewBranchDiff};
 
 use crate::ui::{AcpOnboardingModal, ClaudeCodeOnboardingModal};
 use crate::{
@@ -268,6 +268,47 @@ pub fn init(cx: &mut App) {
                             panel.load_thread_from_clipboard(window, cx);
                         });
                     }
+                })
+                .register_action(|workspace, action: &ReviewBranchDiff, window, cx| {
+                    let Some(panel) = workspace.panel::<AgentPanel>(cx) else {
+                        return;
+                    };
+
+                    let mention_uri = MentionUri::GitDiff {
+                        base_ref: action.base_ref.to_string(),
+                    };
+                    let diff_uri = mention_uri.to_uri().to_string();
+
+                    let content_blocks = vec![
+                        acp::ContentBlock::Text(acp::TextContent::new(
+                            "Please review this branch diff carefully. Point out any issues, \
+                             potential bugs, or improvement opportunities you find.\n\n"
+                                .to_string(),
+                        )),
+                        acp::ContentBlock::Resource(acp::EmbeddedResource::new(
+                            acp::EmbeddedResourceResource::TextResourceContents(
+                                acp::TextResourceContents::new(
+                                    action.diff_text.to_string(),
+                                    diff_uri,
+                                ),
+                            ),
+                        )),
+                    ];
+
+                    workspace.focus_panel::<AgentPanel>(window, cx);
+
+                    panel.update(cx, |panel, cx| {
+                        panel.external_thread(
+                            None,
+                            None,
+                            Some(AgentInitialContent::ContentBlock {
+                                blocks: content_blocks,
+                                auto_submit: true,
+                            }),
+                            window,
+                            cx,
+                        );
+                    });
                 });
         },
     )
@@ -1307,19 +1348,7 @@ impl AgentPanel {
 
     fn copy_thread_to_clipboard(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(thread) = self.active_native_agent_thread(cx) else {
-            if let Some(workspace) = self.workspace.upgrade() {
-                workspace.update(cx, |workspace, cx| {
-                    struct NoThreadToast;
-                    workspace.show_toast(
-                        workspace::Toast::new(
-                            workspace::notifications::NotificationId::unique::<NoThreadToast>(),
-                            "No active native thread to copy",
-                        )
-                        .autohide(),
-                        cx,
-                    );
-                });
-            }
+            Self::show_deferred_toast(&self.workspace, "No active native thread to copy", cx);
             return;
         };
 
@@ -1354,38 +1383,37 @@ impl AgentPanel {
         .detach_and_log_err(cx);
     }
 
-    fn load_thread_from_clipboard(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(clipboard) = cx.read_from_clipboard() else {
-            if let Some(workspace) = self.workspace.upgrade() {
+    fn show_deferred_toast(
+        workspace: &WeakEntity<workspace::Workspace>,
+        message: &'static str,
+        cx: &mut App,
+    ) {
+        let workspace = workspace.clone();
+        cx.defer(move |cx| {
+            if let Some(workspace) = workspace.upgrade() {
                 workspace.update(cx, |workspace, cx| {
-                    struct NoClipboardToast;
+                    struct ClipboardToast;
                     workspace.show_toast(
                         workspace::Toast::new(
-                            workspace::notifications::NotificationId::unique::<NoClipboardToast>(),
-                            "No clipboard content available",
+                            workspace::notifications::NotificationId::unique::<ClipboardToast>(),
+                            message,
                         )
                         .autohide(),
                         cx,
                     );
                 });
             }
+        });
+    }
+
+    fn load_thread_from_clipboard(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(clipboard) = cx.read_from_clipboard() else {
+            Self::show_deferred_toast(&self.workspace, "No clipboard content available", cx);
             return;
         };
 
         let Some(encoded) = clipboard.text() else {
-            if let Some(workspace) = self.workspace.upgrade() {
-                workspace.update(cx, |workspace, cx| {
-                    struct InvalidClipboardToast;
-                    workspace.show_toast(
-                        workspace::Toast::new(
-                            workspace::notifications::NotificationId::unique::<InvalidClipboardToast>(),
-                            "Clipboard does not contain text",
-                        )
-                        .autohide(),
-                        cx,
-                    );
-                });
-            }
+            Self::show_deferred_toast(&self.workspace, "Clipboard does not contain text", cx);
             return;
         };
 
@@ -1393,19 +1421,11 @@ impl AgentPanel {
         {
             Ok(data) => data,
             Err(_) => {
-                if let Some(workspace) = self.workspace.upgrade() {
-                    workspace.update(cx, |workspace, cx| {
-                        struct DecodeErrorToast;
-                        workspace.show_toast(
-                            workspace::Toast::new(
-                                workspace::notifications::NotificationId::unique::<DecodeErrorToast>(),
-                                "Failed to decode clipboard content (expected base64)",
-                            )
-                            .autohide(),
-                            cx,
-                        );
-                    });
-                }
+                Self::show_deferred_toast(
+                    &self.workspace,
+                    "Failed to decode clipboard content (expected base64)",
+                    cx,
+                );
                 return;
             }
         };
@@ -1413,20 +1433,11 @@ impl AgentPanel {
         let shared_thread = match SharedThread::from_bytes(&thread_data) {
             Ok(thread) => thread,
             Err(_) => {
-                if let Some(workspace) = self.workspace.upgrade() {
-                    workspace.update(cx, |workspace, cx| {
-                        struct ParseErrorToast;
-                        workspace.show_toast(
-                            workspace::Toast::new(
-                                workspace::notifications::NotificationId::unique::<ParseErrorToast>(
-                                ),
-                                "Failed to parse thread data from clipboard",
-                            )
-                            .autohide(),
-                            cx,
-                        );
-                    });
-                }
+                Self::show_deferred_toast(
+                    &self.workspace,
+                    "Failed to parse thread data from clipboard",
+                    cx,
+                );
                 return;
             }
         };
@@ -3389,34 +3400,6 @@ impl AgentPanelDelegate for ConcreteAssistantPanelDelegate {
                     });
                 }
             });
-        });
-    }
-
-    fn new_thread_with_content(
-        &self,
-        workspace: &mut Workspace,
-        blocks: Vec<acp::ContentBlock>,
-        auto_submit: bool,
-        window: &mut Window,
-        cx: &mut Context<Workspace>,
-    ) {
-        let Some(panel) = workspace.panel::<AgentPanel>(cx) else {
-            return;
-        };
-
-        workspace.focus_panel::<AgentPanel>(window, cx);
-
-        panel.update(cx, |panel, cx| {
-            panel.external_thread(
-                None,
-                None,
-                Some(AgentInitialContent::ContentBlock {
-                    blocks,
-                    auto_submit,
-                }),
-                window,
-                cx,
-            );
         });
     }
 }
