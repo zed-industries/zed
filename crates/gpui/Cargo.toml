@@ -156,6 +156,9 @@ util = { workspace = true, features = ["test-support"] }
 http_client = { workspace = true, features = ["test-support"] }
 reqwest_client = { workspace = true, features = ["test-support"] }
 
+[target.'cfg(target_family = "wasm")'.dev-dependencies]
+wasm-bindgen = { workspace = true }
+
 [target.'cfg(target_os = "windows")'.build-dependencies]
 embed-resource = "3.0"
 

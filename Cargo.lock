@@ -7508,6 +7508,7 @@ dependencies = [
  "util_macros",
  "uuid",
  "waker-fn",
+ "wasm-bindgen",
  "web-time",
  "windows 0.61.3",
  "zed-font-kit",
@@ -7617,6 +7618,7 @@ dependencies = [
 name = "gpui_platform"
 version = "0.1.0"
 dependencies = [
+ "console_error_panic_hook",
  "gpui",
  "gpui_linux",
  "gpui_macos",
