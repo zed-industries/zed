@@ -127,6 +127,7 @@ The editor doesn't discover diff information through a side channel. It's in the
 ### 13. Staging stays as a git-specific concern
 
 Staging (modifying git's index) is not a buffer-level operation. It needs:
+
 - HEAD text and index text (managed by `BufferGitState` in `crates/project/src/git_store.rs`)
 - Hunk boundaries (derived from the diff region tree)
 - The buffer's working copy text
@@ -140,6 +141,7 @@ Staging status indicators (staged/unstaged/partially staged) come from comparing
 To show staging indicators, we need two diff computations: HEAD → working copy (primary) and index → working copy (secondary). Each hunk's staging status is derived by comparing whether it appears in both, one, or neither diff.
 
 This could be:
+
 - Two `DiffBaseState` on a `BufferDiff` entity
 - Two optional diff bases on `language::Buffer`
 - The primary on the buffer and the secondary as metadata alongside
@@ -182,6 +184,7 @@ struct DiffBaseState {
 ```
 
 **Pros:**
+
 - Clean separation of concerns — buffer is text, BufferDiff adds diff awareness
 - `language::Buffer` stays unchanged (already a large struct)
 - The diff computation dependency (libgit2) doesn't bleed into the `language` crate
@@ -189,6 +192,7 @@ struct DiffBaseState {
 - Non-git diffs (agent edits, edit predictions) use the same entity with different base text
 
 **Cons:**
+
 - Every buffer needs a `BufferDiff` wrapper, even when there's no diff — adds entity overhead
 - Edit-time region updates require a subscription from `BufferDiff` to `Buffer`, rather than happening inline
 - API friction: `MultiBuffer::singleton` takes `Entity<BufferDiff>`, callers must wrap first
@@ -220,7 +224,8 @@ pub struct BufferSnapshot {
 ```
 
 **Pros:**
-- Simplest mental model — a buffer *is* diffable content
+
+- Simplest mental model — a buffer _is_ diffable content
 - No wrapper entity — no entity overhead for the common case
 - Edit-time region updates can happen inside `Buffer::edit` (or its equivalent), avoiding subscription lag
 - MultiBuffer API doesn't change — still takes `Entity<Buffer>`
@@ -228,8 +233,9 @@ pub struct BufferSnapshot {
 - The excerpt snapshot is just `Arc<BufferSnapshot>`, same as today but with diff fields added
 
 **Cons:**
+
 - `language::Buffer` grows larger (already ~40 fields)
-- Diff computation pulls in libgit2 as a dependency of the `language` crate, or the computation stays external and only the *storage* types live in `language`
+- Diff computation pulls in libgit2 as a dependency of the `language` crate, or the computation stays external and only the _storage_ types live in `language`
 - Multiple diffs of the same buffer (HEAD, index, OID) become awkward — does the buffer hold all of them? Or just the "primary" one?
 - The buffer becomes responsible for diff region updates on edit, adding complexity to the edit path
 - Non-git callers (agent UI, edit predictions) that today create standalone `BufferDiff` entities for throwaway comparisons would need to set diff bases on actual buffers
@@ -240,7 +246,7 @@ pub struct BufferSnapshot {
 
 `DiffRegion`, `DiffRegionSummary`, `DiffStats`, `DiffTextSummary` live in the `text` crate (they describe text relationships). `BufferDiff` stays as an entity that holds a `text::Buffer` reference and a diff base. But `text::BufferSnapshot` gains an `Option<DiffBase>` field so that the snapshot itself carries the diff information without needing a separate snapshot type.
 
-This is essentially what the original planning document describes. The diff *types* are in `text`, the diff *entity* is in `buffer_diff`, and the *storage* is on the snapshot.
+This is essentially what the original planning document describes. The diff _types_ are in `text`, the diff _entity_ is in `buffer_diff`, and the _storage_ is on the snapshot.
 
 **Concern:** This splits ownership awkwardly — who updates the snapshot's diff base? The buffer doesn't know about it (it's managed by the external `BufferDiff` entity), but the snapshot carries it.
 
@@ -250,66 +256,66 @@ We were leaning toward either A or B. The key question to resolve: **is the enti
 
 A practical test: look at the non-git callers of `BufferDiff` (agent edits in `crates/acp_thread/src/diff.rs`, action log in `crates/action_log/src/action_log.rs`, edit predictions in `crates/edit_prediction_ui/src/rate_prediction_modal.rs`, git UI views in `crates/git_ui/src/`). In option B, these would need to set diff bases on actual buffers. Does that work naturally, or does it create lifecycle problems? In option A, they create `BufferDiff` entities wrapping those buffers, which is what they already do today.
 
-Also consider: in option B, the `language` crate would need the diff storage types (`DiffRegion`, `DiffRegionSummary`, `DiffStats`). These could live in the `text` crate (which `language` already depends on) with the *computation* staying in a separate crate.
+Also consider: in option B, the `language` crate would need the diff storage types (`DiffRegion`, `DiffRegionSummary`, `DiffStats`). These could live in the `text` crate (which `language` already depends on) with the _computation_ staying in a separate crate.
 
 ---
 
 ## What Gets Eliminated (Regardless of Option)
 
-| Component | Location | Lines (approx) | Status |
-|-----------|----------|----------------|--------|
-| `SumTree<DiffTransform>` | `multi_buffer.rs` ~L610 | — | **Removed** |
-| `DiffTransform` enum | `multi_buffer.rs` ~L638 | 20 | **Removed** |
-| `DiffTransformSummary` | `multi_buffer.rs` ~L804 | 10 | **Removed** |
-| `DiffTransformHunkInfo` | `multi_buffer.rs` ~L656 | 20 | **Removed** |
-| `sync_diff_transforms` | `multi_buffer.rs` ~L3129 | 300+ | **Removed** |
-| `recompute_diff_transforms_for_edit` | `multi_buffer.rs` ~L3267 | 200+ | **Removed** |
-| `push_buffer_content_transform` | `multi_buffer.rs` ~L3510 | 50+ | **Removed** |
-| `extend_last_buffer_content_transform` | `multi_buffer.rs` ~L3546 | 20+ | **Removed** |
-| `append_diff_transforms` | `multi_buffer.rs` ~L3471 | 20+ | **Removed** |
-| `push_diff_transform` | `multi_buffer.rs` ~L3494 | 15 | **Removed** |
-| `MultiBufferCursor` lockstep logic | `multi_buffer.rs` ~L6975 | 200+ | **Simplified to single cursor** |
-| `MultiBufferExcerpt.diff_transforms` cursor | `multi_buffer.rs` ~L759 | — | **Removed** |
-| `diffs: TreeMap<BufferId, DiffStateSnapshot>` | `multi_buffer.rs` ~L609 | — | **Removed** |
-| `DiffState` / `DiffStateSnapshot` | `multi_buffer.rs` ~L522/538 | 80 | **Removed** |
-| `add_diff()` / `add_inverted_diff()` | `multi_buffer.rs` ~L2609/2626 | 20 | **Removed** |
-| `buffer_diff_changed()` | `multi_buffer.rs` ~L2374 | 40 | **Removed or replaced** |
-| `inverted_buffer_diff_changed()` | `multi_buffer.rs` ~L2418 | 40 | **Removed** |
-| `has_inverted_diff` flag | `multi_buffer.rs` ~L616 | — | **Removed** |
-| `all_diff_hunks_expanded` / `show_deleted_hunks` / `use_extended_diff_range` | `multi_buffer.rs` ~L622-624 | — | **Moved to editor** |
-| `Companion` struct | `display_map.rs` ~L232 | 100+ | **Removed** |
-| `CompanionExcerptPatch` | `display_map.rs` ~L183 | 10 | **Removed** |
-| Spacer blocks (`spacer_blocks()`) | `block_map.rs` ~L1207 | 100+ | **Removed** |
-| Balancing blocks | `block_map.rs` | 50+ | **Removed** |
-| `LhsEditor` struct | `split.rs` ~L338 | 5 | **Removed** |
-| `sync_path_excerpts` | `split.rs` ~L1871 | 40 | **Removed** |
-| `sync_cursor_to_other_side` | `split.rs` ~L732 | 30 | **Removed** |
-| Row conversion functions | `split.rs` ~L41-57 | 100+ | **Removed** |
-| `patch_for_buffer_range` O(n) | `buffer_diff.rs` ~L414 | 40 | **Replaced** by O(log n) |
-| `patch_for_base_text_range` O(n) | `buffer_diff.rs` ~L462 | 40 | **Replaced** by O(log n) |
-| `SumTree<InternalDiffHunk>` | `buffer_diff.rs` | — | **Replaced by `SumTree<DiffRegion>`** |
-| Base text as `Entity<language::Buffer>` | `buffer_diff.rs` | — | **Replaced by `Rope`** |
-| `is_inverted` concept | throughout | — | **Removed** |
+| Component                                                                    | Location                      | Lines (approx) | Status                                |
+| ---------------------------------------------------------------------------- | ----------------------------- | -------------- | ------------------------------------- |
+| `SumTree<DiffTransform>`                                                     | `multi_buffer.rs` ~L610       | —              | **Removed**                           |
+| `DiffTransform` enum                                                         | `multi_buffer.rs` ~L638       | 20             | **Removed**                           |
+| `DiffTransformSummary`                                                       | `multi_buffer.rs` ~L804       | 10             | **Removed**                           |
+| `DiffTransformHunkInfo`                                                      | `multi_buffer.rs` ~L656       | 20             | **Removed**                           |
+| `sync_diff_transforms`                                                       | `multi_buffer.rs` ~L3129      | 300+           | **Removed**                           |
+| `recompute_diff_transforms_for_edit`                                         | `multi_buffer.rs` ~L3267      | 200+           | **Removed**                           |
+| `push_buffer_content_transform`                                              | `multi_buffer.rs` ~L3510      | 50+            | **Removed**                           |
+| `extend_last_buffer_content_transform`                                       | `multi_buffer.rs` ~L3546      | 20+            | **Removed**                           |
+| `append_diff_transforms`                                                     | `multi_buffer.rs` ~L3471      | 20+            | **Removed**                           |
+| `push_diff_transform`                                                        | `multi_buffer.rs` ~L3494      | 15             | **Removed**                           |
+| `MultiBufferCursor` lockstep logic                                           | `multi_buffer.rs` ~L6975      | 200+           | **Simplified to single cursor**       |
+| `MultiBufferExcerpt.diff_transforms` cursor                                  | `multi_buffer.rs` ~L759       | —              | **Removed**                           |
+| `diffs: TreeMap<BufferId, DiffStateSnapshot>`                                | `multi_buffer.rs` ~L609       | —              | **Removed**                           |
+| `DiffState` / `DiffStateSnapshot`                                            | `multi_buffer.rs` ~L522/538   | 80             | **Removed**                           |
+| `add_diff()` / `add_inverted_diff()`                                         | `multi_buffer.rs` ~L2609/2626 | 20             | **Removed**                           |
+| `buffer_diff_changed()`                                                      | `multi_buffer.rs` ~L2374      | 40             | **Removed or replaced**               |
+| `inverted_buffer_diff_changed()`                                             | `multi_buffer.rs` ~L2418      | 40             | **Removed**                           |
+| `has_inverted_diff` flag                                                     | `multi_buffer.rs` ~L616       | —              | **Removed**                           |
+| `all_diff_hunks_expanded` / `show_deleted_hunks` / `use_extended_diff_range` | `multi_buffer.rs` ~L622-624   | —              | **Moved to editor**                   |
+| `Companion` struct                                                           | `display_map.rs` ~L232        | 100+           | **Removed**                           |
+| `CompanionExcerptPatch`                                                      | `display_map.rs` ~L183        | 10             | **Removed**                           |
+| Spacer blocks (`spacer_blocks()`)                                            | `block_map.rs` ~L1207         | 100+           | **Removed**                           |
+| Balancing blocks                                                             | `block_map.rs`                | 50+            | **Removed**                           |
+| `LhsEditor` struct                                                           | `split.rs` ~L338              | 5              | **Removed**                           |
+| `sync_path_excerpts`                                                         | `split.rs` ~L1871             | 40             | **Removed**                           |
+| `sync_cursor_to_other_side`                                                  | `split.rs` ~L732              | 30             | **Removed**                           |
+| Row conversion functions                                                     | `split.rs` ~L41-57            | 100+           | **Removed**                           |
+| `patch_for_buffer_range` O(n)                                                | `buffer_diff.rs` ~L414        | 40             | **Replaced** by O(log n)              |
+| `patch_for_base_text_range` O(n)                                             | `buffer_diff.rs` ~L462        | 40             | **Replaced** by O(log n)              |
+| `SumTree<InternalDiffHunk>`                                                  | `buffer_diff.rs`              | —              | **Replaced by `SumTree<DiffRegion>`** |
+| Base text as `Entity<language::Buffer>`                                      | `buffer_diff.rs`              | —              | **Replaced by `Rope`**                |
+| `is_inverted` concept                                                        | throughout                    | —              | **Removed**                           |
 
 ## What Gets Added
 
-| Component | Purpose |
-|-----------|---------|
-| `DiffRegion` / `DiffRegionKind` / `DiffRegionSummary` | Region tree items and summary, with dual TextSummary fields |
-| `DiffStats` | Accumulated diff statistics (lines/bytes added/removed) |
-| `DiffTextSummary` | `{ buffer: TextSummary, diff_base: TextSummary }` |
-| `DiffBase` / `DiffBaseState` / `DiffBaseSnapshot` | Container for base text `Rope` + region tree + word diffs |
-| `diff_base_summary` field on `Excerpt` | Diff base text dimension |
-| `diff_base` field on `ExcerptSummary` | Accumulated diff base dimension |
-| `diff_stats` field on `Excerpt` and `ExcerptSummary` | Accumulated diff statistics |
-| `DiffBaseOffset` / `DiffBasePoint` dimension types | Seeking by diff base dimension in the excerpt tree |
-| `DiffSide` enum | `Buffer` vs `Base` for split view chunk iteration |
-| Coordinate translation APIs | `to_diff_base_offset`, `from_diff_base_offset`, etc. — O(log n) |
-| `diff_stats()` / `diff_stats_for_range()` on `MultiBufferSnapshot` | O(1) total stats, O(log n) range stats |
-| `diff_regions()` iterator | Iterate classified regions in a range |
-| `diff_hunks()` method | Coalesced hunks (adjacent Removed+Added = Modified) for gutter/navigation |
-| Split view renderer using diff regions | Replaces two-editor split with one multibuffer + two pipelines |
-| `compute_diff_regions()` function | Pure function: `(base_text, buffer_text) → DiffBase`. Runs on background thread. |
+| Component                                                          | Purpose                                                                          |
+| ------------------------------------------------------------------ | -------------------------------------------------------------------------------- |
+| `DiffRegion` / `DiffRegionKind` / `DiffRegionSummary`              | Region tree items and summary, with dual TextSummary fields                      |
+| `DiffStats`                                                        | Accumulated diff statistics (lines/bytes added/removed)                          |
+| `DiffTextSummary`                                                  | `{ buffer: TextSummary, diff_base: TextSummary }`                                |
+| `DiffBase` / `DiffBaseState` / `DiffBaseSnapshot`                  | Container for base text `Rope` + region tree + word diffs                        |
+| `diff_base_summary` field on `Excerpt`                             | Diff base text dimension                                                         |
+| `diff_base` field on `ExcerptSummary`                              | Accumulated diff base dimension                                                  |
+| `diff_stats` field on `Excerpt` and `ExcerptSummary`               | Accumulated diff statistics                                                      |
+| `DiffBaseOffset` / `DiffBasePoint` dimension types                 | Seeking by diff base dimension in the excerpt tree                               |
+| `DiffSide` enum                                                    | `Buffer` vs `Base` for split view chunk iteration                                |
+| Coordinate translation APIs                                        | `to_diff_base_offset`, `from_diff_base_offset`, etc. — O(log n)                  |
+| `diff_stats()` / `diff_stats_for_range()` on `MultiBufferSnapshot` | O(1) total stats, O(log n) range stats                                           |
+| `diff_regions()` iterator                                          | Iterate classified regions in a range                                            |
+| `diff_hunks()` method                                              | Coalesced hunks (adjacent Removed+Added = Modified) for gutter/navigation        |
+| Split view renderer using diff regions                             | Replaces two-editor split with one multibuffer + two pipelines                   |
+| `compute_diff_regions()` function                                  | Pure function: `(base_text, buffer_text) → DiffBase`. Runs on background thread. |
 
 ---
 
@@ -366,12 +372,14 @@ This is the core query method. Given a buffer offset range, walk the `DiffRegion
 ### 7. Non-git diff callers
 
 Several systems create `BufferDiff` entities for non-git comparisons:
+
 - `crates/acp_thread/src/diff.rs` — AI completion diffs
 - `crates/action_log/src/action_log.rs` — agent edit tracking
 - `crates/edit_prediction_ui/src/rate_prediction_modal.rs` — prediction rating
 - `crates/git_ui/src/{commit_view,file_diff_view,multi_diff_view,text_diff_view}.rs` — git UI views
 
 These all follow the same pattern: create a `BufferDiff`, compute a diff against some base text, register it on a multibuffer. In the new model, these would either:
+
 - (Option A) Create a `BufferDiff` entity wrapping the buffer — same pattern, just the entity internals change
 - (Option B) Set the diff base directly on the buffer — but this may conflict if the buffer already has a git diff base
 
@@ -383,19 +391,19 @@ This is one of the stronger arguments for option A (separate entity).
 
 Read these to understand the current architecture and what changes:
 
-| File | What to Look At |
-|------|----------------|
-| `crates/text/src/text.rs` | `Buffer`, `BufferSnapshot`, `Fragment`, `FragmentTextSummary`, `apply_local_edit` (~L842). This is where diff state would go in option C. |
-| `crates/language/src/buffer.rs` | `Buffer` (~L101), `BufferSnapshot` (~L188). This is where diff state would go in option B. Already ~40 fields. |
-| `crates/buffer_diff/src/buffer_diff.rs` | `BufferDiff` (~L24), `InternalDiffHunk` (~L115), `compute_hunks` (~L951), `stage_or_unstage_hunks_impl` (~L544), `patch_for_buffer_range` (~L414). The entity that gets restructured or eliminated. |
-| `crates/multi_buffer/src/multi_buffer.rs` | `MultiBuffer` (~L74), `Excerpt` (~L734), `ExcerptSummary` (~L795), `DiffTransform` (~L638), `MultiBufferCursor` (~L1035-7290), `sync_diff_transforms` (~L3129), `diff_hunks_in_range` (~L3863), `MultiBufferChunks` (~L8117). The main site of structural change. |
-| `crates/editor/src/split.rs` | `SplittableEditor`, `LhsEditor` (~L338), `sync_path_excerpts` (~L1871), `sync_cursor_to_other_side` (~L732). Gets largely deleted. |
-| `crates/editor/src/display_map.rs` | `Companion` (~L232), `CompanionExcerptPatch` (~L183). Gets deleted. |
-| `crates/editor/src/display_map/block_map.rs` | `spacer_blocks()` (~L1207). Gets deleted. |
-| `crates/editor/src/element.rs` | `diff_status` usage (~search for `DiffHunkStatusKind`). Changes to read from excerpt's diff snapshot. |
-| `crates/project/src/git_store.rs` | `BufferGitState` (~L111), `recalculate_diffs` (~L3193), `diff_bases_changed` (~L3137). The orchestrator that triggers diff computation. |
-| `crates/rope/src/rope.rs` | `TextSummary`, `TextDimension`, `Chunks`. Unchanged by this design. |
-| `crates/editor/src/split_editor_view.rs` | `SplitEditorView`. Gets rewritten to use one multibuffer with two display pipelines. |
+| File                                         | What to Look At                                                                                                                                                                                                                                                   |
+| -------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `crates/text/src/text.rs`                    | `Buffer`, `BufferSnapshot`, `Fragment`, `FragmentTextSummary`, `apply_local_edit` (~L842). This is where diff state would go in option C.                                                                                                                         |
+| `crates/language/src/buffer.rs`              | `Buffer` (~L101), `BufferSnapshot` (~L188). This is where diff state would go in option B. Already ~40 fields.                                                                                                                                                    |
+| `crates/buffer_diff/src/buffer_diff.rs`      | `BufferDiff` (~L24), `InternalDiffHunk` (~L115), `compute_hunks` (~L951), `stage_or_unstage_hunks_impl` (~L544), `patch_for_buffer_range` (~L414). The entity that gets restructured or eliminated.                                                               |
+| `crates/multi_buffer/src/multi_buffer.rs`    | `MultiBuffer` (~L74), `Excerpt` (~L734), `ExcerptSummary` (~L795), `DiffTransform` (~L638), `MultiBufferCursor` (~L1035-7290), `sync_diff_transforms` (~L3129), `diff_hunks_in_range` (~L3863), `MultiBufferChunks` (~L8117). The main site of structural change. |
+| `crates/editor/src/split.rs`                 | `SplittableEditor`, `LhsEditor` (~L338), `sync_path_excerpts` (~L1871), `sync_cursor_to_other_side` (~L732). Gets largely deleted.                                                                                                                                |
+| `crates/editor/src/display_map.rs`           | `Companion` (~L232), `CompanionExcerptPatch` (~L183). Gets deleted.                                                                                                                                                                                               |
+| `crates/editor/src/display_map/block_map.rs` | `spacer_blocks()` (~L1207). Gets deleted.                                                                                                                                                                                                                         |
+| `crates/editor/src/element.rs`               | `diff_status` usage (~search for `DiffHunkStatusKind`). Changes to read from excerpt's diff snapshot.                                                                                                                                                             |
+| `crates/project/src/git_store.rs`            | `BufferGitState` (~L111), `recalculate_diffs` (~L3193), `diff_bases_changed` (~L3137). The orchestrator that triggers diff computation.                                                                                                                           |
+| `crates/rope/src/rope.rs`                    | `TextSummary`, `TextDimension`, `Chunks`. Unchanged by this design.                                                                                                                                                                                               |
+| `crates/editor/src/split_editor_view.rs`     | `SplitEditorView`. Gets rewritten to use one multibuffer with two display pipelines.                                                                                                                                                                              |
 
 ---
 
@@ -404,24 +412,31 @@ Read these to understand the current architecture and what changes:
 The migration is incremental. Each phase is independently testable.
 
 ### Phase 1: Add diff region types
+
 Define `DiffRegion`, `DiffRegionKind`, `DiffRegionSummary`, `DiffStats`, `DiffTextSummary`, `DiffBase` in the `text` crate. Implement `sum_tree::Item` for `DiffRegion`. Write comprehensive unit tests for the SumTree operations: seeking by buffer dimension, seeking by base dimension, range queries for stats, handling of zero-width Removed regions.
 
 ### Phase 2: Add diff base storage
+
 Depending on the option chosen: add `Option<DiffBase>` to `language::BufferSnapshot` (option B), or restructure `BufferDiff` to use `DiffBaseState` internally (option A). Implement `set_diff_base`, `diff_text_summary_for_range`, `diff_regions`, `diff_stats_for_range`, coordinate translation APIs. Implement edit-time region summary updates.
 
 ### Phase 3: Wire diff computation
+
 Add a function that converts libgit2 `GitPatch` output to `DiffBase` (base text `Rope` + `SumTree<DiffRegion>` + word diffs). Wire this into the existing diff computation path — produce `DiffBase` alongside (not instead of) the existing `SumTree<InternalDiffHunk>`. Validate that both representations agree.
 
 ### Phase 4: Add dual dimensions and stats to excerpts
+
 Add `diff_base_summary: TextSummary` and `diff_stats: DiffStats` to `Excerpt`. Add `diff_base: MBTextSummary` and `diff_stats: DiffStats` to `ExcerptSummary`. Populate during excerpt construction. Implement `DiffBaseOffset` and `DiffBasePoint` dimension types. The existing `DiffTransform` tree is still present and still used. The new dimensions are purely additive.
 
 ### Phase 5: Build diff-aware chunk iteration
+
 Add `DiffSide` parameter to `MultiBufferChunks` (or a parallel method). For `DiffSide::Buffer`: existing behavior. For `DiffSide::Base`: iterate base text for Removed regions, buffer text for Unchanged. Validate output against existing system.
 
 ### Phase 6: Build new split renderer
+
 One multibuffer, two display pipelines. Wire into `SplitEditorView` behind a feature flag. Extensive visual comparison testing.
 
 ### Phase 7: Remove old infrastructure
+
 Delete `DiffTransform` tree, `sync_diff_transforms`, lockstep cursor logic, `Companion`, `LhsEditor`, spacer blocks, excerpt mirroring, `is_inverted`, `add_diff`/`add_inverted_diff`, O(n) coordinate translation. Full test suite pass.
 
 ---
