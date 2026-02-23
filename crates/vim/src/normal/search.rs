@@ -1323,6 +1323,30 @@ mod test {
     }
 
     #[gpui::test]
+    async fn test_star_does_not_clear_highlights_on_escape(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.set_state("ˇhi\nhigh\nhi\n", Mode::Normal);
+
+        cx.simulate_keystrokes("*");
+        cx.run_until_parked();
+        cx.assert_state("hi\nhigh\nˇhi\n", Mode::Normal);
+
+        cx.update_editor(|editor, window, cx| {
+            let highlights = editor.all_text_background_highlights(window, cx);
+            assert!(!highlights.is_empty(), "highlights should exist after *");
+        });
+
+        // ESC via vim::Cancel: bar dismisses, highlights persist
+        cx.simulate_keystrokes("escape");
+        cx.run_until_parked();
+
+        cx.update_editor(|editor, window, cx| {
+            let highlights = editor.all_text_background_highlights(window, cx);
+            assert!(!highlights.is_empty(), "highlights should persist after ESC");
+        });
+    }
+
+    #[gpui::test]
     async fn test_search_dismiss_restores_cursor(cx: &mut gpui::TestAppContext) {
         let mut cx = VimTestContext::new(cx, true).await;
         cx.set_state("ˇhello world\nfoo bar\nhello again\n", Mode::Normal);
