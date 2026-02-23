@@ -105,11 +105,18 @@ fn update_nightly_tag_job(bundle: &ReleaseBundleJobs) -> NamedJob {
 
     fn upload_to_github_release() -> Step<Run> {
         named::bash(indoc::indoc! {r#"
-            # Upload all release artifacts to GitHub Releases
+            # Delete all existing assets from nightly release to keep only latest
+            echo "Deleting existing assets from nightly release..."
+            gh release view nightly --json assets --jq '.assets[].name' 2>/dev/null | while read asset; do
+              echo "Deleting $asset..."
+              gh release delete-asset nightly "$asset" --yes || true
+            done
+
+            # Upload all new release artifacts to GitHub Releases
             for file in ./release-artifacts/*; do
               if [ -f "$file" ]; then
                 echo "Uploading $file to GitHub Release..."
-                gh release upload nightly "$file" --clobber || true
+                gh release upload nightly "$file" || true
               fi
             done
         "#})

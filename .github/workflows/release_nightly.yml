@@ -517,11 +517,18 @@ jobs:
         mv ./artifacts/zed-remote-server-windows-x86_64.zip/zed-remote-server-windows-x86_64.zip release-artifacts/zed-remote-server-windows-x86_64.zip
     - name: release_nightly::update_nightly_tag_job::upload_to_github_release
       run: |
-        # Upload all release artifacts to GitHub Releases
+        # Delete all existing assets from nightly release to keep only latest
+        echo "Deleting existing assets from nightly release..."
+        gh release view nightly --json assets --jq '.assets[].name' 2>/dev/null | while read asset; do
+          echo "Deleting $asset..."
+          gh release delete-asset nightly "$asset" --yes || true
+        done
+
+        # Upload all new release artifacts to GitHub Releases
         for file in ./release-artifacts/*; do
           if [ -f "$file" ]; then
             echo "Uploading $file to GitHub Release..."
-            gh release upload nightly "$file" --clobber || true
+            gh release upload nightly "$file" || true
           fi
         done
     - name: release_nightly::update_nightly_tag_job::update_nightly_tag
