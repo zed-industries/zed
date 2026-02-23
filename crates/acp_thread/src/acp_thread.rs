@@ -1685,6 +1685,17 @@ impl AcpThread {
             })
     }
 
+    pub fn tool_call_for_subagent(&self, session_id: &acp::SessionId) -> Option<&ToolCall> {
+        self.entries.iter().find_map(|entry| match entry {
+            AgentThreadEntry::ToolCall(tool_call)
+                if tool_call.subagent_session_id.as_ref() == Some(session_id) =>
+            {
+                Some(tool_call)
+            }
+            _ => None,
+        })
+    }
+
     pub fn resolve_locations(&mut self, id: acp::ToolCallId, cx: &mut Context<Self>) {
         let project = self.project.clone();
         let Some((_, tool_call)) = self.tool_call_mut(&id) else {
