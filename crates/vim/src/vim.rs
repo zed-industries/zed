@@ -163,6 +163,8 @@ actions!(
     [
         /// Switches to normal mode.
         SwitchToNormalMode,
+        /// Cancels current operation, preserving search highlights (vim normal mode ESC behavior).
+        Cancel,
         /// Switches to insert mode.
         SwitchToInsertMode,
         /// Switches to replace mode.
@@ -684,6 +686,25 @@ impl Vim {
                     vim.switch_mode(Mode::HelixNormal, true, window, cx)
                 },
             );
+            Vim::action(editor, cx, |vim, _: &Cancel, window, cx| {
+                // Preserve search highlights: set flag before dispatching editor::Cancel.
+                // The flag causes dismiss() to skip clear_matches(), so the bar hides
+                // but highlights remain visible.
+                if let Some(pane) = vim.pane(window, cx) {
+                    pane.update(cx, |pane, cx| {
+                        if let Some(search_bar) =
+                            pane.toolbar().read(cx).item_of_type::<BufferSearchBar>()
+                        {
+                            if !search_bar.read(cx).is_dismissed() {
+                                search_bar.update(cx, |bar, _cx| {
+                                    bar.set_cancel_suppressed(true);
+                                });
+                            }
+                        }
+                    });
+                }
+                window.dispatch_action(editor::actions::Cancel.boxed_clone(), cx);
+            });
             Vim::action(editor, cx, |_, _: &PushForcedMotion, _, cx| {
                 Vim::globals(cx).forced_motion = true;
             });
