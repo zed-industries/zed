@@ -1803,10 +1803,10 @@ impl NativeSubagentHandle {
                             }
 
                         }
-                        Ok(None) => SubagentPromptResult::Error("No response from the subagent. You can try messaging again.".into()),
+                        Ok(None) => SubagentPromptResult::Error("No response from the agent. You can try messaging again.".into()),
                         Err(error) => SubagentPromptResult::Error(error.to_string()),
                     },
-                    ratio = token_limit_rx.fuse() =>  SubagentPromptResult::ContextWindowWarning,
+                    _ = token_limit_rx.fuse() =>  SubagentPromptResult::ContextWindowWarning,
                 }
             })
             .shared();
@@ -1846,7 +1846,7 @@ impl SubagentHandle for NativeSubagentHandle {
                 SubagentPromptResult::ContextWindowWarning => {
                     thread.update(cx, |thread, cx| thread.cancel(cx)).await;
                     Err(anyhow!(
-                        "The subagent is nearing the end of its context window and has been \
+                        "The agent is nearing the end of its context window and has been \
                          stopped. You can prompt the thread again to have the agent wrap up \
                          or hand off its work."
                     ))
