@@ -5337,7 +5337,6 @@ impl AcpThreadView {
                                 )
                             })
                             .on_click(cx.listener({
-                                let session_id = session_id.clone();
                                 let tool_call_id = tool_call_id.clone();
                                 let option_id = deny_option_id;
                                 let option_kind = deny_option_kind;
