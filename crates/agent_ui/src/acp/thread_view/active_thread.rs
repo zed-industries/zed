@@ -2357,8 +2357,29 @@ impl AcpThreadView {
         };
 
         let server_view = self.server_view.clone();
+        let thread = self.thread.clone();
+        let is_done = thread.read(cx).status() == ThreadStatus::Idle;
+        let my_session_id = thread.read(cx).session_id().clone();
 
-        let is_done = self.thread.read(cx).status() == ThreadStatus::Idle;
+        let is_canceled_or_failed = self
+            .server_view
+            .upgrade()
+            .and_then(|sv| sv.read(cx).thread_view(&parent_session_id))
+            .is_some_and(|parent_view| {
+                parent_view
+                    .read(cx)
+                    .thread
+                    .read(cx)
+                    .tool_call_for_subagent(&my_session_id)
+                    .is_some_and(|tc| {
+                        matches!(
+                            tc.status,
+                            ToolCallStatus::Canceled
+                                | ToolCallStatus::Failed
+                                | ToolCallStatus::Rejected
+                        )
+                    })
+            });
 
         Some(
             h_flex()
@@ -2381,7 +2402,10 @@ impl AcpThreadView {
                                 .color(Color::Muted),
                         )
                         .child(self.title_editor.clone())
-                        .when(is_done, |this| {
+                        .when(is_done && is_canceled_or_failed, |this| {
+                            this.child(Icon::new(IconName::Close).color(Color::Error))
+                        })
+                        .when(is_done && !is_canceled_or_failed, |this| {
                             this.child(Icon::new(IconName::Check).color(Color::Success))
                         }),
                 )
