@@ -618,7 +618,6 @@ pub trait ThreadEnvironment {
         parent_thread: Entity<Thread>,
         label: String,
         initial_prompt: String,
-        timeout: Option<Duration>,
         cx: &mut App,
     ) -> Result<Rc<dyn SubagentHandle>>;
 
@@ -627,7 +626,6 @@ pub trait ThreadEnvironment {
         _parent_thread: Entity<Thread>,
         _session_id: acp::SessionId,
         _follow_up_prompt: String,
-        _timeout: Option<Duration>,
         _cx: &mut App,
     ) -> Result<Rc<dyn SubagentHandle>> {
         Err(anyhow::anyhow!(

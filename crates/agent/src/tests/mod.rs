@@ -207,7 +207,6 @@ impl crate::ThreadEnvironment for FakeThreadEnvironment {
         _parent_thread: Entity<Thread>,
         _label: String,
         _initial_prompt: String,
-        _timeout_ms: Option<Duration>,
         _cx: &mut App,
     ) -> Result<Rc<dyn SubagentHandle>> {
         Ok(self
@@ -253,7 +252,6 @@ impl crate::ThreadEnvironment for MultiTerminalEnvironment {
         _parent_thread: Entity<Thread>,
         _label: String,
         _initial_prompt: String,
-        _timeout: Option<Duration>,
         _cx: &mut App,
     ) -> Result<Rc<dyn SubagentHandle>> {
         unimplemented!()
@@ -4234,7 +4232,6 @@ async fn test_subagent_tool_call_end_to_end(cx: &mut TestAppContext) {
         label: "label".to_string(),
         message: "subagent task prompt".to_string(),
         session_id: None,
-        timeout_secs: None,
     };
     let subagent_tool_use = LanguageModelToolUse {
         id: "subagent_1".into(),
@@ -4385,7 +4382,6 @@ async fn test_subagent_tool_call_cancellation_during_task_prompt(cx: &mut TestAp
         label: "label".to_string(),
         message: "subagent task prompt".to_string(),
         session_id: None,
-        timeout_secs: None,
     };
     let subagent_tool_use = LanguageModelToolUse {
         id: "subagent_1".into(),
@@ -4523,7 +4519,6 @@ async fn test_subagent_tool_resume_session(cx: &mut TestAppContext) {
         label: "initial task".to_string(),
         message: "do the first task".to_string(),
         session_id: None,
-        timeout_secs: None,
     };
     let subagent_tool_use = LanguageModelToolUse {
         id: "subagent_1".into(),
@@ -4585,7 +4580,6 @@ async fn test_subagent_tool_resume_session(cx: &mut TestAppContext) {
         label: "follow-up task".to_string(),
         message: "do the follow-up task".to_string(),
         session_id: Some(subagent_session_id.clone()),
-        timeout_secs: None,
     };
     let resume_tool_use = LanguageModelToolUse {
         id: "subagent_2".into(),
@@ -4893,7 +4887,6 @@ async fn test_subagent_tool_includes_cancellation_notice_when_timeout_is_exceede
                 parent_thread.clone(),
                 "some title".to_string(),
                 "task prompt".to_string(),
-                Some(Duration::from_secs(1)),
                 cx,
             )
         })

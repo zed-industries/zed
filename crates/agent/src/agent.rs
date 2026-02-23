@@ -50,7 +50,6 @@ use std::any::Any;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
-use std::time::Duration;
 use util::ResultExt;
 use util::rel_path::RelPath;
 
@@ -1586,7 +1585,6 @@ impl NativeThreadEnvironment {
         parent_thread_entity: Entity<Thread>,
         label: String,
         initial_prompt: String,
-        timeout: Option<Duration>,
         cx: &mut App,
     ) -> Result<Rc<dyn SubagentHandle>> {
         let parent_thread = parent_thread_entity.read(cx);
@@ -1617,7 +1615,6 @@ impl NativeThreadEnvironment {
             acp_thread,
             parent_thread_entity,
             initial_prompt,
-            timeout,
             cx,
         )
     }
@@ -1627,7 +1624,6 @@ impl NativeThreadEnvironment {
         parent_thread_entity: Entity<Thread>,
         session_id: acp::SessionId,
         follow_up_prompt: String,
-        timeout: Option<Duration>,
         cx: &mut App,
     ) -> Result<Rc<dyn SubagentHandle>> {
         let (subagent_thread, acp_thread) = agent.update(cx, |agent, _cx| {
@@ -1644,7 +1640,6 @@ impl NativeThreadEnvironment {
             acp_thread,
             parent_thread_entity,
             follow_up_prompt,
-            timeout,
             cx,
         )
     }
@@ -1655,7 +1650,6 @@ impl NativeThreadEnvironment {
         acp_thread: Entity<acp_thread::AcpThread>,
         parent_thread_entity: Entity<Thread>,
         prompt: String,
-        timeout: Option<Duration>,
         cx: &mut App,
     ) -> Result<Rc<dyn SubagentHandle>> {
         parent_thread_entity.update(cx, |parent_thread, _cx| {
@@ -1666,33 +1660,15 @@ impl NativeThreadEnvironment {
             acp_thread.send(vec![prompt.into()], cx)
         });
 
-        let timeout_timer = timeout.map(|d| cx.background_executor().timer(d));
         let wait_for_prompt_to_complete = cx
             .background_spawn(async move {
-                if let Some(timer) = timeout_timer {
-                    futures::select! {
-                        _ = timer.fuse() => SubagentInitialPromptResult::Timeout,
-                        response = task.fuse() => {
-                            let response = response.log_err().flatten();
-                            if response.is_some_and(|response| {
-                                response.stop_reason == acp::StopReason::Cancelled
-                            })
-                            {
-                                SubagentInitialPromptResult::Cancelled
-                            } else {
-                                SubagentInitialPromptResult::Completed
-                            }
-                        },
-                    }
+                let response = task.await.log_err().flatten();
+                if response
+                    .is_some_and(|response| response.stop_reason == acp::StopReason::Cancelled)
+                {
+                    SubagentInitialPromptResult::Cancelled
                 } else {
-                    let response = task.await.log_err().flatten();
-                    if response
-                        .is_some_and(|response| response.stop_reason == acp::StopReason::Cancelled)
-                    {
-                        SubagentInitialPromptResult::Cancelled
-                    } else {
-                        SubagentInitialPromptResult::Completed
-                    }
+                    SubagentInitialPromptResult::Completed
                 }
             })
             .shared();
@@ -1745,7 +1721,6 @@ impl ThreadEnvironment for NativeThreadEnvironment {
         parent_thread_entity: Entity<Thread>,
         label: String,
         initial_prompt: String,
-        timeout: Option<Duration>,
         cx: &mut App,
     ) -> Result<Rc<dyn SubagentHandle>> {
         Self::create_subagent_thread(
@@ -1753,7 +1728,6 @@ impl ThreadEnvironment for NativeThreadEnvironment {
             parent_thread_entity,
             label,
             initial_prompt,
-            timeout,
             cx,
         )
     }
@@ -1763,7 +1737,6 @@ impl ThreadEnvironment for NativeThreadEnvironment {
         parent_thread_entity: Entity<Thread>,
         session_id: acp::SessionId,
         follow_up_prompt: String,
-        timeout: Option<Duration>,
         cx: &mut App,
     ) -> Result<Rc<dyn SubagentHandle>> {
         Self::resume_subagent_thread(
@@ -1771,7 +1744,6 @@ impl ThreadEnvironment for NativeThreadEnvironment {
             parent_thread_entity,
             session_id,
             follow_up_prompt,
-            timeout,
             cx,
         )
     }
@@ -1780,7 +1752,6 @@ impl ThreadEnvironment for NativeThreadEnvironment {
 #[derive(Debug, Clone, Copy)]
 enum SubagentInitialPromptResult {
     Completed,
-    Timeout,
     Cancelled,
 }
 
@@ -1811,10 +1782,6 @@ impl SubagentHandle for NativeSubagentHandle {
                         .map(|m| m.to_markdown())
                         .context("No response from subagent")
                 }),
-                SubagentInitialPromptResult::Timeout => {
-                    thread.update(cx, |thread, cx| thread.cancel(cx)).await;
-                    Err(anyhow!("The time to complete the task was exceeded."))
-                }
                 SubagentInitialPromptResult::Cancelled => Err(anyhow!("User cancelled")),
             };
 

@@ -5,8 +5,8 @@ use gpui::{App, SharedString, Task, WeakEntity};
 use language_model::LanguageModelToolResultContent;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use std::rc::Rc;
 use std::sync::Arc;
-use std::{rc::Rc, time::Duration};
 
 use crate::{AgentTool, Thread, ThreadEnvironment, ToolCallEventStream};
 
@@ -37,9 +37,6 @@ pub struct SpawnAgentToolInput {
     /// Optional session ID of an existing agent session to continue a conversation with. When provided, the message is sent as a follow-up to that session instead of creating a new one. Use this to ask clarifying questions, request changes based on previous output, or retry after errors.
     #[serde(default)]
     pub session_id: Option<acp::SessionId>,
-    /// Optional maximum runtime in seconds. The purpose of this timeout is to prevent the agent from getting stuck in infinite loops, NOT to estimate task duration. Be generous if setting. If not set, the agent runs until it completes or is cancelled.
-    #[serde(default)]
-    pub timeout_secs: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -114,21 +111,11 @@ impl AgentTool for SpawnAgentTool {
         };
 
         let subagent = if let Some(session_id) = input.session_id {
-            self.environment.resume_subagent(
-                parent_thread_entity,
-                session_id,
-                input.message,
-                input.timeout_secs.map(Duration::from_secs),
-                cx,
-            )
+            self.environment
+                .resume_subagent(parent_thread_entity, session_id, input.message, cx)
         } else {
-            self.environment.create_subagent(
-                parent_thread_entity,
-                input.label,
-                input.message,
-                input.timeout_secs.map(Duration::from_secs),
-                cx,
-            )
+            self.environment
+                .create_subagent(parent_thread_entity, input.label, input.message, cx)
         };
         let subagent = match subagent {
             Ok(subagent) => subagent,
