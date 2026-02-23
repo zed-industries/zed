@@ -148,19 +148,26 @@ impl AgentTool for SpawnAgentTool {
         )]);
         event_stream.update_fields_with_meta(acp::ToolCallUpdateFields::new(), Some(meta));
 
-        cx.spawn(async move |cx| {
-            let output =
-                subagent
-                    .wait_for_output(cx)
-                    .await
-                    .map_err(|e| SpawnAgentToolOutput::Error {
-                        session_id: Some(subagent_session_id.clone()),
-                        error: e.to_string(),
-                    })?;
-            Ok(SpawnAgentToolOutput::Success {
-                session_id: subagent_session_id,
-                output,
-            })
+        cx.spawn(async move |cx| match subagent.wait_for_output(cx).await {
+            Ok(output) => {
+                event_stream.update_fields(
+                    acp::ToolCallUpdateFields::new().content(vec![output.clone().into()]),
+                );
+                Ok(SpawnAgentToolOutput::Success {
+                    session_id: subagent_session_id,
+                    output,
+                })
+            }
+            Err(e) => {
+                let error = e.to_string();
+                event_stream.update_fields(
+                    acp::ToolCallUpdateFields::new().content(vec![error.clone().into()]),
+                );
+                Err(SpawnAgentToolOutput::Error {
+                    session_id: Some(subagent_session_id),
+                    error,
+                })
+            }
         })
     }
 
@@ -184,6 +191,12 @@ impl AgentTool for SpawnAgentTool {
             )]);
             event_stream.update_fields_with_meta(acp::ToolCallUpdateFields::new(), Some(meta));
         }
+
+        let content = match &output {
+            SpawnAgentToolOutput::Success { output, .. } => output.into(),
+            SpawnAgentToolOutput::Error { error, .. } => error.into(),
+        };
+        event_stream.update_fields(acp::ToolCallUpdateFields::new().content(vec![content]));
 
         Ok(())
     }

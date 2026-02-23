@@ -2616,17 +2616,6 @@ impl AcpServerView {
             cx.notify();
         }
     }
-
-    /// Expands a subagent card so its content is visible.
-    /// This is primarily useful for visual testing.
-    pub fn expand_subagent(&mut self, session_id: acp::SessionId, cx: &mut Context<Self>) {
-        if let Some(active) = self.active_thread() {
-            active.update(cx, |active, _cx| {
-                active.expanded_subagents.insert(session_id);
-            });
-            cx.notify();
-        }
-    }
 }
 
 impl Render for AcpServerView {
