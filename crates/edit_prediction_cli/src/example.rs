@@ -15,9 +15,8 @@ use std::{
     collections::VecDeque,
     io::Read,
     path::{Path, PathBuf},
-    sync::Arc,
 };
-use zeta_prompt::RelatedFile;
+use zeta_prompt::ZetaPromptInput;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Example {
@@ -27,7 +26,7 @@ pub struct Example {
     /// The full content of the file where an edit is being predicted, and the
     /// actual cursor offset.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub prompt_inputs: Option<ExamplePromptInputs>,
+    pub prompt_inputs: Option<ZetaPromptInput>,
 
     /// The input and expected output from the edit prediction model.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -57,18 +56,6 @@ pub struct ExampleState {
     pub buffer: Entity<Buffer>,
     pub cursor_position: Anchor,
     pub _open_buffers: OpenedBuffers,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct ExamplePromptInputs {
-    pub content: String,
-    pub cursor_row: u32,
-    pub cursor_column: u32,
-    pub cursor_offset: usize,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub excerpt_start_row: Option<u32>,
-    pub edit_history: Vec<Arc<zeta_prompt::Event>>,
-    pub related_files: Option<Vec<RelatedFile>>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

@@ -15,10 +15,7 @@ use zeta_prompt::ZetaPromptInput;
 use crate::example::Example;
 use crate::progress::{InfoStyle, Progress, Step};
 const EDIT_PREDICTION_DEPLOYMENT_EVENT: &str = "Edit Prediction Deployment";
-use edit_prediction::example_spec::{
-    CapturedEvent, CapturedPromptInput, CapturedRelatedExcerpt, CapturedRelatedFile, ExampleSpec,
-    TelemetrySource,
-};
+use edit_prediction::example_spec::{ExampleSpec, TelemetrySource};
 use std::fmt::Write as _;
 
 pub(crate) const SNOWFLAKE_SUCCESS_CODE: &str = "090001";
@@ -40,6 +37,19 @@ pub struct MinCaptureVersion {
 const DEFAULT_STATEMENT_TIMEOUT_SECONDS: u64 = 120;
 pub(crate) const POLL_INTERVAL: Duration = Duration::from_secs(2);
 pub(crate) const MAX_POLL_ATTEMPTS: usize = 120;
+
+/// Earliest date where `can_collect_data` can be true in production telemetry.
+/// Queries that filter on `can_collect_data = true` clamp their start time to
+/// at least this value so Snowflake doesn't scan months of irrelevant data.
+const CAN_COLLECT_DATA_FLOOR: &str = "2026-02-18T00:00:00Z";
+
+fn clamp_after_date<'a>(after_date: &'a str) -> &'a str {
+    if after_date < CAN_COLLECT_DATA_FLOOR {
+        CAN_COLLECT_DATA_FLOOR
+    } else {
+        after_date
+    }
+}
 
 /// Parse an input token of the form `captured-after:{timestamp}`.
 pub fn parse_captured_after_input(input: &str) -> Option<&str> {
@@ -99,6 +109,8 @@ pub async fn fetch_captured_examples_after(
         let step_progress = progress.start(Step::PullExamples, &step_progress_name);
         step_progress.set_substatus("querying");
 
+        let clamped_after_date = clamp_after_date(after_date);
+
         let statement = indoc! {r#"
             SELECT
                 event_properties:example AS example
@@ -120,7 +132,7 @@ pub async fn fetch_captured_examples_after(
             "role": role,
             "bindings": {
                 "1": { "type": "TEXT", "value": EDIT_PREDICTION_EXAMPLE_CAPTURED_EVENT },
-                "2": { "type": "TEXT", "value": after_date },
+                "2": { "type": "TEXT", "value": clamped_after_date },
                 "3": { "type": "FIXED", "value": max_rows_per_timestamp.to_string() },
                 "4": { "type": "FIXED", "value": offset.to_string() }
             }
@@ -499,6 +511,8 @@ pub async fn fetch_rejected_examples_after(
         // We filter for V3 sampling data which contains the structured input we need.
         // We also filter for predictions that were actually shown to the user (was_shown = true)
         // to focus on explicit user rejections rather than implicit cancellations.
+        let clamped_after_date = clamp_after_date(after_date);
+
         let statement = indoc! {r#"
             SELECT
                 req.event_properties:request_id::string AS request_id,
@@ -545,7 +559,7 @@ pub async fn fetch_rejected_examples_after(
             "bindings": {
                 "1": { "type": "TEXT", "value": PREDICTIVE_EDIT_REQUESTED_EVENT },
                 "2": { "type": "TEXT", "value": PREDICTIVE_EDIT_REJECTED_EVENT },
-                "3": { "type": "TEXT", "value": after_date },
+                "3": { "type": "TEXT", "value": clamped_after_date },
                 "4": { "type": "FIXED", "value": min_minor_str_ref },
                 "5": { "type": "FIXED", "value": min_minor_str_ref },
                 "6": { "type": "FIXED", "value": min_minor_str_ref },
@@ -661,6 +675,8 @@ pub async fn fetch_requested_examples_after(
         let step_progress = progress.start(Step::PullExamples, &step_progress_name);
         step_progress.set_substatus("querying");
 
+        let clamped_after_date = clamp_after_date(after_date);
+
         let statement = indoc! {r#"
             SELECT
                 req.event_properties:request_id::string AS request_id,
@@ -698,7 +714,7 @@ pub async fn fetch_requested_examples_after(
             "role": role,
             "bindings": {
                 "1": { "type": "TEXT", "value": PREDICTIVE_EDIT_REQUESTED_EVENT },
-                "2": { "type": "TEXT", "value": after_date },
+                "2": { "type": "TEXT", "value": clamped_after_date },
                 "3": { "type": "FIXED", "value": min_minor_str_ref },
                 "4": { "type": "FIXED", "value": min_minor_str_ref },
                 "5": { "type": "FIXED", "value": min_minor_str_ref },
@@ -817,6 +833,8 @@ pub async fn fetch_rated_examples_after(
             EditPredictionRating::Negative => "Negative",
         });
 
+        let clamped_after_date = clamp_after_date(after_date);
+
         let statement = indoc! {r#"
             SELECT
                 rated.event_properties:request_id::string AS request_id,
@@ -855,7 +873,7 @@ pub async fn fetch_rated_examples_after(
             "3": { "type": "TEXT", "value": EDIT_PREDICTION_RATED_EVENT },
             "4": { "type": "TEXT", "value": rating_value },
             "5": { "type": "TEXT", "value": rating_value },
-            "6": { "type": "TEXT", "value": after_date },
+            "6": { "type": "TEXT", "value": clamped_after_date },
             "7": { "type": "FIXED", "value": max_rows_per_timestamp.to_string() },
             "8": { "type": "FIXED", "value": offset.to_string() }
         });
@@ -1304,49 +1322,10 @@ fn build_example_from_snowflake(
     input: ZetaPromptInput,
     tags: Vec<String>,
     rejection: Option<RejectionInfo>,
-    zed_version: Option<String>,
+    _zed_version: Option<String>,
 ) -> Example {
-    let events: Vec<CapturedEvent> = input
-        .events
-        .iter()
-        .map(|event| match event.as_ref() {
-            zeta_prompt::Event::BufferChange {
-                path,
-                old_path,
-                diff,
-                predicted,
-                in_open_source_repo,
-            } => CapturedEvent {
-                path: path.clone(),
-                old_path: old_path.clone(),
-                diff: diff.clone(),
-                predicted: *predicted,
-                in_open_source_repo: *in_open_source_repo,
-            },
-        })
-        .collect();
-
-    let related_files: Vec<CapturedRelatedFile> = input
-        .related_files
-        .iter()
-        .map(|rf| CapturedRelatedFile {
-            path: rf.path.clone(),
-            max_row: rf.max_row,
-            excerpts: rf
-                .excerpts
-                .iter()
-                .map(|e| CapturedRelatedExcerpt {
-                    row_range: e.row_range.clone(),
-                    text: e.text.to_string(),
-                })
-                .collect(),
-        })
-        .collect();
-
     let cursor_excerpt = input.cursor_excerpt.as_ref();
     let cursor_offset = input.cursor_offset_in_excerpt;
-
-    let (cursor_row, cursor_column) = compute_row_column(cursor_excerpt, cursor_offset);
 
     let mut edit_history = String::new();
     for event in &input.events {
@@ -1371,17 +1350,6 @@ fn build_example_from_snowflake(
         edit_history,
         expected_patches: Vec::new(),
         rejected_patch: None,
-        captured_prompt_input: Some(CapturedPromptInput {
-            cursor_file_content: cursor_excerpt.to_string(),
-            cursor_offset,
-            cursor_row,
-            cursor_column,
-            excerpt_start_row: None,
-            events,
-            related_files,
-            in_open_source_repo: input.in_open_source_repo,
-            zed_version,
-        }),
         telemetry: Some(TelemetrySource {
             request_id,
             device_id,
@@ -1395,29 +1363,13 @@ fn build_example_from_snowflake(
 
     Example {
         spec,
-        prompt_inputs: None,
+        prompt_inputs: Some(input),
         prompt: None,
         predictions: Vec::new(),
         score: Vec::new(),
         qa: Vec::new(),
         state: None,
     }
-}
-
-fn compute_row_column(text: &str, offset: usize) -> (u32, u32) {
-    let mut row = 0u32;
-    let mut last_newline_offset = 0;
-    for (i, c) in text.char_indices() {
-        if i >= offset {
-            break;
-        }
-        if c == '\n' {
-            row += 1;
-            last_newline_offset = i + 1;
-        }
-    }
-    let column = (offset - last_newline_offset) as u32;
-    (row, column)
 }
 
 fn build_cursor_position(excerpt: &str, cursor_offset: usize) -> String {

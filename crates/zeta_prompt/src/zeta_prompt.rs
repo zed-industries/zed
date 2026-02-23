@@ -19,7 +19,7 @@ fn estimate_tokens(bytes: usize) -> usize {
 }
 
 /// The client's preferred edit prediction model. The server may override this.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum EditPredictionModelKind {
     Zeta1,
     Zeta2,
@@ -28,7 +28,7 @@ pub enum EditPredictionModelKind {
 /// Pre-computed byte offset ranges within `cursor_excerpt` for different
 /// editable and context token budgets. Allows the server to select the
 /// appropriate ranges for whichever model it uses.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Hash, Serialize, Deserialize)]
 pub struct ExcerptRanges {
     /// Editable region computed with a 150-token budget.
     pub editable_150: Range<usize>,
@@ -44,7 +44,7 @@ pub struct ExcerptRanges {
     pub editable_350_context_150: Range<usize>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Hash, Serialize, Deserialize)]
 pub struct ZetaPromptInput {
     pub cursor_path: Arc<Path>,
     pub cursor_excerpt: Arc<str>,
@@ -149,7 +149,7 @@ impl ZetaFormat {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Hash, Serialize, Deserialize)]
 #[serde(tag = "event")]
 pub enum Event {
     BufferChange {
@@ -200,7 +200,7 @@ pub fn write_event(prompt: &mut String, event: &Event) {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Hash, Serialize, Deserialize)]
 pub struct RelatedFile {
     pub path: Arc<Path>,
     pub max_row: u32,
@@ -209,7 +209,7 @@ pub struct RelatedFile {
     pub in_open_source_repo: bool,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Hash, Serialize, Deserialize)]
 pub struct RelatedExcerpt {
     pub row_range: Range<u32>,
     pub text: Arc<str>,
