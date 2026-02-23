@@ -4565,18 +4565,6 @@ impl GitPanel {
                                         }),
                                     ),
                             )
-                        })
-                        .when(window.is_action_available(&Open, cx), |this| {
-                            this.child(
-                                panel_icon_button("git-graph-button", IconName::GitGraph)
-                                    .icon_size(IconSize::Small)
-                                    .tooltip(|_window, cx| {
-                                        Tooltip::for_action("Open Git Graph", &Open, cx)
-                                    })
-                                    .on_click(|_, window, cx| {
-                                        window.dispatch_action(Open.boxed_clone(), cx)
-                                    }),
-                            )
                         }),
                 ),
         )

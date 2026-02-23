@@ -37,6 +37,7 @@ pub mod file_diff_view;
 pub mod file_history_view;
 pub mod git_panel;
 mod git_panel_settings;
+pub mod git_graph_indicator;
 pub mod git_picker;
 pub mod multi_diff_view;
 pub mod picker_prompt;
