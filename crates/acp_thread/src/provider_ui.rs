@@ -146,7 +146,35 @@ impl RenderOnce for GenericProviderListItem {
 }
 
 #[derive(IntoElement)]
-pub struct ProviderSelectorHeader;
+pub struct ProviderSelectorHeader {
+    reset_button_disabled: bool,
+    on_reset: Option<Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>,
+}
+
+impl Default for ProviderSelectorHeader {
+    fn default() -> Self {
+        Self {
+            reset_button_disabled: true,
+            on_reset: None,
+        }
+    }
+}
+
+impl ProviderSelectorHeader {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn reset_button(
+        mut self,
+        disabled: bool,
+        handler: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.reset_button_disabled = disabled;
+        self.on_reset = Some(Box::new(handler));
+        self
+    }
+}
 
 impl RenderOnce for ProviderSelectorHeader {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
@@ -154,9 +182,24 @@ impl RenderOnce for ProviderSelectorHeader {
             .px_2()
             .pb_1()
             .child(
-                Label::new("Select Provider")
-                    .size(LabelSize::Default)
-                    .color(Color::Muted),
+                h_flex()
+                    .w_full()
+                    .justify_between()
+                    .items_center()
+                    .child(
+                        Label::new("Select Provider")
+                            .size(LabelSize::Default)
+                            .color(Color::Muted),
+                    )
+                    .when_some(self.on_reset, |this, handler| {
+                        this.child(
+                            Button::new("reset-to-auto", "Reset to Auto")
+                                .style(ButtonStyle::Subtle)
+                                .label_size(LabelSize::Small)
+                                .disabled(self.reset_button_disabled)
+                                .on_click(handler),
+                        )
+                    }),
             )
             .child(
                 h_flex()

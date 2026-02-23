@@ -206,6 +206,10 @@ impl OpenRouterState {
             .insert(model_id.to_string(), provider_name);
     }
 
+    pub fn clear_selected_provider(&mut self, model_id: &str) {
+        self.selected_providers.remove(model_id);
+    }
+
     pub fn global(cx: &App) -> Option<Entity<Self>> {
         cx.try_global::<GlobalOpenRouterState>()
             .map(|g| g.0.clone())
@@ -313,10 +317,21 @@ impl acp_thread::ModelHoverInfo for OpenRouterProvidersHoverInfo {
             })
             .collect();
 
+        let has_selection = selected.is_some();
+        let model_id_for_reset = model_id.clone();
+
         v_flex()
             .w(rems(22.))
             .max_h(vh(0.75, window))
-            .child(ProviderSelectorHeader)
+            .child(
+                ProviderSelectorHeader::new().reset_button(!has_selection, move |_, _, cx| {
+                    if let Some(state) = OpenRouterState::global(cx) {
+                        state.update(cx, |state, _| {
+                            state.clear_selected_provider(&model_id_for_reset);
+                        });
+                    }
+                }),
+            )
             .child(
                 v_flex()
                     .id("provider-list")
