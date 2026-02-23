@@ -239,6 +239,10 @@ impl AgentTool for EditFileTool {
                 ToolCallUpdateFields::new().locations(vec![acp::ToolCallLocation::new(abs_path)]),
             );
         }
+        let allow_thinking = self
+            .thread
+            .read_with(cx, |thread, _cx| thread.thinking_enabled())
+            .unwrap_or(true);
 
         let authorize = self.authorize(&input, &event_stream, cx);
         cx.spawn(async move |cx: &mut AsyncApp| {
