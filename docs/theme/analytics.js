@@ -1,68 +1,67 @@
-const amplitudeKey = "123";
-if (amplitudeKey && amplitudeKey.indexOf("#") === -1) {
-  import("https://esm.sh/c15t@1.8.3").then(
-    ({ configureConsentManager, createConsentManagerStore }) => {
-      const manager = configureConsentManager({
-        mode: "offline",
-      });
-      const store = createConsentManagerStore(manager, {
-        initialGdprTypes: ["necessary", "measurement"],
-        ignoreGeoLocation: true,
-        scripts: [
-          {
-            id: "amplitude",
-            src: `https://cdn.amplitude.com/script/${amplitudeKey}.js`,
-            category: "measurement",
-            onLoad: () => {
-              window.amplitude.init(amplitudeKey, {
-                fetchRemoteConfig: true,
-                autocapture: true,
-              });
-            },
-          },
-        ],
-      });
+const amplitudeKey = document.querySelector(
+  'meta[name="amplitude-key"]',
+)?.content;
 
-      const banner = document.getElementById("c15t-banner");
-      const configureSection = document.getElementById(
-        "c15t-configure-section",
-      );
-      const configureBtn = document.getElementById("c15t-configure-btn");
-      const measurementToggle = document.getElementById(
-        "c15t-toggle-measurement",
-      );
-      let isConfiguring = false;
+document.addEventListener("DOMContentLoaded", () => {
+  const { configureConsentManager, createConsentManagerStore } = window.c15t;
 
-      function syncBanner(state) {
-        banner.style.display = state.showPopup ? "block" : "none";
-      }
+  const manager = configureConsentManager({
+    mode: "offline",
+  });
+  const store = createConsentManagerStore(manager, {
+    initialGdprTypes: ["necessary", "measurement"],
+    ignoreGeoLocation: true,
+    scripts: [
+      {
+        id: "amplitude",
+        src: `https://cdn.amplitude.com/script/${amplitudeKey}.js`,
+        category: "measurement",
+        onLoad: () => {
+          if (amplitudeKey && amplitudeKey.indexOf("#") === -1) {
+            window.amplitude.init(amplitudeKey, {
+              fetchRemoteConfig: true,
+              autocapture: true,
+            });
+          }
+        },
+      },
+    ],
+  });
 
-      store.subscribe((state) => syncBanner(state));
-      syncBanner(store.getState());
+  const banner = document.getElementById("c15t-banner");
+  const configureSection = document.getElementById("c15t-configure-section");
+  const configureBtn = document.getElementById("c15t-configure-btn");
+  const measurementToggle = document.getElementById("c15t-toggle-measurement");
+  let isConfiguring = false;
 
-      configureBtn.addEventListener("click", () => {
-        if (isConfiguring) {
-          store.getState().setConsent("measurement", measurementToggle.checked);
-        } else {
-          isConfiguring = true;
-          const currentConsents = store.getState().consents;
-          measurementToggle.checked = currentConsents
-            ? (currentConsents.measurement ?? false)
-            : false;
-          configureSection.style.display = "flex";
-          configureBtn.innerHTML = "Save";
-          configureBtn.className = "c15t-button secondary";
-          configureBtn.title = "";
-        }
-      });
+  function syncBanner(state) {
+    banner.style.display = state.showPopup ? "block" : "none";
+  }
 
-      document.getElementById("c15t-accept").addEventListener("click", () => {
-        store.getState().setConsent("measurement", true);
-      });
+  store.subscribe((state) => syncBanner(state));
+  syncBanner(store.getState());
 
-      document.getElementById("c15t-decline").addEventListener("click", () => {
-        store.getState().setConsent("measurement", false);
-      });
-    },
-  );
-}
+  configureBtn.addEventListener("click", () => {
+    if (isConfiguring) {
+      store.getState().setConsent("measurement", measurementToggle.checked);
+    } else {
+      isConfiguring = true;
+      const currentConsents = store.getState().consents;
+      measurementToggle.checked = currentConsents
+        ? (currentConsents.measurement ?? false)
+        : false;
+      configureSection.style.display = "flex";
+      configureBtn.innerHTML = "Save";
+      configureBtn.className = "c15t-button secondary";
+      configureBtn.title = "";
+    }
+  });
+
+  document.getElementById("c15t-accept").addEventListener("click", () => {
+    store.getState().setConsent("measurement", true);
+  });
+
+  document.getElementById("c15t-decline").addEventListener("click", () => {
+    store.getState().setConsent("measurement", false);
+  });
+});
