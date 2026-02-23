@@ -170,7 +170,7 @@ impl ChangedFileEntry {
                     )
                     .tooltip({
                         let meta = if dir_path.is_empty() {
-                            file_name.clone()
+                            file_name
                         } else {
                             format!("{}/{}", dir_path, file_name).into()
                         };
@@ -754,7 +754,6 @@ fn to_row_center(
 
 fn draw_commit_circle(center_x: Pixels, center_y: Pixels, color: Hsla, window: &mut Window) {
     let radius = COMMIT_CIRCLE_RADIUS;
-    let stroke_width = COMMIT_CIRCLE_STROKE_WIDTH;
 
     let mut builder = PathBuilder::fill();
 
@@ -1012,8 +1011,8 @@ impl GitGraph {
 
                 let short_sha = commit.data.sha.display_short();
                 let mut formatted_time = String::new();
-                let subject;
-                let author_name;
+                let subject: SharedString;
+                let author_name: SharedString;
 
                 if let CommitDataState::Loaded(data) = data {
                     subject = data.subject.clone();
@@ -1057,11 +1056,11 @@ impl GitGraph {
                                             .map(|name| self.render_chip(name, accent_color)),
                                     )
                                 }))
-                                .child(column_label(subject.into())),
+                                .child(column_label(subject)),
                         )
                         .into_any_element(),
                     column_label(formatted_time.into()),
-                    column_label(author_name.into()),
+                    column_label(author_name),
                     column_label(short_sha.into()),
                 ]
             })
@@ -1338,7 +1337,7 @@ impl GitGraph {
                             .child(
                                 v_flex()
                                     .items_center()
-                                    .child(Label::new(author_name.clone()))
+                                    .child(Label::new(author_name))
                                     .child(
                                         Label::new(date_string)
                                             .color(Color::Muted)
