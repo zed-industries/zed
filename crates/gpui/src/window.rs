@@ -1186,9 +1186,12 @@ impl Window {
             let next_frame_callbacks = next_frame_callbacks.clone();
             let input_rate_tracker = input_rate_tracker.clone();
             move |request_frame_options| {
-                let thermal_state = cx.update(|cx| cx.thermal_state());
+                let thermal_state = handle
+                    .update(&mut cx, |_, _, cx| cx.thermal_state())
+                    .log_err();
 
-                if thermal_state == ThermalState::Serious || thermal_state == ThermalState::Critical
+                if thermal_state == Some(ThermalState::Serious)
+                    || thermal_state == Some(ThermalState::Critical)
                 {
                     let now = Instant::now();
                     let last_frame_time = last_frame_time.replace(Some(now));
