@@ -757,7 +757,7 @@ mod test {
 
     use indoc::indoc;
     use search::BufferSearchBar;
-    use settings::SettingsStore;
+    use settings::{KeymapFile, SettingsStore};
 
     #[gpui::test]
     async fn test_move_to_next(cx: &mut gpui::TestAppContext) {
@@ -1325,6 +1325,19 @@ mod test {
     #[gpui::test]
     async fn test_star_does_not_clear_highlights_on_escape(cx: &mut gpui::TestAppContext) {
         let mut cx = VimTestContext::new(cx, true).await;
+        cx.update(|_, cx| {
+            cx.bind_keys(KeymapFile::load_panic_on_failure(
+                r#"[
+                    {
+                        "context": "(vim_mode == normal || vim_mode == helix_normal) && !menu",
+                        "bindings": {
+                            "escape": "vim::Cancel"
+                        }
+                    }
+                ]"#,
+                cx,
+            ));
+        });
         cx.set_state("ˇhi\nhigh\nhi\n", Mode::Normal);
 
         cx.simulate_keystrokes("*");
