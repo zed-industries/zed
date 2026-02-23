@@ -3681,24 +3681,9 @@ impl AcpThreadView {
                         .into_any()
                 }
             }
-            AgentThreadEntry::ToolCall(tool_call) => {
-                let has_terminals = tool_call.terminals().next().is_some();
-
-                div()
-                    .w_full()
-                    .map(|this| {
-                        if has_terminals {
-                            this.children(tool_call.terminals().map(|terminal| {
-                                self.render_terminal_tool_call(
-                                    entry_ix, terminal, tool_call, window, cx,
-                                )
-                            }))
-                        } else {
-                            this.child(self.render_tool_call(entry_ix, tool_call, window, cx))
-                        }
-                    })
-                    .into_any()
-            }
+            AgentThreadEntry::ToolCall(tool_call) => self
+                .render_any_tool_call(&self.id, entry_ix, tool_call, window, cx)
+                .into_any(),
         };
 
         let primary = if is_indented {
@@ -4503,6 +4488,7 @@ impl AcpThreadView {
 
     fn render_terminal_tool_call(
         &self,
+        active_session_id: &acp::SessionId,
         entry_ix: usize,
         terminal: &Entity<acp_thread::Terminal>,
         tool_call: &ToolCall,
@@ -4772,9 +4758,9 @@ impl AcpThreadView {
                 )
             })
             .when_some(confirmation_options, |this, options| {
-                let is_first = self.is_first_tool_call(&self.id, &tool_call.id, cx);
+                let is_first = self.is_first_tool_call(active_session_id, &tool_call.id, cx);
                 this.child(self.render_permission_buttons(
-                    self.id.clone(),
+                    active_session_id.clone(),
                     is_first,
                     options,
                     entry_ix,
@@ -4787,20 +4773,65 @@ impl AcpThreadView {
 
     fn is_first_tool_call(
         &self,
-        session_id: &acp::SessionId,
+        active_session_id: &acp::SessionId,
         tool_call_id: &acp::ToolCallId,
         cx: &App,
     ) -> bool {
         self.conversation
             .read(cx)
-            .pending_tool_call(&self.id, cx)
+            .pending_tool_call(active_session_id, cx)
             .map_or(false, |(pending_session_id, pending_tool_call_id, _)| {
-                session_id == &pending_session_id && tool_call_id == &pending_tool_call_id
+                dbg!(&pending_session_id, &pending_tool_call_id);
+                self.id == pending_session_id && tool_call_id == &pending_tool_call_id
             })
+    }
+
+    fn render_any_tool_call(
+        &self,
+        active_session_id: &acp::SessionId,
+        entry_ix: usize,
+        tool_call: &ToolCall,
+        window: &Window,
+        cx: &Context<Self>,
+    ) -> Div {
+        let has_terminals = tool_call.terminals().next().is_some();
+
+        div().w_full().map(|this| {
+            if tool_call.is_subagent() {
+                this.child(self.render_subagent_tool_call(
+                    active_session_id,
+                    entry_ix,
+                    tool_call,
+                    tool_call.subagent_session_id.clone(),
+                    window,
+                    cx,
+                ))
+            } else if has_terminals {
+                this.children(tool_call.terminals().map(|terminal| {
+                    self.render_terminal_tool_call(
+                        active_session_id,
+                        entry_ix,
+                        terminal,
+                        tool_call,
+                        window,
+                        cx,
+                    )
+                }))
+            } else {
+                this.child(self.render_tool_call(
+                    active_session_id,
+                    entry_ix,
+                    tool_call,
+                    window,
+                    cx,
+                ))
+            }
+        })
     }
 
     fn render_tool_call(
         &self,
+        active_session_id: &acp::SessionId,
         entry_ix: usize,
         tool_call: &ToolCall,
         window: &Window,
@@ -4822,17 +4853,6 @@ impl AcpThreadView {
 
         let is_edit =
             matches!(tool_call.kind, acp::ToolKind::Edit) || tool_call.diffs().next().is_some();
-
-        // For subagent tool calls, render the subagent cards directly without wrapper
-        if tool_call.is_subagent() {
-            return self.render_subagent_tool_call(
-                entry_ix,
-                tool_call,
-                tool_call.subagent_session_id.clone(),
-                window,
-                cx,
-            );
-        }
 
         let is_cancelled_edit = is_edit && matches!(tool_call.status, ToolCallStatus::Canceled);
         let has_revealed_diff = tool_call.diffs().next().is_some_and(|diff| {
@@ -4873,6 +4893,7 @@ impl AcpThreadView {
                             .map(|(content_ix, content)| {
                                 div()
                                     .child(self.render_tool_call_content(
+                                        active_session_id,
                                         entry_ix,
                                         content,
                                         content_ix,
@@ -4951,8 +4972,8 @@ impl AcpThreadView {
                         )
                     })
                     .child(self.render_permission_buttons(
-                        self.id.clone(),
-                        self.is_first_tool_call(&self.id, &tool_call.id, cx),
+                        active_session_id.clone(),
+                        self.is_first_tool_call(active_session_id, &tool_call.id, cx),
                         options,
                         entry_ix,
                         tool_call.id.clone(),
@@ -5000,6 +5021,7 @@ impl AcpThreadView {
                             .map(|(content_ix, content)| {
                                 div().id(("tool-call-output", entry_ix)).child(
                                     self.render_tool_call_content(
+                                        active_session_id,
                                         entry_ix,
                                         content,
                                         content_ix,
@@ -5253,6 +5275,7 @@ impl AcpThreadView {
                             .icon_size(IconSize::XSmall)
                             .label_size(LabelSize::Small)
                             .when(is_first, |this| {
+                                dbg!("is_first");
                                 this.key_binding(
                                     KeyBinding::for_action_in(
                                         &AllowOnce as &dyn Action,
@@ -5287,6 +5310,7 @@ impl AcpThreadView {
                             .icon_size(IconSize::XSmall)
                             .label_size(LabelSize::Small)
                             .when(is_first, |this| {
+                                dbg!("is_first");
                                 this.key_binding(
                                     KeyBinding::for_action_in(
                                         &RejectOnce as &dyn Action,
@@ -5728,6 +5752,7 @@ impl AcpThreadView {
 
     fn render_tool_call_content(
         &self,
+        session_id: &acp::SessionId,
         entry_ix: usize,
         content: &ToolCallContent,
         context_ix: usize,
@@ -5768,9 +5793,8 @@ impl AcpThreadView {
             ToolCallContent::Diff(diff) => {
                 self.render_diff_editor(entry_ix, diff, tool_call, has_failed, cx)
             }
-            ToolCallContent::Terminal(terminal) => {
-                self.render_terminal_tool_call(entry_ix, terminal, tool_call, window, cx)
-            }
+            ToolCallContent::Terminal(terminal) => self
+                .render_terminal_tool_call(session_id, entry_ix, terminal, tool_call, window, cx),
         }
     }
 
@@ -6002,6 +6026,7 @@ impl AcpThreadView {
 
     fn render_subagent_tool_call(
         &self,
+        active_session_id: &acp::SessionId,
         entry_ix: usize,
         tool_call: &ToolCall,
         subagent_session_id: Option<acp::SessionId>,
@@ -6018,6 +6043,7 @@ impl AcpThreadView {
         });
 
         let content = self.render_subagent_card(
+            active_session_id,
             entry_ix,
             0,
             subagent_thread_view,
@@ -6031,6 +6057,7 @@ impl AcpThreadView {
 
     fn render_subagent_card(
         &self,
+        active_session_id: &acp::SessionId,
         entry_ix: usize,
         context_ix: usize,
         thread_view: Option<&Entity<AcpThreadView>>,
@@ -6041,7 +6068,7 @@ impl AcpThreadView {
         let thread = thread_view
             .as_ref()
             .map(|view| view.read(cx).thread.clone());
-        let session_id = thread
+        let subagent_session_id = thread
             .as_ref()
             .map(|thread| thread.read(cx).session_id().clone());
         let action_log = thread.as_ref().map(|thread| thread.read(cx).action_log());
@@ -6049,8 +6076,8 @@ impl AcpThreadView {
             .map(|log| log.read(cx).changed_buffers(cx))
             .unwrap_or_default();
 
-        let is_expanded = if let Some(session_id) = &session_id {
-            self.expanded_subagents.contains(session_id)
+        let is_expanded = if let Some(subagent_session_id) = &subagent_session_id {
+            self.expanded_subagents.contains(subagent_session_id)
         } else {
             false
         };
@@ -6159,7 +6186,7 @@ impl AcpThreadView {
                             })
                             .tooltip(Tooltip::text(title.to_string())),
                     )
-                    .when_some(session_id, |this, session_id| {
+                    .when_some(subagent_session_id, |this, subagent_session_id| {
                         this.child(
                             h_flex()
                                 .flex_shrink_0()
@@ -6182,14 +6209,18 @@ impl AcpThreadView {
                                         .visible_on_hover(card_header_id.clone())
                                         .on_click(
                                             cx.listener({
-                                                let session_id = session_id.clone();
+                                                let subagent_session_id =
+                                                    subagent_session_id.clone();
                                                 move |this, _, _, cx| {
-                                                    if this.expanded_subagents.contains(&session_id)
+                                                    if this
+                                                        .expanded_subagents
+                                                        .contains(&subagent_session_id)
                                                     {
-                                                        this.expanded_subagents.remove(&session_id);
+                                                        this.expanded_subagents
+                                                            .remove(&subagent_session_id);
                                                     } else {
                                                         this.expanded_subagents
-                                                            .insert(session_id.clone());
+                                                            .insert(subagent_session_id.clone());
                                                     }
                                                     cx.notify();
                                                 }
@@ -6211,7 +6242,7 @@ impl AcpThreadView {
                                             this.server_view
                                                 .update(cx, |this, cx| {
                                                     this.navigate_to_session(
-                                                        session_id.clone(),
+                                                        subagent_session_id.clone(),
                                                         window,
                                                         cx,
                                                     );
@@ -6250,33 +6281,32 @@ impl AcpThreadView {
             )
             .when_some(thread_view, |this, thread_view| {
                 let thread = &thread_view.read(cx).thread;
-                this.when(is_expanded, |this| {
-                    this.child(
-                        self.render_subagent_expanded_content(
+                let pending_tool_call = self
+                    .conversation
+                    .read(cx)
+                    .pending_tool_call(thread.read(cx).session_id(), cx);
+
+                if let Some((_, subagent_tool_call_id, _)) = pending_tool_call {
+                    if let Some((entry_ix, tool_call)) =
+                        thread.read(cx).tool_call(&subagent_tool_call_id)
+                    {
+                        this.child(thread_view.read(cx).render_any_tool_call(
+                            active_session_id,
+                            entry_ix,
+                            tool_call,
+                            window,
+                            cx,
+                        ))
+                    } else {
+                        this
+                    }
+                } else {
+                    this.when(is_expanded, |this| {
+                        this.child(self.render_subagent_expanded_content(
                             entry_ix, context_ix, thread, window, cx,
-                        ),
-                    )
-                })
-                .children(
-                    self.conversation
-                        .read(cx)
-                        .pending_tool_call(thread.read(cx).session_id(), cx)
-                        .and_then(|(subagent_session_id, subagent_tool_call_id, options)| {
-                            let is_first = self.is_first_tool_call(
-                                &subagent_session_id,
-                                &subagent_tool_call_id,
-                                cx,
-                            );
-                            Some(self.render_permission_buttons(
-                                subagent_session_id,
-                                is_first,
-                                &options,
-                                entry_ix,
-                                subagent_tool_call_id,
-                                cx,
-                            ))
-                        }),
-                )
+                        ))
+                    })
+                }
             })
             .into_any_element()
     }
