@@ -79,7 +79,8 @@ struct EpArgs {
     repo: Option<String>,
     #[command(subcommand)]
     command: Option<Command>,
-    #[clap(global = true, help = INPUTS_HELP)]
+    /// Input file paths
+    #[clap(global = true)]
     inputs: Vec<PathBuf>,
     #[arg(long, short, global = true)]
     output: Option<PathBuf>,
@@ -171,7 +172,7 @@ Examples:
 #[derive(Subcommand, Debug, Clone)]
 enum Command {
     /// Read examples from files or fetch from Snowflake, output as .jsonl
-    Read,
+    Read(ReadArgs),
     /// Create git worktrees for each example and load file contents
     LoadProject,
     /// Retrieve context for input examples.
@@ -215,7 +216,7 @@ enum Command {
 impl Display for Command {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Command::Read => write!(f, "read"),
+            Command::Read(_) => write!(f, "read"),
             Command::LoadProject => write!(f, "load-project"),
             Command::Context => write!(f, "context"),
             Command::FormatPrompt(args) => {
@@ -258,6 +259,10 @@ impl Display for Command {
         }
     }
 }
+
+#[derive(Debug, Args, Clone)]
+#[command(after_help = INPUTS_HELP)]
+struct ReadArgs {}
 
 #[derive(Debug, Args, Clone)]
 struct FormatPromptArgs {
@@ -922,7 +927,7 @@ fn main() {
 
                                 let result = async {
                                     match &command {
-                                        Command::Read => {}
+                                        Command::Read(_) => {}
                                         Command::LoadProject => {
                                             run_load_project(
                                                 example,
