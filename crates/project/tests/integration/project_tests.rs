@@ -5089,7 +5089,7 @@ async fn test_save_as(cx: &mut gpui::TestAppContext) {
         buffer.edit([(0..0, "abc")], None, cx);
         assert!(buffer.is_dirty());
         assert!(!buffer.has_conflict());
-        assert_eq!(buffer.language().unwrap().name(), "Plain Text".into());
+        assert_eq!(buffer.language().unwrap().name(), "Plain Text");
     });
     project
         .update(cx, |project, cx| {
@@ -5112,7 +5112,7 @@ async fn test_save_as(cx: &mut gpui::TestAppContext) {
         );
         assert!(!buffer.is_dirty());
         assert!(!buffer.has_conflict());
-        assert_eq!(buffer.language().unwrap().name(), "Rust".into());
+        assert_eq!(buffer.language().unwrap().name(), "Rust");
     });
 
     let opened_buffer = project

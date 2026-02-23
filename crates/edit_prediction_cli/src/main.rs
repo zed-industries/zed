@@ -22,16 +22,19 @@ mod reversal_tracking;
 mod score;
 mod split_commit;
 mod split_dataset;
-mod sync_deployments;
+
 mod synthesize;
 mod truncate_expected_patch;
 mod word_diff;
 use clap::{Args, CommandFactory, Parser, Subcommand, ValueEnum};
-use collections::HashSet;
+use collections::{HashMap, HashSet};
 use edit_prediction::EditPredictionStore;
 use futures::channel::mpsc;
 use futures::{SinkExt as _, StreamExt as _};
-use gpui::{AppContext as _, Application, BackgroundExecutor, Task};
+use gaoya::minhash::{
+    MinHashIndex, MinHasher, MinHasher32, calculate_minhash_params, compute_minhash_similarity,
+};
+use gpui::{AppContext as _, BackgroundExecutor, Task};
 use zeta_prompt::ZetaFormat;
 
 use reqwest_client::ReqwestClient;
@@ -77,9 +80,13 @@ struct EpArgs {
     /// Filter examples by repository
     #[clap(long, global = true)]
     repo: Option<String>,
+    /// Deduplicate by cursor position and keep at most this many examples per cluster
+    #[clap(long, global = true)]
+    max_duplicates: Option<usize>,
     #[command(subcommand)]
     command: Option<Command>,
-    #[clap(global = true, help = INPUTS_HELP)]
+    /// Input file paths
+    #[clap(global = true)]
     inputs: Vec<PathBuf>,
     #[arg(long, short, global = true)]
     output: Option<PathBuf>,
@@ -171,7 +178,7 @@ Examples:
 #[derive(Subcommand, Debug, Clone)]
 enum Command {
     /// Read examples from files or fetch from Snowflake, output as .jsonl
-    Read,
+    Read(ReadArgs),
     /// Create git worktrees for each example and load file contents
     LoadProject,
     /// Retrieve context for input examples.
@@ -210,14 +217,12 @@ enum Command {
     Repair(repair::RepairArgs),
     /// Print all valid zeta formats (lowercase, one per line)
     PrintZetaFormats,
-    /// Sync baseten deployment metadata to Snowflake for linking predictions to experiments
-    SyncDeployments(SyncDeploymentsArgs),
 }
 
 impl Display for Command {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Command::Read => write!(f, "read"),
+            Command::Read(_) => write!(f, "read"),
             Command::LoadProject => write!(f, "load-project"),
             Command::Context => write!(f, "context"),
             Command::FormatPrompt(args) => {
@@ -257,19 +262,13 @@ impl Display for Command {
             Command::PrintZetaFormats => {
                 write!(f, "print-zeta-formats")
             }
-            Command::SyncDeployments(_) => {
-                write!(f, "sync-deployments")
-            }
         }
     }
 }
 
 #[derive(Debug, Args, Clone)]
-struct SyncDeploymentsArgs {
-    /// BaseTen model name (default: "zeta-2")
-    #[arg(long)]
-    model: Option<String>,
-}
+#[command(after_help = INPUTS_HELP)]
+struct ReadArgs {}
 
 #[derive(Debug, Args, Clone)]
 struct FormatPromptArgs {
@@ -493,6 +492,136 @@ const MIN_CAPTURE_VERSION: pull_examples::MinCaptureVersion = pull_examples::Min
     patch: 1,
 };
 
+fn deduplicate_examples(examples: &mut Vec<Example>, max_per_cluster: usize) {
+    let total_before_exact = examples.len();
+    let mut seen_positions = HashSet::default();
+    examples.retain(|example| seen_positions.insert(example.spec.cursor_position.clone()));
+    log::info!(
+        "exact duplicate filter: {total_before_exact} examples → {} examples ({} removed)",
+        examples.len(),
+        total_before_exact - examples.len(),
+    );
+
+    const JACCARD_THRESHOLD: f64 = 0.5;
+    const NUM_HASHES: usize = 128;
+    const TOKEN_NGRAM_SIZE: usize = 5;
+
+    let (num_bands, band_width) = calculate_minhash_params(JACCARD_THRESHOLD, NUM_HASHES);
+    let num_hashes = num_bands * band_width;
+    let minhasher = MinHasher32::new(num_hashes);
+    let mut index: MinHashIndex<u32, usize> =
+        MinHashIndex::new(num_bands, band_width, JACCARD_THRESHOLD);
+
+    let signatures: Vec<Vec<u32>> = examples
+        .iter()
+        .map(|example| {
+            let shingles = code_token_ngrams(&example.spec.cursor_position, TOKEN_NGRAM_SIZE);
+            minhasher.create_signature(shingles.iter())
+        })
+        .collect();
+
+    for (id, signature) in signatures.iter().enumerate() {
+        index.insert(id, signature.clone());
+    }
+
+    // Build clusters via union-find on LSH candidate pairs.
+    let mut parent: Vec<usize> = (0..examples.len()).collect();
+
+    fn find(parent: &mut Vec<usize>, mut x: usize) -> usize {
+        while parent[x] != x {
+            parent[x] = parent[parent[x]];
+            x = parent[x];
+        }
+        x
+    }
+
+    for (id, signature) in signatures.iter().enumerate() {
+        for candidate in index.query_owned(signature) {
+            let (a, b) = (find(&mut parent, id), find(&mut parent, candidate));
+            if a != b {
+                parent[a] = b;
+            }
+        }
+    }
+
+    let mut clusters: HashMap<usize, Vec<usize>> = HashMap::default();
+    for id in 0..examples.len() {
+        clusters.entry(find(&mut parent, id)).or_default().push(id);
+    }
+
+    let mut keep: HashSet<usize> = HashSet::default();
+    for members in clusters.values() {
+        let selected = greedy_max_min_diverse(members, &signatures, max_per_cluster);
+        keep.extend(selected);
+    }
+
+    let total = examples.len();
+    let mut kept_indices: Vec<usize> = keep.into_iter().collect();
+    kept_indices.sort();
+
+    let mut retained = Vec::with_capacity(kept_indices.len());
+    for index in kept_indices.into_iter().rev() {
+        retained.push(examples.swap_remove(index));
+    }
+    retained.reverse();
+
+    *examples = retained;
+    log::info!(
+        "near-duplicate filter: {total} examples → {} examples ({} removed)",
+        examples.len(),
+        total - examples.len(),
+    );
+}
+
+fn greedy_max_min_diverse(members: &[usize], signatures: &[Vec<u32>], k: usize) -> Vec<usize> {
+    if members.len() <= k {
+        return members.to_vec();
+    }
+
+    let mut selected = vec![members[0]];
+    let mut min_dist: HashMap<usize, f64> = HashMap::default();
+    for &member in &members[1..] {
+        let dist = 1.0 - compute_minhash_similarity(&signatures[selected[0]], &signatures[member]);
+        min_dist.insert(member, dist);
+    }
+
+    while selected.len() < k {
+        let &best = min_dist
+            .iter()
+            .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
+            .map(|(id, _)| id)
+            .expect("min_dist should not be empty when selected.len() < k");
+        selected.push(best);
+        min_dist.remove(&best);
+
+        let best_sig = &signatures[best];
+        for (member, current_min) in min_dist.iter_mut() {
+            let dist = 1.0 - compute_minhash_similarity(best_sig, &signatures[*member]);
+            if dist < *current_min {
+                *current_min = dist;
+            }
+        }
+    }
+
+    selected
+}
+
+fn code_token_ngrams(code: &str, ngram_size: usize) -> Vec<String> {
+    let tokens: Vec<&str> = word_diff::tokenize(code)
+        .into_iter()
+        .filter(|t| !t.trim().is_empty())
+        .collect();
+
+    if tokens.len() < ngram_size {
+        return vec![tokens.join("\0")];
+    }
+
+    tokens
+        .windows(ngram_size)
+        .map(|window| window.join("\0"))
+        .collect()
+}
+
 async fn load_examples(
     http_client: Arc<dyn http_client::HttpClient>,
     args: &EpArgs,
@@ -633,6 +762,10 @@ async fn load_examples(
         {
             resume_from_output(path, &mut examples, command);
         }
+    }
+
+    if let Some(max_duplicates) = args.max_duplicates {
+        deduplicate_examples(&mut examples, max_duplicates);
     }
 
     if let Some(limit) = args.limit {
@@ -777,19 +910,7 @@ fn main() {
             }
             return;
         }
-        Command::SyncDeployments(sync_args) => {
-            let http_client: Arc<dyn http_client::HttpClient> = Arc::new(ReqwestClient::new());
-            smol::block_on(async {
-                if let Err(e) =
-                    sync_deployments::run_sync_deployments(http_client, sync_args.model.clone())
-                        .await
-                {
-                    eprintln!("Error: {:?}", e);
-                    std::process::exit(1);
-                }
-            });
-            return;
-        }
+
         Command::Synthesize(synth_args) => {
             let Some(output_dir) = args.output else {
                 panic!("output dir is required");
@@ -851,7 +972,7 @@ fn main() {
     }
 
     let http_client = Arc::new(ReqwestClient::new());
-    let app = Application::headless().with_http_client(http_client);
+    let app = gpui_platform::headless().with_http_client(http_client);
 
     app.run(move |cx| {
         let app_state = Arc::new(headless::init(cx));
@@ -946,7 +1067,7 @@ fn main() {
 
                                 let result = async {
                                     match &command {
-                                        Command::Read => {}
+                                        Command::Read(_) => {}
                                         Command::LoadProject => {
                                             run_load_project(
                                                 example,
@@ -1025,8 +1146,7 @@ fn main() {
                                         | Command::TruncatePatch(_)
                                         | Command::FilterLanguages(_)
                                         | Command::ImportBatch(_)
-                                        | Command::PrintZetaFormats
-                                        | Command::SyncDeployments(_) => {
+                                        | Command::PrintZetaFormats => {
                                             unreachable!()
                                         }
                                     }

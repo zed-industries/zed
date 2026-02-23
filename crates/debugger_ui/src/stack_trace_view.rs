@@ -47,6 +47,8 @@ impl StackTraceView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        telemetry::event!("Stack Trace View Deployed");
+
         let multibuffer = cx.new(|_| MultiBuffer::new(Capability::ReadWrite));
         let editor = cx.new(|cx| {
             let mut editor =

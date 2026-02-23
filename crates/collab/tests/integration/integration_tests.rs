@@ -2379,11 +2379,11 @@ async fn test_propagate_saves_and_fs_changes(
         .unwrap();
 
     buffer_b.read_with(cx_b, |buffer, _| {
-        assert_eq!(buffer.language().unwrap().name(), "Rust".into());
+        assert_eq!(buffer.language().unwrap().name(), "Rust");
     });
 
     buffer_c.read_with(cx_c, |buffer, _| {
-        assert_eq!(buffer.language().unwrap().name(), "Rust".into());
+        assert_eq!(buffer.language().unwrap().name(), "Rust");
     });
     buffer_b.update(cx_b, |buf, cx| buf.edit([(0..0, "i-am-b, ")], None, cx));
     buffer_c.update(cx_c, |buf, cx| buf.edit([(0..0, "i-am-c, ")], None, cx));
@@ -2486,17 +2486,17 @@ async fn test_propagate_saves_and_fs_changes(
 
     buffer_a.read_with(cx_a, |buffer, _| {
         assert_eq!(buffer.file().unwrap().path().as_ref(), rel_path("file1.js"));
-        assert_eq!(buffer.language().unwrap().name(), "JavaScript".into());
+        assert_eq!(buffer.language().unwrap().name(), "JavaScript");
     });
 
     buffer_b.read_with(cx_b, |buffer, _| {
         assert_eq!(buffer.file().unwrap().path().as_ref(), rel_path("file1.js"));
-        assert_eq!(buffer.language().unwrap().name(), "JavaScript".into());
+        assert_eq!(buffer.language().unwrap().name(), "JavaScript");
     });
 
     buffer_c.read_with(cx_c, |buffer, _| {
         assert_eq!(buffer.file().unwrap().path().as_ref(), rel_path("file1.js"));
-        assert_eq!(buffer.language().unwrap().name(), "JavaScript".into());
+        assert_eq!(buffer.language().unwrap().name(), "JavaScript");
     });
 
     let new_buffer_a = project_a

@@ -1,0 +1,26 @@
+[package]
+name = "gpui_wgpu"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+license = "Apache-2.0"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/gpui_wgpu.rs"
+
+[target.'cfg(not(target_os = "windows"))'.dependencies]
+gpui.workspace = true
+anyhow.workspace = true
+bytemuck = "1"
+collections.workspace = true
+etagere = "0.2"
+log.workspace = true
+parking_lot.workspace = true
+profiling.workspace = true
+raw-window-handle = "0.6"
+smol.workspace = true
+util.workspace = true
+wgpu.workspace = true

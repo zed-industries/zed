@@ -1334,6 +1334,7 @@ impl Render for MessageEditor {
                     font_fallbacks: settings.buffer_font.fallbacks.clone(),
                     font_features: settings.buffer_font.features.clone(),
                     font_size: settings.agent_buffer_font_size(cx).into(),
+                    font_weight: settings.buffer_font.weight,
                     line_height: relative(settings.buffer_line_height.value()),
                     ..Default::default()
                 };

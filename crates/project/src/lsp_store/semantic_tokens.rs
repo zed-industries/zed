@@ -564,9 +564,6 @@ async fn raw_to_buffer_semantic_tokens(
                     }
 
                     let end = buffer_snapshot.as_rope().offset_utf16_to_offset(end_offset);
-                    if end < last {
-                        return None;
-                    }
                     last = end;
 
                     if start == end {

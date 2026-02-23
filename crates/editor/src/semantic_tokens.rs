@@ -484,7 +484,7 @@ mod tests {
     async fn lsp_semantic_tokens_full_capability(cx: &mut TestAppContext) {
         init_test(cx, |_| {});
 
-        update_test_language_settings(cx, |language_settings| {
+        update_test_language_settings(cx, &|language_settings| {
             language_settings.languages.0.insert(
                 "Rust".into(),
                 LanguageSettingsContent {
@@ -562,7 +562,7 @@ mod tests {
     async fn lsp_semantic_tokens_full_none_result_id(cx: &mut TestAppContext) {
         init_test(cx, |_| {});
 
-        update_test_language_settings(cx, |language_settings| {
+        update_test_language_settings(cx, &|language_settings| {
             language_settings.languages.0.insert(
                 "Rust".into(),
                 LanguageSettingsContent {
@@ -638,7 +638,7 @@ mod tests {
     async fn lsp_semantic_tokens_delta(cx: &mut TestAppContext) {
         init_test(cx, |_| {});
 
-        update_test_language_settings(cx, |language_settings| {
+        update_test_language_settings(cx, &|language_settings| {
             language_settings.languages.0.insert(
                 "Rust".into(),
                 LanguageSettingsContent {
@@ -734,7 +734,7 @@ mod tests {
     async fn lsp_semantic_tokens_multiserver_full(cx: &mut TestAppContext) {
         init_test(cx, |_| {});
 
-        update_test_language_settings(cx, |language_settings| {
+        update_test_language_settings(cx, &|language_settings| {
             language_settings.languages.0.insert(
                 "TOML".into(),
                 LanguageSettingsContent {
@@ -954,7 +954,7 @@ mod tests {
     async fn lsp_semantic_tokens_multibuffer_part(cx: &mut TestAppContext) {
         init_test(cx, |_| {});
 
-        update_test_language_settings(cx, |language_settings| {
+        update_test_language_settings(cx, &|language_settings| {
             language_settings.languages.0.insert(
                 "TOML".into(),
                 LanguageSettingsContent {
@@ -1238,7 +1238,7 @@ mod tests {
     async fn lsp_semantic_tokens_multibuffer_shared(cx: &mut TestAppContext) {
         init_test(cx, |_| {});
 
-        update_test_language_settings(cx, |language_settings| {
+        update_test_language_settings(cx, &|language_settings| {
             language_settings.languages.0.insert(
                 "TOML".into(),
                 LanguageSettingsContent {
@@ -1454,7 +1454,7 @@ mod tests {
 
         init_test(cx, |_| {});
 
-        update_test_language_settings(cx, |language_settings| {
+        update_test_language_settings(cx, &|language_settings| {
             language_settings.languages.0.insert(
                 "Rust".into(),
                 LanguageSettingsContent {
@@ -1576,7 +1576,7 @@ mod tests {
 
         init_test(cx, |_| {});
 
-        update_test_language_settings(cx, |language_settings| {
+        update_test_language_settings(cx, &|language_settings| {
             language_settings.languages.0.insert(
                 "Rust".into(),
                 LanguageSettingsContent {
@@ -1742,7 +1742,7 @@ mod tests {
 
         init_test(cx, |_| {});
 
-        update_test_language_settings(cx, |language_settings| {
+        update_test_language_settings(cx, &|language_settings| {
             language_settings.languages.0.insert(
                 "Rust".into(),
                 LanguageSettingsContent {
@@ -1850,7 +1850,7 @@ mod tests {
     async fn test_stopping_language_server_clears_semantic_tokens(cx: &mut TestAppContext) {
         init_test(cx, |_| {});
 
-        update_test_language_settings(cx, |language_settings| {
+        update_test_language_settings(cx, &|language_settings| {
             language_settings.languages.0.insert(
                 "Rust".into(),
                 LanguageSettingsContent {
@@ -1928,7 +1928,7 @@ mod tests {
     async fn test_disabling_semantic_tokens_setting_clears_highlights(cx: &mut TestAppContext) {
         init_test(cx, |_| {});
 
-        update_test_language_settings(cx, |language_settings| {
+        update_test_language_settings(cx, &|language_settings| {
             language_settings.languages.0.insert(
                 "Rust".into(),
                 LanguageSettingsContent {
@@ -1986,7 +1986,7 @@ mod tests {
             "Semantic tokens should be present before disabling the setting"
         );
 
-        update_test_language_settings(&mut cx, |language_settings| {
+        update_test_language_settings(&mut cx, &|language_settings| {
             language_settings.languages.0.insert(
                 "Rust".into(),
                 LanguageSettingsContent {
