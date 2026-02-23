@@ -18,5 +18,9 @@ fn migrate_one(obj: &mut serde_json::Map<String, Value>) -> Result<()> {
 
     file_finder_obj.remove("git_status");
 
+    if file_finder_obj.is_empty() {
+        obj.remove("file_finder");
+    }
+
     Ok(())
 }

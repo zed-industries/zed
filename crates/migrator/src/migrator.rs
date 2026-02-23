@@ -3839,7 +3839,7 @@ mod tests {
                 migrations::m_2026_02_23::remove_file_finder_git_status,
             )],
             &"{\n    \"file_finder\": {\n        \"git_status\": true\n    }\n}",
-            Some(&"{\n    \"file_finder\": {\n        \n    }\n}"),
+            Some(&"{\n    \n}"),
         );
 
         // git_status: false — should be removed
@@ -3848,7 +3848,7 @@ mod tests {
                 migrations::m_2026_02_23::remove_file_finder_git_status,
             )],
             &"{\n    \"file_finder\": {\n        \"git_status\": false\n    }\n}",
-            Some(&"{\n    \"file_finder\": {\n        \n    }\n}"),
+            Some(&"{\n    \n}"),
         );
 
         // Other file_finder settings preserved
@@ -3904,9 +3904,7 @@ mod tests {
             }
             "#
             .unindent(),
-            Some(
-                &"{\n    \"linux\": {\n        \"file_finder\": {\n            \n        }\n    }\n}\n",
-            ),
+            Some(&"{\n    \"linux\": {\n        \n    }\n}\n"),
         );
 
         // Profile override — should also be migrated
@@ -3927,7 +3925,7 @@ mod tests {
             "#
             .unindent(),
             Some(
-                &"{\n    \"profiles\": {\n        \"work\": {\n            \"file_finder\": {\n                \n            }\n        }\n    }\n}\n",
+                &"{\n    \"profiles\": {\n        \"work\": {\n            \n        }\n    }\n}\n",
             ),
         );
     }
