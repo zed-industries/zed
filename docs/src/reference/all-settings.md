@@ -4507,9 +4507,9 @@ Example command to set the title: `echo -e "\e]2;New Title\007";`
 ```json [settings]
 {
   "repl": {
-    // Maximum number of columns to keep in REPL's scrollback buffer.
-    // Clamped with [20, 512] range.
-    "max_columns": 128,
+    // Maximum number of columns for REPL terminal output.
+    // Set to 0 to automatically size columns to the window width.
+    "max_columns": 0,
     // Maximum number of lines to keep in REPL's scrollback buffer.
     // Clamped with [4, 256] range.
     "max_lines": 32

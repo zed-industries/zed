@@ -22,12 +22,17 @@ use alacritty_terminal::{
     term::Config,
     vte::ansi::Processor,
 };
-use gpui::{Bounds, ClipboardItem, Entity, FontStyle, Pixels, TextStyle, WhiteSpace, canvas, size};
+use gpui::{
+    Bounds, ClipboardItem, Entity, FocusHandle, FontStyle, MouseButton, Pixels, ScrollHandle,
+    ScrollWheelEvent, Subscription, TextStyle, WhiteSpace, canvas, linear_color_stop,
+    linear_gradient, size,
+};
 use language::Buffer;
+use menu;
 use settings::Settings as _;
 use terminal::terminal_settings::TerminalSettings;
 use terminal_view::terminal_element::TerminalElement;
-use theme::ThemeSettings;
+use theme::{ActiveTheme, ThemeSettings};
 use ui::{IntoElement, prelude::*};
 
 use crate::outputs::OutputContent;
@@ -52,6 +57,11 @@ pub struct TerminalOutput {
     parser: Processor,
     /// Alacritty terminal instance that manages the terminal state and content.
     handler: alacritty_terminal::Term<VoidListener>,
+    scroll_handle: ScrollHandle,
+    /// Created lazily on first render (requires `Context<Self>`).
+    focus_handle: Option<FocusHandle>,
+    scroll_active: bool,
+    _focus_subscription: Option<Subscription>,
 }
 
 /// Returns the default text style for the terminal output.
@@ -82,27 +92,47 @@ pub fn text_style(window: &mut Window, cx: &App) -> TextStyle {
     }
 }
 
-/// Returns the default terminal size for the terminal output.
-pub fn terminal_size(window: &mut Window, cx: &mut App) -> terminal::TerminalBounds {
+fn cell_width(window: &mut Window, cx: &App) -> Pixels {
     let text_style = text_style(window, cx);
     let text_system = window.text_system();
-
-    let line_height = window.line_height();
-
     let font_pixels = text_style.font_size.to_pixels(window.rem_size());
     let font_id = text_system.resolve_font(&text_style.font());
-
-    let cell_width = text_system
+    text_system
         .advance(font_id, font_pixels, 'w')
         .map(|advance| advance.width)
-        .unwrap_or(Pixels::ZERO);
+        .unwrap_or(Pixels::ZERO)
+}
+
+/// Computes the number of terminal columns that fit in the available viewport width,
+/// accounting for the editor gutter and margins. If `max_columns` is set to a nonzero
+/// value in settings, that value is used instead.
+fn columns_for_viewport(window: &mut Window, cx: &App) -> usize {
+    let max_columns = ReplSettings::get_global(cx).max_columns;
+    if max_columns > 0 {
+        return max_columns;
+    }
+
+    let cell_width = cell_width(window, cx);
+    if cell_width == Pixels::ZERO {
+        return 80;
+    }
+
+    let viewport_width = window.viewport_size().width;
+    let gutter_estimate = cell_width * 8.0;
+    let available_width = (viewport_width - gutter_estimate).max(cell_width * 20.0);
+    (available_width / cell_width).floor() as usize
+}
+
+/// Returns the default terminal size for the terminal output.
+pub fn terminal_size(window: &mut Window, cx: &mut App) -> terminal::TerminalBounds {
+    let line_height = window.line_height();
+    let cell_width = cell_width(window, cx);
 
     let num_lines = ReplSettings::get_global(cx).max_lines;
-    let columns = ReplSettings::get_global(cx).max_columns;
+    let columns = columns_for_viewport(window, cx);
 
-    // Reversed math from terminal::TerminalSize to get pixel width according to terminal width
     let width = columns as f32 * cell_width;
-    let height = num_lines as f32 * window.line_height();
+    let height = num_lines as f32 * line_height;
 
     terminal::TerminalBounds {
         cell_width,
@@ -152,6 +182,10 @@ impl TerminalOutput {
             parser: Processor::new(),
             handler: term,
             full_buffer: None,
+            scroll_handle: ScrollHandle::new(),
+            focus_handle: None,
+            scroll_active: false,
+            _focus_subscription: None,
         }
     }
 
@@ -200,6 +234,10 @@ impl TerminalOutput {
     ///
     /// * `text` - A string slice containing the text to be appended.
     pub fn append_text(&mut self, text: &str, cx: &mut App) {
+        let max_offset = self.scroll_handle.max_offset();
+        let offset = self.scroll_handle.offset();
+        let at_bottom = max_offset.y <= Pixels::ZERO || offset.y <= -max_offset.y + px(1.);
+
         for byte in text.as_bytes() {
             if *byte == b'\n' {
                 // Dirty (?) hack to move the cursor down
@@ -215,6 +253,10 @@ impl TerminalOutput {
             buffer.update(cx, |buffer, cx| {
                 buffer.edit([(buffer.len()..buffer.len(), text)], None, cx);
             });
+        }
+
+        if at_bottom {
+            self.scroll_handle.scroll_to_bottom();
         }
     }
 
@@ -311,81 +353,298 @@ mod tests {
         let expected_f32: f32 = expected.into();
         assert!((result_f32 - expected_f32).abs() < 0.01);
     }
+
+    #[gpui::test]
+    fn test_full_text_preserves_all_lines_beyond_max_lines(cx: &mut TestAppContext) {
+        let cx = init_test(cx);
+        cx.update(|window, cx| {
+            let mut output = TerminalOutput::new(window, cx);
+            // Default max_lines is 32; generate 50 lines to exceed it.
+            let lines: Vec<String> = (0..50).map(|i| format!("Line {i}")).collect();
+            output.append_text(&lines.join("\n"), cx);
+
+            let text = output.full_text();
+            assert!(
+                text.contains("Line 0"),
+                "first line should be preserved in scrollback"
+            );
+            assert!(text.contains("Line 49"), "last line should be preserved");
+        });
+    }
+
+    #[gpui::test]
+    fn test_columns_for_viewport_returns_reasonable_value(cx: &mut TestAppContext) {
+        let cx = init_test(cx);
+        let columns = cx.update(|window, cx| columns_for_viewport(window, cx));
+        assert!(
+            columns >= 20,
+            "viewport columns should be at least 20, got {columns}"
+        );
+    }
+
+    #[gpui::test]
+    fn test_focus_handle_not_created_until_render(cx: &mut TestAppContext) {
+        let cx = init_test(cx);
+        cx.update(|window, cx| {
+            let output = TerminalOutput::new(window, cx);
+            assert!(
+                output.focus_handle.is_none(),
+                "focus_handle should be None before first render"
+            );
+        });
+    }
+
+    #[gpui::test]
+    fn test_streaming_append_accumulates_content(cx: &mut TestAppContext) {
+        let cx = init_test(cx);
+        cx.update(|window, cx| {
+            let mut output = TerminalOutput::new(window, cx);
+            output.append_text("Hello,", cx);
+            output.append_text(" world!", cx);
+
+            let text = output.full_text();
+            assert!(
+                text.contains("Hello, world!"),
+                "streaming appends should concatenate: got {text:?}"
+            );
+        });
+    }
+
+    #[gpui::test]
+    fn test_append_empty_string_is_noop(cx: &mut TestAppContext) {
+        let cx = init_test(cx);
+        cx.update(|window, cx| {
+            let mut output = TerminalOutput::new(window, cx);
+            output.append_text("first line", cx);
+            let before = output.full_text();
+            output.append_text("", cx);
+            let after = output.full_text();
+            assert_eq!(
+                before, after,
+                "appending empty string should not change output"
+            );
+        });
+    }
+
+    #[gpui::test]
+    fn test_empty_output_produces_empty_text(cx: &mut TestAppContext) {
+        let cx = init_test(cx);
+        cx.update(|window, cx| {
+            let output = TerminalOutput::new(window, cx);
+            assert!(
+                output.full_text().is_empty(),
+                "new output should have empty text"
+            );
+        });
+    }
+
+    #[gpui::test]
+    fn test_multiline_append_preserves_line_order(cx: &mut TestAppContext) {
+        let cx = init_test(cx);
+        cx.update(|window, cx| {
+            let mut output = TerminalOutput::new(window, cx);
+            output.append_text("alpha\nbeta\ngamma", cx);
+
+            let text = output.full_text();
+            let alpha_pos = text.find("alpha").expect("should contain alpha");
+            let beta_pos = text.find("beta").expect("should contain beta");
+            let gamma_pos = text.find("gamma").expect("should contain gamma");
+            assert!(
+                alpha_pos < beta_pos && beta_pos < gamma_pos,
+                "lines should appear in order: {text:?}"
+            );
+        });
+    }
 }
 
 impl Render for TerminalOutput {
-    /// Renders the terminal output as a GPUI element.
-    ///
-    /// Converts the current terminal state into a renderable GPUI element. It handles
-    /// the layout of the terminal grid, calculates the dimensions of the output, and
-    /// creates a canvas element that paints the terminal cells and background rectangles.
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let text_style = text_style(window, cx);
-        let text_system = window.text_system();
+        let cell_width = cell_width(window, cx);
 
-        let grid = self
-            .handler
-            .renderable_content()
-            .display_iter
-            .map(|ic| terminal::IndexedCell {
-                point: ic.point,
-                cell: ic.cell.clone(),
-            });
+        // Resize terminal to match current viewport width so text reflows appropriately.
+        let target_columns = columns_for_viewport(window, cx);
+        if target_columns != self.handler.columns() {
+            let num_lines = ReplSettings::get_global(cx).max_lines;
+            let width = target_columns as f32 * cell_width;
+            let height = num_lines as f32 * window.line_height();
+            let bounds = terminal::TerminalBounds {
+                cell_width,
+                line_height: window.line_height(),
+                bounds: Bounds {
+                    origin: gpui::Point::default(),
+                    size: size(width, height),
+                },
+            };
+            self.handler.resize(bounds);
+        }
+
+        // Iterate ALL grid lines (history + visible) so output is never truncated.
+        let grid = self.handler.grid();
+        let start = Point::new(Line(grid.topmost_line().0 - 1), grid.last_column());
+        let grid = grid.iter_from(start).map(|ic| terminal::IndexedCell {
+            point: ic.point,
+            cell: ic.cell.clone(),
+        });
+
         let minimum_contrast = TerminalSettings::get_global(cx).minimum_contrast;
         let (rects, batched_text_runs) =
             TerminalElement::layout_grid(grid, 0, &text_style, None, minimum_contrast, cx);
 
-        // lines are 0-indexed, so we must add 1 to get the number of lines
         let text_line_height = text_style.line_height_in_pixels(window.rem_size());
+        // lines are 0-indexed, so we must add 1 to get the number of lines
         let num_lines = batched_text_runs
             .iter()
             .map(|b| b.start_point.line)
             .max()
             .unwrap_or(0)
             + 1;
-        let height = num_lines as f32 * text_line_height;
+        let content_height = num_lines as f32 * text_line_height;
 
-        let font_pixels = text_style.font_size.to_pixels(window.rem_size());
-        let font_id = text_system.resolve_font(&text_style.font());
-
-        let cell_width = text_system
-            .advance(font_id, font_pixels, 'w')
-            .map(|advance| advance.width)
-            .unwrap_or(Pixels::ZERO);
-
-        canvas(
-            // prepaint
+        let canvas_element = canvas(
             move |_bounds, _, _| {},
-            // paint
             move |bounds, _, window, cx| {
+                let terminal_bounds = terminal::TerminalBounds {
+                    cell_width,
+                    line_height: text_line_height,
+                    bounds,
+                };
                 for rect in rects {
-                    rect.paint(
-                        bounds.origin,
-                        &terminal::TerminalBounds {
-                            cell_width,
-                            line_height: text_line_height,
-                            bounds,
-                        },
-                        window,
-                    );
+                    rect.paint(bounds.origin, &terminal_bounds, window);
                 }
-
                 for batch in batched_text_runs {
-                    batch.paint(
-                        bounds.origin,
-                        &terminal::TerminalBounds {
-                            cell_width,
-                            line_height: text_line_height,
-                            bounds,
-                        },
-                        window,
-                        cx,
-                    );
+                    batch.paint(bounds.origin, &terminal_bounds, window, cx);
                 }
             },
         )
-        // We must set the height explicitly for the editor block to size itself correctly
-        .h(height)
+        .h(content_height);
+
+        let output_settings = ReplSettings::get_global(cx);
+        let output_max_height = if output_settings.output_max_height_lines > 0 {
+            Some(text_line_height * output_settings.output_max_height_lines as f32)
+        } else {
+            None
+        };
+
+        // If no max height is configured or the content fits, render the canvas directly.
+        let content_overflows = output_max_height
+            .map(|max_h| content_height > max_h)
+            .unwrap_or(false);
+        if !content_overflows {
+            return canvas_element.into_any_element();
+        }
+
+        let max_height = output_max_height.expect("checked above");
+        if self.focus_handle.is_none() {
+            let handle = cx.focus_handle();
+            self._focus_subscription = Some(cx.on_focus_out(&handle, window, |this, _, _, cx| {
+                this.scroll_active = false;
+                cx.notify();
+            }));
+            self.focus_handle = Some(handle);
+        }
+        let focus_handle = self.focus_handle.clone().expect("initialized above");
+
+        let max_offset = self.scroll_handle.max_offset();
+        let offset = self.scroll_handle.offset();
+        let has_overflow = max_offset.y > text_line_height;
+        let not_at_top = has_overflow && offset.y < -px(1.);
+        let not_at_bottom = has_overflow && offset.y > -max_offset.y + px(1.);
+
+        let bg_color = cx.theme().colors().background;
+        let fade_height = text_line_height * 1.5;
+        let entity_id = cx.entity_id();
+        let scroll_active = self.scroll_active;
+
+        div()
+            .relative()
+            .child(
+                div()
+                    .id(("terminal-scroll", entity_id))
+                    .key_context("TerminalOutput")
+                    .track_focus(&focus_handle)
+                    .on_action(cx.listener(|this, _: &menu::Cancel, _, cx| {
+                        if this.scroll_active {
+                            this.scroll_active = false;
+                            cx.notify();
+                        } else {
+                            cx.propagate();
+                        }
+                    }))
+                    .max_h(max_height)
+                    .track_scroll(&self.scroll_handle)
+                    .when(scroll_active, |this| this.overflow_y_scroll())
+                    .when(!scroll_active, |this| this.overflow_y_hidden())
+                    .on_scroll_wheel(cx.listener(|this, _: &ScrollWheelEvent, _, cx| {
+                        if this.scroll_active {
+                            cx.stop_propagation();
+                        }
+                    }))
+                    .child(canvas_element),
+            )
+            .when(!scroll_active && has_overflow, |this| {
+                this.child(
+                    div()
+                        .id(("terminal-scroll-overlay", entity_id))
+                        .absolute()
+                        .top_0()
+                        .left_0()
+                        .size_full()
+                        .cursor_pointer()
+                        .bg(bg_color.opacity(0.6))
+                        .hover(|style| style.bg(bg_color.opacity(0.4)))
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(|this, _, window, cx| {
+                                this.scroll_active = true;
+                                if let Some(handle) = &this.focus_handle {
+                                    handle.focus(window, cx);
+                                }
+                                cx.notify();
+                            }),
+                        )
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .child(
+                            Label::new("Click to scroll")
+                                .size(LabelSize::Large)
+                                .color(Color::Default)
+                                .weight(gpui::FontWeight::BOLD),
+                        ),
+                )
+            })
+            .when(not_at_top, |this| {
+                this.child(
+                    div()
+                        .absolute()
+                        .top_0()
+                        .left_0()
+                        .w_full()
+                        .h(fade_height)
+                        .bg(linear_gradient(
+                            0.,
+                            linear_color_stop(bg_color.opacity(0.), 0.),
+                            linear_color_stop(bg_color, 1.),
+                        )),
+                )
+            })
+            .when(not_at_bottom, |this| {
+                this.child(
+                    div()
+                        .absolute()
+                        .bottom_0()
+                        .left_0()
+                        .w_full()
+                        .h(fade_height)
+                        .bg(linear_gradient(
+                            180.,
+                            linear_color_stop(bg_color.opacity(0.), 0.),
+                            linear_color_stop(bg_color, 1.),
+                        )),
+                )
+            })
+            .into_any_element()
     }
 }
 
