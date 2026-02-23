@@ -25,7 +25,7 @@ pub use tools::*;
 
 use acp_thread::{
     AcpThread, AgentModelSelector, AgentSessionInfo, AgentSessionList, AgentSessionListRequest,
-    AgentSessionListResponse, UserMessageId,
+    AgentSessionListResponse, TokenUsageRatio, UserMessageId,
 };
 use agent_client_protocol as acp;
 use anyhow::{Context as _, Result, anyhow};
@@ -1735,7 +1735,6 @@ enum SubagentPromptResult {
     Completed,
     Cancelled,
     ContextWindowWarning,
-    ContextWindowExceeded,
     Error(String),
 }
 
@@ -1769,7 +1768,7 @@ impl NativeSubagentHandle {
             acp_thread.send(vec![prompt.into()], cx)
         });
 
-        let (token_limit_tx, token_limit_rx) = oneshot::channel::<acp_thread::TokenUsageRatio>();
+        let (token_limit_tx, token_limit_rx) = oneshot::channel::<()>();
         let mut token_limit_tx = Some(token_limit_tx);
 
         let subscription = cx.subscribe(
@@ -1778,11 +1777,12 @@ impl NativeSubagentHandle {
                 if let Some(usage) = &event.0 {
                     let old_ratio = ratio_before_prompt
                         .clone()
-                        .unwrap_or(acp_thread::TokenUsageRatio::Normal);
+                        .unwrap_or(TokenUsageRatio::Normal);
                     let new_ratio = usage.ratio();
-                    if new_ratio > old_ratio && new_ratio >= acp_thread::TokenUsageRatio::Warning {
+                    if old_ratio == TokenUsageRatio::Normal && new_ratio == TokenUsageRatio::Warning
+                    {
                         if let Some(tx) = token_limit_tx.take() {
-                            tx.send(new_ratio).ok();
+                            tx.send(()).ok();
                         }
                     }
                 }
@@ -1795,7 +1795,7 @@ impl NativeSubagentHandle {
                     response = task.fuse() => match response {
                         Ok(Some(response)) =>{
                             match response.stop_reason {
-                                acp::StopReason::Cancelled=> SubagentPromptResult::Cancelled,
+                                acp::StopReason::Cancelled => SubagentPromptResult::Cancelled,
                                 acp::StopReason::MaxTokens => SubagentPromptResult::Error("The agent reached the maximum number of tokens.".into()),
                                 acp::StopReason::MaxTurnRequests => SubagentPromptResult::Error("The agent reached the maximum number of allowed requests between user turns. Try prompting again.".into()),
                                 acp::StopReason::Refusal => SubagentPromptResult::Error("The agent refused to process that prompt. Try again.".into()),
@@ -1806,12 +1806,7 @@ impl NativeSubagentHandle {
                         Ok(None) => SubagentPromptResult::Error("No response from the subagent. You can try messaging again.".into()),
                         Err(error) => SubagentPromptResult::Error(error.to_string()),
                     },
-                    ratio = token_limit_rx.fuse() => match ratio {
-                        Ok(acp_thread::TokenUsageRatio::Exceeded) => {
-                            SubagentPromptResult::ContextWindowExceeded
-                        }
-                        _ => SubagentPromptResult::ContextWindowWarning,
-                    },
+                    ratio = token_limit_rx.fuse() =>  SubagentPromptResult::ContextWindowWarning,
                 }
             })
             .shared();
@@ -1854,14 +1849,6 @@ impl SubagentHandle for NativeSubagentHandle {
                         "The subagent is nearing the end of its context window and has been \
                          stopped. You can prompt the thread again to have the agent wrap up \
                          or hand off its work."
-                    ))
-                }
-                SubagentPromptResult::ContextWindowExceeded => {
-                    thread.update(cx, |thread, cx| thread.cancel(cx)).await;
-                    Err(anyhow!(
-                        "The subagent has exceeded its context window and has been stopped. \
-                         It cannot be prompted again. Start a new subagent if more work is \
-                         needed."
                     ))
                 }
             };
