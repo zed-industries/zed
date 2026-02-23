@@ -407,23 +407,73 @@
         {{/if}}
         {{/if}}
 
-        <!-- Amplitude Analytics -->
-        <script>
-          (function() {
-            var amplitudeKey = '#amplitude_key#';
-            if (amplitudeKey && amplitudeKey.indexOf('#') === -1) {
-              var script = document.createElement('script');
-              script.src = 'https://cdn.amplitude.com/script/' + amplitudeKey + '.js';
-              script.onload = function() {
-                window.amplitude.init(amplitudeKey, {
-                  fetchRemoteConfig: true,
-                  autocapture: true
-                });
-              };
-              document.head.appendChild(script);
-            }
-          })();
-        </script>
-    </div>
+        <!-- c15t Consent Banner -->
+        <div id="c15t-banner">
+            <div>
+                <p id="c15t-title">We value your privacy</p>
+                <p id="c15t-description">
+                    Zed uses cookies to improve your browsing experience and
+                    analyze site traffic.
+                </p>
+            </div>
+            <div id="c15t-configure-section" style="display: none">
+                <div>
+                    <label for="c15t-toggle-necessary"
+                        >Strictly Necessary</label
+                    >
+                    <label class="c15t-switch">
+                        <input
+                            type="checkbox"
+                            id="c15t-toggle-necessary"
+                            checked
+                            disabled
+                        />
+                        <span class="c15t-slider"></span>
+                    </label>
+                </div>
+                <div>
+                    <label for="c15t-toggle-measurement">Analytics</label>
+                    <label class="c15t-switch">
+                        <input
+                            type="checkbox"
+                            id="c15t-toggle-measurement"
+                        />
+                        <span class="c15t-slider"></span>
+                    </label>
+                </div>
+            </div>
+            <div id="c15t-footer">
+                <button
+                    id="c15t-configure-btn"
+                    class="c15t-button icon"
+                    title="Configure"
+                >
+                    <svg
+                        xmlns="http://www.w3.org/2000/svg"
+                        width="14"
+                        height="14"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                    >
+                        <path d="M20 7h-9" />
+                        <path d="M14 17H5" />
+                        <circle cx="17" cy="17" r="3" />
+                        <circle cx="7" cy="7" r="3" />
+                    </svg>
+                </button>
+                <div>
+                    <button id="c15t-decline" class="c15t-button">
+                        Reject all
+                    </button>
+                    <button id="c15t-accept" class="c15t-button primary">
+                        Accept all
+                    </button>
+                </div>
+            </div>
+        </div>
     </body>
 </html>
