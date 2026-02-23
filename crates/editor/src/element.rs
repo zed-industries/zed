@@ -7835,7 +7835,7 @@ pub fn render_breadcrumb_text(
             return styled_element;
         }
 
-        StyledText::new(segment.text.replace('\n', "⏎"))
+        StyledText::new(segment.text.replace('\n', " "))
             .with_default_highlights(&text_style, segment.highlights.unwrap_or_default())
             .into_any()
     });
