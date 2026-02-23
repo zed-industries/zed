@@ -1730,19 +1730,20 @@ impl ThreadEnvironment for NativeThreadEnvironment {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
-enum SubagentInitialPromptResult {
+#[derive(Debug, Clone)]
+enum SubagentPromptResult {
     Completed,
     Cancelled,
     ContextWindowWarning,
     ContextWindowExceeded,
+    Error(String),
 }
 
 pub struct NativeSubagentHandle {
     session_id: acp::SessionId,
     parent_thread: WeakEntity<Thread>,
     subagent_thread: Entity<Thread>,
-    wait_for_prompt_to_complete: Shared<Task<SubagentInitialPromptResult>>,
+    wait_for_prompt_to_complete: Shared<Task<SubagentPromptResult>>,
     _subscription: Subscription,
 }
 
@@ -1791,22 +1792,26 @@ impl NativeSubagentHandle {
         let wait_for_prompt_to_complete = cx
             .background_spawn(async move {
                 futures::select! {
-                    response = task.fuse() => {
-                        let response = response.log_err().flatten();
-                        if response
-                            .is_some_and(|response| response.stop_reason == acp::StopReason::Cancelled)
-                        {
-                            SubagentInitialPromptResult::Cancelled
-                        } else {
-                            SubagentInitialPromptResult::Completed
+                    response = task.fuse() => match response {
+                        Ok(Some(response)) =>{
+                            match response.stop_reason {
+                                acp::StopReason::Cancelled=> SubagentPromptResult::Cancelled,
+                                acp::StopReason::MaxTokens => SubagentPromptResult::Error("The agent reached the maximum number of tokens.".into()),
+                                acp::StopReason::MaxTurnRequests => SubagentPromptResult::Error("The agent reached the maximum number of allowed requests between user turns. Try prompting again.".into()),
+                                acp::StopReason::Refusal => SubagentPromptResult::Error("The agent refused to process that prompt. Try again.".into()),
+                                acp::StopReason::EndTurn | _ => SubagentPromptResult::Completed,
+                            }
+
                         }
-                    }
+                        Ok(None) => SubagentPromptResult::Error("No response from the subagent. You can try messaging again.".into()),
+                        Err(error) => SubagentPromptResult::Error(error.to_string()),
+                    },
                     ratio = token_limit_rx.fuse() => match ratio {
                         Ok(acp_thread::TokenUsageRatio::Exceeded) => {
-                            SubagentInitialPromptResult::ContextWindowExceeded
+                            SubagentPromptResult::ContextWindowExceeded
                         }
-                        _ => SubagentInitialPromptResult::ContextWindowWarning,
-                    }
+                        _ => SubagentPromptResult::ContextWindowWarning,
+                    },
                 }
             })
             .shared();
@@ -1835,14 +1840,15 @@ impl SubagentHandle for NativeSubagentHandle {
 
         cx.spawn(async move |cx| {
             let result = match wait_for_prompt.await {
-                SubagentInitialPromptResult::Completed => thread.read_with(cx, |thread, _cx| {
+                SubagentPromptResult::Completed => thread.read_with(cx, |thread, _cx| {
                     thread
                         .last_message()
                         .map(|m| m.to_markdown())
                         .context("No response from subagent")
                 }),
-                SubagentInitialPromptResult::Cancelled => Err(anyhow!("User cancelled")),
-                SubagentInitialPromptResult::ContextWindowWarning => {
+                SubagentPromptResult::Cancelled => Err(anyhow!("User cancelled")),
+                SubagentPromptResult::Error(message) => Err(anyhow!("{message}")),
+                SubagentPromptResult::ContextWindowWarning => {
                     thread.update(cx, |thread, cx| thread.cancel(cx)).await;
                     Err(anyhow!(
                         "The subagent is nearing the end of its context window and has been \
@@ -1850,7 +1856,7 @@ impl SubagentHandle for NativeSubagentHandle {
                          or hand off its work."
                     ))
                 }
-                SubagentInitialPromptResult::ContextWindowExceeded => {
+                SubagentPromptResult::ContextWindowExceeded => {
                     thread.update(cx, |thread, cx| thread.cancel(cx)).await;
                     Err(anyhow!(
                         "The subagent has exceeded its context window and has been stopped. \
