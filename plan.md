@@ -2000,13 +2000,20 @@ The architecture is well-positioned for this: the `Scene` IR cleanly decouples r
 
 | Layer | Status |
 |---|---|
-| `gpui_web` crate scaffold | ✅ Exists (`src/lib.rs` is one line: `#![cfg(target_family = "wasm")]`) |
-| `gpui_platform` wasm branch | ⚠️ `todo!()` — compiles but panics |
-| `gpui_platform` → `gpui_web` dependency | ❌ Not wired |
+| `gpui_web` crate scaffold | ✅ Full Phase 0 scaffold with all platform trait stubs |
+| `gpui_platform` wasm branch | ✅ Wired to `gpui_web::WebPlatform::new()` |
+| `gpui_platform` → `gpui_web` dependency | ✅ `cfg(target_family = "wasm")` dep added |
 | `#[cfg(target_family = "wasm")]` guards in `gpui` | ✅ ~20 sites, all gating `http_client` |
 | `gpui_wgpu` renderer + WGSL shaders | ✅ Exists, uses standard WGSL (one extension to strip) |
-| `wasm-bindgen` / `web-sys` dependencies | ❌ Not present in `gpui_web` |
-| Web `Platform` implementation | ❌ Not started |
+| `wasm-bindgen` / `web-sys` dependencies | ✅ Added to `gpui_web` |
+| Web `Platform` stub implementation | ✅ All trait methods implemented (stubs/no-ops) |
+| `PlatformDispatcher` stub | ✅ Runs tasks inline synchronously |
+| `PlatformDisplay` stub | ✅ Hardcoded 1920×1080 |
+| `PlatformTextSystem` | ⚠️ Uses `NoopTextSystem` (needs cosmic-text) |
+| `PlatformWindow` | ❌ Not started (`open_window` bails with error) |
+| Console logging | ✅ `log::*` macros bridge to `web_sys::console` |
+| Build tooling | ✅ `script/build` + `web/index.html` + wasm-bindgen pipeline |
+| Example | ✅ `hello_web` compiles, loads in browser, reports errors to console |
 
 ---
 
@@ -2025,69 +2032,72 @@ Rationale:
 
 ## Implementation Phases
 
-### Phase 0: Build Infrastructure & Toolchain Setup
+### Phase 0: Build Infrastructure & Toolchain Setup ✅ COMPLETE
 
 **Goal:** Get `gpui_web` compiling to `wasm32-unknown-unknown` and loading in a browser.
 
-**Tasks:**
+**What was done:**
 
-1. **Wire `gpui_web` into the workspace:**
-   - Add dependencies to `zed/crates/gpui_web/Cargo.toml`:
+1. **Wired `gpui_web` into the workspace:**
+   - Added `gpui_web` to workspace dependencies in root `Cargo.toml`
+   - Added `gpui`, `anyhow`, `futures`, `log`, `uuid`, `wasm-bindgen`, `web-sys`, `console_error_panic_hook` as `cfg(target_family = "wasm")` dependencies in `gpui_web/Cargo.toml`
+   - Added `gpui_web` as `cfg(target_family = "wasm")` dependency in `gpui_platform/Cargo.toml`
+   - Replaced `todo!()` in `gpui_platform::current_platform` with `Rc::new(gpui_web::WebPlatform::new())`
 
-```/dev/null/Cargo.toml.example#L1-L18
-[dependencies]
-gpui.workspace = true
-gpui_wgpu.workspace = true
-wasm-bindgen = "0.2"
-wasm-bindgen-futures = "0.4"
-web-sys = { version = "0.3", features = [
-    "Window", "Document", "Element", "HtmlCanvasElement",
-    "Navigator", "Gpu", "GpuAdapter", "GpuDevice",
-    "KeyboardEvent", "MouseEvent", "WheelEvent",
-    "PointerEvent", "FocusEvent", "ResizeObserver",
-    "ResizeObserverEntry", "Clipboard", "ClipboardEvent",
-    "Performance", "DomRect",
-    "EventTarget", "AddEventListenerOptions",
-] }
-js-sys = "0.3"
-wgpu = { workspace = true, features = ["webgpu"] }
-log = { workspace = true }
+2. **Implemented all platform trait stubs:**
+   - `WebPlatform` — full `impl Platform` with no-ops/stubs for all methods
+   - `WebDispatcher` — `impl PlatformDispatcher` that runs tasks inline
+   - `WebDisplay` — `impl PlatformDisplay` with hardcoded 1920×1080
+   - `WebKeyboardLayout` — `impl PlatformKeyboardLayout` returning US layout
+   - Console logger — bridges `log::*` macros to `web_sys::console`
+
+3. **Created build harness:**
+   - `crates/gpui_web/script/build` — builds wasm + runs wasm-bindgen
+   - `crates/gpui_web/web/index.html` — bootstrap HTML page
+   - `crates/gpui_web/web/.gitignore` — excludes `pkg/` build artifacts
+
+4. **Created `hello_web` example:**
+   - `crates/gpui_web/examples/hello_web.rs` — creates `Application` with `WebPlatform`, attempts `open_window`, logs errors to browser console
+   - Uses `#[wasm_bindgen(start)]` for browser entry, `console_error_panic_hook` for panic visibility
+
+**Build verification:**
+- ✅ `cargo check -p gpui_web --target wasm32-unknown-unknown`
+- ✅ `cargo check -p gpui_platform --target wasm32-unknown-unknown`
+- ✅ `cargo build -p gpui_web --example hello_web --target wasm32-unknown-unknown` (produces ~30 MB wasm after wasm-bindgen)
+- ✅ Native builds (`cargo check -p gpui_platform`) unaffected
+
+**How to run:**
+```/dev/null/run.sh#L1-L4
+crates/gpui_web/script/build
+cd crates/gpui_web/web
+python3 -m http.server 8080
+# Open http://localhost:8080
 ```
 
-   - Add `cfg(target_family = "wasm")` dependency in `gpui_platform/Cargo.toml` pointing to `gpui_web`
-   - Update the `todo!()` in `gpui_platform::current_platform` to instantiate `gpui_web::WebPlatform`
-
-2. **Create build harness:**
-   - A `script/build-web` script that runs `cargo build -q --target wasm32-unknown-unknown -p gpui_web`
-   - A minimal `web/index.html` + `web/bootstrap.js` that loads the wasm module and creates a canvas
-   - Consider using `wasm-pack` or raw `wasm-bindgen` CLI
-
-3. **Create a minimal demo crate** (e.g., `crates/gpui_web_demo`) that instantiates GPUI with a simple `"Hello, Web!"` view — this serves as the integration test target throughout development.
-
-**Deliverable:** A `wasm32-unknown-unknown` binary that loads in the browser, even if it shows nothing yet.
+**Prerequisites:** `rustup target add wasm32-unknown-unknown` and `cargo install wasm-bindgen-cli --version 0.2.104` (must match lockfile version).
 
 ---
 
 ### Phase 1: `PlatformDispatcher` (Async Runtime)
 
-**Goal:** Get GPUI's async executor working in the browser.
+**Goal:** Replace the synchronous inline-run stubs in `WebDispatcher` with proper browser-based async scheduling.
 
-**Why first:** Everything else depends on the executor — window callbacks, frame scheduling, entity updates all need `dispatch_on_main_thread` and `dispatch_after`.
+**Current state:** `WebDispatcher` exists in `crates/gpui_web/src/dispatcher.rs` and compiles. All methods run tasks inline synchronously, which prevents yielding to the browser event loop and will cause issues with frame scheduling and delayed tasks.
 
-**Implementation: `WebDispatcher`**
+**What needs to change:**
 
-| Trait Method | Web Implementation |
-|---|---|
-| `is_main_thread()` | Always `true` (wasm is single-threaded by default) |
-| `dispatch(runnable, priority)` | For now, run on main thread via `queueMicrotask()` or `setTimeout(0)`. Later: Web Workers for background tasks |
-| `dispatch_on_main_thread(runnable, priority)` | `queueMicrotask()` for high priority, `setTimeout(fn, 0)` for normal priority |
-| `dispatch_after(duration, runnable)` | `setTimeout(fn, duration_ms)` |
-| `spawn_realtime(f)` | Same as `dispatch` (no real-time threads in wasm) |
-| `now()` | `Instant::now()` (works in wasm via `performance.now()`) or use `web_sys::window().performance().now()` |
+| Trait Method | Current (stub) | Target |
+|---|---|---|
+| `dispatch(runnable, priority)` | `runnable.run()` inline | `queueMicrotask()` for high priority, `setTimeout(fn, 0)` for normal |
+| `dispatch_on_main_thread(runnable, priority)` | `runnable.run()` inline | Same as `dispatch` (wasm is single-threaded) |
+| `dispatch_after(duration, runnable)` | `runnable.run()` inline (delay ignored) | `setTimeout(fn, duration_ms)` |
+| `spawn_realtime(f)` | `f()` inline | Same as `dispatch` (no real-time threads in wasm) |
 
 **Key design note:** wasm is fundamentally single-threaded (without SharedArrayBuffer). The dispatcher must be cooperative — all "background" tasks initially run on the main thread via microtask scheduling. Web Workers can be added later for true parallelism but are not needed for a first pass.
 
-**File:** `zed/crates/gpui_web/src/dispatcher.rs`
+**Dependencies needed:** `js-sys` for `setTimeout` / `queueMicrotask`, `wasm-bindgen` closures for passing Rust callbacks to JS timers.
+
+**File:** `zed/crates/gpui_web/src/dispatcher.rs` (modify existing)
 
 ---
 
@@ -2097,17 +2107,19 @@ log = { workspace = true }
 
 #### 2a. `WebDisplay`
 
-Minimal implementation wrapping the browser viewport:
+**Current state:** `WebDisplay` exists in `crates/gpui_web/src/display.rs` with hardcoded 1920×1080 bounds.
 
-| Trait Method | Web Implementation |
-|---|---|
-| `id()` | `DisplayId(0)` (single display) |
-| `uuid()` | Deterministic UUID from `navigator.userAgent` or hardcoded |
-| `bounds()` | `window.screen.width/height` via `web_sys` |
-| `visible_bounds()` | `window.innerWidth/innerHeight` |
-| `default_bounds()` | Same as `visible_bounds()` |
+**What needs to change:** Query actual browser viewport dimensions via `web-sys`:
 
-**File:** `zed/crates/gpui_web/src/display.rs`
+| Trait Method | Current (stub) | Target |
+|---|---|---|
+| `id()` | `DisplayId::new(1)` | No change needed |
+| `uuid()` | Random UUID | Deterministic UUID from `navigator.userAgent` or stable value |
+| `bounds()` | Hardcoded 1920×1080 | `window.screen.width/height` via `web_sys` |
+| `visible_bounds()` | Default (delegates to `bounds()`) | `window.innerWidth/innerHeight` |
+| `default_bounds()` | Default (centered in bounds) | No change needed |
+
+**File:** `zed/crates/gpui_web/src/display.rs` (modify existing)
 
 #### 2b. `WebWindow`
 
@@ -2199,37 +2211,28 @@ The `CosmicTextSystem` from `gpui_linux` should be **extracted into a shared cra
 
 ---
 
-### Phase 5: `Platform` Trait (Tying It All Together)
+### Phase 5: `Platform` Trait (Flesh Out Stubs)
 
-**Goal:** Implement the root `WebPlatform` struct.
+**Goal:** Replace stub implementations in `WebPlatform` with real browser-backed behavior.
 
-| Category | Methods | Web Implementation |
+**Current state:** `WebPlatform` exists in `crates/gpui_web/src/platform.rs` with all `Platform` trait methods implemented as stubs/no-ops. The struct is fully wired into `gpui_platform::current_platform()`.
+
+**What needs to change** (after `WebWindow` exists from Phase 2b):
+
+| Category | Current (stub) | Target |
 |---|---|---|
-| **Lifecycle** | `run(on_finish_launching)` | Call `on_finish_launching()` immediately, then start `requestAnimationFrame` loop |
-| **Quit** | `quit()`, `restart()` | `window.close()` or no-op |
-| **Activation** | `activate()`, `hide()`, etc. | No-op (not applicable in browser) |
-| **Displays** | `displays()`, `primary_display()` | Return single `WebDisplay` |
-| **Window** | `open_window()`, `active_window()` | Create `WebWindow` with canvas |
-| **Clipboard** | `read_from_clipboard()`, `write_to_clipboard()` | `navigator.clipboard` API (async, needs permissions) |
-| **File dialogs** | `prompt_for_paths()`, etc. | `<input type="file">` or no-op initially |
-| **URL** | `open_url()` | `window.open(url)` |
-| **Menus** | `set_menus()`, etc. | No-op (no native menus in browser) |
-| **Cursor** | `set_cursor_style()` | Set `canvas.style.cursor` CSS property |
-| **Credentials** | `write_credentials()`, etc. | `localStorage` or no-op |
-| **Keyboard** | `keyboard_layout()`, `keyboard_mapper()` | `DummyKeyboardMapper` (already exists), basic layout detection |
-| **System** | `app_path()`, `compositor_name()` | Return sensible defaults |
-| **Scrollbars** | `should_auto_hide_scrollbars()` | `true` (web convention) |
-| **Thermal** | `thermal_state()` | Always `Nominal` |
+| **`open_window()`** | `bail!("not yet implemented")` | Create `WebWindow` with canvas + wgpu |
+| **`open_url()`** | `log::info!` | `window.open(url)` via `web_sys` |
+| **`set_cursor_style()`** | `log::debug!` | Set `canvas.style.cursor` CSS property |
+| **Clipboard** | In-memory `RefCell` | `navigator.clipboard` API (async, needs permissions). Keep in-memory cache for synchronous `read_from_clipboard()`, update via `paste` events. |
+| **`prompt_for_paths()`** | Returns error | `<input type="file">` element |
+| **Credentials** | Returns error / `Ok(None)` | `localStorage` |
 
-**The `run()` method is critical.** Unlike native platforms where `run()` blocks forever in an event loop, in the browser we **cannot block the main thread**. The implementation should:
+Most other methods (menus, activation, hide, thermal state, etc.) will remain no-ops permanently since they don't apply to browsers.
 
-1. Call `on_finish_launching()` synchronously
-2. Set up a `requestAnimationFrame` loop that drives frame callbacks
-3. Return (the browser's event loop takes over)
+**The `run()` method** already calls `on_finish_launching()` synchronously and returns — this is correct for the browser since the browser's own event loop takes over. No changes needed.
 
-This may require adjusting how `Application::run()` works for wasm — the `platform.run()` call can't block. The existing code already calls `platform.run(callback)` where the callback is invoked when ready; the web platform would call it immediately and then the browser event loop drives everything via RAF and DOM events.
-
-**File:** `zed/crates/gpui_web/src/platform.rs`
+**File:** `zed/crates/gpui_web/src/platform.rs` (modify existing)
 
 ---
 
@@ -2237,42 +2240,50 @@ This may require adjusting how `Application::run()` works for wasm — the `plat
 
 **Goal:** Basic keyboard layout support.
 
-For initial implementation, use the `DummyKeyboardMapper` that already exists in `gpui`. Keyboard layout detection can use the `navigator.keyboard` API (Keyboard Map API) where available, with a passthrough fallback.
+**Current state:** `WebKeyboardLayout` exists in `crates/gpui_web/src/keyboard.rs` returning a hardcoded US layout. `WebPlatform` already uses `DummyKeyboardMapper`.
 
-**Files:** `zed/crates/gpui_web/src/keyboard.rs`
+**What needs to change:** Keyboard layout detection can use the `navigator.keyboard` API (Keyboard Map API) where available. For the initial implementation the current stubs are sufficient — this is the lowest priority phase.
+
+**File:** `zed/crates/gpui_web/src/keyboard.rs` (modify existing)
 
 ---
 
 ## File Structure
 
-```/dev/null/tree.txt#L1-L16
+```/dev/null/tree.txt#L1-L22
 zed/crates/gpui_web/
 ├── Cargo.toml
+├── script/
+│   └── build              # Build + wasm-bindgen script
 ├── src/
-│   ├── lib.rs              # Module declarations, WebPlatform re-export
-│   ├── platform.rs         # WebPlatform: impl Platform
-│   ├── window.rs           # WebWindow: impl PlatformWindow
-│   ├── display.rs          # WebDisplay: impl PlatformDisplay
-│   ├── dispatcher.rs       # WebDispatcher: impl PlatformDispatcher
-│   ├── text_system.rs      # Text system (wrapping cosmic-text or standalone)
-│   ├── events.rs           # DOM event → PlatformInput translation
-│   └── keyboard.rs         # PlatformKeyboardLayout + PlatformKeyboardMapper
-zed/web/
-├── index.html              # Bootstrap HTML
-├── bootstrap.js            # WASM loader + canvas setup
-└── style.css               # Minimal canvas styling
+│   ├── gpui_web.rs        # ✅ Crate root, module declarations + re-exports
+│   ├── platform.rs        # ✅ WebPlatform: impl Platform (stubs)
+│   ├── dispatcher.rs      # ✅ WebDispatcher: impl PlatformDispatcher (inline stubs)
+│   ├── display.rs         # ✅ WebDisplay: impl PlatformDisplay (hardcoded)
+│   ├── keyboard.rs        # ✅ WebKeyboardLayout: impl PlatformKeyboardLayout (US stub)
+│   ├── logging.rs         # ✅ Console logger (log::* → web_sys::console)
+│   ├── window.rs          # ❌ TODO: WebWindow: impl PlatformWindow
+│   ├── text_system.rs     # ❌ TODO: cosmic-text based text system
+│   └── events.rs          # ❌ TODO: DOM event → PlatformInput translation
+├── examples/
+│   └── hello_web.rs       # ✅ Minimal demo app
+└── web/
+    ├── index.html         # ✅ Bootstrap HTML page
+    ├── .gitignore         # ✅ Excludes pkg/ build artifacts
+    └── pkg/               # Generated by wasm-bindgen (gitignored)
 ```
 
 ---
 
 ## Modifications to Existing Crates
 
-| Crate | Change |
-|---|---|
-| **`gpui_platform`** | Add `gpui_web` as `cfg(target_family = "wasm")` dep; wire up `current_platform()` |
-| **`gpui_wgpu`** | Add `cfg` for `BROWSER_WEBGPU` backend in `WgpuContext::new()`; handle canvas surface creation; conditionally strip `dual_source_blending` from shaders |
-| **`gpui`** | Possibly adjust `Application::run()` for non-blocking web event loop (or the web platform handles this internally) |
-| **`gpui_linux`** (optional) | Extract `CosmicTextSystem` into a shared crate |
+| Crate | Change | Status |
+|---|---|---|
+| **`gpui_platform`** | Add `gpui_web` as `cfg(target_family = "wasm")` dep; wire up `current_platform()` | ✅ Done |
+| **Root `Cargo.toml`** | Add `gpui_web` and `wasm-bindgen` to workspace dependencies | ✅ Done |
+| **`gpui_wgpu`** | Add `cfg` for `BROWSER_WEBGPU` backend in `WgpuContext::new()`; handle canvas surface creation; conditionally strip `dual_source_blending` from shaders | ❌ Phase 2b |
+| **`gpui`** | Possibly adjust `Application::run()` for non-blocking web event loop (or the web platform handles this internally) | ⚠️ May not be needed — `run()` already returns after calling callback |
+| **`gpui_linux`** (optional) | Extract `CosmicTextSystem` into a shared crate | ❌ Phase 4 |
 
 ---
 
@@ -2293,16 +2304,18 @@ zed/web/
 
 ## Suggested Implementation Order
 
-1. **Phase 0** — Build infra, get wasm compiling *(~1 week)*
-2. **Phase 1** — `WebDispatcher` *(~2-3 days)*
-3. **Phase 2a** — `WebDisplay` *(~1 day)*
+1. ~~**Phase 0** — Build infra, get wasm compiling~~ ✅ COMPLETE
+2. **Phase 1** — Proper `WebDispatcher` with `setTimeout`/`queueMicrotask` *(~2-3 days)*
+3. **Phase 2a** — Real `WebDisplay` with browser viewport dimensions *(~1 day)*
 4. **Phase 4** — `PlatformTextSystem` with cosmic-text *(~3-5 days)* — can parallel with Phase 2b
 5. **Phase 2b** — `WebWindow` + wgpu WebGPU integration *(~1-2 weeks)* — this is the largest chunk
-6. **Phase 5** — `WebPlatform` root trait *(~3-5 days)*
+6. **Phase 5** — Flesh out `WebPlatform` stubs (clipboard, cursor, open_url) *(~2-3 days)*
 7. **Phase 3** — Input events *(~1 week)*
 8. **Phase 6** — Keyboard layout *(~1-2 days)*
 
-**First milestone:** A browser window showing a GPUI view with styled `div`s and text, responding to mouse clicks. (~4-5 weeks)
+**Next up:** Phase 1 (async dispatcher) and Phase 2b (WebWindow + wgpu) can start in parallel. Phase 2b is the critical path to first pixels on screen.
+
+**First milestone:** A browser window showing a GPUI view with styled `div`s and text, responding to mouse clicks. (~3-4 weeks from now)
 
 **Second milestone:** Full keyboard input, scrolling, and interactive UI. (~2-3 weeks additional)
 

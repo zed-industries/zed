@@ -3,8 +3,24 @@ name = "gpui_web"
 version = "0.1.0"
 publish.workspace = true
 edition.workspace = true
-
-[dependencies]
+license = "Apache-2.0"
 
 [lints]
 workspace = true
+
+[lib]
+path = "src/gpui_web.rs"
+
+[target.'cfg(target_family = "wasm")'.dependencies]
+gpui.workspace = true
+anyhow.workspace = true
+futures.workspace = true
+log.workspace = true
+uuid.workspace = true
+wasm-bindgen.workspace = true
+console_error_panic_hook = "0.1.7"
+web-sys = { version = "0.3", features = ["console"] }
+
+[[example]]
+name = "hello_web"
+path = "examples/hello_web.rs"
