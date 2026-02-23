@@ -3404,7 +3404,7 @@ impl AcpThreadView {
         entry_ix: usize,
         total_entries: usize,
         entry: &AgentThreadEntry,
-        window: &mut Window,
+        window: &Window,
         cx: &Context<Self>,
     ) -> AnyElement {
         let is_indented = entry.is_indented();
@@ -4768,7 +4768,7 @@ impl AcpThreadView {
             .when_some(confirmation_options, |this, options| {
                 let is_first = self.is_first_tool_call(active_session_id, &tool_call.id, cx);
                 this.child(self.render_permission_buttons(
-                    active_session_id.clone(),
+                    self.id.clone(),
                     is_first,
                     options,
                     entry_ix,
@@ -4986,7 +4986,7 @@ impl AcpThreadView {
                         )
                     })
                     .child(self.render_permission_buttons(
-                        active_session_id.clone(),
+                        self.id.clone(),
                         self.is_first_tool_call(active_session_id, &tool_call.id, cx),
                         options,
                         entry_ix,
@@ -6061,8 +6061,6 @@ impl AcpThreadView {
         window: &Window,
         cx: &Context<Self>,
     ) -> Div {
-        let tool_call_status = &tool_call.status;
-
         let subagent_thread_view = subagent_session_id.and_then(|id| {
             self.server_view
                 .upgrade()
@@ -6075,7 +6073,7 @@ impl AcpThreadView {
             entry_ix,
             0,
             subagent_thread_view,
-            tool_call_status,
+            tool_call,
             focus_handle,
             window,
             cx,
@@ -6090,7 +6088,7 @@ impl AcpThreadView {
         entry_ix: usize,
         context_ix: usize,
         thread_view: Option<&Entity<AcpThreadView>>,
-        tool_call_status: &ToolCallStatus,
+        tool_call: &ToolCall,
         focus_handle: &FocusHandle,
         window: &Window,
         cx: &Context<Self>,
@@ -6115,11 +6113,11 @@ impl AcpThreadView {
         let diff_stats = DiffStats::all_files(&changed_buffers, cx);
 
         let is_running = matches!(
-            tool_call_status,
+            tool_call.status,
             ToolCallStatus::Pending | ToolCallStatus::InProgress
         );
         let is_canceled_or_failed = matches!(
-            tool_call_status,
+            tool_call.status,
             ToolCallStatus::Canceled | ToolCallStatus::Failed | ToolCallStatus::Rejected
         );
 
@@ -6154,18 +6152,9 @@ impl AcpThreadView {
                 .into_any_element()
         });
 
-        let has_expandable_content = thread.as_ref().map_or(false, |thread| {
-            thread.read(cx).entries().iter().rev().any(|entry| {
-                if let AgentThreadEntry::AssistantMessage(msg) = entry {
-                    msg.chunks.iter().any(|chunk| match chunk {
-                        AssistantMessageChunk::Message { block } => block.markdown().is_some(),
-                        AssistantMessageChunk::Thought { block } => block.markdown().is_some(),
-                    })
-                } else {
-                    false
-                }
-            })
-        });
+        let has_expandable_content = thread
+            .as_ref()
+            .map_or(false, |thread| !thread.read(cx).entries().is_empty());
 
         v_flex()
             .w_full()
@@ -6334,7 +6323,13 @@ impl AcpThreadView {
                 } else {
                     this.when(is_expanded, |this| {
                         this.child(self.render_subagent_expanded_content(
-                            entry_ix, context_ix, thread, window, cx,
+                            entry_ix,
+                            context_ix,
+                            thread_view,
+                            is_running,
+                            tool_call,
+                            window,
+                            cx,
                         ))
                     })
                 }
@@ -6344,69 +6339,76 @@ impl AcpThreadView {
 
     fn render_subagent_expanded_content(
         &self,
-        _entry_ix: usize,
-        _context_ix: usize,
-        thread: &Entity<AcpThread>,
+        entry_ix: usize,
+        context_ix: usize,
+        thread_view: &Entity<AcpThreadView>,
+        is_running: bool,
+        tool_call: &ToolCall,
         window: &Window,
         cx: &Context<Self>,
     ) -> impl IntoElement {
-        let thread_read = thread.read(cx);
-        let session_id = thread_read.session_id().clone();
-        let entries = thread_read.entries();
+        const MAX_PREVIEW_ENTRIES: usize = 8;
 
-        // Find the most recent agent message with any content (message or thought)
-        let last_assistant_markdown = entries.iter().rev().find_map(|entry| {
-            if let AgentThreadEntry::AssistantMessage(msg) = entry {
-                msg.chunks.iter().find_map(|chunk| match chunk {
-                    AssistantMessageChunk::Message { block } => block.markdown().cloned(),
-                    AssistantMessageChunk::Thought { block } => block.markdown().cloned(),
+        let subagent_view = thread_view.read(cx);
+        let session_id = subagent_view.thread.read(cx).session_id().clone();
+        let entries = subagent_view.thread.read(cx).entries();
+        let total_entries = entries.len();
+        let start_ix = total_entries.saturating_sub(MAX_PREVIEW_ENTRIES);
+
+        let content = if is_running {
+            let scroll_handle = self
+                .subagent_scroll_handles
+                .borrow_mut()
+                .entry(session_id.clone())
+                .or_default()
+                .clone();
+            scroll_handle.scroll_to_bottom();
+
+            let rendered_entries: Vec<AnyElement> = entries[start_ix..]
+                .iter()
+                .enumerate()
+                .map(|(i, entry)| {
+                    let actual_ix = start_ix + i;
+                    subagent_view.render_entry(actual_ix, total_entries + 1, entry, window, cx)
                 })
-            } else {
-                None
-            }
-        });
+                .collect();
+            div()
+                .id(format!("subagent-content-{}", session_id))
+                .size_full()
+                .track_scroll(&scroll_handle)
+                .pb_1()
+                .children(rendered_entries)
+        } else {
+            div()
+                .id(format!("subagent-content-{}", session_id))
+                .child("output")
+        };
 
-        let scroll_handle = self
-            .subagent_scroll_handles
-            .borrow_mut()
-            .entry(session_id.clone())
-            .or_default()
-            .clone();
-
-        scroll_handle.scroll_to_bottom();
         let editor_bg = cx.theme().colors().editor_background;
 
-        let gradient_overlay = {
-            div().absolute().inset_0().bg(linear_gradient(
-                180.,
-                linear_color_stop(editor_bg, 0.),
-                linear_color_stop(editor_bg.opacity(0.), 0.15),
-            ))
-        };
+        let gradient_overlay = div().absolute().inset_0().bg(linear_gradient(
+            180.,
+            linear_color_stop(editor_bg, 0.),
+            linear_color_stop(editor_bg.opacity(0.), 0.15),
+        ));
+
+        let interaction_blocker = div()
+            .absolute()
+            .inset_0()
+            .size_full()
+            .block_mouse_except_scroll();
 
         div()
             .relative()
             .w_full()
-            .max_h_56()
-            .p_2p5()
-            .text_ui(cx)
+            .h_56()
             .border_t_1()
             .border_color(self.tool_card_border_color(cx))
             .bg(editor_bg.opacity(0.4))
             .overflow_hidden()
-            .child(
-                div()
-                    .id(format!("subagent-content-{}", session_id))
-                    .size_full()
-                    .track_scroll(&scroll_handle)
-                    .when_some(last_assistant_markdown, |this, markdown| {
-                        this.child(self.render_markdown(
-                            markdown,
-                            MarkdownStyle::themed(MarkdownFont::Agent, window, cx),
-                        ))
-                    }),
-            )
+            .child(content)
             .child(gradient_overlay)
+            .child(interaction_blocker)
     }
 
     fn render_rules_item(&self, cx: &Context<Self>) -> Option<AnyElement> {
