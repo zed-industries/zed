@@ -10,7 +10,7 @@ use crate::tasks::workflows::{
     steps::{FluentBuilder, NamedJob},
 };
 
-use super::{runners, steps, steps::named, vars};
+use super::{runners, steps, steps::named};
 use gh_workflow::*;
 
 /// Generates the release_nightly.yml workflow
@@ -103,29 +103,28 @@ fn update_nightly_tag_job(bundle: &ReleaseBundleJobs) -> NamedJob {
         "#})
     }
 
+    fn upload_to_github_release() -> Step<Run> {
+        named::bash(indoc::indoc! {r#"
+            # Upload all release artifacts to GitHub Releases
+            for file in ./release-artifacts/*; do
+              if [ -f "$file" ]; then
+                echo "Uploading $file to GitHub Release..."
+                gh release upload nightly "$file" --clobber || true
+              fi
+            done
+        "#})
+    }
+
     NamedJob {
         name: "update_nightly_tag".to_owned(),
         job: steps::release_job(&bundle.jobs())
             .runs_on(runners::LINUX_MEDIUM)
             .timeout_minutes(180u32)
-            .cond(Expression::new(
-                "${{ secrets.DIGITALOCEAN_SPACES_ACCESS_KEY != '' }}",
-            ))
             .add_step(steps::checkout_repo().with_full_history())
             .add_step(download_workflow_artifacts())
             .add_step(steps::script("ls -lR ./artifacts"))
             .add_step(prep_release_artifacts())
-            .add_step(
-                steps::script("./script/upload-nightly")
-                    .add_env((
-                        "DIGITALOCEAN_SPACES_ACCESS_KEY",
-                        vars::DIGITALOCEAN_SPACES_ACCESS_KEY,
-                    ))
-                    .add_env((
-                        "DIGITALOCEAN_SPACES_SECRET_KEY",
-                        vars::DIGITALOCEAN_SPACES_SECRET_KEY,
-                    )),
-            )
+            .add_step(upload_to_github_release())
             .add_step(update_nightly_tag())
             .add_step(create_sentry_release()),
     }

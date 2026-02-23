@@ -486,7 +486,6 @@ jobs:
     - bundle_mac_x86_64
     - bundle_windows_aarch64
     - bundle_windows_x86_64
-    if: ${{ secrets.DIGITALOCEAN_SPACES_ACCESS_KEY != '' }}
     runs-on: ubuntu-latest
     steps:
     - name: steps::checkout_repo
@@ -516,11 +515,15 @@ jobs:
         mv ./artifacts/zed-remote-server-linux-x86_64.gz/zed-remote-server-linux-x86_64.gz release-artifacts/zed-remote-server-linux-x86_64.gz
         mv ./artifacts/zed-remote-server-windows-aarch64.zip/zed-remote-server-windows-aarch64.zip release-artifacts/zed-remote-server-windows-aarch64.zip
         mv ./artifacts/zed-remote-server-windows-x86_64.zip/zed-remote-server-windows-x86_64.zip release-artifacts/zed-remote-server-windows-x86_64.zip
-    - name: ./script/upload-nightly
-      run: ./script/upload-nightly
-      env:
-        DIGITALOCEAN_SPACES_ACCESS_KEY: ${{ secrets.DIGITALOCEAN_SPACES_ACCESS_KEY }}
-        DIGITALOCEAN_SPACES_SECRET_KEY: ${{ secrets.DIGITALOCEAN_SPACES_SECRET_KEY }}
+    - name: release_nightly::update_nightly_tag_job::upload_to_github_release
+      run: |
+        # Upload all release artifacts to GitHub Releases
+        for file in ./release-artifacts/*; do
+          if [ -f "$file" ]; then
+            echo "Uploading $file to GitHub Release..."
+            gh release upload nightly "$file" --clobber || true
+          fi
+        done
     - name: release_nightly::update_nightly_tag_job::update_nightly_tag
       run: |
         if [ "$(git rev-parse nightly)" = "$(git rev-parse HEAD)" ]; then
