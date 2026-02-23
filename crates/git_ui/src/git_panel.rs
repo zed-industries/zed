@@ -5739,7 +5739,13 @@ impl Panel for GitPanel {
 
     fn icon_label(&self, _: &Window, _: &App) -> Option<String> {
         let total = self.new_count + self.changes_count;
-        (total > 0).then(|| total.to_string())
+        (total > 0).then(|| {
+            if total > 99 {
+                "99+".to_string()
+            } else {
+                total.to_string()
+            }
+        })
     }
 
     fn toggle_action(&self) -> Box<dyn Action> {

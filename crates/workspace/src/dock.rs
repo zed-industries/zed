@@ -1010,6 +1010,7 @@ impl Render for PanelButtons {
                                             .child(
                                                 Label::new(label)
                                                     .size(LabelSize::XSmall)
+                                                    .line_height_style(LineHeightStyle::UiLabel)
                                                     .color(Color::Default),
                                             ),
                                     )
