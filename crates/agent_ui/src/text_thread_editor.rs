@@ -167,15 +167,6 @@ pub trait AgentPanelDelegate {
         window: &mut Window,
         cx: &mut Context<Workspace>,
     );
-
-    fn new_thread_with_content(
-        &self,
-        workspace: &mut Workspace,
-        blocks: Vec<agent_client_protocol::ContentBlock>,
-        auto_submit: bool,
-        window: &mut Window,
-        cx: &mut Context<Workspace>,
-    );
 }
 
 impl dyn AgentPanelDelegate {
@@ -1518,9 +1509,16 @@ impl TextThreadEditor {
                     .selections
                     .all_adjusted(&editor.display_snapshot(cx))
                     .into_iter()
-                    .filter_map(|s| {
-                        (!s.is_empty())
-                            .then(|| snapshot.anchor_after(s.start)..snapshot.anchor_before(s.end))
+                    .map(|s| {
+                        let (start, end) = if s.is_empty() {
+                            let row = multi_buffer::MultiBufferRow(s.start.row);
+                            let line_start = text::Point::new(s.start.row, 0);
+                            let line_end = text::Point::new(s.start.row, snapshot.line_len(row));
+                            (line_start, line_end)
+                        } else {
+                            (s.start, s.end)
+                        };
+                        snapshot.anchor_after(start)..snapshot.anchor_before(end)
                     })
                     .collect::<Vec<_>>()
             });

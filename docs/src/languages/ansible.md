@@ -76,7 +76,7 @@ If your inventory file is in the YAML format, you can either:
 
 By default, the following default config is passed to the Ansible language server. It conveniently mirrors the defaults set by [nvim-lspconfig](https://github.com/neovim/nvim-lspconfig/blob/03bc581e05e81d33808b42b2d7e76d70adb3b595/lua/lspconfig/configs/ansiblels.lua) for the Ansible language server:
 
-```json [settings]
+```json
 {
   "ansible": {
     "ansible": {

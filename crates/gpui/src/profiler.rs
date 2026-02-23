@@ -30,7 +30,8 @@ pub struct ThreadTaskTimings {
 }
 
 impl ThreadTaskTimings {
-    pub(crate) fn convert(timings: &[GlobalThreadTimings]) -> Vec<Self> {
+    /// Convert global thread timings into their structured format.
+    pub fn convert(timings: &[GlobalThreadTimings]) -> Vec<Self> {
         timings
             .iter()
             .filter_map(|t| match t.timings.upgrade() {
@@ -245,19 +246,24 @@ impl ProfilingCollector {
 // Allow 20mb of task timing entries
 const MAX_TASK_TIMINGS: usize = (20 * 1024 * 1024) / core::mem::size_of::<TaskTiming>();
 
-pub(crate) type TaskTimings = circular_buffer::CircularBuffer<MAX_TASK_TIMINGS, TaskTiming>;
-pub(crate) type GuardedTaskTimings = spin::Mutex<ThreadTimings>;
+#[doc(hidden)]
+pub type TaskTimings = circular_buffer::CircularBuffer<MAX_TASK_TIMINGS, TaskTiming>;
+#[doc(hidden)]
+pub type GuardedTaskTimings = spin::Mutex<ThreadTimings>;
 
-pub(crate) struct GlobalThreadTimings {
+#[doc(hidden)]
+pub struct GlobalThreadTimings {
     pub thread_id: ThreadId,
     pub timings: std::sync::Weak<GuardedTaskTimings>,
 }
 
-pub(crate) static GLOBAL_THREAD_TIMINGS: spin::Mutex<Vec<GlobalThreadTimings>> =
+#[doc(hidden)]
+pub static GLOBAL_THREAD_TIMINGS: spin::Mutex<Vec<GlobalThreadTimings>> =
     spin::Mutex::new(Vec::new());
 
 thread_local! {
-    pub(crate) static THREAD_TIMINGS: LazyCell<Arc<GuardedTaskTimings>> = LazyCell::new(|| {
+    #[doc(hidden)]
+    pub static THREAD_TIMINGS: LazyCell<Arc<GuardedTaskTimings>> = LazyCell::new(|| {
         let current_thread = std::thread::current();
         let thread_name = current_thread.name();
         let thread_id = current_thread.id();
@@ -277,7 +283,8 @@ thread_local! {
     });
 }
 
-pub(crate) struct ThreadTimings {
+#[doc(hidden)]
+pub struct ThreadTimings {
     pub thread_name: Option<String>,
     pub thread_id: ThreadId,
     pub timings: Box<TaskTimings>,
@@ -285,7 +292,7 @@ pub(crate) struct ThreadTimings {
 }
 
 impl ThreadTimings {
-    pub(crate) fn new(thread_name: Option<String>, thread_id: ThreadId) -> Self {
+    pub fn new(thread_name: Option<String>, thread_id: ThreadId) -> Self {
         ThreadTimings {
             thread_name,
             thread_id,
@@ -310,8 +317,9 @@ impl Drop for ThreadTimings {
     }
 }
 
+#[doc(hidden)]
 #[allow(dead_code)] // Used by Linux and Windows dispatchers, not macOS
-pub(crate) fn add_task_timing(timing: TaskTiming) {
+pub fn add_task_timing(timing: TaskTiming) {
     THREAD_TIMINGS.with(|timings| {
         let mut timings = timings.lock();
 

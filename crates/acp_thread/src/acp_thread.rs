@@ -400,7 +400,7 @@ impl ToolCall {
     }
 
     pub fn is_subagent(&self) -> bool {
-        self.tool_name.as_ref().is_some_and(|s| s == "subagent")
+        self.tool_name.as_ref().is_some_and(|s| s == "spawn_agent")
             || self.subagent_session_id.is_some()
     }
 
@@ -2334,11 +2334,7 @@ impl AcpThread {
                     text_diff(old_text.as_str(), &content)
                         .into_iter()
                         .map(|(range, replacement)| {
-                            (
-                                snapshot.anchor_after(range.start)
-                                    ..snapshot.anchor_before(range.end),
-                                replacement,
-                            )
+                            (snapshot.anchor_range_between(range), replacement)
                         })
                         .collect::<Vec<_>>()
                 })

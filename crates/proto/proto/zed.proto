@@ -472,7 +472,11 @@ message Envelope {
         GetFoldingRangesResponse get_folding_ranges_response = 422;
 
         GetRemoteProfilingData get_remote_profiling_data = 423;
-        GetRemoteProfilingDataResponse get_remote_profiling_data_response = 424; // current max
+        GetRemoteProfilingDataResponse get_remote_profiling_data_response = 424;
+        
+        SpawnKernel spawn_kernel = 426;
+        SpawnKernelResponse spawn_kernel_response = 427;
+        KillKernel kill_kernel = 428; // current max
     }
 
     reserved 87 to 88;
@@ -546,3 +550,21 @@ message FlushBufferedMessages {}
 message FlushBufferedMessagesResponse {}
 
 message RemoteStarted {}
+
+message SpawnKernel {
+    string kernel_name = 1;
+    string working_directory = 2;
+    uint64 project_id = 3;
+    string command = 4;
+    repeated string args = 5;
+}
+
+message SpawnKernelResponse {
+    string kernel_id = 1;
+    string connection_file = 2;
+}
+
+message KillKernel {
+    string kernel_id = 1;
+    uint64 project_id = 2;
+}
