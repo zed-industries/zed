@@ -3,18 +3,16 @@ use feature_flags::{FeatureFlag, FeatureFlagAppExt as _};
 use git::{
     BuildCommitPermalinkParams, GitHostingProviderRegistry, GitRemote, Oid, ParsedGitRemote,
     parse_git_remote_url,
-    repository::{
-        CommitDiff, CommitFile, CommitFileStatus, InitialGraphCommitData, LogOrder, LogSource,
-        RepoPath,
-    },
+    repository::{CommitDiff, CommitFile, InitialGraphCommitData, LogOrder, LogSource, RepoPath},
+    status::{FileStatus, StatusCode, TrackedStatus},
 };
-use git_ui::{commit_tooltip::CommitAvatar, commit_view::CommitView};
+use git_ui::{commit_tooltip::CommitAvatar, commit_view::CommitView, git_status_icon};
 use gpui::{
-    AnyElement, App, Bounds, ClickEvent, ClipboardItem, Context, Corner, DefiniteLength,
-    DragMoveEvent, ElementId, Empty, Entity, EventEmitter, FocusHandle, Focusable, FontWeight,
-    Hsla, InteractiveElement, ParentElement, PathBuilder, Pixels, Point, Render, ScrollStrategy,
-    ScrollWheelEvent, SharedString, Styled, Subscription, Task, WeakEntity, Window, actions,
-    anchored, deferred, point, px, uniform_list,
+    AnyElement, App, Bounds, ClickEvent, ClipboardItem, Corner, DefiniteLength, DragMoveEvent,
+    ElementId, Empty, Entity, EventEmitter, FocusHandle, Focusable, Hsla, PathBuilder, Pixels,
+    Point, ScrollStrategy, ScrollWheelEvent, SharedString, Subscription, Task,
+    UniformListScrollHandle, WeakEntity, Window, actions, anchored, deferred, point, prelude::*,
+    px, uniform_list,
 };
 use menu::{Cancel, SelectNext, SelectPrevious};
 use project::{
@@ -23,12 +21,20 @@ use project::{
 };
 use settings::Settings;
 use smallvec::{SmallVec, smallvec};
-use std::{ops::Range, rc::Rc, sync::Arc, sync::OnceLock};
+use std::{
+    cell::Cell,
+    ops::Range,
+    rc::Rc,
+    sync::Arc,
+    sync::OnceLock,
+    time::{Duration, Instant},
+};
 use theme::{AccentColors, ThemeSettings};
 use time::{OffsetDateTime, UtcOffset, format_description::BorrowedFormatItem};
 use ui::{
-    CommonAnimationExt as _, ContextMenu, ScrollableHandle, Table, TableColumnWidths,
-    TableInteractionState, TableResizeBehavior, Tooltip, prelude::*,
+    ButtonLike, Chip, CommonAnimationExt as _, ContextMenu, DiffStat, Divider, ScrollableHandle,
+    Table, TableColumnWidths, TableInteractionState, TableResizeBehavior, Tooltip, WithScrollbar,
+    prelude::*,
 };
 use workspace::{
     Workspace,
@@ -41,20 +47,40 @@ const LANE_WIDTH: Pixels = px(16.0);
 const LEFT_PADDING: Pixels = px(12.0);
 const LINE_WIDTH: Pixels = px(1.5);
 const RESIZE_HANDLE_WIDTH: f32 = 8.0;
+const COPIED_STATE_DURATION: Duration = Duration::from_secs(2);
+
+struct CopiedState {
+    copied_at: Option<Instant>,
+}
+
+impl CopiedState {
+    fn new(_window: &mut Window, _cx: &mut Context<Self>) -> Self {
+        Self { copied_at: None }
+    }
+
+    fn is_copied(&self) -> bool {
+        self.copied_at
+            .map(|t| t.elapsed() < COPIED_STATE_DURATION)
+            .unwrap_or(false)
+    }
+
+    fn mark_copied(&mut self) {
+        self.copied_at = Some(Instant::now());
+    }
+}
 
 struct DraggedSplitHandle;
 
 #[derive(Clone)]
 struct ChangedFileEntry {
-    icon_name: IconName,
-    icon_color: Hsla,
+    status: FileStatus,
     file_name: SharedString,
     dir_path: SharedString,
     repo_path: RepoPath,
 }
 
 impl ChangedFileEntry {
-    fn from_commit_file(file: &CommitFile, cx: &App) -> Self {
+    fn from_commit_file(file: &CommitFile, _cx: &App) -> Self {
         let file_name: SharedString = file
             .path
             .file_name()
@@ -67,15 +93,20 @@ impl ChangedFileEntry {
             .map(|p| p.as_unix_str().to_string())
             .unwrap_or_default()
             .into();
-        let colors = cx.theme().colors();
-        let (icon_name, icon_color) = match file.status() {
-            CommitFileStatus::Added => (IconName::SquarePlus, colors.version_control_added),
-            CommitFileStatus::Modified => (IconName::SquareDot, colors.version_control_modified),
-            CommitFileStatus::Deleted => (IconName::SquareMinus, colors.version_control_deleted),
+
+        let status_code = match (&file.old_text, &file.new_text) {
+            (None, Some(_)) => StatusCode::Added,
+            (Some(_), None) => StatusCode::Deleted,
+            _ => StatusCode::Modified,
         };
+
+        let status = FileStatus::Tracked(TrackedStatus {
+            index_status: status_code,
+            worktree_status: StatusCode::Unmodified,
+        });
+
         Self {
-            icon_name,
-            icon_color,
+            status,
             file_name,
             dir_path,
             repo_path: file.path.clone(),
@@ -107,50 +138,57 @@ impl ChangedFileEntry {
         commit_sha: SharedString,
         repository: WeakEntity<Repository>,
         workspace: WeakEntity<Workspace>,
-        cx: &App,
+        _cx: &App,
     ) -> AnyElement {
-        h_flex()
-            .id(("changed-file", ix))
-            .px_3()
-            .py_px()
-            .gap_1()
-            .min_w_0()
-            .overflow_hidden()
-            .cursor_pointer()
-            .rounded_md()
-            .hover(|style| style.bg(cx.theme().colors().ghost_element_hover))
-            .active(|style| style.bg(cx.theme().colors().ghost_element_active))
+        let file_name = self.file_name.clone();
+        let dir_path = self.dir_path.clone();
+
+        div()
+            .w_full()
             .child(
-                div().flex_none().child(
-                    Icon::new(self.icon_name)
-                        .size(IconSize::Small)
-                        .color(Color::Custom(self.icon_color)),
-                ),
+                ButtonLike::new(("changed-file", ix))
+                    .child(
+                        h_flex()
+                            .min_w_0()
+                            .w_full()
+                            .gap_1()
+                            .overflow_hidden()
+                            .child(git_status_icon(self.status))
+                            .child(
+                                Label::new(file_name.clone())
+                                    .size(LabelSize::Small)
+                                    .truncate(),
+                            )
+                            .when(!dir_path.is_empty(), |this| {
+                                this.child(
+                                    Label::new(dir_path.clone())
+                                        .size(LabelSize::Small)
+                                        .color(Color::Muted)
+                                        .truncate_start(),
+                                )
+                            }),
+                    )
+                    .tooltip({
+                        let meta = if dir_path.is_empty() {
+                            file_name.clone()
+                        } else {
+                            format!("{}/{}", dir_path, file_name).into()
+                        };
+                        move |_, cx| Tooltip::with_meta("View Changes", None, meta.clone(), cx)
+                    })
+                    .on_click({
+                        let entry = self.clone();
+                        move |_, window, cx| {
+                            entry.open_in_commit_view(
+                                &commit_sha,
+                                &repository,
+                                &workspace,
+                                window,
+                                cx,
+                            );
+                        }
+                    }),
             )
-            .child(
-                div().flex_none().child(
-                    Label::new(self.file_name.clone())
-                        .size(LabelSize::Small)
-                        .single_line(),
-                ),
-            )
-            .when(!self.dir_path.is_empty(), |this| {
-                this.child(
-                    div().min_w_0().overflow_hidden().child(
-                        Label::new(self.dir_path.clone())
-                            .size(LabelSize::Small)
-                            .color(Color::Muted)
-                            .truncate()
-                            .single_line(),
-                    ),
-                )
-            })
-            .on_click({
-                let entry = self.clone();
-                move |_, window, cx| {
-                    entry.open_in_commit_view(&commit_sha, &repository, &workspace, window, cx);
-                }
-            })
             .into_any_element()
     }
 }
@@ -765,6 +803,7 @@ pub struct GitGraph {
     _commit_diff_task: Option<Task<()>>,
     commit_details_split_state: Entity<SplitState>,
     selected_repo_id: Option<RepositoryId>,
+    changed_files_scroll_handle: UniformListScrollHandle,
 }
 
 impl GitGraph {
@@ -860,6 +899,7 @@ impl GitGraph {
             log_order,
             commit_details_split_state: cx.new(|_cx| SplitState::new()),
             selected_repo_id: active_repository,
+            changed_files_scroll_handle: UniformListScrollHandle::new(),
         };
 
         this.fetch_initial_graph_data(cx);
@@ -921,24 +961,11 @@ impl GitGraph {
             .and_then(|repo_id| project.repositories(cx).get(&repo_id).cloned())
     }
 
-    fn render_badge(&self, name: &SharedString, accent_color: gpui::Hsla) -> impl IntoElement {
-        div()
-            .px_1p5()
-            .py_0p5()
-            .h(self.row_height - px(4.0))
-            .flex()
-            .items_center()
-            .justify_center()
-            .rounded_md()
-            .bg(accent_color.opacity(0.18))
-            .border_1()
-            .border_color(accent_color.opacity(0.55))
-            .child(
-                Label::new(name.clone())
-                    .size(LabelSize::Small)
-                    .color(Color::Default)
-                    .single_line(),
-            )
+    fn render_chip(&self, name: &SharedString, accent_color: gpui::Hsla) -> impl IntoElement {
+        Chip::new(name.clone())
+            .label_size(LabelSize::Small)
+            .bg_color(accent_color.opacity(0.1))
+            .border_color(accent_color.opacity(0.5))
     }
 
     fn render_table_rows(
@@ -993,7 +1020,7 @@ impl GitGraph {
                     author_name = data.author_name.clone();
                     formatted_time = format_timestamp(data.commit_timestamp);
                 } else {
-                    subject = "Loading...".into();
+                    subject = "Loading…".into();
                     author_name = "".into();
                 }
 
@@ -1003,11 +1030,13 @@ impl GitGraph {
                     .get(commit.color_idx)
                     .copied()
                     .unwrap_or_else(|| accent_colors.0.first().copied().unwrap_or_default());
+
                 let is_selected = self.selected_entry_idx == Some(idx);
-                let text_color = if is_selected {
-                    Color::Default
-                } else {
-                    Color::Muted
+                let column_label = |label: SharedString| {
+                    Label::new(label)
+                        .when(!is_selected, |c| c.color(Color::Muted))
+                        .truncate()
+                        .into_any_element()
                 };
 
                 vec![
@@ -1017,38 +1046,23 @@ impl GitGraph {
                         .tooltip(Tooltip::text(subject.clone()))
                         .child(
                             h_flex()
-                                .gap_1()
-                                .items_center()
+                                .gap_2()
                                 .overflow_hidden()
                                 .children((!commit.data.ref_names.is_empty()).then(|| {
-                                    h_flex().flex_shrink().gap_2().items_center().children(
+                                    h_flex().gap_1().children(
                                         commit
                                             .data
                                             .ref_names
                                             .iter()
-                                            .map(|name| self.render_badge(name, accent_color)),
+                                            .map(|name| self.render_chip(name, accent_color)),
                                     )
                                 }))
-                                .child(
-                                    Label::new(subject)
-                                        .color(text_color)
-                                        .truncate()
-                                        .single_line(),
-                                ),
+                                .child(column_label(subject.into())),
                         )
                         .into_any_element(),
-                    Label::new(formatted_time)
-                        .color(text_color)
-                        .single_line()
-                        .into_any_element(),
-                    Label::new(author_name)
-                        .color(text_color)
-                        .single_line()
-                        .into_any_element(),
-                    Label::new(short_sha)
-                        .color(text_color)
-                        .single_line()
-                        .into_any_element(),
+                    column_label(formatted_time.into()),
+                    column_label(author_name.into()),
+                    column_label(short_sha.into()),
                 ]
             })
             .collect()
@@ -1197,15 +1211,8 @@ impl GitGraph {
         });
 
         let full_sha: SharedString = commit_entry.data.sha.to_string().into();
-        let truncated_sha: SharedString = {
-            let sha_str = full_sha.as_ref();
-            if sha_str.len() > 24 {
-                format!("{}...", &sha_str[..24]).into()
-            } else {
-                full_sha.clone()
-            }
-        };
         let ref_names = commit_entry.data.ref_names.clone();
+
         let accent_colors = cx.theme().accents();
         let accent_color = accent_colors
             .0
@@ -1220,7 +1227,7 @@ impl GitGraph {
                 Some(data.commit_timestamp),
                 data.subject.clone(),
             ),
-            CommitDataState::Loading => ("Loading...".into(), "".into(), None, "Loading...".into()),
+            CommitDataState::Loading => ("Loading…".into(), "".into(), None, "Loading…".into()),
         };
 
         let date_string = commit_timestamp
@@ -1256,6 +1263,32 @@ impl GitGraph {
             .map(|diff| diff.files.len())
             .unwrap_or(0);
 
+        let (total_lines_added, total_lines_removed) = self
+            .selected_commit_diff
+            .as_ref()
+            .map(|diff| {
+                diff.files
+                    .iter()
+                    .fold((0usize, 0usize), |(added, removed), file| {
+                        let old_lines = file
+                            .old_text
+                            .as_ref()
+                            .map(|t| t.lines().count())
+                            .unwrap_or(0);
+                        let new_lines = file
+                            .new_text
+                            .as_ref()
+                            .map(|t| t.lines().count())
+                            .unwrap_or(0);
+                        if new_lines >= old_lines {
+                            (added + (new_lines - old_lines), removed)
+                        } else {
+                            (added, removed + (old_lines - new_lines))
+                        }
+                    })
+            })
+            .unwrap_or((0, 0));
+
         let sorted_file_entries: Rc<Vec<ChangedFileEntry>> = Rc::new(
             self.selected_commit_diff
                 .as_ref()
@@ -1271,110 +1304,163 @@ impl GitGraph {
         );
 
         v_flex()
-            .relative()
-            .w(px(300.))
+            .min_w(px(300.))
             .h_full()
-            .border_l_1()
-            .border_color(cx.theme().colors().border)
             .bg(cx.theme().colors().surface_background)
             .flex_basis(DefiniteLength::Fraction(
                 self.commit_details_split_state.read(cx).right_ratio(),
             ))
             .child(
-                div().absolute().top_2().right_2().child(
-                    IconButton::new("close-detail", IconName::Close)
-                        .icon_size(IconSize::Small)
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            this.selected_entry_idx = None;
-                            this.selected_commit_diff = None;
-                            this._commit_diff_task = None;
-                            cx.notify();
-                        })),
-                ),
-            )
-            .child(
                 v_flex()
+                    .relative()
                     .w_full()
-                    .min_w_0()
-                    .flex_none()
-                    .pt_3()
-                    .gap_3()
+                    .p_2()
+                    .gap_2()
+                    .child(
+                        div().absolute().top_2().right_2().child(
+                            IconButton::new("close-detail", IconName::Close)
+                                .icon_size(IconSize::Small)
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    this.selected_entry_idx = None;
+                                    this.selected_commit_diff = None;
+                                    this._commit_diff_task = None;
+                                    cx.notify();
+                                })),
+                        ),
+                    )
                     .child(
                         v_flex()
+                            .py_1()
                             .w_full()
-                            .px_3()
                             .items_center()
-                            .gap_0p5()
+                            .gap_1()
                             .child(avatar)
-                            .child(Label::new(author_name.clone()).weight(FontWeight::SEMIBOLD))
                             .child(
-                                Label::new(date_string)
-                                    .color(Color::Muted)
-                                    .size(LabelSize::Small),
+                                v_flex()
+                                    .items_center()
+                                    .child(Label::new(author_name.clone()))
+                                    .child(
+                                        Label::new(date_string)
+                                            .color(Color::Muted)
+                                            .size(LabelSize::Small),
+                                    ),
                             ),
                     )
                     .children((!ref_names.is_empty()).then(|| {
-                        h_flex()
-                            .px_3()
-                            .justify_center()
-                            .gap_1()
-                            .flex_wrap()
-                            .children(
-                                ref_names
-                                    .iter()
-                                    .map(|name| self.render_badge(name, accent_color)),
-                            )
+                        h_flex().gap_1().flex_wrap().justify_center().children(
+                            ref_names
+                                .iter()
+                                .map(|name| self.render_chip(name, accent_color)),
+                        )
                     }))
                     .child(
                         v_flex()
-                            .px_3()
+                            .ml_neg_1()
                             .gap_1p5()
-                            .child(
-                                h_flex()
-                                    .gap_1()
-                                    .child(
-                                        Icon::new(IconName::Person)
-                                            .size(IconSize::Small)
-                                            .color(Color::Muted),
-                                    )
-                                    .child(
-                                        Label::new(author_name)
-                                            .size(LabelSize::Small)
-                                            .color(Color::Muted),
-                                    )
-                                    .when(!author_email.is_empty(), |this| {
-                                        this.child(
-                                            Label::new(format!("<{}>", author_email))
-                                                .size(LabelSize::Small)
-                                                .color(Color::Ignored),
-                                        )
-                                    }),
-                            )
-                            .child(
-                                h_flex()
-                                    .gap_1()
-                                    .child(
-                                        Icon::new(IconName::FileGit)
-                                            .size(IconSize::Small)
-                                            .color(Color::Muted),
-                                    )
-                                    .child({
-                                        let copy_sha = full_sha.clone();
-                                        Button::new("sha-button", truncated_sha)
-                                            .style(ButtonStyle::Transparent)
-                                            .label_size(LabelSize::Small)
-                                            .color(Color::Muted)
-                                            .tooltip(Tooltip::text(format!(
-                                                "Copy SHA: {}",
-                                                copy_sha
-                                            )))
-                                            .on_click(move |_, _, cx| {
-                                                cx.write_to_clipboard(ClipboardItem::new_string(
-                                                    copy_sha.to_string(),
-                                                ));
+                            .when(!author_email.is_empty(), |this| {
+                                let copied_state: Entity<CopiedState> = window.use_keyed_state(
+                                    "author-email-copy",
+                                    cx,
+                                    CopiedState::new,
+                                );
+                                let is_copied = copied_state.read(cx).is_copied();
+
+                                let (icon, icon_color, tooltip_label) = if is_copied {
+                                    (IconName::Check, Color::Success, "Email Copied!")
+                                } else {
+                                    (IconName::Envelope, Color::Muted, "Copy Email")
+                                };
+
+                                let copy_email = author_email.clone();
+                                let author_email_for_tooltip = author_email.clone();
+
+                                this.child(
+                                    Button::new("author-email-copy", format!("{}", &author_email))
+                                        .icon(icon)
+                                        .icon_size(IconSize::Small)
+                                        .icon_color(icon_color)
+                                        .icon_position(IconPosition::Start)
+                                        .label_size(LabelSize::Small)
+                                        .truncate(true)
+                                        .color(Color::Muted)
+                                        .tooltip(move |_, cx| {
+                                            Tooltip::with_meta(
+                                                tooltip_label,
+                                                None,
+                                                author_email_for_tooltip.clone(),
+                                                cx,
+                                            )
+                                        })
+                                        .on_click(move |_, _, cx| {
+                                            copied_state.update(cx, |state, _cx| {
+                                                state.mark_copied();
+                                            });
+                                            cx.write_to_clipboard(ClipboardItem::new_string(
+                                                copy_email.to_string(),
+                                            ));
+                                            let state_id = copied_state.entity_id();
+                                            cx.spawn(async move |cx| {
+                                                cx.background_executor()
+                                                    .timer(COPIED_STATE_DURATION)
+                                                    .await;
+                                                cx.update(|cx| {
+                                                    cx.notify(state_id);
+                                                })
                                             })
-                                    }),
-                            )
+                                            .detach();
+                                        }),
+                                )
+                            })
+                            .child({
+                                let copy_sha = full_sha.clone();
+                                let copied_state: Entity<CopiedState> =
+                                    window.use_keyed_state("sha-copy", cx, CopiedState::new);
+                                let is_copied = copied_state.read(cx).is_copied();
+
+                                let (icon, icon_color, tooltip_label) = if is_copied {
+                                    (IconName::Check, Color::Success, "Commit SHA Copied!")
+                                } else {
+                                    (IconName::Hash, Color::Muted, "Copy Commit SHA")
+                                };
+
+                                Button::new("sha-button", &full_sha)
+                                    .icon(icon)
+                                    .icon_size(IconSize::Small)
+                                    .icon_color(icon_color)
+                                    .icon_position(IconPosition::Start)
+                                    .label_size(LabelSize::Small)
+                                    .truncate(true)
+                                    .color(Color::Muted)
+                                    .tooltip({
+                                        let full_sha = full_sha.clone();
+                                        move |_, cx| {
+                                            Tooltip::with_meta(
+                                                tooltip_label,
+                                                None,
+                                                full_sha.clone(),
+                                                cx,
+                                            )
+                                        }
+                                    })
+                                    .on_click(move |_, _, cx| {
+                                        copied_state.update(cx, |state, _cx| {
+                                            state.mark_copied();
+                                        });
+                                        cx.write_to_clipboard(ClipboardItem::new_string(
+                                            copy_sha.to_string(),
+                                        ));
+                                        let state_id = copied_state.entity_id();
+                                        cx.spawn(async move |cx| {
+                                            cx.background_executor()
+                                                .timer(COPIED_STATE_DURATION)
+                                                .await;
+                                            cx.update(|cx| {
+                                                cx.notify(state_id);
+                                            })
+                                        })
+                                        .detach();
+                                    })
+                            })
                             .when_some(remote.clone(), |this, remote| {
                                 let provider_name = remote.host.name();
                                 let icon = match provider_name.as_str() {
@@ -1392,79 +1478,85 @@ impl GitGraph {
                                     .host
                                     .build_commit_permalink(&parsed_remote, params)
                                     .to_string();
+
                                 this.child(
-                                    h_flex()
-                                        .gap_1()
-                                        .child(
-                                            Icon::new(icon)
-                                                .size(IconSize::Small)
-                                                .color(Color::Muted),
-                                        )
-                                        .child(
-                                            Button::new(
-                                                "view-on-provider",
-                                                format!("View on {}", provider_name),
-                                            )
-                                            .style(ButtonStyle::Transparent)
-                                            .label_size(LabelSize::Small)
-                                            .color(Color::Muted)
-                                            .on_click(
-                                                move |_, _, cx| {
-                                                    cx.open_url(&url);
-                                                },
-                                            ),
-                                        ),
+                                    Button::new(
+                                        "view-on-provider",
+                                        format!("View on {}", provider_name),
+                                    )
+                                    .icon(icon)
+                                    .icon_size(IconSize::Small)
+                                    .icon_color(Color::Muted)
+                                    .icon_position(IconPosition::Start)
+                                    .label_size(LabelSize::Small)
+                                    .truncate(true)
+                                    .color(Color::Muted)
+                                    .on_click(
+                                        move |_, _, cx| {
+                                            cx.open_url(&url);
+                                        },
+                                    ),
                                 )
                             }),
+                    ),
+            )
+            .child(Divider::horizontal())
+            .child(div().min_w_0().p_2().child(Label::new(subject)))
+            .child(Divider::horizontal())
+            .child(
+                v_flex()
+                    .min_w_0()
+                    .p_2()
+                    .flex_1()
+                    .gap_1()
+                    .child(
+                        h_flex()
+                            .gap_1()
+                            .child(
+                                Label::new(format!("{} Changed Files", changed_files_count))
+                                    .size(LabelSize::Small)
+                                    .color(Color::Muted),
+                            )
+                            .child(DiffStat::new(
+                                "commit-diff-stat",
+                                total_lines_added,
+                                total_lines_removed,
+                            )),
                     )
                     .child(
                         div()
-                            .w_full()
-                            .min_w_0()
-                            .border_t_1()
-                            .border_color(cx.theme().colors().border)
-                            .p_3()
-                            .child(Label::new(subject).weight(FontWeight::MEDIUM)),
+                            .id("changed-files-container")
+                            .flex_1()
+                            .min_h_0()
+                            .child({
+                                let entries = sorted_file_entries;
+                                let entry_count = entries.len();
+                                let commit_sha = full_sha.clone();
+                                let repository = repository.downgrade();
+                                let workspace = self.workspace.clone();
+                                uniform_list(
+                                    "changed-files-list",
+                                    entry_count,
+                                    move |range, _window, cx| {
+                                        range
+                                            .map(|ix| {
+                                                entries[ix].render(
+                                                    ix,
+                                                    commit_sha.clone(),
+                                                    repository.clone(),
+                                                    workspace.clone(),
+                                                    cx,
+                                                )
+                                            })
+                                            .collect()
+                                    },
+                                )
+                                .size_full()
+                                .ml_neg_1()
+                                .track_scroll(&self.changed_files_scroll_handle)
+                            })
+                            .vertical_scrollbar_for(&self.changed_files_scroll_handle, window, cx),
                     ),
-            )
-            .child(
-                v_flex()
-                    .flex_1()
-                    .min_h_0()
-                    .border_t_1()
-                    .border_color(cx.theme().colors().border)
-                    .child(
-                        div().px_3().pt_3().pb_1().child(
-                            Label::new(format!("{} Changed Files", changed_files_count))
-                                .size(LabelSize::Small)
-                                .color(Color::Muted),
-                        ),
-                    )
-                    .child({
-                        let entries = sorted_file_entries;
-                        let entry_count = entries.len();
-                        let commit_sha = full_sha.clone();
-                        let repository = repository.downgrade();
-                        let workspace = self.workspace.clone();
-                        uniform_list(
-                            "changed-files-list",
-                            entry_count,
-                            move |range, _window, cx| {
-                                range
-                                    .map(|ix| {
-                                        entries[ix].render(
-                                            ix,
-                                            commit_sha.clone(),
-                                            repository.clone(),
-                                            workspace.clone(),
-                                            cx,
-                                        )
-                                    })
-                                    .collect()
-                            },
-                        )
-                        .flex_1()
-                    }),
             )
             .into_any_element()
     }
