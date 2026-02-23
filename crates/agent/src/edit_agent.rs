@@ -81,6 +81,7 @@ pub struct EditAgent {
     project: Entity<Project>,
     templates: Arc<Templates>,
     edit_format: EditFormat,
+    thinking_allowed: bool,
 }
 
 impl EditAgent {
@@ -90,6 +91,7 @@ impl EditAgent {
         action_log: Entity<ActionLog>,
         templates: Arc<Templates>,
         edit_format: EditFormat,
+        allow_thinking: bool,
     ) -> Self {
         EditAgent {
             model,
@@ -97,6 +99,7 @@ impl EditAgent {
             action_log,
             templates,
             edit_format,
+            thinking_allowed: allow_thinking,
         }
     }
 
@@ -731,7 +734,7 @@ impl EditAgent {
             tools,
             stop: Vec::new(),
             temperature: None,
-            thinking_allowed: true,
+            thinking_allowed: self.thinking_allowed,
             thinking_effort: None,
         };
 
@@ -1418,6 +1421,7 @@ mod tests {
             action_log,
             Templates::new(),
             EditFormat::XmlTags,
+            true,
         )
     }
 
