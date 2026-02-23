@@ -1,6 +1,8 @@
 use std::{cmp::Reverse, rc::Rc, sync::Arc};
 
-use acp_thread::{AgentModelIcon, AgentModelInfo, AgentModelList, AgentModelSelector, ModelHoverInfo};
+use acp_thread::{
+    AgentModelIcon, AgentModelInfo, AgentModelList, AgentModelSelector, ModelHoverInfo,
+};
 use agent_client_protocol::ModelId;
 use agent_servers::AgentServer;
 use agent_settings::AgentSettings;
@@ -10,8 +12,8 @@ use fs::Fs;
 use futures::FutureExt;
 use fuzzy::{StringMatchCandidate, match_strings};
 use gpui::{
-    Action, AsyncWindowContext, BackgroundExecutor, DismissEvent, Entity, FocusHandle, Subscription,
-    Task, WeakEntity,
+    Action, AsyncWindowContext, BackgroundExecutor, DismissEvent, Entity, FocusHandle,
+    Subscription, Task, WeakEntity,
 };
 use itertools::Itertools;
 use language_models::provider::open_router::OpenRouterState;
@@ -22,9 +24,7 @@ use ui::{DocumentationAside, DocumentationSide, IntoElement, prelude::*};
 use util::ResultExt;
 use zed_actions::agent::OpenSettings;
 
-use crate::ui::{
-    HoldForDefault, ModelSelectorFooter, ModelSelectorHeader, ModelSelectorListItem,
-};
+use crate::ui::{HoldForDefault, ModelSelectorFooter, ModelSelectorHeader, ModelSelectorListItem};
 
 pub type AcpModelSelector = Picker<AcpModelPickerDelegate>;
 
@@ -67,7 +67,7 @@ pub struct AcpModelPickerDelegate {
     favorites: HashSet<ModelId>,
     _refresh_models_task: Task<()>,
     _settings_subscription: Subscription,
-    _openrouter_subscription: Option<Subscription>,
+    _endpoint_cache_subscription: Option<Subscription>,
     focus_handle: FocusHandle,
 }
 
@@ -128,9 +128,12 @@ impl AcpModelPickerDelegate {
             });
         let favorites = agent_server.favorite_model_ids(cx);
 
-        let openrouter_subscription = Self::get_openrouter_state(cx).map(|state| {
-            cx.observe_in(&state, window, |_picker, _, _, cx| {
-                cx.notify();
+        let endpoint_cache_subscription = Self::get_openrouter_state(cx).map(|state| {
+            let entity = state.read(cx).endpoint_cache();
+            cx.observe_in(&entity, window, |picker, _, _, cx| {
+                if picker.delegate.hovered_model.is_some() {
+                    cx.notify();
+                }
             })
         });
 
@@ -146,7 +149,7 @@ impl AcpModelPickerDelegate {
             favorites,
             _refresh_models_task: refresh_models_task,
             _settings_subscription: settings_subscription,
-            _openrouter_subscription: openrouter_subscription,
+            _endpoint_cache_subscription: endpoint_cache_subscription,
             focus_handle,
         }
     }
@@ -400,7 +403,9 @@ impl PickerDelegate for AcpModelPickerDelegate {
                         .child(
                             ModelSelectorListItem::new(ix, model_info.name.clone())
                                 .map(|this| match &model_info.icon {
-                                    Some(AgentModelIcon::Path(path)) => this.icon_path(path.clone()),
+                                    Some(AgentModelIcon::Path(path)) => {
+                                        this.icon_path(path.clone())
+                                    }
                                     Some(AgentModelIcon::Named(icon)) => this.icon(*icon),
                                     None => this,
                                 })
@@ -449,8 +454,6 @@ impl PickerDelegate for AcpModelPickerDelegate {
     fn documentation_aside_index(&self) -> Option<usize> {
         self.hovered_model.as_ref().map(|state| state.index)
     }
-
-
 
     fn render_footer(
         &self,

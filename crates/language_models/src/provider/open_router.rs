@@ -47,12 +47,14 @@ pub struct OpenRouterLanguageModelProvider {
     state: Entity<OpenRouterState>,
 }
 
+pub type EndpointCache = HashMap<String, Vec<OpenRouterEndpoint>>;
+
 pub struct OpenRouterState {
     api_key_state: ApiKeyState,
     http_client: Arc<dyn HttpClient>,
     available_models: Vec<open_router::Model>,
     fetch_models_task: Option<Task<Result<(), LanguageModelCompletionError>>>,
-    endpoint_cache: HashMap<String, Vec<OpenRouterEndpoint>>,
+    endpoint_cache: Entity<EndpointCache>,
     endpoint_fetch_tasks: HashMap<String, Task<()>>,
     selected_providers: HashMap<String, String>,
 }
@@ -121,12 +123,12 @@ impl OpenRouterState {
         }
     }
 
-    pub fn get_cached_endpoints(&self, model_id: &str) -> Option<&Vec<OpenRouterEndpoint>> {
-        self.endpoint_cache.get(model_id)
+    pub fn get_cached_endpoints(&self, model_id: &str, cx: &App) -> Option<Vec<OpenRouterEndpoint>> {
+        self.endpoint_cache.read(cx).get(model_id).cloned()
     }
 
     pub fn fetch_endpoints(&mut self, model_id: &str, cx: &mut Context<Self>) {
-        if self.endpoint_cache.contains_key(model_id)
+        if self.endpoint_cache.read(cx).contains_key(model_id)
             || self.endpoint_fetch_tasks.contains_key(model_id)
         {
             return;
@@ -140,6 +142,7 @@ impl OpenRouterState {
 
         let model_id_owned = model_id.to_string();
         let http_client = self.http_client.clone();
+        let endpoint_cache = self.endpoint_cache.clone();
 
         let task = cx.spawn({
             let model_id = model_id_owned.clone();
@@ -149,14 +152,14 @@ impl OpenRouterState {
 
                 this.update(cx, |this, cx| {
                     this.endpoint_fetch_tasks.remove(&model_id);
-                    match endpoints {
+                    let entries = match endpoints {
                         Ok(endpoints) => {
                             log::info!(
                                 "[OpenRouter] fetch_endpoints succeeded for {}: {} endpoints",
                                 model_id,
                                 endpoints.len()
                             );
-                            this.endpoint_cache.insert(model_id, endpoints);
+                            endpoints
                         }
                         Err(e) => {
                             log::error!(
@@ -164,10 +167,13 @@ impl OpenRouterState {
                                 model_id,
                                 e
                             );
-                            this.endpoint_cache.insert(model_id, vec![]);
+                            vec![]
                         }
-                    }
-                    cx.notify();
+                    };
+                    endpoint_cache.update(cx, |cache, cx| {
+                        cache.insert(model_id, entries);
+                        cx.notify();
+                    });
                 })
                 .ok();
             }
@@ -180,8 +186,14 @@ impl OpenRouterState {
         self.endpoint_fetch_tasks.contains_key(model_id)
     }
 
+    pub fn endpoint_cache(&self) -> Entity<EndpointCache> {
+        self.endpoint_cache.clone()
+    }
+
     pub fn retry_fetch_endpoints(&mut self, model_id: &str, cx: &mut Context<Self>) {
-        self.endpoint_cache.remove(model_id);
+        self.endpoint_cache.update(cx, |cache, _| {
+            cache.remove(model_id);
+        });
         self.fetch_endpoints(model_id, cx);
     }
 
@@ -239,8 +251,7 @@ impl acp_thread::ModelHoverInfo for OpenRouterProvidersHoverInfo {
 
         let endpoints = state
             .read(cx)
-            .get_cached_endpoints(&model_id)
-            .cloned()
+            .get_cached_endpoints(&model_id, cx)
             .unwrap_or_default();
 
         let selected = state.read(cx).selected_provider(&model_id).cloned();
@@ -356,12 +367,13 @@ impl OpenRouterLanguageModelProvider {
             })
             .detach();
 
+            let endpoint_cache = cx.new(|_| HashMap::default());
             let mut state = OpenRouterState {
                 api_key_state: ApiKeyState::new(Self::api_url(cx), (*API_KEY_ENV_VAR).clone()),
                 http_client: http_client.clone(),
                 available_models: Vec::new(),
                 fetch_models_task: None,
-                endpoint_cache: HashMap::default(),
+                endpoint_cache,
                 endpoint_fetch_tasks: HashMap::default(),
                 selected_providers: HashMap::default(),
             };
@@ -572,8 +584,7 @@ impl LanguageModel for OpenRouterLanguageModel {
     fn available_endpoints(&self, cx: &App) -> Vec<open_router::Endpoint> {
         self.state
             .read(cx)
-            .get_cached_endpoints(self.model.id())
-            .cloned()
+            .get_cached_endpoints(self.model.id(), cx)
             .unwrap_or_default()
     }
 

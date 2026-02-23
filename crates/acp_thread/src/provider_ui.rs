@@ -74,18 +74,16 @@ impl RenderOnce for GenericProviderListItem {
                 h_flex()
                     .w_full()
                     .gap_2()
-                    .child(
-                        div()
-                            .w(CHECKMARK_COL_WIDTH)
-                            .flex_shrink_0()
-                            .when(self.is_selected, |this| {
-                                this.child(
-                                    Icon::new(IconName::Check)
-                                        .size(IconSize::Small)
-                                        .color(Color::Accent),
-                                )
-                            }),
-                    )
+                    .child(div().w(CHECKMARK_COL_WIDTH).flex_shrink_0().when(
+                        self.is_selected,
+                        |this| {
+                            this.child(
+                                Icon::new(IconName::Check)
+                                    .size(IconSize::Small)
+                                    .color(Color::Accent),
+                            )
+                        },
+                    ))
                     .child(
                         v_flex()
                             .flex_1()
@@ -104,20 +102,15 @@ impl RenderOnce for GenericProviderListItem {
                             }),
                     )
                     .child(
-                        div()
-                            .w(SPEED_COL_WIDTH)
-                            .flex_shrink_0()
-                            .child(
-                                Label::new(format!("{:.0}", throughput)).size(LabelSize::XSmall),
-                            ),
+                        div().w(SPEED_COL_WIDTH).flex_shrink_0().child(
+                            Label::new(format!("{:.0}", throughput)).size(LabelSize::XSmall),
+                        ),
                     )
                     .child(
                         div()
                             .w(LATENCY_COL_WIDTH)
                             .flex_shrink_0()
-                            .child(
-                                Label::new(format!("{:.0}ms", latency)).size(LabelSize::XSmall),
-                            ),
+                            .child(Label::new(format!("{:.0}ms", latency)).size(LabelSize::XSmall)),
                     )
                     .child(
                         v_flex()
@@ -131,13 +124,8 @@ impl RenderOnce for GenericProviderListItem {
                                     .child(Label::new("$").size(LabelSize::XSmall))
                                     .child(Label::new(input_price).size(LabelSize::XSmall))
                                     .child(
-                                        Label::new("/M")
+                                        Label::new("/M in")
                                             .size(LabelSize::XSmall)
-                                            .color(Color::Muted),
-                                    )
-                                    .child(
-                                        Icon::new(IconName::ArrowDown)
-                                            .size(IconSize::XSmall)
                                             .color(Color::Muted),
                                     ),
                             )
@@ -147,13 +135,8 @@ impl RenderOnce for GenericProviderListItem {
                                     .child(Label::new("$").size(LabelSize::XSmall))
                                     .child(Label::new(output_price).size(LabelSize::XSmall))
                                     .child(
-                                        Label::new("/M")
+                                        Label::new("/M out")
                                             .size(LabelSize::XSmall)
-                                            .color(Color::Muted),
-                                    )
-                                    .child(
-                                        Icon::new(IconName::ArrowUp)
-                                            .size(IconSize::XSmall)
                                             .color(Color::Muted),
                                     ),
                             ),
@@ -172,7 +155,7 @@ impl RenderOnce for ProviderSelectorHeader {
             .pb_1()
             .child(
                 Label::new("Select Provider")
-                    .size(LabelSize::Small)
+                    .size(LabelSize::Default)
                     .color(Color::Muted),
             )
             .child(
@@ -182,45 +165,34 @@ impl RenderOnce for ProviderSelectorHeader {
                     .mt_1()
                     .child(div().w(CHECKMARK_COL_WIDTH).flex_shrink_0())
                     .child(
-                        h_flex()
-                            .flex_1()
-                            .child(
-                                Label::new("Provider")
+                        h_flex().flex_1().child(
+                            Label::new("Provider")
+                                .size(LabelSize::XSmall)
+                                .color(Color::Muted),
+                        ),
+                    )
+                    .child(
+                        div().w(SPEED_COL_WIDTH).flex_shrink_0().child(
+                            Label::new("tok/s")
+                                .size(LabelSize::XSmall)
+                                .color(Color::Muted),
+                        ),
+                    )
+                    .child(
+                        div().w(LATENCY_COL_WIDTH).flex_shrink_0().child(
+                            Label::new("Latency")
+                                .size(LabelSize::XSmall)
+                                .color(Color::Muted),
+                        ),
+                    )
+                    .child(
+                        div().w(PRICE_COL_WIDTH).flex_shrink_0().child(
+                            h_flex().justify_end().child(
+                                Label::new("Price")
                                     .size(LabelSize::XSmall)
                                     .color(Color::Muted),
                             ),
-                    )
-                    .child(
-                        div()
-                            .w(SPEED_COL_WIDTH)
-                            .flex_shrink_0()
-                            .child(
-                                Label::new("tok/s")
-                                    .size(LabelSize::XSmall)
-                                    .color(Color::Muted),
-                            ),
-                    )
-                    .child(
-                        div()
-                            .w(LATENCY_COL_WIDTH)
-                            .flex_shrink_0()
-                            .child(
-                                Label::new("Latency")
-                                    .size(LabelSize::XSmall)
-                                    .color(Color::Muted),
-                            ),
-                    )
-                    .child(
-                        div()
-                            .w(PRICE_COL_WIDTH)
-                            .flex_shrink_0()
-                            .child(
-                                h_flex().justify_end().child(
-                                    Label::new("Price")
-                                        .size(LabelSize::XSmall)
-                                        .color(Color::Muted),
-                                ),
-                            ),
+                        ),
                     ),
             )
             .child(
@@ -238,12 +210,10 @@ pub struct ProviderSelectorLoading;
 
 impl RenderOnce for ProviderSelectorLoading {
     fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
-        div()
-            .p_4()
-            .child(
-                h_flex()
-                    .justify_center()
-                    .child(Label::new("Loading providers...").color(Color::Muted)),
-            )
+        div().p_4().child(
+            h_flex()
+                .justify_center()
+                .child(Label::new("Loading providers...").color(Color::Muted)),
+        )
     }
 }
