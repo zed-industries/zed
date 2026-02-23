@@ -783,6 +783,22 @@ fn draw_commit_circle(center_x: Pixels, center_y: Pixels, color: Hsla, window: &
     }
 }
 
+fn compute_diff_stats(diff: &CommitDiff) -> (usize, usize) {
+    diff.files.iter().fold((0, 0), |(added, removed), file| {
+        let old_text = file.old_text.as_deref().unwrap_or("");
+        let new_text = file.new_text.as_deref().unwrap_or("");
+        let hunks = line_diff(old_text, new_text);
+        hunks
+            .iter()
+            .fold((added, removed), |(a, r), (old_range, new_range)| {
+                (
+                    a + (new_range.end - new_range.start) as usize,
+                    r + (old_range.end - old_range.start) as usize,
+                )
+            })
+    })
+}
+
 pub struct GitGraph {
     focus_handle: FocusHandle,
     graph_data: GraphData,
@@ -800,6 +816,7 @@ pub struct GitGraph {
     log_source: LogSource,
     log_order: LogOrder,
     selected_commit_diff: Option<CommitDiff>,
+    selected_commit_diff_stats: Option<(usize, usize)>,
     _commit_diff_task: Option<Task<()>>,
     commit_details_split_state: Entity<SplitState>,
     selected_repo_id: Option<RepositoryId>,
@@ -895,6 +912,7 @@ impl GitGraph {
             hovered_entry_idx: None,
             graph_canvas_bounds: Rc::new(Cell::new(None)),
             selected_commit_diff: None,
+            selected_commit_diff_stats: None,
             log_source,
             log_order,
             commit_details_split_state: cx.new(|_cx| SplitState::new()),
@@ -1071,6 +1089,7 @@ impl GitGraph {
     fn cancel(&mut self, _: &Cancel, _window: &mut Window, cx: &mut Context<Self>) {
         self.selected_entry_idx = None;
         self.selected_commit_diff = None;
+        self.selected_commit_diff_stats = None;
         cx.notify();
     }
 
@@ -1097,6 +1116,7 @@ impl GitGraph {
 
         self.selected_entry_idx = Some(idx);
         self.selected_commit_diff = None;
+        self.selected_commit_diff_stats = None;
         self.table_interaction_state.update(cx, |state, cx| {
             state
                 .scroll_handle
@@ -1119,7 +1139,9 @@ impl GitGraph {
         self._commit_diff_task = Some(cx.spawn(async move |this, cx| {
             if let Ok(Ok(diff)) = diff_receiver.await {
                 this.update(cx, |this, cx| {
+                    let stats = compute_diff_stats(&diff);
                     this.selected_commit_diff = Some(diff);
+                    this.selected_commit_diff_stats = Some(stats);
                     cx.notify();
                 })
                 .ok();
@@ -1263,27 +1285,8 @@ impl GitGraph {
             .map(|diff| diff.files.len())
             .unwrap_or(0);
 
-        let (total_lines_added, total_lines_removed) = self
-            .selected_commit_diff
-            .as_ref()
-            .map(|diff| {
-                diff.files
-                    .iter()
-                    .fold((0usize, 0usize), |(added, removed), file| {
-                        let old_text = file.old_text.as_deref().unwrap_or("");
-                        let new_text = file.new_text.as_deref().unwrap_or("");
-                        let hunks = line_diff(old_text, new_text);
-                        hunks
-                            .iter()
-                            .fold((added, removed), |(a, r), (old_range, new_range)| {
-                                (
-                                    a + (new_range.end - new_range.start) as usize,
-                                    r + (old_range.end - old_range.start) as usize,
-                                )
-                            })
-                    })
-            })
-            .unwrap_or((0, 0));
+        let (total_lines_added, total_lines_removed) =
+            self.selected_commit_diff_stats.unwrap_or((0, 0));
 
         let sorted_file_entries: Rc<Vec<ChangedFileEntry>> = Rc::new(
             self.selected_commit_diff
@@ -1319,6 +1322,7 @@ impl GitGraph {
                                 .on_click(cx.listener(move |this, _, _, cx| {
                                     this.selected_entry_idx = None;
                                     this.selected_commit_diff = None;
+                                    this.selected_commit_diff_stats = None;
                                     this._commit_diff_task = None;
                                     cx.notify();
                                 })),
