@@ -1,5 +1,9 @@
-use anyhow::{Result, anyhow};
+use anyhow::{Context as _, Result, anyhow, bail};
+use futures::AsyncReadExt as _;
+use http_client::{AsyncBody, HttpClient, Request, Response};
 use serde::{Deserialize, Serialize};
+use smol::net::TcpListener;
+use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 use url::Url;
 
@@ -575,6 +579,423 @@ fn simple_sha256(data: &[u8]) -> [u8; 32] {
     result
 }
 
+// -- Discovery (async, hits real endpoints) ----------------------------------
+
+/// Fetch Protected Resource Metadata from the MCP server.
+///
+/// Tries the `resource_metadata` URL from the `WWW-Authenticate` header first,
+/// then falls back to well-known URIs constructed from `server_url`.
+pub async fn fetch_protected_resource_metadata(
+    http_client: &Arc<dyn HttpClient>,
+    server_url: &Url,
+    www_authenticate: &WwwAuthenticate,
+) -> Result<ProtectedResourceMetadata> {
+    let candidate_urls = if let Some(ref url) = www_authenticate.resource_metadata {
+        vec![url.clone()]
+    } else {
+        protected_resource_metadata_urls(server_url)
+    };
+
+    for url in &candidate_urls {
+        match fetch_json::<ProtectedResourceMetadataResponse>(http_client, url).await {
+            Ok(response) => {
+                if response.authorization_servers.is_empty() {
+                    bail!(
+                        "Protected Resource Metadata at {} has no authorization_servers",
+                        url
+                    );
+                }
+                return Ok(ProtectedResourceMetadata {
+                    resource: response.resource.unwrap_or_else(|| server_url.clone()),
+                    authorization_servers: response.authorization_servers,
+                    scopes_supported: response.scopes_supported,
+                });
+            }
+            Err(err) => {
+                log::debug!(
+                    "Failed to fetch Protected Resource Metadata from {}: {}",
+                    url,
+                    err
+                );
+            }
+        }
+    }
+
+    bail!(
+        "Could not fetch Protected Resource Metadata for {}",
+        server_url
+    )
+}
+
+/// Fetch Authorization Server Metadata, trying RFC 8414 and OIDC Discovery
+/// endpoints in the priority order specified by the MCP spec.
+pub async fn fetch_auth_server_metadata(
+    http_client: &Arc<dyn HttpClient>,
+    issuer: &Url,
+) -> Result<AuthServerMetadata> {
+    let candidate_urls = auth_server_metadata_urls(issuer);
+
+    for url in &candidate_urls {
+        match fetch_json::<AuthServerMetadataResponse>(http_client, url).await {
+            Ok(response) => {
+                let issuer_url = response
+                    .issuer
+                    .as_deref()
+                    .and_then(|s| Url::parse(s).ok())
+                    .unwrap_or_else(|| issuer.clone());
+
+                let authorization_endpoint = response
+                    .authorization_endpoint
+                    .as_deref()
+                    .map(Url::parse)
+                    .transpose()
+                    .context("invalid authorization_endpoint")?
+                    .ok_or_else(|| anyhow!("missing authorization_endpoint"))?;
+
+                let token_endpoint = response
+                    .token_endpoint
+                    .as_deref()
+                    .map(Url::parse)
+                    .transpose()
+                    .context("invalid token_endpoint")?
+                    .ok_or_else(|| anyhow!("missing token_endpoint"))?;
+
+                let registration_endpoint = response
+                    .registration_endpoint
+                    .as_deref()
+                    .map(Url::parse)
+                    .transpose()
+                    .context("invalid registration_endpoint")?;
+
+                let code_challenge_methods = response.code_challenge_methods_supported;
+
+                return Ok(AuthServerMetadata {
+                    issuer: issuer_url,
+                    authorization_endpoint,
+                    token_endpoint,
+                    registration_endpoint,
+                    scopes_supported: response.scopes_supported,
+                    code_challenge_methods_supported: code_challenge_methods,
+                    client_id_metadata_document_supported: response
+                        .client_id_metadata_document_supported
+                        .unwrap_or(false),
+                });
+            }
+            Err(err) => {
+                log::debug!("Failed to fetch Auth Server Metadata from {}: {}", url, err);
+            }
+        }
+    }
+
+    bail!(
+        "Could not fetch Authorization Server Metadata for {}",
+        issuer
+    )
+}
+
+/// Run the full discovery flow: fetch resource metadata, then auth server
+/// metadata, then determine the client registration strategy and scopes.
+pub async fn discover(
+    http_client: &Arc<dyn HttpClient>,
+    server_url: &Url,
+    www_authenticate: &WwwAuthenticate,
+) -> Result<OAuthDiscovery> {
+    let resource_metadata =
+        fetch_protected_resource_metadata(http_client, server_url, www_authenticate).await?;
+
+    let auth_server_url = resource_metadata
+        .authorization_servers
+        .first()
+        .ok_or_else(|| anyhow!("no authorization servers in resource metadata"))?;
+
+    let auth_server_metadata = fetch_auth_server_metadata(http_client, auth_server_url).await?;
+
+    // Verify PKCE S256 support (spec requirement).
+    match &auth_server_metadata.code_challenge_methods_supported {
+        Some(methods) if methods.iter().any(|m| m == "S256") => {}
+        Some(_) => bail!("authorization server does not support S256 PKCE"),
+        None => bail!("authorization server does not advertise code_challenge_methods_supported"),
+    }
+
+    let scopes = select_scopes(www_authenticate, &resource_metadata);
+
+    let client_registration = match determine_registration_strategy(&auth_server_metadata) {
+        ClientRegistrationStrategy::Cimd { client_id } => OAuthClientRegistration {
+            client_id,
+            client_secret: None,
+        },
+        ClientRegistrationStrategy::Dcr {
+            registration_endpoint,
+        } => perform_dcr(http_client, &registration_endpoint).await?,
+        ClientRegistrationStrategy::Unavailable => {
+            bail!("authorization server supports neither CIMD nor DCR")
+        }
+    };
+
+    Ok(OAuthDiscovery {
+        resource_metadata,
+        auth_server_metadata,
+        client_registration,
+        scopes,
+    })
+}
+
+// -- Dynamic Client Registration (RFC 7591) ----------------------------------
+
+/// Perform Dynamic Client Registration with the authorization server.
+pub async fn perform_dcr(
+    http_client: &Arc<dyn HttpClient>,
+    registration_endpoint: &Url,
+) -> Result<OAuthClientRegistration> {
+    let body = dcr_registration_body();
+    let body_bytes = serde_json::to_vec(&body)?;
+
+    let request = Request::builder()
+        .method(http_client::http::Method::POST)
+        .uri(registration_endpoint.as_str())
+        .header("Content-Type", "application/json")
+        .header("Accept", "application/json")
+        .body(AsyncBody::from(body_bytes))?;
+
+    let mut response = http_client.send(request).await?;
+
+    if !response.status().is_success() {
+        let mut error_body = String::new();
+        response.body_mut().read_to_string(&mut error_body).await?;
+        bail!(
+            "DCR failed with status {}: {}",
+            response.status(),
+            error_body
+        );
+    }
+
+    let mut response_body = String::new();
+    response
+        .body_mut()
+        .read_to_string(&mut response_body)
+        .await?;
+
+    let dcr_response: DcrResponse =
+        serde_json::from_str(&response_body).context("failed to parse DCR response")?;
+
+    Ok(OAuthClientRegistration {
+        client_id: dcr_response.client_id,
+        client_secret: dcr_response.client_secret,
+    })
+}
+
+// -- Token exchange and refresh (async) --------------------------------------
+
+/// Exchange an authorization code for tokens at the token endpoint.
+pub async fn exchange_code(
+    http_client: &Arc<dyn HttpClient>,
+    auth_server_metadata: &AuthServerMetadata,
+    code: &str,
+    client_id: &str,
+    redirect_uri: &str,
+    code_verifier: &str,
+    resource: &str,
+) -> Result<OAuthTokens> {
+    let params = token_exchange_params(code, client_id, redirect_uri, code_verifier, resource);
+    post_token_request(http_client, &auth_server_metadata.token_endpoint, &params).await
+}
+
+/// Refresh tokens using a refresh token.
+pub async fn refresh_tokens(
+    http_client: &Arc<dyn HttpClient>,
+    auth_server_metadata: &AuthServerMetadata,
+    refresh_token: &str,
+    client_id: &str,
+    resource: &str,
+) -> Result<OAuthTokens> {
+    let params = token_refresh_params(refresh_token, client_id, resource);
+    post_token_request(http_client, &auth_server_metadata.token_endpoint, &params).await
+}
+
+/// POST form-encoded parameters to a token endpoint and parse the response.
+async fn post_token_request(
+    http_client: &Arc<dyn HttpClient>,
+    token_endpoint: &Url,
+    params: &[(&str, String)],
+) -> Result<OAuthTokens> {
+    let body = url::form_urlencoded::Serializer::new(String::new())
+        .extend_pairs(params.iter().map(|(k, v)| (*k, v.as_str())))
+        .finish();
+
+    let request = Request::builder()
+        .method(http_client::http::Method::POST)
+        .uri(token_endpoint.as_str())
+        .header("Content-Type", "application/x-www-form-urlencoded")
+        .header("Accept", "application/json")
+        .body(AsyncBody::from(body.into_bytes()))?;
+
+    let mut response = http_client.send(request).await?;
+
+    if !response.status().is_success() {
+        let mut error_body = String::new();
+        response.body_mut().read_to_string(&mut error_body).await?;
+        bail!(
+            "token request failed with status {}: {}",
+            response.status(),
+            error_body
+        );
+    }
+
+    let mut response_body = String::new();
+    response
+        .body_mut()
+        .read_to_string(&mut response_body)
+        .await?;
+
+    let token_response: TokenResponse =
+        serde_json::from_str(&response_body).context("failed to parse token response")?;
+
+    Ok(token_response.into_tokens())
+}
+
+// -- Local callback server ---------------------------------------------------
+
+/// Result of awaiting the OAuth callback on the local server.
+#[derive(Debug)]
+pub struct AuthorizationCallback {
+    pub code: String,
+    pub state: String,
+}
+
+/// Start a local HTTP server on an ephemeral port to receive the OAuth callback.
+///
+/// Returns the bound port and a future that resolves when the callback is
+/// received. The server responds with a simple HTML page telling the user
+/// they can close the tab, then shuts down.
+pub async fn start_callback_server() -> Result<(u16, smol::Task<Result<AuthorizationCallback>>)> {
+    let listener = TcpListener::bind("127.0.0.1:0").await?;
+    let port = listener.local_addr()?.port();
+
+    let task = smol::spawn(async move {
+        let (mut stream, _) = listener.accept().await?;
+
+        // Read the full HTTP request head into a buffer. We read byte-by-byte
+        // looking for the "\r\n\r\n" delimiter so we never over-read past the
+        // headers (there is no body in a GET callback request).
+        let mut head = Vec::with_capacity(1024);
+        let mut found_end = false;
+        let mut buf = [0u8; 1];
+        while smol::io::AsyncReadExt::read(&mut stream, &mut buf).await? > 0 {
+            head.push(buf[0]);
+            if head.len() >= 4 && head[head.len() - 4..] == *b"\r\n\r\n" {
+                found_end = true;
+                break;
+            }
+            // Safety valve — a real callback request should be well under 8 KiB.
+            if head.len() > 8192 {
+                bail!("OAuth callback request too large");
+            }
+        }
+        if !found_end {
+            bail!("OAuth callback connection closed before end of headers");
+        }
+
+        let head_str = String::from_utf8_lossy(&head);
+
+        // Parse "GET /callback?code=...&state=... HTTP/1.1\r\n..."
+        let request_line = head_str
+            .lines()
+            .next()
+            .ok_or_else(|| anyhow!("empty HTTP request"))?;
+
+        let path = request_line
+            .split_whitespace()
+            .nth(1)
+            .ok_or_else(|| anyhow!("malformed HTTP request line"))?;
+
+        let dummy_base = Url::parse("http://127.0.0.1")?;
+        let full_url = dummy_base.join(path)?;
+        let query_pairs: std::collections::HashMap<_, _> = full_url.query_pairs().collect();
+
+        let code = query_pairs
+            .get("code")
+            .ok_or_else(|| anyhow!("missing 'code' parameter in OAuth callback"))?
+            .to_string();
+        let state = query_pairs
+            .get("state")
+            .ok_or_else(|| anyhow!("missing 'state' parameter in OAuth callback"))?
+            .to_string();
+
+        // Send a minimal response.
+        let html = "<!DOCTYPE html><html><body><h1>Authorization complete</h1><p>You can close this tab and return to Zed.</p></body></html>";
+        let response = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            html.len(),
+            html
+        );
+        smol::io::AsyncWriteExt::write_all(&mut stream, response.as_bytes()).await?;
+
+        Ok(AuthorizationCallback { code, state })
+    });
+
+    Ok((port, task))
+}
+
+// -- JSON fetch helper -------------------------------------------------------
+
+async fn fetch_json<T: serde::de::DeserializeOwned>(
+    http_client: &Arc<dyn HttpClient>,
+    url: &Url,
+) -> Result<T> {
+    let request = Request::builder()
+        .method(http_client::http::Method::GET)
+        .uri(url.as_str())
+        .header("Accept", "application/json")
+        .body(AsyncBody::default())?;
+
+    let mut response = http_client.send(request).await?;
+
+    if !response.status().is_success() {
+        bail!("HTTP {} fetching {}", response.status(), url);
+    }
+
+    let mut body = String::new();
+    response.body_mut().read_to_string(&mut body).await?;
+    serde_json::from_str(&body).with_context(|| format!("failed to parse JSON from {}", url))
+}
+
+// -- Serde response types for discovery --------------------------------------
+
+#[derive(Debug, Deserialize)]
+struct ProtectedResourceMetadataResponse {
+    #[serde(default)]
+    resource: Option<Url>,
+    #[serde(default)]
+    authorization_servers: Vec<Url>,
+    #[serde(default)]
+    scopes_supported: Option<Vec<String>>,
+}
+
+#[derive(Debug, Deserialize)]
+struct AuthServerMetadataResponse {
+    #[serde(default)]
+    issuer: Option<String>,
+    #[serde(default)]
+    authorization_endpoint: Option<String>,
+    #[serde(default)]
+    token_endpoint: Option<String>,
+    #[serde(default)]
+    registration_endpoint: Option<String>,
+    #[serde(default)]
+    scopes_supported: Option<Vec<String>>,
+    #[serde(default)]
+    code_challenge_methods_supported: Option<Vec<String>>,
+    #[serde(default)]
+    client_id_metadata_document_supported: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
+struct DcrResponse {
+    client_id: String,
+    #[serde(default)]
+    client_secret: Option<String>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1062,5 +1483,584 @@ mod tests {
         assert_eq!(body["grant_types"][0], "authorization_code");
         assert_eq!(body["response_types"][0], "code");
         assert_eq!(body["token_endpoint_auth_method"], "none");
+    }
+
+    // -- Test helpers for async/HTTP tests -----------------------------------
+
+    fn make_fake_http_client(
+        handler: impl Fn(
+            http_client::Request<AsyncBody>,
+        ) -> std::pin::Pin<
+            Box<dyn std::future::Future<Output = anyhow::Result<Response<AsyncBody>>> + Send>,
+        > + Send
+        + Sync
+        + 'static,
+    ) -> Arc<dyn HttpClient> {
+        http_client::FakeHttpClient::create(handler) as Arc<dyn HttpClient>
+    }
+
+    fn json_response(status: u16, body: &str) -> anyhow::Result<Response<AsyncBody>> {
+        Ok(Response::builder()
+            .status(status)
+            .header("Content-Type", "application/json")
+            .body(AsyncBody::from(body.as_bytes().to_vec()))
+            .unwrap())
+    }
+
+    // -- Discovery integration tests -----------------------------------------
+
+    #[test]
+    fn test_fetch_protected_resource_metadata() {
+        smol::block_on(async {
+            let client = make_fake_http_client(|req| {
+                Box::pin(async move {
+                    let uri = req.uri().to_string();
+                    if uri.contains(".well-known/oauth-protected-resource") {
+                        json_response(
+                            200,
+                            r#"{
+                                "resource": "https://mcp.example.com",
+                                "authorization_servers": ["https://auth.example.com"],
+                                "scopes_supported": ["read", "write"]
+                            }"#,
+                        )
+                    } else {
+                        json_response(404, "{}")
+                    }
+                })
+            });
+
+            let server_url = Url::parse("https://mcp.example.com").unwrap();
+            let www_auth = WwwAuthenticate {
+                resource_metadata: None,
+                scope: None,
+                error: None,
+                error_description: None,
+            };
+
+            let metadata = fetch_protected_resource_metadata(&client, &server_url, &www_auth)
+                .await
+                .unwrap();
+
+            assert_eq!(metadata.resource.as_str(), "https://mcp.example.com/");
+            assert_eq!(metadata.authorization_servers.len(), 1);
+            assert_eq!(
+                metadata.authorization_servers[0].as_str(),
+                "https://auth.example.com"
+            );
+            assert_eq!(
+                metadata.scopes_supported,
+                Some(vec!["read".to_string(), "write".to_string()])
+            );
+        });
+    }
+
+    #[test]
+    fn test_fetch_protected_resource_metadata_prefers_www_authenticate_url() {
+        smol::block_on(async {
+            let client = make_fake_http_client(|req| {
+                Box::pin(async move {
+                    let uri = req.uri().to_string();
+                    if uri == "https://mcp.example.com/custom-resource-metadata" {
+                        json_response(
+                            200,
+                            r#"{
+                                "resource": "https://mcp.example.com",
+                                "authorization_servers": ["https://auth.example.com"]
+                            }"#,
+                        )
+                    } else {
+                        json_response(500, r#"{"error": "should not be called"}"#)
+                    }
+                })
+            });
+
+            let server_url = Url::parse("https://mcp.example.com").unwrap();
+            let www_auth = WwwAuthenticate {
+                resource_metadata: Some(
+                    Url::parse("https://mcp.example.com/custom-resource-metadata").unwrap(),
+                ),
+                scope: None,
+                error: None,
+                error_description: None,
+            };
+
+            let metadata = fetch_protected_resource_metadata(&client, &server_url, &www_auth)
+                .await
+                .unwrap();
+
+            assert_eq!(metadata.authorization_servers.len(), 1);
+        });
+    }
+
+    #[test]
+    fn test_fetch_auth_server_metadata() {
+        smol::block_on(async {
+            let client = make_fake_http_client(|req| {
+                Box::pin(async move {
+                    let uri = req.uri().to_string();
+                    if uri.contains(".well-known/oauth-authorization-server") {
+                        json_response(
+                            200,
+                            r#"{
+                                "issuer": "https://auth.example.com",
+                                "authorization_endpoint": "https://auth.example.com/authorize",
+                                "token_endpoint": "https://auth.example.com/token",
+                                "registration_endpoint": "https://auth.example.com/register",
+                                "code_challenge_methods_supported": ["S256"],
+                                "client_id_metadata_document_supported": true
+                            }"#,
+                        )
+                    } else {
+                        json_response(404, "{}")
+                    }
+                })
+            });
+
+            let issuer = Url::parse("https://auth.example.com").unwrap();
+            let metadata = fetch_auth_server_metadata(&client, &issuer).await.unwrap();
+
+            assert_eq!(metadata.issuer.as_str(), "https://auth.example.com/");
+            assert_eq!(
+                metadata.authorization_endpoint.as_str(),
+                "https://auth.example.com/authorize"
+            );
+            assert_eq!(
+                metadata.token_endpoint.as_str(),
+                "https://auth.example.com/token"
+            );
+            assert!(metadata.registration_endpoint.is_some());
+            assert!(metadata.client_id_metadata_document_supported);
+            assert_eq!(
+                metadata.code_challenge_methods_supported,
+                Some(vec!["S256".to_string()])
+            );
+        });
+    }
+
+    #[test]
+    fn test_fetch_auth_server_metadata_falls_back_to_oidc() {
+        smol::block_on(async {
+            let client = make_fake_http_client(|req| {
+                Box::pin(async move {
+                    let uri = req.uri().to_string();
+                    if uri.contains("openid-configuration") {
+                        json_response(
+                            200,
+                            r#"{
+                                "issuer": "https://auth.example.com",
+                                "authorization_endpoint": "https://auth.example.com/authorize",
+                                "token_endpoint": "https://auth.example.com/token",
+                                "code_challenge_methods_supported": ["S256"]
+                            }"#,
+                        )
+                    } else {
+                        json_response(404, "{}")
+                    }
+                })
+            });
+
+            let issuer = Url::parse("https://auth.example.com").unwrap();
+            let metadata = fetch_auth_server_metadata(&client, &issuer).await.unwrap();
+
+            assert_eq!(
+                metadata.authorization_endpoint.as_str(),
+                "https://auth.example.com/authorize"
+            );
+            assert!(!metadata.client_id_metadata_document_supported);
+        });
+    }
+
+    // -- Full discover integration tests -------------------------------------
+
+    #[test]
+    fn test_full_discover_with_cimd() {
+        smol::block_on(async {
+            let client = make_fake_http_client(|req| {
+                Box::pin(async move {
+                    let uri = req.uri().to_string();
+                    if uri.contains("oauth-protected-resource") {
+                        json_response(
+                            200,
+                            r#"{
+                                "resource": "https://mcp.example.com",
+                                "authorization_servers": ["https://auth.example.com"],
+                                "scopes_supported": ["mcp:read"]
+                            }"#,
+                        )
+                    } else if uri.contains("oauth-authorization-server") {
+                        json_response(
+                            200,
+                            r#"{
+                                "issuer": "https://auth.example.com",
+                                "authorization_endpoint": "https://auth.example.com/authorize",
+                                "token_endpoint": "https://auth.example.com/token",
+                                "code_challenge_methods_supported": ["S256"],
+                                "client_id_metadata_document_supported": true
+                            }"#,
+                        )
+                    } else {
+                        json_response(404, "{}")
+                    }
+                })
+            });
+
+            let server_url = Url::parse("https://mcp.example.com").unwrap();
+            let www_auth = WwwAuthenticate {
+                resource_metadata: None,
+                scope: None,
+                error: None,
+                error_description: None,
+            };
+
+            let discovery = discover(&client, &server_url, &www_auth).await.unwrap();
+
+            assert_eq!(discovery.client_registration.client_id, CIMD_URL);
+            assert_eq!(discovery.client_registration.client_secret, None);
+            assert_eq!(discovery.scopes, vec!["mcp:read"]);
+        });
+    }
+
+    #[test]
+    fn test_full_discover_with_dcr_fallback() {
+        smol::block_on(async {
+            let client = make_fake_http_client(|req| {
+                Box::pin(async move {
+                    let uri = req.uri().to_string();
+                    if uri.contains("oauth-protected-resource") {
+                        json_response(
+                            200,
+                            r#"{
+                                "resource": "https://mcp.example.com",
+                                "authorization_servers": ["https://auth.example.com"]
+                            }"#,
+                        )
+                    } else if uri.contains("oauth-authorization-server") {
+                        json_response(
+                            200,
+                            r#"{
+                                "issuer": "https://auth.example.com",
+                                "authorization_endpoint": "https://auth.example.com/authorize",
+                                "token_endpoint": "https://auth.example.com/token",
+                                "registration_endpoint": "https://auth.example.com/register",
+                                "code_challenge_methods_supported": ["S256"],
+                                "client_id_metadata_document_supported": false
+                            }"#,
+                        )
+                    } else if uri.contains("/register") {
+                        json_response(
+                            201,
+                            r#"{
+                                "client_id": "dcr-minted-id-123",
+                                "client_secret": "dcr-secret-456"
+                            }"#,
+                        )
+                    } else {
+                        json_response(404, "{}")
+                    }
+                })
+            });
+
+            let server_url = Url::parse("https://mcp.example.com").unwrap();
+            let www_auth = WwwAuthenticate {
+                resource_metadata: None,
+                scope: Some(vec!["files:read".into()]),
+                error: None,
+                error_description: None,
+            };
+
+            let discovery = discover(&client, &server_url, &www_auth).await.unwrap();
+
+            assert_eq!(discovery.client_registration.client_id, "dcr-minted-id-123");
+            assert_eq!(
+                discovery.client_registration.client_secret.as_deref(),
+                Some("dcr-secret-456")
+            );
+            assert_eq!(discovery.scopes, vec!["files:read"]);
+        });
+    }
+
+    #[test]
+    fn test_discover_fails_without_pkce_support() {
+        smol::block_on(async {
+            let client = make_fake_http_client(|req| {
+                Box::pin(async move {
+                    let uri = req.uri().to_string();
+                    if uri.contains("oauth-protected-resource") {
+                        json_response(
+                            200,
+                            r#"{
+                                "resource": "https://mcp.example.com",
+                                "authorization_servers": ["https://auth.example.com"]
+                            }"#,
+                        )
+                    } else if uri.contains("oauth-authorization-server") {
+                        json_response(
+                            200,
+                            r#"{
+                                "issuer": "https://auth.example.com",
+                                "authorization_endpoint": "https://auth.example.com/authorize",
+                                "token_endpoint": "https://auth.example.com/token"
+                            }"#,
+                        )
+                    } else {
+                        json_response(404, "{}")
+                    }
+                })
+            });
+
+            let server_url = Url::parse("https://mcp.example.com").unwrap();
+            let www_auth = WwwAuthenticate {
+                resource_metadata: None,
+                scope: None,
+                error: None,
+                error_description: None,
+            };
+
+            let result = discover(&client, &server_url, &www_auth).await;
+            assert!(result.is_err());
+            let err_msg = result.unwrap_err().to_string();
+            assert!(
+                err_msg.contains("code_challenge_methods_supported"),
+                "unexpected error: {}",
+                err_msg
+            );
+        });
+    }
+
+    // -- Token exchange integration tests ------------------------------------
+
+    #[test]
+    fn test_exchange_code_success() {
+        smol::block_on(async {
+            let client = make_fake_http_client(|req| {
+                Box::pin(async move {
+                    let uri = req.uri().to_string();
+                    if uri.contains("/token") {
+                        json_response(
+                            200,
+                            r#"{
+                                "access_token": "new_access_token",
+                                "refresh_token": "new_refresh_token",
+                                "expires_in": 3600,
+                                "token_type": "Bearer"
+                            }"#,
+                        )
+                    } else {
+                        json_response(404, "{}")
+                    }
+                })
+            });
+
+            let metadata = AuthServerMetadata {
+                issuer: Url::parse("https://auth.example.com").unwrap(),
+                authorization_endpoint: Url::parse("https://auth.example.com/authorize").unwrap(),
+                token_endpoint: Url::parse("https://auth.example.com/token").unwrap(),
+                registration_endpoint: None,
+                scopes_supported: None,
+                code_challenge_methods_supported: Some(vec!["S256".into()]),
+                client_id_metadata_document_supported: true,
+            };
+
+            let tokens = exchange_code(
+                &client,
+                &metadata,
+                "auth_code_123",
+                CIMD_URL,
+                "http://127.0.0.1:9999/callback",
+                "verifier_abc",
+                "https://mcp.example.com",
+            )
+            .await
+            .unwrap();
+
+            assert_eq!(tokens.access_token, "new_access_token");
+            assert_eq!(tokens.refresh_token.as_deref(), Some("new_refresh_token"));
+            assert!(tokens.expires_at.is_some());
+        });
+    }
+
+    #[test]
+    fn test_refresh_tokens_success() {
+        smol::block_on(async {
+            let client = make_fake_http_client(|req| {
+                Box::pin(async move {
+                    let uri = req.uri().to_string();
+                    if uri.contains("/token") {
+                        json_response(
+                            200,
+                            r#"{
+                                "access_token": "refreshed_token",
+                                "expires_in": 1800,
+                                "token_type": "Bearer"
+                            }"#,
+                        )
+                    } else {
+                        json_response(404, "{}")
+                    }
+                })
+            });
+
+            let metadata = AuthServerMetadata {
+                issuer: Url::parse("https://auth.example.com").unwrap(),
+                authorization_endpoint: Url::parse("https://auth.example.com/authorize").unwrap(),
+                token_endpoint: Url::parse("https://auth.example.com/token").unwrap(),
+                registration_endpoint: None,
+                scopes_supported: None,
+                code_challenge_methods_supported: Some(vec!["S256".into()]),
+                client_id_metadata_document_supported: true,
+            };
+
+            let tokens = refresh_tokens(
+                &client,
+                &metadata,
+                "old_refresh_token",
+                CIMD_URL,
+                "https://mcp.example.com",
+            )
+            .await
+            .unwrap();
+
+            assert_eq!(tokens.access_token, "refreshed_token");
+            assert_eq!(tokens.refresh_token, None);
+            assert!(tokens.expires_at.is_some());
+        });
+    }
+
+    #[test]
+    fn test_exchange_code_failure() {
+        smol::block_on(async {
+            let client = make_fake_http_client(|_req| {
+                Box::pin(async move { json_response(400, r#"{"error": "invalid_grant"}"#) })
+            });
+
+            let metadata = AuthServerMetadata {
+                issuer: Url::parse("https://auth.example.com").unwrap(),
+                authorization_endpoint: Url::parse("https://auth.example.com/authorize").unwrap(),
+                token_endpoint: Url::parse("https://auth.example.com/token").unwrap(),
+                registration_endpoint: None,
+                scopes_supported: None,
+                code_challenge_methods_supported: Some(vec!["S256".into()]),
+                client_id_metadata_document_supported: true,
+            };
+
+            let result = exchange_code(
+                &client,
+                &metadata,
+                "bad_code",
+                "client",
+                "http://127.0.0.1:1/callback",
+                "verifier",
+                "https://mcp.example.com",
+            )
+            .await;
+
+            assert!(result.is_err());
+            assert!(result.unwrap_err().to_string().contains("400"));
+        });
+    }
+
+    // -- DCR integration tests -----------------------------------------------
+
+    #[test]
+    fn test_perform_dcr() {
+        smol::block_on(async {
+            let client = make_fake_http_client(|_req| {
+                Box::pin(async move {
+                    json_response(
+                        201,
+                        r#"{
+                            "client_id": "dynamic-client-001",
+                            "client_secret": "dynamic-secret-001"
+                        }"#,
+                    )
+                })
+            });
+
+            let endpoint = Url::parse("https://auth.example.com/register").unwrap();
+            let registration = perform_dcr(&client, &endpoint).await.unwrap();
+
+            assert_eq!(registration.client_id, "dynamic-client-001");
+            assert_eq!(
+                registration.client_secret.as_deref(),
+                Some("dynamic-secret-001")
+            );
+        });
+    }
+
+    #[test]
+    fn test_perform_dcr_failure() {
+        smol::block_on(async {
+            let client = make_fake_http_client(|_req| {
+                Box::pin(
+                    async move { json_response(403, r#"{"error": "registration_not_allowed"}"#) },
+                )
+            });
+
+            let endpoint = Url::parse("https://auth.example.com/register").unwrap();
+            let result = perform_dcr(&client, &endpoint).await;
+
+            assert!(result.is_err());
+            assert!(result.unwrap_err().to_string().contains("403"));
+        });
+    }
+
+    // -- Callback server tests -----------------------------------------------
+
+    #[test]
+    fn test_callback_server_receives_code() {
+        smol::block_on(async {
+            let (port, task) = start_callback_server().await.unwrap();
+
+            let mut stream = smol::net::TcpStream::connect(format!("127.0.0.1:{}", port))
+                .await
+                .unwrap();
+
+            let request = format!(
+                "GET /callback?code=test_auth_code&state=test_state HTTP/1.1\r\nHost: 127.0.0.1:{}\r\n\r\n",
+                port
+            );
+            smol::io::AsyncWriteExt::write_all(&mut stream, request.as_bytes())
+                .await
+                .unwrap();
+
+            // Shut down the write half so the server sees EOF and can respond.
+            stream.shutdown(std::net::Shutdown::Write).unwrap();
+
+            let mut response = Vec::new();
+            smol::io::AsyncReadExt::read_to_end(&mut stream, &mut response)
+                .await
+                .unwrap();
+            let response_str = String::from_utf8_lossy(&response);
+            assert!(response_str.contains("200 OK"));
+            assert!(response_str.contains("Authorization complete"));
+
+            let callback = task.await.unwrap();
+            assert_eq!(callback.code, "test_auth_code");
+            assert_eq!(callback.state, "test_state");
+        });
+    }
+
+    #[test]
+    fn test_callback_server_rejects_missing_code() {
+        smol::block_on(async {
+            let (port, task) = start_callback_server().await.unwrap();
+
+            let mut stream = smol::net::TcpStream::connect(format!("127.0.0.1:{}", port))
+                .await
+                .unwrap();
+
+            let request = format!(
+                "GET /callback?state=test_state HTTP/1.1\r\nHost: 127.0.0.1:{}\r\n\r\n",
+                port
+            );
+            smol::io::AsyncWriteExt::write_all(&mut stream, request.as_bytes())
+                .await
+                .unwrap();
+
+            let result = task.await;
+            assert!(result.is_err());
+            assert!(result.unwrap_err().to_string().contains("code"));
+        });
     }
 }
