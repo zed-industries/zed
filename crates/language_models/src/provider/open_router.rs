@@ -123,7 +123,11 @@ impl OpenRouterState {
         }
     }
 
-    pub fn get_cached_endpoints(&self, model_id: &str, cx: &App) -> Option<Vec<OpenRouterEndpoint>> {
+    pub fn get_cached_endpoints(
+        &self,
+        model_id: &str,
+        cx: &App,
+    ) -> Option<Vec<OpenRouterEndpoint>> {
         self.endpoint_cache.read(cx).get(model_id).cloned()
     }
 
@@ -136,7 +140,6 @@ impl OpenRouterState {
 
         let api_url = OpenRouterLanguageModelProvider::api_url(cx);
         let Some(api_key) = self.api_key_state.key(&api_url) else {
-            log::warn!("[OpenRouter] fetch_endpoints: no API key available");
             return;
         };
 
@@ -153,14 +156,7 @@ impl OpenRouterState {
                 this.update(cx, |this, cx| {
                     this.endpoint_fetch_tasks.remove(&model_id);
                     let entries = match endpoints {
-                        Ok(endpoints) => {
-                            log::info!(
-                                "[OpenRouter] fetch_endpoints succeeded for {}: {} endpoints",
-                                model_id,
-                                endpoints.len()
-                            );
-                            endpoints
-                        }
+                        Ok(endpoints) => endpoints,
                         Err(e) => {
                             log::error!(
                                 "[OpenRouter] fetch_endpoints failed for {}: {:?}",

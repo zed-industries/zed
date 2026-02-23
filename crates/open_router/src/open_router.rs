@@ -675,7 +675,6 @@ pub async fn get_model_endpoints(
         "{}/models/{}/{}/endpoints",
         OPEN_ROUTER_API_URL, author, slug
     );
-    log::info!("Requesting {}", uri);
     let request_builder = HttpRequest::builder()
         .method(Method::GET)
         .uri(uri)
