@@ -1353,6 +1353,17 @@ mod test {
         cx.simulate_keystrokes("escape");
         cx.run_until_parked();
 
+        cx.workspace(|workspace, _, cx| {
+            let search_bar = workspace
+                .active_pane()
+                .read(cx)
+                .toolbar()
+                .read(cx)
+                .item_of_type::<BufferSearchBar>()
+                .expect("buffer search bar should exist");
+            assert!(search_bar.read(cx).is_dismissed(), "search bar should be dismissed after first ESC");
+        });
+
         cx.update_editor(|editor, window, cx| {
             let highlights = editor.all_text_background_highlights(window, cx);
             assert!(!highlights.is_empty(), "highlights should persist after ESC");
@@ -1361,6 +1372,17 @@ mod test {
         // Second ESC should clear previously retained highlights.
         cx.simulate_keystrokes("escape");
         cx.run_until_parked();
+
+        cx.workspace(|workspace, _, cx| {
+            let search_bar = workspace
+                .active_pane()
+                .read(cx)
+                .toolbar()
+                .read(cx)
+                .item_of_type::<BufferSearchBar>()
+                .expect("buffer search bar should exist");
+            assert!(search_bar.read(cx).is_dismissed(), "search bar should remain dismissed after second ESC");
+        });
 
         cx.update_editor(|editor, window, cx| {
             let highlights = editor.all_text_background_highlights(window, cx);
