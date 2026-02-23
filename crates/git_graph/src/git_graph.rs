@@ -1117,6 +1117,8 @@ impl GitGraph {
         self.selected_entry_idx = Some(idx);
         self.selected_commit_diff = None;
         self.selected_commit_diff_stats = None;
+        self.changed_files_scroll_handle
+            .scroll_to_item(0, ScrollStrategy::Top);
         self.table_interaction_state.update(cx, |state, cx| {
             state
                 .scroll_handle
@@ -1375,7 +1377,7 @@ impl GitGraph {
                                 let author_email_for_tooltip = author_email.clone();
 
                                 this.child(
-                                    Button::new("author-email-copy", format!("{}", &author_email))
+                                    Button::new("author-email-copy", author_email.clone())
                                         .icon(icon)
                                         .icon_size(IconSize::Small)
                                         .icon_color(icon_color)
