@@ -65,45 +65,47 @@ fn main() {
     });
     let theme_name = args.theme.unwrap_or("One Dark".to_string());
 
-    gpui::Application::new().with_assets(Assets).run(move |cx| {
-        load_embedded_fonts(cx).unwrap();
+    gpui_platform::application()
+        .with_assets(Assets)
+        .run(move |cx| {
+            load_embedded_fonts(cx).unwrap();
 
-        cx.set_global(GlobalColors(Arc::new(Colors::default())));
+            cx.set_global(GlobalColors(Arc::new(Colors::default())));
 
-        let http_client = ReqwestClient::user_agent("zed_storybook").unwrap();
-        cx.set_http_client(Arc::new(http_client));
+            let http_client = ReqwestClient::user_agent("zed_storybook").unwrap();
+            cx.set_http_client(Arc::new(http_client));
 
-        settings::init(cx);
-        theme::init(theme::LoadThemes::All(Box::new(Assets)), cx);
+            settings::init(cx);
+            theme::init(theme::LoadThemes::All(Box::new(Assets)), cx);
 
-        let selector = story_selector;
+            let selector = story_selector;
 
-        let mut theme_settings = ThemeSettings::get_global(cx).clone();
-        theme_settings.theme =
-            theme::ThemeSelection::Static(settings::ThemeName(theme_name.into()));
-        ThemeSettings::override_global(theme_settings, cx);
+            let mut theme_settings = ThemeSettings::get_global(cx).clone();
+            theme_settings.theme =
+                theme::ThemeSelection::Static(settings::ThemeName(theme_name.into()));
+            ThemeSettings::override_global(theme_settings, cx);
 
-        editor::init(cx);
-        init(cx);
-        load_storybook_keymap(cx);
-        cx.set_menus(app_menus());
+            editor::init(cx);
+            init(cx);
+            load_storybook_keymap(cx);
+            cx.set_menus(app_menus());
 
-        let size = size(px(1500.), px(780.));
-        let bounds = Bounds::centered(None, size, cx);
-        let _window = cx.open_window(
-            WindowOptions {
-                window_bounds: Some(WindowBounds::Windowed(bounds)),
-                ..Default::default()
-            },
-            move |window, cx| {
-                theme::setup_ui_font(window, cx);
+            let size = size(px(1500.), px(780.));
+            let bounds = Bounds::centered(None, size, cx);
+            let _window = cx.open_window(
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::Windowed(bounds)),
+                    ..Default::default()
+                },
+                move |window, cx| {
+                    theme::setup_ui_font(window, cx);
 
-                cx.new(|cx| StoryWrapper::new(selector.story(window, cx)))
-            },
-        );
+                    cx.new(|cx| StoryWrapper::new(selector.story(window, cx)))
+                },
+            );
 
-        cx.activate(true);
-    });
+            cx.activate(true);
+        });
 }
 
 #[derive(Clone)]

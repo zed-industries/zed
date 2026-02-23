@@ -1,7 +1,8 @@
 use gpui::{
-    App, Application, Bounds, ColorSpace, Context, Half, Render, Window, WindowOptions, canvas,
-    div, linear_color_stop, linear_gradient, point, prelude::*, px, size,
+    App, Bounds, ColorSpace, Context, Half, Render, Window, WindowOptions, canvas, div,
+    linear_color_stop, linear_gradient, point, prelude::*, px, size,
 };
+use gpui_platform::application;
 
 struct GradientViewer {
     color_space: ColorSpace,
@@ -243,7 +244,7 @@ impl Render for GradientViewer {
 }
 
 fn main() {
-    Application::new().run(|cx: &mut App| {
+    application().run(|cx: &mut App| {
         cx.open_window(
             WindowOptions {
                 focus: true,

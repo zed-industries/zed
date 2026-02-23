@@ -54,8 +54,8 @@ pub async fn run_format_prompt(
             let (editable_range, context_range) = editable_and_context_ranges_for_cursor_position(
                 cursor_point,
                 &snapshot,
-                edit_prediction::zeta2::max_editable_tokens(ZetaFormat::default()),
-                edit_prediction::zeta2::MAX_CONTEXT_TOKENS,
+                edit_prediction::zeta::max_editable_tokens(ZetaFormat::default()),
+                edit_prediction::zeta::MAX_CONTEXT_TOKENS,
             );
             let editable_range = editable_range.to_offset(&snapshot);
             let context_range = context_range.to_offset(&snapshot);
@@ -75,8 +75,8 @@ pub async fn run_format_prompt(
             let (editable_range, context_range) = editable_and_context_ranges_for_cursor_position(
                 cursor_point,
                 &snapshot,
-                edit_prediction::zeta2::max_editable_tokens(version),
-                edit_prediction::zeta2::MAX_CONTEXT_TOKENS,
+                edit_prediction::zeta::max_editable_tokens(version),
+                edit_prediction::zeta::MAX_CONTEXT_TOKENS,
             );
             let editable_range = editable_range.to_offset(&snapshot);
             let context_range = context_range.to_offset(&snapshot);

@@ -150,7 +150,10 @@ fn main() {
 fn run_visual_tests(project_path: PathBuf, update_baseline: bool) -> Result<()> {
     // Create the visual test context with deterministic task scheduling
     // Use real Assets so that SVG icons render properly
-    let mut cx = VisualTestAppContext::with_asset_source(Arc::new(Assets));
+    let mut cx = VisualTestAppContext::with_asset_source(
+        gpui_platform::current_platform(false),
+        Arc::new(Assets),
+    );
 
     // Load embedded fonts (IBM Plex Sans, Lilex, etc.) so UI renders with correct fonts
     cx.update(|cx| {
@@ -1285,7 +1288,7 @@ fn run_settings_ui_subpage_visual_tests(
         )
     });
 
-    let workspace_window: WindowHandle<Workspace> = cx
+    let workspace_window: WindowHandle<MultiWorkspace> = cx
         .update(|cx| {
             cx.open_window(
                 WindowOptions {
@@ -1295,9 +1298,10 @@ fn run_settings_ui_subpage_visual_tests(
                     ..Default::default()
                 },
                 |window, cx| {
-                    cx.new(|cx| {
+                    let workspace = cx.new(|cx| {
                         Workspace::new(None, project.clone(), app_state.clone(), window, cx)
-                    })
+                    });
+                    cx.new(|cx| MultiWorkspace::new(workspace, window, cx))
                 },
             )
         })
@@ -2049,7 +2053,12 @@ fn run_agent_thread_view_test(
     cx.background_executor.allow_parking();
     let run_result = cx.foreground_executor.block_test(run_task);
     cx.background_executor.forbid_parking();
-    run_result.context("ReadFileTool failed")?;
+    run_result.map_err(|e| match e {
+        language_model::LanguageModelToolResultContent::Text(text) => {
+            anyhow::anyhow!("ReadFileTool failed: {text}")
+        }
+        other => anyhow::anyhow!("ReadFileTool failed: {other:?}"),
+    })?;
 
     cx.run_until_parked();
 
@@ -2335,7 +2344,7 @@ fn run_tool_permissions_visual_tests(
         )
     });
 
-    let workspace_window: WindowHandle<Workspace> = cx
+    let workspace_window: WindowHandle<MultiWorkspace> = cx
         .update(|cx| {
             cx.open_window(
                 WindowOptions {
@@ -2345,9 +2354,10 @@ fn run_tool_permissions_visual_tests(
                     ..Default::default()
                 },
                 |window, cx| {
-                    cx.new(|cx| {
+                    let workspace = cx.new(|cx| {
                         Workspace::new(None, project.clone(), app_state.clone(), window, cx)
-                    })
+                    });
+                    cx.new(|cx| MultiWorkspace::new(workspace, window, cx))
                 },
             )
         })
