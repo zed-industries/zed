@@ -1937,13 +1937,21 @@ impl GitGraph {
                                     .border_b_1()
                                     .border_color(cx.theme().colors().border)
                                     .child(
+                                        Label::new(format!("{} Changed Files", changed_files_count))
+                                            .size(LabelSize::Small)
+                                            .color(Color::Muted),
+                                    ),
+                            )
+                            .child(
+                                div()
+                                    .id("commit-files-list")
+                                    .flex_1()
+                                    .min_h_0()
+                                    .overflow_y_scroll()
+                                    .p_3()
+                                    .child(
                                         v_flex()
-                                            .gap_2()
-                                            .child(
-                                                Label::new(format!("{} Changed Files", changed_files_count))
-                                                    .size(LabelSize::Small)
-                                                    .color(Color::Muted),
-                                            )
+                                            .gap_1()
                                             .children(self.selected_commit_diff.as_ref().map(|diff| {
                                                 let commit_sha = self.graph_data.commits
                                                     .get(self.selected_entry_idx.unwrap_or(0))

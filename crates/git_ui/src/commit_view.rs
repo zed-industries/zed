@@ -632,9 +632,6 @@ impl CommitView {
         window: &mut Window,
         cx: &mut App,
     ) {
-        log::info!("[CommitView] handle_open_excerpts_requested START");
-        let start_time = std::time::Instant::now();
-
         // Get the workspace
         let workspace = match self.editor.read(cx).workspace() {
             Some(ws) => ws,
@@ -643,61 +640,38 @@ impl CommitView {
         let project = workspace.read(cx).project().clone();
         let pane = workspace.read(cx).active_pane().clone();
 
-        log::info!(
-            "[CommitView] Got workspace/pane: {:?}",
-            start_time.elapsed()
-        );
-
         // Collect all the data we need before creating editors
         let mut editors_to_create: Vec<(Entity<Buffer>, Entity<BufferDiff>)> = Vec::new();
 
         for (buffer_id, (_ranges, _scroll_offset)) in selections_by_buffer {
             // Get the BufferDiff from multibuffer
-            let t1 = std::time::Instant::now();
             let buffer_diff = match self.multibuffer.read(cx).diff_for(*buffer_id) {
                 Some(diff) => diff,
                 None => continue,
             };
-            log::info!("[CommitView] diff_for: {:?}", t1.elapsed());
 
             // Get the buffer from multibuffer
-            let t2 = std::time::Instant::now();
             let buffer = match self.multibuffer.read(cx).buffer(*buffer_id) {
                 Some(buf) => buf,
                 None => continue,
             };
-            log::info!("[CommitView] buffer: {:?}", t2.elapsed());
 
             editors_to_create.push((buffer, buffer_diff));
         }
-
-        log::info!(
-            "[CommitView] Collected editors_to_create: {:?}",
-            start_time.elapsed()
-        );
 
         // Use defer to postpone the editor creation to avoid borrowing issues
         for (buffer, buffer_diff) in editors_to_create {
             let project = project.clone();
             let pane = pane.clone();
-            let defer_start = std::time::Instant::now();
             window.defer(cx, move |window, cx| {
-                log::info!(
-                    "[CommitView] DEFER START, waited: {:?}",
-                    defer_start.elapsed()
-                );
-
                 // Create a new MultiBuffer with the buffer and diff
-                let t3 = std::time::Instant::now();
                 let new_multibuffer = cx.new(|cx| {
                     let mut multibuffer = MultiBuffer::singleton(buffer, cx);
                     multibuffer.set_all_diff_hunks_expanded(cx);
                     multibuffer.add_diff(buffer_diff, cx);
                     multibuffer
                 });
-                log::info!("[CommitView] MultiBuffer creation: {:?}", t3.elapsed());
 
-                let t4 = std::time::Instant::now();
                 let new_editor = cx.new(|cx| {
                     let mut editor =
                         Editor::for_multibuffer(new_multibuffer, Some(project), window, cx);
@@ -706,10 +680,8 @@ impl CommitView {
                     editor.set_read_only(true);
                     editor
                 });
-                log::info!("[CommitView] Editor creation: {:?}", t4.elapsed());
 
                 // Scroll to the first diff hunk
-                let t5 = std::time::Instant::now();
                 new_editor.update(cx, |editor, cx| {
                     editor.go_to_hunk_before_or_after_position(
                         &editor.snapshot(window, cx),
@@ -719,22 +691,12 @@ impl CommitView {
                         cx,
                     );
                 });
-                log::info!("[CommitView] Scroll to hunk: {:?}", t5.elapsed());
 
-                let t6 = std::time::Instant::now();
                 pane.update(cx, |pane, cx| {
                     pane.add_item(Box::new(new_editor), true, true, None, window, cx);
                 });
-                log::info!("[CommitView] Add to pane: {:?}", t6.elapsed());
-
-                log::info!("[CommitView] DEFER TOTAL: {:?}", defer_start.elapsed());
             });
         }
-
-        log::info!(
-            "[CommitView] handle_open_excerpts_requested END: {:?}",
-            start_time.elapsed()
-        );
     }
 
     fn scroll_to_file(&mut self, file_path: &RepoPath, window: &mut Window, cx: &mut App) {
