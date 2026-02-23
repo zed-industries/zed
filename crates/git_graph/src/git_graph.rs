@@ -1950,6 +1950,7 @@ impl GitGraph {
                                     .id("commit-files-scroll")
                                     .flex_1()
                                     .min_h_0()
+                                    .overflow_y_scroll()
                                     .p_3()
                                     .child(v_flex().gap_1().children(
                                         self.selected_commit_diff.as_ref().map(|diff| {
