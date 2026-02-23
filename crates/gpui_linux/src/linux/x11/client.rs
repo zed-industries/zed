@@ -1515,7 +1515,7 @@ impl LinuxClient for X11Client {
             handle,
             X11ClientStatePtr(Rc::downgrade(&self.0)),
             state.common.foreground_executor.clone(),
-            &state.gpu_context,
+            &mut state.gpu_context,
             params,
             &state.xcb_connection,
             state.client_side_decorations_supported,

@@ -317,7 +317,7 @@ impl WaylandWindowState {
         viewport: Option<wp_viewport::WpViewport>,
         client: WaylandClientStatePtr,
         globals: Globals,
-        gpu_context: &WgpuContext,
+        gpu_context: &mut WgpuContext,
         options: WindowParams,
         parent: Option<WaylandWindowStatePtr>,
     ) -> anyhow::Result<Self> {
@@ -481,7 +481,7 @@ impl WaylandWindow {
     pub fn new(
         handle: AnyWindowHandle,
         globals: Globals,
-        gpu_context: &WgpuContext,
+        gpu_context: &mut WgpuContext,
         client: WaylandClientStatePtr,
         params: WindowParams,
         appearance: WindowAppearance,

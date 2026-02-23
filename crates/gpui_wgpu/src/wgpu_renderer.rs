@@ -124,7 +124,7 @@ impl WgpuRenderer {
     /// The caller must ensure that the window handle remains valid for the lifetime
     /// of the returned renderer.
     pub fn new<W: HasWindowHandle + HasDisplayHandle>(
-        context: &WgpuContext,
+        context: &mut WgpuContext,
         window: &W,
         config: WgpuSurfaceConfig,
     ) -> anyhow::Result<Self> {
@@ -150,10 +150,9 @@ impl WgpuRenderer {
                 .map_err(|e| anyhow::anyhow!("Failed to create surface: {e}"))?
         };
 
+        context.ensure_compatible_with_surface(&surface)?;
+
         let surface_caps = surface.get_capabilities(&context.adapter);
-        // Prefer standard 8-bit non-sRGB formats that don't require special features.
-        // Other formats like Rgba16Unorm require TEXTURE_FORMAT_16BIT_NORM which may
-        // not be available on all devices.
         let preferred_formats = [
             wgpu::TextureFormat::Bgra8Unorm,
             wgpu::TextureFormat::Rgba8Unorm,
@@ -163,26 +162,38 @@ impl WgpuRenderer {
             .find(|f| surface_caps.formats.contains(f))
             .copied()
             .or_else(|| surface_caps.formats.iter().find(|f| !f.is_srgb()).copied())
-            .unwrap_or(surface_caps.formats[0]);
+            .or_else(|| surface_caps.formats.first().copied())
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "Surface reports no supported texture formats for adapter {:?}",
+                    context.adapter.get_info().name
+                )
+            })?;
 
         let pick_alpha_mode =
-            |preferences: &[wgpu::CompositeAlphaMode]| -> wgpu::CompositeAlphaMode {
-                preferences
+            |preferences: &[wgpu::CompositeAlphaMode]| -> anyhow::Result<wgpu::CompositeAlphaMode> {
+                Ok(preferences
                     .iter()
                     .find(|p| surface_caps.alpha_modes.contains(p))
                     .copied()
-                    .unwrap_or(surface_caps.alpha_modes[0])
+                    .or_else(|| surface_caps.alpha_modes.first().copied())
+                    .ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "Surface reports no supported alpha modes for adapter {:?}",
+                            context.adapter.get_info().name
+                        )
+                    })?)
             };
 
         let transparent_alpha_mode = pick_alpha_mode(&[
             wgpu::CompositeAlphaMode::PreMultiplied,
             wgpu::CompositeAlphaMode::Inherit,
-        ]);
+        ])?;
 
         let opaque_alpha_mode = pick_alpha_mode(&[
             wgpu::CompositeAlphaMode::Opaque,
             wgpu::CompositeAlphaMode::Inherit,
-        ]);
+        ])?;
 
         let alpha_mode = if config.transparent {
             transparent_alpha_mode

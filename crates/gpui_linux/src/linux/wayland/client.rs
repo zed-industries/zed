@@ -718,7 +718,7 @@ impl LinuxClient for WaylandClient {
         let (window, surface_id) = WaylandWindow::new(
             handle,
             state.globals.clone(),
-            &state.gpu_context,
+            &mut state.gpu_context,
             WaylandClientStatePtr(Rc::downgrade(&self.0)),
             params,
             state.common.appearance,

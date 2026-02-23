@@ -31,7 +31,7 @@ impl WgpuContext {
             memory_budget_thresholds: wgpu::MemoryBudgetThresholds::default(),
         });
 
-        let adapter = smol::block_on(Self::select_adapter(&instance, device_id_filter))?;
+        let adapter = smol::block_on(Self::select_adapter(&instance, device_id_filter, None))?;
 
         log::info!(
             "Selected GPU adapter: {:?} ({:?})",
@@ -39,6 +39,70 @@ impl WgpuContext {
             adapter.get_info().backend
         );
 
+        let (device, queue, dual_source_blending) = Self::create_device(&adapter)?;
+
+        Ok(Self {
+            instance,
+            adapter,
+            device: Arc::new(device),
+            queue: Arc::new(queue),
+            dual_source_blending,
+        })
+    }
+
+    /// Validates that the current adapter is compatible with the given surface.
+    /// If not, attempts to re-select an adapter that is compatible and
+    /// reinitializes the device and queue.
+    pub fn ensure_compatible_with_surface(
+        &mut self,
+        surface: &wgpu::Surface<'_>,
+    ) -> anyhow::Result<()> {
+        let caps = surface.get_capabilities(&self.adapter);
+        if !caps.formats.is_empty() {
+            return Ok(());
+        }
+
+        let info = self.adapter.get_info();
+        log::warn!(
+            "Adapter {:?} (backend={:?}, device={:#06x}) is not compatible with the \
+             display surface. Searching for a compatible adapter...",
+            info.name,
+            info.backend,
+            info.device,
+        );
+
+        let adapter = smol::block_on(Self::select_adapter(&self.instance, None, Some(surface)))?;
+
+        let caps = surface.get_capabilities(&adapter);
+        if caps.formats.is_empty() {
+            let info = adapter.get_info();
+            anyhow::bail!(
+                "No adapter compatible with the display surface could be found. \
+                 Best candidate {:?} (backend={:?}, device={:#06x}) reports no \
+                 supported surface formats.",
+                info.name,
+                info.backend,
+                info.device,
+            );
+        }
+
+        log::info!(
+            "Re-selected GPU adapter: {:?} ({:?})",
+            adapter.get_info().name,
+            adapter.get_info().backend
+        );
+
+        let (device, queue, dual_source_blending) = Self::create_device(&adapter)?;
+
+        self.adapter = adapter;
+        self.device = Arc::new(device);
+        self.queue = Arc::new(queue);
+        self.dual_source_blending = dual_source_blending;
+
+        Ok(())
+    }
+
+    fn create_device(adapter: &wgpu::Adapter) -> anyhow::Result<(wgpu::Device, wgpu::Queue, bool)> {
         let dual_source_blending_available = adapter
             .features()
             .contains(wgpu::Features::DUAL_SOURCE_BLENDING);
@@ -63,18 +127,13 @@ impl WgpuContext {
         }))
         .map_err(|e| anyhow::anyhow!("Failed to create wgpu device: {e}"))?;
 
-        Ok(Self {
-            instance,
-            adapter,
-            device: Arc::new(device),
-            queue: Arc::new(queue),
-            dual_source_blending: dual_source_blending_available,
-        })
+        Ok((device, queue, dual_source_blending_available))
     }
 
     async fn select_adapter(
         instance: &wgpu::Instance,
         device_id_filter: Option<u32>,
+        compatible_surface: Option<&wgpu::Surface<'_>>,
     ) -> anyhow::Result<wgpu::Adapter> {
         if let Some(device_id) = device_id_filter {
             let adapters: Vec<_> = instance.enumerate_adapters(wgpu::Backends::all()).await;
@@ -88,6 +147,18 @@ impl WgpuContext {
             for adapter in adapters.into_iter() {
                 let info = adapter.get_info();
                 if info.device == device_id {
+                    if let Some(surface) = compatible_surface {
+                        let caps = surface.get_capabilities(&adapter);
+                        if caps.formats.is_empty() {
+                            log::warn!(
+                                "GPU matching ZED_DEVICE_ID={:#06x} ({}) is not compatible \
+                                 with the display surface. Falling back to auto-selection.",
+                                device_id,
+                                info.name,
+                            );
+                            break;
+                        }
+                    }
                     log::info!(
                         "Found GPU matching ZED_DEVICE_ID={:#06x}: {}",
                         device_id,
@@ -100,7 +171,7 @@ impl WgpuContext {
             }
 
             log::warn!(
-                "No GPU found matching ZED_DEVICE_ID={:#06x}. Available devices:",
+                "No compatible GPU found matching ZED_DEVICE_ID={:#06x}. Available devices:",
                 device_id
             );
 
@@ -117,7 +188,7 @@ impl WgpuContext {
         instance
             .request_adapter(&wgpu::RequestAdapterOptions {
                 power_preference: wgpu::PowerPreference::None,
-                compatible_surface: None,
+                compatible_surface,
                 force_fallback_adapter: false,
             })
             .await
