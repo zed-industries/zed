@@ -3,7 +3,10 @@ use feature_flags::{FeatureFlag, FeatureFlagAppExt as _};
 use git::{
     BuildCommitPermalinkParams, GitHostingProviderRegistry, GitRemote, Oid, ParsedGitRemote,
     parse_git_remote_url,
-    repository::{CommitDiff, InitialGraphCommitData, LogOrder, LogSource},
+    repository::{
+        CommitDiff, CommitFile, CommitFileStatus, InitialGraphCommitData, LogOrder, LogSource,
+        RepoPath,
+    },
 };
 use git_ui::{commit_tooltip::CommitAvatar, commit_view::CommitView};
 use gpui::{
@@ -11,7 +14,7 @@ use gpui::{
     DragMoveEvent, ElementId, Entity, EventEmitter, FocusHandle, Focusable, FontWeight, Hsla,
     InteractiveElement, ParentElement, PathBuilder, Pixels, Point, Render, ScrollStrategy,
     ScrollWheelEvent, SharedString, Styled, Subscription, Task, WeakEntity, Window, actions,
-    anchored, deferred, point, px,
+    anchored, deferred, point, px, uniform_list,
 };
 use menu::{SelectNext, SelectPrevious};
 use project::{
@@ -40,6 +43,117 @@ const LINE_WIDTH: Pixels = px(1.5);
 const RESIZE_HANDLE_WIDTH: f32 = 8.0;
 
 struct DraggedSplitHandle;
+
+#[derive(Clone)]
+struct ChangedFileEntry {
+    icon_name: IconName,
+    icon_color: Hsla,
+    file_name: SharedString,
+    dir_path: SharedString,
+    repo_path: RepoPath,
+}
+
+impl ChangedFileEntry {
+    fn from_commit_file(file: &CommitFile, cx: &App) -> Self {
+        let file_name: SharedString = file
+            .path
+            .file_name()
+            .map(|n| n.to_string())
+            .unwrap_or_default()
+            .into();
+        let dir_path: SharedString = file
+            .path
+            .parent()
+            .map(|p| p.as_unix_str().to_string())
+            .unwrap_or_default()
+            .into();
+        let colors = cx.theme().colors();
+        let (icon_name, icon_color) = match file.status() {
+            CommitFileStatus::Added => (IconName::SquarePlus, colors.version_control_added),
+            CommitFileStatus::Modified => (IconName::SquareDot, colors.version_control_modified),
+            CommitFileStatus::Deleted => (IconName::SquareMinus, colors.version_control_deleted),
+        };
+        Self {
+            icon_name,
+            icon_color,
+            file_name,
+            dir_path,
+            repo_path: file.path.clone(),
+        }
+    }
+
+    fn open_in_commit_view(
+        &self,
+        commit_sha: &SharedString,
+        repository: &WeakEntity<Repository>,
+        workspace: &WeakEntity<Workspace>,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        CommitView::open(
+            commit_sha.to_string(),
+            repository.clone(),
+            workspace.clone(),
+            None,
+            Some(self.repo_path.clone()),
+            window,
+            cx,
+        );
+    }
+
+    fn render(
+        &self,
+        ix: usize,
+        commit_sha: SharedString,
+        repository: WeakEntity<Repository>,
+        workspace: WeakEntity<Workspace>,
+        cx: &App,
+    ) -> AnyElement {
+        h_flex()
+            .id(("changed-file", ix))
+            .px_3()
+            .py_px()
+            .gap_1()
+            .min_w_0()
+            .overflow_hidden()
+            .cursor_pointer()
+            .rounded_md()
+            .hover(|style| style.bg(cx.theme().colors().ghost_element_hover))
+            .active(|style| style.bg(cx.theme().colors().ghost_element_active))
+            .child(
+                div().flex_none().child(
+                    Icon::new(self.icon_name)
+                        .size(IconSize::Small)
+                        .color(Color::Custom(self.icon_color)),
+                ),
+            )
+            .child(
+                div().flex_none().child(
+                    Label::new(self.file_name.clone())
+                        .size(LabelSize::Small)
+                        .single_line(),
+                ),
+            )
+            .when(!self.dir_path.is_empty(), |this| {
+                this.child(
+                    div().min_w_0().overflow_hidden().child(
+                        Label::new(self.dir_path.clone())
+                            .size(LabelSize::Small)
+                            .color(Color::Muted)
+                            .truncate()
+                            .single_line(),
+                    ),
+                )
+            })
+            .on_click({
+                let entry = self.clone();
+                move |_, window, cx| {
+                    entry.open_in_commit_view(&commit_sha, &repository, &workspace, window, cx);
+                }
+            })
+            .into_any_element()
+    }
+}
 
 pub struct SplitState {
     left_ratio: f32,
@@ -1131,7 +1245,22 @@ impl GitGraph {
             .map(|diff| diff.files.len())
             .unwrap_or(0);
 
+        let sorted_file_entries: Rc<Vec<ChangedFileEntry>> = Rc::new(
+            self.selected_commit_diff
+                .as_ref()
+                .map(|diff| {
+                    let mut files: Vec<_> = diff.files.iter().collect();
+                    files.sort_by_key(|file| file.status());
+                    files
+                        .into_iter()
+                        .map(|file| ChangedFileEntry::from_commit_file(file, cx))
+                        .collect()
+                })
+                .unwrap_or_default(),
+        );
+
         v_flex()
+            .relative()
             .w(px(300.))
             .h_full()
             .border_l_1()
@@ -1141,24 +1270,31 @@ impl GitGraph {
                 self.commit_details_split_state.read(cx).right_ratio(),
             ))
             .child(
+                div().absolute().top_2().right_2().child(
+                    IconButton::new("close-detail", IconName::Close)
+                        .icon_size(IconSize::Small)
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.selected_entry_idx = None;
+                            this.selected_commit_diff = None;
+                            this._commit_diff_task = None;
+                            cx.notify();
+                        })),
+                ),
+            )
+            .child(
                 v_flex()
-                    .p_3()
+                    .w_full()
+                    .min_w_0()
+                    .flex_none()
+                    .pt_3()
                     .gap_3()
                     .child(
-                        h_flex().justify_between().child(avatar).child(
-                            IconButton::new("close-detail", IconName::Close)
-                                .icon_size(IconSize::Small)
-                                .on_click(cx.listener(move |this, _, _, cx| {
-                                    this.selected_entry_idx = None;
-                                    this.selected_commit_diff = None;
-                                    this._commit_diff_task = None;
-                                    cx.notify();
-                                })),
-                        ),
-                    )
-                    .child(
                         v_flex()
+                            .w_full()
+                            .px_3()
+                            .items_center()
                             .gap_0p5()
+                            .child(avatar)
                             .child(Label::new(author_name.clone()).weight(FontWeight::SEMIBOLD))
                             .child(
                                 Label::new(date_string)
@@ -1167,14 +1303,20 @@ impl GitGraph {
                             ),
                     )
                     .children((!ref_names.is_empty()).then(|| {
-                        h_flex().gap_1().flex_wrap().children(
-                            ref_names
-                                .iter()
-                                .map(|name| self.render_badge(name, accent_color)),
-                        )
+                        h_flex()
+                            .px_3()
+                            .justify_center()
+                            .gap_1()
+                            .flex_wrap()
+                            .children(
+                                ref_names
+                                    .iter()
+                                    .map(|name| self.render_badge(name, accent_color)),
+                            )
                     }))
                     .child(
                         v_flex()
+                            .px_3()
                             .gap_1p5()
                             .child(
                                 h_flex()
@@ -1201,7 +1343,7 @@ impl GitGraph {
                                 h_flex()
                                     .gap_1()
                                     .child(
-                                        Icon::new(IconName::Hash)
+                                        Icon::new(IconName::FileGit)
                                             .size(IconSize::Small)
                                             .color(Color::Muted),
                                     )
@@ -1263,72 +1405,55 @@ impl GitGraph {
                                         ),
                                 )
                             }),
-                    ),
-            )
-            .child(
-                div()
-                    .border_t_1()
-                    .border_color(cx.theme().colors().border)
-                    .p_3()
-                    .min_w_0()
+                    )
                     .child(
-                        v_flex()
-                            .gap_2()
+                        div()
+                            .w_full()
+                            .min_w_0()
+                            .border_t_1()
+                            .border_color(cx.theme().colors().border)
+                            .p_3()
                             .child(Label::new(subject).weight(FontWeight::MEDIUM)),
                     ),
             )
             .child(
-                div()
+                v_flex()
                     .flex_1()
-                    .overflow_hidden()
+                    .min_h_0()
                     .border_t_1()
                     .border_color(cx.theme().colors().border)
-                    .p_3()
                     .child(
-                        v_flex()
-                            .gap_2()
-                            .child(
-                                Label::new(format!("{} Changed Files", changed_files_count))
-                                    .size(LabelSize::Small)
-                                    .color(Color::Muted),
-                            )
-                            .children(self.selected_commit_diff.as_ref().map(|diff| {
-                                v_flex().gap_1().children(diff.files.iter().map(|file| {
-                                    let file_name: String = file
-                                        .path
-                                        .file_name()
-                                        .map(|n| n.to_string())
-                                        .unwrap_or_default();
-                                    let dir_path: String = file
-                                        .path
-                                        .parent()
-                                        .map(|p| p.as_unix_str().to_string())
-                                        .unwrap_or_default();
-
-                                    h_flex()
-                                        .gap_1()
-                                        .overflow_hidden()
-                                        .child(
-                                            Icon::new(IconName::File)
-                                                .size(IconSize::Small)
-                                                .color(Color::Accent),
+                        div().px_3().pt_3().pb_1().child(
+                            Label::new(format!("{} Changed Files", changed_files_count))
+                                .size(LabelSize::Small)
+                                .color(Color::Muted),
+                        ),
+                    )
+                    .child({
+                        let entries = sorted_file_entries;
+                        let entry_count = entries.len();
+                        let commit_sha = full_sha.clone();
+                        let repository = repository.downgrade();
+                        let workspace = self.workspace.clone();
+                        uniform_list(
+                            "changed-files-list",
+                            entry_count,
+                            move |range, _window, cx| {
+                                range
+                                    .map(|ix| {
+                                        entries[ix].render(
+                                            ix,
+                                            commit_sha.clone(),
+                                            repository.clone(),
+                                            workspace.clone(),
+                                            cx,
                                         )
-                                        .child(
-                                            Label::new(file_name)
-                                                .size(LabelSize::Small)
-                                                .single_line(),
-                                        )
-                                        .when(!dir_path.is_empty(), |this| {
-                                            this.child(
-                                                Label::new(dir_path)
-                                                    .size(LabelSize::Small)
-                                                    .color(Color::Muted)
-                                                    .single_line(),
-                                            )
-                                        })
-                                }))
-                            })),
-                    ),
+                                    })
+                                    .collect()
+                            },
+                        )
+                        .flex_1()
+                    }),
             )
             .into_any_element()
     }
