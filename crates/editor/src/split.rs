@@ -841,7 +841,12 @@ impl SplittableEditor {
         });
     }
 
-    fn toggle_split(&mut self, _: &ToggleSplitDiff, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn toggle_split(
+        &mut self,
+        _: &ToggleSplitDiff,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if self.lhs.is_some() {
             self.unsplit(window, cx);
         } else {
