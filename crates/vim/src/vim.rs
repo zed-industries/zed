@@ -42,7 +42,7 @@ use multi_buffer::ToPoint as _;
 use normal::search::SearchSubmit;
 use object::Object;
 use schemars::JsonSchema;
-use search::BufferSearchBar;
+use search::{BufferSearchBar, buffer_search::Dismiss as BufferSearchDismiss};
 use serde::Deserialize;
 use settings::RegisterSetting;
 pub use settings::{
@@ -687,6 +687,7 @@ impl Vim {
                 },
             );
             Vim::action(editor, cx, |vim, _: &Cancel, window, cx| {
+                vim.clear_operator(window, cx);
                 // Preserve search highlights: set flag before dispatching editor::Cancel.
                 // The flag causes dismiss() to skip clear_matches(), so the bar hides
                 // but highlights remain visible.
@@ -695,11 +696,13 @@ impl Vim {
                         if let Some(search_bar) =
                             pane.toolbar().read(cx).item_of_type::<BufferSearchBar>()
                         {
-                            if !search_bar.read(cx).is_dismissed() {
-                                search_bar.update(cx, |bar, _cx| {
+                            search_bar.update(cx, |bar, cx| {
+                                if bar.is_dismissed() {
+                                    bar.dismiss(&BufferSearchDismiss, window, cx);
+                                } else {
                                     bar.set_cancel_suppressed(true);
-                                });
-                            }
+                                }
+                            });
                         }
                     });
                 }

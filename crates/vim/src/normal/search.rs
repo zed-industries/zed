@@ -1344,6 +1344,18 @@ mod test {
             let highlights = editor.all_text_background_highlights(window, cx);
             assert!(!highlights.is_empty(), "highlights should persist after ESC");
         });
+
+        // Second ESC should clear previously retained highlights.
+        cx.simulate_keystrokes("escape");
+        cx.run_until_parked();
+
+        cx.update_editor(|editor, window, cx| {
+            let highlights = editor.all_text_background_highlights(window, cx);
+            assert!(
+                highlights.is_empty(),
+                "highlights should clear after second ESC"
+            );
+        });
     }
 
     #[gpui::test]
