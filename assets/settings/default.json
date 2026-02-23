@@ -1555,6 +1555,9 @@
       "model": "qwen2.5-coder:7b-base",
       "max_output_tokens": 64,
     },
+    // Whether to show edit prediction previews alongside the completions menu.
+    // Set to false if you experience unexpected completions when edit predictions are enabled.
+    "show_in_completions_menu": true,
     // Whether edit predictions are enabled when editing text threads in the agent panel.
     // This setting has no effect if globally disabled.
     "enabled_in_text_threads": true,

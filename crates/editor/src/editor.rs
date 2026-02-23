@@ -7839,7 +7839,12 @@ impl Editor {
             MenuEditPredictionsPolicy::ByProvider
         );
 
+        let show_in_completions_menu = all_language_settings(file, cx)
+            .edit_predictions
+            .show_in_completions_menu;
+
         let show_in_menu = by_provider
+            && show_in_completions_menu
             && self
                 .edit_prediction_provider
                 .as_ref()

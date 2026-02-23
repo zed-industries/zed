@@ -190,6 +190,11 @@ pub struct EditPredictionSettingsContent {
     pub sweep: Option<SweepSettingsContent>,
     /// Settings specific to Ollama.
     pub ollama: Option<OllamaEditPredictionSettingsContent>,
+    /// Whether to show edit prediction previews alongside the completions menu.
+    /// When disabled, edit predictions are shown only as inline suggestions.
+    ///
+    /// Default: true
+    pub show_in_completions_menu: Option<bool>,
     /// Whether edit predictions are enabled in the assistant prompt editor.
     /// This has no effect if globally disabled.
     pub enabled_in_text_threads: Option<bool>,

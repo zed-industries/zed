@@ -399,6 +399,8 @@ pub struct EditPredictionSettings {
     pub sweep: SweepSettings,
     /// Settings specific to Ollama.
     pub ollama: OllamaSettings,
+    /// Whether to show edit prediction previews alongside the completions menu.
+    pub show_in_completions_menu: bool,
     /// Whether edit predictions are enabled in the assistant panel.
     /// This setting has no effect if globally disabled.
     pub enabled_in_text_threads: bool,
@@ -706,6 +708,7 @@ impl settings::Settings for AllLanguageSettings {
             api_url: ollama.api_url.unwrap().into(),
         };
 
+        let show_in_completions_menu = edit_predictions.show_in_completions_menu.unwrap();
         let enabled_in_text_threads = edit_predictions.enabled_in_text_threads.unwrap();
 
         let mut file_types: FxHashMap<Arc<str>, (GlobSet, Vec<String>)> = FxHashMap::default();
@@ -745,6 +748,7 @@ impl settings::Settings for AllLanguageSettings {
                 codestral: codestral_settings,
                 sweep: sweep_settings,
                 ollama: ollama_settings,
+                show_in_completions_menu,
                 enabled_in_text_threads,
                 examples_dir: edit_predictions.examples_dir,
             },
