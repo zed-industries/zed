@@ -2471,13 +2471,13 @@ mod tests {
         for i in 0..operations {
             if managed_buffers.is_empty() {
                 log::info!("op {i}: adding initial buffer");
-                let len = rng.random_range(50..300);
+                let len = rng.random_range(200..1000);
                 let base_text: String = RandomCharIter::new(&mut *rng).take(len).collect();
                 let buffer = cx.new(|cx| Buffer::local(base_text.clone(), cx));
                 let buffer_snapshot = buffer.read_with(cx, |b, _| b.text_snapshot());
                 let diff =
                     cx.new(|cx| BufferDiff::new_with_base_text(&base_text, &buffer_snapshot, cx));
-                let edit_count = rng.random_range(1..4);
+                let edit_count = rng.random_range(3..8);
                 buffer.update(cx, |buffer, cx| {
                     buffer.randomly_edit(rng, edit_count, cx);
                 });
@@ -2490,7 +2490,7 @@ mod tests {
                     .hunks(&buffer_snapshot)
                     .map(|hunk| hunk.range)
                     .collect::<Vec<_>>();
-                let context_lines = rng.random_range(1..4);
+                let context_lines = rng.random_range(0..2);
                 editor.update(cx, |editor, cx| {
                     let path = PathKey::for_buffer(&buffer, cx);
                     editor.set_excerpts_for_path(
@@ -2512,13 +2512,13 @@ mod tests {
             match rng.random_range(0..100) {
                 0..=14 if managed_buffers.len() < 6 => {
                     log::info!("op {i}: creating new buffer and setting excerpts");
-                    let len = rng.random_range(50..300);
+                    let len = rng.random_range(200..1000);
                     let base_text: String = RandomCharIter::new(&mut *rng).take(len).collect();
                     let buffer = cx.new(|cx| Buffer::local(base_text.clone(), cx));
                     let buffer_snapshot = buffer.read_with(cx, |b, _| b.text_snapshot());
                     let diff = cx
                         .new(|cx| BufferDiff::new_with_base_text(&base_text, &buffer_snapshot, cx));
-                    let edit_count = rng.random_range(1..4);
+                    let edit_count = rng.random_range(3..8);
                     buffer.update(cx, |buffer, cx| {
                         buffer.randomly_edit(rng, edit_count, cx);
                     });
@@ -2531,7 +2531,7 @@ mod tests {
                         .hunks(&buffer_snapshot)
                         .map(|hunk| hunk.range)
                         .collect::<Vec<_>>();
-                    let context_lines = rng.random_range(1..4);
+                    let context_lines = rng.random_range(0..2);
                     editor.update(cx, |editor, cx| {
                         let path = PathKey::for_buffer(&buffer, cx);
                         editor.set_excerpts_for_path(
@@ -2581,7 +2581,7 @@ mod tests {
                         .hunks(&buffer_snapshot)
                         .map(|hunk| hunk.range)
                         .collect::<Vec<_>>();
-                    let context_lines = rng.random_range(1..4);
+                    let context_lines = rng.random_range(0..2);
                     let buffer = buffer.clone();
                     let diff = diff.clone();
                     editor.update(cx, |editor, cx| {
@@ -2605,6 +2605,17 @@ mod tests {
                     editor.update(cx, |editor, cx| {
                         let path = PathKey::for_buffer(&buffer, cx);
                         editor.remove_excerpts_for_path(path, cx);
+                    });
+                }
+
+                80..=84 => {
+                    log::info!("op {i}: unsplit and resplit");
+                    editor.update_in(cx, |editor, window, cx| {
+                        editor.unsplit(window, cx);
+                    });
+                    cx.run_until_parked();
+                    editor.update_in(cx, |editor, window, cx| {
+                        editor.split(window, cx);
                     });
                 }
 
