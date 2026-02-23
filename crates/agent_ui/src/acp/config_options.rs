@@ -718,7 +718,7 @@ impl PickerDelegate for ConfigOptionPickerDelegate {
 
                 ui::DocumentationAside::new(
                     side,
-                    Rc::new(move |_| {
+                    Rc::new(move |_, _| {
                         v_flex()
                             .gap_1()
                             .child(Label::new(description.clone()))

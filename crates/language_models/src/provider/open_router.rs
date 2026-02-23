@@ -219,7 +219,7 @@ impl OpenRouterProvidersHoverInfo {
 }
 
 impl acp_thread::ModelHoverInfo for OpenRouterProvidersHoverInfo {
-    fn render(&self, cx: &mut App) -> gpui::AnyElement {
+    fn render(&self, window: &mut gpui::Window, cx: &mut App) -> gpui::AnyElement {
         use acp_thread::{
             GenericProviderListItem, ModelProviderInfo, ProviderSelectorHeader,
             ProviderSelectorLoading,
@@ -249,11 +249,13 @@ impl acp_thread::ModelHoverInfo for OpenRouterProvidersHoverInfo {
 
         if endpoints.is_empty() {
             if in_flight {
+                // Still loading
                 return v_flex()
                     .w(rems(22.))
                     .child(ProviderSelectorLoading)
                     .into_any_element();
             } else {
+                // Loading failed
                 let model_id_for_retry = model_id.clone();
                 return v_flex()
                     .w(rems(22.))
@@ -262,9 +264,9 @@ impl acp_thread::ModelHoverInfo for OpenRouterProvidersHoverInfo {
                             .p_4()
                             .gap_2()
                             .child(
-                                h_flex()
-                                    .justify_center()
-                                    .child(Label::new("Failed to load providers").color(Color::Error)),
+                                h_flex().justify_center().child(
+                                    Label::new("Failed to load providers").color(Color::Error),
+                                ),
                             )
                             .child(
                                 h_flex().justify_center().child(
@@ -302,9 +304,13 @@ impl acp_thread::ModelHoverInfo for OpenRouterProvidersHoverInfo {
 
         v_flex()
             .w(rems(22.))
+            .max_h(vh(0.75, window))
             .child(ProviderSelectorHeader)
             .child(
                 v_flex()
+                    .id("provider-list")
+                    .flex_1()
+                    .overflow_y_scroll()
                     .gap_0p5()
                     .children(providers.into_iter().enumerate().map(|(idx, provider)| {
                         let provider_name = provider.name.to_string();

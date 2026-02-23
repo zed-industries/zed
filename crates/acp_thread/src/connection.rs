@@ -3,7 +3,7 @@ use agent_client_protocol::{self as acp};
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use collections::IndexMap;
-use gpui::{AnyElement, Entity, IntoElement, SharedString, Task};
+use gpui::{AnyElement, Entity, IntoElement, SharedString, Task, Window};
 use language_model::LanguageModelProviderId;
 use project::Project;
 use serde::{Deserialize, Serialize};
@@ -385,13 +385,13 @@ pub enum AgentModelIcon {
 }
 
 pub trait ModelHoverInfo: 'static {
-    fn render(&self, cx: &mut App) -> AnyElement;
+    fn render(&self, window: &mut Window, cx: &mut App) -> AnyElement;
 }
 
 pub struct DescriptionHoverInfo(pub SharedString);
 
 impl ModelHoverInfo for DescriptionHoverInfo {
-    fn render(&self, _cx: &mut App) -> AnyElement {
+    fn render(&self, _window: &mut Window, _cx: &mut App) -> AnyElement {
         Label::new(self.0.clone()).into_any_element()
     }
 }

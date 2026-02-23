@@ -436,10 +436,10 @@ impl PickerDelegate for AcpModelPickerDelegate {
 
         Some(DocumentationAside::new(
             side,
-            Rc::new(move |cx| {
+            Rc::new(move |window, cx| {
                 v_flex()
                     .gap_1()
-                    .child(hover_info.render(cx))
+                    .child(hover_info.render(window, cx))
                     .when(is_default, |this| this.child(HoldForDefault::new(true)))
                     .into_any_element()
             }),

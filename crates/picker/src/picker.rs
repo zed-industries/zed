@@ -6,10 +6,10 @@ use anyhow::Result;
 use log;
 
 use gpui::{
-    Action, AnyElement, App, Bounds, ClickEvent, Context, DismissEvent, EventEmitter, FocusHandle,
-    Focusable, Length, ListSizingBehavior, ListState, MouseButton, MouseUpEvent, Pixels, Render,
-    ScrollStrategy, Task, UniformListScrollHandle, Window, actions, canvas, div, list, prelude::*,
-    uniform_list,
+    Action, AnyElement, App, Bounds, ClickEvent, Context, Corner, DismissEvent, EventEmitter,
+    FocusHandle, Focusable, Length, ListSizingBehavior, ListState, MouseButton, MouseUpEvent,
+    Pixels, Render, ScrollStrategy, Task, UniformListScrollHandle, Window, actions, anchored,
+    canvas, div, list, prelude::*, uniform_list,
 };
 use head::Head;
 use schemars::JsonSchema;
@@ -997,7 +997,7 @@ impl<D: PickerDelegate> Render for Picker<D> {
             return menu;
         };
 
-        let render_aside = |aside: DocumentationAside, cx: &mut Context<Self>| {
+        let render_aside = |aside: DocumentationAside, window: &mut Window, cx: &mut Context<Self>| {
             WithRemSize::new(ui_font_size)
                 .occlude()
                 .elevation_2(cx)
@@ -1006,7 +1006,7 @@ impl<D: PickerDelegate> Render for Picker<D> {
                 .overflow_hidden()
                 .when(is_wide_window, |this| this.max_w_96())
                 .when(!is_wide_window, |this| this.max_w_48())
-                .child((aside.render)(cx))
+                .child((aside.render)(window, cx))
         };
 
         if is_wide_window {
@@ -1018,8 +1018,7 @@ impl<D: PickerDelegate> Render for Picker<D> {
             let item_position = match (picker_bounds, item_bounds) {
                 (Some(picker_bounds), Some(item_bounds)) => {
                     let relative_top = item_bounds.origin.y - picker_bounds.origin.y;
-                    let height = item_bounds.size.height;
-                    Some((relative_top, height))
+                    Some(relative_top)
                 }
                 _ => None,
             };
@@ -1042,9 +1041,14 @@ impl<D: PickerDelegate> Render for Picker<D> {
                 .relative()
                 .child(menu)
                 // Only render the aside once we have bounds to avoid flicker
-                .when_some(item_position, |this, (top, _height)| {
+                .when_some(item_position, |this, top| {
+                    let anchor_corner = match aside.side {
+                        DocumentationSide::Left => Corner::TopRight,
+                        DocumentationSide::Right => Corner::TopLeft,
+                    };
+
                     this.child(
-                        h_flex()
+                        div()
                             .id("picker-documentation-aside")
                             .absolute()
                             .when(aside.side == DocumentationSide::Left, |el| {
@@ -1060,8 +1064,17 @@ impl<D: PickerDelegate> Render for Picker<D> {
                                     this.aside_hovered = true;
                                 }
                             }))
-                            .child(bounds_canvas)
-                            .child(render_aside(aside, cx)),
+                            .child(
+                                anchored()
+                                    .anchor(anchor_corner)
+                                    .snap_to_window_with_margin(px(8.0))
+                                    .child(
+                                        div()
+                                            .occlude()
+                                            .child(bounds_canvas)
+                                            .child(render_aside(aside, window, cx)),
+                                    ),
+                            ),
                     )
                 })
         } else {
@@ -1069,7 +1082,7 @@ impl<D: PickerDelegate> Render for Picker<D> {
                 .w_full()
                 .gap_1()
                 .justify_end()
-                .child(render_aside(aside, cx))
+                .child(render_aside(aside, window, cx))
                 .child(menu)
         }
     }

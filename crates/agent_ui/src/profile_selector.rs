@@ -645,7 +645,7 @@ impl PickerDelegate for ProfilePickerDelegate {
 
         Some(DocumentationAside {
             side,
-            render: Rc::new(move |_| Label::new(docs_aside.clone()).into_any_element()),
+            render: Rc::new(move |_, _| Label::new(docs_aside.clone()).into_any_element()),
         })
     }
 
