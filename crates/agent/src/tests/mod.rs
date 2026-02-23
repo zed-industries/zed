@@ -4294,33 +4294,26 @@ async fn test_subagent_tool_call_end_to_end(cx: &mut TestAppContext) {
 
     assert_eq!(
         acp_thread.read_with(cx, |thread, cx| thread.to_markdown(cx)),
-        format!(
-            indoc! {r#"
-                ## User
+        indoc! {r#"
+            ## User
 
-                Prompt
+            Prompt
 
-                ## Assistant
+            ## Assistant
 
-                spawning subagent
+            spawning subagent
 
-                **Tool Call: label**
-                Status: Completed
+            **Tool Call: label**
+            Status: Completed
 
-                ```json
-                {{
-                  "session_id": "{}",
-                  "output": "subagent task response\n"
-                }}
-                ```
+            subagent task response
 
-                ## Assistant
 
-                Response
+            ## Assistant
 
-            "#},
-            subagent_session_id
-        )
+            Response
+
+        "#},
     );
 }
 
