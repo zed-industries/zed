@@ -262,6 +262,7 @@ impl AgentTool for EditFileTool {
                 action_log.clone(),
                 self.templates.clone(),
                 edit_format,
+                allow_thinking
             );
 
             let buffer = project
