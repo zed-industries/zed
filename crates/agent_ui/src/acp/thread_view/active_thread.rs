@@ -6156,6 +6156,11 @@ impl AcpThreadView {
             ToolCallStatus::Canceled | ToolCallStatus::Failed | ToolCallStatus::Rejected
         );
 
+        let has_title = thread
+            .as_ref()
+            .is_some_and(|t| !t.read(cx).title().is_empty());
+        let has_no_title_or_canceled = !has_title || is_canceled_or_failed;
+
         let title = thread
             .as_ref()
             .map(|t| t.read(cx).title())
@@ -6195,48 +6200,42 @@ impl AcpThreadView {
             .w_full()
             .rounded_md()
             .border_1()
+            .when(has_no_title_or_canceled, |this| this.border_dashed())
             .border_color(self.tool_card_border_color(cx))
             .overflow_hidden()
             .child(
                 h_flex()
-                    .id(format!("subagent-header-click-{}", entry_ix))
                     .group(&card_header_id)
+                    .h_8()
                     .p_1()
-                    .pl_1p5()
                     .w_full()
-                    .gap_1()
                     .justify_between()
-                    .bg(self.tool_card_header_bg(cx))
-                    .when(has_expandable_content, |this| {
-                        this.cursor_pointer().on_click(cx.listener({
-                            let tool_call_id = tool_call.id.clone();
-                            move |this, _, _, cx| {
-                                if this.expanded_tool_calls.contains(&tool_call_id) {
-                                    this.expanded_tool_calls.remove(&tool_call_id);
-                                } else {
-                                    this.expanded_tool_calls.insert(tool_call_id.clone());
-                                }
-                                cx.notify();
-                            }
-                        }))
+                    .when(!has_no_title_or_canceled, |this| {
+                        this.bg(self.tool_card_header_bg(cx))
                     })
                     .child(
                         h_flex()
                             .id(format!("subagent-title-{}", entry_ix))
+                            .px_1()
                             .min_w_0()
+                            .size_full()
+                            .gap_2()
+                            .justify_between()
+                            .rounded_sm()
                             .overflow_hidden()
-                            .gap_1p5()
-                            .child(icon)
                             .child(
-                                Label::new(title.to_string())
-                                    .size(LabelSize::Small)
-                                    .truncate(),
-                            )
-                            .when(files_changed > 0, |this| {
-                                this.child(
-                                    h_flex()
-                                        .gap_1()
-                                        .child(
+                                h_flex()
+                                    .min_w_0()
+                                    .w_full()
+                                    .gap_1p5()
+                                    .child(icon)
+                                    .child(
+                                        Label::new(title.to_string())
+                                            .size(LabelSize::Small)
+                                            .truncate(),
+                                    )
+                                    .when(files_changed > 0, |this| {
+                                        this.child(
                                             Label::new(format!(
                                                 "— {} {} changed",
                                                 files_changed,
@@ -6245,101 +6244,73 @@ impl AcpThreadView {
                                             .size(LabelSize::Small)
                                             .color(Color::Muted),
                                         )
-                                        .child(DiffStat::new(
-                                            diff_stat_id.clone(),
-                                            diff_stats.lines_added as usize,
-                                            diff_stats.lines_removed as usize,
-                                        )),
-                                )
+                                        .child(
+                                            DiffStat::new(
+                                                diff_stat_id.clone(),
+                                                diff_stats.lines_added as usize,
+                                                diff_stats.lines_removed as usize,
+                                            ),
+                                        )
+                                    }),
+                            )
+                            .when(!has_no_title_or_canceled, |this| {
+                                this.tooltip(move |_, cx| {
+                                    Tooltip::with_meta(
+                                        title.to_string(),
+                                        None,
+                                        "Click to View Preview",
+                                        cx,
+                                    )
+                                })
                             })
-                            .tooltip(Tooltip::text(title.to_string())),
-                    )
-                    .when_some(subagent_session_id, |this, subagent_session_id| {
-                        this.child(
-                            h_flex()
-                                .flex_shrink_0()
-                                .when(has_expandable_content, |this| {
-                                    this.child(
-                                        IconButton::new(
-                                            format!("subagent-disclosure-{}", entry_ix),
-                                            if is_expanded {
+                            .when(has_expandable_content, |this| {
+                                this.cursor_pointer()
+                                    .hover(|s| s.bg(cx.theme().colors().element_hover))
+                                    .child(
+                                        div().visible_on_hover(card_header_id).child(
+                                            Icon::new(if is_expanded {
                                                 IconName::ChevronUp
                                             } else {
                                                 IconName::ChevronDown
-                                            },
-                                        )
-                                        .icon_color(Color::Muted)
-                                        .icon_size(IconSize::Small)
-                                        .disabled(!has_expandable_content)
-                                        .visible_on_hover(card_header_id.clone())
-                                        .on_click(
-                                            cx.listener({
-                                                let tool_call_id = tool_call.id.clone();
-                                                move |this, _, _, cx| {
-                                                    if this
-                                                        .expanded_tool_calls
-                                                        .contains(&tool_call_id)
-                                                    {
-                                                        this.expanded_tool_calls
-                                                            .remove(&tool_call_id);
-                                                    } else {
-                                                        this.expanded_tool_calls
-                                                            .insert(tool_call_id.clone());
-                                                    }
-                                                    cx.notify();
-                                                }
-                                            }),
+                                            })
+                                            .color(Color::Muted)
+                                            .size(IconSize::Small),
                                         ),
                                     )
-                                })
-                                .child(
-                                    IconButton::new(
-                                        format!("expand-subagent-{}", entry_ix),
-                                        IconName::Maximize,
-                                    )
-                                    .icon_color(Color::Muted)
-                                    .icon_size(IconSize::Small)
-                                    .tooltip(Tooltip::text("Expand Subagent"))
-                                    .visible_on_hover(card_header_id)
-                                    .on_click(cx.listener(
-                                        move |this, _event, window, cx| {
-                                            this.server_view
-                                                .update(cx, |this, cx| {
-                                                    this.navigate_to_session(
-                                                        subagent_session_id.clone(),
-                                                        window,
-                                                        cx,
-                                                    );
-                                                })
-                                                .ok();
-                                        },
-                                    )),
-                                )
-                                .when(is_running, |buttons| {
-                                    buttons.child(
-                                        IconButton::new(
-                                            format!("stop-subagent-{}", entry_ix),
-                                            IconName::Stop,
-                                        )
-                                        .icon_size(IconSize::Small)
-                                        .icon_color(Color::Error)
-                                        .tooltip(Tooltip::text("Stop Subagent"))
-                                        .when_some(
-                                            thread_view
-                                                .as_ref()
-                                                .map(|view| view.read(cx).thread.clone()),
-                                            |this, thread| {
-                                                this.on_click(cx.listener(
-                                                    move |_this, _event, _window, cx| {
-                                                        thread.update(cx, |thread, cx| {
-                                                            thread.cancel(cx).detach();
-                                                        });
-                                                    },
-                                                ))
+                                    .on_click(cx.listener({
+                                        let tool_call_id = tool_call.id.clone();
+                                        move |this, _, _, cx| {
+                                            if this.expanded_tool_calls.contains(&tool_call_id) {
+                                                this.expanded_tool_calls.remove(&tool_call_id);
+                                            } else {
+                                                this.expanded_tool_calls
+                                                    .insert(tool_call_id.clone());
+                                            }
+                                            cx.notify();
+                                        }
+                                    }))
+                            }),
+                    )
+                    .when(is_running && subagent_session_id.is_some(), |buttons| {
+                        buttons.child(
+                            IconButton::new(format!("stop-subagent-{}", entry_ix), IconName::Stop)
+                                .icon_size(IconSize::Small)
+                                .icon_color(Color::Error)
+                                .tooltip(Tooltip::text("Stop Subagent"))
+                                .when_some(
+                                    thread_view
+                                        .as_ref()
+                                        .map(|view| view.read(cx).thread.clone()),
+                                    |this, thread| {
+                                        this.on_click(cx.listener(
+                                            move |_this, _event, _window, cx| {
+                                                thread.update(cx, |thread, cx| {
+                                                    thread.cancel(cx).detach();
+                                                });
                                             },
-                                        ),
-                                    )
-                                }),
+                                        ))
+                                    },
+                                ),
                         )
                     }),
             )
@@ -6366,6 +6337,7 @@ impl AcpThreadView {
                         this
                     }
                 } else {
+                    let session_id = thread.read(cx).session_id().clone();
                     this.when(is_expanded, |this| {
                         this.child(self.render_subagent_expanded_content(
                             active_session_id,
@@ -6377,6 +6349,34 @@ impl AcpThreadView {
                             window,
                             cx,
                         ))
+                        .child(
+                            h_flex()
+                                .p_1()
+                                .w_full()
+                                .border_t_1()
+                                .when(is_canceled_or_failed, |this| this.border_dashed())
+                                .border_color(cx.theme().colors().border_variant)
+                                .child(
+                                    Button::new(format!("expand-subagent-{}", entry_ix), "Expand")
+                                        .full_width()
+                                        .style(ButtonStyle::Outlined)
+                                        .icon(IconName::Maximize)
+                                        .icon_color(Color::Muted)
+                                        .icon_size(IconSize::Small)
+                                        .icon_position(IconPosition::Start)
+                                        .on_click(cx.listener(move |this, _event, window, cx| {
+                                            this.server_view
+                                                .update(cx, |this, cx| {
+                                                    this.navigate_to_session(
+                                                        session_id.clone(),
+                                                        window,
+                                                        cx,
+                                                    );
+                                                })
+                                                .ok();
+                                        })),
+                                ),
+                        )
                     })
                 }
             })
@@ -6399,7 +6399,20 @@ impl AcpThreadView {
         let subagent_view = thread_view.read(cx);
         let session_id = subagent_view.thread.read(cx).session_id().clone();
 
-        if is_running {
+        let base_container = || {
+            div()
+                .id(format!("subagent-content-{}", session_id))
+                .relative()
+                .w_full()
+                .h_56()
+                .border_t_1()
+                .border_color(self.tool_card_border_color(cx))
+                .overflow_hidden()
+        };
+
+        let show_thread_entries = is_running || tool_call.content.is_empty();
+
+        if show_thread_entries {
             let entries = subagent_view.thread.read(cx).entries();
             let total_entries = entries.len();
             let start_ix = total_entries.saturating_sub(MAX_PREVIEW_ENTRIES);
@@ -6421,50 +6434,41 @@ impl AcpThreadView {
                 })
                 .collect();
 
-            let editor_bg = cx.theme().colors().editor_background;
-
-            let gradient_overlay = div().absolute().inset_0().bg(linear_gradient(
-                180.,
-                linear_color_stop(editor_bg, 0.),
-                linear_color_stop(editor_bg.opacity(0.), 0.15),
-            ));
-
-            let interaction_blocker = div()
-                .absolute()
-                .inset_0()
-                .size_full()
-                .block_mouse_except_scroll();
-
-            div()
+            base_container()
                 .id(format!("subagent-content-{}", session_id))
-                .relative()
-                .w_full()
-                .h_56()
-                .border_t_1()
-                .border_color(self.tool_card_border_color(cx))
-                .bg(editor_bg.opacity(0.4))
-                .overflow_hidden()
                 .child(
                     div()
-                        .id("entries")
+                        .id(format!("subagent-entries-{}", session_id))
                         .size_full()
                         .track_scroll(&scroll_handle)
                         .pb_1()
                         .children(rendered_entries),
                 )
-                .child(gradient_overlay)
-                .child(interaction_blocker)
+                .when(is_running, |this| {
+                    let editor_bg = cx.theme().colors().editor_background;
+                    this.child(
+                        div()
+                            .absolute()
+                            .inset_0()
+                            .size_full()
+                            .bg(linear_gradient(
+                                180.,
+                                linear_color_stop(editor_bg, 0.),
+                                linear_color_stop(editor_bg.opacity(0.), 0.15),
+                            ))
+                            .block_mouse_except_scroll(),
+                    )
+                })
+                .into_any_element()
         } else {
-            div()
-                .id(format!("subagent-content-{}", session_id))
-                .p_2()
+            base_container()
                 .children(
                     tool_call
                         .content
                         .iter()
                         .enumerate()
                         .map(|(content_ix, content)| {
-                            div().id(("tool-call-output", entry_ix)).child(
+                            div().id(("tool-call-output", entry_ix)).pb_1().child(
                                 self.render_tool_call_content(
                                     active_session_id,
                                     entry_ix,
@@ -6486,6 +6490,7 @@ impl AcpThreadView {
                             )
                         }),
                 )
+                .into_any_element()
         }
     }
 
