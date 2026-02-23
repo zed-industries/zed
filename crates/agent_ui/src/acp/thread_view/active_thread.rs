@@ -6155,6 +6155,7 @@ impl AcpThreadView {
             .overflow_hidden()
             .child(
                 h_flex()
+                    .id(format!("subagent-header-click-{}", entry_ix))
                     .group(&card_header_id)
                     .p_1()
                     .pl_1p5()
@@ -6162,6 +6163,19 @@ impl AcpThreadView {
                     .gap_1()
                     .justify_between()
                     .bg(self.tool_card_header_bg(cx))
+                    .when(has_expandable_content, |this| {
+                        this.cursor_pointer().on_click(cx.listener({
+                            let tool_call_id = tool_call.id.clone();
+                            move |this, _, _, cx| {
+                                if this.expanded_tool_calls.contains(&tool_call_id) {
+                                    this.expanded_tool_calls.remove(&tool_call_id);
+                                } else {
+                                    this.expanded_tool_calls.insert(tool_call_id.clone());
+                                }
+                                cx.notify();
+                            }
+                        }))
+                    })
                     .child(
                         h_flex()
                             .id(format!("subagent-title-{}", entry_ix))
