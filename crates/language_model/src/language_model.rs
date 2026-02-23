@@ -704,7 +704,7 @@ pub trait LanguageModel: Send + Sync {
                     move |result| {
                         let last_token_usage = last_token_usage.clone();
                         async move {
-                            match dbg!(result) {
+                            match result {
                                 Ok(LanguageModelCompletionEvent::Queued { .. }) => None,
                                 Ok(LanguageModelCompletionEvent::Started) => None,
                                 Ok(LanguageModelCompletionEvent::StartMessage { .. }) => None,
