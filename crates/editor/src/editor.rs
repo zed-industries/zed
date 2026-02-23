@@ -8898,7 +8898,7 @@ impl Editor {
                 .context(focus_handle)
                 .when(run_to_cursor, |this| {
                     let weak_editor = weak_editor.clone();
-                    this.entry("Run to cursor", None, move |window, cx| {
+                    this.entry("Run to Cursor", None, move |window, cx| {
                         weak_editor
                             .update(cx, |editor, cx| {
                                 editor.change_selections(

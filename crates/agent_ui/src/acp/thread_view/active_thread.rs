@@ -191,6 +191,7 @@ pub struct AcpThreadView {
     pub parent_id: Option<acp::SessionId>,
     pub login: Option<task::SpawnInTerminal>, // is some <=> Active | Unauthenticated
     pub thread: Entity<AcpThread>,
+    pub(crate) conversation: Entity<super::Conversation>,
     pub server_view: WeakEntity<AcpServerView>,
     pub agent_icon: IconName,
     pub agent_name: SharedString,
@@ -217,7 +218,6 @@ pub struct AcpThreadView {
     pub expanded_tool_calls: HashSet<agent_client_protocol::ToolCallId>,
     pub expanded_tool_call_raw_inputs: HashSet<agent_client_protocol::ToolCallId>,
     pub expanded_thinking_blocks: HashSet<(usize, usize)>,
-    pub expanded_subagents: HashSet<agent_client_protocol::SessionId>,
     pub subagent_scroll_handles: RefCell<HashMap<agent_client_protocol::SessionId, ScrollHandle>>,
     pub edits_expanded: bool,
     pub plan_expanded: bool,
@@ -277,9 +277,10 @@ pub struct TurnFields {
 }
 
 impl AcpThreadView {
-    pub fn new(
+    pub(crate) fn new(
         parent_id: Option<acp::SessionId>,
         thread: Entity<AcpThread>,
+        conversation: Entity<super::Conversation>,
         login: Option<task::SpawnInTerminal>,
         server_view: WeakEntity<AcpServerView>,
         agent_icon: IconName,
@@ -385,6 +386,7 @@ impl AcpThreadView {
             parent_id,
             focus_handle: cx.focus_handle(),
             thread,
+            conversation,
             login,
             server_view,
             agent_icon,
@@ -412,7 +414,6 @@ impl AcpThreadView {
             expanded_tool_calls: HashSet::default(),
             expanded_tool_call_raw_inputs: HashSet::default(),
             expanded_thinking_blocks: HashSet::default(),
-            expanded_subagents: HashSet::default(),
             subagent_scroll_handles: RefCell::new(HashMap::default()),
             edits_expanded: false,
             plan_expanded: false,
@@ -1246,24 +1247,15 @@ impl AcpThreadView {
 
     pub fn authorize_tool_call(
         &mut self,
+        session_id: acp::SessionId,
         tool_call_id: acp::ToolCallId,
         option_id: acp::PermissionOptionId,
         option_kind: acp::PermissionOptionKind,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let thread = &self.thread;
-        let agent_telemetry_id = thread.read(cx).connection().telemetry_id();
-
-        telemetry::event!(
-            "Agent Tool Call Authorized",
-            agent = agent_telemetry_id,
-            session = thread.read(cx).session_id(),
-            option = option_kind
-        );
-
-        thread.update(cx, |thread, cx| {
-            thread.authorize_tool_call(tool_call_id, option_id, option_kind, cx);
+        self.conversation.update(cx, |conversation, cx| {
+            conversation.authorize_tool_call(session_id, tool_call_id, option_id, option_kind, cx);
         });
         if self.should_be_following {
             self.workspace
@@ -1293,21 +1285,17 @@ impl AcpThreadView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<()> {
-        let thread = self.thread.read(cx);
-        let tool_call = thread.first_tool_awaiting_confirmation()?;
-        let ToolCallStatus::WaitingForConfirmation { options, .. } = &tool_call.status else {
-            return None;
-        };
-        let option = options.first_option_of_kind(kind)?;
-
-        self.authorize_tool_call(
-            tool_call.id.clone(),
-            option.option_id.clone(),
-            option.kind,
-            window,
-            cx,
-        );
-
+        self.conversation.update(cx, |conversation, cx| {
+            conversation.authorize_pending_tool_call(&self.id, kind, cx)
+        })?;
+        if self.should_be_following {
+            self.workspace
+                .update(cx, |workspace, cx| {
+                    workspace.follow(CollaboratorId::Agent, window, cx);
+                })
+                .ok();
+        }
+        cx.notify();
         Some(())
     }
 
@@ -1327,7 +1315,14 @@ impl AcpThreadView {
             _ => acp::PermissionOptionKind::AllowOnce,
         };
 
-        self.authorize_tool_call(tool_call_id, option_id, option_kind, window, cx);
+        self.authorize_tool_call(
+            self.id.clone(),
+            tool_call_id,
+            option_id,
+            option_kind,
+            window,
+            cx,
+        );
     }
 
     pub fn handle_select_permission_granularity(
@@ -1349,13 +1344,8 @@ impl AcpThreadView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<()> {
-        let thread = self.thread.read(cx);
-        let tool_call = thread.first_tool_awaiting_confirmation()?;
-        let ToolCallStatus::WaitingForConfirmation { options, .. } = &tool_call.status else {
-            return None;
-        };
-        let tool_call_id = tool_call.id.clone();
-
+        let (session_id, tool_call_id, options) =
+            self.conversation.read(cx).pending_tool_call(&self.id, cx)?;
         let PermissionOptions::Dropdown(choices) = options else {
             let kind = if is_allow {
                 acp::PermissionOptionKind::AllowOnce
@@ -1381,6 +1371,7 @@ impl AcpThreadView {
         };
 
         self.authorize_tool_call(
+            session_id,
             tool_call_id,
             selected_option.option_id.clone(),
             selected_option.kind,
@@ -3411,7 +3402,7 @@ impl AcpThreadView {
         entry_ix: usize,
         total_entries: usize,
         entry: &AgentThreadEntry,
-        window: &mut Window,
+        window: &Window,
         cx: &Context<Self>,
     ) -> AnyElement {
         let is_indented = entry.is_indented();
@@ -3688,24 +3679,16 @@ impl AcpThreadView {
                         .into_any()
                 }
             }
-            AgentThreadEntry::ToolCall(tool_call) => {
-                let has_terminals = tool_call.terminals().next().is_some();
-
-                div()
-                    .w_full()
-                    .map(|this| {
-                        if has_terminals {
-                            this.children(tool_call.terminals().map(|terminal| {
-                                self.render_terminal_tool_call(
-                                    entry_ix, terminal, tool_call, window, cx,
-                                )
-                            }))
-                        } else {
-                            this.child(self.render_tool_call(entry_ix, tool_call, window, cx))
-                        }
-                    })
-                    .into_any()
-            }
+            AgentThreadEntry::ToolCall(tool_call) => self
+                .render_any_tool_call(
+                    &self.id,
+                    entry_ix,
+                    tool_call,
+                    &self.focus_handle(cx),
+                    window,
+                    cx,
+                )
+                .into_any(),
         };
 
         let primary = if is_indented {
@@ -4510,9 +4493,11 @@ impl AcpThreadView {
 
     fn render_terminal_tool_call(
         &self,
+        active_session_id: &acp::SessionId,
         entry_ix: usize,
         terminal: &Entity<acp_thread::Terminal>,
         tool_call: &ToolCall,
+        focus_handle: &FocusHandle,
         window: &Window,
         cx: &Context<Self>,
     ) -> AnyElement {
@@ -4779,20 +4764,87 @@ impl AcpThreadView {
                 )
             })
             .when_some(confirmation_options, |this, options| {
+                let is_first = self.is_first_tool_call(active_session_id, &tool_call.id, cx);
                 this.child(self.render_permission_buttons(
+                    self.id.clone(),
+                    is_first,
                     options,
                     entry_ix,
                     tool_call.id.clone(),
+                    focus_handle,
                     cx,
                 ))
             })
             .into_any()
     }
 
-    fn render_tool_call(
+    fn is_first_tool_call(
         &self,
+        active_session_id: &acp::SessionId,
+        tool_call_id: &acp::ToolCallId,
+        cx: &App,
+    ) -> bool {
+        self.conversation
+            .read(cx)
+            .pending_tool_call(active_session_id, cx)
+            .map_or(false, |(pending_session_id, pending_tool_call_id, _)| {
+                self.id == pending_session_id && tool_call_id == &pending_tool_call_id
+            })
+    }
+
+    fn render_any_tool_call(
+        &self,
+        active_session_id: &acp::SessionId,
         entry_ix: usize,
         tool_call: &ToolCall,
+        focus_handle: &FocusHandle,
+        window: &Window,
+        cx: &Context<Self>,
+    ) -> Div {
+        let has_terminals = tool_call.terminals().next().is_some();
+
+        div().w_full().map(|this| {
+            if tool_call.is_subagent() {
+                this.child(self.render_subagent_tool_call(
+                    active_session_id,
+                    entry_ix,
+                    tool_call,
+                    tool_call.subagent_session_id.clone(),
+                    focus_handle,
+                    window,
+                    cx,
+                ))
+            } else if has_terminals {
+                this.children(tool_call.terminals().map(|terminal| {
+                    self.render_terminal_tool_call(
+                        active_session_id,
+                        entry_ix,
+                        terminal,
+                        tool_call,
+                        focus_handle,
+                        window,
+                        cx,
+                    )
+                }))
+            } else {
+                this.child(self.render_tool_call(
+                    active_session_id,
+                    entry_ix,
+                    tool_call,
+                    focus_handle,
+                    window,
+                    cx,
+                ))
+            }
+        })
+    }
+
+    fn render_tool_call(
+        &self,
+        active_session_id: &acp::SessionId,
+        entry_ix: usize,
+        tool_call: &ToolCall,
+        focus_handle: &FocusHandle,
         window: &Window,
         cx: &Context<Self>,
     ) -> Div {
@@ -4812,17 +4864,6 @@ impl AcpThreadView {
 
         let is_edit =
             matches!(tool_call.kind, acp::ToolKind::Edit) || tool_call.diffs().next().is_some();
-
-        // For subagent tool calls, render the subagent cards directly without wrapper
-        if tool_call.is_subagent() {
-            return self.render_subagent_tool_call(
-                entry_ix,
-                tool_call,
-                tool_call.subagent_session_id.clone(),
-                window,
-                cx,
-            );
-        }
 
         let is_cancelled_edit = is_edit && matches!(tool_call.status, ToolCallStatus::Canceled);
         let has_revealed_diff = tool_call.diffs().next().is_some_and(|diff| {
@@ -4863,6 +4904,7 @@ impl AcpThreadView {
                             .map(|(content_ix, content)| {
                                 div()
                                     .child(self.render_tool_call_content(
+                                        active_session_id,
                                         entry_ix,
                                         content,
                                         content_ix,
@@ -4870,6 +4912,7 @@ impl AcpThreadView {
                                         use_card_layout,
                                         has_image_content,
                                         failed_or_canceled,
+                                        focus_handle,
                                         window,
                                         cx,
                                     ))
@@ -4941,9 +4984,12 @@ impl AcpThreadView {
                         )
                     })
                     .child(self.render_permission_buttons(
+                        self.id.clone(),
+                        self.is_first_tool_call(active_session_id, &tool_call.id, cx),
                         options,
                         entry_ix,
                         tool_call.id.clone(),
+                        focus_handle,
                         cx,
                     ))
                     .into_any(),
@@ -4988,6 +5034,7 @@ impl AcpThreadView {
                             .map(|(content_ix, content)| {
                                 div().id(("tool-call-output", entry_ix)).child(
                                     self.render_tool_call_content(
+                                        active_session_id,
                                         entry_ix,
                                         content,
                                         content_ix,
@@ -4995,6 +5042,7 @@ impl AcpThreadView {
                                         use_card_layout,
                                         has_image_content,
                                         failed_or_canceled,
+                                        focus_handle,
                                         window,
                                         cx,
                                     ),
@@ -5157,34 +5205,46 @@ impl AcpThreadView {
 
     fn render_permission_buttons(
         &self,
+        session_id: acp::SessionId,
+        is_first: bool,
         options: &PermissionOptions,
         entry_ix: usize,
         tool_call_id: acp::ToolCallId,
+        focus_handle: &FocusHandle,
         cx: &Context<Self>,
     ) -> Div {
         match options {
-            PermissionOptions::Flat(options) => {
-                self.render_permission_buttons_flat(options, entry_ix, tool_call_id, cx)
-            }
-            PermissionOptions::Dropdown(options) => {
-                self.render_permission_buttons_dropdown(options, entry_ix, tool_call_id, cx)
-            }
+            PermissionOptions::Flat(options) => self.render_permission_buttons_flat(
+                session_id,
+                is_first,
+                options,
+                entry_ix,
+                tool_call_id,
+                focus_handle,
+                cx,
+            ),
+            PermissionOptions::Dropdown(options) => self.render_permission_buttons_dropdown(
+                session_id,
+                is_first,
+                options,
+                entry_ix,
+                tool_call_id,
+                focus_handle,
+                cx,
+            ),
         }
     }
 
     fn render_permission_buttons_dropdown(
         &self,
+        session_id: acp::SessionId,
+        is_first: bool,
         choices: &[PermissionOptionChoice],
         entry_ix: usize,
         tool_call_id: acp::ToolCallId,
+        focus_handle: &FocusHandle,
         cx: &Context<Self>,
     ) -> Div {
-        let is_first = self
-            .thread
-            .read(cx)
-            .first_tool_awaiting_confirmation()
-            .is_some_and(|call| call.id == tool_call_id);
-
         // Get the selected granularity index, defaulting to the last option ("Only this time")
         let selected_index = self
             .selected_permission_granularity
@@ -5236,18 +5296,20 @@ impl AcpThreadView {
                                 this.key_binding(
                                     KeyBinding::for_action_in(
                                         &AllowOnce as &dyn Action,
-                                        &self.focus_handle(cx),
+                                        focus_handle,
                                         cx,
                                     )
                                     .map(|kb| kb.size(rems_from_px(10.))),
                                 )
                             })
                             .on_click(cx.listener({
+                                let session_id = session_id.clone();
                                 let tool_call_id = tool_call_id.clone();
                                 let option_id = allow_option_id;
                                 let option_kind = allow_option_kind;
                                 move |this, _, window, cx| {
                                     this.authorize_tool_call(
+                                        session_id.clone(),
                                         tool_call_id.clone(),
                                         option_id.clone(),
                                         option_kind,
@@ -5268,7 +5330,7 @@ impl AcpThreadView {
                                 this.key_binding(
                                     KeyBinding::for_action_in(
                                         &RejectOnce as &dyn Action,
-                                        &self.focus_handle(cx),
+                                        focus_handle,
                                         cx,
                                     )
                                     .map(|kb| kb.size(rems_from_px(10.))),
@@ -5280,6 +5342,7 @@ impl AcpThreadView {
                                 let option_kind = deny_option_kind;
                                 move |this, _, window, cx| {
                                     this.authorize_tool_call(
+                                        session_id.clone(),
                                         tool_call_id.clone(),
                                         option_id.clone(),
                                         option_kind,
@@ -5375,16 +5438,14 @@ impl AcpThreadView {
 
     fn render_permission_buttons_flat(
         &self,
+        session_id: acp::SessionId,
+        is_first: bool,
         options: &[acp::PermissionOption],
         entry_ix: usize,
         tool_call_id: acp::ToolCallId,
+        focus_handle: &FocusHandle,
         cx: &Context<Self>,
     ) -> Div {
-        let is_first = self
-            .thread
-            .read(cx)
-            .first_tool_awaiting_confirmation()
-            .is_some_and(|call| call.id == tool_call_id);
         let mut seen_kinds: ArrayVec<acp::PermissionOptionKind, 3> = ArrayVec::new();
 
         div()
@@ -5427,7 +5488,7 @@ impl AcpThreadView {
                         seen_kinds.push(option.kind);
 
                         this.key_binding(
-                            KeyBinding::for_action_in(action, &self.focus_handle(cx), cx)
+                            KeyBinding::for_action_in(action, focus_handle, cx)
                                 .map(|kb| kb.size(rems_from_px(10.))),
                         )
                     })
@@ -5435,11 +5496,13 @@ impl AcpThreadView {
                     .icon_size(IconSize::XSmall)
                     .label_size(LabelSize::Small)
                     .on_click(cx.listener({
+                        let session_id = session_id.clone();
                         let tool_call_id = tool_call_id.clone();
                         let option_id = option.option_id.clone();
                         let option_kind = option.kind;
                         move |this, _, window, cx| {
                             this.authorize_tool_call(
+                                session_id.clone(),
                                 tool_call_id.clone(),
                                 option_id.clone(),
                                 option_kind,
@@ -5705,6 +5768,7 @@ impl AcpThreadView {
 
     fn render_tool_call_content(
         &self,
+        session_id: &acp::SessionId,
         entry_ix: usize,
         content: &ToolCallContent,
         context_ix: usize,
@@ -5712,6 +5776,7 @@ impl AcpThreadView {
         card_layout: bool,
         is_image_tool_call: bool,
         has_failed: bool,
+        focus_handle: &FocusHandle,
         window: &Window,
         cx: &Context<Self>,
     ) -> AnyElement {
@@ -5745,9 +5810,15 @@ impl AcpThreadView {
             ToolCallContent::Diff(diff) => {
                 self.render_diff_editor(entry_ix, diff, tool_call, has_failed, cx)
             }
-            ToolCallContent::Terminal(terminal) => {
-                self.render_terminal_tool_call(entry_ix, terminal, tool_call, window, cx)
-            }
+            ToolCallContent::Terminal(terminal) => self.render_terminal_tool_call(
+                session_id,
+                entry_ix,
+                terminal,
+                tool_call,
+                focus_handle,
+                window,
+                cx,
+            ),
         }
     }
 
@@ -5979,14 +6050,14 @@ impl AcpThreadView {
 
     fn render_subagent_tool_call(
         &self,
+        active_session_id: &acp::SessionId,
         entry_ix: usize,
         tool_call: &ToolCall,
         subagent_session_id: Option<acp::SessionId>,
+        focus_handle: &FocusHandle,
         window: &Window,
         cx: &Context<Self>,
     ) -> Div {
-        let tool_call_status = &tool_call.status;
-
         let subagent_thread_view = subagent_session_id.and_then(|id| {
             self.server_view
                 .upgrade()
@@ -5995,10 +6066,11 @@ impl AcpThreadView {
         });
 
         let content = self.render_subagent_card(
+            active_session_id,
             entry_ix,
-            0,
             subagent_thread_view,
-            tool_call_status,
+            tool_call,
+            focus_handle,
             window,
             cx,
         );
@@ -6008,17 +6080,18 @@ impl AcpThreadView {
 
     fn render_subagent_card(
         &self,
+        active_session_id: &acp::SessionId,
         entry_ix: usize,
-        context_ix: usize,
         thread_view: Option<&Entity<AcpThreadView>>,
-        tool_call_status: &ToolCallStatus,
+        tool_call: &ToolCall,
+        focus_handle: &FocusHandle,
         window: &Window,
         cx: &Context<Self>,
     ) -> AnyElement {
         let thread = thread_view
             .as_ref()
             .map(|view| view.read(cx).thread.clone());
-        let session_id = thread
+        let subagent_session_id = thread
             .as_ref()
             .map(|thread| thread.read(cx).session_id().clone());
         let action_log = thread.as_ref().map(|thread| thread.read(cx).action_log());
@@ -6026,20 +6099,16 @@ impl AcpThreadView {
             .map(|log| log.read(cx).changed_buffers(cx))
             .unwrap_or_default();
 
-        let is_expanded = if let Some(session_id) = &session_id {
-            self.expanded_subagents.contains(session_id)
-        } else {
-            false
-        };
+        let is_expanded = self.expanded_tool_calls.contains(&tool_call.id);
         let files_changed = changed_buffers.len();
         let diff_stats = DiffStats::all_files(&changed_buffers, cx);
 
         let is_running = matches!(
-            tool_call_status,
+            tool_call.status,
             ToolCallStatus::Pending | ToolCallStatus::InProgress
         );
         let is_canceled_or_failed = matches!(
-            tool_call_status,
+            tool_call.status,
             ToolCallStatus::Canceled | ToolCallStatus::Failed | ToolCallStatus::Rejected
         );
 
@@ -6050,13 +6119,13 @@ impl AcpThreadView {
                 if is_canceled_or_failed {
                     "Subagent Canceled"
                 } else {
-                    "Spawning agent…"
+                    "Spawning Subagent…"
                 }
                 .into()
             });
 
-        let card_header_id = format!("subagent-header-{}-{}", entry_ix, context_ix);
-        let diff_stat_id = format!("subagent-diff-{}-{}", entry_ix, context_ix);
+        let card_header_id = format!("subagent-header-{}", entry_ix);
+        let diff_stat_id = format!("subagent-diff-{}", entry_ix);
 
         let icon = h_flex().w_4().justify_center().child(if is_running {
             SpinnerLabel::new()
@@ -6074,18 +6143,9 @@ impl AcpThreadView {
                 .into_any_element()
         });
 
-        let has_expandable_content = thread.as_ref().map_or(false, |thread| {
-            thread.read(cx).entries().iter().rev().any(|entry| {
-                if let AgentThreadEntry::AssistantMessage(msg) = entry {
-                    msg.chunks.iter().any(|chunk| match chunk {
-                        AssistantMessageChunk::Message { block } => block.markdown().is_some(),
-                        AssistantMessageChunk::Thought { block } => block.markdown().is_some(),
-                    })
-                } else {
-                    false
-                }
-            })
-        });
+        let has_expandable_content = thread
+            .as_ref()
+            .map_or(false, |thread| !thread.read(cx).entries().is_empty());
 
         v_flex()
             .w_full()
@@ -6104,7 +6164,7 @@ impl AcpThreadView {
                     .bg(self.tool_card_header_bg(cx))
                     .child(
                         h_flex()
-                            .id(format!("subagent-title-{}-{}", entry_ix, context_ix))
+                            .id(format!("subagent-title-{}", entry_ix))
                             .min_w_0()
                             .overflow_hidden()
                             .gap_1p5()
@@ -6136,17 +6196,14 @@ impl AcpThreadView {
                             })
                             .tooltip(Tooltip::text(title.to_string())),
                     )
-                    .when_some(session_id, |this, session_id| {
+                    .when_some(subagent_session_id, |this, subagent_session_id| {
                         this.child(
                             h_flex()
                                 .flex_shrink_0()
                                 .when(has_expandable_content, |this| {
                                     this.child(
                                         IconButton::new(
-                                            format!(
-                                                "subagent-disclosure-{}-{}",
-                                                entry_ix, context_ix
-                                            ),
+                                            format!("subagent-disclosure-{}", entry_ix),
                                             if is_expanded {
                                                 IconName::ChevronUp
                                             } else {
@@ -6159,14 +6216,17 @@ impl AcpThreadView {
                                         .visible_on_hover(card_header_id.clone())
                                         .on_click(
                                             cx.listener({
-                                                let session_id = session_id.clone();
+                                                let tool_call_id = tool_call.id.clone();
                                                 move |this, _, _, cx| {
-                                                    if this.expanded_subagents.contains(&session_id)
+                                                    if this
+                                                        .expanded_tool_calls
+                                                        .contains(&tool_call_id)
                                                     {
-                                                        this.expanded_subagents.remove(&session_id);
+                                                        this.expanded_tool_calls
+                                                            .remove(&tool_call_id);
                                                     } else {
-                                                        this.expanded_subagents
-                                                            .insert(session_id.clone());
+                                                        this.expanded_tool_calls
+                                                            .insert(tool_call_id.clone());
                                                     }
                                                     cx.notify();
                                                 }
@@ -6176,7 +6236,7 @@ impl AcpThreadView {
                                 })
                                 .child(
                                     IconButton::new(
-                                        format!("expand-subagent-{}-{}", entry_ix, context_ix),
+                                        format!("expand-subagent-{}", entry_ix),
                                         IconName::Maximize,
                                     )
                                     .icon_color(Color::Muted)
@@ -6188,7 +6248,7 @@ impl AcpThreadView {
                                             this.server_view
                                                 .update(cx, |this, cx| {
                                                     this.navigate_to_session(
-                                                        session_id.clone(),
+                                                        subagent_session_id.clone(),
                                                         window,
                                                         cx,
                                                     );
@@ -6200,7 +6260,7 @@ impl AcpThreadView {
                                 .when(is_running, |buttons| {
                                     buttons.child(
                                         IconButton::new(
-                                            format!("stop-subagent-{}-{}", entry_ix, context_ix),
+                                            format!("stop-subagent-{}", entry_ix),
                                             IconName::Stop,
                                         )
                                         .icon_size(IconSize::Small)
@@ -6227,462 +6287,148 @@ impl AcpThreadView {
             )
             .when_some(thread_view, |this, thread_view| {
                 let thread = &thread_view.read(cx).thread;
-                this.when(is_expanded, |this| {
-                    this.child(
-                        self.render_subagent_expanded_content(
-                            entry_ix, context_ix, thread, window, cx,
-                        ),
-                    )
-                })
-                .children(
-                    thread
-                        .read(cx)
-                        .first_tool_awaiting_confirmation()
-                        .and_then(|tc| {
-                            if let ToolCallStatus::WaitingForConfirmation { options, .. } =
-                                &tc.status
-                            {
-                                Some(self.render_subagent_pending_tool_call(
-                                    entry_ix,
-                                    context_ix,
-                                    thread.clone(),
-                                    tc,
-                                    options,
-                                    window,
-                                    cx,
-                                ))
-                            } else {
-                                None
-                            }
-                        }),
-                )
+                let pending_tool_call = self
+                    .conversation
+                    .read(cx)
+                    .pending_tool_call(thread.read(cx).session_id(), cx);
+
+                if let Some((_, subagent_tool_call_id, _)) = pending_tool_call {
+                    if let Some((entry_ix, tool_call)) =
+                        thread.read(cx).tool_call(&subagent_tool_call_id)
+                    {
+                        this.child(thread_view.read(cx).render_any_tool_call(
+                            active_session_id,
+                            entry_ix,
+                            tool_call,
+                            focus_handle,
+                            window,
+                            cx,
+                        ))
+                    } else {
+                        this
+                    }
+                } else {
+                    this.when(is_expanded, |this| {
+                        this.child(self.render_subagent_expanded_content(
+                            active_session_id,
+                            entry_ix,
+                            thread_view,
+                            is_running,
+                            tool_call,
+                            focus_handle,
+                            window,
+                            cx,
+                        ))
+                    })
+                }
             })
             .into_any_element()
     }
 
     fn render_subagent_expanded_content(
         &self,
-        _entry_ix: usize,
-        _context_ix: usize,
-        thread: &Entity<AcpThread>,
+        active_session_id: &acp::SessionId,
+        entry_ix: usize,
+        thread_view: &Entity<AcpThreadView>,
+        is_running: bool,
+        tool_call: &ToolCall,
+        focus_handle: &FocusHandle,
         window: &Window,
         cx: &Context<Self>,
     ) -> impl IntoElement {
-        let thread_read = thread.read(cx);
-        let session_id = thread_read.session_id().clone();
-        let entries = thread_read.entries();
+        const MAX_PREVIEW_ENTRIES: usize = 8;
 
-        // Find the most recent agent message with any content (message or thought)
-        let last_assistant_markdown = entries.iter().rev().find_map(|entry| {
-            if let AgentThreadEntry::AssistantMessage(msg) = entry {
-                msg.chunks.iter().find_map(|chunk| match chunk {
-                    AssistantMessageChunk::Message { block } => block.markdown().cloned(),
-                    AssistantMessageChunk::Thought { block } => block.markdown().cloned(),
+        let subagent_view = thread_view.read(cx);
+        let session_id = subagent_view.thread.read(cx).session_id().clone();
+
+        if is_running {
+            let entries = subagent_view.thread.read(cx).entries();
+            let total_entries = entries.len();
+            let start_ix = total_entries.saturating_sub(MAX_PREVIEW_ENTRIES);
+
+            let scroll_handle = self
+                .subagent_scroll_handles
+                .borrow_mut()
+                .entry(session_id.clone())
+                .or_default()
+                .clone();
+            scroll_handle.scroll_to_bottom();
+
+            let rendered_entries: Vec<AnyElement> = entries[start_ix..]
+                .iter()
+                .enumerate()
+                .map(|(i, entry)| {
+                    let actual_ix = start_ix + i;
+                    subagent_view.render_entry(actual_ix, total_entries + 1, entry, window, cx)
                 })
-            } else {
-                None
-            }
-        });
+                .collect();
 
-        let scroll_handle = self
-            .subagent_scroll_handles
-            .borrow_mut()
-            .entry(session_id.clone())
-            .or_default()
-            .clone();
+            let editor_bg = cx.theme().colors().editor_background;
 
-        scroll_handle.scroll_to_bottom();
-        let editor_bg = cx.theme().colors().editor_background;
-
-        let gradient_overlay = {
-            div().absolute().inset_0().bg(linear_gradient(
+            let gradient_overlay = div().absolute().inset_0().bg(linear_gradient(
                 180.,
                 linear_color_stop(editor_bg, 0.),
                 linear_color_stop(editor_bg.opacity(0.), 0.15),
-            ))
-        };
+            ));
 
-        div()
-            .relative()
-            .w_full()
-            .max_h_56()
-            .p_2p5()
-            .text_ui(cx)
-            .border_t_1()
-            .border_color(self.tool_card_border_color(cx))
-            .bg(editor_bg.opacity(0.4))
-            .overflow_hidden()
-            .child(
-                div()
-                    .id(format!("subagent-content-{}", session_id))
-                    .size_full()
-                    .track_scroll(&scroll_handle)
-                    .when_some(last_assistant_markdown, |this, markdown| {
-                        this.child(self.render_markdown(
-                            markdown,
-                            MarkdownStyle::themed(MarkdownFont::Agent, window, cx),
-                        ))
-                    }),
-            )
-            .child(gradient_overlay)
-    }
+            let interaction_blocker = div()
+                .absolute()
+                .inset_0()
+                .size_full()
+                .block_mouse_except_scroll();
 
-    fn render_subagent_pending_tool_call(
-        &self,
-        entry_ix: usize,
-        context_ix: usize,
-        subagent_thread: Entity<AcpThread>,
-        tool_call: &ToolCall,
-        options: &PermissionOptions,
-        window: &Window,
-        cx: &Context<Self>,
-    ) -> Div {
-        let tool_call_id = tool_call.id.clone();
-        let is_edit =
-            matches!(tool_call.kind, acp::ToolKind::Edit) || tool_call.diffs().next().is_some();
-        let has_image_content = tool_call.content.iter().any(|c| c.image().is_some());
-
-        v_flex()
-            .w_full()
-            .border_t_1()
-            .border_color(self.tool_card_border_color(cx))
-            .child(
-                self.render_tool_call_label(
-                    entry_ix, tool_call, is_edit, false, // has_failed
-                    false, // has_revealed_diff
-                    true,  // use_card_layout
-                    window, cx,
+            div()
+                .id(format!("subagent-content-{}", session_id))
+                .relative()
+                .w_full()
+                .h_56()
+                .border_t_1()
+                .border_color(self.tool_card_border_color(cx))
+                .bg(editor_bg.opacity(0.4))
+                .overflow_hidden()
+                .child(
+                    div()
+                        .id("entries")
+                        .size_full()
+                        .track_scroll(&scroll_handle)
+                        .pb_1()
+                        .children(rendered_entries),
                 )
-                .py_1(),
-            )
-            .children(
-                tool_call
-                    .content
-                    .iter()
-                    .enumerate()
-                    .map(|(content_ix, content)| {
-                        self.render_tool_call_content(
-                            entry_ix,
-                            content,
-                            content_ix,
-                            tool_call,
-                            true, // card_layout
-                            has_image_content,
-                            false, // has_failed
-                            window,
-                            cx,
-                        )
-                    }),
-            )
-            .child(self.render_subagent_permission_buttons(
-                entry_ix,
-                context_ix,
-                subagent_thread,
-                tool_call_id,
-                options,
-                cx,
-            ))
-    }
-
-    fn render_subagent_permission_buttons(
-        &self,
-        entry_ix: usize,
-        context_ix: usize,
-        subagent_thread: Entity<AcpThread>,
-        tool_call_id: acp::ToolCallId,
-        options: &PermissionOptions,
-        cx: &Context<Self>,
-    ) -> Div {
-        match options {
-            PermissionOptions::Flat(options) => self.render_subagent_permission_buttons_flat(
-                entry_ix,
-                context_ix,
-                subagent_thread,
-                tool_call_id,
-                options,
-                cx,
-            ),
-            PermissionOptions::Dropdown(options) => self
-                .render_subagent_permission_buttons_dropdown(
-                    entry_ix,
-                    context_ix,
-                    subagent_thread,
-                    tool_call_id,
-                    options,
-                    cx,
-                ),
+                .child(gradient_overlay)
+                .child(interaction_blocker)
+        } else {
+            div()
+                .id(format!("subagent-content-{}", session_id))
+                .p_2()
+                .children(
+                    tool_call
+                        .content
+                        .iter()
+                        .enumerate()
+                        .map(|(content_ix, content)| {
+                            div().id(("tool-call-output", entry_ix)).child(
+                                self.render_tool_call_content(
+                                    active_session_id,
+                                    entry_ix,
+                                    content,
+                                    content_ix,
+                                    tool_call,
+                                    true,
+                                    false,
+                                    matches!(
+                                        tool_call.status,
+                                        ToolCallStatus::Failed
+                                            | ToolCallStatus::Rejected
+                                            | ToolCallStatus::Canceled
+                                    ),
+                                    focus_handle,
+                                    window,
+                                    cx,
+                                ),
+                            )
+                        }),
+                )
         }
-    }
-
-    fn render_subagent_permission_buttons_flat(
-        &self,
-        entry_ix: usize,
-        context_ix: usize,
-        subagent_thread: Entity<AcpThread>,
-        tool_call_id: acp::ToolCallId,
-        options: &[acp::PermissionOption],
-        cx: &Context<Self>,
-    ) -> Div {
-        div()
-            .p_1()
-            .border_t_1()
-            .border_color(self.tool_card_border_color(cx))
-            .w_full()
-            .v_flex()
-            .gap_0p5()
-            .children(options.iter().map(move |option| {
-                let option_id = SharedString::from(format!(
-                    "subagent-{}-{}-{}",
-                    entry_ix, context_ix, option.option_id.0
-                ));
-                Button::new((option_id, entry_ix), option.name.clone())
-                    .map(|this| match option.kind {
-                        acp::PermissionOptionKind::AllowOnce => {
-                            this.icon(IconName::Check).icon_color(Color::Success)
-                        }
-                        acp::PermissionOptionKind::AllowAlways => {
-                            this.icon(IconName::CheckDouble).icon_color(Color::Success)
-                        }
-                        acp::PermissionOptionKind::RejectOnce
-                        | acp::PermissionOptionKind::RejectAlways
-                        | _ => this.icon(IconName::Close).icon_color(Color::Error),
-                    })
-                    .icon_position(IconPosition::Start)
-                    .icon_size(IconSize::XSmall)
-                    .label_size(LabelSize::Small)
-                    .on_click(cx.listener({
-                        let subagent_thread = subagent_thread.clone();
-                        let tool_call_id = tool_call_id.clone();
-                        let option_id = option.option_id.clone();
-                        let option_kind = option.kind;
-                        move |this, _, window, cx| {
-                            this.authorize_subagent_tool_call(
-                                subagent_thread.clone(),
-                                tool_call_id.clone(),
-                                option_id.clone(),
-                                option_kind,
-                                window,
-                                cx,
-                            );
-                        }
-                    }))
-            }))
-    }
-
-    fn authorize_subagent_tool_call(
-        &mut self,
-        subagent_thread: Entity<AcpThread>,
-        tool_call_id: acp::ToolCallId,
-        option_id: acp::PermissionOptionId,
-        option_kind: acp::PermissionOptionKind,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        subagent_thread.update(cx, |thread, cx| {
-            thread.authorize_tool_call(tool_call_id, option_id, option_kind, cx);
-        });
-    }
-
-    fn render_subagent_permission_buttons_dropdown(
-        &self,
-        entry_ix: usize,
-        context_ix: usize,
-        subagent_thread: Entity<AcpThread>,
-        tool_call_id: acp::ToolCallId,
-        choices: &[PermissionOptionChoice],
-        cx: &Context<Self>,
-    ) -> Div {
-        let selected_index = self
-            .selected_permission_granularity
-            .get(&tool_call_id)
-            .copied()
-            .unwrap_or_else(|| choices.len().saturating_sub(1));
-
-        let selected_choice = choices.get(selected_index).or(choices.last());
-
-        let dropdown_label: SharedString = selected_choice
-            .map(|choice| choice.label())
-            .unwrap_or_else(|| "Only this time".into());
-
-        let (allow_option_id, allow_option_kind, deny_option_id, deny_option_kind) =
-            if let Some(choice) = selected_choice {
-                (
-                    choice.allow.option_id.clone(),
-                    choice.allow.kind,
-                    choice.deny.option_id.clone(),
-                    choice.deny.kind,
-                )
-            } else {
-                (
-                    acp::PermissionOptionId::new("allow"),
-                    acp::PermissionOptionKind::AllowOnce,
-                    acp::PermissionOptionId::new("deny"),
-                    acp::PermissionOptionKind::RejectOnce,
-                )
-            };
-
-        h_flex()
-            .w_full()
-            .p_1()
-            .gap_2()
-            .justify_between()
-            .border_t_1()
-            .border_color(self.tool_card_border_color(cx))
-            .child(
-                h_flex()
-                    .gap_0p5()
-                    .child(
-                        Button::new(
-                            (
-                                SharedString::from(format!(
-                                    "subagent-allow-btn-{}-{}",
-                                    entry_ix, context_ix
-                                )),
-                                entry_ix,
-                            ),
-                            "Allow",
-                        )
-                        .icon(IconName::Check)
-                        .icon_color(Color::Success)
-                        .icon_position(IconPosition::Start)
-                        .icon_size(IconSize::XSmall)
-                        .label_size(LabelSize::Small)
-                        .on_click(cx.listener({
-                            let subagent_thread = subagent_thread.clone();
-                            let tool_call_id = tool_call_id.clone();
-                            let option_id = allow_option_id;
-                            let option_kind = allow_option_kind;
-                            move |this, _, window, cx| {
-                                this.authorize_subagent_tool_call(
-                                    subagent_thread.clone(),
-                                    tool_call_id.clone(),
-                                    option_id.clone(),
-                                    option_kind,
-                                    window,
-                                    cx,
-                                );
-                            }
-                        })),
-                    )
-                    .child(
-                        Button::new(
-                            (
-                                SharedString::from(format!(
-                                    "subagent-deny-btn-{}-{}",
-                                    entry_ix, context_ix
-                                )),
-                                entry_ix,
-                            ),
-                            "Deny",
-                        )
-                        .icon(IconName::Close)
-                        .icon_color(Color::Error)
-                        .icon_position(IconPosition::Start)
-                        .icon_size(IconSize::XSmall)
-                        .label_size(LabelSize::Small)
-                        .on_click(cx.listener({
-                            let tool_call_id = tool_call_id.clone();
-                            let option_id = deny_option_id;
-                            let option_kind = deny_option_kind;
-                            move |this, _, window, cx| {
-                                this.authorize_subagent_tool_call(
-                                    subagent_thread.clone(),
-                                    tool_call_id.clone(),
-                                    option_id.clone(),
-                                    option_kind,
-                                    window,
-                                    cx,
-                                );
-                            }
-                        })),
-                    ),
-            )
-            .child(self.render_subagent_permission_granularity_dropdown(
-                choices,
-                dropdown_label,
-                entry_ix,
-                context_ix,
-                tool_call_id,
-                selected_index,
-                cx,
-            ))
-    }
-
-    fn render_subagent_permission_granularity_dropdown(
-        &self,
-        choices: &[PermissionOptionChoice],
-        current_label: SharedString,
-        entry_ix: usize,
-        context_ix: usize,
-        tool_call_id: acp::ToolCallId,
-        selected_index: usize,
-        _cx: &Context<Self>,
-    ) -> AnyElement {
-        let menu_options: Vec<(usize, SharedString)> = choices
-            .iter()
-            .enumerate()
-            .map(|(i, choice)| (i, choice.label()))
-            .collect();
-
-        let permission_dropdown_handle = self.permission_dropdown_handle.clone();
-
-        PopoverMenu::new((
-            SharedString::from(format!(
-                "subagent-permission-granularity-{}-{}",
-                entry_ix, context_ix
-            )),
-            entry_ix,
-        ))
-        .with_handle(permission_dropdown_handle)
-        .trigger(
-            Button::new(
-                (
-                    SharedString::from(format!(
-                        "subagent-granularity-trigger-{}-{}",
-                        entry_ix, context_ix
-                    )),
-                    entry_ix,
-                ),
-                current_label,
-            )
-            .icon(IconName::ChevronDown)
-            .icon_size(IconSize::XSmall)
-            .icon_color(Color::Muted)
-            .label_size(LabelSize::Small),
-        )
-        .menu(move |window, cx| {
-            let tool_call_id = tool_call_id.clone();
-            let options = menu_options.clone();
-
-            Some(ContextMenu::build(window, cx, move |mut menu, _, _| {
-                for (index, display_name) in options.iter() {
-                    let display_name = display_name.clone();
-                    let index = *index;
-                    let tool_call_id_for_entry = tool_call_id.clone();
-                    let is_selected = index == selected_index;
-
-                    menu = menu.toggleable_entry(
-                        display_name,
-                        is_selected,
-                        IconPosition::End,
-                        None,
-                        move |window, cx| {
-                            window.dispatch_action(
-                                SelectPermissionGranularity {
-                                    tool_call_id: tool_call_id_for_entry.0.to_string(),
-                                    index,
-                                }
-                                .boxed_clone(),
-                                cx,
-                            );
-                        },
-                    );
-                }
-
-                menu
-            }))
-        })
-        .into_any_element()
     }
 
     fn render_rules_item(&self, cx: &Context<Self>) -> Option<AnyElement> {
