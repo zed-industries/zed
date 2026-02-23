@@ -468,7 +468,7 @@ impl AgentServerStore {
             ),
         );
         self.external_agents.insert(
-            CLAUDE_CODE_NAME.into(),
+            CLAUDE_AGENT_NAME.into(),
             ExternalAgentEntry::new(
                 Box::new(LocalClaudeCode {
                     fs: fs.clone(),
@@ -685,12 +685,12 @@ impl AgentServerStore {
         // will have them.
         let external_agents: [(ExternalAgentServerName, ExternalAgentEntry); 3] = [
             (
-                CLAUDE_CODE_NAME.into(),
+                CLAUDE_AGENT_NAME.into(),
                 ExternalAgentEntry::new(
                     Box::new(RemoteExternalAgentServer {
                         project_id,
                         upstream_client: upstream_client.clone(),
-                        name: CLAUDE_CODE_NAME.into(),
+                        name: CLAUDE_AGENT_NAME.into(),
                         status_tx: None,
                         new_version_available_tx: None,
                     }) as Box<dyn ExternalAgentServer>,
@@ -917,7 +917,7 @@ impl AgentServerStore {
                 .map(|name| {
                     let agent_name = ExternalAgentServerName(name.clone().into());
                     let fallback_source =
-                        if name == GEMINI_NAME || name == CLAUDE_CODE_NAME || name == CODEX_NAME {
+                        if name == GEMINI_NAME || name == CLAUDE_AGENT_NAME || name == CODEX_NAME {
                             ExternalAgentSource::Builtin
                         } else {
                             ExternalAgentSource::Custom
@@ -1455,10 +1455,10 @@ impl ExternalAgentServer for LocalClaudeCode {
                 (custom_command, None)
             } else {
                 let mut command = get_or_npm_install_builtin_agent(
-                    "claude-code-acp".into(),
-                    "@zed-industries/claude-code-acp".into(),
-                    "node_modules/@zed-industries/claude-code-acp/dist/index.js".into(),
-                    Some("0.5.2".parse().unwrap()),
+                    "claude-agent-acp".into(),
+                    "@zed-industries/claude-agent-acp".into(),
+                    "node_modules/@zed-industries/claude-agent-acp/dist/index.js".into(),
+                    Some("0.17.0".parse().unwrap()),
                     status_tx,
                     new_version_available_tx,
                     fs,
@@ -1467,26 +1467,8 @@ impl ExternalAgentServer for LocalClaudeCode {
                 )
                 .await?;
                 command.env = Some(env);
-                let login = command
-                    .args
-                    .first()
-                    .and_then(|path| {
-                        path.strip_suffix("/@zed-industries/claude-code-acp/dist/index.js")
-                    })
-                    .map(|path_prefix| task::SpawnInTerminal {
-                        command: Some(command.path.to_string_lossy().into_owned()),
-                        args: vec![
-                            Path::new(path_prefix)
-                                .join("@anthropic-ai/claude-agent-sdk/cli.js")
-                                .to_string_lossy()
-                                .to_string(),
-                            "/login".into(),
-                        ],
-                        env: command.env.clone().unwrap_or_default(),
-                        label: "claude /login".into(),
-                        ..Default::default()
-                    });
-                (command, login)
+
+                (command, None)
             };
 
             command.env.get_or_insert_default().extend(extra_env);
@@ -2247,7 +2229,7 @@ impl ExternalAgentServer for LocalCustomAgent {
 }
 
 pub const GEMINI_NAME: &'static str = "gemini";
-pub const CLAUDE_CODE_NAME: &'static str = "claude";
+pub const CLAUDE_AGENT_NAME: &'static str = "claude";
 pub const CODEX_NAME: &'static str = "codex";
 
 #[derive(Default, Clone, JsonSchema, Debug, PartialEq, RegisterSetting)]

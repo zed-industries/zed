@@ -37,7 +37,7 @@ jobs:
     - id: compare-versions-check
       name: extension_bump::compare_versions
       run: |
-        CURRENT_VERSION="$(sed -n 's/version = \"\(.*\)\"/\1/p' < extension.toml)"
+        CURRENT_VERSION="$(sed -n 's/^version = \"\(.*\)\"/\1/p' < extension.toml | tr -d '[:space:]')"
         PR_PARENT_SHA="${{ github.event.pull_request.head.sha }}"
 
         if [[ -n "$PR_PARENT_SHA" ]]; then
@@ -48,7 +48,7 @@ jobs:
             git checkout "$(git log -1 --format=%H)"~1
         fi
 
-        PARENT_COMMIT_VERSION="$(sed -n 's/version = \"\(.*\)\"/\1/p' < extension.toml)"
+        PARENT_COMMIT_VERSION="$(sed -n 's/^version = \"\(.*\)\"/\1/p' < extension.toml | tr -d '[:space:]')"
 
         [[ "$CURRENT_VERSION" == "$PARENT_COMMIT_VERSION" ]] && \
             echo "version_changed=false" >> "$GITHUB_OUTPUT" || \
@@ -99,7 +99,7 @@ jobs:
             cargo update --workspace
         fi
 
-        NEW_VERSION="$(sed -n 's/version = \"\(.*\)\"/\1/p' < extension.toml)"
+        NEW_VERSION="$(sed -n 's/^version = \"\(.*\)\"/\1/p' < extension.toml | tr -d '[:space:]')"
 
         echo "new_version=${NEW_VERSION}" >> "$GITHUB_OUTPUT"
     - name: extension_bump::create_pull_request

@@ -132,9 +132,9 @@ impl InlineAssistant {
             })
             .detach();
 
-        let workspace = workspace.downgrade();
+        let workspace_weak = workspace.downgrade();
         cx.observe_global::<SettingsStore>(move |cx| {
-            let Some(workspace) = workspace.upgrade() else {
+            let Some(workspace) = workspace_weak.upgrade() else {
                 return;
             };
             let Some(terminal_panel) = workspace.read(cx).panel::<TerminalPanel>(cx) else {
@@ -144,6 +144,19 @@ impl InlineAssistant {
             terminal_panel.update(cx, |terminal_panel, cx| {
                 terminal_panel.set_assistant_enabled(enabled, cx)
             });
+        })
+        .detach();
+
+        cx.observe(workspace, |workspace, cx| {
+            let Some(terminal_panel) = workspace.read(cx).panel::<TerminalPanel>(cx) else {
+                return;
+            };
+            let enabled = AgentSettings::get_global(cx).enabled(cx);
+            if terminal_panel.read(cx).assistant_enabled() != enabled {
+                terminal_panel.update(cx, |terminal_panel, cx| {
+                    terminal_panel.set_assistant_enabled(enabled, cx)
+                });
+            }
         })
         .detach();
     }

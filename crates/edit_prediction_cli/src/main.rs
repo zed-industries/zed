@@ -22,7 +22,7 @@ mod reversal_tracking;
 mod score;
 mod split_commit;
 mod split_dataset;
-mod sync_deployments;
+
 mod synthesize;
 mod truncate_expected_patch;
 mod word_diff;
@@ -31,7 +31,7 @@ use collections::HashSet;
 use edit_prediction::EditPredictionStore;
 use futures::channel::mpsc;
 use futures::{SinkExt as _, StreamExt as _};
-use gpui::{AppContext as _, Application, BackgroundExecutor, Task};
+use gpui::{AppContext as _, BackgroundExecutor, Task};
 use zeta_prompt::ZetaFormat;
 
 use reqwest_client::ReqwestClient;
@@ -210,8 +210,6 @@ enum Command {
     Repair(repair::RepairArgs),
     /// Print all valid zeta formats (lowercase, one per line)
     PrintZetaFormats,
-    /// Sync baseten deployment metadata to Snowflake for linking predictions to experiments
-    SyncDeployments(SyncDeploymentsArgs),
 }
 
 impl Display for Command {
@@ -257,18 +255,8 @@ impl Display for Command {
             Command::PrintZetaFormats => {
                 write!(f, "print-zeta-formats")
             }
-            Command::SyncDeployments(_) => {
-                write!(f, "sync-deployments")
-            }
         }
     }
-}
-
-#[derive(Debug, Args, Clone)]
-struct SyncDeploymentsArgs {
-    /// BaseTen model name (default: "zeta-2")
-    #[arg(long)]
-    model: Option<String>,
 }
 
 #[derive(Debug, Args, Clone)]
@@ -297,8 +285,10 @@ struct EvalArgs {
     summary_json: Option<PathBuf>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Default, Debug, PartialEq, Eq, Hash)]
 pub enum TeacherBackend {
+    Sonnet46,
+    #[default]
     Sonnet45,
     Gpt52,
 }
@@ -306,6 +296,7 @@ pub enum TeacherBackend {
 impl std::fmt::Display for TeacherBackend {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            TeacherBackend::Sonnet46 => write!(f, "sonnet46"),
             TeacherBackend::Sonnet45 => write!(f, "sonnet45"),
             TeacherBackend::Gpt52 => write!(f, "gpt52"),
         }
@@ -318,9 +309,12 @@ impl std::str::FromStr for TeacherBackend {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_lowercase().as_str() {
             "sonnet45" | "sonnet" | "claude" => Ok(TeacherBackend::Sonnet45),
+            "sonnet46" => Ok(TeacherBackend::Sonnet46),
             "gpt52" | "gpt" | "openai" => Ok(TeacherBackend::Gpt52),
             "v0114180editableregion" => Ok(TeacherBackend::Sonnet45),
-            _ => anyhow::bail!("unknown teacher backend `{s}`. Valid options: sonnet45, gpt52"),
+            _ => anyhow::bail!(
+                "unknown teacher backend `{s}`. Valid options: sonnet45, sonnet46, gpt52"
+            ),
         }
     }
 }
@@ -329,6 +323,7 @@ impl TeacherBackend {
     pub fn model_name(&self) -> &'static str {
         match self {
             TeacherBackend::Sonnet45 => "claude-sonnet-4-5",
+            TeacherBackend::Sonnet46 => "claude-sonnet-4-6",
             TeacherBackend::Gpt52 => "gpt-5.2",
         }
     }
@@ -386,14 +381,14 @@ impl std::str::FromStr for PredictionProvider {
                 let backend = arg
                     .map(|a| a.parse())
                     .transpose()?
-                    .unwrap_or(TeacherBackend::Sonnet45);
+                    .unwrap_or(TeacherBackend::default());
                 Ok(PredictionProvider::Teacher(backend))
             }
             "teacher-non-batching" | "teacher_non_batching" | "teachernonbatching" => {
                 let backend = arg
                     .map(|a| a.parse())
                     .transpose()?
-                    .unwrap_or(TeacherBackend::Sonnet45);
+                    .unwrap_or(TeacherBackend::default());
                 Ok(PredictionProvider::TeacherNonBatching(backend))
             }
             "repair" => Ok(PredictionProvider::Repair),
@@ -401,7 +396,7 @@ impl std::str::FromStr for PredictionProvider {
                 anyhow::bail!(
                     "unknown provider `{provider}`. Valid options: sweep, mercury, zeta1, zeta2, zeta2:<version>, teacher, teacher:<backend>, teacher-non-batching, repair\n\
                  For zeta2, you can optionally specify a version like `zeta2:ordered` or `zeta2:V0113_Ordered`.\n\
-                 For teacher, you can specify a backend like `teacher:sonnet45` or `teacher:gpt52`.\n\
+                 For teacher, you can specify a backend like `teacher:sonnet46` or `teacher:gpt52`.\n\
                  Available zeta versions:\n{}",
                     ZetaFormat::options_as_string()
                 )
@@ -478,6 +473,14 @@ impl EpArgs {
     }
 }
 
+/// Minimum Zed version required for Snowflake queries.
+/// This version introduced the current request schema with predicted edits in the edit
+/// history, and open source repos distinguished.
+const MIN_CAPTURE_VERSION: pull_examples::MinCaptureVersion = pull_examples::MinCaptureVersion {
+    minor: 224,
+    patch: 1,
+};
+
 async fn load_examples(
     http_client: Arc<dyn http_client::HttpClient>,
     args: &EpArgs,
@@ -514,6 +517,20 @@ async fn load_examples(
 
     let mut examples = read_example_files(&file_inputs);
 
+    // Apply offset to file examples first, then pass remaining offset to Snowflake.
+    let file_example_count = examples.len();
+    let remaining_offset = if let Some(offset) = args.offset {
+        if offset >= file_example_count {
+            examples.clear();
+            offset - file_example_count
+        } else {
+            examples.splice(0..offset, []);
+            0
+        }
+    } else {
+        0
+    };
+
     Progress::global().set_total_examples(examples.len());
 
     let remaining_limit_for_snowflake =
@@ -533,7 +550,9 @@ async fn load_examples(
                 http_client.clone(),
                 &captured_after_timestamps,
                 max_rows_per_timestamp,
+                remaining_offset,
                 background_executor.clone(),
+                Some(MIN_CAPTURE_VERSION),
             )
             .await?;
             examples.append(&mut captured_examples);
@@ -546,7 +565,9 @@ async fn load_examples(
                 http_client.clone(),
                 &rejected_after_timestamps,
                 max_rows_per_timestamp,
+                remaining_offset,
                 background_executor.clone(),
+                Some(MIN_CAPTURE_VERSION),
             )
             .await?;
             examples.append(&mut rejected_examples);
@@ -559,7 +580,9 @@ async fn load_examples(
                 http_client.clone(),
                 &requested_after_timestamps,
                 max_rows_per_timestamp,
+                remaining_offset,
                 background_executor.clone(),
+                Some(MIN_CAPTURE_VERSION),
             )
             .await?;
             examples.append(&mut requested_examples);
@@ -572,7 +595,9 @@ async fn load_examples(
                 http_client,
                 &rated_after_inputs,
                 max_rows_per_timestamp,
+                remaining_offset,
                 background_executor,
+                Some(MIN_CAPTURE_VERSION),
             )
             .await?;
             examples.append(&mut rated_examples);
@@ -596,10 +621,6 @@ async fn load_examples(
         {
             resume_from_output(path, &mut examples, command);
         }
-    }
-
-    if let Some(offset) = args.offset {
-        examples.splice(0..offset, []);
     }
 
     if let Some(limit) = args.limit {
@@ -744,19 +765,7 @@ fn main() {
             }
             return;
         }
-        Command::SyncDeployments(sync_args) => {
-            let http_client: Arc<dyn http_client::HttpClient> = Arc::new(ReqwestClient::new());
-            smol::block_on(async {
-                if let Err(e) =
-                    sync_deployments::run_sync_deployments(http_client, sync_args.model.clone())
-                        .await
-                {
-                    eprintln!("Error: {:?}", e);
-                    std::process::exit(1);
-                }
-            });
-            return;
-        }
+
         Command::Synthesize(synth_args) => {
             let Some(output_dir) = args.output else {
                 panic!("output dir is required");
@@ -818,7 +827,7 @@ fn main() {
     }
 
     let http_client = Arc::new(ReqwestClient::new());
-    let app = Application::headless().with_http_client(http_client);
+    let app = gpui_platform::headless().with_http_client(http_client);
 
     app.run(move |cx| {
         let app_state = Arc::new(headless::init(cx));
@@ -992,8 +1001,7 @@ fn main() {
                                         | Command::TruncatePatch(_)
                                         | Command::FilterLanguages(_)
                                         | Command::ImportBatch(_)
-                                        | Command::PrintZetaFormats
-                                        | Command::SyncDeployments(_) => {
+                                        | Command::PrintZetaFormats => {
                                             unreachable!()
                                         }
                                     }
@@ -1041,11 +1049,9 @@ fn main() {
                                 }
                             }
 
-                            let repo_url = &repo_examples.first().unwrap().spec.repository_url;
                             let project = repo_examples
                                 .iter()
-                                .find_map(|e| e.state.as_ref().map(|s| s.project.clone()))
-                                .or_else(|| app_state.project_cache.get(repo_url));
+                                .find_map(|e| e.state.as_ref().map(|s| s.project.clone()));
 
                             if let Some(project) = project {
                                 let mut cx = cx.clone();
@@ -1069,7 +1075,6 @@ fn main() {
                                 }
                             }
 
-                            app_state.project_cache.remove(repo_url);
                             for example in &mut repo_examples {
                                 example.state.take();
                             }

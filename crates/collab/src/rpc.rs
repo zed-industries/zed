@@ -50,7 +50,6 @@ use rpc::{
     },
 };
 use semver::Version;
-use serde::{Serialize, Serializer};
 use std::{
     any::TypeId,
     future::Future,
@@ -131,7 +130,6 @@ impl<R: RequestMessage> Response<R> {
 #[derive(Clone, Debug)]
 pub enum Principal {
     User(User),
-    Impersonated { user: User, admin: User },
 }
 
 impl Principal {
@@ -140,11 +138,6 @@ impl Principal {
             Principal::User(user) => {
                 span.record("user_id", user.id.0);
                 span.record("login", &user.github_login);
-            }
-            Principal::Impersonated { user, admin } => {
-                span.record("user_id", user.id.0);
-                span.record("login", &user.github_login);
-                span.record("impersonator", &admin.github_login);
             }
         }
     }
@@ -226,14 +219,12 @@ impl Session {
     fn is_staff(&self) -> bool {
         match &self.principal {
             Principal::User(user) => user.admin,
-            Principal::Impersonated { .. } => true,
         }
     }
 
     fn user_id(&self) -> UserId {
         match &self.principal {
             Principal::User(user) => user.id,
-            Principal::Impersonated { user, .. } => user.id,
         }
     }
 }
@@ -244,10 +235,6 @@ impl Debug for Session {
         match &self.principal {
             Principal::User(user) => {
                 result.field("user", &user.github_login);
-            }
-            Principal::Impersonated { user, admin } => {
-                result.field("user", &user.github_login);
-                result.field("impersonator", &admin.github_login);
             }
         }
         result.field("connection_id", &self.connection_id).finish()
@@ -276,22 +263,6 @@ pub struct Server {
 struct ConnectionPoolGuard<'a> {
     guard: parking_lot::MutexGuard<'a, ConnectionPool>,
     _not_send: PhantomData<Rc<()>>,
-}
-
-#[derive(Serialize)]
-pub struct ServerSnapshot<'a> {
-    peer: &'a Peer,
-    #[serde(serialize_with = "serialize_deref")]
-    connection_pool: ConnectionPoolGuard<'a>,
-}
-
-pub fn serialize_deref<S, T, U>(value: &T, serializer: S) -> Result<S::Ok, S::Error>
-where
-    S: Serializer,
-    T: Deref<Target = U>,
-    U: Serialize,
-{
-    Serialize::serialize(value.deref(), serializer)
 }
 
 impl Server {
@@ -780,7 +751,6 @@ impl Server {
             connection_id=field::Empty,
             user_id=field::Empty,
             login=field::Empty,
-            impersonator=field::Empty,
             user_agent=field::Empty,
             geoip_country_code=field::Empty,
             release_channel=field::Empty,
@@ -889,7 +859,6 @@ impl Server {
                                 concurrent_handlers,
                                 user_id=field::Empty,
                                 login=field::Empty,
-                                impersonator=field::Empty,
                                 lsp_query_request=field::Empty,
                                 release_channel=field::Empty,
                                 { TOTAL_DURATION_MS }=field::Empty,
@@ -953,7 +922,7 @@ impl Server {
         }
 
         match &session.principal {
-            Principal::User(user) | Principal::Impersonated { user, admin: _ } => {
+            Principal::User(user) => {
                 if !user.connected_once {
                     self.peer.send(connection_id, proto::ShowContacts {})?;
                     self.app_state
@@ -988,16 +957,6 @@ impl Server {
         }
 
         Ok(())
-    }
-
-    pub async fn snapshot(self: &Arc<Self>) -> ServerSnapshot<'_> {
-        ServerSnapshot {
-            connection_pool: ConnectionPoolGuard {
-                guard: self.connection_pool.lock(),
-                _not_send: PhantomData,
-            },
-            peer: &self.peer,
-        }
     }
 }
 

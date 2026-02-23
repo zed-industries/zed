@@ -4,10 +4,11 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use gpui::{
-    App, AppContext, Application, AssetSource, Bounds, Context, ImageSource, KeyBinding, Menu,
-    MenuItem, Point, SharedString, SharedUri, TitlebarOptions, Window, WindowBounds, WindowOptions,
-    actions, div, img, prelude::*, px, rgb, size,
+    App, AppContext, AssetSource, Bounds, Context, ImageSource, KeyBinding, Menu, MenuItem, Point,
+    SharedString, SharedUri, TitlebarOptions, Window, WindowBounds, WindowOptions, actions, div,
+    img, prelude::*, px, rgb, size,
 };
+use gpui_platform::application;
 use reqwest_client::ReqwestClient;
 
 struct Assets {
@@ -150,7 +151,7 @@ fn main() {
 
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
 
-    Application::new()
+    application()
         .with_assets(Assets {
             base: manifest_dir.join("examples"),
         })

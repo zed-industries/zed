@@ -6,7 +6,7 @@ use settings_content::{PlatformOverrides, ReleaseChannelOverrides};
 /// nested platform, release-channel, and profile override objects.
 pub(crate) fn migrate_settings(
     value: &mut Value,
-    mut migrate_one: impl FnMut(&mut serde_json::Map<String, Value>) -> Result<()>,
+    migrate_one: &mut dyn FnMut(&mut serde_json::Map<String, Value>) -> Result<()>,
 ) -> Result<()> {
     let Some(root_object) = value.as_object_mut() else {
         return Ok(());

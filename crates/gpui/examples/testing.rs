@@ -7,9 +7,10 @@
 //! Run tests:   cargo test -p gpui --example testing --features test-support
 
 use gpui::{
-    App, Application, Bounds, Context, FocusHandle, Focusable, Render, Task, Window, WindowBounds,
+    App, Bounds, Context, FocusHandle, Focusable, Render, Task, Window, WindowBounds,
     WindowOptions, actions, div, prelude::*, px, rgb, size,
 };
+use gpui_platform::application;
 
 actions!(counter, [Increment, Decrement]);
 
@@ -176,7 +177,7 @@ impl Render for Counter {
 }
 
 fn main() {
-    Application::new().run(|cx: &mut App| {
+    application().run(|cx: &mut App| {
         cx.bind_keys([
             gpui::KeyBinding::new("up", Increment, Some("Counter")),
             gpui::KeyBinding::new("down", Decrement, Some("Counter")),

@@ -29,7 +29,7 @@ impl Vim {
                 let mut original_positions: HashMap<_, _> = Default::default();
                 let mut kind = None;
                 editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
-                    s.move_with(|map, selection| {
+                    s.move_with(&mut |map, selection| {
                         let original_position = (selection.head(), selection.goal);
                         kind = motion.expand_selection(
                             map,
@@ -49,7 +49,7 @@ impl Vim {
                 let Some(kind) = kind else { return };
                 vim.yank_selections_content(editor, kind, window, cx);
                 editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
-                    s.move_with(|_, selection| {
+                    s.move_with(&mut |_, selection| {
                         let (head, goal) = original_positions.remove(&selection.id).unwrap();
                         selection.collapse_to(head, goal);
                     });
@@ -72,7 +72,7 @@ impl Vim {
                 editor.set_clip_at_line_ends(false, cx);
                 let mut start_positions: HashMap<_, _> = Default::default();
                 editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
-                    s.move_with(|map, selection| {
+                    s.move_with(&mut |map, selection| {
                         object.expand_selection(map, selection, around, times);
                         let start_position = (selection.start, selection.goal);
                         start_positions.insert(selection.id, start_position);
@@ -84,7 +84,7 @@ impl Vim {
                 };
                 vim.yank_selections_content(editor, kind, window, cx);
                 editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
-                    s.move_with(|_, selection| {
+                    s.move_with(&mut |_, selection| {
                         let (head, goal) = start_positions.remove(&selection.id).unwrap();
                         selection.collapse_to(head, goal);
                     });

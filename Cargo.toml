@@ -61,6 +61,7 @@ members = [
     "crates/edit_prediction_context",
     "crates/editor",
     "crates/encoding_selector",
+    "crates/etw_tracing",
     "crates/eval",
     "crates/eval_utils",
     "crates/explorer_command_injector",
@@ -83,7 +84,12 @@ members = [
     "crates/go_to_line",
     "crates/google_ai",
     "crates/gpui",
+    "crates/gpui_linux",
+    "crates/gpui_macos",
     "crates/gpui_macros",
+    "crates/gpui_platform",
+    "crates/gpui_wgpu",
+    "crates/gpui_windows",
     "crates/gpui_tokio",
     "crates/html_to_markdown",
     "crates/http_client",
@@ -304,6 +310,7 @@ dev_container = { path = "crates/dev_container" }
 diagnostics = { path = "crates/diagnostics" }
 editor = { path = "crates/editor" }
 encoding_selector = { path = "crates/encoding_selector" }
+etw_tracing = { path = "crates/etw_tracing" }
 eval_utils = { path = "crates/eval_utils" }
 extension = { path = "crates/extension" }
 extension_host = { path = "crates/extension_host" }
@@ -321,7 +328,12 @@ git_ui = { path = "crates/git_ui" }
 go_to_line = { path = "crates/go_to_line" }
 google_ai = { path = "crates/google_ai" }
 gpui = { path = "crates/gpui", default-features = false }
+gpui_linux = { path = "crates/gpui_linux", default-features = false }
+gpui_macos = { path = "crates/gpui_macos", default-features = false }
 gpui_macros = { path = "crates/gpui_macros" }
+gpui_platform = { path = "crates/gpui_platform", default-features = false }
+gpui_wgpu = { path = "crates/gpui_wgpu" }
+gpui_windows = { path = "crates/gpui_windows", default-features = false }
 gpui_tokio = { path = "crates/gpui_tokio" }
 html_to_markdown = { path = "crates/html_to_markdown" }
 http_client = { path = "crates/http_client" }
@@ -511,7 +523,7 @@ cocoa-foundation = "=0.2.0"
 convert_case = "0.8.0"
 core-foundation = "=0.10.0"
 core-foundation-sys = "0.8.6"
-core-video = { version = "0.4.3", features = ["metal"] }
+core-video = { version = "0.5.2", features = ["metal"] }
 cpal = "0.17"
 crash-handler = "0.6"
 criterion = { version = "0.5", features = ["html_reports"] }
@@ -562,12 +574,12 @@ log = { version = "0.4.16", features = ["kv_unstable_serde", "serde"] }
 lsp-types = { git = "https://github.com/zed-industries/lsp-types", rev = "a4f410987660bf560d1e617cb78117c6b6b9f599" }
 mach2 = "0.5"
 markup5ever_rcdom = "0.3.0"
-metal = "0.29"
+metal = "0.33"
 minidumper = "0.8"
 moka = { version = "0.12.10", features = ["sync"] }
 naga = { version = "28.0", features = ["wgsl-in"] }
 nanoid = "0.4"
-nbformat = "1.0.0"
+nbformat = "1.1.0"
 nix = "0.29"
 num-format = "0.4.4"
 objc = "0.2"
@@ -668,7 +680,6 @@ stacksafe = "0.1"
 streaming-iterator = "0.1"
 strsim = "0.11"
 strum = { version = "0.27.2", features = ["derive"] }
-subtle = "2.5.0"
 syn = { version = "2.0.101", features = ["full", "extra-traits", "visit-mut"] }
 sys-locale = "0.3.1"
 sysinfo = "0.37.0"
@@ -806,8 +817,8 @@ features = [
 
 [patch.crates-io]
 async-task = { git = "https://github.com/smol-rs/async-task.git", rev = "b4486cd71e4e94fbda54ce6302444de14f4d190e" }
-notify = { git = "https://github.com/zed-industries/notify.git", rev = "6c550ac3c56cbd143c57ea6390e197af9d790908" }
-notify-types = { git = "https://github.com/zed-industries/notify.git", rev = "6c550ac3c56cbd143c57ea6390e197af9d790908" }
+notify = { git = "https://github.com/zed-industries/notify.git", rev = "ce58c24cad542c28e04ced02e20325a4ec28a31d" }
+notify-types = { git = "https://github.com/zed-industries/notify.git", rev = "ce58c24cad542c28e04ced02e20325a4ec28a31d" }
 windows-capture = { git = "https://github.com/zed-industries/windows-capture.git", rev = "f0d6c1b6691db75461b732f6d5ff56eed002eeb9" }
 calloop = { git = "https://github.com/zed-industries/calloop" }
 
@@ -820,6 +831,8 @@ codegen-units = 16
 # (without this cargo will compile ~400 crates twice)
 [profile.dev.build-override]
 codegen-units = 16
+split-debuginfo = "unpacked"
+debug = true
 
 [profile.dev.package]
 # proc-macros start

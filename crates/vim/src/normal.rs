@@ -145,7 +145,7 @@ pub(crate) fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
         vim.record_current_action(cx);
         vim.update_editor(cx, |_, editor, cx| {
             editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
-                s.move_with(|map, selection| {
+                s.move_with(&mut |map, selection| {
                     if selection.is_empty() {
                         selection.end = movement::right(map, selection.end)
                     }
@@ -159,7 +159,7 @@ pub(crate) fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     Vim::action(editor, cx, |vim, _: &HelixCollapseSelection, window, cx| {
         vim.update_editor(cx, |_, editor, cx| {
             editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
-                s.move_with(|map, selection| {
+                s.move_with(&mut |map, selection| {
                     let mut point = selection.head();
                     if !selection.reversed && !selection.is_empty() {
                         point = movement::left(map, selection.head());
@@ -598,7 +598,7 @@ impl Vim {
                 window,
                 cx,
                 |s| {
-                    s.move_cursors_with(|map, cursor, goal| {
+                    s.move_cursors_with(&mut |map, cursor, goal| {
                         motion
                             .move_point(map, cursor, goal, times, &text_layout_details)
                             .unwrap_or((cursor, goal))
@@ -617,7 +617,9 @@ impl Vim {
         self.switch_mode(Mode::Insert, false, window, cx);
         self.update_editor(cx, |_, editor, cx| {
             editor.change_selections(Default::default(), window, cx, |s| {
-                s.move_cursors_with(|map, cursor, _| (right(map, cursor, 1), SelectionGoal::None));
+                s.move_cursors_with(&mut |map, cursor, _| {
+                    (right(map, cursor, 1), SelectionGoal::None)
+                });
             });
         });
     }
@@ -628,7 +630,7 @@ impl Vim {
             let current_mode = self.mode;
             self.update_editor(cx, |_, editor, cx| {
                 editor.change_selections(Default::default(), window, cx, |s| {
-                    s.move_with(|map, selection| {
+                    s.move_with(&mut |map, selection| {
                         if current_mode == Mode::VisualLine {
                             let start_of_line = motion::start_of_line(map, false, selection.start);
                             selection.collapse_to(start_of_line, SelectionGoal::None)
@@ -652,7 +654,7 @@ impl Vim {
         self.switch_mode(Mode::Insert, false, window, cx);
         self.update_editor(cx, |_, editor, cx| {
             editor.change_selections(Default::default(), window, cx, |s| {
-                s.move_cursors_with(|map, cursor, _| {
+                s.move_cursors_with(&mut |map, cursor, _| {
                     (
                         first_non_whitespace(map, false, cursor),
                         SelectionGoal::None,
@@ -672,7 +674,7 @@ impl Vim {
         self.switch_mode(Mode::Insert, false, window, cx);
         self.update_editor(cx, |_, editor, cx| {
             editor.change_selections(Default::default(), window, cx, |s| {
-                s.move_cursors_with(|map, cursor, _| {
+                s.move_cursors_with(&mut |map, cursor, _| {
                     (next_line_end(map, cursor, 1), SelectionGoal::None)
                 });
             });
@@ -729,7 +731,7 @@ impl Vim {
                     .collect::<Vec<_>>();
                 editor.edit_with_autoindent(edits, cx);
                 editor.change_selections(Default::default(), window, cx, |s| {
-                    s.move_cursors_with(|map, cursor, _| {
+                    s.move_cursors_with(&mut |map, cursor, _| {
                         let previous_line = map.start_of_relative_buffer_row(cursor, -1);
                         let insert_point = motion::end_of_line(map, false, previous_line, 1);
                         (insert_point, SelectionGoal::None)
@@ -770,7 +772,7 @@ impl Vim {
                     })
                     .collect::<Vec<_>>();
                 editor.change_selections(Default::default(), window, cx, |s| {
-                    s.maybe_move_cursors_with(|map, cursor, goal| {
+                    s.maybe_move_cursors_with(&mut |map, cursor, goal| {
                         Motion::CurrentLine.move_point(
                             map,
                             cursor,
@@ -848,7 +850,7 @@ impl Vim {
                 editor.edit(edits, cx);
 
                 editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
-                    s.move_with(|_, selection| {
+                    s.move_with(&mut |_, selection| {
                         if let Some(position) = original_positions.get(&selection.id) {
                             selection.collapse_to(*position, SelectionGoal::None);
                         }
@@ -1025,7 +1027,7 @@ impl Vim {
                 }
                 editor.set_clip_at_line_ends(true, cx);
                 editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
-                    s.move_with(|map, selection| {
+                    s.move_with(&mut |map, selection| {
                         let point = movement::saturating_left(map, selection.head());
                         selection.collapse_to(point, SelectionGoal::None)
                     });
@@ -1061,7 +1063,7 @@ impl Vim {
         mut positions: HashMap<usize, Anchor>,
     ) {
         editor.change_selections(Default::default(), window, cx, |s| {
-            s.move_with(|map, selection| {
+            s.move_with(&mut |map, selection| {
                 if let Some(anchor) = positions.remove(&selection.id) {
                     selection.collapse_to(anchor.to_display_point(map), SelectionGoal::None);
                 }

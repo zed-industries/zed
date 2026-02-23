@@ -64,7 +64,6 @@ pub(crate) fn render_edit_prediction_setup_page(
             )
             .into_any_element(),
         ),
-        Some(render_ollama_provider(settings_window, window, cx).into_any_element()),
         Some(
             render_api_key_provider(
                 IconName::AiMistral,
@@ -87,6 +86,8 @@ pub(crate) fn render_edit_prediction_setup_page(
             )
             .into_any_element(),
         ),
+        Some(render_ollama_provider(settings_window, window, cx).into_any_element()),
+        Some(render_open_ai_compatible_provider(settings_window, window, cx).into_any_element()),
     ];
 
     div()
@@ -421,6 +422,36 @@ fn ollama_settings() -> Box<[SettingsPageItem]> {
             files: USER,
         }),
         SettingsPageItem::SettingItem(SettingItem {
+            title: "Prompt Format",
+            description: "The prompt format to use when requesting predictions. Set to Infer to have the format inferred based on the model name",
+            field: Box::new(SettingField {
+                pick: |settings| {
+                    settings
+                        .project
+                        .all_languages
+                        .edit_predictions
+                        .as_ref()?
+                        .ollama
+                        .as_ref()?
+                        .prompt_format
+                        .as_ref()
+                },
+                write: |settings, value| {
+                    settings
+                        .project
+                        .all_languages
+                        .edit_predictions
+                        .get_or_insert_default()
+                        .ollama
+                        .get_or_insert_default()
+                        .prompt_format = value;
+                },
+                json_path: Some("edit_predictions.ollama.prompt_format"),
+            }),
+            files: USER,
+            metadata: None,
+        }),
+        SettingsPageItem::SettingItem(SettingItem {
             title: "Max Output Tokens",
             description: "The maximum number of tokens to generate.",
             field: Box::new(SettingField {
@@ -446,6 +477,165 @@ fn ollama_settings() -> Box<[SettingsPageItem]> {
                         .max_output_tokens = value;
                 },
                 json_path: Some("edit_predictions.ollama.max_output_tokens"),
+            }),
+            metadata: None,
+            files: USER,
+        }),
+    ])
+}
+
+fn render_open_ai_compatible_provider(
+    settings_window: &SettingsWindow,
+    window: &mut Window,
+    cx: &mut Context<SettingsWindow>,
+) -> impl IntoElement {
+    let open_ai_compatible_settings = open_ai_compatible_settings();
+    let additional_fields = settings_window
+        .render_sub_page_items_section(
+            open_ai_compatible_settings.iter().enumerate(),
+            true,
+            window,
+            cx,
+        )
+        .into_any_element();
+
+    v_flex()
+        .id("open-ai-compatible")
+        .min_w_0()
+        .pt_8()
+        .gap_1p5()
+        .child(
+            SettingsSectionHeader::new("OpenAI Compatible API")
+                .icon(IconName::AiOpenAiCompat)
+                .no_padding(true),
+        )
+        .child(div().px_neg_8().child(additional_fields))
+}
+
+fn open_ai_compatible_settings() -> Box<[SettingsPageItem]> {
+    Box::new([
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "API URL",
+            description: "The base URL of your OpenAI-compatible server.",
+            field: Box::new(SettingField {
+                pick: |settings| {
+                    settings
+                        .project
+                        .all_languages
+                        .edit_predictions
+                        .as_ref()?
+                        .open_ai_compatible_api
+                        .as_ref()?
+                        .api_url
+                        .as_ref()
+                },
+                write: |settings, value| {
+                    settings
+                        .project
+                        .all_languages
+                        .edit_predictions
+                        .get_or_insert_default()
+                        .open_ai_compatible_api
+                        .get_or_insert_default()
+                        .api_url = value;
+                },
+                json_path: Some("edit_predictions.open_ai_compatible_api.api_url"),
+            }),
+            metadata: Some(Box::new(SettingsFieldMetadata {
+                placeholder: Some(OLLAMA_API_URL_PLACEHOLDER),
+                ..Default::default()
+            })),
+            files: USER,
+        }),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Model",
+            description: "The model string to pass to the OpenAI-compatible server.",
+            field: Box::new(SettingField {
+                pick: |settings| {
+                    settings
+                        .project
+                        .all_languages
+                        .edit_predictions
+                        .as_ref()?
+                        .open_ai_compatible_api
+                        .as_ref()?
+                        .model
+                        .as_ref()
+                },
+                write: |settings, value| {
+                    settings
+                        .project
+                        .all_languages
+                        .edit_predictions
+                        .get_or_insert_default()
+                        .open_ai_compatible_api
+                        .get_or_insert_default()
+                        .model = value;
+                },
+                json_path: Some("edit_predictions.open_ai_compatible_api.model"),
+            }),
+            metadata: Some(Box::new(SettingsFieldMetadata {
+                placeholder: Some(OLLAMA_MODEL_PLACEHOLDER),
+                ..Default::default()
+            })),
+            files: USER,
+        }),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Prompt Format",
+            description: "The prompt format to use when requesting predictions. Set to Infer to have the format inferred based on the model name",
+            field: Box::new(SettingField {
+                pick: |settings| {
+                    settings
+                        .project
+                        .all_languages
+                        .edit_predictions
+                        .as_ref()?
+                        .open_ai_compatible_api
+                        .as_ref()?
+                        .prompt_format
+                        .as_ref()
+                },
+                write: |settings, value| {
+                    settings
+                        .project
+                        .all_languages
+                        .edit_predictions
+                        .get_or_insert_default()
+                        .open_ai_compatible_api
+                        .get_or_insert_default()
+                        .prompt_format = value;
+                },
+                json_path: Some("edit_predictions.open_ai_compatible_api.prompt_format"),
+            }),
+            files: USER,
+            metadata: None,
+        }),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Max Output Tokens",
+            description: "The maximum number of tokens to generate.",
+            field: Box::new(SettingField {
+                pick: |settings| {
+                    settings
+                        .project
+                        .all_languages
+                        .edit_predictions
+                        .as_ref()?
+                        .open_ai_compatible_api
+                        .as_ref()?
+                        .max_output_tokens
+                        .as_ref()
+                },
+                write: |settings, value| {
+                    settings
+                        .project
+                        .all_languages
+                        .edit_predictions
+                        .get_or_insert_default()
+                        .open_ai_compatible_api
+                        .get_or_insert_default()
+                        .max_output_tokens = value;
+                },
+                json_path: Some("edit_predictions.open_ai_compatible_api.max_output_tokens"),
             }),
             metadata: None,
             files: USER,

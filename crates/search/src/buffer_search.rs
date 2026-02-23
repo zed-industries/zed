@@ -13,7 +13,7 @@ use crate::{
 use any_vec::AnyVec;
 use collections::HashMap;
 use editor::{
-    DisplayPoint, Editor, EditorSettings, MultiBufferOffset, SplittableEditor, ToggleSplitDiff,
+    Editor, EditorSettings, MultiBufferOffset, SplittableEditor, ToggleSplitDiff,
     actions::{Backtab, FoldAll, Tab, ToggleFoldAll, UnfoldAll},
 };
 use futures::channel::oneshot;
@@ -42,8 +42,8 @@ use workspace::{
     ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace,
     item::{ItemBufferKind, ItemHandle},
     searchable::{
-        CollapseDirection, Direction, FilteredSearchRange, SearchEvent, SearchToken,
-        SearchableItemHandle, WeakSearchableItemHandle,
+        Direction, FilteredSearchRange, SearchEvent, SearchToken, SearchableItemHandle,
+        WeakSearchableItemHandle,
     },
 };
 
@@ -91,10 +91,7 @@ pub struct BufferSearchBar {
     replace_enabled: bool,
     selection_search_enabled: Option<FilteredSearchRange>,
     scroll_handle: ScrollHandle,
-    editor_scroll_handle: ScrollHandle,
-    editor_needed_width: Pixels,
     regex_language: Option<Arc<Language>>,
-    is_collapsed: bool,
     splittable_editor: Option<WeakEntity<SplittableEditor>>,
     _splittable_editor_subscription: Option<Subscription>,
 }
@@ -212,7 +209,14 @@ impl Render for BufferSearchBar {
         let collapse_expand_button = if self.needs_expand_collapse_option(cx) {
             let query_editor_focus = self.query_editor.focus_handle(cx);
 
-            let (icon, tooltip_label) = if self.is_collapsed {
+            let is_collapsed = self
+                .active_searchable_item
+                .as_ref()
+                .and_then(|item| item.act_as_type(TypeId::of::<Editor>(), cx))
+                .and_then(|item| item.downcast::<Editor>().ok())
+                .map(|editor: Entity<Editor>| editor.read(cx).has_any_buffer_folded(cx))
+                .unwrap_or_default();
+            let (icon, tooltip_label) = if is_collapsed {
                 (IconName::ChevronUpDown, "Expand All Files")
             } else {
                 (IconName::ChevronDownUp, "Collapse All Files")
@@ -258,8 +262,6 @@ impl Render for BufferSearchBar {
 
         let narrow_mode =
             self.scroll_handle.bounds().size.width / window.rem_size() < 340. / BASE_REM_SIZE_IN_PX;
-        let hide_inline_icons = self.editor_needed_width
-            > self.editor_scroll_handle.bounds().size.width - window.rem_size() * 6.;
 
         let workspace::searchable::SearchOptions {
             case,
@@ -325,36 +327,39 @@ impl Render for BufferSearchBar {
         };
 
         let query_column = input_style
-            .id("editor-scroll")
-            .track_scroll(&self.editor_scroll_handle)
-            .child(render_text_input(&self.query_editor, color_override, cx))
-            .when(!hide_inline_icons, |div| {
-                div.child(
-                    h_flex()
-                        .gap_1()
-                        .when(case, |div| {
-                            div.child(SearchOption::CaseSensitive.as_button(
-                                self.search_options,
-                                SearchSource::Buffer,
-                                focus_handle.clone(),
-                            ))
-                        })
-                        .when(word, |div| {
-                            div.child(SearchOption::WholeWord.as_button(
-                                self.search_options,
-                                SearchSource::Buffer,
-                                focus_handle.clone(),
-                            ))
-                        })
-                        .when(regex, |div| {
-                            div.child(SearchOption::Regex.as_button(
-                                self.search_options,
-                                SearchSource::Buffer,
-                                focus_handle.clone(),
-                            ))
-                        }),
-                )
-            });
+            .child(
+                div()
+                    .flex_1()
+                    .min_w(px(0.))
+                    .overflow_hidden()
+                    .child(render_text_input(&self.query_editor, color_override, cx)),
+            )
+            .child(
+                h_flex()
+                    .flex_none()
+                    .gap_1()
+                    .when(case, |div| {
+                        div.child(SearchOption::CaseSensitive.as_button(
+                            self.search_options,
+                            SearchSource::Buffer,
+                            focus_handle.clone(),
+                        ))
+                    })
+                    .when(word, |div| {
+                        div.child(SearchOption::WholeWord.as_button(
+                            self.search_options,
+                            SearchSource::Buffer,
+                            focus_handle.clone(),
+                        ))
+                    })
+                    .when(regex, |div| {
+                        div.child(SearchOption::Regex.as_button(
+                            self.search_options,
+                            SearchSource::Buffer,
+                            focus_handle.clone(),
+                        ))
+                    }),
+            );
 
         let mode_column = h_flex()
             .gap_1()
@@ -884,10 +889,7 @@ impl BufferSearchBar {
             replace_enabled: false,
             selection_search_enabled: None,
             scroll_handle: ScrollHandle::new(),
-            editor_scroll_handle: ScrollHandle::new(),
-            editor_needed_width: px(0.),
             regex_language: None,
-            is_collapsed: false,
             splittable_editor: None,
             _splittable_editor_subscription: None,
         }
@@ -1053,11 +1055,11 @@ impl BufferSearchBar {
     }
 
     fn toggle_fold_all_in_item(&self, window: &mut Window, cx: &mut Context<Self>) {
-        let is_collapsed = self.is_collapsed;
         if let Some(item) = &self.active_searchable_item {
             if let Some(item) = item.act_as_type(TypeId::of::<Editor>(), cx) {
                 let editor = item.downcast::<Editor>().expect("Is an editor");
                 editor.update(cx, |editor, cx| {
+                    let is_collapsed = editor.has_any_buffer_folded(cx);
                     if is_collapsed {
                         editor.unfold_all(&UnfoldAll, window, cx);
                     } else {
@@ -1371,7 +1373,7 @@ impl BufferSearchBar {
 
     fn on_query_editor_event(
         &mut self,
-        editor: &Entity<Editor>,
+        _editor: &Entity<Editor>,
         event: &editor::EditorEvent,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -1383,16 +1385,6 @@ impl BufferSearchBar {
                 self.smartcase(window, cx);
                 self.clear_matches(window, cx);
                 let search = self.update_matches(false, true, window, cx);
-
-                let width = editor.update(cx, |editor, cx| {
-                    let text_layout_details = editor.text_layout_details(window, cx);
-                    let snapshot = editor.snapshot(window, cx).display_snapshot;
-
-                    snapshot.x_for_display_point(snapshot.max_point(), &text_layout_details)
-                        - snapshot.x_for_display_point(DisplayPoint::zero(), &text_layout_details)
-                });
-                self.editor_needed_width = width;
-                cx.notify();
 
                 cx.spawn_in(window, async move |this, cx| {
                     if search.await.is_ok() {
@@ -1434,15 +1426,6 @@ impl BufferSearchBar {
                 drop(self.update_matches(false, false, window, cx));
             }
             SearchEvent::ActiveMatchChanged => self.update_match_index(window, cx),
-            SearchEvent::ResultsCollapsedChanged(collapse_direction) => {
-                if self.needs_expand_collapse_option(cx) {
-                    match collapse_direction {
-                        CollapseDirection::Collapsed => self.is_collapsed = true,
-                        CollapseDirection::Expanded => self.is_collapsed = false,
-                    }
-                }
-                cx.notify();
-            }
         }
     }
 
@@ -3395,18 +3378,79 @@ mod tests {
         editor.update_in(cx, |editor, window, cx| {
             editor.fold_all(&FoldAll, window, cx);
         });
+        cx.run_until_parked();
 
-        let is_collapsed = search_bar.read_with(cx, |search_bar, _| search_bar.is_collapsed);
-
+        let is_collapsed = editor.read_with(cx, |editor, cx| editor.has_any_buffer_folded(cx));
         assert!(is_collapsed);
 
         editor.update_in(cx, |editor, window, cx| {
             editor.unfold_all(&UnfoldAll, window, cx);
         });
+        cx.run_until_parked();
 
-        let is_collapsed = search_bar.read_with(cx, |search_bar, _| search_bar.is_collapsed);
-
+        let is_collapsed = editor.read_with(cx, |editor, cx| editor.has_any_buffer_folded(cx));
         assert!(!is_collapsed);
+    }
+
+    #[perf]
+    #[gpui::test]
+    async fn test_collapse_state_syncs_after_manual_buffer_fold(cx: &mut TestAppContext) {
+        let (editor, search_bar, cx) = init_multibuffer_test(cx);
+
+        search_bar.update_in(cx, |search_bar, window, cx| {
+            search_bar.set_active_pane_item(Some(&editor), window, cx);
+        });
+
+        // Fold all buffers via fold_all
+        editor.update_in(cx, |editor, window, cx| {
+            editor.fold_all(&FoldAll, window, cx);
+        });
+        cx.run_until_parked();
+
+        let has_any_folded = editor.read_with(cx, |editor, cx| editor.has_any_buffer_folded(cx));
+        assert!(
+            has_any_folded,
+            "All buffers should be folded after fold_all"
+        );
+
+        // Manually unfold one buffer (simulating a chevron click)
+        let first_buffer_id = editor.read_with(cx, |editor, cx| {
+            editor.buffer().read(cx).excerpt_buffer_ids()[0]
+        });
+        editor.update_in(cx, |editor, _window, cx| {
+            editor.unfold_buffer(first_buffer_id, cx);
+        });
+
+        let has_any_folded = editor.read_with(cx, |editor, cx| editor.has_any_buffer_folded(cx));
+        assert!(
+            has_any_folded,
+            "Should still report folds when only one buffer is unfolded"
+        );
+
+        // Manually unfold the second buffer too
+        let second_buffer_id = editor.read_with(cx, |editor, cx| {
+            editor.buffer().read(cx).excerpt_buffer_ids()[1]
+        });
+        editor.update_in(cx, |editor, _window, cx| {
+            editor.unfold_buffer(second_buffer_id, cx);
+        });
+
+        let has_any_folded = editor.read_with(cx, |editor, cx| editor.has_any_buffer_folded(cx));
+        assert!(
+            !has_any_folded,
+            "No folds should remain after unfolding all buffers individually"
+        );
+
+        // Manually fold one buffer back
+        editor.update_in(cx, |editor, _window, cx| {
+            editor.fold_buffer(first_buffer_id, cx);
+        });
+
+        let has_any_folded = editor.read_with(cx, |editor, cx| editor.has_any_buffer_folded(cx));
+        assert!(
+            has_any_folded,
+            "Should report folds after manually folding one buffer"
+        );
     }
 
     #[perf]

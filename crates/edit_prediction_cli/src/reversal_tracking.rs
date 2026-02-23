@@ -3,7 +3,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use edit_prediction::udiff::apply_diff_to_string;
-use language::text_diff;
+use language::{char_diff, text_diff};
 
 use crate::example::ExamplePromptInputs;
 
@@ -417,17 +417,6 @@ impl ReversalOverlap {
     }
 }
 
-/// Check if `needle` is a subsequence of `haystack` (characters appear in order, not necessarily contiguous).
-fn is_subsequence(needle: &str, haystack: &str) -> bool {
-    let mut needle_chars = needle.chars().peekable();
-    for c in haystack.chars() {
-        if needle_chars.peek() == Some(&c) {
-            needle_chars.next();
-        }
-    }
-    needle_chars.peek().is_none()
-}
-
 /// Normalize edits where `old_text` appears as a subsequence within `new_text` (extension),
 /// or where `new_text` appears as a subsequence within `old_text` (reduction).
 ///
@@ -442,31 +431,35 @@ fn is_subsequence(needle: &str, haystack: &str) -> bool {
 fn normalize_extension_edits(edits: Vec<GranularEdit>) -> Vec<GranularEdit> {
     edits
         .into_iter()
-        .map(|edit| {
+        .flat_map(|edit| {
             if edit.old_text.is_empty() || edit.new_text.is_empty() {
-                return edit;
+                return vec![edit];
             }
 
-            if is_subsequence(&edit.old_text, &edit.new_text) {
-                let inserted_char_count =
-                    edit.new_text.chars().count() - edit.old_text.chars().count();
-                GranularEdit {
-                    range: edit.range.start..edit.range.start,
-                    old_text: String::new(),
-                    new_text: edit.new_text.chars().take(inserted_char_count).collect(),
-                }
-            } else if is_subsequence(&edit.new_text, &edit.old_text) {
-                let deleted_char_count =
-                    edit.old_text.chars().count() - edit.new_text.chars().count();
-                let deleted_text: String = edit.old_text.chars().take(deleted_char_count).collect();
-                GranularEdit {
-                    range: edit.range.start..edit.range.start + deleted_text.len(),
-                    old_text: deleted_text,
-                    new_text: String::new(),
-                }
-            } else {
-                edit
+            // Use character-wise diff to find exact byte ranges of changes
+            let char_edits = char_diff(&edit.old_text, &edit.new_text);
+
+            let all_deletions = !char_edits.is_empty()
+                && char_edits
+                    .iter()
+                    .all(|(range, replacement)| !range.is_empty() && replacement.is_empty());
+            let all_insertions = !char_edits.is_empty()
+                && char_edits
+                    .iter()
+                    .all(|(range, replacement)| range.is_empty() && !replacement.is_empty());
+            if all_deletions || all_insertions {
+                return char_edits
+                    .into_iter()
+                    .map(|(range, replacement)| GranularEdit {
+                        range: edit.range.start + range.start..edit.range.start + range.end,
+                        old_text: edit.old_text[range].to_string(),
+                        new_text: replacement.to_string(),
+                    })
+                    .collect();
             }
+
+            // Otherwise, keep the original edit (mixed changes)
+            vec![edit]
         })
         .collect()
 }
@@ -609,6 +602,12 @@ fn extract_diff_from_event(event: &zeta_prompt::Event) -> &str {
     }
 }
 
+fn is_predicted_event(event: &zeta_prompt::Event) -> bool {
+    match event {
+        zeta_prompt::Event::BufferChange { predicted, .. } => *predicted,
+    }
+}
+
 pub fn compute_prediction_reversal_ratio(
     prompt_inputs: &ExamplePromptInputs,
     predicted_content: &str,
@@ -619,11 +618,18 @@ pub fn compute_prediction_reversal_ratio(
     let edit_history: &[Arc<zeta_prompt::Event>] = &prompt_inputs.edit_history;
     let relevant_events = filter_edit_history_by_path(edit_history, cursor_path);
 
+    let most_recent = match relevant_events.last() {
+        Some(event) if !is_predicted_event(event) => *event,
+        _ => return 0.0,
+    };
+
+    let diff = extract_diff_from_event(most_recent);
+    if diff.is_empty() {
+        return 0.0;
+    }
+
     if let Some(excerpt_start_row) = prompt_inputs.excerpt_start_row {
-        let diffs: Vec<&str> = relevant_events
-            .iter()
-            .map(|e| extract_diff_from_event(e))
-            .collect();
+        let diffs = vec![diff];
         let overlap = compute_excerpt_aware_reversal_overlap(
             &diffs,
             current_content,
@@ -633,21 +639,12 @@ pub fn compute_prediction_reversal_ratio(
         return overlap.ratio();
     }
 
-    let mut original_content = current_content.to_string();
-    for event in relevant_events.into_iter().rev() {
-        let diff = extract_diff_from_event(event);
-        if diff.is_empty() {
-            continue;
-        }
-        let reversed = reverse_diff(diff);
-        let with_headers = format!("--- a/file\n+++ b/file\n{}", reversed);
-        match apply_diff_to_string(&with_headers, &original_content) {
-            Ok(updated_content) => original_content = updated_content,
-            Err(_) => {
-                original_content = apply_diff_to_string_lenient(&reversed, &original_content);
-            }
-        }
-    }
+    let reversed = reverse_diff(diff);
+    let with_headers = format!("--- a/file\n+++ b/file\n{}", reversed);
+    let original_content = match apply_diff_to_string(&with_headers, current_content) {
+        Ok(updated_content) => updated_content,
+        Err(_) => apply_diff_to_string_lenient(&reversed, current_content),
+    };
 
     let overlap = compute_reversal_overlap(&original_content, current_content, predicted_content);
     overlap.ratio()
@@ -1719,20 +1716,6 @@ mod tests {
     }
 
     #[test]
-    fn test_is_subsequence() {
-        assert!(is_subsequence("", "anything"));
-        assert!(is_subsequence("", ""));
-        assert!(is_subsequence("abc", "abc"));
-        assert!(is_subsequence("abc", "aXbXc"));
-        assert!(is_subsequence("ac", "abc"));
-        assert!(!is_subsequence("abc", "ab"));
-        assert!(!is_subsequence("abc", "cba"));
-        assert!(!is_subsequence("abc", ""));
-        assert!(is_subsequence("日本", "日X本Y語"));
-        assert!(!is_subsequence("日本語", "日本"));
-    }
-
-    #[test]
     fn test_compute_lcs_length() {
         assert_eq!(compute_lcs_length("", ""), 0);
         assert_eq!(compute_lcs_length("abc", ""), 0);
@@ -1971,7 +1954,7 @@ mod tests {
     }
 
     #[test]
-    fn test_multiple_sequential_diffs() {
+    fn test_only_most_recent_edit_tracked() {
         let prompt_inputs = ExamplePromptInputs {
             content: indoc! {"
                 line1
@@ -2017,6 +2000,7 @@ mod tests {
 
         let predicted = indoc! {"
             line1
+            first_add
             line2
         "};
         let ratio =
@@ -2024,7 +2008,7 @@ mod tests {
 
         assert!(
             ratio > 0.9,
-            "Expected high reversal ratio when reversing multiple sequential edits, got {}",
+            "Expected high reversal ratio when prediction exactly reverses the most recent edit, got {}",
             ratio
         );
     }

@@ -553,7 +553,7 @@ impl Item for ChannelView {
         self.editor.read(cx).pixel_position_of_cursor(cx)
     }
 
-    fn to_item_events(event: &EditorEvent, f: impl FnMut(ItemEvent)) {
+    fn to_item_events(event: &EditorEvent, f: &mut dyn FnMut(ItemEvent)) {
         Editor::to_item_events(event, f)
     }
 }
