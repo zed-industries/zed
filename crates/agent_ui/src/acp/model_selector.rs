@@ -374,13 +374,6 @@ impl PickerDelegate for AcpModelPickerDelegate {
                             if let Some(hover_info) = hover_info {
                                 this.on_hover(cx.listener(move |menu, hovered, window, cx| {
                                     let mouse_in_aside = menu.is_mouse_over_aside(window);
-                                    log::info!(
-                                        "[ModelSelector] item on_hover: ix={}, hovered={}, aside_hovered={}, mouse_in_aside={}",
-                                        ix,
-                                        hovered,
-                                        menu.is_aside_hovered(),
-                                        mouse_in_aside
-                                    );
                                     if *hovered {
                                         menu.set_aside_hovered(false);
                                         menu.delegate.hovered_model = Some(HoveredModelState {
@@ -396,7 +389,6 @@ impl PickerDelegate for AcpModelPickerDelegate {
                                         && !menu.is_aside_hovered()
                                         && !mouse_in_aside
                                     {
-                                        log::info!("[ModelSelector] clearing hovered_model for ix={}", ix);
                                         menu.delegate.hovered_model = None;
                                     }
                                     cx.notify();

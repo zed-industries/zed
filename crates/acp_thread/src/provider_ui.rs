@@ -1,6 +1,11 @@
 use crate::ModelProviderInfo;
 use gpui::{ClickEvent, prelude::*};
-use ui::{ListItem, ListItemSpacing, prelude::*};
+use ui::{IconName, ListItem, ListItemSpacing, prelude::*};
+
+const SPEED_COL_WIDTH: Rems = rems(3.5);
+const LATENCY_COL_WIDTH: Rems = rems(3.5);
+const PRICE_COL_WIDTH: Rems = rems(5.);
+const CHECKMARK_COL_WIDTH: Rems = rems(1.25);
 
 fn format_price_per_million(price_per_million: f64) -> String {
     if price_per_million < 0.01 {
@@ -68,10 +73,22 @@ impl RenderOnce for GenericProviderListItem {
             .child(
                 h_flex()
                     .w_full()
-                    .justify_between()
                     .gap_2()
                     .child(
+                        div()
+                            .w(CHECKMARK_COL_WIDTH)
+                            .flex_shrink_0()
+                            .when(self.is_selected, |this| {
+                                this.child(
+                                    Icon::new(IconName::Check)
+                                        .size(IconSize::Small)
+                                        .color(Color::Accent),
+                                )
+                            }),
+                    )
+                    .child(
                         v_flex()
+                            .flex_1()
                             .overflow_hidden()
                             .child(
                                 Label::new(self.provider.display_name.to_string())
@@ -87,63 +104,57 @@ impl RenderOnce for GenericProviderListItem {
                             }),
                     )
                     .child(
-                        h_flex()
-                            .gap_3()
+                        div()
+                            .w(SPEED_COL_WIDTH)
                             .flex_shrink_0()
                             .child(
-                                v_flex().items_end().gap_0p5().child(
-                                    h_flex()
-                                        .gap_1()
-                                        .child(
-                                            Label::new(format!("{:.0}", throughput))
-                                                .size(LabelSize::XSmall),
-                                        )
-                                        .child(
-                                            Label::new("tok/s")
-                                                .size(LabelSize::XSmall)
-                                                .color(Color::Muted),
-                                        ),
-                                ),
-                            )
+                                Label::new(format!("{:.0}", throughput)).size(LabelSize::XSmall),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .w(LATENCY_COL_WIDTH)
+                            .flex_shrink_0()
                             .child(
-                                v_flex().items_end().gap_0p5().child(
-                                    h_flex()
-                                        .gap_1()
-                                        .child(
-                                            Label::new(format!("{:.0}ms", latency))
-                                                .size(LabelSize::XSmall),
-                                        ),
-                                ),
-                            )
+                                Label::new(format!("{:.0}ms", latency)).size(LabelSize::XSmall),
+                            ),
+                    )
+                    .child(
+                        v_flex()
+                            .w(PRICE_COL_WIDTH)
+                            .flex_shrink_0()
+                            .items_end()
+                            .gap_0p5()
                             .child(
-                                v_flex()
-                                    .items_end()
+                                h_flex()
                                     .gap_0p5()
+                                    .child(Label::new("$").size(LabelSize::XSmall))
+                                    .child(Label::new(input_price).size(LabelSize::XSmall))
                                     .child(
-                                        h_flex()
-                                            .gap_0p5()
-                                            .child(Label::new("$").size(LabelSize::XSmall))
-                                            .child(
-                                                Label::new(input_price).size(LabelSize::XSmall),
-                                            )
-                                            .child(
-                                                Label::new("/M in")
-                                                    .size(LabelSize::XSmall)
-                                                    .color(Color::Muted),
-                                            ),
+                                        Label::new("/M")
+                                            .size(LabelSize::XSmall)
+                                            .color(Color::Muted),
                                     )
                                     .child(
-                                        h_flex()
-                                            .gap_0p5()
-                                            .child(Label::new("$").size(LabelSize::XSmall))
-                                            .child(
-                                                Label::new(output_price).size(LabelSize::XSmall),
-                                            )
-                                            .child(
-                                                Label::new("/M out")
-                                                    .size(LabelSize::XSmall)
-                                                    .color(Color::Muted),
-                                            ),
+                                        Icon::new(IconName::ArrowDown)
+                                            .size(IconSize::XSmall)
+                                            .color(Color::Muted),
+                                    ),
+                            )
+                            .child(
+                                h_flex()
+                                    .gap_0p5()
+                                    .child(Label::new("$").size(LabelSize::XSmall))
+                                    .child(Label::new(output_price).size(LabelSize::XSmall))
+                                    .child(
+                                        Label::new("/M")
+                                            .size(LabelSize::XSmall)
+                                            .color(Color::Muted),
+                                    )
+                                    .child(
+                                        Icon::new(IconName::ArrowUp)
+                                            .size(IconSize::XSmall)
+                                            .color(Color::Muted),
                                     ),
                             ),
                     ),
@@ -167,9 +178,9 @@ impl RenderOnce for ProviderSelectorHeader {
             .child(
                 h_flex()
                     .w_full()
-                    .justify_between()
                     .gap_2()
                     .mt_1()
+                    .child(div().w(CHECKMARK_COL_WIDTH).flex_shrink_0())
                     .child(
                         h_flex()
                             .flex_1()
@@ -180,22 +191,35 @@ impl RenderOnce for ProviderSelectorHeader {
                             ),
                     )
                     .child(
-                        h_flex()
-                            .gap_3()
+                        div()
+                            .w(SPEED_COL_WIDTH)
+                            .flex_shrink_0()
                             .child(
-                                Label::new("Speed")
+                                Label::new("tok/s")
                                     .size(LabelSize::XSmall)
                                     .color(Color::Muted),
-                            )
+                            ),
+                    )
+                    .child(
+                        div()
+                            .w(LATENCY_COL_WIDTH)
+                            .flex_shrink_0()
                             .child(
                                 Label::new("Latency")
                                     .size(LabelSize::XSmall)
                                     .color(Color::Muted),
-                            )
+                            ),
+                    )
+                    .child(
+                        div()
+                            .w(PRICE_COL_WIDTH)
+                            .flex_shrink_0()
                             .child(
-                                Label::new("Price")
-                                    .size(LabelSize::XSmall)
-                                    .color(Color::Muted),
+                                h_flex().justify_end().child(
+                                    Label::new("Price")
+                                        .size(LabelSize::XSmall)
+                                        .color(Color::Muted),
+                                ),
                             ),
                     ),
             )

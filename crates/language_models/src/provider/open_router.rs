@@ -180,6 +180,11 @@ impl OpenRouterState {
         self.endpoint_fetch_tasks.contains_key(model_id)
     }
 
+    pub fn retry_fetch_endpoints(&mut self, model_id: &str, cx: &mut Context<Self>) {
+        self.endpoint_cache.remove(model_id);
+        self.fetch_endpoints(model_id, cx);
+    }
+
     pub fn selected_provider(&self, model_id: &str) -> Option<&String> {
         self.selected_providers.get(model_id)
     }
@@ -249,14 +254,34 @@ impl acp_thread::ModelHoverInfo for OpenRouterProvidersHoverInfo {
                     .child(ProviderSelectorLoading)
                     .into_any_element();
             } else {
+                let model_id_for_retry = model_id.clone();
                 return v_flex()
                     .w(rems(22.))
                     .child(
-                        div().p_4().child(
-                            h_flex()
-                                .justify_center()
-                                .child(Label::new("Failed to load providers").color(Color::Error)),
-                        ),
+                        v_flex()
+                            .p_4()
+                            .gap_2()
+                            .child(
+                                h_flex()
+                                    .justify_center()
+                                    .child(Label::new("Failed to load providers").color(Color::Error)),
+                            )
+                            .child(
+                                h_flex().justify_center().child(
+                                    Button::new("retry-providers", "Retry")
+                                        .style(ButtonStyle::Filled)
+                                        .on_click(move |_, _, cx| {
+                                            if let Some(state) = OpenRouterState::global(cx) {
+                                                state.update(cx, |state, cx| {
+                                                    state.retry_fetch_endpoints(
+                                                        &model_id_for_retry,
+                                                        cx,
+                                                    );
+                                                });
+                                            }
+                                        }),
+                                ),
+                            ),
                     )
                     .into_any_element();
             }
