@@ -1806,29 +1806,6 @@ impl AcpThread {
         cx.emit(AcpThreadEvent::EntryUpdated(ix));
     }
 
-    pub fn first_tool_awaiting_confirmation(&self) -> Option<&ToolCall> {
-        let mut first_tool_call = None;
-
-        for entry in self.entries.iter().rev() {
-            match &entry {
-                AgentThreadEntry::ToolCall(call) => {
-                    if let ToolCallStatus::WaitingForConfirmation { .. } = call.status {
-                        first_tool_call = Some(call);
-                    } else {
-                        continue;
-                    }
-                }
-                AgentThreadEntry::UserMessage(_) | AgentThreadEntry::AssistantMessage(_) => {
-                    // Reached the beginning of the turn.
-                    // If we had pending permission requests in the previous turn, they have been cancelled.
-                    break;
-                }
-            }
-        }
-
-        first_tool_call
-    }
-
     pub fn plan(&self) -> &Plan {
         &self.plan
     }

@@ -179,6 +179,9 @@ impl Conversation {
             AcpThreadEvent::ToolAuthorizationReceived(id) => {
                 if let Some(tool_calls) = this.permission_requests.get_mut(&session_id) {
                     tool_calls.retain(|tool_call_id| tool_call_id != id);
+                    if tool_calls.is_empty() {
+                        this.permission_requests.shift_remove(&session_id);
+                    }
                 }
             }
             AcpThreadEvent::NewEntry
@@ -202,34 +205,6 @@ impl Conversation {
             .insert(thread.read(cx).session_id().clone(), thread);
     }
 
-    pub fn permission_requests(
-        &self,
-        session_id: &acp::SessionId,
-        cx: &App,
-    ) -> Vec<(acp::SessionId, acp::ToolCallId)> {
-        let Some(thread) = self.threads.get(session_id) else {
-            return Vec::new();
-        };
-        let is_subagent = thread.read(cx).parent_session_id().is_some();
-        if is_subagent {
-            self.permission_requests
-                .get(session_id)
-                .map_or(Vec::new(), |tool_calls| {
-                    tool_calls
-                        .iter()
-                        .map(|id| (session_id.clone(), id.clone()))
-                        .collect::<Vec<_>>()
-                })
-        } else {
-            self.permission_requests
-                .iter()
-                .flat_map(|(session_id, tool_calls)| {
-                    tool_calls.iter().map(|id| (session_id.clone(), id.clone()))
-                })
-                .collect()
-        }
-    }
-
     pub fn pending_tool_call<'a>(
         &'a self,
         session_id: &acp::SessionId,
@@ -237,7 +212,6 @@ impl Conversation {
     ) -> Option<(acp::SessionId, acp::ToolCallId, &'a PermissionOptions)> {
         let thread = self.threads.get(session_id)?;
         let is_subagent = thread.read(cx).parent_session_id().is_some();
-
         let (thread, tool_id) = if is_subagent {
             let id = self.permission_requests.get(session_id)?.iter().next()?;
             (thread, id)
@@ -252,7 +226,11 @@ impl Conversation {
         let ToolCallStatus::WaitingForConfirmation { options, .. } = &tool_call.status else {
             return None;
         };
-        Some((session_id.clone(), tool_id.clone(), options))
+        Some((
+            thread.read(cx).session_id().clone(),
+            tool_id.clone(),
+            options,
+        ))
     }
 
     pub fn authorize_pending_tool_call(
