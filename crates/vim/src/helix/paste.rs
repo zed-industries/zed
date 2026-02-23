@@ -66,7 +66,11 @@ impl Vim {
                     let to_insert = if let Some(clip_sel) = clipboard_selections.get(ix) {
                         let end_offset = start_offset + clip_sel.len;
                         let text = text[start_offset..end_offset].to_string();
-                        start_offset = end_offset + 1;
+                        start_offset = if clip_sel.is_entire_line {
+                            end_offset
+                        } else {
+                            end_offset + 1
+                        };
                         text
                     } else if let Some(last_text) = replacement_texts.last() {
                         // We have more current selections than clipboard selections: repeat the last one.

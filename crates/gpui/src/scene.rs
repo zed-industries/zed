@@ -16,25 +16,29 @@ use std::{
 };
 
 #[allow(non_camel_case_types, unused)]
-pub(crate) type PathVertex_ScaledPixels = PathVertex<ScaledPixels>;
+#[expect(missing_docs)]
+pub type PathVertex_ScaledPixels = PathVertex<ScaledPixels>;
 
-pub(crate) type DrawOrder = u32;
+#[expect(missing_docs)]
+pub type DrawOrder = u32;
 
 #[derive(Default)]
-pub(crate) struct Scene {
+#[expect(missing_docs)]
+pub struct Scene {
     pub(crate) paint_operations: Vec<PaintOperation>,
     primitive_bounds: BoundsTree<ScaledPixels>,
     layer_stack: Vec<DrawOrder>,
-    pub(crate) shadows: Vec<Shadow>,
-    pub(crate) quads: Vec<Quad>,
-    pub(crate) paths: Vec<Path<ScaledPixels>>,
-    pub(crate) underlines: Vec<Underline>,
-    pub(crate) monochrome_sprites: Vec<MonochromeSprite>,
-    pub(crate) subpixel_sprites: Vec<SubpixelSprite>,
-    pub(crate) polychrome_sprites: Vec<PolychromeSprite>,
-    pub(crate) surfaces: Vec<PaintSurface>,
+    pub shadows: Vec<Shadow>,
+    pub quads: Vec<Quad>,
+    pub paths: Vec<Path<ScaledPixels>>,
+    pub underlines: Vec<Underline>,
+    pub monochrome_sprites: Vec<MonochromeSprite>,
+    pub subpixel_sprites: Vec<SubpixelSprite>,
+    pub polychrome_sprites: Vec<PolychromeSprite>,
+    pub surfaces: Vec<PaintSurface>,
 }
 
+#[expect(missing_docs)]
 impl Scene {
     pub fn clear(&mut self) {
         self.paint_operations.clear();
@@ -151,7 +155,7 @@ impl Scene {
         ),
         allow(dead_code)
     )]
-    pub(crate) fn batches(&self) -> impl Iterator<Item = PrimitiveBatch> + '_ {
+    pub fn batches(&self) -> impl Iterator<Item = PrimitiveBatch> + '_ {
         BatchIterator {
             shadows_start: 0,
             shadows_iter: self.shadows.iter().peekable(),
@@ -200,7 +204,8 @@ pub(crate) enum PaintOperation {
 }
 
 #[derive(Clone)]
-pub(crate) enum Primitive {
+#[expect(missing_docs)]
+pub enum Primitive {
     Shadow(Shadow),
     Quad(Quad),
     Path(Path<ScaledPixels>),
@@ -211,6 +216,7 @@ pub(crate) enum Primitive {
     Surface(PaintSurface),
 }
 
+#[expect(missing_docs)]
 impl Primitive {
     pub fn bounds(&self) -> &Bounds<ScaledPixels> {
         match self {
@@ -453,7 +459,8 @@ impl<'a> Iterator for BatchIterator<'a> {
     ),
     allow(dead_code)
 )]
-pub(crate) enum PrimitiveBatch {
+#[expect(missing_docs)]
+pub enum PrimitiveBatch {
     Shadows(Range<usize>),
     Quads(Range<usize>),
     Paths(Range<usize>),
@@ -476,7 +483,8 @@ pub(crate) enum PrimitiveBatch {
 
 #[derive(Default, Debug, Clone)]
 #[repr(C)]
-pub(crate) struct Quad {
+#[expect(missing_docs)]
+pub struct Quad {
     pub order: DrawOrder,
     pub border_style: BorderStyle,
     pub bounds: Bounds<ScaledPixels>,
@@ -495,7 +503,8 @@ impl From<Quad> for Primitive {
 
 #[derive(Debug, Clone)]
 #[repr(C)]
-pub(crate) struct Underline {
+#[expect(missing_docs)]
+pub struct Underline {
     pub order: DrawOrder,
     pub pad: u32, // align to 8 bytes
     pub bounds: Bounds<ScaledPixels>,
@@ -513,7 +522,8 @@ impl From<Underline> for Primitive {
 
 #[derive(Debug, Clone)]
 #[repr(C)]
-pub(crate) struct Shadow {
+#[expect(missing_docs)]
+pub struct Shadow {
     pub order: DrawOrder,
     pub blur_radius: ScaledPixels,
     pub bounds: Bounds<ScaledPixels>,
@@ -644,7 +654,8 @@ impl Default for TransformationMatrix {
 
 #[derive(Clone, Debug)]
 #[repr(C)]
-pub(crate) struct MonochromeSprite {
+#[expect(missing_docs)]
+pub struct MonochromeSprite {
     pub order: DrawOrder,
     pub pad: u32, // align to 8 bytes
     pub bounds: Bounds<ScaledPixels>,
@@ -662,7 +673,8 @@ impl From<MonochromeSprite> for Primitive {
 
 #[derive(Clone, Debug)]
 #[repr(C)]
-pub(crate) struct SubpixelSprite {
+#[expect(missing_docs)]
+pub struct SubpixelSprite {
     pub order: DrawOrder,
     pub pad: u32, // align to 8 bytes
     pub bounds: Bounds<ScaledPixels>,
@@ -680,7 +692,8 @@ impl From<SubpixelSprite> for Primitive {
 
 #[derive(Clone, Debug)]
 #[repr(C)]
-pub(crate) struct PolychromeSprite {
+#[expect(missing_docs)]
+pub struct PolychromeSprite {
     pub order: DrawOrder,
     pub pad: u32, // align to 8 bytes
     pub grayscale: bool,
@@ -698,7 +711,8 @@ impl From<PolychromeSprite> for Primitive {
 }
 
 #[derive(Clone, Debug)]
-pub(crate) struct PaintSurface {
+#[expect(missing_docs)]
+pub struct PaintSurface {
     pub order: DrawOrder,
     pub bounds: Bounds<ScaledPixels>,
     pub content_mask: ContentMask<ScaledPixels>,
@@ -713,17 +727,19 @@ impl From<PaintSurface> for Primitive {
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
-pub(crate) struct PathId(pub(crate) usize);
+#[expect(missing_docs)]
+pub struct PathId(pub usize);
 
 /// A line made up of a series of vertices and control points.
 #[derive(Clone, Debug)]
+#[expect(missing_docs)]
 pub struct Path<P: Clone + Debug + Default + PartialEq> {
-    pub(crate) id: PathId,
-    pub(crate) order: DrawOrder,
-    pub(crate) bounds: Bounds<P>,
-    pub(crate) content_mask: ContentMask<P>,
-    pub(crate) vertices: Vec<PathVertex<P>>,
-    pub(crate) color: Background,
+    pub id: PathId,
+    pub order: DrawOrder,
+    pub bounds: Bounds<P>,
+    pub content_mask: ContentMask<P>,
+    pub vertices: Vec<PathVertex<P>>,
+    pub color: Background,
     start: Point<P>,
     current: Point<P>,
     contour_count: usize,
@@ -847,7 +863,8 @@ where
     T: Clone + Debug + Default + PartialEq + PartialOrd + Add<T, Output = T> + Sub<Output = T>,
 {
     #[allow(unused)]
-    pub(crate) fn clipped_bounds(&self) -> Bounds<T> {
+    #[expect(missing_docs)]
+    pub fn clipped_bounds(&self) -> Bounds<T> {
         self.bounds.intersect(&self.content_mask.bounds)
     }
 }
@@ -860,12 +877,14 @@ impl From<Path<ScaledPixels>> for Primitive {
 
 #[derive(Clone, Debug)]
 #[repr(C)]
-pub(crate) struct PathVertex<P: Clone + Debug + Default + PartialEq> {
-    pub(crate) xy_position: Point<P>,
-    pub(crate) st_position: Point<f32>,
-    pub(crate) content_mask: ContentMask<P>,
+#[expect(missing_docs)]
+pub struct PathVertex<P: Clone + Debug + Default + PartialEq> {
+    pub xy_position: Point<P>,
+    pub st_position: Point<f32>,
+    pub content_mask: ContentMask<P>,
 }
 
+#[expect(missing_docs)]
 impl PathVertex<Pixels> {
     pub fn scale(&self, factor: f32) -> PathVertex<ScaledPixels> {
         PathVertex {

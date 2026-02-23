@@ -6,7 +6,6 @@ use crate::{AgentTool, ToolCallEventStream, ToolPermissionDecision, decide_permi
 use action_log::ActionLog;
 use agent_client_protocol::ToolKind;
 use agent_settings::AgentSettings;
-use anyhow::{Context as _, Result, anyhow};
 use futures::{FutureExt as _, SinkExt, StreamExt, channel::mpsc};
 use gpui::{App, AppContext, Entity, SharedString, Task};
 use project::{Project, ProjectPath};
@@ -75,14 +74,14 @@ impl AgentTool for DeletePathTool {
         input: Self::Input,
         event_stream: ToolCallEventStream,
         cx: &mut App,
-    ) -> Task<Result<Self::Output>> {
+    ) -> Task<Result<Self::Output, Self::Output>> {
         let path = input.path;
 
         let settings = AgentSettings::get_global(cx);
         let decision = decide_permission_for_path(Self::NAME, &path, settings);
 
         if let ToolPermissionDecision::Deny(reason) = decision {
-            return Task::ready(Err(anyhow!("{}", reason)));
+            return Task::ready(Err(reason));
         }
 
         let project = self.project.clone();
@@ -140,20 +139,20 @@ impl AgentTool for DeletePathTool {
             };
 
             if let Some(authorize) = authorize {
-                authorize.await?;
+                authorize.await.map_err(|e| e.to_string())?;
             }
 
             let (project_path, worktree_snapshot) = project.read_with(cx, |project, cx| {
                 let project_path = project.find_project_path(&path, cx).ok_or_else(|| {
-                    anyhow!("Couldn't delete {path} because that path isn't in this project.")
+                    format!("Couldn't delete {path} because that path isn't in this project.")
                 })?;
                 let worktree = project
                     .worktree_for_id(project_path.worktree_id, cx)
                     .ok_or_else(|| {
-                        anyhow!("Couldn't delete {path} because that path isn't in this project.")
+                        format!("Couldn't delete {path} because that path isn't in this project.")
                     })?;
                 let worktree_snapshot = worktree.read(cx).snapshot();
-                anyhow::Ok((project_path, worktree_snapshot))
+                Result::<_, String>::Ok((project_path, worktree_snapshot))
             })?;
 
             let (mut paths_tx, mut paths_rx) = mpsc::channel(256);
@@ -182,7 +181,7 @@ impl AgentTool for DeletePathTool {
                 let path_result = futures::select! {
                     path = paths_rx.next().fuse() => path,
                     _ = event_stream.cancelled_by_user().fuse() => {
-                        anyhow::bail!("Delete cancelled by user");
+                        return Err("Delete cancelled by user".to_string());
                     }
                 };
                 let Some(path) = path_result else {
@@ -202,16 +201,16 @@ impl AgentTool for DeletePathTool {
                 .update(cx, |project, cx| {
                     project.delete_file(project_path, false, cx)
                 })
-                .with_context(|| {
+                .ok_or_else(|| {
                     format!("Couldn't delete {path} because that path isn't in this project.")
                 })?;
 
             futures::select! {
                 result = deletion_task.fuse() => {
-                    result.with_context(|| format!("Deleting {path}"))?;
+                    result.map_err(|e| format!("Deleting {path}: {e}"))?;
                 }
                 _ = event_stream.cancelled_by_user().fuse() => {
-                    anyhow::bail!("Delete cancelled by user");
+                    return Err("Delete cancelled by user".to_string());
                 }
             }
             Ok(format!("Deleted {path}"))

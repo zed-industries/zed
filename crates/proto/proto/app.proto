@@ -63,3 +63,31 @@ message AskPassRequest {
 message AskPassResponse {
   string response = 1;
 }
+
+message GetRemoteProfilingData {
+    uint64 project_id = 1;
+    bool foreground_only = 2;
+}
+
+message GetRemoteProfilingDataResponse {
+    repeated RemoteProfilingThread threads = 1;
+    uint64 now_nanos = 2;
+}
+
+message RemoteProfilingThread {
+    optional string thread_name = 1;
+    uint64 thread_id = 2;
+    repeated RemoteProfilingTiming timings = 3;
+}
+
+message RemoteProfilingTiming {
+    RemoteProfilingLocation location = 1;
+    uint64 start_nanos = 2;
+    uint64 duration_nanos = 3;
+}
+
+message RemoteProfilingLocation {
+    string file = 1;
+    uint32 line = 2;
+    uint32 column = 3;
+}

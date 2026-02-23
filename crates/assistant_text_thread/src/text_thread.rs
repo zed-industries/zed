@@ -1094,7 +1094,7 @@ impl TextThread {
                 .buffer
                 .read(cx)
                 .version
-                .observed(anchor.start.timestamp),
+                .observed(anchor.start.timestamp()),
             TextThreadOperation::UpdateMessage { message_id, .. } => {
                 self.messages_metadata.contains_key(message_id)
             }
@@ -1121,10 +1121,11 @@ impl TextThread {
         cx: &App,
     ) -> bool {
         let version = &self.buffer.read(cx).version;
-        let observed_start =
-            range.start.is_min() || range.start.is_max() || version.observed(range.start.timestamp);
+        let observed_start = range.start.is_min()
+            || range.start.is_max()
+            || version.observed(range.start.timestamp());
         let observed_end =
-            range.end.is_min() || range.end.is_max() || version.observed(range.end.timestamp);
+            range.end.is_min() || range.end.is_max() || version.observed(range.end.timestamp());
         observed_start && observed_end
     }
 

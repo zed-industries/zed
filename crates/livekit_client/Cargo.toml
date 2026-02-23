@@ -26,7 +26,7 @@ audio.workspace = true
 collections.workspace = true
 cpal.workspace = true
 futures.workspace = true
-gpui = { workspace = true, features = ["screen-capture", "x11", "wayland", "windows-manifest"] }
+gpui = { workspace = true, features = ["screen-capture", "x11", "wayland"] }
 gpui_tokio.workspace = true
 http_client_tls.workspace = true
 image.workspace = true
@@ -63,6 +63,7 @@ objc.workspace = true
 [dev-dependencies]
 collections = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
+gpui_platform.workspace = true
 sha2.workspace = true
 simplelog.workspace = true
 

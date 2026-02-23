@@ -11,10 +11,10 @@ mod example {
     use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
     use gpui::{
-        App, Application, Bounds, Context, FontWeight, Size, Window, WindowBackgroundAppearance,
-        WindowBounds, WindowKind, WindowOptions, div, layer_shell::*, point, prelude::*, px, rems,
-        rgba, white,
+        App, Bounds, Context, FontWeight, Size, Window, WindowBackgroundAppearance, WindowBounds,
+        WindowKind, WindowOptions, div, layer_shell::*, point, prelude::*, px, rems, rgba, white,
     };
+    use gpui_platform::application;
 
     struct LayerShellExample;
 
@@ -60,7 +60,7 @@ mod example {
     }
 
     pub fn main() {
-        Application::new().run(|cx: &mut App| {
+        application().run(|cx: &mut App| {
             cx.open_window(
                 WindowOptions {
                     titlebar: None,

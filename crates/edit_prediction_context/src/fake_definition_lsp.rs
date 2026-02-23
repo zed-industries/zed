@@ -9,9 +9,9 @@ use project::Fs;
 use std::{ops::Range, path::PathBuf, sync::Arc};
 use tree_sitter::{Parser, QueryCursor, StreamingIterator, Tree};
 
-/// Registers a fake language server that implements go-to-definition using tree-sitter,
-/// making the assumption that all names are unique, and all variables' types are
-/// explicitly declared.
+/// Registers a fake language server that implements go-to-definition and
+/// go-to-type-definition using tree-sitter, making the assumption that all
+/// names are unique, and all variables' types are explicitly declared.
 pub fn register_fake_definition_server(
     language_registry: &Arc<LanguageRegistry>,
     language: Arc<Language>,
@@ -34,6 +34,7 @@ pub fn register_fake_definition_server(
             },
             capabilities: lsp::ServerCapabilities {
                 definition_provider: Some(lsp::OneOf::Left(true)),
+                type_definition_provider: Some(lsp::TypeDefinitionProviderCapability::Simple(true)),
                 text_document_sync: Some(TextDocumentSyncCapability::Kind(
                     TextDocumentSyncKind::FULL,
                 )),
@@ -153,6 +154,17 @@ pub fn register_fake_definition_server(
                             async move { Ok(result) }
                         }
                     });
+
+                    server.set_request_handler::<lsp::request::GotoTypeDefinition, _, _>({
+                        let index = index.clone();
+                        move |params, _cx| {
+                            let result = index.lock().get_type_definitions(
+                                params.text_document_position_params.text_document.uri,
+                                params.text_document_position_params.position,
+                            );
+                            async move { Ok(result) }
+                        }
+                    });
                 }
             })),
         },
@@ -162,6 +174,7 @@ pub fn register_fake_definition_server(
 struct DefinitionIndex {
     language: Arc<Language>,
     definitions: HashMap<String, Vec<lsp::Location>>,
+    type_annotations: HashMap<String, String>,
     files: HashMap<Uri, FileEntry>,
 }
 
@@ -176,6 +189,7 @@ impl DefinitionIndex {
         Self {
             language,
             definitions: HashMap::default(),
+            type_annotations: HashMap::default(),
             files: HashMap::default(),
         }
     }
@@ -228,6 +242,13 @@ impl DefinitionIndex {
                 .or_insert_with(Vec::new)
                 .push(location);
         }
+
+        for (identifier_name, type_name) in extract_type_annotations(content) {
+            self.type_annotations
+                .entry(identifier_name)
+                .or_insert(type_name);
+        }
+
         self.files.insert(
             uri,
             FileEntry {
@@ -249,6 +270,108 @@ impl DefinitionIndex {
         let locations = self.definitions.get(name).cloned()?;
         Some(lsp::GotoDefinitionResponse::Array(locations))
     }
+
+    fn get_type_definitions(
+        &mut self,
+        uri: Uri,
+        position: lsp::Position,
+    ) -> Option<lsp::GotoDefinitionResponse> {
+        let entry = self.files.get(&uri)?;
+        let name = word_at_position(&entry.contents, position)?;
+
+        if let Some(type_name) = self.type_annotations.get(name) {
+            if let Some(locations) = self.definitions.get(type_name) {
+                return Some(lsp::GotoDefinitionResponse::Array(locations.clone()));
+            }
+        }
+
+        // If the identifier itself is an uppercase name (a type), return its own definition.
+        // This mirrors real LSP behavior where GotoTypeDefinition on a type name
+        // resolves to that type's definition.
+        if name.starts_with(|c: char| c.is_uppercase()) {
+            if let Some(locations) = self.definitions.get(name) {
+                return Some(lsp::GotoDefinitionResponse::Array(locations.clone()));
+            }
+        }
+
+        None
+    }
+}
+
+/// Extracts `identifier_name -> type_name` mappings from field declarations
+/// and function parameters. For example, `owner: Arc<Person>` produces
+/// `"owner" -> "Person"` by unwrapping common generic wrappers.
+fn extract_type_annotations(content: &str) -> Vec<(String, String)> {
+    let mut annotations = Vec::new();
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("//")
+            || trimmed.starts_with("use ")
+            || trimmed.starts_with("pub use ")
+        {
+            continue;
+        }
+
+        let Some(colon_idx) = trimmed.find(':') else {
+            continue;
+        };
+
+        // The part before `:` should end with an identifier name.
+        let left = trimmed[..colon_idx].trim();
+        let Some(name) = left.split_whitespace().last() else {
+            continue;
+        };
+
+        if name.is_empty() || !name.chars().all(|c| c.is_alphanumeric() || c == '_') {
+            continue;
+        }
+
+        // Skip names that start uppercase — they're type names, not variables/fields.
+        if name.starts_with(|c: char| c.is_uppercase()) {
+            continue;
+        }
+
+        let right = trimmed[colon_idx + 1..].trim();
+        let type_name = extract_base_type_name(right);
+
+        if !type_name.is_empty() && type_name.starts_with(|c: char| c.is_uppercase()) {
+            annotations.push((name.to_string(), type_name));
+        }
+    }
+    annotations
+}
+
+/// Unwraps common generic wrappers (Arc, Box, Rc, Option, Vec) and trait
+/// object prefixes (dyn, impl) to find the concrete type name. For example:
+/// `Arc<Person>` → `"Person"`, `Box<dyn Trait>` → `"Trait"`.
+fn extract_base_type_name(type_str: &str) -> String {
+    let trimmed = type_str
+        .trim()
+        .trim_start_matches('&')
+        .trim_start_matches("mut ")
+        .trim_end_matches(',')
+        .trim_end_matches('{')
+        .trim_end_matches(')')
+        .trim()
+        .trim_start_matches("dyn ")
+        .trim_start_matches("impl ")
+        .trim();
+
+    if let Some(angle_start) = trimmed.find('<') {
+        let outer = &trimmed[..angle_start];
+        if matches!(outer, "Arc" | "Box" | "Rc" | "Option" | "Vec" | "Cow") {
+            let inner_end = trimmed.rfind('>').unwrap_or(trimmed.len());
+            let inner = &trimmed[angle_start + 1..inner_end];
+            return extract_base_type_name(inner);
+        }
+        return outer.to_string();
+    }
+
+    trimmed
+        .split(|c: char| !c.is_alphanumeric() && c != '_')
+        .next()
+        .unwrap_or("")
+        .to_string()
 }
 
 fn extract_declarations_from_tree(

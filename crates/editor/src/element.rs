@@ -9573,13 +9573,8 @@ impl Element for EditorElement {
                     let em_layout_width = window.text_system().em_layout_width(font_id, font_size);
                     let glyph_grid_cell = size(em_advance, line_height);
 
-                    let mut gutter_dimensions =
+                    let gutter_dimensions =
                         snapshot.gutter_dimensions(font_id, font_size, style, window, cx);
-                    // Reduce flickering and rewraps when new excerpts are added and removed.
-                    if !is_singleton {
-                        let prev_width = self.editor.read(cx).gutter_dimensions.width;
-                        gutter_dimensions.width = gutter_dimensions.width.max(prev_width);
-                    }
                     let text_width = bounds.size.width - gutter_dimensions.width;
 
                     let settings = EditorSettings::get_global(cx);
@@ -9775,11 +9770,39 @@ impl Element for EditorElement {
                     let mut highlighted_ranges = self
                         .editor_with_selections(cx)
                         .map(|editor| {
-                            editor.read(cx).background_highlights_in_range(
-                                start_anchor..end_anchor,
-                                &snapshot.display_snapshot,
-                                cx.theme(),
-                            )
+                            if editor == self.editor {
+                                editor.read(cx).background_highlights_in_range(
+                                    start_anchor..end_anchor,
+                                    &snapshot.display_snapshot,
+                                    cx.theme(),
+                                )
+                            } else {
+                                editor.update(cx, |editor, cx| {
+                                    let snapshot = editor.snapshot(window, cx);
+                                    let start_anchor = if start_row == Default::default() {
+                                        Anchor::min()
+                                    } else {
+                                        snapshot.buffer_snapshot().anchor_before(
+                                            DisplayPoint::new(start_row, 0)
+                                                .to_offset(&snapshot, Bias::Left),
+                                        )
+                                    };
+                                    let end_anchor = if end_row > max_row {
+                                        Anchor::max()
+                                    } else {
+                                        snapshot.buffer_snapshot().anchor_before(
+                                            DisplayPoint::new(end_row, 0)
+                                                .to_offset(&snapshot, Bias::Right),
+                                        )
+                                    };
+
+                                    editor.background_highlights_in_range(
+                                        start_anchor..end_anchor,
+                                        &snapshot.display_snapshot,
+                                        cx.theme(),
+                                    )
+                                })
+                            }
                         })
                         .unwrap_or_default();
 
@@ -12253,9 +12276,6 @@ mod tests {
     #[gpui::test]
     async fn test_soft_wrap_editor_width_auto_height_editor(cx: &mut TestAppContext) {
         init_test(cx, |_| {});
-        // Ensure wrap completes synchronously by giving block_with_timeout enough ticks
-        cx.dispatcher.scheduler().set_timeout_ticks(1000..=1000);
-
         let window = cx.add_window(|window, cx| {
             let buffer = MultiBuffer::build_simple(&"a ".to_string().repeat(100), cx);
             let mut editor = Editor::new(
@@ -12292,9 +12312,6 @@ mod tests {
     #[gpui::test]
     async fn test_soft_wrap_editor_width_full_editor(cx: &mut TestAppContext) {
         init_test(cx, |_| {});
-        // Ensure wrap completes synchronously by giving block_with_timeout enough ticks
-        cx.dispatcher.scheduler().set_timeout_ticks(1000..=1000);
-
         let window = cx.add_window(|window, cx| {
             let buffer = MultiBuffer::build_simple(&"a ".to_string().repeat(100), cx);
             let mut editor = Editor::new(EditorMode::full(), buffer, None, window, cx);
@@ -12560,7 +12577,7 @@ mod tests {
             Editor::new(EditorMode::full(), buffer, None, window, cx)
         });
 
-        update_test_language_settings(cx, |s| {
+        update_test_language_settings(cx, &|s| {
             s.defaults.preferred_line_length = Some(5_u32);
             s.defaults.soft_wrap = Some(language_settings::SoftWrap::PreferredLineLength);
         });
@@ -12940,7 +12957,7 @@ mod tests {
         let mut editor_width = 200.0;
         while editor_width <= 1000.0 {
             for show_line_numbers in [true, false] {
-                update_test_language_settings(cx, |s| {
+                update_test_language_settings(cx, &|s| {
                     s.defaults.tab_size = NonZeroU32::new(tab_size);
                     s.defaults.show_whitespaces = Some(ShowWhitespaceSetting::All);
                     s.defaults.preferred_line_length = Some(editor_width as u32);

@@ -242,8 +242,20 @@ Patterns are **case-insensitive** by default. To make a pattern case-sensitive, 
 
 ```json [settings]
 {
-  "pattern": "^Makefile$",
-  "case_sensitive": true
+  "agent": {
+    "tool_permissions": {
+      "tools": {
+        "edit_file": {
+          "always_deny": [
+            {
+              "pattern": "^Makefile$",
+              "case_sensitive": true
+            }
+          ]
+        }
+      }
+    }
+  }
 }
 ```
 

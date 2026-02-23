@@ -248,7 +248,7 @@ impl BufferDiffSnapshot {
         self.inner.buffer_version()
     }
 
-    pub fn original_buffer_snapshot(&self) -> &text::BufferSnapshot {
+    fn original_buffer_snapshot(&self) -> &text::BufferSnapshot {
         &self.inner.buffer_snapshot
     }
 
@@ -1978,8 +1978,8 @@ impl BufferDiff {
         cx.emit(BufferDiffEvent::DiffChanged(change));
     }
 
-    pub fn base_text_buffer(&self) -> Entity<language::Buffer> {
-        self.inner.base_text.clone()
+    pub fn base_text_buffer(&self) -> &Entity<language::Buffer> {
+        &self.inner.base_text
     }
 }
 
