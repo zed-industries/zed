@@ -1,6 +1,6 @@
 use futures::future::join_all;
 use itertools::Itertools;
-use language::language_settings::language_settings;
+use language::language_settings::LanguageSettings;
 use text::BufferId;
 use ui::{Context, Window};
 
@@ -29,11 +29,7 @@ impl Editor {
                 let id = buffer.read(cx).remote_id();
                 (for_buffer.is_none_or(|target| target == id))
                     && self.registered_buffers.contains_key(&id)
-                    && language_settings(
-                        buffer.read(cx).language().map(|l| l.name()),
-                        buffer.read(cx).file(),
-                        cx,
-                    )
+                    && LanguageSettings::for_buffer(&buffer.read(cx), cx)
                     .document_folding_ranges
                     .enabled()
             })
@@ -104,7 +100,7 @@ impl Editor {
             .into_iter()
             .filter(|buffer| {
                 let buffer = buffer.read(cx);
-                !language_settings(buffer.language().map(|l| l.name()), buffer.file(), cx)
+                !LanguageSettings::for_buffer(buffer, cx)
                     .document_folding_ranges
                     .enabled()
             })
