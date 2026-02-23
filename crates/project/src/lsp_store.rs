@@ -7700,6 +7700,8 @@ impl LspStore {
         for (_, _, path_summary) in self.diagnostic_summaries(include_ignored, cx) {
             summary.error_count += path_summary.error_count;
             summary.warning_count += path_summary.warning_count;
+            summary.info_count += path_summary.info_count;
+            summary.hint_count += path_summary.hint_count;
         }
         summary
     }
@@ -7715,12 +7717,15 @@ impl LspStore {
             .get(&project_path.worktree_id)
             .and_then(|map| map.get(&project_path.path))
         {
-            let (error_count, warning_count) = summaries.iter().fold(
-                (0, 0),
-                |(error_count, warning_count), (_language_server_id, summary)| {
+            let (error_count, warning_count, info_count, hint_count) = summaries.iter().fold(
+                (0, 0, 0, 0),
+                |(error_count, warning_count, info_count, hint_count),
+                 (_language_server_id, summary)| {
                     (
                         error_count + summary.error_count,
                         warning_count + summary.warning_count,
+                        info_count + summary.info_count,
+                        hint_count + summary.hint_count,
                     )
                 },
             );
@@ -7728,6 +7733,8 @@ impl LspStore {
             DiagnosticSummary {
                 error_count,
                 warning_count,
+                info_count,
+                hint_count,
             }
         } else {
             DiagnosticSummary::default()
@@ -8314,6 +8321,8 @@ impl LspStore {
                                         language_server_id: server_id.0 as u64,
                                         error_count: new_summary.error_count,
                                         warning_count: new_summary.warning_count,
+                                        info_count: new_summary.info_count,
+                                        hint_count: new_summary.hint_count,
                                     })
                             }
                             None => {
@@ -8325,6 +8334,8 @@ impl LspStore {
                                         language_server_id: server_id.0 as u64,
                                         error_count: new_summary.error_count,
                                         warning_count: new_summary.warning_count,
+                                        info_count: new_summary.info_count,
+                                        hint_count: new_summary.hint_count,
                                     }),
                                     more_summaries: Vec::new(),
                                 })
@@ -8409,6 +8420,8 @@ impl LspStore {
                         language_server_id: server_id.0 as u64,
                         error_count: new_summary.error_count as u32,
                         warning_count: new_summary.warning_count as u32,
+                        info_count: new_summary.info_count as u32,
+                        hint_count: new_summary.hint_count as u32,
                     },
                 ))))
             } else {
@@ -9271,6 +9284,8 @@ impl LspStore {
                 let summary = DiagnosticSummary {
                     error_count: message_summary.error_count as usize,
                     warning_count: message_summary.warning_count as usize,
+                    info_count: message_summary.info_count as usize,
+                    hint_count: message_summary.hint_count as usize,
                 };
 
                 if summary.is_empty() {
@@ -9303,6 +9318,8 @@ impl LspStore {
                                     language_server_id: server_id.0 as u64,
                                     error_count: summary.error_count as u32,
                                     warning_count: summary.warning_count as u32,
+                                    info_count: summary.info_count as u32,
+                                    hint_count: summary.hint_count as u32,
                                 })
                         }
                         None => {
@@ -9314,6 +9331,8 @@ impl LspStore {
                                     language_server_id: server_id.0 as u64,
                                     error_count: summary.error_count as u32,
                                     warning_count: summary.warning_count as u32,
+                                    info_count: summary.info_count as u32,
+                                    hint_count: summary.hint_count as u32,
                                 }),
                                 more_summaries: Vec::new(),
                             })
@@ -10752,6 +10771,8 @@ impl LspStore {
                                     language_server_id: server_id.0 as u64,
                                     error_count: 0,
                                     warning_count: 0,
+                                    info_count: 0,
+                                    hint_count: 0,
                                 }),
                                 more_summaries: Vec::new(),
                             })
@@ -13778,6 +13799,8 @@ pub struct LanguageServerProgress {
 pub struct DiagnosticSummary {
     pub error_count: usize,
     pub warning_count: usize,
+    pub info_count: usize,
+    pub hint_count: usize,
 }
 
 impl DiagnosticSummary {
@@ -13785,6 +13808,8 @@ impl DiagnosticSummary {
         let mut this = Self {
             error_count: 0,
             warning_count: 0,
+            info_count: 0,
+            hint_count: 0,
         };
 
         for entry in diagnostics {
@@ -13792,6 +13817,8 @@ impl DiagnosticSummary {
                 match entry.diagnostic.severity {
                     DiagnosticSeverity::ERROR => this.error_count += 1,
                     DiagnosticSeverity::WARNING => this.warning_count += 1,
+                    DiagnosticSeverity::INFORMATION => this.info_count += 1,
+                    DiagnosticSeverity::HINT => this.hint_count += 1,
                     _ => {}
                 }
             }
@@ -13801,7 +13828,10 @@ impl DiagnosticSummary {
     }
 
     pub fn is_empty(&self) -> bool {
-        self.error_count == 0 && self.warning_count == 0
+        self.error_count == 0
+            && self.warning_count == 0
+            && self.info_count == 0
+            && self.hint_count == 0
     }
 
     pub fn to_proto(
@@ -13814,6 +13844,8 @@ impl DiagnosticSummary {
             language_server_id: language_server_id.0 as u64,
             error_count: self.error_count as u32,
             warning_count: self.warning_count as u32,
+            info_count: self.info_count as u32,
+            hint_count: self.hint_count as u32,
         }
     }
 }

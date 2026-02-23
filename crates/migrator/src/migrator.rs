@@ -232,6 +232,10 @@ pub fn migrate_settings(text: &str) -> Result<Option<String>> {
             migrations::m_2025_12_15::SETTINGS_PATTERNS,
             &SETTINGS_QUERY_2025_12_15,
         ),
+        MigrationType::TreeSitter(
+            migrations::m_2026_01_19::SETTINGS_PATTERNS,
+            &SETTINGS_QUERY_2026_01_19,
+        ),
         MigrationType::Json(
             migrations::m_2026_02_02::move_edit_prediction_provider_to_edit_predictions,
         ),
@@ -370,6 +374,11 @@ define_query!(
 define_query!(
     SETTINGS_QUERY_2025_12_15,
     migrations::m_2025_12_15::SETTINGS_PATTERNS
+);
+
+define_query!(
+    SETTINGS_QUERY_2026_01_19,
+    migrations::m_2026_01_19::SETTINGS_PATTERNS
 );
 
 // custom query
@@ -3817,6 +3826,51 @@ mod tests {
             .unindent(),
             Some(
                 "{\n    \"agent\": {\n        \n    },\n    \"agent_servers\": {\n        \"claude\": {}\n    }\n}\n",
+            ),
+        );
+    }
+
+    #[test]
+    fn test_diagnostics_include_warnings_migrates_to_max_severity() {
+        assert_migrate_settings(
+            &r#"
+            {
+                "diagnostics": {
+                    "include_warnings": true
+                }
+            }
+            "#
+            .unindent(),
+            Some(
+                &r#"
+                {
+                    "diagnostics": {
+                        "max_severity": "warning"
+                    }
+                }
+                "#
+                .unindent(),
+            ),
+        );
+
+        assert_migrate_settings(
+            &r#"
+            {
+                "diagnostics": {
+                    "include_warnings": false
+                }
+            }
+            "#
+            .unindent(),
+            Some(
+                &r#"
+                {
+                    "diagnostics": {
+                        "max_severity": "error"
+                    }
+                }
+                "#
+                .unindent(),
             ),
         );
     }

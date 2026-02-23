@@ -13,6 +13,8 @@ pub struct Model {
     pub language_server_id: i64,
     pub error_count: i32,
     pub warning_count: i32,
+    pub info_count: i32,
+    pub hint_count: i32,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
