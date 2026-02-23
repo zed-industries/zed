@@ -303,6 +303,17 @@ impl AcpServerView {
         }
     }
 
+    pub fn pending_tool_call<'a>(
+        &'a self,
+        cx: &'a App,
+    ) -> Option<(acp::SessionId, acp::ToolCallId, &'a PermissionOptions)> {
+        let id = &self.active_thread()?.read(cx).id;
+        self.as_connected()?
+            .conversation
+            .read(cx)
+            .pending_tool_call(id, cx)
+    }
+
     pub fn parent_thread(&self, cx: &App) -> Option<Entity<AcpThreadView>> {
         match &self.server_state {
             ServerState::Connected(connected) => {
@@ -5471,14 +5482,7 @@ pub(crate) mod tests {
 
         // Verify tool call is waiting for confirmation
         thread_view.read_with(cx, |thread_view, cx| {
-            let thread = thread_view
-                .active_thread()
-                .expect("Thread should exist")
-                .read(cx)
-                .thread
-                .clone();
-            let thread = thread.read(cx);
-            let tool_call = thread.first_tool_awaiting_confirmation();
+            let tool_call = thread_view.pending_tool_call(cx);
             assert!(
                 tool_call.is_some(),
                 "Expected a tool call waiting for confirmation"
@@ -5502,14 +5506,12 @@ pub(crate) mod tests {
 
         // Verify tool call is no longer waiting for confirmation (was authorized)
         thread_view.read_with(cx, |thread_view, cx| {
-                let thread = thread_view.active_thread().expect("Thread should exist").read(cx).thread.clone();
-                let thread = thread.read(cx);
-                let tool_call = thread.first_tool_awaiting_confirmation();
-                assert!(
-                    tool_call.is_none(),
-                    "Tool call should no longer be waiting for confirmation after AuthorizeToolCall action"
-                );
-            });
+            let tool_call = thread_view.pending_tool_call(cx);
+            assert!(
+                tool_call.is_none(),
+                "Tool call should no longer be waiting for confirmation after AuthorizeToolCall action"
+            );
+        });
     }
 
     #[gpui::test]
@@ -5587,14 +5589,7 @@ pub(crate) mod tests {
 
         // Verify tool call was authorized
         thread_view.read_with(cx, |thread_view, cx| {
-            let thread = thread_view
-                .active_thread()
-                .expect("Thread should exist")
-                .read(cx)
-                .thread
-                .clone();
-            let thread = thread.read(cx);
-            let tool_call = thread.first_tool_awaiting_confirmation();
+            let tool_call = thread_view.pending_tool_call(cx);
             assert!(
                 tool_call.is_none(),
                 "Tool call should be authorized after selecting pattern option"
@@ -5770,14 +5765,7 @@ pub(crate) mod tests {
 
         // Verify tool call was authorized
         thread_view.read_with(cx, |thread_view, cx| {
-            let thread = thread_view
-                .active_thread()
-                .expect("Thread should exist")
-                .read(cx)
-                .thread
-                .clone();
-            let thread = thread.read(cx);
-            let tool_call = thread.first_tool_awaiting_confirmation();
+            let tool_call = thread_view.pending_tool_call(cx);
             assert!(
                 tool_call.is_none(),
                 "Tool call should be authorized after Allow with pattern granularity"
@@ -5837,14 +5825,7 @@ pub(crate) mod tests {
 
         // Verify tool call was rejected (no longer waiting for confirmation)
         thread_view.read_with(cx, |thread_view, cx| {
-            let thread = thread_view
-                .active_thread()
-                .expect("Thread should exist")
-                .read(cx)
-                .thread
-                .clone();
-            let thread = thread.read(cx);
-            let tool_call = thread.first_tool_awaiting_confirmation();
+            let tool_call = thread_view.pending_tool_call(cx);
             assert!(
                 tool_call.is_none(),
                 "Tool call should be rejected after Deny"
