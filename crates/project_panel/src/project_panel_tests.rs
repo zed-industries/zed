@@ -4,7 +4,7 @@ use editor::MultiBufferOffset;
 use gpui::{Empty, Entity, TestAppContext, VisualTestContext};
 use menu::Cancel;
 use pretty_assertions::assert_eq;
-use project::FakeFs;
+use project::{FakeFs, RealFs};
 use serde_json::json;
 use settings::{ProjectPanelAutoOpenSettings, SettingsStore};
 use std::path::{Path, PathBuf};
@@ -105,6 +105,76 @@ async fn test_visible_list(cx: &mut gpui::TestAppContext) {
             "      .dockerignore",
             "v root2",
         ]
+    );
+}
+
+#[gpui::test]
+async fn test_watcher_for_recreated_directory_in_real_fs(cx: &mut gpui::TestAppContext) {
+    cx.executor().allow_parking();
+    init_test(cx);
+
+    let project_root = "test-recreated-root";
+    let test_name = "test-recreateing";
+    let test_dir = format!("{}/{}", project_root, test_name);
+
+    let count = 200;
+
+    let fs = Arc::new(RealFs::new(None, cx.executor()));
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let project_root_dir = temp_dir.path().join(&project_root);
+    let dir = temp_dir.path().join(&test_dir);
+
+    std::fs::create_dir(&project_root_dir).ok();
+    assert_eq!(
+        std::fs::create_dir(&dir).is_ok(),
+        true,
+        "Failed to create test directory"
+    );
+
+    let project = Project::test(fs.clone(), [project_root_dir.as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+    let panel = workspace.update_in(cx, ProjectPanel::new);
+    cx.run_until_parked();
+
+    std::fs::remove_dir_all(&dir).ok();
+    assert_eq!(
+        std::fs::create_dir(&dir).is_ok(),
+        true,
+        "Failed to create test directory"
+    );
+    toggle_expand_dir(&panel, &test_dir, cx);
+
+    let mut entries = Vec::with_capacity(count);
+    entries.push(format!("v {}", project_root));
+    entries.push(format!("    v {}  <== selected", test_name));
+    for i in 1..=count {
+        let filename = format!("file-{}", i);
+        std::fs::File::create(dir.join(&filename)).unwrap();
+        entries.push(format!("          {}", &filename));
+        if i % 9 == 0 {
+            // this can simulate a realistic scenario and some file showing up in the panel
+            // instead of just an empty directory
+            // but the pause timer is just a magic number
+            cx.executor()
+                .timer(std::time::Duration::from_nanos(75))
+                .await;
+        }
+    }
+
+    // need sometime for watcher event
+    // run_until_parked cannot catch this
+    cx.executor()
+        .timer(std::time::Duration::from_millis(1))
+        .await;
+    cx.run_until_parked();
+
+    assert_eq!(
+        entries,
+        visible_entries_as_strings(&panel, 0..usize::MAX, cx),
     );
 }
 
