@@ -7,13 +7,13 @@ use cosmic_text::{
 use gpui::{
     Bounds, DevicePixels, Font, FontFeatures, FontId, FontMetrics, FontRun, GlyphId, LineLayout,
     Pixels, PlatformTextSystem, RenderGlyphParams, SUBPIXEL_VARIANTS_X, SUBPIXEL_VARIANTS_Y,
-    ShapedGlyph, ShapedRun, SharedString, Size, TextRenderingMode, point, size,
+    ShapedGlyph, ShapedRun, SharedString, Size, TextRenderingMode, point, px, size,
 };
 
 use itertools::Itertools;
 use parking_lot::RwLock;
 use smallvec::SmallVec;
-use std::{borrow::Cow, sync::Arc};
+use std::{borrow::Cow, panic, sync::Arc};
 use swash::{
     scale::{Render, ScaleContext, Source, StrikeWith},
     zeno::{Format, Vector},
@@ -413,13 +413,33 @@ impl CosmicTextSystemState {
             offs += run.len;
         }
 
-        let line = ShapeLine::new(
-            &mut self.font_system,
-            text,
-            &attrs_list,
-            cosmic_text::Shaping::Advanced,
-            4,
-        );
+        // Wrap ShapeLine::new in catch_unwind to handle panics from cosmic_text's
+        // BiDi assertion failures (see cosmic-text issue #442). This can happen with
+        // certain mixed RTL/LTR text sequences that trigger an assertion in the
+        // unicode_bidi crate's paragraph handling.
+        let font_system = &mut self.font_system;
+        let shape_result = panic::catch_unwind(panic::AssertUnwindSafe(|| {
+            ShapeLine::new(
+                font_system,
+                text,
+                &attrs_list,
+                cosmic_text::Shaping::Advanced,
+                4,
+            )
+        }));
+
+        let line = match shape_result {
+            std::result::Result::Ok(line) => line,
+            std::result::Result::Err(_) => {
+                log::warn!(
+                    "cosmic_text panicked during text shaping (likely BiDi assertion failure), \
+                    returning fallback layout for text: {:?}",
+                    text.chars().take(50).collect::<String>()
+                );
+                return self.fallback_layout(text, font_size, font_runs);
+            }
+        };
+
         let mut layout_lines = Vec::with_capacity(1);
         line.layout_to_buffer(
             &mut self.scratch,
@@ -473,6 +493,78 @@ impl CosmicTextSystemState {
             width: layout.w.into(),
             ascent: layout.max_ascent.into(),
             descent: layout.max_descent.into(),
+            runs,
+            len: text.len(),
+        }
+    }
+
+    /// Creates a fallback layout when cosmic_text's shaping panics.
+    /// This produces a simple layout where each character is treated as a single glyph
+    /// without proper shaping, used as a safety net for problematic BiDi text.
+    fn fallback_layout(
+        &mut self,
+        text: &str,
+        font_size: Pixels,
+        font_runs: &[FontRun],
+    ) -> LineLayout {
+        let mut runs: Vec<ShapedRun> = Vec::new();
+        let mut current_offset = 0;
+        let mut x_position = 0.0f32;
+
+        for run in font_runs {
+            let run_text = &text[current_offset..current_offset + run.len];
+            let mut glyphs = Vec::new();
+
+            for (char_offset, ch) in run_text.char_indices() {
+                let glyph_id = self.glyph_for_char(run.font_id, ch).unwrap_or(GlyphId(0));
+                let advance = self
+                    .advance(run.font_id, glyph_id)
+                    .map(|s| s.width)
+                    .unwrap_or(0.0);
+                let scaled_advance = advance / self.loaded_font(run.font_id).font.as_swash().metrics(&[]).units_per_em as f32 * f32::from(font_size);
+
+                glyphs.push(ShapedGlyph {
+                    id: glyph_id,
+                    position: point(px(x_position), px(0.0)),
+                    index: current_offset + char_offset,
+                    is_emoji: self.loaded_font(run.font_id).is_known_emoji_font,
+                });
+
+                x_position += scaled_advance;
+            }
+
+            if !glyphs.is_empty() {
+                if let Some(last_run) = runs
+                    .last_mut()
+                    .filter(|last_run| last_run.font_id == run.font_id)
+                {
+                    last_run.glyphs.extend(glyphs);
+                } else {
+                    runs.push(ShapedRun {
+                        font_id: run.font_id,
+                        glyphs,
+                    });
+                }
+            }
+
+            current_offset += run.len;
+        }
+
+        // Get font metrics for ascent/descent from the first font run
+        let (ascent, descent) = if let Some(first_run) = font_runs.first() {
+            let font = &self.loaded_font(first_run.font_id).font;
+            let metrics = font.as_swash().metrics(&[]);
+            let scale = f32::from(font_size) / metrics.units_per_em as f32;
+            (px(metrics.ascent * scale), px(metrics.descent.abs() * scale))
+        } else {
+            (font_size, px(0.0))
+        };
+
+        LineLayout {
+            font_size,
+            width: px(x_position),
+            ascent,
+            descent,
             runs,
             len: text.len(),
         }
