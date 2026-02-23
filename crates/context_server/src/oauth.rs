@@ -1,4 +1,5 @@
 use anyhow::{Context as _, Result, anyhow, bail};
+use async_trait::async_trait;
 use futures::AsyncReadExt as _;
 use http_client::{AsyncBody, HttpClient, Request, Response};
 use serde::{Deserialize, Serialize};
@@ -994,6 +995,20 @@ struct DcrResponse {
     client_id: String,
     #[serde(default)]
     client_secret: Option<String>,
+}
+
+/// Provides OAuth tokens to the HTTP transport layer.
+///
+/// The transport calls `access_token()` before each request. On a 401 response
+/// it calls `try_refresh()` and retries once if the refresh succeeds.
+#[async_trait]
+pub trait OAuthTokenProvider: Send + Sync {
+    /// Returns the current access token, if one is available.
+    fn access_token(&self) -> Option<String>;
+
+    /// Attempts to refresh the access token. Returns `true` if a new token was
+    /// obtained and the request should be retried.
+    async fn try_refresh(&self) -> Result<bool>;
 }
 
 #[cfg(test)]
