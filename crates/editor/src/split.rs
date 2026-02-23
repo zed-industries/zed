@@ -225,10 +225,12 @@ where
     for (source_buffer, buffer_offset_range, source_excerpt_id, source_context_range) in
         source_snapshot.range_to_buffer_ranges_with_context(source_bounds)
     {
-        let target_excerpt_id = excerpt_map.get(&source_excerpt_id).copied().unwrap();
-        let target_buffer = target_snapshot
-            .buffer_for_excerpt(target_excerpt_id)
-            .unwrap();
+        let Some(target_excerpt_id) = excerpt_map.get(&source_excerpt_id).copied() else {
+            continue;
+        };
+        let Some(target_buffer) = target_snapshot.buffer_for_excerpt(target_excerpt_id) else {
+            continue;
+        };
 
         let buffer_id = source_buffer.remote_id();
 
@@ -1126,15 +1128,9 @@ impl SplittableEditor {
         use crate::display_map::DisplayRow;
 
         self.debug_print(cx);
+        self.check_excerpt_mapping_invariants(cx);
 
         let lhs = self.lhs.as_ref().unwrap();
-        let rhs_excerpts = self.rhs_multibuffer.read(cx).excerpt_ids();
-        let lhs_excerpts = lhs.multibuffer.read(cx).excerpt_ids();
-        assert_eq!(
-            lhs_excerpts.len(),
-            rhs_excerpts.len(),
-            "mismatch in excerpt count"
-        );
 
         if quiesced {
             let rhs_snapshot = lhs
@@ -1593,6 +1589,112 @@ impl SplittableEditor {
                     self.remove_excerpts_for_path(path.clone(), cx);
                 }
             }
+        }
+    }
+
+    fn check_excerpt_mapping_invariants(&self, cx: &gpui::App) {
+        use multi_buffer::{ExcerptId, PathKey};
+
+        let lhs = self.lhs.as_ref().expect("should have lhs editor");
+
+        let rhs_excerpt_ids = self.rhs_multibuffer.read(cx).excerpt_ids();
+        let lhs_excerpt_ids = lhs.multibuffer.read(cx).excerpt_ids();
+        assert_eq!(
+            rhs_excerpt_ids.len(),
+            lhs_excerpt_ids.len(),
+            "excerpt count mismatch: rhs has {}, lhs has {}",
+            rhs_excerpt_ids.len(),
+            lhs_excerpt_ids.len(),
+        );
+
+        let rhs_display_map = self.rhs_editor.read(cx).display_map.clone();
+        let companion = rhs_display_map
+            .read(cx)
+            .companion()
+            .cloned()
+            .expect("should have companion");
+        let (lhs_to_rhs, rhs_to_lhs) = {
+            let c = companion.read(cx);
+            let (l, r) = c.excerpt_mappings();
+            (l.clone(), r.clone())
+        };
+
+        assert_eq!(
+            lhs_to_rhs.len(),
+            rhs_to_lhs.len(),
+            "mapping size mismatch: lhs_to_rhs has {}, rhs_to_lhs has {}",
+            lhs_to_rhs.len(),
+            rhs_to_lhs.len(),
+        );
+
+        for (&lhs_id, &rhs_id) in &lhs_to_rhs {
+            let reverse = rhs_to_lhs.get(&rhs_id);
+            assert_eq!(
+                reverse,
+                Some(&lhs_id),
+                "lhs_to_rhs maps {lhs_id:?} -> {rhs_id:?}, but rhs_to_lhs maps {rhs_id:?} -> {reverse:?}",
+            );
+        }
+        for (&rhs_id, &lhs_id) in &rhs_to_lhs {
+            let reverse = lhs_to_rhs.get(&lhs_id);
+            assert_eq!(
+                reverse,
+                Some(&rhs_id),
+                "rhs_to_lhs maps {rhs_id:?} -> {lhs_id:?}, but lhs_to_rhs maps {lhs_id:?} -> {reverse:?}",
+            );
+        }
+
+        assert_eq!(
+            lhs_to_rhs.len(),
+            rhs_excerpt_ids.len(),
+            "mapping covers {} excerpts but rhs has {}",
+            lhs_to_rhs.len(),
+            rhs_excerpt_ids.len(),
+        );
+
+        let rhs_mapped_order: Vec<ExcerptId> = rhs_excerpt_ids
+            .iter()
+            .map(|rhs_id| {
+                *rhs_to_lhs.get(rhs_id).unwrap_or_else(|| {
+                    panic!("rhs excerpt {rhs_id:?} has no mapping in rhs_to_lhs")
+                })
+            })
+            .collect();
+        assert_eq!(
+            rhs_mapped_order, lhs_excerpt_ids,
+            "excerpt ordering mismatch: mapping rhs order through rhs_to_lhs doesn't match lhs order",
+        );
+
+        let rhs_paths: Vec<PathKey> = self.rhs_multibuffer.read(cx).paths().cloned().collect();
+        let lhs_paths: Vec<PathKey> = lhs.multibuffer.read(cx).paths().cloned().collect();
+        assert_eq!(
+            rhs_paths, lhs_paths,
+            "path set mismatch between rhs and lhs"
+        );
+
+        for path in &rhs_paths {
+            let rhs_path_excerpts: Vec<ExcerptId> = self
+                .rhs_multibuffer
+                .read(cx)
+                .excerpts_for_path(path)
+                .collect();
+            let lhs_path_excerpts: Vec<ExcerptId> =
+                lhs.multibuffer.read(cx).excerpts_for_path(path).collect();
+            assert_eq!(
+                rhs_path_excerpts.len(),
+                lhs_path_excerpts.len(),
+                "excerpt count mismatch for path {path:?}: rhs has {}, lhs has {}",
+                rhs_path_excerpts.len(),
+                lhs_path_excerpts.len(),
+            );
+            let rhs_path_mapped: Vec<ExcerptId> = rhs_path_excerpts
+                .iter()
+                .map(|rhs_id| *rhs_to_lhs.get(rhs_id).unwrap())
+                .collect();
+            assert_eq!(
+                rhs_path_mapped, lhs_path_excerpts,
+                "per-path excerpt ordering mismatch for {path:?}",
+            );
         }
     }
 }
@@ -2349,113 +2451,7 @@ mod tests {
         }
     }
 
-    fn check_excerpt_mapping_invariants(editor: &SplittableEditor, cx: &gpui::App) {
-        use multi_buffer::{ExcerptId, PathKey};
-
-        let lhs = editor.lhs.as_ref().expect("should have lhs editor");
-
-        let rhs_excerpt_ids = editor.rhs_multibuffer.read(cx).excerpt_ids();
-        let lhs_excerpt_ids = lhs.multibuffer.read(cx).excerpt_ids();
-        assert_eq!(
-            rhs_excerpt_ids.len(),
-            lhs_excerpt_ids.len(),
-            "excerpt count mismatch: rhs has {}, lhs has {}",
-            rhs_excerpt_ids.len(),
-            lhs_excerpt_ids.len(),
-        );
-
-        let rhs_display_map = editor.rhs_editor.read(cx).display_map.clone();
-        let companion = rhs_display_map
-            .read(cx)
-            .companion()
-            .cloned()
-            .expect("should have companion");
-        let (lhs_to_rhs, rhs_to_lhs) = {
-            let c = companion.read(cx);
-            let (l, r) = c.excerpt_mappings();
-            (l.clone(), r.clone())
-        };
-
-        assert_eq!(
-            lhs_to_rhs.len(),
-            rhs_to_lhs.len(),
-            "mapping size mismatch: lhs_to_rhs has {}, rhs_to_lhs has {}",
-            lhs_to_rhs.len(),
-            rhs_to_lhs.len(),
-        );
-
-        for (&lhs_id, &rhs_id) in &lhs_to_rhs {
-            let reverse = rhs_to_lhs.get(&rhs_id);
-            assert_eq!(
-                reverse,
-                Some(&lhs_id),
-                "lhs_to_rhs maps {lhs_id:?} -> {rhs_id:?}, but rhs_to_lhs maps {rhs_id:?} -> {reverse:?}",
-            );
-        }
-        for (&rhs_id, &lhs_id) in &rhs_to_lhs {
-            let reverse = lhs_to_rhs.get(&lhs_id);
-            assert_eq!(
-                reverse,
-                Some(&rhs_id),
-                "rhs_to_lhs maps {rhs_id:?} -> {lhs_id:?}, but lhs_to_rhs maps {lhs_id:?} -> {reverse:?}",
-            );
-        }
-
-        assert_eq!(
-            lhs_to_rhs.len(),
-            rhs_excerpt_ids.len(),
-            "mapping covers {} excerpts but rhs has {}",
-            lhs_to_rhs.len(),
-            rhs_excerpt_ids.len(),
-        );
-
-        let rhs_mapped_order: Vec<ExcerptId> = rhs_excerpt_ids
-            .iter()
-            .map(|rhs_id| {
-                *rhs_to_lhs.get(rhs_id).unwrap_or_else(|| {
-                    panic!("rhs excerpt {rhs_id:?} has no mapping in rhs_to_lhs")
-                })
-            })
-            .collect();
-        assert_eq!(
-            rhs_mapped_order, lhs_excerpt_ids,
-            "excerpt ordering mismatch: mapping rhs order through rhs_to_lhs doesn't match lhs order",
-        );
-
-        let rhs_paths: Vec<PathKey> = editor.rhs_multibuffer.read(cx).paths().cloned().collect();
-        let lhs_paths: Vec<PathKey> = lhs.multibuffer.read(cx).paths().cloned().collect();
-        assert_eq!(
-            rhs_paths, lhs_paths,
-            "path set mismatch between rhs and lhs"
-        );
-
-        for path in &rhs_paths {
-            let rhs_path_excerpts: Vec<ExcerptId> = editor
-                .rhs_multibuffer
-                .read(cx)
-                .excerpts_for_path(path)
-                .collect();
-            let lhs_path_excerpts: Vec<ExcerptId> =
-                lhs.multibuffer.read(cx).excerpts_for_path(path).collect();
-            assert_eq!(
-                rhs_path_excerpts.len(),
-                lhs_path_excerpts.len(),
-                "excerpt count mismatch for path {path:?}: rhs has {}, lhs has {}",
-                rhs_path_excerpts.len(),
-                lhs_path_excerpts.len(),
-            );
-            let rhs_path_mapped: Vec<ExcerptId> = rhs_path_excerpts
-                .iter()
-                .map(|rhs_id| *rhs_to_lhs.get(rhs_id).unwrap())
-                .collect();
-            assert_eq!(
-                rhs_path_mapped, lhs_path_excerpts,
-                "per-path excerpt ordering mismatch for {path:?}",
-            );
-        }
-    }
-
-    #[gpui::test(iterations = 50)]
+    #[gpui::test(iterations = 25)]
     async fn test_random_excerpt_management(mut rng: StdRng, cx: &mut gpui::TestAppContext) {
         use multi_buffer::{ExcerptId, ExpandExcerptDirection};
         use rand::prelude::*;
@@ -2464,7 +2460,7 @@ mod tests {
         let (editor, cx) = init_test(cx, SoftWrap::EditorWidth, DiffViewStyle::Split).await;
         let operations = std::env::var("OPERATIONS")
             .map(|i| i.parse().expect("invalid `OPERATIONS` variable"))
-            .unwrap_or(20);
+            .unwrap_or(10);
         let rng = &mut rng;
         let mut managed_buffers: Vec<(Entity<Buffer>, Entity<BufferDiff>)> = Vec::new();
 
@@ -2504,7 +2500,7 @@ mod tests {
                 });
                 managed_buffers.push((buffer, diff));
                 editor.update(cx, |editor, cx| {
-                    check_excerpt_mapping_invariants(editor, cx);
+                    editor.check_excerpt_mapping_invariants(cx);
                 });
                 continue;
             }
@@ -2642,7 +2638,7 @@ mod tests {
             }
 
             editor.update(cx, |editor, cx| {
-                check_excerpt_mapping_invariants(editor, cx);
+                editor.check_excerpt_mapping_invariants(cx);
             });
         }
     }

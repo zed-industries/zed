@@ -2230,14 +2230,6 @@ impl MultiBuffer {
         let mut removed_excerpts_for_buffers = HashSet::default();
 
         while let Some(excerpt_id) = excerpt_ids.next() {
-            if let Some(path) = self.paths_by_excerpt.remove(&excerpt_id) {
-                if let Some(excerpt_list) = self.excerpts_by_path.get_mut(&path) {
-                    excerpt_list.retain(|id| *id != excerpt_id);
-                    if excerpt_list.is_empty() {
-                        self.excerpts_by_path.remove(&path);
-                    }
-                }
-            }
             // Seek to the next excerpt to remove, preserving any preceding excerpts.
             let locator = snapshot.excerpt_locator_for_id(excerpt_id);
             new_excerpts.append(cursor.slice(&Some(locator), Bias::Left), ());
@@ -2299,6 +2291,16 @@ impl MultiBuffer {
         let changed_trailing_excerpt = suffix.is_empty();
         new_excerpts.append(suffix, ());
         drop(cursor);
+        for &excerpt_id in &ids {
+            if let Some(path) = self.paths_by_excerpt.remove(&excerpt_id) {
+                if let Some(excerpt_list) = self.excerpts_by_path.get_mut(&path) {
+                    excerpt_list.retain(|id| *id != excerpt_id);
+                    if excerpt_list.is_empty() {
+                        self.excerpts_by_path.remove(&path);
+                    }
+                }
+            }
+        }
         for buffer_id in removed_excerpts_for_buffers {
             match self.buffers.get(&buffer_id) {
                 Some(buffer_state) => {
