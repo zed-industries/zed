@@ -211,10 +211,15 @@ impl TeacherPrompt {
 
     pub fn parse(example: &Example, response: &str) -> Result<(String, Option<ActualCursor>)> {
         // Check if the model indicated no edits are needed
+        let no_edits = (String::new(), None);
         if let Some(last_codeblock) = extract_last_codeblock(&response) {
             if last_codeblock.trim() == Self::NO_EDITS {
-                return Ok((String::new(), None));
+                return Ok(no_edits);
             }
+        }
+
+        if response.trim().ends_with(Self::NO_EDITS) {
+            return Ok(no_edits);
         }
 
         // Extract updated (new) editable region from the model response.
