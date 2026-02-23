@@ -2,7 +2,7 @@ use anyhow::{Context as _, Result};
 use buffer_diff::BufferDiff;
 use collections::HashMap;
 use editor::display_map::{BlockPlacement, BlockProperties, BlockStyle};
-use editor::{Addon, Editor, EditorEvent, ExcerptRange, MultiBuffer, multibuffer_context_lines};
+use editor::{Addon, Direction, Editor, EditorEvent, ExcerptRange, MultiBuffer, multibuffer_context_lines};
 use git::repository::{CommitDetails, CommitDiff, RepoPath, is_binary_content};
 use git::status::{FileStatus, StatusCode, TrackedStatus};
 use git::{
@@ -482,7 +482,19 @@ impl CommitView {
                     let mut editor = Editor::for_multibuffer(new_multibuffer, Some(project), window, cx);
                     editor.start_temporary_diff_override();
                     editor.set_expand_all_diff_hunks(cx);
+                    editor.set_read_only(true);
                     editor
+                });
+
+                // Scroll to the first diff hunk
+                new_editor.update(cx, |editor, cx| {
+                    editor.go_to_hunk_before_or_after_position(
+                        &editor.snapshot(window, cx),
+                        language::Point::zero(),
+                        Direction::Next,
+                        window,
+                        cx,
+                    );
                 });
 
                 pane.update(cx, |pane, cx| {
