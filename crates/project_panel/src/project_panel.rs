@@ -1176,7 +1176,7 @@ impl ProjectPanel {
                             })
                             .when(should_show_compare, |menu| {
                                 menu.separator()
-                                    .action("Compare marked files", Box::new(CompareMarkedFiles))
+                                    .action("Compare Marked Files", Box::new(CompareMarkedFiles))
                             })
                             .separator()
                             .action("Cut", Box::new(Cut))
