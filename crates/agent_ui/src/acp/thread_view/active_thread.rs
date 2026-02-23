@@ -6128,7 +6128,7 @@ impl AcpThreadView {
                 if is_canceled_or_failed {
                     "Subagent Canceled"
                 } else {
-                    "Creating Subagent…"
+                    "Spawning agent…"
                 }
                 .into()
             });

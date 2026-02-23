@@ -508,6 +508,21 @@ Note: Dirty files (files with unsaved changes) will not be automatically closed 
 }
 ```
 
+## Diff View Style
+
+- Description: How to display diffs in the editor.
+- Setting: `diff_view_style`
+- Default: `"split"`
+
+**Options**
+
+- `"unified"`: Show changes inline with added and deleted lines stacked vertically
+- `"split"`: Display old and new versions side by side in separate panes (default)
+
+> **Changed in Preview (v0.225).** Values renamed from `"stacked"`/`"side_by_side"` to `"unified"`/`"split"`.
+
+See [Git documentation](../git.md#diff-view-styles) for more details.
+
 ## Disable AI
 
 - Description: Whether to disable all AI features in Zed
@@ -2757,6 +2772,33 @@ The following settings can be overridden for each specific language:
 
 These values take in the same options as the root-level settings with the same name.
 
+### Document Symbols
+
+> **Preview:** This feature is available in Zed Preview. It will be included in the next Stable release.
+
+- Description: Controls the source of document symbols used for outlines and breadcrumbs.
+- Setting: `document_symbols`
+- Default: `off`
+
+**Options**
+
+- `"off"`: Use tree-sitter queries to compute document symbols (default)
+- `"on"`: Use the language server's `textDocument/documentSymbol` LSP response. When enabled, tree-sitter is not used for document symbols
+
+LSP document symbols can provide more accurate symbols for complex language features (e.g., generic types, macros, decorators) that tree-sitter may not handle well. Use this when your language server provides better symbol information than the tree-sitter grammar.
+
+Example:
+
+```json [settings]
+{
+  "languages": {
+    "TypeScript": {
+      "document_symbols": "on"
+    }
+  }
+}
+```
+
 ## Language Models
 
 - Description: Configuration for language model providers
@@ -3430,13 +3472,7 @@ Non-negative `integer` values
 
 - Description: Whether to search on input in project search.
 - Setting: `search_on_input`
-- Default: `false`
-
-### Search On Input Debounce Ms
-
-- Description: Debounce time in milliseconds for search on input in project search. Set to 0 to disable debouncing.
-- Setting: `search_on_input_debounce_ms`
-- Default: `200`
+- Default: `true`
 
 ### Center On Match
 
@@ -5101,6 +5137,34 @@ See the [debugger page](../debugger.md) for more information about debugging sup
 - `sort_by_path`: Whether to sort entries in the panel by path or by status (the default)
 - `collapse_untracked_diff`: Whether to collapse untracked files in the diff panel
 - `scrollbar`: When to show the scrollbar in the git panel
+
+## Git Worktree Directory
+
+> **Preview:** This feature is available in Zed Preview. It will be included in the next Stable release.
+
+- Description: Directory where git worktrees are created, relative to the repository working directory.
+- Setting: `git.worktree_directory`
+- Default: `"../worktrees"`
+
+When the resolved directory falls outside the project root, the project's directory name is automatically appended so that sibling repos don't collide. For example, with the default `"../worktrees"` and a project at `~/code/zed`, worktrees are created under `~/code/worktrees/zed/`.
+
+When the resolved directory is inside the project root, no extra component is added (it's already project-scoped).
+
+**Examples**:
+
+- `"../worktrees"` — `~/code/worktrees/<project>/` (default)
+- `".git/zed-worktrees"` — `<project>/.git/zed-worktrees/`
+- `"my-worktrees"` — `<project>/my-worktrees/`
+
+Trailing slashes are ignored.
+
+```json [settings]
+{
+  "git": {
+    "worktree_directory": "../worktrees"
+  }
+}
+```
 
 ## Git Hosting Providers
 

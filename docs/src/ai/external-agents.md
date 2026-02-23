@@ -130,9 +130,10 @@ Claude Agent supports the same workflows as Zed's first-party agent. Add context
 In complement to talking to it [over ACP](https://agentclientprotocol.com), Zed relies on the [Claude Agent SDK](https://platform.claude.com/docs/en/agent-sdk/overview) to support some of its specific features.
 However, the SDK doesn't yet expose everything needed to fully support all of them:
 
-- Slash Commands: A subset of [built-in commands](https://docs.anthropic.com/en/docs/claude-code/slash-commands#built-in-slash-commands) are supported, while [custom slash commands](https://docs.anthropic.com/en/docs/claude-code/slash-commands#custom-slash-commands) are fully supported.
-- [Subagents](https://docs.anthropic.com/en/docs/claude-code/sub-agents) are supported.
-- [Hooks](https://docs.anthropic.com/en/docs/claude-code/hooks-guide) are currently _not_ supported.
+- Slash Commands: [Custom slash commands](https://code.claude.com/docs/en/slash-commands#custom-slash-commands) are fully supported, and have been merged into skills. A subset of [built-in commands](https://code.claude.com/docs/en/slash-commands#built-in-slash-commands) are supported.
+- [Subagents](https://code.claude.com/docs/en/sub-agents) are supported.
+- [Agent teams](https://code.claude.com/docs/en/agent-teams) are currently _not_ supported.
+- [Hooks](https://code.claude.com/docs/en/hooks-guide) are currently _not_ supported.
 
 > Some [agent panel](./agent-panel.md) features are not yet available with Claude Agent: editing past messages, resuming threads from history, and checkpointing.
 

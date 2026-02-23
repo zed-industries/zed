@@ -4595,7 +4595,7 @@ mod tests {
                 [ExcerptRange::new(text::Anchor::MIN..text::Anchor::MAX)],
                 cx,
             );
-            mb.add_inverted_diff(diff.clone(), cx);
+            mb.add_inverted_diff(diff.clone(), rhs_buffer.clone(), cx);
             mb
         });
         let rhs_multibuffer = cx.new(|cx| {
