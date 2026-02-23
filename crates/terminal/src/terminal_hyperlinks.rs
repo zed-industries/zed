@@ -906,6 +906,23 @@ mod tests {
             }
 
             #[test]
+            // <https://github.com/zed-industries/zed/issues/46795>
+            fn issue_46795() {
+                // Box drawing characters are commonly used as UI elements and
+                // should not interfere with path detection; they appear rarely
+                // enough in actual paths that false positives should be minimal
+
+                test_path!("─‹«/👉test/cool.rs»:«4»:«2»›");
+                test_path!("┤‹«/👉test/cool.rs»:«4»:«2»›");
+                test_path!("╿‹«/👉test/cool.rs»:«4»:«2»›");
+
+                test_path!("└──‹«/👉test/cool.rs»:«4»:«2»›");
+                test_path!("├─[‹«/👉test/cool.rs»:«4»:«2»›]");
+                test_path!("─[‹«/👉test/cool.rs»:«4»:«2»›]");
+                test_path!("┬‹«/👉test/cool.rs»:«4»:«2»›┬");
+            }
+
+            #[test]
             #[cfg_attr(
                 not(target_os = "windows"),
                 should_panic(

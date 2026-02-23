@@ -614,6 +614,7 @@ impl Scheduler for TestScheduler {
         });
     }
 
+    #[track_caller]
     fn timer(&self, duration: Duration) -> Timer {
         let (tx, rx) = oneshot::channel();
         let state = &mut *self.state.lock();

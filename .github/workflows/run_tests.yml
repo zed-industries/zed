@@ -26,6 +26,7 @@ jobs:
     - id: filter
       name: filter
       run: |
+        set -euo pipefail
         if [ -z "$GITHUB_BASE_REF" ]; then
           echo "Not in a PR context (i.e., push to main/stable/preview)"
           COMPARE_REV="$(git rev-parse HEAD~1)"
@@ -166,7 +167,7 @@ jobs:
       run: ./script/clippy.ps1
       shell: pwsh
     - name: steps::show_sccache_stats
-      run: sccache --show-stats; exit 0
+      run: if ($env:RUSTC_WRAPPER) { & $env:RUSTC_WRAPPER --show-stats }; exit 0
       shell: pwsh
     timeout-minutes: 60
   clippy_linux:
@@ -252,6 +253,13 @@ jobs:
         New-Item -ItemType Directory -Path "./../.cargo" -Force
         Copy-Item -Path "./.cargo/ci-config.toml" -Destination "./../.cargo/config.toml"
       shell: pwsh
+    - name: steps::setup_node
+      uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+      with:
+        node-version: '20'
+    - name: steps::clear_target_dir_if_large
+      run: ./script/clear-target-dir-if-larger-than.ps1 250
+      shell: pwsh
     - name: steps::setup_sccache
       run: ./script/setup-sccache.ps1
       shell: pwsh
@@ -260,18 +268,11 @@ jobs:
         R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
         R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
         SCCACHE_BUCKET: sccache-zed
-    - name: steps::setup_node
-      uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
-      with:
-        node-version: '20'
-    - name: steps::clear_target_dir_if_large
-      run: ./script/clear-target-dir-if-larger-than.ps1 250
-      shell: pwsh
     - name: steps::cargo_nextest
-      run: cargo nextest run --workspace --no-fail-fast${{ needs.orchestrate.outputs.changed_packages && format(' -E "{0}"', needs.orchestrate.outputs.changed_packages) || '' }}
+      run: cargo nextest run --workspace --no-fail-fast --no-tests=warn${{ needs.orchestrate.outputs.changed_packages && format(' -E "{0}"', needs.orchestrate.outputs.changed_packages) || '' }}
       shell: pwsh
     - name: steps::show_sccache_stats
-      run: sccache --show-stats; exit 0
+      run: if ($env:RUSTC_WRAPPER) { & $env:RUSTC_WRAPPER --show-stats }; exit 0
       shell: pwsh
     - name: steps::cleanup_cargo_config
       if: always()
@@ -304,13 +305,6 @@ jobs:
       run: ./script/install-mold
     - name: steps::download_wasi_sdk
       run: ./script/download-wasi-sdk
-    - name: steps::setup_sccache
-      run: ./script/setup-sccache
-      env:
-        R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
-        R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
-        R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
-        SCCACHE_BUCKET: sccache-zed
     - name: steps::setup_node
       uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
       with:
@@ -319,8 +313,15 @@ jobs:
       uses: taiki-e/install-action@nextest
     - name: steps::clear_target_dir_if_large
       run: ./script/clear-target-dir-if-larger-than 250
+    - name: steps::setup_sccache
+      run: ./script/setup-sccache
+      env:
+        R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+        R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+        R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+        SCCACHE_BUCKET: sccache-zed
     - name: steps::cargo_nextest
-      run: cargo nextest run --workspace --no-fail-fast${{ needs.orchestrate.outputs.changed_packages && format(' -E "{0}"', needs.orchestrate.outputs.changed_packages) || '' }}
+      run: cargo nextest run --workspace --no-fail-fast --no-tests=warn${{ needs.orchestrate.outputs.changed_packages && format(' -E "{0}"', needs.orchestrate.outputs.changed_packages) || '' }}
     - name: steps::show_sccache_stats
       run: sccache --show-stats || true
     - name: steps::cleanup_cargo_config
@@ -355,13 +356,6 @@ jobs:
       with:
         cache: rust
         path: ~/.rustup
-    - name: steps::setup_sccache
-      run: ./script/setup-sccache
-      env:
-        R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
-        R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
-        R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
-        SCCACHE_BUCKET: sccache-zed
     - name: steps::setup_node
       uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
       with:
@@ -370,8 +364,15 @@ jobs:
       uses: taiki-e/install-action@nextest
     - name: steps::clear_target_dir_if_large
       run: ./script/clear-target-dir-if-larger-than 300
+    - name: steps::setup_sccache
+      run: ./script/setup-sccache
+      env:
+        R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+        R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+        R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+        SCCACHE_BUCKET: sccache-zed
     - name: steps::cargo_nextest
-      run: cargo nextest run --workspace --no-fail-fast${{ needs.orchestrate.outputs.changed_packages && format(' -E "{0}"', needs.orchestrate.outputs.changed_packages) || '' }}
+      run: cargo nextest run --workspace --no-fail-fast --no-tests=warn${{ needs.orchestrate.outputs.changed_packages && format(' -E "{0}"', needs.orchestrate.outputs.changed_packages) || '' }}
     - name: steps::show_sccache_stats
       run: sccache --show-stats || true
     - name: steps::cleanup_cargo_config
@@ -605,9 +606,8 @@ jobs:
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       with:
+        clean: false
         fetch-depth: 0
-    - name: run_tests::check_postgres_and_protobuf_migrations::remove_untracked_files
-      run: git clean -df
     - name: run_tests::check_postgres_and_protobuf_migrations::ensure_fresh_merge
       run: |
         if [ -z "$GITHUB_BASE_REF" ];

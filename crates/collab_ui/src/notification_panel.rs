@@ -26,7 +26,7 @@ use workspace::notifications::{
     Notification as WorkspaceNotification, NotificationId, SuppressEvent,
 };
 use workspace::{
-    NotificationSource, Workspace,
+    Workspace,
     dock::{DockPosition, Panel, PanelEvent},
 };
 
@@ -76,6 +76,8 @@ pub struct NotificationPresenter {
 actions!(
     notification_panel,
     [
+        /// Toggles the notification panel.
+        Toggle,
         /// Toggles focus on the notification panel.
         ToggleFocus
     ]
@@ -85,6 +87,11 @@ pub fn init(cx: &mut App) {
     cx.observe_new(|workspace: &mut Workspace, _, _| {
         workspace.register_action(|workspace, _: &ToggleFocus, window, cx| {
             workspace.toggle_panel_focus::<NotificationPanel>(window, cx);
+        });
+        workspace.register_action(|workspace, _: &Toggle, window, cx| {
+            if !workspace.toggle_panel_focus::<NotificationPanel>(window, cx) {
+                workspace.close_panel::<NotificationPanel>(window, cx);
+            }
         });
     })
     .detach();
@@ -473,7 +480,7 @@ impl NotificationPanel {
                 let id = NotificationId::unique::<NotificationToast>();
 
                 workspace.dismiss_notification(&id, cx);
-                workspace.show_notification(id, NotificationSource::Collab, cx, |cx| {
+                workspace.show_notification(id, cx, |cx| {
                     let workspace = cx.entity().downgrade();
                     cx.new(|cx| NotificationToast {
                         actor,

@@ -1526,7 +1526,7 @@ impl Item for TerminalView {
         }
     }
 
-    fn to_item_events(event: &Self::Event, mut f: impl FnMut(ItemEvent)) {
+    fn to_item_events(event: &Self::Event, f: &mut dyn FnMut(ItemEvent)) {
         f(*event)
     }
 }
@@ -1843,7 +1843,7 @@ mod tests {
     use std::path::Path;
     use util::paths::PathStyle;
     use util::rel_path::RelPath;
-    use workspace::AppState;
+    use workspace::{AppState, MultiWorkspace};
 
     // Working directory calculation tests
 
@@ -2020,9 +2020,10 @@ mod tests {
         });
 
         let project = Project::test(params.fs.clone(), [], cx).await;
-        let workspace = cx
-            .add_window(|window, cx| Workspace::test_new(project.clone(), window, cx))
-            .root(cx)
+        let window_handle =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = window_handle
+            .read_with(cx, |mw, _| mw.workspace().clone())
             .unwrap();
 
         (project, workspace)

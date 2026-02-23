@@ -76,6 +76,8 @@ pub struct ExamplePrompt {
     pub input: String,
     pub expected_output: String,
     pub rejected_output: Option<String>, // For DPO
+    #[serde(default)]
+    pub prefill: Option<String>,
     pub provider: PredictionProvider,
 }
 
@@ -170,6 +172,10 @@ pub struct ExampleScore {
     pub wrong_editable_region: Option<bool>,
     #[serde(default)]
     pub has_isolated_whitespace_changes: bool,
+    #[serde(default)]
+    pub inserted_tokens: usize,
+    #[serde(default)]
+    pub deleted_tokens: usize,
 }
 
 impl Example {

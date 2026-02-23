@@ -63,8 +63,8 @@ function Install-Sccache {
 
 function Configure-Sccache {
     if (-not $env:R2_ACCOUNT_ID) {
-        Write-Host "::error::R2_ACCOUNT_ID not set, cannot configure sccache"
-        exit 1
+        Write-Host "R2_ACCOUNT_ID not set, skipping sccache configuration"
+        return
     }
 
     # Verify sccache is available before configuring

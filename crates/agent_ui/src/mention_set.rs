@@ -36,10 +36,7 @@ use std::{
 use text::OffsetRangeExt;
 use ui::{Disclosure, Toggleable, prelude::*};
 use util::{ResultExt, debug_panic, rel_path::RelPath};
-use workspace::{
-    Workspace,
-    notifications::{NotificationSource, NotifyResultExt as _},
-};
+use workspace::{Workspace, notifications::NotifyResultExt as _};
 
 use crate::ui::MentionCrease;
 
@@ -152,7 +149,8 @@ impl MentionSet {
             } => self.confirm_mention_for_diagnostics(include_errors, include_warnings, cx),
             MentionUri::PastedImage
             | MentionUri::Selection { .. }
-            | MentionUri::TerminalSelection { .. } => {
+            | MentionUri::TerminalSelection { .. }
+            | MentionUri::GitDiff { .. } => {
                 Task::ready(Err(anyhow!("Unsupported mention URI type for paste")))
             }
         }
@@ -293,6 +291,10 @@ impl MentionSet {
                 debug_panic!("unexpected terminal URI");
                 Task::ready(Err(anyhow!("unexpected terminal URI")))
             }
+            MentionUri::GitDiff { .. } => {
+                debug_panic!("unexpected git diff URI");
+                Task::ready(Err(anyhow!("unexpected git diff URI")))
+            }
         };
         let task = cx
             .spawn(async move |_, _| task.await.map_err(|e| e.to_string()))
@@ -300,8 +302,9 @@ impl MentionSet {
         self.mentions.insert(crease_id, (mention_uri, task.clone()));
 
         // Notify the user if we failed to load the mentioned context
-        cx.spawn_in(window, async move |this, cx| {
-            let result = task.await.notify_async_err(NotificationSource::Agent, cx);
+        let workspace = workspace.downgrade();
+        cx.spawn(async move |this, mut cx| {
+            let result = task.await.notify_workspace_async_err(workspace, &mut cx);
             drop(tx);
             if result.is_none() {
                 this.update(cx, |this, cx| {
@@ -647,6 +650,7 @@ pub(crate) async fn insert_images_as_context(
     images: Vec<gpui::Image>,
     editor: Entity<Editor>,
     mention_set: Entity<MentionSet>,
+    workspace: WeakEntity<Workspace>,
     cx: &mut gpui::AsyncWindowContext,
 ) {
     if images.is_empty() {
@@ -666,9 +670,9 @@ pub(crate) async fn insert_images_as_context(
                 let text_anchor = cursor_anchor.bias_left(&buffer_snapshot);
                 let multibuffer_anchor = snapshot
                     .buffer_snapshot()
-                    .anchor_in_excerpt(*excerpt_id, text_anchor);
+                    .anchor_in_excerpt(excerpt_id, text_anchor);
                 editor.insert(&format!("{replacement_text} "), window, cx);
-                (*excerpt_id, text_anchor, multibuffer_anchor)
+                (excerpt_id, text_anchor, multibuffer_anchor)
             })
             .ok()
         else {
@@ -723,7 +727,7 @@ pub(crate) async fn insert_images_as_context(
 
         if task
             .await
-            .notify_async_err(NotificationSource::Agent, cx)
+            .notify_workspace_async_err(workspace.clone(), cx)
             .is_none()
         {
             editor.update(cx, |editor, cx| {
@@ -739,11 +743,12 @@ pub(crate) async fn insert_images_as_context(
 pub(crate) fn paste_images_as_context(
     editor: Entity<Editor>,
     mention_set: Entity<MentionSet>,
+    workspace: WeakEntity<Workspace>,
     window: &mut Window,
     cx: &mut App,
 ) -> Option<Task<()>> {
     let clipboard = cx.read_from_clipboard()?;
-    Some(window.spawn(cx, async move |cx| {
+    Some(window.spawn(cx, async move |mut cx| {
         use itertools::Itertools;
         let (mut images, paths) = clipboard
             .into_entries()
@@ -790,7 +795,7 @@ pub(crate) fn paste_images_as_context(
         })
         .ok();
 
-        insert_images_as_context(images, editor, mention_set, cx).await;
+        insert_images_as_context(images, editor, mention_set, workspace, &mut cx).await;
     }))
 }
 

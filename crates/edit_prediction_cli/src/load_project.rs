@@ -190,20 +190,6 @@ async fn setup_project(
 
     let worktree_path = setup_worktree(example, step_progress).await?;
 
-    if let Some(project) = app_state.project_cache.get(&example.spec.repository_url) {
-        let buffer_store = project.read_with(cx, |project, _| project.buffer_store().clone());
-        let buffers = buffer_store.read_with(cx, |buffer_store, _| {
-            buffer_store.buffers().collect::<Vec<_>>()
-        });
-        for buffer in buffers {
-            buffer.update(cx, |buffer, cx| buffer.reload(cx)).await.ok();
-        }
-        ep_store.update(cx, |ep_store, _| {
-            ep_store.clear_history_for_project(&project);
-        });
-        return Ok(project);
-    }
-
     let project = cx.update(|cx| {
         Project::local(
             app_state.client.clone(),
@@ -226,10 +212,6 @@ async fn setup_project(
             project.create_worktree(&worktree_path, true, cx)
         })
         .await?;
-
-    app_state
-        .project_cache
-        .insert(example.spec.repository_url.clone(), project.clone());
 
     let buffer_store = project.read_with(cx, |project, _| project.buffer_store().clone());
     cx.subscribe(&buffer_store, {

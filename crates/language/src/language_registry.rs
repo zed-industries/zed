@@ -87,6 +87,18 @@ impl Borrow<str> for LanguageName {
     }
 }
 
+impl PartialEq<str> for LanguageName {
+    fn eq(&self, other: &str) -> bool {
+        self.0.as_ref() == other
+    }
+}
+
+impl PartialEq<&str> for LanguageName {
+    fn eq(&self, other: &&str) -> bool {
+        self.0.as_ref() == *other
+    }
+}
+
 impl std::fmt::Display for LanguageName {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         write!(f, "{}", self.0)
@@ -412,6 +424,17 @@ impl LanguageRegistry {
     pub fn is_lsp_adapter_available(&self, name: &LanguageServerName) -> bool {
         let state = self.state.read();
         state.available_lsp_adapters.contains_key(name)
+    }
+
+    /// Returns the names of all available LSP adapters (registered via `register_available_lsp_adapter`).
+    /// These are adapters that are not bound to a specific language but can be enabled via settings.
+    pub fn available_lsp_adapter_names(&self) -> Vec<LanguageServerName> {
+        self.state
+            .read()
+            .available_lsp_adapters
+            .keys()
+            .cloned()
+            .collect()
     }
 
     pub fn register_lsp_adapter(&self, language_name: LanguageName, adapter: Arc<dyn LspAdapter>) {

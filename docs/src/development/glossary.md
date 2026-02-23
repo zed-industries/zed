@@ -1,8 +1,13 @@
+---
+title: Zed Development: Glossary
+description: "Guide to zed development: glossary for Zed development."
+---
+
 # Zed Development: Glossary
 
-These are some terms and structures frequently used throughout the zed codebase.
+This page defines terms and structures used throughout the Zed codebase.
 
-This is a best effort list and a work in progress.
+It is a best-effort list and a work in progress.
 
 <!--
 TBD: Glossary Improvement
@@ -15,33 +20,32 @@ Questions:
 
 ## Naming conventions
 
-These are generally true for the whole codebase. Note that Name can be anything
-here. An example would be `AnyElement` and `LspStore`.
+These are common naming patterns across the codebase. `Name` is a placeholder
+for any type name, such as `AnyElement` or `LspStore`.
 
-- `AnyName`: A type erased version of _name_. Think `Box<dyn NameTrait>`.
+- `AnyName`: A type-erased version of _name_. Think `Box<dyn NameTrait>`.
 - `NameStore`: A wrapper type which abstracts over whether operations are running locally or on a remote.
 
 ## GPUI
 
 ### State management
 
-- `App`: A singleton which holds the full application state including all the entities. Crucially: `App` is not `Send`, which means that `App` only exists on the thread that created it (which is the main/UI thread, usually). Thus, if you see a `&mut App`, know that you're on UI thread.
-- `Context`: A wrapper around the `App` struct with specialized behavior for a specific `Entity`. Think of it as `(&mut App, Entity<V>)`. The specialized behavior is surfaced in the API surface of `Context`. E.g., `App::spawn` takes an `AsyncFnOnce(AsyncApp) -> Ret`, whereas `Context::spawn` takes an `AsyncFnOnce(WeakEntity<V>, AsyncApp) -> Ret`.
-- `AsyncApp`: An owned version of `App` for use in async contexts. This type is _still_ not `Send` (so `AsyncApp` = you're on the main thread) and any use of it may be fallible (to account for the fact that the `App` might've been terminated by the time this closure runs).
-  The convenience of `AsyncApp` lies in the fact that you usually interface with `App` via `&mut App`, which would be inconvenient to use with async closures; `AsyncApp` is owned, so you can use it in async closures with no sweat.
-- `AppContext` A trait which abstracts over `App`, `AsyncApp` & `Context` and their Test versions.
-- `Task`: A future running or scheduled to run on the background or foreground
-  executor. In contradiction to regular Futures Tasks do not need `.await` to start running. You do need to await them to get the result of the task.
+- `App`: A singleton that holds full application state, including all entities. `App` is not `Send`, so it exists only on the thread that created it (usually the main/UI thread). If you see `&mut App`, you are on the UI thread.
+- `Context`: A wrapper around `App` with specialized behavior for a specific `Entity`. You can think of it as `(&mut App, Entity<V>)`. For example, `App::spawn` takes `AsyncFnOnce(AsyncApp) -> Ret`, while `Context::spawn` takes `AsyncFnOnce(WeakEntity<V>, AsyncApp) -> Ret`.
+- `AsyncApp`: An owned version of `App` for async contexts. It is still not `Send`, so it still runs on the main thread, and operations may fail if the `App` has already terminated.
+  `AsyncApp` exists because `App` is usually accessed as `&mut App`, which is awkward to hold across async boundaries.
+- `AppContext`: A trait that abstracts over `App`, `AsyncApp`, `Context`, and their test variants.
+- `Task`: A future running (or scheduled to run) on a background or foreground executor. Unlike regular futures, tasks do not need `.await` to start. You still need to await them to read their result.
 - `Executor`: Used to spawn tasks that run either on the foreground or background thread. Try to run the tasks on the background thread.
   - `BackgroundExecutor`: A threadpool running `Task`s.
   - `ForegroundExecutor`: The main thread running `Task`s.
 - `Entity`: A strong, well-typed reference to a struct which is managed by gpui. Effectively a pointer/map key into the `App::EntityMap`.
 - `WeakEntity`: A runtime checked reference to an `Entity` which may no longer exist. Similar to [`std::rc::Weak`](https://doc.rust-lang.org/std/rc/struct.Weak.html).
 - `Global`: A singleton type which has only one value, that is stored in the `App`.
-- `Event`: A datatype which can be send by an `Entity` to subscribers
+- `Event`: A data type that can be sent by an `Entity` to subscribers.
 - `Action`: An event that represents a user's keyboard input that can be handled by listeners
   Example: `file finder: toggle`
-- `Observing`: reacting entities notifying they've changed
+- `Observing`: Reacting to notifications that entities have changed.
 - `Subscription`: An event handler that is used to react to the changes of state in the application.
   1. Emitted event handling
   2. Observing `{new,release,on notify}` of an entity
@@ -71,14 +75,14 @@ h_flex()
 
 ## Zed UI
 
-- `Window`: A struct in zed representing a zed window in your desktop environment (see image below). There can be multiple if you have multiple zed instances open. Mostly passed around for rendering.
+- `Window`: A struct representing a Zed window in your desktop environment (see image below). You can have multiple windows open. This is mostly passed around for rendering.
 - `Modal`: A UI element that floats on top of the rest of the UI
 - `Picker`: A struct representing a list of items floating on top of the UI (Modal). You can select an item and confirm. What happens on select or confirm is determined by the picker's delegate. (The 'Modal' in the image below is a picker.)
 - `PickerDelegate`: A trait used to specialize behavior for a `Picker`. The `Picker` stores the `PickerDelegate` in the field delegate.
 - `Center`: The middle of the zed window, the center is split into multiple `Pane`s. In the codebase this is a field on the `Workspace` struct. (see image below).
 - `Pane`: An area in the `Center` where we can place items, such as an editor, multi-buffer or terminal (see image below).
-- `Panel`: An `Entity` implementing the `Panel` trait. These can be placed in a `Dock`. In the image below we see the: `ProjectPanel` in the left dock, the `DebugPanel` in the bottom dock, and `AgentPanel` in the right dock. Note `Editor` does not implement `Panel` and hence is not a `Panel`.
-- `Dock`: A UI element similar to a `Pane` which can be opened and hidden. There can be up to 3 docks open at a time, left right and below the center. A dock contains one or more `Panel`s not `Pane`s. (see image).
+- `Panel`: An `Entity` implementing the `Panel` trait. Panels can be placed in a `Dock`. In the image below: `ProjectPanel` is in the left dock, `DebugPanel` is in the bottom dock, and `AgentPanel` is in the right dock. `Editor` does not implement `Panel`.
+- `Dock`: A UI element similar to a `Pane` that can be opened and hidden. Up to three docks can be open at once: left, right, and bottom. A dock contains one or more `Panel`s, not `Pane`s.
 
 <img width="1921" height="1080" alt="Screenshot for the Pane and Dock features" src="https://github.com/user-attachments/assets/2cb1170e-2850-450d-89bb-73622b5d07b2" />
 
@@ -93,7 +97,7 @@ h_flex()
 
 ## Editor
 
-- `Editor`: _The_ text editor, nearly everything in zed is an `Editor`, even single line inputs. Each pane in the image above contains one or more `Editor` instances.
+- `Editor`: The text editor type. Most editable surfaces in Zed are an `Editor`, including single-line inputs. Each pane in the image above contains one or more `Editor` instances.
 - `Workspace`: The root of the window
 - `Entry`: A file, dir, pending dir or unloaded dir.
 - `Buffer`: The in-memory representation of a 'file' together with relevant data such as syntax trees, git status and diagnostics.
@@ -108,7 +112,7 @@ h_flex()
 ## Debugger
 
 - `DapStore`: Is an entity that manages debugger sessions
-- `debugger::Session`: Is an entity that manages the lifecycle of a debug session and communication with DAPS
+- `debugger::Session`: An entity that manages the lifecycle of a debug session and communication with DAPs.
 - `BreakpointStore`: Is an entity that manages breakpoints states in local and remote instances of Zed
 - `DebugSession`: Manages a debug session's UI and running state
 - `RunningState`: Directly manages all the views of a debug session

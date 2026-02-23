@@ -26,7 +26,7 @@ use std::{
     sync::Arc,
     time::{Duration, SystemTime},
 };
-use util::command::new_smol_command;
+use util::command::new_command;
 use workspace::Workspace;
 
 const SHOULD_SHOW_UPDATE_NOTIFICATION_KEY: &str = "auto-updater-should-show-updated-notification";
@@ -127,7 +127,7 @@ impl Drop for MacOsUnmounter<'_> {
         let mount_path = mem::take(&mut self.mount_path);
         self.background_executor
             .spawn(async move {
-                let unmount_output = new_smol_command("hdiutil")
+                let unmount_output = new_command("hdiutil")
                     .args(["detach", "-force"])
                     .arg(&mount_path)
                     .output()
@@ -902,7 +902,7 @@ async fn install_release_linux(
         .await
         .context("failed to create directory into which to extract update")?;
 
-    let output = new_smol_command("tar")
+    let output = new_command("tar")
         .arg("-xzf")
         .arg(&downloaded_tar_gz)
         .arg("-C")
@@ -937,7 +937,7 @@ async fn install_release_linux(
         to = PathBuf::from(prefix);
     }
 
-    let output = new_smol_command("rsync")
+    let output = new_command("rsync")
         .args(["-av", "--delete"])
         .arg(&from)
         .arg(&to)
@@ -969,7 +969,7 @@ async fn install_release_macos(
     let mut mounted_app_path: OsString = mount_path.join(running_app_filename).into();
 
     mounted_app_path.push("/");
-    let output = new_smol_command("hdiutil")
+    let output = new_command("hdiutil")
         .args(["attach", "-nobrowse"])
         .arg(&downloaded_dmg)
         .arg("-mountroot")
@@ -989,7 +989,7 @@ async fn install_release_macos(
         background_executor: cx.background_executor(),
     };
 
-    let output = new_smol_command("rsync")
+    let output = new_command("rsync")
         .args(["-av", "--delete"])
         .arg(&mounted_app_path)
         .arg(&running_app_path)
@@ -1020,7 +1020,7 @@ async fn cleanup_windows() -> Result<()> {
 }
 
 async fn install_release_windows(downloaded_installer: PathBuf) -> Result<Option<PathBuf>> {
-    let output = new_smol_command(downloaded_installer)
+    let output = new_command(downloaded_installer)
         .arg("/verysilent")
         .arg("/update=true")
         .arg("!desktopicon")
@@ -1058,7 +1058,7 @@ pub async fn finalize_auto_update_on_quit() {
             .parent()
             .map(|p| p.join("tools").join("auto_update_helper.exe"))
     {
-        let mut command = util::command::new_smol_command(helper);
+        let mut command = util::command::new_command(helper);
         command.arg("--launch");
         command.arg("false");
         if let Ok(mut cmd) = command.spawn() {

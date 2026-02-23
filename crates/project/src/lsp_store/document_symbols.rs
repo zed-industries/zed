@@ -1,3 +1,4 @@
+use std::ops::Range;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -11,7 +12,7 @@ use itertools::Itertools;
 use language::{Buffer, BufferSnapshot, OutlineItem};
 use lsp::LanguageServerId;
 use settings::Settings as _;
-use text::{Anchor, Bias};
+use text::{Anchor, Bias, PointUtf16};
 use util::ResultExt;
 
 use crate::DocumentSymbol;
@@ -74,6 +75,7 @@ impl LspStore {
                                 .symbols
                                 .values()
                                 .flatten()
+                                .unique()
                                 .cloned()
                                 .sorted_by(|a, b| a.range.start.cmp(&b.range.start, &snapshot))
                                 .collect(),
@@ -155,6 +157,7 @@ impl LspStore {
                             .symbols
                             .values()
                             .flatten()
+                            .unique()
                             .cloned()
                             .sorted_by(|a, b| a.range.start.cmp(&b.range.start, &snapshot))
                             .collect()
@@ -246,6 +249,8 @@ fn flatten_document_symbols(
     output: &mut Vec<OutlineItem<Anchor>>,
 ) {
     for symbol in symbols {
+        let name = super::collapse_newlines(&symbol.name, " ");
+
         let start = snapshot.clip_point_utf16(symbol.range.start, Bias::Right);
         let end = snapshot.clip_point_utf16(symbol.range.end, Bias::Left);
         let selection_start = snapshot.clip_point_utf16(symbol.selection_range.start, Bias::Right);
@@ -255,13 +260,17 @@ fn flatten_document_symbols(
         let selection_range =
             snapshot.anchor_after(selection_start)..snapshot.anchor_before(selection_end);
 
-        let text = symbol.name.clone();
-        let name_ranges = vec![0..text.len()];
+        let (text, name_ranges, source_range_for_text) =
+            enriched_symbol_text(&name, start, selection_start, selection_end, snapshot)
+                .unwrap_or_else(|| {
+                    let name_len = name.len();
+                    (name.clone(), vec![0..name_len], selection_range.clone())
+                });
 
         output.push(OutlineItem {
             depth,
             range,
-            source_range_for_text: selection_range,
+            source_range_for_text,
             text,
             highlight_ranges: Vec::new(),
             name_ranges,
@@ -273,6 +282,45 @@ fn flatten_document_symbols(
             flatten_document_symbols(&symbol.children, snapshot, depth + 1, output);
         }
     }
+}
+
+/// Tries to build an enriched label by including buffer text from the symbol
+/// range start to the selection range end (e.g., "struct Foo" instead of just "Foo").
+/// Only uses same-line prefix to avoid pulling in attributes/decorators.
+fn enriched_symbol_text(
+    name: &str,
+    range_start: PointUtf16,
+    selection_start: PointUtf16,
+    selection_end: PointUtf16,
+    snapshot: &BufferSnapshot,
+) -> Option<(String, Vec<Range<usize>>, Range<Anchor>)> {
+    let text_start = if range_start.row == selection_start.row {
+        range_start
+    } else {
+        PointUtf16::new(selection_start.row, 0)
+    };
+
+    let start_offset = snapshot.point_utf16_to_offset(text_start);
+    let end_offset = snapshot.point_utf16_to_offset(selection_end);
+    if start_offset >= end_offset {
+        return None;
+    }
+
+    let raw: String = snapshot.text_for_range(start_offset..end_offset).collect();
+    let trimmed = raw.trim_start();
+    if trimmed.len() <= name.len() || !trimmed.ends_with(name) {
+        return None;
+    }
+
+    let name_start = trimmed.len() - name.len();
+    let leading_ws = raw.len() - trimmed.len();
+    let adjusted_start = start_offset + leading_ws;
+
+    Some((
+        trimmed.to_string(),
+        vec![name_start..trimmed.len()],
+        snapshot.anchor_after(adjusted_start)..snapshot.anchor_before(end_offset),
+    ))
 }
 
 #[cfg(test)]
@@ -372,8 +420,8 @@ mod tests {
         assert_eq!(items.len(), 5);
 
         assert_eq!(items[0].depth, 0);
-        assert_eq!(items[0].text, "Foo");
-        assert_eq!(items[0].name_ranges, vec![0..3]);
+        assert_eq!(items[0].text, "struct Foo");
+        assert_eq!(items[0].name_ranges, vec![7..10]);
 
         assert_eq!(items[1].depth, 1);
         assert_eq!(items[1].text, "bar");
@@ -384,12 +432,12 @@ mod tests {
         assert_eq!(items[2].name_ranges, vec![0..3]);
 
         assert_eq!(items[3].depth, 0);
-        assert_eq!(items[3].text, "Foo");
-        assert_eq!(items[3].name_ranges, vec![0..3]);
+        assert_eq!(items[3].text, "impl Foo");
+        assert_eq!(items[3].name_ranges, vec![5..8]);
 
         assert_eq!(items[4].depth, 1);
-        assert_eq!(items[4].text, "new");
-        assert_eq!(items[4].name_ranges, vec![0..3]);
+        assert_eq!(items[4].text, "fn new");
+        assert_eq!(items[4].name_ranges, vec![3..6]);
     }
 
     #[gpui::test]
@@ -401,5 +449,51 @@ mod tests {
         let mut items = Vec::new();
         flatten_document_symbols(&symbols, &snapshot, 0, &mut items);
         assert!(items.is_empty());
+    }
+
+    #[gpui::test]
+    async fn test_newlines_collapsed_in_name(cx: &mut TestAppContext) {
+        let buffer = cx.new(|cx| Buffer::local("x = 1\ny = 2\n", cx));
+
+        let symbols = vec![
+            make_symbol(
+                "line1\nline2",
+                lsp::SymbolKind::VARIABLE,
+                (0, 0)..(0, 5),
+                (0, 0)..(0, 1),
+                vec![],
+            ),
+            make_symbol(
+                "  a  \n  b  ",
+                lsp::SymbolKind::VARIABLE,
+                (1, 0)..(1, 5),
+                (1, 0)..(1, 1),
+                vec![],
+            ),
+            make_symbol(
+                "a\r\nb",
+                lsp::SymbolKind::VARIABLE,
+                (0, 0)..(1, 5),
+                (0, 0)..(0, 1),
+                vec![],
+            ),
+            make_symbol(
+                "a\n\nb",
+                lsp::SymbolKind::VARIABLE,
+                (0, 0)..(1, 5),
+                (0, 0)..(0, 1),
+                vec![],
+            ),
+        ];
+
+        let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot());
+        let mut items = Vec::new();
+        flatten_document_symbols(&symbols, &snapshot, 0, &mut items);
+
+        assert_eq!(items.len(), 4);
+        assert_eq!(items[0].text, "line1 line2");
+        assert_eq!(items[1].text, "a b");
+        assert_eq!(items[2].text, "a b");
+        assert_eq!(items[3].text, "a b");
     }
 }

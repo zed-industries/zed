@@ -111,7 +111,7 @@ impl LspInstaller for GoLspAdapter {
         delegate: &dyn LspAdapterDelegate,
     ) -> Result<LanguageServerBinary> {
         let go = delegate.which("go".as_ref()).await.unwrap_or("go".into());
-        let go_version_output = util::command::new_smol_command(&go)
+        let go_version_output = util::command::new_command(&go)
             .args(["version"])
             .output()
             .await
@@ -140,7 +140,7 @@ impl LspInstaller for GoLspAdapter {
 
         let gobin_dir = container_dir.join("gobin");
         fs::create_dir_all(&gobin_dir).await?;
-        let install_output = util::command::new_smol_command(go)
+        let install_output = util::command::new_command(go)
             .env("GO111MODULE", "on")
             .env("GOBIN", &gobin_dir)
             .args(["install", "golang.org/x/tools/gopls@latest"])
@@ -159,7 +159,7 @@ impl LspInstaller for GoLspAdapter {
         }
 
         let installed_binary_path = gobin_dir.join(BINARY);
-        let version_output = util::command::new_smol_command(&installed_binary_path)
+        let version_output = util::command::new_command(&installed_binary_path)
             .arg("version")
             .output()
             .await

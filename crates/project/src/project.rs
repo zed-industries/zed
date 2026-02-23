@@ -488,11 +488,11 @@ pub struct InlayHint {
     pub resolve_state: ResolveState,
 }
 
-/// The user's intent behind a given completion confirmation
+/// The user's intent behind a given completion confirmation.
 #[derive(PartialEq, Eq, Hash, Debug, Clone, Copy)]
 pub enum CompletionIntent {
-    /// The user intends to 'commit' this result, if possible
-    /// completion confirmations should run side effects.
+    /// The user intends to 'commit' this result, if possible.
+    /// Completion confirmations should run side effects.
     ///
     /// For LSP completions, will respect the setting `completions.lsp_insert_mode`.
     Complete,
@@ -500,9 +500,9 @@ pub enum CompletionIntent {
     CompleteWithInsert,
     /// Similar to [Self::Complete], but behaves like `lsp_insert_mode` is set to `replace`.
     CompleteWithReplace,
-    /// The user intends to continue 'composing' this completion
-    /// completion confirmations should not run side effects and
-    /// let the user continue composing their action
+    /// The user intends to continue 'composing' this completion.
+    /// Completion confirmations should not run side effects and
+    /// let the user continue composing their action.
     Compose,
 }
 
@@ -540,7 +540,7 @@ pub struct Completion {
     /// Whether to adjust indentation (the default) or not.
     pub insert_text_mode: Option<InsertTextMode>,
     /// An optional callback to invoke when this completion is confirmed.
-    /// Returns, whether new completions should be retriggered after the current one.
+    /// Returns whether new completions should be retriggered after the current one.
     /// If `true` is returned, the editor will show a new completion menu after this completion is confirmed.
     /// if no confirmation is provided or `false` is returned, the completion will be committed.
     pub confirm: Option<Arc<dyn Send + Sync + Fn(CompletionIntent, &mut Window, &mut App) -> bool>>,
@@ -668,7 +668,7 @@ impl std::fmt::Debug for Completion {
 pub struct CompletionResponse {
     pub completions: Vec<Completion>,
     pub display_options: CompletionDisplayOptions,
-    /// When false, indicates that the list is complete and so does not need to be re-queried if it
+    /// When false, indicates that the list is complete and does not need to be re-queried if it
     /// can be filtered instead.
     pub is_incomplete: bool,
 }
@@ -688,7 +688,7 @@ impl CompletionDisplayOptions {
 #[derive(Clone, Debug, Default)]
 pub(crate) struct CoreCompletionResponse {
     pub completions: Vec<CoreCompletion>,
-    /// When false, indicates that the list is complete and so does not need to be re-queried if it
+    /// When false, indicates that the list is complete and does not need to be re-queried if it
     /// can be filtered instead.
     pub is_incomplete: bool,
 }
@@ -1076,8 +1076,26 @@ pub struct DisableAiSettings {
 impl settings::Settings for DisableAiSettings {
     fn from_settings(content: &settings::SettingsContent) -> Self {
         Self {
-            disable_ai: content.disable_ai.unwrap().0,
+            disable_ai: content.project.disable_ai.unwrap().0,
         }
+    }
+}
+
+impl DisableAiSettings {
+    /// Returns whether AI is disabled for the given file.
+    ///
+    /// This checks the project-level settings for the file's worktree,
+    /// allowing `disable_ai` to be configured per-project in `.zed/settings.json`.
+    pub fn is_ai_disabled_for_buffer(buffer: Option<&Entity<Buffer>>, cx: &App) -> bool {
+        Self::is_ai_disabled_for_file(buffer.and_then(|buffer| buffer.read(cx).file()), cx)
+    }
+
+    pub fn is_ai_disabled_for_file(file: Option<&Arc<dyn language::File>>, cx: &App) -> bool {
+        let location = file.map(|f| settings::SettingsLocation {
+            worktree_id: f.worktree_id(cx),
+            path: f.path().as_ref(),
+        });
+        Self::get(location, cx).disable_ai
     }
 }
 

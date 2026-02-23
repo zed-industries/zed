@@ -52,9 +52,7 @@ use terminal_view::{TerminalView, terminal_panel::TerminalPanel};
 use text::{OffsetRangeExt, ToPoint as _};
 use ui::prelude::*;
 use util::{RangeExt, ResultExt, maybe};
-use workspace::{
-    ItemHandle, NotificationSource, Toast, Workspace, dock::Panel, notifications::NotificationId,
-};
+use workspace::{ItemHandle, Toast, Workspace, dock::Panel, notifications::NotificationId};
 use zed_actions::agent::OpenSettings;
 
 pub fn init(fs: Arc<dyn Fs>, prompt_builder: Arc<PromptBuilder>, cx: &mut App) {
@@ -134,9 +132,9 @@ impl InlineAssistant {
             })
             .detach();
 
-        let workspace = workspace.downgrade();
+        let workspace_weak = workspace.downgrade();
         cx.observe_global::<SettingsStore>(move |cx| {
-            let Some(workspace) = workspace.upgrade() else {
+            let Some(workspace) = workspace_weak.upgrade() else {
                 return;
             };
             let Some(terminal_panel) = workspace.read(cx).panel::<TerminalPanel>(cx) else {
@@ -146,6 +144,19 @@ impl InlineAssistant {
             terminal_panel.update(cx, |terminal_panel, cx| {
                 terminal_panel.set_assistant_enabled(enabled, cx)
             });
+        })
+        .detach();
+
+        cx.observe(workspace, |workspace, cx| {
+            let Some(terminal_panel) = workspace.read(cx).panel::<TerminalPanel>(cx) else {
+                return;
+            };
+            let enabled = AgentSettings::get_global(cx).enabled(cx);
+            if terminal_panel.read(cx).assistant_enabled() != enabled {
+                terminal_panel.update(cx, |terminal_panel, cx| {
+                    terminal_panel.set_assistant_enabled(enabled, cx)
+                });
+            }
         })
         .detach();
     }
@@ -1837,11 +1848,7 @@ impl InlineAssist {
                                         assist_id.0,
                                     );
 
-                                    workspace.show_toast(
-                                        Toast::new(id, error),
-                                        NotificationSource::Agent,
-                                        cx,
-                                    );
+                                    workspace.show_toast(Toast::new(id, error), cx);
                                 })
                             } else {
                                 #[cfg(any(test, feature = "test-support"))]

@@ -13,10 +13,7 @@ use picker::{Picker, PickerDelegate};
 use std::sync::Arc;
 use ui::{HighlightedLabel, ListItem, ListItemSpacing, Toggleable, v_flex};
 use util::ResultExt;
-use workspace::{
-    ModalView, Toast, Workspace,
-    notifications::{NotificationId, NotificationSource},
-};
+use workspace::{ModalView, Toast, Workspace, notifications::NotificationId};
 
 actions!(
     encoding_selector,
@@ -65,7 +62,6 @@ impl EncodingSelector {
                     NotificationId::unique::<EncodingSelector>(),
                     "Save file to change encoding",
                 ),
-                NotificationSource::Editor,
                 cx,
             );
             return Some(());
@@ -76,7 +72,6 @@ impl EncodingSelector {
                     NotificationId::unique::<EncodingSelector>(),
                     "Cannot change encoding during collaboration",
                 ),
-                NotificationSource::Collab,
                 cx,
             );
             return Some(());
@@ -87,7 +82,6 @@ impl EncodingSelector {
                     NotificationId::unique::<EncodingSelector>(),
                     "Cannot change encoding of remote server file",
                 ),
-                NotificationSource::Remote,
                 cx,
             );
             return Some(());

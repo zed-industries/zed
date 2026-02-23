@@ -1295,6 +1295,7 @@ mod tests {
     use serde_json::json;
     use settings::SettingsStore;
     use util::path;
+    use workspace::MultiWorkspace;
 
     fn init_test(cx: &mut TestAppContext) {
         cx.update(|cx| {
@@ -1347,13 +1348,17 @@ mod tests {
         let fs = FakeFs::new(cx.executor());
         let project = Project::test(fs, [], cx).await;
 
-        let workspace = cx.add_window(|window, cx| Workspace::test_new(project, window, cx));
+        let window_handle =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let workspace = window_handle
+            .read_with(cx, |mw, _| mw.workspace().clone())
+            .unwrap();
 
-        let branch_list = workspace
-            .update(cx, |workspace, window, cx| {
+        let branch_list = window_handle
+            .update(cx, |_multi_workspace, window, cx| {
                 cx.new(|cx| {
                     let mut delegate = BranchListDelegate::new(
-                        workspace.weak_handle(),
+                        workspace.downgrade(),
                         repository,
                         BranchListStyle::Modal,
                         cx,
@@ -1380,7 +1385,7 @@ mod tests {
             })
             .unwrap();
 
-        let cx = VisualTestContext::from_window(*workspace, cx);
+        let cx = VisualTestContext::from_window(window_handle.into(), cx);
 
         (branch_list, cx)
     }

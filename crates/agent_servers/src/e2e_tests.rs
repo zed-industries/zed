@@ -416,7 +416,7 @@ pub async fn init_test(cx: &mut TestAppContext) -> Arc<FakeFs> {
         project::agent_server_store::AllAgentServersSettings::override_global(
             project::agent_server_store::AllAgentServersSettings {
                 claude: Some(BuiltinAgentServerSettings {
-                    path: Some("claude-code-acp".into()),
+                    path: Some("claude-agent-acp".into()),
                     ..Default::default()
                 }),
                 gemini: Some(crate::gemini::tests::local_command().into()),

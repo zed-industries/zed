@@ -594,7 +594,7 @@ mod tests {
     use picker::PickerDelegate;
     use project::{FakeFs, Project};
     use settings::SettingsStore;
-    use workspace::Workspace;
+    use workspace::MultiWorkspace;
 
     fn init_test(cx: &mut TestAppContext) {
         cx.update(|cx| {
@@ -626,25 +626,27 @@ mod tests {
 
         let fs = FakeFs::new(cx.executor());
         let project = Project::test(fs, [], cx).await;
-        let workspace = cx.add_window(|window, cx| Workspace::test_new(project, window, cx));
-        let cx = &mut VisualTestContext::from_window(*workspace, cx);
+        let multi_workspace =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let cx = &mut VisualTestContext::from_window(*multi_workspace, cx);
+        let workspace = multi_workspace
+            .update(cx, |workspace, _, _| workspace.workspace().clone())
+            .unwrap();
         let stash_entries = vec![
             stash_entry(0, "stash #0", Some("main")),
             stash_entry(1, "stash #1", Some("develop")),
         ];
 
-        let stash_list = workspace
-            .update(cx, |workspace, window, cx| {
-                let weak_workspace = workspace.weak_handle();
+        let stash_list = workspace.update_in(cx, |workspace, window, cx| {
+            let weak_workspace = workspace.weak_handle();
 
-                workspace.toggle_modal(window, cx, move |window, cx| {
-                    StashList::new(None, weak_workspace, rems(34.), window, cx)
-                });
+            workspace.toggle_modal(window, cx, move |window, cx| {
+                StashList::new(None, weak_workspace, rems(34.), window, cx)
+            });
 
-                assert!(workspace.active_modal::<StashList>(cx).is_some());
-                workspace.active_modal::<StashList>(cx).unwrap()
-            })
-            .unwrap();
+            assert!(workspace.active_modal::<StashList>(cx).is_some());
+            workspace.active_modal::<StashList>(cx).unwrap()
+        });
 
         cx.run_until_parked();
         stash_list.update(cx, |stash_list, cx| {
@@ -667,10 +669,8 @@ mod tests {
             stash_list.handle_show_stash(&Default::default(), window, cx);
         });
 
-        workspace
-            .update(cx, |workspace, _, cx| {
-                assert!(workspace.active_modal::<StashList>(cx).is_none());
-            })
-            .unwrap();
+        workspace.update(cx, |workspace, cx| {
+            assert!(workspace.active_modal::<StashList>(cx).is_none());
+        });
     }
 }

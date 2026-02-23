@@ -11,13 +11,14 @@ The snippets are located in `~/.config/zed/snippets` directory to which you can 
 
 ## Example configuration
 
-```json [settings]
+```json
 {
   // Each snippet must have a name and body, but the prefix and description are optional.
   // The prefix is used to trigger the snippet, but when omitted then the name is used.
   // Use placeholders like $1, $2 or ${1:defaultValue} to define tab stops.
   // The $0 determines the final cursor position.
   // Placeholders with the same value are linked.
+  // If the snippet contains the $ symbol outside of a placeholder, it must be escaped with two slashes (e.g. \\$var).
   "Log to console": {
     "prefix": "log",
     "body": ["console.info(\"Hello, ${1:World}!\")", "$0"],

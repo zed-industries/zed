@@ -576,6 +576,8 @@ pub struct Chunk<'a> {
     pub tabs: u128,
     /// Bitmap of character indices in this chunk
     pub chars: u128,
+    /// Bitmap of newline indices in this chunk
+    pub newlines: u128,
     /// Whether this chunk of text is marked as unnecessary.
     pub is_unnecessary: bool,
     /// Whether this chunk of text was originally a tab character.
@@ -1716,28 +1718,14 @@ impl Buffer {
     /// Returns the [`Language`] at the given location.
     pub fn language_at<D: ToOffset>(&self, position: D) -> Option<Arc<Language>> {
         let offset = position.to_offset(self);
-        let mut is_first = true;
-        let start_anchor = self.anchor_before(offset);
-        let end_anchor = self.anchor_after(offset);
+        let text: &TextBufferSnapshot = &self.text;
         self.syntax_map
             .lock()
-            .layers_for_range(offset..offset, &self.text, false)
+            .layers_for_range(offset..offset, text, false)
             .filter(|layer| {
-                if is_first {
-                    is_first = false;
-                    return true;
-                }
-
                 layer
                     .included_sub_ranges
-                    .map(|sub_ranges| {
-                        sub_ranges.iter().any(|sub_range| {
-                            let is_before_start = sub_range.end.cmp(&start_anchor, self).is_lt();
-                            let is_after_end = sub_range.start.cmp(&end_anchor, self).is_gt();
-                            !is_before_start && !is_after_end
-                        })
-                    })
-                    .unwrap_or(true)
+                    .is_none_or(|ranges| offset_in_sub_ranges(ranges, offset, text))
             })
             .last()
             .map(|info| info.language.clone())
@@ -1747,10 +1735,17 @@ impl Buffer {
     /// Returns each [`Language`] for the active syntax layers at the given location.
     pub fn languages_at<D: ToOffset>(&self, position: D) -> Vec<Arc<Language>> {
         let offset = position.to_offset(self);
+        let text: &TextBufferSnapshot = &self.text;
         let mut languages: Vec<Arc<Language>> = self
             .syntax_map
             .lock()
-            .layers_for_range(offset..offset, &self.text, false)
+            .layers_for_range(offset..offset, text, false)
+            .filter(|layer| {
+                // For combined injections, check if offset is within the actual sub-ranges.
+                layer
+                    .included_sub_ranges
+                    .is_none_or(|ranges| offset_in_sub_ranges(ranges, offset, text))
+            })
             .map(|info| info.language.clone())
             .collect();
 
@@ -3340,6 +3335,21 @@ impl Buffer {
 
 impl EventEmitter<BufferEvent> for Buffer {}
 
+fn offset_in_sub_ranges(
+    sub_ranges: &[Range<Anchor>],
+    offset: usize,
+    snapshot: &TextBufferSnapshot,
+) -> bool {
+    let start_anchor = snapshot.anchor_before(offset);
+    let end_anchor = snapshot.anchor_after(offset);
+
+    sub_ranges.iter().any(|sub_range| {
+        let is_before_start = sub_range.end.cmp(&start_anchor, snapshot).is_lt();
+        let is_after_end = sub_range.start.cmp(&end_anchor, snapshot).is_gt();
+        !is_before_start && !is_after_end
+    })
+}
+
 impl Deref for Buffer {
     type Target = TextBuffer;
 
@@ -3854,12 +3864,19 @@ impl BufferSnapshot {
         let offset = position.to_offset(self);
         let mut scope = None;
         let mut smallest_range_and_depth: Option<(Range<usize>, usize)> = None;
+        let text: &TextBufferSnapshot = self;
 
         // Use the layer that has the smallest node intersecting the given point.
         for layer in self
             .syntax
             .layers_for_range(offset..offset, &self.text, false)
         {
+            if let Some(ranges) = layer.included_sub_ranges
+                && !offset_in_sub_ranges(ranges, offset, text)
+            {
+                continue;
+            }
+
             let mut cursor = layer.node().walk();
 
             let mut range = None;
@@ -5648,6 +5665,7 @@ impl<'a> Iterator for BufferChunks<'a> {
             text: chunk,
             chars: chars_map,
             tabs,
+            newlines,
         }) = self.chunks.peek_with_bitmaps()
         {
             let chunk_start = self.range.start;
@@ -5669,6 +5687,7 @@ impl<'a> Iterator for BufferChunks<'a> {
             let mask = 1u128.unbounded_shl(bit_end as u32).wrapping_sub(1);
             let tabs = (tabs >> bit_start) & mask;
             let chars = (chars_map >> bit_start) & mask;
+            let newlines = (newlines >> bit_start) & mask;
 
             self.range.start = chunk_end;
             if self.range.start == self.chunks.offset() + chunk.len() {
@@ -5683,6 +5702,7 @@ impl<'a> Iterator for BufferChunks<'a> {
                 is_unnecessary: self.current_code_is_unnecessary(),
                 tabs,
                 chars,
+                newlines,
                 ..Chunk::default()
             })
         } else {
