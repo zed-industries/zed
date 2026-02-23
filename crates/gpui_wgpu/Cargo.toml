@@ -11,7 +11,7 @@ workspace = true
 [lib]
 path = "src/gpui_wgpu.rs"
 
-[target.'cfg(not(target_os = "windows"))'.dependencies]
+[dependencies]
 gpui.workspace = true
 anyhow.workspace = true
 bytemuck = "1"
@@ -21,6 +21,6 @@ log.workspace = true
 parking_lot.workspace = true
 profiling.workspace = true
 raw-window-handle = "0.6"
-smol.workspace = true
+pollster.workspace = true
 util.workspace = true
 wgpu.workspace = true

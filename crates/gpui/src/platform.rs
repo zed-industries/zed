@@ -827,7 +827,7 @@ impl From<RenderImageParams> for AtlasKey {
 }
 
 #[expect(missing_docs)]
-pub trait PlatformAtlas: Send + Sync {
+pub trait PlatformAtlas {
     fn get_or_insert_with<'a>(
         &self,
         key: &AtlasKey,

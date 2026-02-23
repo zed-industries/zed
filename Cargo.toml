@@ -240,7 +240,7 @@ members = [
     #
 
     "tooling/perf",
-    "tooling/xtask",
+    "tooling/xtask", "crates/gpui_web",
 ]
 default-members = ["crates/zed"]
 
@@ -482,6 +482,7 @@ arrayvec = { version = "0.7.4", features = ["serde"] }
 ashpd = { version = "0.12.1", default-features = false, features = [
     "async-std",
 ] }
+async-channel = "2.5.0"
 async-compat = "0.2.1"
 async-compression = { version = "0.4", features = ["gzip", "futures-io"] }
 async-dispatcher = "0.1"
@@ -542,6 +543,7 @@ exec = "0.3.1"
 fancy-regex = "0.16.0"
 fork = "0.4.0"
 futures = "0.3"
+futures-concurrency = "7.7.1"
 futures-lite = "1.13"
 gh-workflow = { git = "https://github.com/zed-industries/gh-workflow", rev = "c9eac0ed361583e1072860d96776fa52775b82ac" }
 git2 = { version = "0.20.1", default-features = false, features = ["vendored-libgit2"] }
@@ -632,6 +634,7 @@ profiling = "1"
 prost = "0.9"
 prost-build = "0.9"
 prost-types = "0.9"
+pollster = "0.4.0"
 pulldown-cmark = { version = "0.13.0", default-features = false }
 quote = "1.0.9"
 rand = "0.9"

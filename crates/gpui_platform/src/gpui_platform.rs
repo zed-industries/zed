@@ -33,9 +33,14 @@ pub fn current_platform(headless: bool) -> Rc<dyn Platform> {
         )
     }
 
-    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     {
         gpui_linux::current_platform(headless)
+    }
+
+    #[cfg(target_family = "wasm")]
+    {
+        todo!()
     }
 }
 

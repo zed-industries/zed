@@ -87,6 +87,7 @@ pub use executor::*;
 pub use geometry::*;
 pub use global::*;
 pub use gpui_macros::{AppContext, IntoElement, Render, VisualContext, register_action, test};
+#[cfg(not(target_family = "wasm"))]
 pub use http_client;
 pub use input::*;
 pub use inspector::*;

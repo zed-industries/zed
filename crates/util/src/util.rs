@@ -1,26 +1,32 @@
 pub mod arc_cow;
+#[cfg(not(target_family = "wasm"))]
 pub mod archive;
+#[cfg(not(target_family = "wasm"))]
 pub mod command;
+#[cfg(not(target_family = "wasm"))]
 pub mod fs;
 pub mod markdown;
 pub mod paths;
+#[cfg(not(target_family = "wasm"))]
 pub mod process;
 pub mod redact;
 pub mod rel_path;
 pub mod schemars;
 pub mod serde;
+#[cfg(not(target_family = "wasm"))]
 pub mod shell;
+#[cfg(not(target_family = "wasm"))]
 pub mod shell_builder;
+#[cfg(not(target_family = "wasm"))]
 pub mod shell_env;
 pub mod size;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test;
 pub mod time;
 
-use anyhow::{Context as _, Result};
+use anyhow::Result;
 use futures::Future;
 use itertools::Either;
-use paths::PathExt;
 use regex::Regex;
 use std::path::{Path, PathBuf};
 use std::sync::{LazyLock, OnceLock};
@@ -39,6 +45,11 @@ use unicase::UniCase;
 pub use take_until::*;
 #[cfg(any(test, feature = "test-support"))]
 pub use util_macros::{line_endings, path, uri};
+
+#[cfg(not(target_family = "wasm"))]
+pub use self::shell::{
+    get_default_system_shell, get_default_system_shell_preferring_bash, get_system_shell,
+};
 
 #[macro_export]
 macro_rules! debug_panic {
@@ -303,7 +314,10 @@ fn load_shell_from_passwd() -> Result<()> {
 }
 
 /// Returns a shell escaped path for the current zed executable
+#[cfg(not(target_family = "wasm"))]
 pub fn get_shell_safe_zed_path(shell_kind: shell::ShellKind) -> anyhow::Result<String> {
+    use anyhow::Context as _;
+    use paths::PathExt;
     let mut zed_path =
         std::env::current_exe().context("Failed to determine current zed executable path.")?;
     if cfg!(target_os = "linux")
@@ -325,7 +339,9 @@ pub fn get_shell_safe_zed_path(shell_kind: shell::ShellKind) -> anyhow::Result<S
 
 /// Returns a path for the zed cli executable, this function
 /// should be called from the zed executable, not zed-cli.
+#[cfg(not(target_family = "wasm"))]
 pub fn get_zed_cli_path() -> Result<PathBuf> {
+    use anyhow::Context as _;
     let zed_path =
         std::env::current_exe().context("Failed to determine current zed executable path.")?;
     let parent = zed_path
@@ -404,7 +420,7 @@ pub fn set_pre_exec_to_start_new_session(
 ) -> &mut std::process::Command {
     // safety: code in pre_exec should be signal safe.
     // https://man7.org/linux/man-pages/man7/signal-safety.7.html
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(unix)]
     unsafe {
         use std::os::unix::process::CommandExt;
         command.pre_exec(|| {
@@ -630,9 +646,9 @@ fn log_error_with_caller<E>(caller: core::panic::Location<'_>, error: E, level: 
 where
     E: std::fmt::Debug,
 {
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(not(windows))]
     let file = caller.file();
-    #[cfg(target_os = "windows")]
+    #[cfg(windows)]
     let file = caller.file().replace('\\', "/");
     // In this codebase all crates reside in a `crates` directory,
     // so discard the prefix up to that segment to find the crate name
@@ -1021,10 +1037,6 @@ pub fn split_str_with_ranges<'s>(
 pub fn default<D: Default>() -> D {
     Default::default()
 }
-
-pub use self::shell::{
-    get_default_system_shell, get_default_system_shell_preferring_bash, get_system_shell,
-};
 
 #[derive(Debug)]
 pub enum ConnectionResult<O> {

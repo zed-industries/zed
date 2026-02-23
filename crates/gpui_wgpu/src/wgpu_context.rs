@@ -31,7 +31,7 @@ impl WgpuContext {
             memory_budget_thresholds: wgpu::MemoryBudgetThresholds::default(),
         });
 
-        let adapter = smol::block_on(Self::select_adapter(&instance, device_id_filter))?;
+        let adapter = pollster::block_on(Self::select_adapter(&instance, device_id_filter))?;
 
         log::info!(
             "Selected GPU adapter: {:?} ({:?})",
@@ -53,7 +53,7 @@ impl WgpuContext {
             );
         }
 
-        let (device, queue) = smol::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
             label: Some("gpui_device"),
             required_features,
             required_limits: wgpu::Limits::default(),
