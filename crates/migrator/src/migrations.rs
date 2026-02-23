@@ -292,3 +292,9 @@ pub(crate) mod m_2026_02_04 {
 
     pub(crate) use settings::migrate_tool_permission_defaults;
 }
+
+pub(crate) mod m_2026_02_23 {
+    mod settings;
+
+    pub(crate) use settings::remove_file_finder_git_status;
+}

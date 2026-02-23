@@ -3154,7 +3154,7 @@ fn search_and_files_page() -> SettingsPage {
         ]
     }
 
-    fn file_finder_section() -> [SettingsPageItem; 6] {
+    fn file_finder_section() -> [SettingsPageItem; 5] {
         [
             SettingsPageItem::SectionHeader("File Finder"),
             // todo: null by default
@@ -3237,24 +3237,6 @@ fn search_and_files_page() -> SettingsPage {
                             .file_finder
                             .get_or_insert_default()
                             .skip_focus_for_active_in_search = value;
-                    },
-                }),
-                metadata: None,
-                files: USER,
-            }),
-            SettingsPageItem::SettingItem(SettingItem {
-                title: "Git Status",
-                description: "Show the Git status in the file finder.",
-                field: Box::new(SettingField {
-                    json_path: Some("file_finder.git_status"),
-                    pick: |settings_content| {
-                        settings_content.file_finder.as_ref()?.git_status.as_ref()
-                    },
-                    write: |settings_content, value| {
-                        settings_content
-                            .file_finder
-                            .get_or_insert_default()
-                            .git_status = value;
                     },
                 }),
                 metadata: None,

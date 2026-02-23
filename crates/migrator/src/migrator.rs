@@ -237,6 +237,7 @@ pub fn migrate_settings(text: &str) -> Result<Option<String>> {
         ),
         MigrationType::Json(migrations::m_2026_02_03::migrate_experimental_sweep_mercury),
         MigrationType::Json(migrations::m_2026_02_04::migrate_tool_permission_defaults),
+        MigrationType::Json(migrations::m_2026_02_23::remove_file_finder_git_status),
     ];
     run_migrations(text, migrations)
 }
@@ -3817,6 +3818,116 @@ mod tests {
             .unindent(),
             Some(
                 "{\n    \"agent\": {\n        \n    },\n    \"agent_servers\": {\n        \"claude\": {}\n    }\n}\n",
+            ),
+        );
+    }
+
+    #[test]
+    fn test_remove_file_finder_git_status() {
+        // No file_finder section — no change
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2026_02_23::remove_file_finder_git_status,
+            )],
+            &r#"{ }"#.unindent(),
+            None,
+        );
+
+        // git_status: true — should be removed
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2026_02_23::remove_file_finder_git_status,
+            )],
+            &"{\n    \"file_finder\": {\n        \"git_status\": true\n    }\n}",
+            Some(&"{\n    \"file_finder\": {\n        \n    }\n}"),
+        );
+
+        // git_status: false — should be removed
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2026_02_23::remove_file_finder_git_status,
+            )],
+            &"{\n    \"file_finder\": {\n        \"git_status\": false\n    }\n}",
+            Some(&"{\n    \"file_finder\": {\n        \n    }\n}"),
+        );
+
+        // Other file_finder settings preserved
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2026_02_23::remove_file_finder_git_status,
+            )],
+            &r#"{
+                "file_finder": {
+                    "file_icons": true,
+                    "git_status": true,
+                    "include_ignored": "smart"
+                }
+            }"#
+            .unindent(),
+            Some(
+                &r#"{
+                    "file_finder": {
+                        "file_icons": true,
+                        "include_ignored": "smart"
+                    }
+                }"#
+                .unindent(),
+            ),
+        );
+
+        // No git_status present — no change
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2026_02_23::remove_file_finder_git_status,
+            )],
+            &r#"{
+                "file_finder": {
+                    "file_icons": true
+                }
+            }"#
+            .unindent(),
+            None,
+        );
+
+        // Platform override — should also be migrated
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2026_02_23::remove_file_finder_git_status,
+            )],
+            &r#"
+            {
+                "linux": {
+                    "file_finder": {
+                        "git_status": true
+                    }
+                }
+            }
+            "#
+            .unindent(),
+            Some(
+                &"{\n    \"linux\": {\n        \"file_finder\": {\n            \n        }\n    }\n}\n",
+            ),
+        );
+
+        // Profile override — should also be migrated
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2026_02_23::remove_file_finder_git_status,
+            )],
+            &r#"
+            {
+                "profiles": {
+                    "work": {
+                        "file_finder": {
+                            "git_status": false
+                        }
+                    }
+                }
+            }
+            "#
+            .unindent(),
+            Some(
+                &"{\n    \"profiles\": {\n        \"work\": {\n            \"file_finder\": {\n                \n            }\n        }\n    }\n}\n",
             ),
         );
     }
