@@ -1524,7 +1524,7 @@ mod tests {
         let agent = init_test_with_thinking(cx, true).await;
         let buffer = cx.new(|cx| Buffer::local("hello\n", cx));
         let (_apply, _events) = agent.edit(
-            buffer.clone(),
+            buffer,
             String::new(),
             &LanguageModelRequest::default(),
             &mut cx.to_async(),
