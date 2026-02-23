@@ -2450,13 +2450,10 @@ impl MultiBuffer {
         let diff_change_range = range.to_offset(buffer);
 
         let excerpt_edits = snapshot.excerpt_edits_for_diff_change(buffer_state, diff_change_range);
-        let edits = Self::sync_diff_transforms(
-            &mut snapshot,
-            excerpt_edits,
-            DiffChangeKind::DiffUpdated {
-                base_changed: base_text_changed,
-            },
-        );
+        let change_kind = DiffChangeKind::DiffUpdated {
+            base_changed: base_text_changed,
+        };
+        let edits = Self::sync_diff_transforms(&mut snapshot, excerpt_edits, change_kind);
         if !edits.is_empty() {
             self.subscriptions.publish(edits);
         }
@@ -2664,6 +2661,9 @@ impl MultiBuffer {
         {
             return;
         }
+
+        // Ensure sync_mut will actually sync the diff to the snapshot
+        self.buffer_changed_since_sync.replace(true);
 
         self.buffer_diff_changed(
             diff.clone(),

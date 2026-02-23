@@ -2,8 +2,12 @@ use anyhow::{Context as _, Result};
 use buffer_diff::BufferDiff;
 use collections::HashMap;
 use editor::display_map::{BlockPlacement, BlockProperties, BlockStyle};
-use editor::{Addon, Editor, EditorEvent, ExcerptRange, MultiBuffer, multibuffer_context_lines};
-use git::repository::{CommitDetails, CommitDiff, RepoPath, is_binary_content};
+use editor::scroll::Autoscroll;
+use editor::{
+    Addon, Direction, Editor, EditorEvent, ExcerptRange, MultiBuffer, SelectionEffects,
+    multibuffer_context_lines,
+};
+use git::repository::{CommitDetails, CommitDiff, CommitFile, RepoPath, is_binary_content};
 use git::status::{FileStatus, StatusCode, TrackedStatus};
 use git::{
     BuildCommitPermalinkParams, GitHostingProviderRegistry, GitRemote, ParsedGitRemote,
@@ -12,7 +16,7 @@ use git::{
 use gpui::{
     AnyElement, App, AppContext as _, AsyncApp, AsyncWindowContext, ClipboardItem, Context,
     Element, Entity, EventEmitter, FocusHandle, Focusable, InteractiveElement, IntoElement,
-    ParentElement, PromptLevel, Render, Styled, Task, WeakEntity, Window, actions,
+    ParentElement, PromptLevel, Render, Styled, Subscription, Task, WeakEntity, Window, actions,
 };
 use language::{
     Anchor, Buffer, Capability, DiskState, File, LanguageRegistry, LineEnding, OffsetRangeExt as _,
@@ -66,6 +70,8 @@ pub struct CommitView {
     multibuffer: Entity<MultiBuffer>,
     repository: Entity<Repository>,
     remote: Option<GitRemote>,
+    pending_focus_file: Option<RepoPath>,
+    _subscription: Subscription,
 }
 
 struct GitBlob {
@@ -103,31 +109,70 @@ impl CommitView {
         repo: WeakEntity<Repository>,
         workspace: WeakEntity<Workspace>,
         stash: Option<usize>,
-        file_filter: Option<RepoPath>,
+        focus_file: Option<RepoPath>,
         window: &mut Window,
         cx: &mut App,
     ) {
-        let commit_diff = repo
-            .update(cx, |repo, _| repo.load_commit_diff(commit_sha.clone()))
-            .ok();
-        let commit_details = repo
-            .update(cx, |repo, _| repo.show(commit_sha.clone()))
-            .ok();
+        Self::open_with_cached_diff(
+            commit_sha, repo, workspace, stash, focus_file, None, None, window, cx,
+        );
+    }
+
+    pub fn open_with_cached_diff(
+        commit_sha: String,
+        repo: WeakEntity<Repository>,
+        workspace: WeakEntity<Workspace>,
+        stash: Option<usize>,
+        focus_file: Option<RepoPath>,
+        cached_diff: Option<CommitDiff>,
+        cached_details: Option<CommitDetails>,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        let commit_diff_future = if cached_diff.is_none() {
+            repo.update(cx, |repo, _| repo.load_commit_diff(commit_sha.clone()))
+                .ok()
+        } else {
+            None
+        };
+        let commit_details_future = if cached_details.is_none() {
+            repo.update(cx, |repo, _| repo.show(commit_sha.clone()))
+                .ok()
+        } else {
+            None
+        };
 
         window
             .spawn(cx, async move |cx| {
-                let (commit_diff, commit_details) = futures::join!(commit_diff?, commit_details?);
-                let mut commit_diff = commit_diff.log_err()?.log_err()?;
-                let commit_details = commit_details.log_err()?.log_err()?;
+                let commit_diff: Result<CommitDiff> = if let Some(diff) = cached_diff {
+                    Ok(diff)
+                } else if let Some(receiver) = commit_diff_future {
+                    receiver
+                        .await
+                        .context("Failed to load commit diff")?
+                        .context("Commit diff error")
+                } else {
+                    anyhow::bail!("No diff available");
+                };
 
-                // Filter to specific file if requested
-                if let Some(ref filter_path) = file_filter {
-                    commit_diff.files.retain(|f| &f.path == filter_path);
-                }
+                let commit_details: Result<CommitDetails> = if let Some(details) = cached_details {
+                    Ok(details)
+                } else if let Some(receiver) = commit_details_future {
+                    receiver
+                        .await
+                        .context("Failed to load commit details")?
+                        .context("Commit details error")
+                } else {
+                    anyhow::bail!("No details available");
+                };
 
-                let repo = repo.upgrade()?;
+                let commit_diff = commit_diff?;
+                let commit_details = commit_details?;
+                let repo = repo
+                    .upgrade()
+                    .ok_or_else(|| anyhow::anyhow!("Repository dropped"))?;
 
-                workspace
+                Ok(workspace
                     .update_in(cx, |workspace, window, cx| {
                         let project = workspace.project();
                         let commit_view = cx.new(|cx| {
@@ -141,6 +186,13 @@ impl CommitView {
                                 cx,
                             )
                         });
+
+                        // Store the focus file to scroll after files are loaded
+                        if let Some(focus_path) = focus_file {
+                            commit_view.update(cx, |view, _cx| {
+                                view.pending_focus_file = Some(focus_path);
+                            });
+                        }
 
                         let pane = workspace.active_pane();
                         pane.update(cx, |pane, cx| {
@@ -156,7 +208,140 @@ impl CommitView {
                             }
                         })
                     })
-                    .log_err()
+                    .log_err())
+            })
+            .detach();
+    }
+
+    pub fn open_single_file_diff(
+        commit_sha: String,
+        repo: WeakEntity<Repository>,
+        workspace: WeakEntity<Workspace>,
+        file: CommitFile,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        let Some(workspace_entity) = workspace.upgrade() else {
+            return;
+        };
+        let project = workspace_entity.read(cx).project().clone();
+        let language_registry = project.read(cx).languages().clone();
+
+        let first_worktree_id = project
+            .read(cx)
+            .worktrees(cx)
+            .next()
+            .map(|worktree| worktree.read(cx).id());
+
+        let is_deleted = file.new_text.is_none();
+        let raw_new_text = file.new_text.unwrap_or_default();
+        let raw_old_text = file.old_text;
+
+        let is_binary = file.is_binary
+            || is_binary_content(raw_new_text.as_bytes())
+            || raw_old_text
+                .as_ref()
+                .is_some_and(|text| is_binary_content(text.as_bytes()));
+
+        let new_text = if is_binary {
+            "(binary file not shown)".to_string()
+        } else {
+            raw_new_text
+        };
+        let old_text = if is_binary { None } else { raw_old_text };
+
+        let worktree_id = repo
+            .read_with(cx, |repo, cx| {
+                repo.repo_path_to_project_path(&file.path, cx)
+                    .map(|path| path.worktree_id)
+                    .or(first_worktree_id)
+            })
+            .ok()
+            .flatten();
+
+        let Some(worktree_id) = worktree_id else {
+            return;
+        };
+
+        let short_sha = commit_sha.get(0..7).unwrap_or(&commit_sha);
+        let file_name = file
+            .path
+            .file_name()
+            .map(|name| name.to_string())
+            .unwrap_or_else(|| {
+                file.path
+                    .display(util::paths::PathStyle::local())
+                    .to_string()
+            });
+        let display_name = format!("{short_sha} - {file_name}");
+
+        let file_info = Arc::new(GitBlob {
+            path: file.path.clone(),
+            is_deleted,
+            is_binary,
+            worktree_id,
+            display_name,
+        }) as Arc<dyn language::File>;
+
+        window
+            .spawn(cx, async move |cx| {
+                let buffer = build_buffer(new_text, file_info, &language_registry, cx)
+                    .await
+                    .ok()?;
+                let buffer_diff = if is_binary {
+                    None
+                } else {
+                    Some(
+                        build_buffer_diff(old_text, &buffer, &language_registry, cx)
+                            .await
+                            .ok()?,
+                    )
+                };
+
+                workspace
+                    .update_in(cx, |workspace, window, cx| {
+                        let project = workspace.project();
+                        let pane = workspace.active_pane();
+
+                        let new_multibuffer = cx.new(|cx| {
+                            let mut multibuffer = MultiBuffer::singleton(buffer, cx);
+                            multibuffer.set_all_diff_hunks_expanded(cx);
+                            if let Some(buffer_diff) = buffer_diff {
+                                multibuffer.add_diff(buffer_diff, cx);
+                            }
+                            multibuffer
+                        });
+
+                        let new_editor = cx.new(|cx| {
+                            let mut editor = Editor::for_multibuffer(
+                                new_multibuffer,
+                                Some(project.clone()),
+                                window,
+                                cx,
+                            );
+                            editor.start_temporary_diff_override();
+                            editor.set_expand_all_diff_hunks(cx);
+                            editor.set_read_only(true);
+                            editor
+                        });
+
+                        new_editor.update(cx, |editor, cx| {
+                            editor.go_to_hunk_before_or_after_position(
+                                &editor.snapshot(window, cx),
+                                language::Point::zero(),
+                                Direction::Next,
+                                window,
+                                cx,
+                            );
+                        });
+
+                        pane.update(cx, |pane, cx| {
+                            pane.add_item(Box::new(new_editor), true, true, None, window, cx);
+                        });
+                    })
+                    .log_err();
+
+                Some(())
             })
             .detach();
     }
@@ -202,12 +387,15 @@ impl CommitView {
             let mut editor =
                 Editor::for_multibuffer(multibuffer.clone(), Some(project.clone()), window, cx);
 
+            editor.start_temporary_diff_override();
             editor.disable_inline_diagnostics();
             editor.set_show_breakpoints(false, cx);
             editor.set_show_diff_review_button(true, cx);
             editor.set_expand_all_diff_hunks(cx);
             editor.disable_header_for_buffer(message_buffer.read(cx).remote_id(), cx);
             editor.disable_indent_guides_for_buffer(message_buffer.read(cx).remote_id(), cx);
+            // Delegate excerpt opening so we can open single-file editors with diff info
+            editor.set_delegate_open_excerpts(true);
 
             editor.insert_blocks(
                 [BlockProperties {
@@ -248,7 +436,7 @@ impl CommitView {
 
         let repository_clone = repository.clone();
 
-        cx.spawn(async move |this, cx| {
+        cx.spawn_in(window, async move |this, cx| {
             let mut binary_buffer_ids: HashSet<language::BufferId> = HashSet::default();
             let mut file_statuses: HashMap<language::BufferId, FileStatus> = HashMap::default();
 
@@ -295,7 +483,7 @@ impl CommitView {
                 }) as Arc<dyn language::File>;
 
                 let buffer = build_buffer(new_text, file, &language_registry, cx).await?;
-                let buffer_id = cx.update(|cx| buffer.read(cx).remote_id());
+                let buffer_id = cx.update(|_window, cx| buffer.read(cx).remote_id())?;
 
                 let status_code = if is_created {
                     StatusCode::Added
@@ -350,13 +538,15 @@ impl CommitView {
                             cx,
                         );
                         if let Some(buffer_diff) = buffer_diff {
+                            // Expand diff hunks before adding diff so sync_diff_transforms works correctly
+                            multibuffer.set_all_diff_hunks_expanded(cx);
                             multibuffer.add_diff(buffer_diff, cx);
                         }
                     });
                 })?;
             }
 
-            this.update(cx, |this, cx| {
+            this.update_in(cx, |this, window, cx| {
                 this.editor.update(cx, |editor, _cx| {
                     editor.register_addon(CommitDiffAddon { file_statuses });
                 });
@@ -364,6 +554,13 @@ impl CommitView {
                     this.editor.update(cx, |editor, cx| {
                         editor.fold_buffers(binary_buffer_ids, cx);
                     });
+                }
+
+                // Scroll to the pending focus file if set
+                if let Some(ref focus_path) = this.pending_focus_file {
+                    let focus_path = focus_path.clone();
+                    this.pending_focus_file = None;
+                    this.scroll_to_file(&focus_path, window, cx);
                 }
             })?;
 
@@ -386,6 +583,31 @@ impl CommitView {
             })
         });
 
+        // Subscribe to editor events to handle OpenExcerptsRequested
+        let commit_sha_for_handler = commit.sha.clone();
+        let repository_for_handler = repository.clone();
+        let this_weak = cx.weak_entity();
+        let _subscription = window.subscribe(&editor, cx, move |_editor, event, window, cx| {
+            if let EditorEvent::OpenExcerptsRequested {
+                selections_by_buffer,
+                split,
+            } = event
+            {
+                if let Some(this) = this_weak.upgrade() {
+                    this.update(cx, |this, cx| {
+                        this.handle_open_excerpts_requested(
+                            &commit_sha_for_handler,
+                            &repository_for_handler,
+                            selections_by_buffer,
+                            *split,
+                            window,
+                            cx,
+                        );
+                    });
+                }
+            }
+        });
+
         Self {
             commit,
             editor,
@@ -393,7 +615,111 @@ impl CommitView {
             stash,
             repository,
             remote,
+            pending_focus_file: None,
+            _subscription,
         }
+    }
+
+    fn handle_open_excerpts_requested(
+        &mut self,
+        _commit_sha: &str,
+        _repository: &Entity<Repository>,
+        selections_by_buffer: &HashMap<
+            language::BufferId,
+            (Vec<std::ops::Range<editor::BufferOffset>>, Option<u32>),
+        >,
+        _split: bool,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        // Get the workspace
+        let workspace = match self.editor.read(cx).workspace() {
+            Some(ws) => ws,
+            None => return,
+        };
+        let project = workspace.read(cx).project().clone();
+        let pane = workspace.read(cx).active_pane().clone();
+
+        // Collect all the data we need before creating editors
+        let mut editors_to_create: Vec<(Entity<Buffer>, Entity<BufferDiff>)> = Vec::new();
+
+        for (buffer_id, (_ranges, _scroll_offset)) in selections_by_buffer {
+            // Get the BufferDiff from multibuffer
+            let buffer_diff = match self.multibuffer.read(cx).diff_for(*buffer_id) {
+                Some(diff) => diff,
+                None => continue,
+            };
+
+            // Get the buffer from multibuffer
+            let buffer = match self.multibuffer.read(cx).buffer(*buffer_id) {
+                Some(buf) => buf,
+                None => continue,
+            };
+
+            editors_to_create.push((buffer, buffer_diff));
+        }
+
+        // Use defer to postpone the editor creation to avoid borrowing issues
+        for (buffer, buffer_diff) in editors_to_create {
+            let project = project.clone();
+            let pane = pane.clone();
+            window.defer(cx, move |window, cx| {
+                // Create a new MultiBuffer with the buffer and diff
+                let new_multibuffer = cx.new(|cx| {
+                    let mut multibuffer = MultiBuffer::singleton(buffer, cx);
+                    multibuffer.set_all_diff_hunks_expanded(cx);
+                    multibuffer.add_diff(buffer_diff, cx);
+                    multibuffer
+                });
+
+                let new_editor = cx.new(|cx| {
+                    let mut editor =
+                        Editor::for_multibuffer(new_multibuffer, Some(project), window, cx);
+                    editor.start_temporary_diff_override();
+                    editor.set_expand_all_diff_hunks(cx);
+                    editor.set_read_only(true);
+                    editor
+                });
+
+                // Scroll to the first diff hunk
+                new_editor.update(cx, |editor, cx| {
+                    editor.go_to_hunk_before_or_after_position(
+                        &editor.snapshot(window, cx),
+                        language::Point::zero(),
+                        Direction::Next,
+                        window,
+                        cx,
+                    );
+                });
+
+                pane.update(cx, |pane, cx| {
+                    pane.add_item(Box::new(new_editor), true, true, None, window, cx);
+                });
+            });
+        }
+    }
+
+    fn scroll_to_file(&mut self, file_path: &RepoPath, window: &mut Window, cx: &mut App) {
+        // Create a PathKey from the RepoPath
+        let path_key =
+            PathKey::with_sort_prefix(FILE_NAMESPACE_SORT_PREFIX, file_path.as_ref().clone());
+
+        // Get the anchor for this path from the multibuffer
+        let Some(location) = self.multibuffer.read(cx).location_for_path(&path_key, cx) else {
+            return;
+        };
+
+        // Scroll to that location
+        self.editor.update(cx, |editor, cx| {
+            editor.change_selections(
+                SelectionEffects::scroll(Autoscroll::center()),
+                window,
+                cx,
+                |s| {
+                    s.select_ranges([location..location]);
+                },
+            );
+        });
     }
 
     fn render_commit_avatar(
@@ -881,14 +1207,14 @@ async fn build_buffer_diff(
     }
 
     let language = cx.update(|cx| buffer.read(cx).language().cloned());
-    let buffer = cx.update(|cx| buffer.read(cx).snapshot());
+    let buffer_snapshot = cx.update(|cx| buffer.read(cx).snapshot());
 
-    let diff = cx.new(|cx| BufferDiff::new(&buffer.text, cx));
+    let diff = cx.new(|cx| BufferDiff::new(&buffer_snapshot.text, cx));
 
     let update = diff
         .update(cx, |diff, cx| {
             diff.update_diff(
-                buffer.text.clone(),
+                buffer_snapshot.text.clone(),
                 old_text.map(|old_text| Arc::from(old_text.as_str())),
                 Some(true),
                 language.clone(),
@@ -899,7 +1225,7 @@ async fn build_buffer_diff(
 
     diff.update(cx, |diff, cx| {
         diff.language_changed(language, Some(language_registry.clone()), cx);
-        diff.set_snapshot(update, &buffer.text, cx)
+        diff.set_snapshot(update, &buffer_snapshot.text, cx)
     })
     .await;
 
@@ -1061,6 +1387,32 @@ impl Item for CommitView {
                 }
             });
             let multibuffer = editor.read(cx).buffer().clone();
+
+            // Subscribe to editor events to handle OpenExcerptsRequested
+            let commit_sha_for_handler = self.commit.sha.clone();
+            let repository_for_handler = self.repository.clone();
+            let this_weak = cx.weak_entity();
+            let _subscription = window.subscribe(&editor, cx, move |_editor, event, window, cx| {
+                if let EditorEvent::OpenExcerptsRequested {
+                    selections_by_buffer,
+                    split,
+                } = event
+                {
+                    if let Some(this) = this_weak.upgrade() {
+                        this.update(cx, |this: &mut CommitView, cx| {
+                            this.handle_open_excerpts_requested(
+                                &commit_sha_for_handler,
+                                &repository_for_handler,
+                                selections_by_buffer,
+                                *split,
+                                window,
+                                cx,
+                            );
+                        });
+                    }
+                }
+            });
+
             Self {
                 editor,
                 multibuffer,
@@ -1068,6 +1420,8 @@ impl Item for CommitView {
                 stash: self.stash,
                 repository: self.repository.clone(),
                 remote: self.remote.clone(),
+                pending_focus_file: None,
+                _subscription,
             }
         })))
     }

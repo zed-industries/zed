@@ -1,17 +1,16 @@
-use collections::{BTreeMap, HashMap};
-use feature_flags::{FeatureFlag, FeatureFlagAppExt as _};
+use collections::{BTreeMap, HashMap, HashSet};
 use git::{
     BuildCommitPermalinkParams, GitHostingProviderRegistry, GitRemote, Oid, ParsedGitRemote,
     parse_git_remote_url,
-    repository::{CommitDiff, InitialGraphCommitData, LogOrder, LogSource},
+    repository::{CommitDetails, CommitDiff, InitialGraphCommitData, LogOrder, LogSource},
 };
 use git_ui::{commit_tooltip::CommitAvatar, commit_view::CommitView};
 use gpui::{
-    AnyElement, App, Bounds, ClickEvent, ClipboardItem, Context, Corner, DefiniteLength,
-    DragMoveEvent, ElementId, Entity, EventEmitter, FocusHandle, Focusable, FontWeight, Hsla,
-    InteractiveElement, ParentElement, PathBuilder, Pixels, Point, Render, ScrollStrategy,
-    ScrollWheelEvent, SharedString, Styled, Subscription, Task, WeakEntity, Window, actions,
-    anchored, deferred, point, px,
+    Animation, AnimationExt, AnyElement, App, Bounds, ClickEvent, ClipboardItem, Context, Corner,
+    DefiniteLength, DragMoveEvent, ElementId, Entity, EventEmitter, FocusHandle, Focusable,
+    FontWeight, Hsla, InteractiveElement, KeyDownEvent, MouseDownEvent, ParentElement, PathBuilder,
+    Pixels, Point, Render, ScrollStrategy, ScrollWheelEvent, SharedString, Styled, Subscription,
+    Task, WeakEntity, Window, actions, anchored, deferred, point, px,
 };
 use menu::{SelectNext, SelectPrevious};
 use project::{
@@ -20,7 +19,7 @@ use project::{
 };
 use settings::Settings;
 use smallvec::{SmallVec, smallvec};
-use std::{ops::Range, rc::Rc, sync::Arc, sync::OnceLock};
+use std::{ops::Range, rc::Rc, sync::Arc, sync::OnceLock, time::Duration};
 use theme::{AccentColors, ThemeSettings};
 use time::{OffsetDateTime, UtcOffset, format_description::BorrowedFormatItem};
 use ui::{
@@ -93,12 +92,6 @@ actions!(
     ]
 );
 
-pub struct GitGraphFeatureFlag;
-
-impl FeatureFlag for GitGraphFeatureFlag {
-    const NAME: &'static str = "git-graph";
-}
-
 fn timestamp_format() -> &'static [BorrowedFormatItem<'static>] {
     static FORMAT: OnceLock<Vec<BorrowedFormatItem<'static>>> = OnceLock::new();
     FORMAT.get_or_init(|| {
@@ -122,6 +115,54 @@ fn format_timestamp(timestamp: i64) -> String {
 
 fn accent_colors_count(accents: &AccentColors) -> usize {
     accents.0.len()
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+enum BranchFilterMode {
+    #[default]
+    All,
+    Selected,
+}
+
+#[derive(Clone, Debug, Default)]
+struct BranchFilter {
+    mode: BranchFilterMode,
+    selected_branches: HashSet<SharedString>,
+}
+
+impl BranchFilter {
+    fn is_all(&self) -> bool {
+        self.mode == BranchFilterMode::All
+    }
+
+    fn toggle_branch(&mut self, branch: SharedString) {
+        if self.mode == BranchFilterMode::All {
+            self.mode = BranchFilterMode::Selected;
+            self.selected_branches.insert(branch);
+        } else {
+            if self.selected_branches.contains(&branch) {
+                self.selected_branches.remove(&branch);
+                if self.selected_branches.is_empty() {
+                    self.mode = BranchFilterMode::All;
+                }
+            } else {
+                self.selected_branches.insert(branch);
+            }
+        }
+    }
+
+    fn set_mode(&mut self, mode: BranchFilterMode) {
+        self.mode = mode;
+        if mode == BranchFilterMode::All {
+            self.selected_branches.clear();
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+struct BranchInfo {
+    name: SharedString,
+    is_remote: bool,
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -550,8 +591,7 @@ pub fn init(cx: &mut App) {
     cx.observe_new(|workspace: &mut workspace::Workspace, _, _| {
         workspace.register_action_renderer(|div, workspace, _, cx| {
             div.when(
-                workspace.project().read(cx).active_repository(cx).is_some()
-                    && cx.has_flag::<GitGraphFeatureFlag>(),
+                workspace.project().read(cx).active_repository(cx).is_some(),
                 |div| {
                     let workspace = workspace.weak_handle();
 
@@ -568,6 +608,9 @@ pub fn init(cx: &mut App) {
                                 let workspace_handle = workspace.weak_handle();
                                 let git_graph = cx
                                     .new(|cx| GitGraph::new(project, workspace_handle, window, cx));
+                                git_graph.update(cx, |git_graph, cx| {
+                                    git_graph.fetch_branches(cx);
+                                });
                                 workspace.add_item_to_active_pane(
                                     Box::new(git_graph),
                                     None,
@@ -644,10 +687,26 @@ pub struct GitGraph {
     log_source: LogSource,
     log_order: LogOrder,
     selected_commit_diff: Option<CommitDiff>,
+    selected_commit_details: Option<CommitDetails>,
     _commit_diff_task: Option<Task<()>>,
     _load_task: Option<Task<()>>,
     commit_details_split_state: Entity<SplitState>,
+    branch_filter: BranchFilter,
+    show_remotes: bool,
+    all_branches: Vec<BranchInfo>,
+    branch_filter_query: String,
+    branch_filter_menu_open: bool,
+    branch_filter_focus_handle: FocusHandle,
+    branch_commit_shas: HashSet<Oid>,
+    filtered_commit_indices: Vec<usize>,
+    _branch_commits_task: Option<Task<()>>,
+    branch_commits_cache: HashMap<SharedString, HashSet<Oid>>,
+    branch_commits_cache_order: Vec<SharedString>,
 }
+
+/// Maximum number of branches to cache commits for.
+/// When exceeded, oldest entries are evicted (LRU-like behavior).
+const MAX_BRANCH_CACHE_SIZE: usize = 10;
 
 impl GitGraph {
     fn row_height(cx: &App) -> Pixels {
@@ -686,6 +745,7 @@ impl GitGraph {
             }
             GitStoreEvent::ActiveRepositoryChanged(_) => {
                 this.graph_data.clear();
+                this.fetch_branches(cx);
                 cx.notify();
             }
             _ => {}
@@ -720,7 +780,7 @@ impl GitGraph {
         })
         .detach();
 
-        GitGraph {
+        let mut git_graph = GitGraph {
             focus_handle,
             project,
             workspace,
@@ -735,9 +795,190 @@ impl GitGraph {
             graph_viewport_width: px(88.),
             selected_entry_idx: None,
             selected_commit_diff: None,
+            selected_commit_details: None,
             log_source,
             log_order,
             commit_details_split_state: cx.new(|_cx| SplitState::new()),
+            branch_filter: BranchFilter::default(),
+            show_remotes: true,
+            all_branches: Vec::new(),
+            branch_filter_query: String::new(),
+            branch_filter_menu_open: false,
+            branch_filter_focus_handle: cx.focus_handle(),
+            branch_commit_shas: HashSet::default(),
+            filtered_commit_indices: Vec::new(),
+            _branch_commits_task: None,
+            branch_commits_cache: HashMap::default(),
+            branch_commits_cache_order: Vec::new(),
+        };
+
+        // Fetch branches and update commit filtering on initialization
+        git_graph.fetch_branches(cx);
+
+        git_graph
+    }
+
+    fn fetch_branches(&mut self, cx: &mut Context<Self>) {
+        let Some(repository) = self.project.read(cx).active_repository(cx) else {
+            return;
+        };
+
+        let show_remotes = self.show_remotes;
+
+        // Get the branches future from the repository
+        let branches_future = repository.update(cx, |repository, _| repository.branches());
+
+        let _weak_this = cx.weak_entity();
+        self._load_task = Some(cx.spawn(async move |this, cx| {
+            let fetched_branches = branches_future.await.ok().and_then(|r| r.ok());
+            if let Some(this) = this.upgrade() {
+                if let Some(branches) = fetched_branches {
+                    this.update(cx, |this, cx| {
+                        this.all_branches = branches
+                            .into_iter()
+                            .filter_map(|branch| {
+                                let name = branch.name().to_string();
+                                // Filter based on show_remotes setting
+                                if branch.is_remote() && !show_remotes {
+                                    return None;
+                                }
+                                Some(BranchInfo {
+                                    name: name.into(),
+                                    is_remote: branch.is_remote(),
+                                })
+                            })
+                            .collect();
+
+                        // Remove selected branches that are no longer in all_branches
+                        let valid_branches: HashSet<_> =
+                            this.all_branches.iter().map(|b| b.name.clone()).collect();
+                        this.branch_filter
+                            .selected_branches
+                            .retain(|branch| valid_branches.contains(branch));
+
+                        // Update commit filtering
+                        let commits_empty = this.graph_data.commits.is_empty();
+                        if !this.branch_filter.is_all() || !this.show_remotes || commits_empty {
+                            this.update_branch_commits(cx);
+                        } else {
+                            // When showing remotes and is_all, ensure filter is cleared
+                            this.branch_commit_shas.clear();
+                            this.filtered_commit_indices.clear();
+                        }
+
+                        cx.notify();
+                    });
+                }
+            }
+        }));
+    }
+
+    fn update_branch_commits(&mut self, cx: &mut Context<Self>) {
+        // If showing all branches and remote branches are allowed, clear filter
+        if self.branch_filter.is_all() && self.show_remotes {
+            self.branch_commit_shas.clear();
+            self.filtered_commit_indices.clear();
+            cx.notify();
+            return;
+        }
+
+        if self.project.read(cx).active_repository(cx).is_none() {
+            return;
+        }
+
+        // Determine which branches to use for filtering
+        let branches: Vec<SharedString> = if self.branch_filter.is_all() {
+            // When is_all but show_remotes is false, use only local branches
+            self.all_branches
+                .iter()
+                .filter(|b| !b.is_remote)
+                .map(|b| b.name.clone())
+                .collect()
+        } else {
+            self.branch_filter
+                .selected_branches
+                .iter()
+                .cloned()
+                .collect()
+        };
+
+        // Check which branches need to be fetched (not in cache)
+        // Use into_iter() to transfer ownership and avoid lifetime issues with async
+        let (cached, uncached): (Vec<SharedString>, Vec<SharedString>) = branches
+            .into_iter()
+            .partition(|b| self.branch_commits_cache.contains_key(b));
+
+        // Start with cached results
+        let mut all_shas: HashSet<Oid> = HashSet::default();
+        for branch in &cached {
+            if let Some(shas) = self.branch_commits_cache.get(branch) {
+                all_shas.extend(shas.iter().cloned());
+            }
+        }
+
+        self._branch_commits_task = Some(cx.spawn(async move |this, cx| {
+            // Fetch uncached branches
+            for branch in uncached {
+                if let Some(this) = this.upgrade() {
+                    let branch_clone = branch.clone();
+                    let receiver = this.update(cx, |this, cx| {
+                        this.project.read(cx).active_repository(cx).map(|r| {
+                            r.update(cx, |r, _| r.branch_commits(branch_clone.to_string()))
+                        })
+                    });
+
+                    if let Some(receiver) = receiver {
+                        if let Ok(shas_result) = receiver.await {
+                            if let Ok(shas) = shas_result {
+                                // Store in cache and add to all_shas
+                                let shas_set: HashSet<Oid> = shas.into_iter().collect();
+                                all_shas.extend(shas_set.iter().cloned());
+
+                                this.update(cx, |this, _cx| {
+                                    // Evict oldest entries if cache is full
+                                    while this.branch_commits_cache.len() >= MAX_BRANCH_CACHE_SIZE {
+                                        if let Some(oldest) = this.branch_commits_cache_order.pop()
+                                        {
+                                            this.branch_commits_cache.remove(&oldest);
+                                        }
+                                    }
+                                    // Add to cache and update order
+                                    this.branch_commits_cache.insert(branch.clone(), shas_set);
+                                    this.branch_commits_cache_order.insert(0, branch.clone());
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+
+            if let Some(this) = this.upgrade() {
+                this.update(cx, |this, cx| {
+                    this.branch_commit_shas = all_shas;
+                    this.update_filtered_indices(cx);
+                    cx.notify();
+                });
+            }
+        }));
+    }
+
+    fn update_filtered_indices(&mut self, _cx: &mut Context<Self>) {
+        if self.branch_commit_shas.is_empty() {
+            self.filtered_commit_indices.clear();
+        } else {
+            self.filtered_commit_indices = self
+                .graph_data
+                .commits
+                .iter()
+                .enumerate()
+                .filter_map(|(idx, commit)| {
+                    if self.branch_commit_shas.contains(&commit.data.sha) {
+                        Some(idx)
+                    } else {
+                        None
+                    }
+                })
+                .collect();
         }
     }
 
@@ -762,6 +1003,19 @@ impl GitGraph {
                 });
 
                 self.graph_data.max_commit_count = AllCommitCount::Loaded(*commit_count);
+
+                // Update filtered indices based on current filter settings
+                if self.branch_filter.is_all() && self.show_remotes {
+                    // No filtering needed - clear filter to show all commits
+                    self.branch_commit_shas.clear();
+                    self.filtered_commit_indices.clear();
+                } else if !self.branch_commit_shas.is_empty() {
+                    // Re-apply filter with new commits
+                    self.update_filtered_indices(cx);
+                } else if self.branch_filter.is_all() && !self.show_remotes {
+                    // Need to filter by local branches but cache is empty - trigger update
+                    self.update_branch_commits(cx);
+                }
             }
             RepositoryEvent::BranchChanged => {
                 self.graph_data.clear();
@@ -804,26 +1058,52 @@ impl GitGraph {
             .read_with(cx, |project, cx| project.active_repository(cx));
 
         let row_height = self.row_height;
+        let use_filter = !self.filtered_commit_indices.is_empty();
 
         // We fetch data outside the visible viewport to avoid loading entries when
         // users scroll through the git graph
         if let Some(repository) = repository.as_ref() {
-            const FETCH_RANGE: usize = 100;
+            let fetch_indices: Vec<usize> = if use_filter {
+                range
+                    .clone()
+                    .filter_map(|idx| self.filtered_commit_indices.get(idx).copied())
+                    .collect()
+            } else {
+                range.clone().collect()
+            };
+
             repository.update(cx, |repository, cx| {
-                self.graph_data.commits[range.start.saturating_sub(FETCH_RANGE)
-                    ..(range.end + FETCH_RANGE)
-                        .min(self.graph_data.commits.len().saturating_sub(1))]
-                    .iter()
-                    .for_each(|commit| {
+                for idx in fetch_indices {
+                    if let Some(commit) = self.graph_data.commits.get(idx) {
                         repository.fetch_commit_data(commit.data.sha, cx);
-                    });
+                    }
+                }
             });
         }
 
         range
             .map(|idx| {
-                let Some((commit, repository)) =
-                    self.graph_data.commits.get(idx).zip(repository.as_ref())
+                let actual_idx = if use_filter {
+                    match self.filtered_commit_indices.get(idx) {
+                        Some(&actual) => actual,
+                        None => {
+                            return vec![
+                                div().h(row_height).into_any_element(),
+                                div().h(row_height).into_any_element(),
+                                div().h(row_height).into_any_element(),
+                                div().h(row_height).into_any_element(),
+                            ];
+                        }
+                    }
+                } else {
+                    idx
+                };
+
+                let Some((commit, repository)) = self
+                    .graph_data
+                    .commits
+                    .get(actual_idx)
+                    .zip(repository.as_ref())
                 else {
                     return vec![
                         div().h(row_height).into_any_element(),
@@ -931,6 +1211,7 @@ impl GitGraph {
 
         self.selected_entry_idx = Some(idx);
         self.selected_commit_diff = None;
+        self.selected_commit_details = None;
         self.table_interaction_state.update(cx, |state, cx| {
             state
                 .scroll_handle
@@ -951,16 +1232,23 @@ impl GitGraph {
             return;
         };
 
-        let diff_receiver = repository.update(cx, |repo, _| repo.load_commit_diff(sha));
+        let diff_receiver = repository.update(cx, |repo, _| repo.load_commit_diff(sha.clone()));
+        let details_receiver = repository.update(cx, |repo, _| repo.show(sha));
 
         self._commit_diff_task = Some(cx.spawn(async move |this, cx| {
-            if let Ok(Ok(diff)) = diff_receiver.await {
-                this.update(cx, |this, cx| {
+            let diff_result = diff_receiver.await;
+            let details_result = details_receiver.await;
+
+            this.update(cx, |this, cx| {
+                if let Ok(Ok(diff)) = diff_result {
                     this.selected_commit_diff = Some(diff);
-                    cx.notify();
-                })
-                .ok();
-            }
+                }
+                if let Ok(Ok(details)) = details_result {
+                    this.selected_commit_details = Some(details);
+                }
+                cx.notify();
+            })
+            .ok();
         }));
 
         cx.notify();
@@ -1026,6 +1314,356 @@ impl GitGraph {
             .color(Color::Accent)
             .with_rotate_animation(3)
             .into_any_element()
+    }
+
+    fn render_branch_filter_bar(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
+        let is_all = self.branch_filter.is_all();
+        let selected_branches = self.branch_filter.selected_branches.clone();
+        let show_remotes = self.show_remotes;
+
+        // Build display text for selected branches
+        let branch_display = if is_all {
+            "All".to_string()
+        } else if selected_branches.is_empty() {
+            "None".to_string()
+        } else {
+            let names: Vec<&str> = selected_branches.iter().map(|s| s.as_ref()).collect();
+            names.join(", ")
+        };
+
+        let colors = cx.theme().colors().clone();
+
+        div()
+            .h_flex()
+            .items_center()
+            .gap_2()
+            .w_full()
+            // Left: filter button with sufficient width
+            .child(
+                div()
+                    .id("branch-filter-button")
+                    .min_w(px(150.))
+                    .px_2()
+                    .py_1()
+                    .cursor_pointer()
+                    .rounded_md()
+                    .hover(|style| style.bg(colors.element_hover))
+                    .on_click(cx.listener(|this, _event: &ClickEvent, window, cx| {
+                        this.toggle_branch_filter_menu(window, cx);
+                    }))
+                    .h_flex()
+                    .items_center()
+                    .justify_between()
+                    .gap_1()
+                    .child(
+                        Label::new(branch_display)
+                            .color(Color::Default)
+                            .size(LabelSize::Small),
+                    )
+                    .child(
+                        Icon::new(IconName::ChevronDown)
+                            .size(IconSize::Small)
+                            .color(Color::Muted),
+                    ),
+            )
+            // Right of filter button: Show Remote Branches
+            .child(
+                div()
+                    .id("remote-toggle")
+                    .px_2()
+                    .py_1()
+                    .cursor_pointer()
+                    .rounded_md()
+                    .hover(|style| style.bg(colors.element_hover))
+                    .on_click(cx.listener(|this, _event: &ClickEvent, _window, cx| {
+                        this.show_remotes = !this.show_remotes;
+                        if this.show_remotes {
+                            // When turning ON remote branches, clear the filter to show all commits
+                            this.branch_commit_shas.clear();
+                            this.filtered_commit_indices.clear();
+                            cx.notify();
+                        }
+                        this.fetch_branches(cx);
+                    }))
+                    .h_flex()
+                    .items_center()
+                    .gap_1()
+                    .when(show_remotes, |this| {
+                        this.child(
+                            Icon::new(IconName::Check)
+                                .size(IconSize::XSmall)
+                                .color(Color::Muted),
+                        )
+                    })
+                    .when(!show_remotes, |this| {
+                        this.child(
+                            div()
+                                .size(IconSize::XSmall.rems())
+                                .border_1()
+                                .border_color(Color::Muted.color(cx))
+                                .rounded_xs(),
+                        )
+                    })
+                    .child(
+                        Label::new("Show Remote Branches")
+                            .color(Color::Default)
+                            .size(LabelSize::Small),
+                    ),
+            )
+    }
+
+    fn toggle_branch_filter_menu(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        // Toggle menu visibility
+        self.branch_filter_menu_open = !self.branch_filter_menu_open;
+        if self.branch_filter_menu_open {
+            self.branch_filter_query.clear();
+            if self.all_branches.is_empty() {
+                self.fetch_branches(cx);
+            }
+        }
+        cx.notify();
+    }
+
+    fn toggle_branch_selection(&mut self, branch: SharedString, cx: &mut Context<Self>) {
+        self.branch_filter.toggle_branch(branch);
+        self.update_branch_commits(cx);
+    }
+
+    fn render_branch_filter_popover(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let is_all = self.branch_filter.is_all();
+        let show_remotes = self.show_remotes;
+        let query = self.branch_filter_query.to_lowercase();
+        let selected_branches = self.branch_filter.selected_branches.clone();
+
+        // Filter branches by query
+        let filtered_branches: Vec<_> = self
+            .all_branches
+            .iter()
+            .filter(|branch| {
+                // Skip remote branches if show_remotes is false
+                if branch.is_remote && !show_remotes {
+                    return false;
+                }
+                // Filter by query
+                if query.is_empty() {
+                    return true;
+                }
+                branch.name.to_lowercase().contains(&query)
+            })
+            .collect();
+
+        let colors = cx.theme().colors().clone();
+        let colors_for_branches = colors.clone();
+
+        let focus_handle = self.branch_filter_focus_handle.clone();
+
+        deferred(
+            div()
+                .id("branch-filter-popover")
+                .track_focus(&focus_handle)
+                .absolute()
+                .top(px(40.))
+                .left(px(0.))
+                .w(px(250.))
+                .max_h(px(350.))
+                .bg(colors.elevated_surface_background)
+                .border_1()
+                .border_color(colors.border)
+                .rounded_md()
+                .shadow_lg()
+                .flex()
+                .flex_col()
+            .on_mouse_down_out(cx.listener(|this, _event: &MouseDownEvent, _window, cx| {
+                this.branch_filter_menu_open = false;
+                cx.notify();
+            }))
+            .on_key_down(cx.listener(|this, event: &KeyDownEvent, _window, cx| {
+                let key = &event.keystroke.key;
+                if key == "backspace" {
+                    this.branch_filter_query.pop();
+                } else if key == "escape" {
+                    this.branch_filter_menu_open = false;
+                } else if key.len() == 1 {
+                    // Single character input
+                    this.branch_filter_query.push_str(key);
+                }
+                cx.notify();
+            }))
+            .child(
+                // Filter input display
+                div()
+                    .id("branch-filter-input")
+                    .track_focus(&focus_handle)
+                    .m_2()
+                    .px_2()
+                    .py_1()
+                    .rounded_md()
+                    .bg(colors.editor_background)
+                    .border_1()
+                    .border_color(colors.border)
+                    .h_flex()
+                    .gap_2()
+                    .items_center()
+                    .cursor_text()
+                    .on_click(cx.listener(|this, _event: &ClickEvent, window, cx| {
+                        this.branch_filter_focus_handle.focus(window, cx);
+                        cx.notify();
+                    }))
+                    .child(
+                        Icon::new(IconName::Filter)
+                            .size(IconSize::XSmall)
+                            .color(Color::Muted),
+                    )
+                    // Show placeholder only when not focused and empty
+                    .when(!focus_handle.is_focused(window) && self.branch_filter_query.is_empty(), |this| {
+                        this.child(
+                            Label::new("Type to filter...")
+                                .size(LabelSize::Small)
+                                .color(Color::Muted),
+                        )
+                    })
+                    // Show actual text when there's input
+                    .when(!self.branch_filter_query.is_empty(), |this| {
+                        this.child(
+                            Label::new(self.branch_filter_query.clone())
+                                .size(LabelSize::Small)
+                                .color(Color::Default),
+                        )
+                    })
+                    // Blinking cursor when focused (after text or at start if empty)
+                    .when(focus_handle.is_focused(window), |this| {
+                        this.child(
+                            div()
+                                .w(px(1.))
+                                .h(px(12.))
+                                .bg(cx.theme().colors().text)
+                                .with_animation(
+                                    "cursor_blink",
+                                    Animation::new(Duration::from_millis(500))
+                                        .repeat()
+                                        .with_easing(|t| if t < 0.5 { 0.0 } else { 1.0 }),
+                                    |cursor, delta| cursor.opacity(1.0 - delta),
+                                ),
+                        )
+                    })
+                    .when(!self.branch_filter_query.is_empty(), |this| {
+                        this.child(
+                            div()
+                                .id("clear-filter")
+                                .ml_auto()
+                                .cursor_pointer()
+                                .on_click(cx.listener(|this, _event: &ClickEvent, _window, cx| {
+                                    this.branch_filter_query.clear();
+                                    cx.notify();
+                                }))
+                                .child(
+                                    Icon::new(IconName::Close)
+                                        .size(IconSize::XSmall)
+                                        .color(Color::Muted),
+                                ),
+                        )
+                    }),
+            )
+            .child(
+                // Scrollable branch list
+                div()
+                    .id("branch-filter-list")
+                    .flex_1()
+                    .overflow_y_scroll()
+                    .max_h(px(250.))
+                    .px_1()
+                    .pb_1()
+                    .bg(colors.elevated_surface_background)
+                    .occlude()
+                    .child(
+                        v_flex()
+                            .gap_0p5()
+                            .bg(colors.elevated_surface_background)
+                            .w_full()
+                            // "No Filter" option
+                            .child(
+                                div()
+                                    .id("filter-no-filter")
+                                    .px_2()
+                                    .py_1()
+                                    .rounded_md()
+                                    .hover(|this| this.bg(colors.element_hover))
+                                    .cursor_pointer()
+                                    .h_flex()
+                                    .gap_2()
+                                    .items_center()
+                                    .when(is_all, |this| {
+                                        this.child(
+                                            Icon::new(IconName::Check)
+                                                .size(IconSize::XSmall)
+                                                .color(Color::Muted),
+                                        )
+                                    })
+                                    .child(
+                                        Label::new("No Filter (All Commits)")
+                                            .size(LabelSize::Small)
+                                            .color(Color::Default),
+                                    )
+                                    .on_click(cx.listener(|this, _event: &ClickEvent, _window, cx| {
+                                        this.branch_filter.set_mode(BranchFilterMode::All);
+                                        this.update_branch_commits(cx);
+                                    })),
+                            )
+                            .child(
+                                // Separator
+                                div()
+                                    .m_1()
+                                    .h(px(1.))
+                                    .bg(colors.border),
+                            )
+                            // Branch entries
+                            .children({
+                                let mut children = Vec::new();
+                                for (idx, branch) in filtered_branches.into_iter().enumerate() {
+                                    let branch_name = branch.name.clone();
+                                    // Only show check for selected branches when not in "all" mode
+                                    let is_selected = !is_all && selected_branches.contains(&branch_name);
+                                    let colors = colors_for_branches.clone();
+                                    let branch_name_for_click = branch_name.clone();
+
+                                    children.push(
+                                        div()
+                                            .id(("branch", idx))
+                                            .px_2()
+                                            .py_1()
+                                            .rounded_md()
+                                            .hover(|this| this.bg(colors.element_hover))
+                                            .cursor_pointer()
+                                            .h_flex()
+                                            .gap_2()
+                                            .items_center()
+                                            .when(is_selected, |this| {
+                                                this.child(
+                                                    Icon::new(IconName::Check)
+                                                        .size(IconSize::XSmall)
+                                                        .color(Color::Muted),
+                                                )
+                                            })
+                                            .child(
+                                                Label::new(branch_name.clone())
+                                                    .size(LabelSize::Small)
+                                                    .color(Color::Default),
+                                            )
+                                            .on_click(cx.listener(move |this, _event: &ClickEvent, _window, cx| {
+                                                this.toggle_branch_selection(branch_name_for_click.clone(), cx);
+                                            }))
+                                            .into_any_element()
+                                    );
+                                }
+                                children
+                            }),
+                    ),
+            ),
+        )
     }
 
     fn render_commit_detail_panel(
@@ -1283,51 +1921,93 @@ impl GitGraph {
                     .overflow_hidden()
                     .border_t_1()
                     .border_color(cx.theme().colors().border)
-                    .p_3()
+                    .min_w_0()
                     .child(
                         v_flex()
-                            .gap_2()
+                            .min_h_0()
+                            .min_w_0()
+                            .flex_1()
                             .child(
-                                Label::new(format!("{} Changed Files", changed_files_count))
-                                    .size(LabelSize::Small)
-                                    .color(Color::Muted),
-                            )
-                            .children(self.selected_commit_diff.as_ref().map(|diff| {
-                                v_flex().gap_1().children(diff.files.iter().map(|file| {
-                                    let file_name: String = file
-                                        .path
-                                        .file_name()
-                                        .map(|n| n.to_string())
-                                        .unwrap_or_default();
-                                    let dir_path: String = file
-                                        .path
-                                        .parent()
-                                        .map(|p| p.as_unix_str().to_string())
-                                        .unwrap_or_default();
-
-                                    h_flex()
-                                        .gap_1()
-                                        .overflow_hidden()
-                                        .child(
-                                            Icon::new(IconName::File)
-                                                .size(IconSize::Small)
-                                                .color(Color::Accent),
-                                        )
-                                        .child(
-                                            Label::new(file_name)
-                                                .size(LabelSize::Small)
-                                                .single_line(),
-                                        )
-                                        .when(!dir_path.is_empty(), |this| {
-                                            this.child(
-                                                Label::new(dir_path)
+                                div()
+                                    .p_3()
+                                    .border_b_1()
+                                    .border_color(cx.theme().colors().border)
+                                    .child(
+                                        v_flex()
+                                            .gap_2()
+                                            .child(
+                                                Label::new(format!("{} Changed Files", changed_files_count))
                                                     .size(LabelSize::Small)
-                                                    .color(Color::Muted)
-                                                    .single_line(),
+                                                    .color(Color::Muted),
                                             )
-                                        })
-                                }))
-                            })),
+                                            .children(self.selected_commit_diff.as_ref().map(|diff| {
+                                                let commit_sha = self.graph_data.commits
+                                                    .get(self.selected_entry_idx.unwrap_or(0))
+                                                    .map(|entry| entry.data.sha.to_string());
+                                                let workspace = self.workspace.clone();
+
+                                                v_flex().gap_1().children(diff.files.iter().enumerate().map(|(idx, file)| {
+                                                    let file_name: String = file
+                                                        .path
+                                                        .file_name()
+                                                        .map(|n| n.to_string())
+                                                        .unwrap_or_default();
+                                                    let dir_path: String = file
+                                                        .path
+                                                        .parent()
+                                                        .map(|p| p.as_unix_str().to_string())
+                                                        .unwrap_or_default();
+                                                    let commit_file = file.clone();
+                                                    let commit_sha = commit_sha.clone();
+                                                    let workspace = workspace.clone();
+
+                                                    h_flex()
+                                                        .gap_1()
+                                                        .overflow_hidden()
+                                                        .px_2()
+                                                        .py_1()
+                                                        .rounded_md()
+                                                        .child(
+                                                            Icon::new(IconName::File)
+                                                                .size(IconSize::Small)
+                                                                .color(Color::Accent),
+                                                        )
+                                                        .child(
+                                                            Button::new(("file", idx), file_name)
+                                                                .style(ButtonStyle::Transparent)
+                                                                .label_size(LabelSize::Small)
+                                                                .on_click(move |_, window, cx| {
+                                                                    let Some(commit_sha) = commit_sha.clone() else {
+                                                                        return;
+                                                                    };
+                                                                    let Some(workspace_entity) = workspace.upgrade() else {
+                                                                        return;
+                                                                    };
+                                                                    let Some(repository) = workspace_entity.read(cx).project().read(cx).active_repository(cx) else {
+                                                                        return;
+                                                                    };
+                                                                    CommitView::open_single_file_diff(
+                                                                        commit_sha,
+                                                                        repository.downgrade(),
+                                                                        workspace.clone(),
+                                                                        commit_file.clone(),
+                                                                        window,
+                                                                        cx,
+                                                                    );
+                                                                })
+                                                        )
+                                                        .when(!dir_path.is_empty(), |this| {
+                                                            this.child(
+                                                                Label::new(dir_path)
+                                                                    .size(LabelSize::Small)
+                                                                    .color(Color::Muted)
+                                                                    .single_line(),
+                                                            )
+                                                        })
+                                                }))
+                                            })),
+                                    ),
+                            )
                     ),
             )
             .into_any_element()
@@ -1651,6 +2331,12 @@ impl Render for GitGraph {
             }
         };
 
+        let display_count = if self.filtered_commit_indices.is_empty() {
+            commit_count
+        } else {
+            self.filtered_commit_indices.len()
+        };
+
         let content = if self.graph_data.commits.is_empty() {
             let message = if is_loading {
                 "Loading"
@@ -1674,104 +2360,129 @@ impl Render for GitGraph {
             div()
                 .size_full()
                 .flex()
-                .flex_row()
+                .flex_col()
                 .child(
                     div()
-                        .w(self.graph_content_width())
-                        .h_full()
-                        .flex()
-                        .flex_col()
-                        .child(
-                            div()
-                                .p_2()
-                                .border_b_1()
-                                .border_color(cx.theme().colors().border)
-                                .child(Label::new("Graph").color(Color::Muted)),
-                        )
-                        .child(
-                            div()
-                                .id("graph-canvas")
-                                .flex_1()
-                                .overflow_hidden()
-                                .child(self.render_graph(cx))
-                                .on_scroll_wheel(cx.listener(Self::handle_graph_scroll)),
-                        ),
+                        .flex_none()
+                        .relative()
+                        .w_full()
+                        .p_2()
+                        .border_b_1()
+                        .border_color(cx.theme().colors().border)
+                        .bg(cx.theme().colors().elevated_surface_background)
+                        .child(self.render_branch_filter_bar(cx))
+                        .when(self.branch_filter_menu_open, |this| {
+                            this.child(self.render_branch_filter_popover(window, cx))
+                        }),
                 )
-                .child({
-                    let row_height = self.row_height;
-                    let selected_entry_idx = self.selected_entry_idx;
-                    let weak_self = cx.weak_entity();
-                    div().flex_1().size_full().child(
-                        Table::new(4)
-                            .interactable(&self.table_interaction_state)
-                            .hide_row_borders()
-                            .header(vec![
-                                Label::new("Description")
-                                    .color(Color::Muted)
-                                    .into_any_element(),
-                                Label::new("Date").color(Color::Muted).into_any_element(),
-                                Label::new("Author").color(Color::Muted).into_any_element(),
-                                Label::new("Commit").color(Color::Muted).into_any_element(),
-                            ])
-                            .column_widths(
-                                [
-                                    DefiniteLength::Fraction(description_width_fraction),
-                                    DefiniteLength::Fraction(date_width_fraction),
-                                    DefiniteLength::Fraction(author_width_fraction),
-                                    DefiniteLength::Fraction(commit_width_fraction),
-                                ]
-                                .to_vec(),
-                            )
-                            .resizable_columns(
-                                vec![
-                                    TableResizeBehavior::Resizable,
-                                    TableResizeBehavior::Resizable,
-                                    TableResizeBehavior::Resizable,
-                                    TableResizeBehavior::Resizable,
-                                ],
-                                &self.table_column_widths,
-                                cx,
-                            )
-                            .map_row(move |(index, row), _window, cx| {
-                                let is_selected = selected_entry_idx == Some(index);
-                                let weak = weak_self.clone();
-                                row.h(row_height)
-                                    .when(is_selected, |row| {
-                                        row.bg(cx.theme().colors().element_selected)
+                .child(
+                    div()
+                        .flex_1()
+                        .flex()
+                        .flex_row()
+                        .min_h_0()
+                        .child(
+                            v_flex()
+                                .w(self.graph_content_width())
+                                .h_full()
+                                .child(
+                                    div()
+                                        .flex()
+                                        .flex_row()
+                                        .items_center()
+                                        .w_full()
+                                        .p_2()
+                                        .border_b_1()
+                                        .border_color(cx.theme().colors().border)
+                                        .child(Label::new("")),
+                                )
+                                .child(
+                                    div()
+                                        .flex_1()
+                                        .size_full()
+                                        .overflow_hidden()
+                                        .child(self.render_graph(cx))
+                                        .on_scroll_wheel(cx.listener(Self::handle_graph_scroll)),
+                                ),
+                        )
+                        .child({
+                            let row_height = self.row_height;
+                            let selected_entry_idx = self.selected_entry_idx;
+                            let weak_self = cx.weak_entity();
+                            div().flex_1().size_full().child(
+                                Table::new(4)
+                                    .interactable(&self.table_interaction_state)
+                                    .hide_row_borders()
+                                    .header(vec![
+                                        Label::new("Description")
+                                            .color(Color::Muted)
+                                            .into_any_element(),
+                                        Label::new("Date").color(Color::Muted).into_any_element(),
+                                        Label::new("Author").color(Color::Muted).into_any_element(),
+                                        Label::new("Commit").color(Color::Muted).into_any_element(),
+                                    ])
+                                    .column_widths(
+                                        [
+                                            DefiniteLength::Fraction(description_width_fraction),
+                                            DefiniteLength::Fraction(date_width_fraction),
+                                            DefiniteLength::Fraction(author_width_fraction),
+                                            DefiniteLength::Fraction(commit_width_fraction),
+                                        ]
+                                        .to_vec(),
+                                    )
+                                    .resizable_columns(
+                                        vec![
+                                            TableResizeBehavior::Resizable,
+                                            TableResizeBehavior::Resizable,
+                                            TableResizeBehavior::Resizable,
+                                            TableResizeBehavior::Resizable,
+                                        ],
+                                        &self.table_column_widths,
+                                        cx,
+                                    )
+                                    .map_row(move |(index, row), _window, cx| {
+                                        let is_selected = selected_entry_idx == Some(index);
+                                        let weak = weak_self.clone();
+                                        row.h(row_height)
+                                            .when(is_selected, |row| {
+                                                row.bg(cx.theme().colors().element_selected)
+                                            })
+                                            .on_click(move |event, window, cx| {
+                                                let click_count = event.click_count();
+                                                weak.update(cx, |this, cx| {
+                                                    this.select_entry(index, cx);
+                                                    if click_count >= 2 {
+                                                        this.open_commit_view(index, window, cx);
+                                                    }
+                                                })
+                                                .ok();
+                                            })
+                                            .into_any_element()
                                     })
-                                    .on_click(move |event, window, cx| {
-                                        let click_count = event.click_count();
-                                        weak.update(cx, |this, cx| {
-                                            this.select_entry(index, cx);
-                                            if click_count >= 2 {
-                                                this.open_commit_view(index, window, cx);
-                                            }
-                                        })
-                                        .ok();
-                                    })
-                                    .into_any_element()
-                            })
-                            .uniform_list(
-                                "git-graph-commits",
-                                commit_count,
-                                cx.processor(Self::render_table_rows),
-                            ),
-                    )
-                })
-                .on_drag_move::<DraggedSplitHandle>(cx.listener(|this, event, window, cx| {
-                    this.commit_details_split_state.update(cx, |state, cx| {
-                        state.on_drag_move(event, window, cx);
-                    });
-                }))
-                .on_drop::<DraggedSplitHandle>(cx.listener(|this, _event, _window, cx| {
-                    this.commit_details_split_state.update(cx, |state, _cx| {
-                        state.commit_ratio();
-                    });
-                }))
-                .when(self.selected_entry_idx.is_some(), |this| {
-                    this.child(self.render_commit_view_resize_handle(window, cx))
-                        .child(self.render_commit_detail_panel(window, cx))
-                })
+                                    .uniform_list(
+                                        "git-graph-commits",
+                                        display_count,
+                                        cx.processor(Self::render_table_rows),
+                                    ),
+                            )
+                        })
+                        .on_drag_move::<DraggedSplitHandle>(cx.listener(
+                            |this, event, window, cx| {
+                                this.commit_details_split_state.update(cx, |state, cx| {
+                                    state.on_drag_move(event, window, cx);
+                                });
+                            },
+                        ))
+                        .on_drop::<DraggedSplitHandle>(cx.listener(|this, _event, _window, cx| {
+                            this.commit_details_split_state.update(cx, |state, _cx| {
+                                state.commit_ratio();
+                            });
+                        }))
+                        .when(self.selected_entry_idx.is_some(), |this| {
+                            this.child(self.render_commit_view_resize_handle(window, cx))
+                                .child(self.render_commit_detail_panel(window, cx))
+                        }),
+                )
         };
 
         div()

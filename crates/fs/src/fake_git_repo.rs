@@ -405,6 +405,10 @@ impl GitRepository for FakeGitRepository {
         })
     }
 
+    fn branch_commits(&self, _branch: String) -> BoxFuture<'_, Result<Vec<git::Oid>>> {
+        async { Ok(Vec::new()) }.boxed()
+    }
+
     fn worktrees(&self) -> BoxFuture<'_, Result<Vec<Worktree>>> {
         self.with_state_async(false, |state| Ok(state.worktrees.clone()))
     }

@@ -446,12 +446,12 @@ pub struct FileHistory {
     pub path: RepoPath,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct CommitDiff {
     pub files: Vec<CommitFile>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct CommitFile {
     pub path: RepoPath,
     pub old_text: Option<String>,
@@ -716,6 +716,9 @@ pub trait GitRepository: Send + Sync {
     fn stash_entries(&self) -> BoxFuture<'_, Result<GitStash>>;
 
     fn branches(&self) -> BoxFuture<'_, Result<Vec<Branch>>>;
+
+    /// Returns all commit SHAs reachable from the given branch
+    fn branch_commits(&self, branch: String) -> BoxFuture<'_, Result<Vec<Oid>>>;
 
     fn change_branch(&self, name: String) -> BoxFuture<'_, Result<()>>;
     fn create_branch(&self, name: String, base_branch: Option<String>)
@@ -1644,6 +1647,31 @@ impl GitRepository for RealGitRepository {
                 }
 
                 Ok(branches)
+            })
+            .boxed()
+    }
+
+    fn branch_commits(&self, branch: String) -> BoxFuture<'_, Result<Vec<Oid>>> {
+        let git_binary_path = self.any_git_binary_path.clone();
+        let working_directory = self.working_directory();
+        self.executor
+            .spawn(async move {
+                let output = new_command(&git_binary_path)
+                    .current_dir(working_directory?)
+                    .args(&["--no-optional-locks", "rev-list", &branch])
+                    .output()
+                    .await?;
+                if output.status.success() {
+                    let stdout = String::from_utf8_lossy(&output.stdout);
+                    let oids: Vec<Oid> = stdout
+                        .lines()
+                        .filter_map(|line| Oid::from_str(line.trim()).ok())
+                        .collect();
+                    Ok(oids)
+                } else {
+                    let stderr = String::from_utf8_lossy(&output.stderr);
+                    anyhow::bail!("git rev-list failed: {stderr}");
+                }
             })
             .boxed()
     }
