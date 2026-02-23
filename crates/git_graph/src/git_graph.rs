@@ -14,6 +14,7 @@ use gpui::{
     UniformListScrollHandle, WeakEntity, Window, actions, anchored, deferred, point, prelude::*,
     px, uniform_list,
 };
+use language::line_diff;
 use menu::{Cancel, SelectNext, SelectPrevious};
 use project::{
     Project,
@@ -1269,21 +1270,17 @@ impl GitGraph {
                 diff.files
                     .iter()
                     .fold((0usize, 0usize), |(added, removed), file| {
-                        let old_lines = file
-                            .old_text
-                            .as_ref()
-                            .map(|t| t.lines().count())
-                            .unwrap_or(0);
-                        let new_lines = file
-                            .new_text
-                            .as_ref()
-                            .map(|t| t.lines().count())
-                            .unwrap_or(0);
-                        if new_lines >= old_lines {
-                            (added + (new_lines - old_lines), removed)
-                        } else {
-                            (added, removed + (old_lines - new_lines))
-                        }
+                        let old_text = file.old_text.as_deref().unwrap_or("");
+                        let new_text = file.new_text.as_deref().unwrap_or("");
+                        let hunks = line_diff(old_text, new_text);
+                        hunks
+                            .iter()
+                            .fold((added, removed), |(a, r), (old_range, new_range)| {
+                                (
+                                    a + (new_range.end - new_range.start) as usize,
+                                    r + (old_range.end - old_range.start) as usize,
+                                )
+                            })
                     })
             })
             .unwrap_or((0, 0));
