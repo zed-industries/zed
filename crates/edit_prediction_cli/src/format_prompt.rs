@@ -6,14 +6,14 @@ use crate::{
     retrieve_context::run_context_retrieval,
 };
 use anyhow::{Context as _, Result, anyhow};
-use edit_prediction::{cursor_excerpt::editable_and_context_ranges_for_cursor_position, udiff};
+use edit_prediction::{cursor_excerpt::compute_excerpt_ranges, udiff};
 use gpui::{AppContext, AsyncApp};
-use language::{Buffer, OffsetRangeExt, Point};
+use language::{Buffer, Point};
 use similar::DiffableStr;
 use std::sync::Arc;
 use std::{fmt::Write as _, ops::Range};
-use zeta_prompt::ZetaFormat;
 use zeta_prompt::format_zeta_prompt;
+use zeta_prompt::{ZetaFormat, excerpt_range_for_format};
 
 pub async fn run_format_prompt(
     example: &mut Example,
@@ -47,18 +47,15 @@ pub async fn run_format_prompt(
     let cursor_point = Point::new(prompt_inputs.cursor_row, prompt_inputs.cursor_column);
     let snapshot = cx.background_spawn(snapshot_fut).await;
 
+    let (_, _, excerpt_ranges) = compute_excerpt_ranges(cursor_point, &snapshot);
+
     match args.provider {
         PredictionProvider::Teacher(_) | PredictionProvider::TeacherNonBatching(_) => {
             step_progress.set_substatus("formatting teacher prompt");
 
-            let (editable_range, context_range) = editable_and_context_ranges_for_cursor_position(
-                cursor_point,
-                &snapshot,
-                edit_prediction::zeta::max_editable_tokens(ZetaFormat::default()),
-                edit_prediction::zeta::MAX_CONTEXT_TOKENS,
-            );
-            let editable_range = editable_range.to_offset(&snapshot);
-            let context_range = context_range.to_offset(&snapshot);
+            let zeta_format = ZetaFormat::default();
+            let (editable_range, context_range) =
+                excerpt_range_for_format(zeta_format, &excerpt_ranges);
 
             let prompt = TeacherPrompt::format_prompt(example, editable_range, context_range);
             example.prompt = Some(ExamplePrompt {
@@ -69,17 +66,11 @@ pub async fn run_format_prompt(
                 provider: args.provider,
             });
         }
-        PredictionProvider::Zeta2(version) => {
+        PredictionProvider::Zeta2(zeta_format) => {
             step_progress.set_substatus("formatting zeta2 prompt");
 
-            let (editable_range, context_range) = editable_and_context_ranges_for_cursor_position(
-                cursor_point,
-                &snapshot,
-                edit_prediction::zeta::max_editable_tokens(version),
-                edit_prediction::zeta::MAX_CONTEXT_TOKENS,
-            );
-            let editable_range = editable_range.to_offset(&snapshot);
-            let context_range = context_range.to_offset(&snapshot);
+            let (editable_range, context_range) =
+                excerpt_range_for_format(zeta_format, &excerpt_ranges);
 
             let context_start = context_range.start;
             let cursor_offset_in_excerpt = prompt_inputs.cursor_offset - context_start;
@@ -93,7 +84,7 @@ pub async fn run_format_prompt(
                 excerpt_start_row: prompt_inputs.excerpt_start_row,
                 events: prompt_inputs.edit_history.clone(),
                 related_files: prompt_inputs.related_files.clone().unwrap_or_default(),
-                excerpt_ranges: None,
+                excerpt_ranges: Some(excerpt_ranges),
                 preferred_model: None,
                 in_open_source_repo: example
                     .spec
@@ -102,21 +93,24 @@ pub async fn run_format_prompt(
                     .map_or(false, |input| input.in_open_source_repo),
                 can_collect_data: false,
             };
-            let prompt = format_zeta_prompt(&input, version);
-            let prefill = zeta_prompt::get_prefill(&input, version);
+            let prompt = format_zeta_prompt(&input, zeta_format);
+            let prefill = zeta_prompt::get_prefill(&input, zeta_format);
             let (expected_patch, expected_cursor_offset) = example
                 .spec
                 .expected_patches_with_cursor_positions()
                 .into_iter()
                 .next()
                 .context("expected patches is empty")?;
-            let expected_output =
-                zeta2_output_for_patch(&input, &expected_patch, expected_cursor_offset, version)?;
-            let rejected_output = example
-                .spec
-                .rejected_patch
-                .as_ref()
-                .and_then(|patch| zeta2_output_for_patch(&input, patch, None, version).ok());
+            let expected_output = zeta2_output_for_patch(
+                &input,
+                &expected_patch,
+                expected_cursor_offset,
+                zeta_format,
+            )?;
+            let rejected_output =
+                example.spec.rejected_patch.as_ref().and_then(|patch| {
+                    zeta2_output_for_patch(&input, patch, None, zeta_format).ok()
+                });
 
             example.prompt = Some(ExamplePrompt {
                 input: prompt,

@@ -86,9 +86,9 @@ pub struct ZetaPromptInput {
 pub enum ZetaFormat {
     V0112MiddleAtEnd,
     V0113Ordered,
-    #[default]
     V0114180EditableRegion,
     V0120GitMergeMarkers,
+    #[default]
     V0131GitMergeMarkersPrefix,
     V0211Prefill,
     V0211SeedCoder,
@@ -242,6 +242,26 @@ pub fn clean_zeta2_model_output(output: &str, format: ZetaFormat) -> &str {
     }
 }
 
+pub fn excerpt_range_for_format(
+    format: ZetaFormat,
+    ranges: &ExcerptRanges,
+) -> (Range<usize>, Range<usize>) {
+    match format {
+        ZetaFormat::V0112MiddleAtEnd | ZetaFormat::V0113Ordered => (
+            ranges.editable_150.clone(),
+            ranges.editable_150_context_350.clone(),
+        ),
+        ZetaFormat::V0114180EditableRegion
+        | ZetaFormat::V0120GitMergeMarkers
+        | ZetaFormat::V0131GitMergeMarkersPrefix
+        | ZetaFormat::V0211Prefill
+        | ZetaFormat::V0211SeedCoder => (
+            ranges.editable_350.clone(),
+            ranges.editable_350_context_150.clone(),
+        ),
+    }
+}
+
 fn resolve_cursor_region(
     input: &ZetaPromptInput,
     format: ZetaFormat,
@@ -254,21 +274,7 @@ fn resolve_cursor_region(
         );
     };
 
-    let (editable_range, context_range) = match format {
-        ZetaFormat::V0112MiddleAtEnd | ZetaFormat::V0113Ordered => (
-            ranges.editable_150.clone(),
-            ranges.editable_150_context_350.clone(),
-        ),
-        ZetaFormat::V0114180EditableRegion
-        | ZetaFormat::V0120GitMergeMarkers
-        | ZetaFormat::V0131GitMergeMarkersPrefix
-        | ZetaFormat::V0211Prefill
-        | ZetaFormat::V0211SeedCoder => (
-            ranges.editable_180.clone(),
-            ranges.editable_180_context_350.clone(),
-        ),
-    };
-
+    let (editable_range, context_range) = excerpt_range_for_format(format, ranges);
     let context_start = context_range.start;
     let context_text = &input.cursor_excerpt[context_range];
     let adjusted_editable =

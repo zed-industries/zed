@@ -1,4 +1,4 @@
-use crate::cursor_excerpt::{compute_excerpt_ranges, excerpt_ranges_to_byte_offsets};
+use crate::cursor_excerpt::compute_excerpt_ranges;
 use crate::prediction::EditPredictionResult;
 use crate::{
     CurrentEditPrediction, DebugEvent, EditPredictionFinishedDebugEvent, EditPredictionId,
@@ -11,7 +11,7 @@ use edit_prediction_types::PredictedCursorPosition;
 use futures::AsyncReadExt as _;
 use gpui::{App, AppContext as _, Task, http_client, prelude::*};
 use language::language_settings::{OpenAiCompatibleEditPredictionSettings, all_language_settings};
-use language::{BufferSnapshot, OffsetRangeExt as _, ToOffset as _, ToPoint, text_diff};
+use language::{BufferSnapshot, ToOffset as _, ToPoint, text_diff};
 use release_channel::AppVersion;
 use text::{Anchor, Bias};
 
@@ -23,19 +23,6 @@ use zeta_prompt::{
     format_zeta_prompt, get_prefill, prompt_input_contains_special_tokens,
     zeta1::{self, EDITABLE_REGION_END_MARKER},
 };
-
-pub const MAX_CONTEXT_TOKENS: usize = 350;
-
-pub fn max_editable_tokens(format: ZetaFormat) -> usize {
-    match format {
-        ZetaFormat::V0112MiddleAtEnd | ZetaFormat::V0113Ordered => 150,
-        ZetaFormat::V0114180EditableRegion => 180,
-        ZetaFormat::V0120GitMergeMarkers => 180,
-        ZetaFormat::V0131GitMergeMarkersPrefix => 180,
-        ZetaFormat::V0211Prefill => 180,
-        ZetaFormat::V0211SeedCoder => 180,
-    }
-}
 
 pub fn request_prediction_with_zeta(
     store: &mut EditPredictionStore,
@@ -359,7 +346,8 @@ pub fn zeta2_prompt_input(
 ) -> (std::ops::Range<usize>, zeta_prompt::ZetaPromptInput) {
     let cursor_point = cursor_offset.to_point(snapshot);
 
-    let (full_context, range_points) = compute_excerpt_ranges(cursor_point, snapshot);
+    let (full_context, full_context_offset_range, excerpt_ranges) =
+        compute_excerpt_ranges(cursor_point, snapshot);
 
     let related_files = crate::filter_redundant_excerpts(
         related_files,
@@ -367,24 +355,17 @@ pub fn zeta2_prompt_input(
         full_context.start.row..full_context.end.row,
     );
 
-    let full_context_start_offset = full_context.start.to_offset(snapshot);
+    let full_context_start_offset = full_context_offset_range.start;
     let full_context_start_row = full_context.start.row;
 
-    let excerpt_ranges =
-        excerpt_ranges_to_byte_offsets(&range_points, full_context_start_offset, snapshot);
-
-    let editable_range = match preferred_model {
-        Some(EditPredictionModelKind::Zeta1) => &range_points.editable_350,
-        _ => match zeta_format {
-            ZetaFormat::V0112MiddleAtEnd | ZetaFormat::V0113Ordered => &range_points.editable_150,
-            _ => &range_points.editable_180,
-        },
+    let editable_offset_range = match preferred_model {
+        Some(EditPredictionModelKind::Zeta1) => excerpt_ranges.editable_350.clone(),
+        _ => zeta_prompt::excerpt_range_for_format(zeta_format, &excerpt_ranges).0,
     };
+    let absolute_editable_range = full_context_start_offset + editable_offset_range.start
+        ..full_context_start_offset + editable_offset_range.end;
 
-    let editable_offset_range = editable_range.to_offset(snapshot);
     let cursor_offset_in_excerpt = cursor_offset - full_context_start_offset;
-    let editable_range_in_excerpt = (editable_offset_range.start - full_context_start_offset)
-        ..(editable_offset_range.end - full_context_start_offset);
 
     let prompt_input = zeta_prompt::ZetaPromptInput {
         cursor_path: excerpt_path,
@@ -392,7 +373,7 @@ pub fn zeta2_prompt_input(
             .text_for_range(full_context)
             .collect::<String>()
             .into(),
-        editable_range_in_excerpt,
+        editable_range_in_excerpt: editable_offset_range,
         cursor_offset_in_excerpt,
         excerpt_start_row: Some(full_context_start_row),
         events,
@@ -402,7 +383,7 @@ pub fn zeta2_prompt_input(
         in_open_source_repo: is_open_source,
         can_collect_data,
     };
-    (editable_offset_range, prompt_input)
+    (absolute_editable_range, prompt_input)
 }
 
 pub(crate) async fn send_custom_server_request(
