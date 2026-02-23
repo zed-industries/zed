@@ -6,17 +6,29 @@ use anyhow::Result;
 use futures::channel::oneshot;
 use gpui::{
     Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DummyKeyboardMapper,
-    ForegroundExecutor, Keymap, Menu, MenuItem, NoopTextSystem, PathPromptOptions, Platform,
-    PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem,
-    PlatformWindow, Task, ThermalState, WindowAppearance, WindowParams,
+    ForegroundExecutor, Keymap, Menu, MenuItem, PathPromptOptions, Platform, PlatformDisplay,
+    PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem, PlatformWindow, Task,
+    ThermalState, WindowAppearance, WindowParams,
 };
 use gpui_wgpu::WgpuContext;
 use std::{
+    borrow::Cow,
     cell::RefCell,
     path::{Path, PathBuf},
     rc::Rc,
     sync::Arc,
 };
+
+static BUNDLED_FONTS: &[&[u8]] = &[
+    include_bytes!("../../../assets/fonts/ibm-plex-sans/IBMPlexSans-Regular.ttf"),
+    include_bytes!("../../../assets/fonts/ibm-plex-sans/IBMPlexSans-Italic.ttf"),
+    include_bytes!("../../../assets/fonts/ibm-plex-sans/IBMPlexSans-SemiBold.ttf"),
+    include_bytes!("../../../assets/fonts/ibm-plex-sans/IBMPlexSans-SemiBoldItalic.ttf"),
+    include_bytes!("../../../assets/fonts/lilex/Lilex-Regular.ttf"),
+    include_bytes!("../../../assets/fonts/lilex/Lilex-Bold.ttf"),
+    include_bytes!("../../../assets/fonts/lilex/Lilex-Italic.ttf"),
+    include_bytes!("../../../assets/fonts/lilex/Lilex-BoldItalic.ttf"),
+];
 
 pub struct WebPlatform {
     background_executor: BackgroundExecutor,
@@ -46,7 +58,16 @@ impl WebPlatform {
         let dispatcher = Arc::new(WebDispatcher::new());
         let background_executor = BackgroundExecutor::new(dispatcher.clone());
         let foreground_executor = ForegroundExecutor::new(dispatcher);
-        let text_system: Arc<dyn PlatformTextSystem> = Arc::new(NoopTextSystem);
+        let text_system =
+            Arc::new(gpui_cosmic_text::CosmicTextSystem::new_without_system_fonts("IBM Plex Sans"));
+        let fonts = BUNDLED_FONTS
+            .iter()
+            .map(|bytes| Cow::Borrowed(*bytes))
+            .collect();
+        if let Err(error) = text_system.add_fonts(fonts) {
+            log::error!("failed to load bundled fonts: {error:#}");
+        }
+        let text_system: Arc<dyn PlatformTextSystem> = text_system;
         let active_display: Rc<dyn PlatformDisplay> = Rc::new(WebDisplay::new());
 
         Self {

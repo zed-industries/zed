@@ -2161,7 +2161,7 @@ This needs a `#[cfg(target_family = "wasm")]` branch that uses `wgpu::Backends::
 
 ---
 
-### Phase 3: Input Events
+### Phase 3: Input Events ✅ COMPLETE
 
 **Goal:** Translate DOM events to GPUI's `PlatformInput` enum.
 
@@ -2191,27 +2191,63 @@ The browser's `KeyboardEvent.key` and `KeyboardEvent.code` provide these. The `p
 
 **File:** `zed/crates/gpui_web/src/events.rs`
 
+**Implementation details:**
+- `WebEventListeners` struct holds all `Closure<dyn FnMut(JsValue)>` instances to prevent GC
+- `register_event_listeners()` wires up all DOM listeners on the canvas element (pointer/wheel/drag/keyboard)
+- `dom_key_to_gpui_key()` maps DOM `KeyboardEvent.key` → GPUI key names (e.g. `"ArrowLeft"` → `"left"`)
+- `dom_mouse_button_to_gpui()` maps DOM button numbers (0–4) → `MouseButton` variants
+- Universal modifier mapping: `ctrlKey`→`control`, `altKey`→`alt`, `shiftKey`→`shift`, `metaKey`→`platform`
+- `capslock_from_keyboard_event()` uses `getModifierState("CapsLock")`
+- `is_mac_platform()` detects macOS via `navigator.platform`
+- `ClickState` tracks double/triple-click (400ms window, 5px distance threshold)
+- `compute_key_char()` produces `key_char` for printable single characters; `None` for modifier combos
+- `WebWindowMutableState` gained `modifiers` and `capslock` fields, updated on every input event
+- `WebWindow::modifiers()` and `capslock()` now return live tracked state
+- Canvas is made focusable via `tabindex="0"`, auto-focused on creation, and re-focused on every `pointerdown`
+- Keyboard events (`keydown`/`keyup`) are registered on the canvas (not the browser window) so they only fire when the canvas is focused
+- All non-modifier key events call `preventDefault()` to stop the browser from handling them
+- Scroll wheel deltas are negated (DOM positive = scroll down, GPUI positive = scroll up)
+- Added web-sys features: `DataTransfer`, `DragEvent`, `EventTarget`, `File`, `FileList`, `KeyboardEvent`, `MouseEvent`, `PointerEvent`, `WheelEvent`
+- Added `smallvec` workspace dependency
+
 ---
 
-### Phase 4: `PlatformTextSystem`
+### Phase 4: `PlatformTextSystem` ✅ COMPLETE
 
 **Goal:** Font loading, text shaping, and glyph rasterization in the browser.
 
-**Recommendation: Use `cosmic-text` compiled to wasm.**
+**Implementation: `cosmic-text` compiled to wasm via shared `gpui_cosmic_text` crate.**
 
-This is what Linux already uses (`CosmicTextSystem` in `gpui_linux/src/text_system.rs`). It's a pure-Rust text stack (fontdb + rustybuzz + swash) that compiles to wasm without issues.
+The `CosmicTextSystem` was extracted from `gpui_linux/src/linux/text_system.rs` into a new shared crate `gpui_cosmic_text` at `zed/crates/gpui_cosmic_text/`. Both Linux and Web now depend on this shared crate.
 
-| Approach | Pros | Cons |
-|---|---|---|
-| **cosmic-text (recommended)** | Already integrated in gpui_linux, pure Rust, compiles to wasm, full shaping + rasterization | Binary size (~2-3 MB), must bundle fonts |
-| Canvas2D `measureText` | Native browser performance, access to system fonts | No glyph-level access for rasterization into atlas, can't implement `rasterize_glyph` properly |
-| harfbuzz.js + freetype.js | Good shaping | Complex FFI, large bundle |
+**What was done:**
 
-The `CosmicTextSystem` from `gpui_linux` should be **extracted into a shared crate** (e.g., `gpui_cosmic_text`) so both Linux and Web can use it without code duplication.
+1. **Created `gpui_cosmic_text` crate** (`zed/crates/gpui_cosmic_text/`):
+   - Contains the full `CosmicTextSystem` (cosmic-text + swash text stack)
+   - `font-kit` is an optional feature — Linux enables it for precise font matching; web uses a built-in weight/style scoring fallback
+   - Two constructors: `new(fallback)` loads system fonts (Linux), `new_without_system_fonts(fallback)` creates empty DB (wasm)
+   - Configurable system font fallback name (both platforms use `"IBM Plex Sans"`)
+   - Improved error handling: replaced `.unwrap()` calls with proper `Result` propagation and `log::warn!` fallbacks
 
-**Font bundling:** Since wasm can't access system fonts, the demo/app must bundle its fonts (Zed already ships its own fonts). The `add_fonts()` method accepts raw bytes, so fonts can be fetched via HTTP and loaded at startup.
+2. **Updated `gpui_linux`**:
+   - `text_system.rs` replaced with single re-export: `pub(crate) use gpui_cosmic_text::CosmicTextSystem;`
+   - `Cargo.toml`: replaced direct `cosmic-text` + `font-kit` deps with `gpui_cosmic_text` (with `font-kit` feature)
+   - Feature lists (`wayland`, `x11`) updated to gate `gpui_cosmic_text` instead of `cosmic-text`/`font-kit`
 
-**File:** `zed/crates/gpui_web/src/text_system.rs` (or shared crate)
+3. **Updated `gpui_web`**:
+   - `WebPlatform::new()` uses `CosmicTextSystem::new_without_system_fonts("IBM Plex Sans")` instead of `NoopTextSystem`
+   - All 8 Zed-bundled fonts embedded via `include_bytes!()` and loaded at platform init:
+     - IBM Plex Sans: Regular, Italic, SemiBold, SemiBoldItalic
+     - Lilex: Regular, Bold, Italic, BoldItalic
+   - Fonts are `Cow::Borrowed` (`&'static [u8]`) — zero-copy from wasm binary into cosmic-text
+
+4. **Updated workspace `Cargo.toml`**: added `gpui_cosmic_text` to members and dependencies
+
+**Files:**
+- `zed/crates/gpui_cosmic_text/Cargo.toml`
+- `zed/crates/gpui_cosmic_text/src/gpui_cosmic_text.rs`
+- `zed/crates/gpui_linux/src/linux/text_system.rs` (now a re-export)
+- `zed/crates/gpui_web/src/platform.rs` (font embedding + loading)
 
 ---
 
@@ -2254,27 +2290,23 @@ Most other methods (menus, activation, hide, thermal state, etc.) will remain no
 
 ## File Structure
 
-```/dev/null/tree.txt#L1-L22
+```/dev/null/tree.txt#L1-L27
+zed/crates/gpui_cosmic_text/
+├── Cargo.toml
+└── src/
+    └── gpui_cosmic_text.rs  # ✅ Shared CosmicTextSystem (cosmic-text + swash), used by Linux & Web
+
 zed/crates/gpui_web/
 ├── Cargo.toml
-├── script/
-│   └── build              # Build + wasm-bindgen script
 ├── src/
 │   ├── gpui_web.rs        # ✅ Crate root, module declarations + re-exports
-│   ├── platform.rs        # ✅ WebPlatform: impl Platform (stubs)
+│   ├── platform.rs        # ✅ WebPlatform: impl Platform (bundled fonts + cosmic-text)
 │   ├── dispatcher.rs      # ✅ WebDispatcher: impl PlatformDispatcher (inline stubs)
 │   ├── display.rs         # ✅ WebDisplay: impl PlatformDisplay (hardcoded)
 │   ├── keyboard.rs        # ✅ WebKeyboardLayout: impl PlatformKeyboardLayout (US stub)
 │   ├── logging.rs         # ✅ Console logger (log::* → web_sys::console)
-│   ├── window.rs          # ❌ TODO: WebWindow: impl PlatformWindow
-│   ├── text_system.rs     # ❌ TODO: cosmic-text based text system
-│   └── events.rs          # ❌ TODO: DOM event → PlatformInput translation
-├── examples/
-│   └── hello_web.rs       # ✅ Minimal demo app
-└── web/
-    ├── index.html         # ✅ Bootstrap HTML page
-    ├── .gitignore         # ✅ Excludes pkg/ build artifacts
-    └── pkg/               # Generated by wasm-bindgen (gitignored)
+│   ├── window.rs          # ✅ WebWindow: impl PlatformWindow (canvas, resize, RAF loop, event wiring)
+│   └── events.rs          # ✅ DOM event → PlatformInput translation (pointer, keyboard, wheel, drag)
 ```
 
 ---
@@ -2287,7 +2319,8 @@ zed/crates/gpui_web/
 | **Root `Cargo.toml`** | Add `gpui_web` and `wasm-bindgen` to workspace dependencies | ✅ Done |
 | **`gpui_wgpu`** | Add `cfg` for `BROWSER_WEBGPU` backend in `WgpuContext::new()`; handle canvas surface creation; conditionally strip `dual_source_blending` from shaders | ❌ Phase 2b |
 | **`gpui`** | Possibly adjust `Application::run()` for non-blocking web event loop (or the web platform handles this internally) | ⚠️ May not be needed — `run()` already returns after calling callback |
-| **`gpui_linux`** (optional) | Extract `CosmicTextSystem` into a shared crate | ❌ Phase 4 |
+| **`gpui_linux`** | Extract `CosmicTextSystem` into shared `gpui_cosmic_text` crate; re-export from `text_system.rs` | ✅ Done (Phase 4) |
+| **`gpui_cosmic_text`** (new) | Shared text system crate used by both `gpui_linux` and `gpui_web` | ✅ Done (Phase 4) |
 
 ---
 
@@ -2311,15 +2344,14 @@ zed/crates/gpui_web/
 1. ~~**Phase 0** — Build infra, get wasm compiling~~ ✅ COMPLETE
 2. ~~**Phase 1** — Proper `WebDispatcher` with `setTimeout`/`queueMicrotask`~~ ✅ COMPLETE
 3. ~~**Phase 2a** — Real `WebDisplay` with browser viewport dimensions~~ ✅ COMPLETE
-4. **Phase 4** — `PlatformTextSystem` with cosmic-text *(~3-5 days)* — can parallel with Phase 2b
+4. ~~**Phase 4** — `PlatformTextSystem` with cosmic-text via shared `gpui_cosmic_text` crate~~ ✅ COMPLETE
 5. ~~**Phase 2b** — `WebWindow` + wgpu WebGPU integration~~ ✅ COMPLETE
 6. **Phase 5** — Flesh out `WebPlatform` stubs (clipboard, cursor, open_url) *(~2-3 days)*
 7. **Phase 3** — Input events *(~1 week)*
 8. **Phase 6** — Keyboard layout *(~1-2 days)*
 
-**Next up:** Phase 4 (PlatformTextSystem) is the critical path to first pixels on screen — the NoopTextSystem must be replaced with a real text renderer (cosmic-text) before GPUI views can render text.
+**Next up:** Phase 5 (flesh out `WebPlatform` stubs) and Phase 3 (input events) are the remaining work to reach the first milestone.
 
-**First milestone:** A browser window showing a GPUI view with styled `div`s and text, responding to mouse clicks. (~3-4 weeks from now)
+**First milestone:** A browser window showing a GPUI view with styled `div`s and text, responding to mouse clicks.
 
-**Second milestone:** Full keyboard input, scrolling, and interactive UI. (~2-3 weeks additional)
-
+**Second milestone:** Full keyboard input, scrolling, and interactive UI.

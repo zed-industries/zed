@@ -2,6 +2,7 @@
 
 mod dispatcher;
 mod display;
+mod events;
 mod keyboard;
 mod logging;
 mod platform;

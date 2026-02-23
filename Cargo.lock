@@ -7516,6 +7516,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "gpui_cosmic_text"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "collections",
+ "cosmic-text",
+ "gpui",
+ "itertools 0.14.0",
+ "log",
+ "parking_lot",
+ "profiling",
+ "smallvec",
+ "swash",
+ "zed-font-kit",
+]
+
+[[package]]
 name = "gpui_linux"
 version = "0.1.0"
 dependencies = [
@@ -7527,10 +7544,10 @@ dependencies = [
  "calloop",
  "calloop-wayland-source",
  "collections",
- "cosmic-text",
  "filedescriptor",
  "futures 0.3.31",
  "gpui",
+ "gpui_cosmic_text",
  "gpui_wgpu",
  "http_client",
  "itertools 0.14.0",
@@ -7557,7 +7574,6 @@ dependencies = [
  "x11-clipboard",
  "x11rb",
  "xkbcommon",
- "zed-font-kit",
  "zed-scap",
  "zed-xim",
 ]
@@ -7644,10 +7660,12 @@ dependencies = [
  "console_error_panic_hook",
  "futures 0.3.31",
  "gpui",
+ "gpui_cosmic_text",
  "gpui_wgpu",
  "js-sys",
  "log",
  "raw-window-handle",
+ "smallvec",
  "uuid",
  "wasm-bindgen",
  "wasm-bindgen-futures",

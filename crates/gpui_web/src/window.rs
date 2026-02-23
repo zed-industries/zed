@@ -1,4 +1,5 @@
 use crate::display::WebDisplay;
+use crate::events::{self, WebEventListeners};
 use std::{cell::RefCell, rc::Rc, sync::Arc};
 
 use gpui::{
@@ -12,28 +13,30 @@ use gpui_wgpu::{WgpuContext, WgpuRenderer, WgpuSurfaceConfig};
 use wasm_bindgen::prelude::*;
 
 #[derive(Default)]
-struct WebWindowCallbacks {
-    request_frame: Option<Box<dyn FnMut(RequestFrameOptions)>>,
-    input: Option<Box<dyn FnMut(PlatformInput) -> DispatchEventResult>>,
-    active_status_change: Option<Box<dyn FnMut(bool)>>,
-    hover_status_change: Option<Box<dyn FnMut(bool)>>,
-    resize: Option<Box<dyn FnMut(Size<Pixels>, f32)>>,
-    moved: Option<Box<dyn FnMut()>>,
-    should_close: Option<Box<dyn FnMut() -> bool>>,
-    close: Option<Box<dyn FnOnce()>>,
-    appearance_changed: Option<Box<dyn FnMut()>>,
-    hit_test_window_control: Option<Box<dyn FnMut() -> Option<WindowControlArea>>>,
+pub(crate) struct WebWindowCallbacks {
+    pub(crate) request_frame: Option<Box<dyn FnMut(RequestFrameOptions)>>,
+    pub(crate) input: Option<Box<dyn FnMut(PlatformInput) -> DispatchEventResult>>,
+    pub(crate) active_status_change: Option<Box<dyn FnMut(bool)>>,
+    pub(crate) hover_status_change: Option<Box<dyn FnMut(bool)>>,
+    pub(crate) resize: Option<Box<dyn FnMut(Size<Pixels>, f32)>>,
+    pub(crate) moved: Option<Box<dyn FnMut()>>,
+    pub(crate) should_close: Option<Box<dyn FnMut() -> bool>>,
+    pub(crate) close: Option<Box<dyn FnOnce()>>,
+    pub(crate) appearance_changed: Option<Box<dyn FnMut()>>,
+    pub(crate) hit_test_window_control: Option<Box<dyn FnMut() -> Option<WindowControlArea>>>,
 }
 
-struct WebWindowMutableState {
-    renderer: WgpuRenderer,
-    bounds: Bounds<Pixels>,
-    scale_factor: f32,
-    title: String,
-    input_handler: Option<PlatformInputHandler>,
-    is_fullscreen: bool,
-    is_active: bool,
-    mouse_position: Point<Pixels>,
+pub(crate) struct WebWindowMutableState {
+    pub(crate) renderer: WgpuRenderer,
+    pub(crate) bounds: Bounds<Pixels>,
+    pub(crate) scale_factor: f32,
+    pub(crate) title: String,
+    pub(crate) input_handler: Option<PlatformInputHandler>,
+    pub(crate) is_fullscreen: bool,
+    pub(crate) is_active: bool,
+    pub(crate) mouse_position: Point<Pixels>,
+    pub(crate) modifiers: Modifiers,
+    pub(crate) capslock: Capslock,
 }
 
 pub struct WebWindow {
@@ -48,6 +51,7 @@ pub struct WebWindow {
     // to the functions, but the Rust Closure must stay alive to back them.
     _raf_closure: Closure<dyn FnMut()>,
     _resize_closure: Option<Closure<dyn FnMut(js_sys::Array)>>,
+    _event_listeners: WebEventListeners,
 }
 
 impl WebWindow {
@@ -79,6 +83,8 @@ impl WebWindow {
         canvas.set_width(physical_width.max(1));
         canvas.set_height(physical_height.max(1));
 
+        canvas.set_tab_index(0);
+
         let style = canvas.style();
         style
             .set_property("width", &format!("{}px", f32::from(logical_width)))
@@ -89,12 +95,17 @@ impl WebWindow {
         style
             .set_property("display", "block")
             .map_err(|e| anyhow::anyhow!("Failed to set canvas display style: {e:?}"))?;
+        style
+            .set_property("outline", "none")
+            .map_err(|e| anyhow::anyhow!("Failed to set canvas outline style: {e:?}"))?;
 
         let body = document
             .body()
             .ok_or_else(|| anyhow::anyhow!("No `body` found on document"))?;
         body.append_child(&canvas)
             .map_err(|e| anyhow::anyhow!("Failed to append canvas to body: {e:?}"))?;
+
+        canvas.focus().ok();
 
         let device_size = Size {
             width: DevicePixels(physical_width as i32),
@@ -119,6 +130,8 @@ impl WebWindow {
             is_fullscreen: false,
             is_active: true,
             mouse_position: Point::default(),
+            modifiers: Modifiers::default(),
+            capslock: Capslock::default(),
         };
 
         let state = Rc::new(RefCell::new(mutable_state));
@@ -130,6 +143,9 @@ impl WebWindow {
         let resize_closure =
             Self::create_resize_observer(Rc::clone(&state), Rc::clone(&callbacks), &canvas);
 
+        let event_listeners =
+            events::register_event_listeners(&canvas, Rc::clone(&callbacks), Rc::clone(&state));
+
         Ok(Self {
             canvas,
             display,
@@ -138,6 +154,7 @@ impl WebWindow {
             callbacks,
             _raf_closure: raf_closure,
             _resize_closure: resize_closure,
+            _event_listeners: event_listeners,
         })
     }
 
@@ -355,11 +372,11 @@ impl PlatformWindow for WebWindow {
     }
 
     fn modifiers(&self) -> Modifiers {
-        Modifiers::default()
+        self.state.borrow().modifiers
     }
 
     fn capslock(&self) -> Capslock {
-        Capslock::default()
+        self.state.borrow().capslock
     }
 
     fn set_input_handler(&mut self, input_handler: PlatformInputHandler) {
