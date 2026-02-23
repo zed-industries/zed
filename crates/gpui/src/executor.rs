@@ -3,16 +3,11 @@ use futures::channel::mpsc;
 use futures::prelude::*;
 use scheduler::Scheduler;
 use std::{
-    fmt::Debug,
-    future::Future,
-    marker::PhantomData,
-    mem,
-    pin::Pin,
-    rc::Rc,
-    sync::Arc,
-    time::{Duration, Instant},
+    fmt::Debug, future::Future, marker::PhantomData, mem, pin::Pin, rc::Rc, sync::Arc,
+    time::Duration,
 };
 use util::TryFutureExt;
+use web_time::Instant;
 
 pub use scheduler::{FallibleTask, ForegroundExecutor as SchedulerForegroundExecutor, Priority};
 

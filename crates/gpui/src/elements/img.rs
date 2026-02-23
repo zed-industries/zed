@@ -19,10 +19,11 @@ use std::{
     path::{Path, PathBuf},
     str::FromStr,
     sync::Arc,
-    time::{Duration, Instant},
+    time::Duration,
 };
 use thiserror::Error;
 use util::ResultExt;
+use web_time::Instant;
 
 use super::{Stateful, StatefulInteractiveElement};
 

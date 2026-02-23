@@ -28,7 +28,7 @@ impl Render for HelloWeb {
             .items_center()
             .justify_center()
             .size_full()
-            .bg(rgb(0x1e1e2e))
+            .bg(rgb(0x3e343b))
             .text_color(rgb(0xcdd6f4))
             .child(
                 div()

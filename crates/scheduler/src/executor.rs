@@ -12,8 +12,9 @@ use std::{
     },
     task::{Context, Poll},
     thread::{self, ThreadId},
-    time::{Duration, Instant},
+    time::Duration,
 };
+use web_time::Instant;
 
 #[derive(Clone)]
 pub struct ForegroundExecutor {

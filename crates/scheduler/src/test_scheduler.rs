@@ -26,8 +26,9 @@ use std::{
     },
     task::{Context, Poll, RawWaker, RawWakerVTable, Waker},
     thread::{self, Thread},
-    time::{Duration, Instant},
+    time::Duration,
 };
+use web_time::Instant;
 
 const PENDING_TRACES_VAR_NAME: &str = "PENDING_TRACES";
 

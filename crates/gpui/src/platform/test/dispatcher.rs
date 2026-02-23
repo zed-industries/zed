@@ -5,8 +5,9 @@ use std::{
         Arc,
         atomic::{AtomicUsize, Ordering},
     },
-    time::{Duration, Instant},
+    time::Duration,
 };
+use web_time::Instant;
 
 /// TestDispatcher provides deterministic async execution for tests.
 ///

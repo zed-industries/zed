@@ -501,11 +501,11 @@ fn gradient_color(background: Background, position: vec2<f32>, bounds: Bounds,
             // checkerboard
             let size = background.gradient_angle_or_pattern_height;
             let relative_position = position - bounds.origin;
-            
+
             let x_index = floor(relative_position.x / size);
             let y_index = floor(relative_position.y / size);
             let should_be_colored = (x_index + y_index) % 2.0;
-            
+
             background_color = solid_color;
             background_color.a *= saturate(should_be_colored);
         }
@@ -1033,7 +1033,7 @@ struct PathRasterizationVertex {
 struct PathRasterizationVarying {
     @builtin(position) position: vec4<f32>,
     @location(0) st_position: vec2<f32>,
-    @location(1) vertex_id: u32,
+    @location(1) @interpolate(flat) vertex_id: u32,
     //TODO: use `clip_distance` once Naga supports it
     @location(3) clip_distances: vec4<f32>,
 }
@@ -1072,14 +1072,14 @@ fn fs_path_rasterization(input: PathRasterizationVarying) -> @location(0) vec4<f
         let distance = f / length(gradient);
         alpha = saturate(0.5 - distance);
     }
-    let gradient_color = prepare_gradient_color(
+    let prepared_gradient = prepare_gradient_color(
         background.tag,
         background.color_space,
         background.solid,
         background.colors,
     );
     let color = gradient_color(background, input.position.xy, bounds,
-        gradient_color.solid, gradient_color.color0, gradient_color.color1);
+        prepared_gradient.solid, prepared_gradient.color0, prepared_gradient.color1);
     return vec4<f32>(color.rgb * color.a * alpha, color.a * alpha);
 }
 

@@ -1,6 +1,7 @@
 use gpui::{PlatformDispatcher, Priority, RunnableVariant, ThreadTaskTimings};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use wasm_bindgen::prelude::*;
+use web_time::Instant;
 
 #[wasm_bindgen]
 extern "C" {

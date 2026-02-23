@@ -1,7 +1,5 @@
-use std::{
-    rc::Rc,
-    time::{Duration, Instant},
-};
+use std::{rc::Rc, time::Duration};
+use web_time::Instant;
 
 use crate::{
     AnyElement, App, Element, ElementId, GlobalElementId, InspectorElementId, IntoElement, Window,

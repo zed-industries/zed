@@ -7508,6 +7508,7 @@ dependencies = [
  "util_macros",
  "uuid",
  "waker-fn",
+ "web-time",
  "windows 0.61.3",
  "zed-font-kit",
  "zed-scap",
@@ -7649,6 +7650,7 @@ dependencies = [
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",
+ "web-time",
 ]
 
 [[package]]
@@ -14832,6 +14834,7 @@ dependencies = [
  "futures 0.3.31",
  "parking_lot",
  "rand 0.9.2",
+ "web-time",
 ]
 
 [[package]]

@@ -5,8 +5,8 @@ use std::{
     hash::{DefaultHasher, Hash},
     sync::Arc,
     thread::ThreadId,
-    time::Instant,
 };
+use web_time::Instant;
 
 use serde::{Deserialize, Serialize};
 
