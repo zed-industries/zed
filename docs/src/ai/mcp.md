@@ -7,7 +7,7 @@ description: Install and configure MCP servers in Zed to extend your AI agent wi
 
 Zed uses the [Model Context Protocol](https://modelcontextprotocol.io/) to interact with context servers.
 
-> The Model Context Protocol (MCP) is an open protocol that enables seamless integration between LLM applications and external data sources and tools. Whether you're building an AI-powered IDE, enhancing a chat interface, or creating custom AI workflows, MCP provides a standardized way to connect LLMs with the context they need.
+> The Model Context Protocol (MCP) is an open protocol for connecting LLM applications to external tools and data sources through a standard interface.
 
 ## Supported Features
 
@@ -38,13 +38,12 @@ Popular servers available as an extension include:
 - [Brave Search](https://zed.dev/extensions/brave-search-mcp-server)
 - [Prisma](https://github.com/aqrln/prisma-mcp-zed)
 - [Framelink Figma](https://zed.dev/extensions/framelink-figma-mcp-server)
-- [Linear](https://zed.dev/extensions/linear-mcp-server)
 - [Resend](https://zed.dev/extensions/resend-mcp-server)
 
 ### As Custom Servers
 
 Creating an extension is not the only way to use MCP servers in Zed.
-You can connect them by adding their commands directly to your `settings.json`, like so:
+You can connect them by adding their commands directly to your settings file ([how to edit](../configuring-zed.md#settings-files)), like so:
 
 ```json [settings]
 {
@@ -155,5 +154,5 @@ Learn more about [how tool permissions work](./tool-permissions.md), how to furt
 
 Note that for [external agents](./external-agents.md) connected through the [Agent Client Protocol](https://agentclientprotocol.com/), access to MCP servers installed from Zed may vary depending on the ACP agent implementation.
 
-Regarding the built-in ones, Claude Code and Codex both support it, and Gemini CLI does not yet.
+Regarding the built-in ones, Claude Agent and Codex both support it, and Gemini CLI does not yet.
 In the meantime, learn how to add MCP server support to Gemini CLI through [their documentation](https://github.com/google-gemini/gemini-cli?tab=readme-ov-file#using-mcp-servers).

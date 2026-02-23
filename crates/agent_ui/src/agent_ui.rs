@@ -111,6 +111,8 @@ actions!(
         Reject,
         /// Rejects all suggestions or changes.
         RejectAll,
+        /// Undoes the most recent reject operation, restoring the rejected changes.
+        UndoLastReject,
         /// Keeps all suggestions or changes.
         KeepAll,
         /// Allow this operation only this time.
@@ -226,9 +228,12 @@ impl ExternalAgent {
 }
 
 /// Content to initialize new external agent with.
-pub enum ExternalAgentInitialContent {
+pub enum AgentInitialContent {
     ThreadSummary(acp_thread::AgentSessionInfo),
-    Text(String),
+    ContentBlock {
+        blocks: Vec<agent_client_protocol::ContentBlock>,
+        auto_submit: bool,
+    },
 }
 
 /// Opens the profile management interface for configuring agent tools and settings.
@@ -406,6 +411,7 @@ fn update_command_palette_filter(cx: &mut App) {
                 EditPredictionProvider::Zed
                 | EditPredictionProvider::Codestral
                 | EditPredictionProvider::Ollama
+                | EditPredictionProvider::OpenAiCompatibleApi
                 | EditPredictionProvider::Sweep
                 | EditPredictionProvider::Mercury
                 | EditPredictionProvider::Experimental(_) => {

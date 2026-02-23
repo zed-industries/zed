@@ -7,12 +7,12 @@ use axum::{
     routing::get,
 };
 
-use collab::ServiceMode;
 use collab::api::CloudflareIpCountryHeader;
 use collab::{
     AppState, Config, Result, api::fetch_extensions_from_blob_store_periodically, db, env,
     executor::Executor,
 };
+use collab::{REVISION, ServiceMode, VERSION};
 use db::Database;
 use std::{
     env::args,
@@ -27,9 +27,6 @@ use tracing_subscriber::{
     Layer, filter::EnvFilter, fmt::format::JsonFields, util::SubscriberInitExt,
 };
 use util::ResultExt as _;
-
-const VERSION: &str = env!("CARGO_PKG_VERSION");
-const REVISION: Option<&'static str> = option_env!("GITHUB_SHA");
 
 #[expect(clippy::result_large_err)]
 #[tokio::main]
@@ -94,9 +91,7 @@ async fn main() -> Result<()> {
                     let rpc_server = collab::rpc::Server::new(epoch, state.clone());
                     rpc_server.start().await?;
 
-                    app = app
-                        .merge(collab::api::routes(rpc_server.clone()))
-                        .merge(collab::rpc::routes(rpc_server.clone()));
+                    app = app.merge(collab::rpc::routes(rpc_server.clone()));
 
                     on_shutdown = Some(Box::new(move || rpc_server.teardown()));
                 }

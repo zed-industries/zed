@@ -4,7 +4,7 @@ use crate::{
 };
 use ::fs::Fs;
 use anyhow::{Context as _, Result, bail};
-use futures::{AsyncReadExt, StreamExt};
+use futures::{StreamExt, io};
 use heck::ToSnakeCase;
 use http_client::{self, AsyncBody, HttpClient};
 use serde::Deserialize;
@@ -441,13 +441,15 @@ impl ExtensionBuilder {
 
         // Write the response to a temporary file
         let tar_gz_path = self.cache_dir.join("wasi-sdk.tar.gz");
-        let mut tar_gz_file =
+        let tar_gz_file =
             fs::File::create(&tar_gz_path).context("failed to create temporary tar.gz file")?;
         let response_body = response.body_mut();
-        let mut body_bytes = Vec::new();
-        response_body.read_to_end(&mut body_bytes).await?;
-        std::io::Write::write_all(&mut tar_gz_file, &body_bytes)?;
-        drop(tar_gz_file);
+
+        let mut async_file = io::AllowStdIo::new(tar_gz_file);
+        io::copy(response_body, &mut async_file)
+            .await
+            .context("failed to stream response to file")?;
+        drop(async_file);
 
         log::info!("un-tarring wasi-sdk to {}", tar_out_dir.display());
 

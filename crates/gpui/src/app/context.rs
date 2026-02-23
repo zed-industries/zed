@@ -752,10 +752,14 @@ impl<T> Context<'_, T> {
         T: EventEmitter<Evt>,
         Evt: 'static,
     {
+        let event = self
+            .event_arena
+            .alloc(|| event)
+            .map(|it| it as &mut dyn Any);
         self.app.pending_effects.push_back(Effect::Emit {
             emitter: self.entity_state.entity_id,
             event_type: TypeId::of::<Evt>(),
-            event: Box::new(event),
+            event,
         });
     }
 }

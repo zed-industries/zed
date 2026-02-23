@@ -189,9 +189,9 @@ impl LabelCommon for LabelLike {
     }
 
     fn buffer_font(mut self, cx: &App) -> Self {
-        self.base = self
-            .base
-            .font(theme::ThemeSettings::get_global(cx).buffer_font.clone());
+        let font = theme::ThemeSettings::get_global(cx).buffer_font.clone();
+        self.weight = Some(font.weight);
+        self.base = self.base.font(font);
         self
     }
 

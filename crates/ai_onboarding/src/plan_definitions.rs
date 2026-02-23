@@ -14,7 +14,7 @@ impl PlanDefinitions {
                 "Unlimited prompts with your AI API keys",
             ))
             .child(ListBulletItem::new(
-                "Unlimited use of external agents like Claude Code",
+                "Unlimited use of external agents like Claude Agent",
             ))
     }
 

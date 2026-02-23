@@ -17,7 +17,7 @@ You can do that by:
 
 1. [subscribing to our Pro plan](https://zed.dev/pricing), so you have access to our hosted models
 2. [using your own API keys](./llm-providers.md#use-your-own-keys), either from model providers like Anthropic or model gateways like OpenRouter.
-3. using an [external agent](./external-agents.md) like [Gemini CLI](./external-agents.md#gemini-cli) or [Claude Code](./external-agents.md#claude-code)
+3. using an [external agent](./external-agents.md) like [Gemini CLI](./external-agents.md#gemini-cli) or [Claude Agent](./external-agents.md#claude-agent)
 
 ## Overview {#overview}
 
@@ -27,7 +27,7 @@ Expand the editor with {#kb agent::ExpandMessageEditor} if you need more room.
 Responses stream in with indicators showing [which tools](./tools.md) the model is using.
 The sections below cover what you can do from here.
 
-> Note that for external agents, like [Gemini CLI](./external-agents.md#gemini-cli) or [Claude Code](./external-agents.md#claude-code), some of the features outlined below may _not_ be supported—for example, _restoring threads from history_, _checkpoints_, _token usage display_, and others.
+> Note that for external agents, like [Gemini CLI](./external-agents.md#gemini-cli) or [Claude Agent](./external-agents.md#claude-agent), some of the features outlined below may _not_ be supported—for example, _restoring threads from history_, _checkpoints_, _token usage display_, and others.
 > Their availability varies depending on the agent.
 
 ### Creating New Threads {#new-thread}
@@ -134,7 +134,7 @@ You can also do this at any time with an ongoing thread via the "Agent Options" 
 
 After you've configured your LLM providers—either via [a custom API key](./llm-providers.md) or through [Zed's hosted models](./models.md)—you can switch between their models by clicking on the model selector on the message editor or by using the {#kb agent::ToggleModelSelector} keybinding.
 
-> The same model can be offered via multiple providers - for example, Claude Sonnet 4 is available via Zed Pro, OpenRouter, Anthropic directly, and more.
+> The same model can be offered via multiple providers - for example, Claude Sonnet 4.5 is available via Zed Pro, OpenRouter, Anthropic directly, and more.
 > Make sure you've selected the correct model **_provider_** for the model you'd like to use, delineated by the logo to the left of the model in the model selector.
 
 ### Favoriting Models
@@ -180,7 +180,7 @@ In the Agent Profile modal, select a built-in profile, navigate to `Configure To
 
 Zed will store this profile in your settings using the same profile name as the default you overrode.
 
-All custom profiles can be edited via the UI or by hand under the `agent.profiles` key in your `settings.json` file.
+All custom profiles can be edited via the UI or by hand under the `agent.profiles` key in your settings file.
 
 To delete a custom profile, open the Agent Profile modal, select the profile you want to remove, and click the delete button.
 
@@ -227,7 +227,7 @@ Autonomous code editing (where the agent writes to files) is only available in t
 
 ## Errors and Debugging {#errors-and-debugging}
 
-In case of any error or strange LLM response behavior, the best way to help the Zed team debug is by reaching for the `agent: open thread as markdown` action and attaching that data as part of your issue on GitHub.
+If you hit an error or unusual LLM behavior, open the thread as Markdown with `agent: open thread as markdown` and attach it to your GitHub issue.
 
 You can also open threads as Markdown by clicking on the file icon button, to the right of the thumbs down button, when focused on the panel's editor.
 
@@ -240,7 +240,7 @@ You can rate agent responses to help improve Zed's system prompt and tools.
 > **_If you don't want data persisted on Zed's servers, don't rate_**.
 > We will not collect data for improving our Agentic offering without you explicitly rating responses.
 
-The best way you can help influence the next change to Zed's system prompt and tools is by rating the LLM's response via the thumbs up/down buttons at the end of every response.
+To help improve Zed's system prompt and tools, rate responses with the thumbs up/down controls at the end of each response.
 In case of a thumbs down, a new text area will show up where you can add more specifics about what happened.
 
 You can provide feedback on the thread at any point after the agent responds, and multiple times within the same thread.

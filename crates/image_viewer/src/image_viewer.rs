@@ -479,7 +479,7 @@ impl EventEmitter<ImageViewEvent> for ImageView {}
 impl Item for ImageView {
     type Event = ImageViewEvent;
 
-    fn to_item_events(event: &Self::Event, mut f: impl FnMut(workspace::item::ItemEvent)) {
+    fn to_item_events(event: &Self::Event, f: &mut dyn FnMut(workspace::item::ItemEvent)) {
         match event {
             ImageViewEvent::TitleChanged => {
                 f(workspace::item::ItemEvent::UpdateTab);

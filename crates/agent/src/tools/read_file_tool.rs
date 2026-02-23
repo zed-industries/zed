@@ -13,6 +13,10 @@ use settings::Settings;
 use std::sync::Arc;
 use util::markdown::MarkdownCodeBlock;
 
+fn tool_content_err(e: impl std::fmt::Display) -> LanguageModelToolResultContent {
+    LanguageModelToolResultContent::from(e.to_string())
+}
+
 use super::tool_permissions::{
     ResolvedProjectPath, authorize_symlink_access, canonicalize_worktree_roots,
     resolve_project_path,
@@ -113,7 +117,7 @@ impl AgentTool for ReadFileTool {
         input: Self::Input,
         event_stream: ToolCallEventStream,
         cx: &mut App,
-    ) -> Task<Result<LanguageModelToolResultContent>> {
+    ) -> Task<Result<LanguageModelToolResultContent, LanguageModelToolResultContent>> {
         let project = self.project.clone();
         let thread = self.thread.clone();
         let action_log = self.action_log.clone();
@@ -132,7 +136,7 @@ impl AgentTool for ReadFileTool {
                             canonical_target,
                         } => (project_path, Some(canonical_target)),
                     })
-                })?;
+                }).map_err(tool_content_err)?;
 
             let abs_path = project
                 .read_with(cx, |project, cx| {
@@ -140,7 +144,7 @@ impl AgentTool for ReadFileTool {
                 })
                 .ok_or_else(|| {
                     anyhow!("Failed to convert {} to absolute path", &input.path)
-                })?;
+                }).map_err(tool_content_err)?;
 
             // Check settings exclusions synchronously
             project.read_with(cx, |_project, cx| {
@@ -175,7 +179,7 @@ impl AgentTool for ReadFileTool {
                 }
 
                 anyhow::Ok(())
-            })?;
+            }).map_err(tool_content_err)?;
 
             if let Some(canonical_target) = &symlink_canonical_target {
                 let authorize = cx.update(|cx| {
@@ -187,7 +191,7 @@ impl AgentTool for ReadFileTool {
                         cx,
                     )
                 });
-                authorize.await?;
+                authorize.await.map_err(tool_content_err)?;
             }
 
             let file_path = input.path.clone();
@@ -211,7 +215,7 @@ impl AgentTool for ReadFileTool {
                             project.open_image(project_path.clone(), cx)
                         })
                     })
-                    .await?;
+                    .await.map_err(tool_content_err)?;
 
                 let image =
                     image_entity.read_with(cx, |image_item, _| Arc::clone(&image_item.image));
@@ -219,7 +223,8 @@ impl AgentTool for ReadFileTool {
                 let language_model_image = cx
                     .update(|cx| LanguageModelImage::from_image(image, cx))
                     .await
-                    .context("processing image")?;
+                    .context("processing image")
+                    .map_err(tool_content_err)?;
 
                 event_stream.update_fields(ToolCallUpdateFields::new().content(vec![
                     acp::ToolCallContent::Content(acp::Content::new(acp::ContentBlock::Image(
@@ -235,9 +240,9 @@ impl AgentTool for ReadFileTool {
             });
 
             let buffer = futures::select! {
-                result = open_buffer_task.fuse() => result?,
+                result = open_buffer_task.fuse() => result.map_err(tool_content_err)?,
                 _ = event_stream.cancelled_by_user().fuse() => {
-                    anyhow::bail!("File read cancelled by user");
+                    return Err(tool_content_err("File read cancelled by user"));
                 }
             };
             if buffer.read_with(cx, |buffer, _| {
@@ -246,7 +251,7 @@ impl AgentTool for ReadFileTool {
                     .as_ref()
                     .is_none_or(|file| !file.disk_state().exists())
             }) {
-                anyhow::bail!("{file_path} not found");
+                return Err(tool_content_err(format!("{file_path} not found")));
             }
 
             // Record the file read time and mtime
@@ -294,7 +299,7 @@ impl AgentTool for ReadFileTool {
                     Some(&abs_path.to_string_lossy()),
                     cx,
                 )
-                .await?;
+                .await.map_err(tool_content_err)?;
 
                 action_log.update(cx, |log, cx| {
                     log.buffer_read(buffer.clone(), cx);
@@ -397,7 +402,7 @@ mod test {
             })
             .await;
         assert_eq!(
-            result.unwrap_err().to_string(),
+            error_text(result.unwrap_err()),
             "root/nonexistent_file.txt not found"
         );
     }
@@ -638,6 +643,13 @@ mod test {
             })
             .await;
         assert_eq!(result.unwrap(), "Line 3\n".into());
+    }
+
+    fn error_text(content: LanguageModelToolResultContent) -> String {
+        match content {
+            LanguageModelToolResultContent::Text(text) => text.to_string(),
+            other => panic!("Expected text error, got: {other:?}"),
+        }
     }
 
     fn init_test(cx: &mut TestAppContext) {
@@ -1051,10 +1063,7 @@ mod test {
 
         assert!(result.is_err());
         assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("worktree `private_files` setting"),
+            error_text(result.unwrap_err()).contains("worktree `private_files` setting"),
             "Error should mention worktree private_files setting"
         );
 
@@ -1072,10 +1081,7 @@ mod test {
 
         assert!(result.is_err());
         assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("worktree `file_scan_exclusions` setting"),
+            error_text(result.unwrap_err()).contains("worktree `file_scan_exclusions` setting"),
             "Error should mention worktree file_scan_exclusions setting"
         );
 
@@ -1111,10 +1117,7 @@ mod test {
 
         assert!(result.is_err());
         assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("worktree `private_files` setting"),
+            error_text(result.unwrap_err()).contains("worktree `private_files` setting"),
             "Error should mention worktree private_files setting"
         );
 
@@ -1132,10 +1135,7 @@ mod test {
 
         assert!(result.is_err());
         assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("worktree `file_scan_exclusions` setting"),
+            error_text(result.unwrap_err()).contains("worktree `file_scan_exclusions` setting"),
             "Error should mention worktree file_scan_exclusions setting"
         );
 
@@ -1154,10 +1154,7 @@ mod test {
 
         assert!(result.is_err());
         assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("worktree `private_files` setting"),
+            error_text(result.unwrap_err()).contains("worktree `private_files` setting"),
             "Config.toml should be blocked by worktree1's private_files setting"
         );
     }
@@ -1385,7 +1382,7 @@ mod test {
             result.is_err(),
             "Expected read_file to fail on private path"
         );
-        let error = result.unwrap_err().to_string();
+        let error = error_text(result.unwrap_err());
         assert!(
             error.contains("private_files"),
             "Expected private-files validation error, got: {error}"

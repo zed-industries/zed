@@ -113,6 +113,7 @@ pub trait Scheduler: Send + Sync {
         self.schedule_background_with_priority(runnable, Priority::default());
     }
 
+    #[track_caller]
     fn timer(&self, timeout: Duration) -> Timer;
     fn clock(&self) -> Arc<dyn Clock>;
 

@@ -1,8 +1,13 @@
+---
+title: Troubleshooting
+description: "Common issues and solutions for Zed on all platforms."
+---
+
 # Troubleshooting
 
 This guide covers common troubleshooting techniques for Zed.
 Sometimes you'll be able to identify and resolve issues on your own using this information.
-Other times, troubleshooting means gathering the right information—logs, profiles, or reproduction steps—to help us diagnose and fix the problem.
+Other times, troubleshooting means gathering the right information (logs, profiles, or reproduction steps) to help us diagnose and fix the problem.
 
 > **Note**: To open the command palette, use `cmd-shift-p` on macOS or `ctrl-shift-p` on Windows / Linux.
 
@@ -25,14 +30,14 @@ You'll find the Zed log in the respective location on each operating system:
 - Windows: `C:\Users\YOU\AppData\Local\Zed\logs\Zed.log`
 - Linux: `~/.local/share/zed/logs/Zed.log` or `$XDG_DATA_HOME`
 
-> Note: In some cases, it might be useful to monitor the log live, such as when [developing a Zed extension](https://zed.dev/docs/extensions/developing-extensions).
+> **Note:** In some cases, it might be useful to monitor the log live, such as when [developing a Zed extension](https://zed.dev/docs/extensions/developing-extensions).
 > Example: `tail -f ~/Library/Logs/Zed/Zed.log`
 
 The log may contain enough context to help you debug the issue yourself, or you may find specific errors that are useful when filing a [GitHub issue](https://github.com/zed-industries/zed/issues/new/choose) or when talking to Zed staff in our [Discord server](https://zed.dev/community-links#forums-and-discussions).
 
 ## Performance Issues (Profiling)
 
-If you're running into performance issues in Zed—such as hitches, hangs, or general unresponsiveness—having a performance profile attached to your issue will help us zero in on what is getting stuck, so we can fix it.
+If you're running into performance issues in Zed (hitches, hangs, or general unresponsiveness), having a performance profile attached to your issue will help us zero in on what is getting stuck.
 
 ### macOS
 

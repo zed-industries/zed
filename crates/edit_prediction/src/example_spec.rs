@@ -12,6 +12,56 @@ pub const INLINE_CURSOR_MARKER: &str = "<|user_cursor|>";
 /// falling back to git-based loading.
 pub const MAX_CURSOR_FILE_SIZE: usize = 64 * 1024;
 
+/// Encodes a cursor position into a diff patch by adding a comment line with a caret
+/// pointing to the cursor column.
+///
+/// The cursor offset is relative to the start of the new text content (additions and context lines).
+/// Returns the patch with cursor marker comment lines inserted after the relevant addition line.
+pub fn encode_cursor_in_patch(patch: &str, cursor_offset: Option<usize>) -> String {
+    let Some(cursor_offset) = cursor_offset else {
+        return patch.to_string();
+    };
+
+    let mut result = String::new();
+    let mut line_start_offset = 0usize;
+
+    for line in patch.lines() {
+        if !result.is_empty() {
+            result.push('\n');
+        }
+        result.push_str(line);
+
+        match DiffLine::parse(line) {
+            DiffLine::Addition(content) => {
+                let line_end_offset = line_start_offset + content.len();
+
+                if cursor_offset >= line_start_offset && cursor_offset <= line_end_offset {
+                    let cursor_column = cursor_offset - line_start_offset;
+
+                    result.push('\n');
+                    result.push('#');
+                    for _ in 0..cursor_column {
+                        result.push(' ');
+                    }
+                    write!(result, "^{}", CURSOR_POSITION_MARKER).unwrap();
+                }
+
+                line_start_offset = line_end_offset + 1;
+            }
+            DiffLine::Context(content) => {
+                line_start_offset += content.len() + 1;
+            }
+            _ => {}
+        }
+    }
+
+    if patch.ends_with('\n') {
+        result.push('\n');
+    }
+
+    result
+}
+
 #[derive(Clone, Debug, PartialEq, Hash, Serialize, Deserialize)]
 pub struct ExampleSpec {
     #[serde(default)]
@@ -66,7 +116,10 @@ pub struct CapturedPromptInput {
     pub excerpt_start_row: Option<u32>,
     pub events: Vec<CapturedEvent>,
     pub related_files: Vec<CapturedRelatedFile>,
+    #[serde(default)]
     pub in_open_source_repo: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub zed_version: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Hash, Serialize, Deserialize)]
@@ -75,6 +128,7 @@ pub struct CapturedEvent {
     pub old_path: Arc<Path>,
     pub diff: String,
     pub predicted: bool,
+    #[serde(default)]
     pub in_open_source_repo: bool,
 }
 
@@ -127,6 +181,7 @@ const EDIT_HISTORY_HEADING: &str = "Edit History";
 const CURSOR_POSITION_HEADING: &str = "Cursor Position";
 const EXPECTED_PATCH_HEADING: &str = "Expected Patch";
 const REJECTED_PATCH_HEADING: &str = "Rejected Patch";
+const ACCEPTED_PREDICTION_MARKER: &str = "// User accepted prediction:";
 
 #[derive(Serialize, Deserialize)]
 struct FrontMatter<'a> {
@@ -298,6 +353,7 @@ impl ExampleSpec {
         }
 
         let mut current_section = Section::Start;
+        let mut next_edit_predicted = false;
 
         for event in parser {
             match event {
@@ -333,6 +389,12 @@ impl ExampleSpec {
                     anyhow::bail!("Unexpected heading level: {level}");
                 }
                 Event::Start(Tag::CodeBlock(kind)) => {
+                    if current_section == Section::EditHistory
+                        && text.trim() == ACCEPTED_PREDICTION_MARKER
+                    {
+                        next_edit_predicted = true;
+                    }
+                    text.clear();
                     match kind {
                         CodeBlockKind::Fenced(info) => {
                             block_info = info;
@@ -353,6 +415,11 @@ impl ExampleSpec {
                             spec.uncommitted_diff = mem::take(&mut text);
                         }
                         Section::EditHistory => {
+                            if next_edit_predicted {
+                                spec.edit_history
+                                    .push_str(&format!("{}\n", ACCEPTED_PREDICTION_MARKER));
+                                next_edit_predicted = false;
+                            }
                             spec.edit_history.push_str(&mem::take(&mut text));
                         }
                         Section::CursorPosition => {
@@ -563,52 +630,7 @@ impl ExampleSpec {
     ) {
         self.expected_patches = patches
             .into_iter()
-            .map(|(patch, cursor_editable_region_offset)| {
-                let Some(cursor_offset) = cursor_editable_region_offset else {
-                    return patch;
-                };
-
-                let mut result = String::new();
-                let mut line_start_offset = 0usize;
-
-                for line in patch.lines() {
-                    if !result.is_empty() {
-                        result.push('\n');
-                    }
-                    result.push_str(line);
-
-                    match DiffLine::parse(line) {
-                        DiffLine::Addition(content) => {
-                            let line_end_offset = line_start_offset + content.len();
-
-                            if cursor_offset >= line_start_offset
-                                && cursor_offset <= line_end_offset
-                            {
-                                let cursor_column = cursor_offset - line_start_offset;
-
-                                result.push('\n');
-                                result.push('#');
-                                for _ in 0..cursor_column {
-                                    result.push(' ');
-                                }
-                                write!(result, "^{}", CURSOR_POSITION_MARKER).unwrap();
-                            }
-
-                            line_start_offset = line_end_offset + 1;
-                        }
-                        DiffLine::Context(content) => {
-                            line_start_offset += content.len() + 1;
-                        }
-                        _ => {}
-                    }
-                }
-
-                if patch.ends_with('\n') {
-                    result.push('\n');
-                }
-
-                result
-            })
+            .map(|(patch, cursor_offset)| encode_cursor_in_patch(&patch, cursor_offset))
             .collect();
     }
 }
@@ -898,5 +920,82 @@ mod tests {
 
         let results = spec.expected_patches_with_cursor_positions();
         assert_eq!(results, vec![(clean_patch, None)]);
+    }
+
+    #[test]
+    fn test_from_markdown_accepted_prediction_marker() {
+        let markdown = indoc! {r#"
+            +++
+            repository_url = "https://github.com/example/repo"
+            revision = "abc123"
+            +++
+
+            ## Edit History
+
+            ```diff
+            --- a/src/main.rs
+            +++ b/src/main.rs
+            @@ -1,3 +1,3 @@
+            -fn hello() {}
+            +fn hello_world() {}
+            ```
+
+            // User accepted prediction:
+            ```diff
+            --- a/src/main.rs
+            +++ b/src/main.rs
+            @@ -1,3 +1,3 @@
+            -fn hello_world() {}
+            +fn hello_world() { println!("hi"); }
+            ```
+
+            ```diff
+            --- a/src/main.rs
+            +++ b/src/main.rs
+            @@ -1,3 +1,3 @@
+            -fn hello_world() { println!("hi"); }
+            +fn hello_world() { println!("hello"); }
+            ```
+
+            ## Cursor Position
+
+            ```src/main.rs
+            fn hello_world() { println!("hello"); }
+            #                                    ^[CURSOR_POSITION]
+            ```
+
+            ## Expected Patch
+
+            ```diff
+            --- a/src/main.rs
+            +++ b/src/main.rs
+            @@ -1,3 +1,3 @@
+            -fn hello_world() { println!("hello"); }
+            +fn hello_world() { println!("hello, world!"); }
+            ```
+        "#};
+
+        let spec = ExampleSpec::from_markdown(markdown).unwrap();
+
+        // The first diff should NOT have the marker
+        assert!(spec.edit_history.starts_with("--- a/src/main.rs"));
+
+        // The second diff should be preceded by the accepted prediction marker
+        assert!(
+            spec.edit_history
+                .contains("// User accepted prediction:\n--- a/src/main.rs")
+        );
+
+        // Count occurrences of the marker - should be exactly one
+        let marker_count = spec
+            .edit_history
+            .matches("// User accepted prediction:")
+            .count();
+        assert_eq!(marker_count, 1);
+
+        // The third diff should NOT have the marker
+        // Verify all three diffs are present
+        let diff_count = spec.edit_history.matches("--- a/src/main.rs").count();
+        assert_eq!(diff_count, 3);
     }
 }
