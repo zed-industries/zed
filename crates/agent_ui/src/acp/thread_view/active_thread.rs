@@ -4772,9 +4772,10 @@ impl AcpThreadView {
                 )
             })
             .when_some(confirmation_options, |this, options| {
+                let is_first = self.is_first_tool_call(&self.id, &tool_call.id, cx);
                 this.child(self.render_permission_buttons(
                     self.id.clone(),
-                    false, //todo
+                    is_first,
                     options,
                     entry_ix,
                     tool_call.id.clone(),
@@ -4782,6 +4783,20 @@ impl AcpThreadView {
                 ))
             })
             .into_any()
+    }
+
+    fn is_first_tool_call(
+        &self,
+        session_id: &acp::SessionId,
+        tool_call_id: &acp::ToolCallId,
+        cx: &App,
+    ) -> bool {
+        self.conversation
+            .read(cx)
+            .pending_tool_call(&self.id, cx)
+            .map_or(false, |(pending_session_id, pending_tool_call_id, _)| {
+                session_id == &pending_session_id && tool_call_id == &pending_tool_call_id
+            })
     }
 
     fn render_tool_call(
@@ -4937,7 +4952,7 @@ impl AcpThreadView {
                     })
                     .child(self.render_permission_buttons(
                         self.id.clone(),
-                        false, //todo
+                        self.is_first_tool_call(&self.id, &tool_call.id, cx),
                         options,
                         entry_ix,
                         tool_call.id.clone(),
@@ -6246,15 +6261,20 @@ impl AcpThreadView {
                     self.conversation
                         .read(cx)
                         .pending_tool_call(thread.read(cx).session_id(), cx)
-                        .map(|(session_id, tool_call_id, options)| {
-                            self.render_permission_buttons(
-                                session_id,
-                                false, //todo
+                        .and_then(|(subagent_session_id, subagent_tool_call_id, options)| {
+                            let is_first = self.is_first_tool_call(
+                                &subagent_session_id,
+                                &subagent_tool_call_id,
+                                cx,
+                            );
+                            Some(self.render_permission_buttons(
+                                subagent_session_id,
+                                is_first,
                                 &options,
                                 entry_ix,
-                                tool_call_id,
+                                subagent_tool_call_id,
                                 cx,
-                            )
+                            ))
                         }),
                 )
             })
