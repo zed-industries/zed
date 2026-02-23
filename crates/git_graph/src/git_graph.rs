@@ -1,5 +1,4 @@
 use collections::{BTreeMap, HashMap, HashSet};
-use feature_flags::{FeatureFlag, FeatureFlagAppExt as _};
 use git::{
     BuildCommitPermalinkParams, GitHostingProviderRegistry, GitRemote, Oid, ParsedGitRemote,
     parse_git_remote_url,
@@ -92,12 +91,6 @@ actions!(
         OpenCommitView,
     ]
 );
-
-pub struct GitGraphFeatureFlag;
-
-impl FeatureFlag for GitGraphFeatureFlag {
-    const NAME: &'static str = "git-graph";
-}
 
 fn timestamp_format() -> &'static [BorrowedFormatItem<'static>] {
     static FORMAT: OnceLock<Vec<BorrowedFormatItem<'static>>> = OnceLock::new();
@@ -598,8 +591,7 @@ pub fn init(cx: &mut App) {
     cx.observe_new(|workspace: &mut workspace::Workspace, _, _| {
         workspace.register_action_renderer(|div, workspace, _, cx| {
             div.when(
-                workspace.project().read(cx).active_repository(cx).is_some()
-                    && cx.has_flag::<GitGraphFeatureFlag>(),
+                workspace.project().read(cx).active_repository(cx).is_some(),
                 |div| {
                     let workspace = workspace.weak_handle();
 
@@ -803,7 +795,7 @@ impl GitGraph {
             log_order,
             commit_details_split_state: cx.new(|_cx| SplitState::new()),
             branch_filter: BranchFilter::default(),
-            show_remotes: false,
+            show_remotes: true,
             all_branches: Vec::new(),
             branch_filter_query: String::new(),
             branch_filter_menu_open: false,
@@ -845,6 +837,26 @@ impl GitGraph {
                                 })
                             })
                             .collect();
+
+                        // Remove selected branches that are no longer in all_branches
+                        let valid_branches: HashSet<_> = this.all_branches.iter()
+                            .map(|b| b.name.clone())
+                            .collect();
+                        this.branch_filter.selected_branches.retain(|branch| {
+                            valid_branches.contains(branch)
+                        });
+
+                        // Update commit filtering
+                        let commits_empty = this.graph_data.commits.is_empty();
+                        if !this.branch_filter.is_all() || !this.show_remotes || commits_empty {
+                            this.update_branch_commits(cx);
+                        } else {
+                            // When showing remotes and is_all, ensure filter is cleared
+                            this.branch_commit_shas.clear();
+                            this.filtered_commit_indices.clear();
+                            eprintln!("[GitGraph] fetch_branches callback: cleared filter for show_remotes=true, commits_len={}", this.graph_data.commits.len());
+                        }
+
                         cx.notify();
                     });
                 }
@@ -854,13 +866,14 @@ impl GitGraph {
 
     fn update_branch_commits(&mut self, cx: &mut Context<Self>) {
         let start = std::time::Instant::now();
-        eprintln!("[GitGraph] update_branch_commits: start, is_all={}", self.branch_filter.is_all());
+        eprintln!("[GitGraph] update_branch_commits: start, is_all={}, show_remotes={}", self.branch_filter.is_all(), self.show_remotes);
 
-        if self.branch_filter.is_all() {
+        // If showing all branches and remote branches are allowed, clear filter
+        if self.branch_filter.is_all() && self.show_remotes {
             self.branch_commit_shas.clear();
             self.filtered_commit_indices.clear();
             cx.notify();
-            eprintln!("[GitGraph] update_branch_commits: is_all mode, elapsed={:?}", start.elapsed());
+            eprintln!("[GitGraph] update_branch_commits: is_all mode with remotes, elapsed={:?}", start.elapsed());
             return;
         }
 
@@ -869,13 +882,23 @@ impl GitGraph {
             return;
         }
 
-        let branches: Vec<SharedString> = self
-            .branch_filter
-            .selected_branches
-            .iter()
-            .cloned()
-            .collect();
-        eprintln!("[GitGraph] update_branch_commits: {} branches selected", branches.len());
+        // Determine which branches to use for filtering
+        let branches: Vec<SharedString> = if self.branch_filter.is_all() {
+            // When is_all but show_remotes is false, use only local branches
+            let local_branches: Vec<_> = self.all_branches.iter()
+                .filter(|b| !b.is_remote)
+                .map(|b| b.name.clone())
+                .collect();
+            eprintln!("[GitGraph] update_branch_commits: using local branches: {:?}", local_branches);
+            local_branches
+        } else {
+            let selected: Vec<_> = self.branch_filter.selected_branches.iter()
+                .cloned()
+                .collect();
+            eprintln!("[GitGraph] update_branch_commits: using selected branches: {:?}", selected);
+            selected
+        };
+        eprintln!("[GitGraph] update_branch_commits: {} branches to filter", branches.len());
 
         // Check which branches need to be fetched (not in cache)
         // Use into_iter() to transfer ownership and avoid lifetime issues with async
@@ -933,6 +956,7 @@ impl GitGraph {
                 this.update(cx, |this, cx| {
                     this.branch_commit_shas = all_shas;
                     this.update_filtered_indices(cx);
+                    cx.notify();
                 });
                 eprintln!("[GitGraph] update_branch_commits: update_filtered_indices done, elapsed={:?}", filter_start.elapsed());
             }
@@ -988,6 +1012,16 @@ impl GitGraph {
                 });
 
                 self.graph_data.max_commit_count = AllCommitCount::Loaded(*commit_count);
+
+                // Update filtered indices based on current filter settings
+                if self.branch_filter.is_all() && self.show_remotes {
+                    // No filtering needed - clear filter to show all commits
+                    self.branch_commit_shas.clear();
+                    self.filtered_commit_indices.clear();
+                } else if !self.branch_commit_shas.is_empty() {
+                    // Re-apply filter with new commits
+                    self.update_filtered_indices(cx);
+                }
             }
             RepositoryEvent::BranchChanged => {
                 self.graph_data.clear();
@@ -1031,6 +1065,8 @@ impl GitGraph {
 
         let row_height = self.row_height;
         let use_filter = !self.filtered_commit_indices.is_empty();
+        eprintln!("[GitGraph] render_visible_range: use_filter={}, filtered_count={}, show_remotes={}",
+            use_filter, self.filtered_commit_indices.len(), self.show_remotes);
 
         // We fetch data outside the visible viewport to avoid loading entries when
         // users scroll through the git graph
@@ -1353,7 +1389,17 @@ impl GitGraph {
                     })
                     .on_click(cx.listener(|this, _event: &ClickEvent, _window, cx| {
                         this.show_remotes = !this.show_remotes;
-                        cx.notify();
+                        eprintln!("[GitGraph] TOGGLE: show_remotes is now {}", this.show_remotes);
+                        if this.show_remotes {
+                            // When turning ON remote branches, clear the filter to show all commits
+                            eprintln!("[GitGraph] TOGGLE: clearing filter");
+                            this.branch_commit_shas.clear();
+                            this.filtered_commit_indices.clear();
+                            cx.notify();
+                        } else {
+                            eprintln!("[GitGraph] TOGGLE: NOT clearing filter, will fetch and filter");
+                        }
+                        this.fetch_branches(cx);
                     }))
                     .h_flex()
                     .items_center()
