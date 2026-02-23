@@ -373,7 +373,7 @@ pub fn zeta2_prompt_input(
             .text_for_range(full_context)
             .collect::<String>()
             .into(),
-        editable_range_in_excerpt: editable_offset_range.clone(),
+        editable_range_in_excerpt: editable_offset_range,
         cursor_offset_in_excerpt,
         excerpt_start_row: Some(full_context_start_row),
         events,
