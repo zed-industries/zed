@@ -11202,6 +11202,9 @@ impl Editor {
     }
 
     pub fn delete_line(&mut self, _: &DeleteLine, window: &mut Window, cx: &mut Context<Self>) {
+        if self.read_only(cx) {
+            return;
+        }
         self.hide_mouse_cursor(HideMouseCursorOrigin::TypingAction, cx);
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let selections = self.selections.all::<Point>(&display_map);
@@ -12260,6 +12263,9 @@ impl Editor {
     ) where
         M: FnMut(&str) -> LineManipulationResult,
     {
+        if self.read_only(cx) {
+            return;
+        }
         self.hide_mouse_cursor(HideMouseCursorOrigin::TypingAction, cx);
 
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
@@ -12759,6 +12765,10 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.read_only(cx) {
+            return;
+        }
+
         self.hide_mouse_cursor(HideMouseCursorOrigin::TypingAction, cx);
 
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
@@ -12904,6 +12914,9 @@ impl Editor {
     }
 
     pub fn move_line_up(&mut self, _: &MoveLineUp, window: &mut Window, cx: &mut Context<Self>) {
+        if self.read_only(cx) {
+            return;
+        }
         self.hide_mouse_cursor(HideMouseCursorOrigin::TypingAction, cx);
         if self.mode.is_single_line() {
             cx.propagate();
@@ -13015,6 +13028,9 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.read_only(cx) {
+            return;
+        }
         self.hide_mouse_cursor(HideMouseCursorOrigin::TypingAction, cx);
         if self.mode.is_single_line() {
             cx.propagate();
@@ -13109,6 +13125,9 @@ impl Editor {
     }
 
     pub fn transpose(&mut self, _: &Transpose, window: &mut Window, cx: &mut Context<Self>) {
+        if self.read_only(cx) {
+            return;
+        }
         self.hide_mouse_cursor(HideMouseCursorOrigin::TypingAction, cx);
         let text_layout_details = &self.text_layout_details(window, cx);
         self.transact(window, cx, |this, window, cx| {
