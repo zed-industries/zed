@@ -131,7 +131,7 @@ jobs:
             echo "Version changes happen in separate PRs and will be performed by the zed-zippy bot"
             exit 42
         fi
-    timeout-minutes: 4
+    timeout-minutes: 6
   tests_pass:
     needs:
     - orchestrate
