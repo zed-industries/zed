@@ -757,6 +757,8 @@ pub struct GitGraph {
     horizontal_scroll_offset: Pixels,
     graph_viewport_width: Pixels,
     selected_entry_idx: Option<usize>,
+    hovered_entry_idx: Option<usize>,
+    graph_canvas_bounds: Rc<Cell<Option<Bounds<Pixels>>>>,
     log_source: LogSource,
     log_order: LogOrder,
     selected_commit_diff: Option<CommitDiff>,
@@ -851,6 +853,8 @@ impl GitGraph {
             horizontal_scroll_offset: px(0.),
             graph_viewport_width: px(88.),
             selected_entry_idx: None,
+            hovered_entry_idx: None,
+            graph_canvas_bounds: Rc::new(Cell::new(None)),
             selected_commit_diff: None,
             log_source,
             log_order,
@@ -1465,7 +1469,7 @@ impl GitGraph {
             .into_any_element()
     }
 
-    pub fn render_graph(&self, cx: &mut Context<GitGraph>) -> impl IntoElement {
+    pub fn render_graph(&self, window: &Window, cx: &mut Context<GitGraph>) -> impl IntoElement {
         let row_height = self.row_height;
         let table_state = self.table_interaction_state.read(cx);
         let viewport_height = table_state
@@ -1506,11 +1510,47 @@ impl GitGraph {
 
         let mut lines: BTreeMap<usize, Vec<_>> = BTreeMap::new();
 
+        let hovered_entry_idx = self.hovered_entry_idx;
+        let selected_entry_idx = self.selected_entry_idx;
+        let is_focused = self.focus_handle.is_focused(window);
+        let graph_canvas_bounds = self.graph_canvas_bounds.clone();
+
         gpui::canvas(
             move |_bounds, _window, _cx| {},
             move |bounds: Bounds<Pixels>, _: (), window: &mut Window, cx: &mut App| {
+                graph_canvas_bounds.set(Some(bounds));
+
                 window.paint_layer(bounds, |window| {
                     let accent_colors = cx.theme().accents();
+
+                    let hover_bg = cx.theme().colors().element_hover.opacity(0.6);
+                    let selected_bg = if is_focused {
+                        cx.theme().colors().element_selected
+                    } else {
+                        cx.theme().colors().element_hover
+                    };
+
+                    for visible_row_idx in 0..rows.len() {
+                        let absolute_row_idx = first_visible_row + visible_row_idx;
+                        let is_hovered = hovered_entry_idx == Some(absolute_row_idx);
+                        let is_selected = selected_entry_idx == Some(absolute_row_idx);
+
+                        if is_hovered || is_selected {
+                            let row_y = bounds.origin.y + visible_row_idx as f32 * row_height
+                                - vertical_scroll_offset;
+
+                            let row_bounds = Bounds::new(
+                                point(bounds.origin.x, row_y),
+                                gpui::Size {
+                                    width: bounds.size.width,
+                                    height: row_height,
+                                },
+                            );
+
+                            let bg_color = if is_selected { selected_bg } else { hover_bg };
+                            window.paint_quad(gpui::fill(row_bounds, bg_color));
+                        }
+                    }
 
                     for (row_idx, row) in rows.into_iter().enumerate() {
                         let row_color = accent_colors.color_for_index(row.color_idx as u32);
@@ -1674,6 +1714,57 @@ impl GitGraph {
         .h_full()
     }
 
+    fn row_at_position(&self, position_y: Pixels, cx: &Context<Self>) -> Option<usize> {
+        let canvas_bounds = self.graph_canvas_bounds.get()?;
+        let table_state = self.table_interaction_state.read(cx);
+        let scroll_offset_y = -table_state.scroll_offset().y;
+
+        let local_y = position_y - canvas_bounds.origin.y;
+
+        if local_y >= px(0.) && local_y < canvas_bounds.size.height {
+            let row_in_viewport = (local_y / self.row_height).floor() as usize;
+            let scroll_rows = (scroll_offset_y / self.row_height).floor() as usize;
+            let absolute_row = scroll_rows + row_in_viewport;
+
+            if absolute_row < self.graph_data.commits.len() {
+                return Some(absolute_row);
+            }
+        }
+
+        None
+    }
+
+    fn handle_graph_mouse_move(
+        &mut self,
+        event: &gpui::MouseMoveEvent,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(row) = self.row_at_position(event.position.y, cx) {
+            if self.hovered_entry_idx != Some(row) {
+                self.hovered_entry_idx = Some(row);
+                cx.notify();
+            }
+        } else if self.hovered_entry_idx.is_some() {
+            self.hovered_entry_idx = None;
+            cx.notify();
+        }
+    }
+
+    fn handle_graph_click(
+        &mut self,
+        event: &ClickEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(row) = self.row_at_position(event.position().y, cx) {
+            self.select_entry(row, cx);
+            if event.click_count() >= 2 {
+                self.open_commit_view(row, window, cx);
+            }
+        }
+    }
+
     fn handle_graph_scroll(
         &mut self,
         event: &ScrollWheelEvent,
@@ -1830,18 +1921,29 @@ impl Render for GitGraph {
                                 .id("graph-canvas")
                                 .flex_1()
                                 .overflow_hidden()
-                                .child(self.render_graph(cx))
-                                .on_scroll_wheel(cx.listener(Self::handle_graph_scroll)),
+                                .child(self.render_graph(window, cx))
+                                .on_scroll_wheel(cx.listener(Self::handle_graph_scroll))
+                                .on_mouse_move(cx.listener(Self::handle_graph_mouse_move))
+                                .on_click(cx.listener(Self::handle_graph_click))
+                                .on_hover(cx.listener(|this, &is_hovered: &bool, _, cx| {
+                                    if !is_hovered && this.hovered_entry_idx.is_some() {
+                                        this.hovered_entry_idx = None;
+                                        cx.notify();
+                                    }
+                                })),
                         ),
                 )
                 .child({
                     let row_height = self.row_height;
                     let selected_entry_idx = self.selected_entry_idx;
+                    let hovered_entry_idx = self.hovered_entry_idx;
                     let weak_self = cx.weak_entity();
+                    let focus_handle = self.focus_handle.clone();
                     div().flex_1().size_full().child(
                         Table::new(4)
                             .interactable(&self.table_interaction_state)
                             .hide_row_borders()
+                            .hide_row_hover()
                             .header(vec![
                                 Label::new("Description")
                                     .color(Color::Muted)
@@ -1869,12 +1971,38 @@ impl Render for GitGraph {
                                 &self.table_column_widths,
                                 cx,
                             )
-                            .map_row(move |(index, row), _window, cx| {
+                            .map_row(move |(index, row), window, cx| {
                                 let is_selected = selected_entry_idx == Some(index);
+                                let is_hovered = hovered_entry_idx == Some(index);
+                                let is_focused = focus_handle.is_focused(window);
                                 let weak = weak_self.clone();
+                                let weak_for_hover = weak.clone();
+
+                                let hover_bg = cx.theme().colors().element_hover.opacity(0.6);
+                                let selected_bg = if is_focused {
+                                    cx.theme().colors().element_selected
+                                } else {
+                                    cx.theme().colors().element_hover
+                                };
+
                                 row.h(row_height)
-                                    .when(is_selected, |row| {
-                                        row.bg(cx.theme().colors().element_selected)
+                                    .when(is_selected, |row| row.bg(selected_bg))
+                                    .when(is_hovered && !is_selected, |row| row.bg(hover_bg))
+                                    .on_hover(move |&is_hovered, _, cx| {
+                                        weak_for_hover
+                                            .update(cx, |this, cx| {
+                                                if is_hovered {
+                                                    if this.hovered_entry_idx != Some(index) {
+                                                        this.hovered_entry_idx = Some(index);
+                                                        cx.notify();
+                                                    }
+                                                } else if this.hovered_entry_idx == Some(index) {
+                                                    // Only clear if this row was the hovered one
+                                                    this.hovered_entry_idx = None;
+                                                    cx.notify();
+                                                }
+                                            })
+                                            .ok();
                                     })
                                     .on_click(move |event, window, cx| {
                                         let click_count = event.click_count();
