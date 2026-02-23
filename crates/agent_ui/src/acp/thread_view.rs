@@ -5983,4 +5983,272 @@ pub(crate) mod tests {
             }
         });
     }
+
+    fn create_test_acp_thread(
+        parent_session_id: Option<acp::SessionId>,
+        session_id: &str,
+        connection: Rc<dyn AgentConnection>,
+        project: Entity<Project>,
+        cx: &mut App,
+    ) -> Entity<AcpThread> {
+        let action_log = cx.new(|_| ActionLog::new(project.clone()));
+        cx.new(|cx| {
+            AcpThread::new(
+                parent_session_id,
+                "Test Thread",
+                connection,
+                project,
+                action_log,
+                acp::SessionId::new(session_id),
+                watch::Receiver::constant(acp::PromptCapabilities::new()),
+                cx,
+            )
+        })
+    }
+
+    fn request_test_tool_authorization(
+        thread: &Entity<AcpThread>,
+        tool_call_id: &str,
+        option_id: &str,
+        cx: &mut TestAppContext,
+    ) -> Task<acp::RequestPermissionOutcome> {
+        let tool_call_id = acp::ToolCallId::new(tool_call_id);
+        let label = format!("Tool {tool_call_id}");
+        let option_id = acp::PermissionOptionId::new(option_id);
+        cx.update(|cx| {
+            thread.update(cx, |thread, cx| {
+                thread
+                    .request_tool_call_authorization(
+                        acp::ToolCall::new(tool_call_id, label)
+                            .kind(acp::ToolKind::Edit)
+                            .into(),
+                        PermissionOptions::Flat(vec![acp::PermissionOption::new(
+                            option_id,
+                            "Allow",
+                            acp::PermissionOptionKind::AllowOnce,
+                        )]),
+                        cx,
+                    )
+                    .unwrap()
+            })
+        })
+    }
+
+    #[gpui::test]
+    async fn test_conversation_multiple_tool_calls_fifo_ordering(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let connection: Rc<dyn AgentConnection> = Rc::new(StubAgentConnection::new());
+
+        let (thread, conversation) = cx.update(|cx| {
+            let thread =
+                create_test_acp_thread(None, "session-1", connection.clone(), project.clone(), cx);
+            let conversation = cx.new(|cx| {
+                let mut conversation = Conversation::default();
+                conversation.register_thread(thread.clone(), cx);
+                conversation
+            });
+            (thread, conversation)
+        });
+
+        let _task1 = request_test_tool_authorization(&thread, "tc-1", "allow-1", cx);
+        let _task2 = request_test_tool_authorization(&thread, "tc-2", "allow-2", cx);
+
+        cx.read(|cx| {
+            let session_id = acp::SessionId::new("session-1");
+            let (_, tool_call_id, _) = conversation
+                .read(cx)
+                .pending_tool_call(&session_id, cx)
+                .expect("Expected a pending tool call");
+            assert_eq!(tool_call_id, acp::ToolCallId::new("tc-1"));
+        });
+
+        cx.update(|cx| {
+            conversation.update(cx, |conversation, cx| {
+                conversation.authorize_tool_call(
+                    acp::SessionId::new("session-1"),
+                    acp::ToolCallId::new("tc-1"),
+                    acp::PermissionOptionId::new("allow-1"),
+                    acp::PermissionOptionKind::AllowOnce,
+                    cx,
+                );
+            });
+        });
+
+        cx.run_until_parked();
+
+        cx.read(|cx| {
+            let session_id = acp::SessionId::new("session-1");
+            let (_, tool_call_id, _) = conversation
+                .read(cx)
+                .pending_tool_call(&session_id, cx)
+                .expect("Expected tc-2 to be pending after tc-1 was authorized");
+            assert_eq!(tool_call_id, acp::ToolCallId::new("tc-2"));
+        });
+
+        cx.update(|cx| {
+            conversation.update(cx, |conversation, cx| {
+                conversation.authorize_tool_call(
+                    acp::SessionId::new("session-1"),
+                    acp::ToolCallId::new("tc-2"),
+                    acp::PermissionOptionId::new("allow-2"),
+                    acp::PermissionOptionKind::AllowOnce,
+                    cx,
+                );
+            });
+        });
+
+        cx.run_until_parked();
+
+        cx.read(|cx| {
+            let session_id = acp::SessionId::new("session-1");
+            assert!(
+                conversation
+                    .read(cx)
+                    .pending_tool_call(&session_id, cx)
+                    .is_none(),
+                "Expected no pending tool calls after both were authorized"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_conversation_subagent_scoped_pending_tool_call(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let connection: Rc<dyn AgentConnection> = Rc::new(StubAgentConnection::new());
+
+        let (parent_thread, subagent_thread, conversation) = cx.update(|cx| {
+            let parent_thread =
+                create_test_acp_thread(None, "parent", connection.clone(), project.clone(), cx);
+            let subagent_thread = create_test_acp_thread(
+                Some(acp::SessionId::new("parent")),
+                "subagent",
+                connection.clone(),
+                project.clone(),
+                cx,
+            );
+            let conversation = cx.new(|cx| {
+                let mut conversation = Conversation::default();
+                conversation.register_thread(parent_thread.clone(), cx);
+                conversation.register_thread(subagent_thread.clone(), cx);
+                conversation
+            });
+            (parent_thread, subagent_thread, conversation)
+        });
+
+        let _parent_task =
+            request_test_tool_authorization(&parent_thread, "parent-tc", "allow-parent", cx);
+        let _subagent_task =
+            request_test_tool_authorization(&subagent_thread, "subagent-tc", "allow-subagent", cx);
+
+        // Querying with the subagent's session ID returns only the
+        // subagent's own tool call (subagent path is scoped to its session)
+        cx.read(|cx| {
+            let subagent_id = acp::SessionId::new("subagent");
+            let (session_id, tool_call_id, _) = conversation
+                .read(cx)
+                .pending_tool_call(&subagent_id, cx)
+                .expect("Expected subagent's pending tool call");
+            assert_eq!(session_id, acp::SessionId::new("subagent"));
+            assert_eq!(tool_call_id, acp::ToolCallId::new("subagent-tc"));
+        });
+
+        // Querying with the parent's session ID returns the first pending
+        // request in FIFO order across all sessions
+        cx.read(|cx| {
+            let parent_id = acp::SessionId::new("parent");
+            let (session_id, tool_call_id, _) = conversation
+                .read(cx)
+                .pending_tool_call(&parent_id, cx)
+                .expect("Expected a pending tool call from parent query");
+            assert_eq!(session_id, acp::SessionId::new("parent"));
+            assert_eq!(tool_call_id, acp::ToolCallId::new("parent-tc"));
+        });
+    }
+
+    #[gpui::test]
+    async fn test_conversation_parent_pending_tool_call_returns_first_across_threads(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let connection: Rc<dyn AgentConnection> = Rc::new(StubAgentConnection::new());
+
+        let (thread_a, thread_b, conversation) = cx.update(|cx| {
+            let thread_a =
+                create_test_acp_thread(None, "thread-a", connection.clone(), project.clone(), cx);
+            let thread_b =
+                create_test_acp_thread(None, "thread-b", connection.clone(), project.clone(), cx);
+            let conversation = cx.new(|cx| {
+                let mut conversation = Conversation::default();
+                conversation.register_thread(thread_a.clone(), cx);
+                conversation.register_thread(thread_b.clone(), cx);
+                conversation
+            });
+            (thread_a, thread_b, conversation)
+        });
+
+        let _task_a = request_test_tool_authorization(&thread_a, "tc-a", "allow-a", cx);
+        let _task_b = request_test_tool_authorization(&thread_b, "tc-b", "allow-b", cx);
+
+        // Both threads are non-subagent, so pending_tool_call always returns
+        // the first entry from permission_requests (FIFO across all sessions)
+        cx.read(|cx| {
+            let session_a = acp::SessionId::new("thread-a");
+            let (session_id, tool_call_id, _) = conversation
+                .read(cx)
+                .pending_tool_call(&session_a, cx)
+                .expect("Expected a pending tool call");
+            assert_eq!(session_id, acp::SessionId::new("thread-a"));
+            assert_eq!(tool_call_id, acp::ToolCallId::new("tc-a"));
+        });
+
+        // Querying with thread-b also returns thread-a's tool call,
+        // because non-subagent queries always use permission_requests.first()
+        cx.read(|cx| {
+            let session_b = acp::SessionId::new("thread-b");
+            let (session_id, tool_call_id, _) = conversation
+                .read(cx)
+                .pending_tool_call(&session_b, cx)
+                .expect("Expected a pending tool call from thread-b query");
+            assert_eq!(
+                session_id,
+                acp::SessionId::new("thread-a"),
+                "Non-subagent queries always return the first pending request in FIFO order"
+            );
+            assert_eq!(tool_call_id, acp::ToolCallId::new("tc-a"));
+        });
+
+        // After authorizing thread-a's tool call, thread-b's becomes first
+        cx.update(|cx| {
+            conversation.update(cx, |conversation, cx| {
+                conversation.authorize_tool_call(
+                    acp::SessionId::new("thread-a"),
+                    acp::ToolCallId::new("tc-a"),
+                    acp::PermissionOptionId::new("allow-a"),
+                    acp::PermissionOptionKind::AllowOnce,
+                    cx,
+                );
+            });
+        });
+
+        cx.run_until_parked();
+
+        cx.read(|cx| {
+            let session_b = acp::SessionId::new("thread-b");
+            let (session_id, tool_call_id, _) = conversation
+                .read(cx)
+                .pending_tool_call(&session_b, cx)
+                .expect("Expected thread-b's tool call after thread-a's was authorized");
+            assert_eq!(session_id, acp::SessionId::new("thread-b"));
+            assert_eq!(tool_call_id, acp::ToolCallId::new("tc-b"));
+        });
+    }
 }
