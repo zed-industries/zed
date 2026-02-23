@@ -44,7 +44,6 @@ fn publish_job() -> NamedJob {
             .with_repository_owner_guard()
             .runs_on(runners::LINUX_SMALL)
             .add_step(steps::checkout_repo())
-            .add_step(steps::cache_rust_dependencies_namespace())
             .add_step(steps::setup_linux())
             .add_step(build_extension_cli())
             .add_step(upload_binary()),
@@ -78,7 +77,6 @@ fn update_sha_in_zed(publish_job: &NamedJob) -> NamedJob {
             .runs_on(runners::LINUX_LARGE)
             .add_step(generate_token)
             .add_step(steps::checkout_repo())
-            .add_step(steps::cache_rust_dependencies_namespace())
             .add_step(get_short_sha_step)
             .add_step(replace_sha())
             .add_step(regenerate_workflows())

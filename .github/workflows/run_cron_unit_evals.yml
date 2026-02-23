@@ -10,7 +10,7 @@ on:
   workflow_dispatch: {}
 jobs:
   cron_unit_evals:
-    runs-on: namespace-profile-16x32-ubuntu-2204
+    runs-on: ubuntu-latest
     strategy:
       matrix:
         model:
@@ -28,11 +28,6 @@ jobs:
       run: |
         mkdir -p ./../.cargo
         cp ./.cargo/ci-config.toml ./../.cargo/config.toml
-    - name: steps::cache_rust_dependencies_namespace
-      uses: namespacelabs/nscloud-cache-action@v1
-      with:
-        cache: rust
-        path: ~/.rustup
     - name: steps::setup_linux
       run: ./script/linux
     - name: steps::install_mold

@@ -18,27 +18,21 @@ impl GitGraphIndicator {
 
 impl Render for GitGraphIndicator {
     fn render(&mut self, _: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        h_flex()
-            .child(
-                ButtonLike::new("git-graph-indicator")
-                    .child(
-                        Icon::new(IconName::GitGraph)
-                            .size(IconSize::Small),
-                    )
-                    .tooltip(move |_window, cx| {
-                        Tooltip::for_action("Open Git Graph", &Open, cx)
-                    })
-                    .on_click({
-                        let workspace = self.workspace.clone();
-                        move |_, window, cx| {
-                            if let Some(workspace) = workspace.upgrade() {
-                                workspace.update(cx, |_workspace, cx| {
-                                    window.dispatch_action(Open.boxed_clone(), cx);
-                                });
-                            }
+        h_flex().child(
+            ButtonLike::new("git-graph-indicator")
+                .child(Icon::new(IconName::GitGraph).size(IconSize::Small))
+                .tooltip(move |_window, cx| Tooltip::for_action("Open Git Graph", &Open, cx))
+                .on_click({
+                    let workspace = self.workspace.clone();
+                    move |_, window, cx| {
+                        if let Some(workspace) = workspace.upgrade() {
+                            workspace.update(cx, |_workspace, cx| {
+                                window.dispatch_action(Open.boxed_clone(), cx);
+                            });
                         }
-                    }),
-            )
+                    }
+                }),
+        )
     }
 }
 

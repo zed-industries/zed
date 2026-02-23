@@ -3,7 +3,10 @@ use buffer_diff::BufferDiff;
 use collections::HashMap;
 use editor::display_map::{BlockPlacement, BlockProperties, BlockStyle};
 use editor::scroll::Autoscroll;
-use editor::{Addon, Direction, Editor, EditorEvent, ExcerptRange, MultiBuffer, SelectionEffects, multibuffer_context_lines};
+use editor::{
+    Addon, Direction, Editor, EditorEvent, ExcerptRange, MultiBuffer, SelectionEffects,
+    multibuffer_context_lines,
+};
 use git::repository::{CommitDetails, CommitDiff, CommitFile, RepoPath, is_binary_content};
 use git::status::{FileStatus, StatusCode, TrackedStatus};
 use git::{
@@ -110,7 +113,9 @@ impl CommitView {
         window: &mut Window,
         cx: &mut App,
     ) {
-        Self::open_with_cached_diff(commit_sha, repo, workspace, stash, focus_file, None, None, window, cx);
+        Self::open_with_cached_diff(
+            commit_sha, repo, workspace, stash, focus_file, None, None, window, cx,
+        );
     }
 
     pub fn open_with_cached_diff(
@@ -142,7 +147,10 @@ impl CommitView {
                 let commit_diff: Result<CommitDiff> = if let Some(diff) = cached_diff {
                     Ok(diff)
                 } else if let Some(receiver) = commit_diff_future {
-                    receiver.await.context("Failed to load commit diff")?.context("Commit diff error")
+                    receiver
+                        .await
+                        .context("Failed to load commit diff")?
+                        .context("Commit diff error")
                 } else {
                     anyhow::bail!("No diff available");
                 };
@@ -150,14 +158,19 @@ impl CommitView {
                 let commit_details: Result<CommitDetails> = if let Some(details) = cached_details {
                     Ok(details)
                 } else if let Some(receiver) = commit_details_future {
-                    receiver.await.context("Failed to load commit details")?.context("Commit details error")
+                    receiver
+                        .await
+                        .context("Failed to load commit details")?
+                        .context("Commit details error")
                 } else {
                     anyhow::bail!("No details available");
                 };
 
                 let commit_diff = commit_diff?;
                 let commit_details = commit_details?;
-                let repo = repo.upgrade().ok_or_else(|| anyhow::anyhow!("Repository dropped"))?;
+                let repo = repo
+                    .upgrade()
+                    .ok_or_else(|| anyhow::anyhow!("Repository dropped"))?;
 
                 Ok(workspace
                     .update_in(cx, |workspace, window, cx| {
@@ -255,7 +268,11 @@ impl CommitView {
             .path
             .file_name()
             .map(|name| name.to_string())
-            .unwrap_or_else(|| file.path.display(util::paths::PathStyle::local()).to_string());
+            .unwrap_or_else(|| {
+                file.path
+                    .display(util::paths::PathStyle::local())
+                    .to_string()
+            });
         let display_name = format!("{short_sha} - {file_name}");
 
         let file_info = Arc::new(GitBlob {
@@ -268,11 +285,17 @@ impl CommitView {
 
         window
             .spawn(cx, async move |cx| {
-                let buffer = build_buffer(new_text, file_info, &language_registry, cx).await.ok()?;
+                let buffer = build_buffer(new_text, file_info, &language_registry, cx)
+                    .await
+                    .ok()?;
                 let buffer_diff = if is_binary {
                     None
                 } else {
-                    Some(build_buffer_diff(old_text, &buffer, &language_registry, cx).await.ok()?)
+                    Some(
+                        build_buffer_diff(old_text, &buffer, &language_registry, cx)
+                            .await
+                            .ok()?,
+                    )
                 };
 
                 workspace
@@ -290,8 +313,12 @@ impl CommitView {
                         });
 
                         let new_editor = cx.new(|cx| {
-                            let mut editor =
-                                Editor::for_multibuffer(new_multibuffer, Some(project.clone()), window, cx);
+                            let mut editor = Editor::for_multibuffer(
+                                new_multibuffer,
+                                Some(project.clone()),
+                                window,
+                                cx,
+                            );
                             editor.start_temporary_diff_override();
                             editor.set_expand_all_diff_hunks(cx);
                             editor.set_read_only(true);
@@ -561,7 +588,11 @@ impl CommitView {
         let repository_for_handler = repository.clone();
         let this_weak = cx.weak_entity();
         let _subscription = window.subscribe(&editor, cx, move |_editor, event, window, cx| {
-            if let EditorEvent::OpenExcerptsRequested { selections_by_buffer, split } = event {
+            if let EditorEvent::OpenExcerptsRequested {
+                selections_by_buffer,
+                split,
+            } = event
+            {
                 if let Some(this) = this_weak.upgrade() {
                     this.update(cx, |this, cx| {
                         this.handle_open_excerpts_requested(
@@ -593,7 +624,10 @@ impl CommitView {
         &mut self,
         _commit_sha: &str,
         _repository: &Entity<Repository>,
-        selections_by_buffer: &HashMap<language::BufferId, (Vec<std::ops::Range<editor::BufferOffset>>, Option<u32>)>,
+        selections_by_buffer: &HashMap<
+            language::BufferId,
+            (Vec<std::ops::Range<editor::BufferOffset>>, Option<u32>),
+        >,
         _split: bool,
         window: &mut Window,
         cx: &mut App,
@@ -639,7 +673,8 @@ impl CommitView {
                 });
 
                 let new_editor = cx.new(|cx| {
-                    let mut editor = Editor::for_multibuffer(new_multibuffer, Some(project), window, cx);
+                    let mut editor =
+                        Editor::for_multibuffer(new_multibuffer, Some(project), window, cx);
                     editor.start_temporary_diff_override();
                     editor.set_expand_all_diff_hunks(cx);
                     editor.set_read_only(true);
@@ -666,7 +701,8 @@ impl CommitView {
 
     fn scroll_to_file(&mut self, file_path: &RepoPath, window: &mut Window, cx: &mut App) {
         // Create a PathKey from the RepoPath
-        let path_key = PathKey::with_sort_prefix(FILE_NAMESPACE_SORT_PREFIX, file_path.as_ref().clone());
+        let path_key =
+            PathKey::with_sort_prefix(FILE_NAMESPACE_SORT_PREFIX, file_path.as_ref().clone());
 
         // Get the anchor for this path from the multibuffer
         let Some(location) = self.multibuffer.read(cx).location_for_path(&path_key, cx) else {
@@ -675,9 +711,14 @@ impl CommitView {
 
         // Scroll to that location
         self.editor.update(cx, |editor, cx| {
-            editor.change_selections(SelectionEffects::scroll(Autoscroll::center()), window, cx, |s| {
-                s.select_ranges([location..location]);
-            });
+            editor.change_selections(
+                SelectionEffects::scroll(Autoscroll::center()),
+                window,
+                cx,
+                |s| {
+                    s.select_ranges([location..location]);
+                },
+            );
         });
     }
 
@@ -1352,7 +1393,11 @@ impl Item for CommitView {
             let repository_for_handler = self.repository.clone();
             let this_weak = cx.weak_entity();
             let _subscription = window.subscribe(&editor, cx, move |_editor, event, window, cx| {
-                if let EditorEvent::OpenExcerptsRequested { selections_by_buffer, split } = event {
+                if let EditorEvent::OpenExcerptsRequested {
+                    selections_by_buffer,
+                    split,
+                } = event
+                {
                     if let Some(this) = this_weak.upgrade() {
                         this.update(cx, |this: &mut CommitView, cx| {
                             this.handle_open_excerpts_requested(

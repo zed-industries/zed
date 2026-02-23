@@ -6,11 +6,11 @@ use git::{
 };
 use git_ui::{commit_tooltip::CommitAvatar, commit_view::CommitView};
 use gpui::{
-    AnyElement, App, Bounds, ClickEvent, ClipboardItem, Context, Corner, DefiniteLength,
-    DragMoveEvent, ElementId, Entity, EventEmitter, FocusHandle, Focusable,
+    Animation, AnimationExt, AnyElement, App, Bounds, ClickEvent, ClipboardItem, Context, Corner,
+    DefiniteLength, DragMoveEvent, ElementId, Entity, EventEmitter, FocusHandle, Focusable,
     FontWeight, Hsla, InteractiveElement, KeyDownEvent, MouseDownEvent, ParentElement, PathBuilder,
     Pixels, Point, Render, ScrollStrategy, ScrollWheelEvent, SharedString, Styled, Subscription,
-    Task, WeakEntity, Window, actions, anchored, deferred, point, px, Animation, AnimationExt,
+    Task, WeakEntity, Window, actions, anchored, deferred, point, px,
 };
 use menu::{SelectNext, SelectPrevious};
 use project::{
@@ -866,14 +866,21 @@ impl GitGraph {
 
     fn update_branch_commits(&mut self, cx: &mut Context<Self>) {
         let start = std::time::Instant::now();
-        eprintln!("[GitGraph] update_branch_commits: start, is_all={}, show_remotes={}", self.branch_filter.is_all(), self.show_remotes);
+        eprintln!(
+            "[GitGraph] update_branch_commits: start, is_all={}, show_remotes={}",
+            self.branch_filter.is_all(),
+            self.show_remotes
+        );
 
         // If showing all branches and remote branches are allowed, clear filter
         if self.branch_filter.is_all() && self.show_remotes {
             self.branch_commit_shas.clear();
             self.filtered_commit_indices.clear();
             cx.notify();
-            eprintln!("[GitGraph] update_branch_commits: is_all mode with remotes, elapsed={:?}", start.elapsed());
+            eprintln!(
+                "[GitGraph] update_branch_commits: is_all mode with remotes, elapsed={:?}",
+                start.elapsed()
+            );
             return;
         }
 
@@ -885,27 +892,45 @@ impl GitGraph {
         // Determine which branches to use for filtering
         let branches: Vec<SharedString> = if self.branch_filter.is_all() {
             // When is_all but show_remotes is false, use only local branches
-            let local_branches: Vec<_> = self.all_branches.iter()
+            let local_branches: Vec<_> = self
+                .all_branches
+                .iter()
                 .filter(|b| !b.is_remote)
                 .map(|b| b.name.clone())
                 .collect();
-            eprintln!("[GitGraph] update_branch_commits: using local branches: {:?}", local_branches);
+            eprintln!(
+                "[GitGraph] update_branch_commits: using local branches: {:?}",
+                local_branches
+            );
             local_branches
         } else {
-            let selected: Vec<_> = self.branch_filter.selected_branches.iter()
+            let selected: Vec<_> = self
+                .branch_filter
+                .selected_branches
+                .iter()
                 .cloned()
                 .collect();
-            eprintln!("[GitGraph] update_branch_commits: using selected branches: {:?}", selected);
+            eprintln!(
+                "[GitGraph] update_branch_commits: using selected branches: {:?}",
+                selected
+            );
             selected
         };
-        eprintln!("[GitGraph] update_branch_commits: {} branches to filter", branches.len());
+        eprintln!(
+            "[GitGraph] update_branch_commits: {} branches to filter",
+            branches.len()
+        );
 
         // Check which branches need to be fetched (not in cache)
         // Use into_iter() to transfer ownership and avoid lifetime issues with async
         let (cached, uncached): (Vec<SharedString>, Vec<SharedString>) = branches
             .into_iter()
             .partition(|b| self.branch_commits_cache.contains_key(b));
-        eprintln!("[GitGraph] update_branch_commits: {} cached, {} uncached", cached.len(), uncached.len());
+        eprintln!(
+            "[GitGraph] update_branch_commits: {} cached, {} uncached",
+            cached.len(),
+            uncached.len()
+        );
 
         // Start with cached results
         let mut all_shas: HashSet<Oid> = HashSet::default();
@@ -987,8 +1012,13 @@ impl GitGraph {
                 })
                 .collect();
         }
-        eprintln!("[GitGraph] update_filtered_indices: {} total commits, {} shas, {} filtered, elapsed={:?}",
-            total_commits, sha_count, self.filtered_commit_indices.len(), start.elapsed());
+        eprintln!(
+            "[GitGraph] update_filtered_indices: {} total commits, {} shas, {} filtered, elapsed={:?}",
+            total_commits,
+            sha_count,
+            self.filtered_commit_indices.len(),
+            start.elapsed()
+        );
     }
 
     fn on_repository_event(
@@ -1065,8 +1095,12 @@ impl GitGraph {
 
         let row_height = self.row_height;
         let use_filter = !self.filtered_commit_indices.is_empty();
-        eprintln!("[GitGraph] render_visible_range: use_filter={}, filtered_count={}, show_remotes={}",
-            use_filter, self.filtered_commit_indices.len(), self.show_remotes);
+        eprintln!(
+            "[GitGraph] render_visible_range: use_filter={}, filtered_count={}, show_remotes={}",
+            use_filter,
+            self.filtered_commit_indices.len(),
+            self.show_remotes
+        );
 
         // We fetch data outside the visible viewport to avoid loading entries when
         // users scroll through the git graph
@@ -1107,8 +1141,11 @@ impl GitGraph {
                     idx
                 };
 
-                let Some((commit, repository)) =
-                    self.graph_data.commits.get(actual_idx).zip(repository.as_ref())
+                let Some((commit, repository)) = self
+                    .graph_data
+                    .commits
+                    .get(actual_idx)
+                    .zip(repository.as_ref())
                 else {
                     return vec![
                         div().h(row_height).into_any_element(),
@@ -1321,10 +1358,7 @@ impl GitGraph {
             .into_any_element()
     }
 
-    fn render_branch_filter_bar(
-        &mut self,
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement {
+    fn render_branch_filter_bar(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
         let is_all = self.branch_filter.is_all();
         let selected_branches = self.branch_filter.selected_branches.clone();
         let show_remotes = self.show_remotes;
@@ -1355,9 +1389,7 @@ impl GitGraph {
                     .py_1()
                     .cursor_pointer()
                     .rounded_md()
-                    .hover(|style| {
-                        style.bg(colors.element_hover)
-                    })
+                    .hover(|style| style.bg(colors.element_hover))
                     .on_click(cx.listener(|this, _event: &ClickEvent, window, cx| {
                         this.toggle_branch_filter_menu(window, cx);
                     }))
@@ -1384,12 +1416,13 @@ impl GitGraph {
                     .py_1()
                     .cursor_pointer()
                     .rounded_md()
-                    .hover(|style| {
-                        style.bg(colors.element_hover)
-                    })
+                    .hover(|style| style.bg(colors.element_hover))
                     .on_click(cx.listener(|this, _event: &ClickEvent, _window, cx| {
                         this.show_remotes = !this.show_remotes;
-                        eprintln!("[GitGraph] TOGGLE: show_remotes is now {}", this.show_remotes);
+                        eprintln!(
+                            "[GitGraph] TOGGLE: show_remotes is now {}",
+                            this.show_remotes
+                        );
                         if this.show_remotes {
                             // When turning ON remote branches, clear the filter to show all commits
                             eprintln!("[GitGraph] TOGGLE: clearing filter");
@@ -1397,7 +1430,9 @@ impl GitGraph {
                             this.filtered_commit_indices.clear();
                             cx.notify();
                         } else {
-                            eprintln!("[GitGraph] TOGGLE: NOT clearing filter, will fetch and filter");
+                            eprintln!(
+                                "[GitGraph] TOGGLE: NOT clearing filter, will fetch and filter"
+                            );
                         }
                         this.fetch_branches(cx);
                     }))
@@ -1428,11 +1463,7 @@ impl GitGraph {
             )
     }
 
-    fn toggle_branch_filter_menu(
-        &mut self,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    fn toggle_branch_filter_menu(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
         // Toggle menu visibility
         self.branch_filter_menu_open = !self.branch_filter_menu_open;
         if self.branch_filter_menu_open {
@@ -1446,11 +1477,20 @@ impl GitGraph {
 
     fn toggle_branch_selection(&mut self, branch: SharedString, cx: &mut Context<Self>) {
         let start = std::time::Instant::now();
-        eprintln!("[GitGraph] toggle_branch_selection: start for branch {}", branch);
+        eprintln!(
+            "[GitGraph] toggle_branch_selection: start for branch {}",
+            branch
+        );
         self.branch_filter.toggle_branch(branch);
-        eprintln!("[GitGraph] toggle_branch_selection: after toggle_branch, elapsed={:?}", start.elapsed());
+        eprintln!(
+            "[GitGraph] toggle_branch_selection: after toggle_branch, elapsed={:?}",
+            start.elapsed()
+        );
         self.update_branch_commits(cx);
-        eprintln!("[GitGraph] toggle_branch_selection: done, total elapsed={:?}", start.elapsed());
+        eprintln!(
+            "[GitGraph] toggle_branch_selection: done, total elapsed={:?}",
+            start.elapsed()
+        );
     }
 
     fn render_branch_filter_popover(
@@ -1464,7 +1504,8 @@ impl GitGraph {
         let selected_branches = self.branch_filter.selected_branches.clone();
 
         // Filter branches by query
-        let filtered_branches: Vec<_> = self.all_branches
+        let filtered_branches: Vec<_> = self
+            .all_branches
             .iter()
             .filter(|branch| {
                 // Skip remote branches if show_remotes is false
@@ -2489,20 +2530,22 @@ impl Render for GitGraph {
                                     ),
                             )
                         })
-                .on_drag_move::<DraggedSplitHandle>(cx.listener(|this, event, window, cx| {
-                    this.commit_details_split_state.update(cx, |state, cx| {
-                        state.on_drag_move(event, window, cx);
-                    });
-                }))
-                .on_drop::<DraggedSplitHandle>(cx.listener(|this, _event, _window, cx| {
-                    this.commit_details_split_state.update(cx, |state, _cx| {
-                        state.commit_ratio();
-                    });
-                }))
-                .when(self.selected_entry_idx.is_some(), |this| {
-                    this.child(self.render_commit_view_resize_handle(window, cx))
-                        .child(self.render_commit_detail_panel(window, cx))
-                })
+                        .on_drag_move::<DraggedSplitHandle>(cx.listener(
+                            |this, event, window, cx| {
+                                this.commit_details_split_state.update(cx, |state, cx| {
+                                    state.on_drag_move(event, window, cx);
+                                });
+                            },
+                        ))
+                        .on_drop::<DraggedSplitHandle>(cx.listener(|this, _event, _window, cx| {
+                            this.commit_details_split_state.update(cx, |state, _cx| {
+                                state.commit_ratio();
+                            });
+                        }))
+                        .when(self.selected_entry_idx.is_some(), |this| {
+                            this.child(self.render_commit_view_resize_handle(window, cx))
+                                .child(self.render_commit_detail_panel(window, cx))
+                        }),
                 )
         };
 

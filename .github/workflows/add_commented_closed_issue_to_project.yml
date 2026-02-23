@@ -17,7 +17,7 @@ jobs:
       github.event.issue.type != null &&
       github.event.issue.type.name == 'Bug' &&
       github.event.comment.user.type != 'Bot'
-    runs-on: namespace-profile-2x4-ubuntu-2404
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - id: get-app-token

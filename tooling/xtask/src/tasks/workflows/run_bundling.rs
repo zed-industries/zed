@@ -4,7 +4,7 @@ use crate::tasks::workflows::{
     nix_build::build_nix,
     release::ReleaseBundleJobs,
     runners::{Arch, Platform, ReleaseChannel},
-    steps::{DEFAULT_REPOSITORY_OWNER_GUARD, FluentBuilder, NamedJob, dependant_job, named},
+    steps::{DEFAULT_REPOSITORY_OWNER_GUARD, FluentBuilder, NamedJob, named},
     vars::{assets, bundle_envs},
 };
 
@@ -62,14 +62,33 @@ fn nix_job(platform: Platform, arch: Arch) -> NamedJob {
     job
 }
 
-fn bundle_job(deps: &[&NamedJob]) -> Job {
-    dependant_job(deps)
-        .when(deps.len() == 0, |job|
-            job.cond(Expression::new(
+fn bundle_job(deps: &[&NamedJob], release_channel: Option<ReleaseChannel>) -> Job {
+    // For nightly builds: always run without conditions
+    // For PR builds: only run when labeled with 'run-bundling'
+    let job = if release_channel.is_some() {
+        // Nightly build - no conditions, just run
+        if deps.is_empty() {
+            Job::default()
+        } else {
+            Job::default()
+                .needs(deps.iter().map(|j| j.name.clone()).collect::<Vec<_>>())
+                .cond(Expression::new("always()"))
+        }
+    } else {
+        // PR build - requires label
+        if deps.is_empty() {
+            Job::default().cond(Expression::new(
                 indoc! {
                     r#"(github.event.action == 'labeled' && github.event.label.name == 'run-bundling') ||
                     (github.event.action == 'synchronize' && contains(github.event.pull_request.labels.*.name, 'run-bundling'))"#,
-                })))
+                }))
+        } else {
+            Job::default()
+                .needs(deps.iter().map(|j| j.name.clone()).collect::<Vec<_>>())
+                .cond(Expression::new("always()"))
+        }
+    };
+    job
 }
 
 pub(crate) fn bundle_mac(
@@ -91,10 +110,11 @@ pub(crate) fn bundle_mac(
     };
     NamedJob {
         name: format!("bundle_mac_{arch}"),
-        job: bundle_job(deps)
+        job: bundle_job(deps, release_channel)
             .runs_on(runners::MAC_DEFAULT)
             .envs(bundle_envs(platform))
             .add_step(steps::checkout_repo())
+            .add_step(steps::rust_cache())
             .when_some(release_channel, |job, release_channel| {
                 job.add_step(set_release_channel(platform, release_channel))
             })
@@ -142,10 +162,11 @@ pub(crate) fn bundle_linux(
     };
     NamedJob {
         name: format!("bundle_linux_{arch}"),
-        job: bundle_job(deps)
+        job: bundle_job(deps, release_channel)
             .runs_on(arch.linux_bundler())
             .envs(bundle_envs(platform))
             .add_step(steps::checkout_repo())
+            .add_step(steps::rust_cache())
             .when_some(release_channel, |job, release_channel| {
                 job.add_step(set_release_channel(platform, release_channel))
             })
@@ -182,10 +203,12 @@ pub(crate) fn bundle_windows(
     };
     NamedJob {
         name: format!("bundle_windows_{arch}"),
-        job: bundle_job(deps)
+        job: bundle_job(deps, release_channel)
             .runs_on(runners::WINDOWS_DEFAULT)
             .envs(bundle_envs(platform))
             .add_step(steps::checkout_repo())
+            .add_step(steps::rust_cache())
+            .add_step(steps::enable_git_long_paths())
             .when_some(release_channel, |job, release_channel| {
                 job.add_step(set_release_channel(platform, release_channel))
             })

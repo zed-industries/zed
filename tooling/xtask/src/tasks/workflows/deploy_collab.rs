@@ -30,7 +30,6 @@ fn style() -> NamedJob {
             .runs_on(runners::LINUX_XL)
             .add_step(steps::checkout_repo().with_full_history())
             .add_step(steps::setup_cargo_config(Platform::Linux))
-            .add_step(steps::cache_rust_dependencies_namespace())
             .map(steps::install_linux_dependencies)
             .add_step(steps::cargo_fmt())
             .add_step(steps::clippy(Platform::Linux)),
@@ -60,7 +59,6 @@ fn tests(deps: &[&NamedJob]) -> NamedJob {
             )
             .add_step(steps::checkout_repo().with_full_history())
             .add_step(steps::setup_cargo_config(Platform::Linux))
-            .add_step(steps::cache_rust_dependencies_namespace())
             .map(steps::install_linux_dependencies)
             .add_step(steps::cargo_install_nextest())
             .add_step(steps::clear_target_dir_if_large(Platform::Linux))

@@ -40,7 +40,25 @@ function Get-VSArch {
 }
 
 Push-Location
-& "C:\Program Files\Microsoft Visual Studio\2022\Community\Common7\Tools\Launch-VsDevShell.ps1" -Arch (Get-VSArch -Arch $Architecture) -HostArch (Get-VSArch -Arch $OSArchitecture)
+$vsEditions = @("Enterprise", "Professional", "Community")
+$vsPath = $null
+foreach ($edition in $vsEditions) {
+    $testPath = "${env:ProgramFiles}\Microsoft Visual Studio\2022\$edition"
+    if (Test-Path $testPath) {
+        $vsPath = $testPath
+        break
+    }
+    $testPathX86 = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\2022\$edition"
+    if (Test-Path $testPathX86) {
+        $vsPath = $testPathX86
+        break
+    }
+}
+if (-not $vsPath) {
+    Write-Error "Visual Studio 2022 not found"
+    exit 1
+}
+& "$vsPath\Common7\Tools\Launch-VsDevShell.ps1" -Arch (Get-VSArch -Arch $Architecture) -HostArch (Get-VSArch -Arch $OSArchitecture)
 Pop-Location
 
 $target = "$Architecture-pc-windows-msvc"
@@ -67,16 +85,28 @@ function CheckEnvironmentVariables {
     }
 
     $requiredVars = @(
-        'ZED_WORKSPACE', 'RELEASE_VERSION', 'ZED_RELEASE_CHANNEL',
-        'AZURE_TENANT_ID', 'AZURE_CLIENT_ID', 'AZURE_CLIENT_SECRET',
-        'ACCOUNT_NAME', 'CERT_PROFILE_NAME', 'ENDPOINT',
-        'FILE_DIGEST', 'TIMESTAMP_DIGEST', 'TIMESTAMP_SERVER'
+        'ZED_WORKSPACE', 'RELEASE_VERSION', 'ZED_RELEASE_CHANNEL'
     )
 
     foreach ($var in $requiredVars) {
         if (-not (Test-Path "env:$var")) {
             Write-Error "$var is not set"
             exit 1
+        }
+    }
+
+    # Azure signing variables are only required if AZURE_TENANT_ID is set (main repo builds)
+    if (Test-Path "env:AZURE_TENANT_ID") {
+        $azureVars = @(
+            'AZURE_TENANT_ID', 'AZURE_CLIENT_ID', 'AZURE_CLIENT_SECRET',
+            'ACCOUNT_NAME', 'CERT_PROFILE_NAME', 'ENDPOINT',
+            'FILE_DIGEST', 'TIMESTAMP_DIGEST', 'TIMESTAMP_SERVER'
+        )
+        foreach ($var in $azureVars) {
+            if (-not (Test-Path "env:$var")) {
+                Write-Error "$var is not set"
+                exit 1
+            }
         }
     }
 }
@@ -128,7 +158,7 @@ function BuildRemoteServer {
     # Create zipped remote server binary
     $remoteServerSrc = (Resolve-Path ".\$CargoOutDir\remote_server.exe").Path
 
-    if ($env:CI) {
+    if ($env:CI -and -not [string]::IsNullOrEmpty($env:AZURE_TENANT_ID)) {
         Write-Output "Code signing remote_server.exe"
         & "$innoDir\sign.ps1" $remoteServerSrc
     }
@@ -201,6 +231,12 @@ function MakeAppx {
 
 function SignZedAndItsFriends {
     if (-not $env:CI) {
+        return
+    }
+
+    # Skip signing if Azure secrets are not available (fork builds)
+    if ([string]::IsNullOrEmpty($env:AZURE_TENANT_ID)) {
+        Write-Output "Skipping signing: Azure secrets not available"
         return
     }
 
@@ -340,7 +376,8 @@ function BuildInstaller {
     }
 
     $innoArgs = @($issFilePath) + $defs
-    if($env:CI) {
+    if($env:CI -and -not [string]::IsNullOrEmpty($env:AZURE_TENANT_ID)) {
+        $env:ZED_ENABLE_SIGNING = "1"
         $signTool = "powershell.exe -ExecutionPolicy Bypass -File $innoDir\sign.ps1 `$f"
         $innoArgs += "/sDefaultsign=`"$signTool`""
     }

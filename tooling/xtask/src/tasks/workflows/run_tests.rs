@@ -278,7 +278,6 @@ fn check_style() -> NamedJob {
         release_job(&[])
             .runs_on(runners::LINUX_MEDIUM)
             .add_step(steps::checkout_repo())
-            .add_step(steps::cache_rust_dependencies_namespace())
             .add_step(steps::setup_pnpm())
             .add_step(steps::prettier())
             .add_step(steps::cargo_fmt())
@@ -326,7 +325,6 @@ fn check_dependencies() -> NamedJob {
         release_job(&[])
             .runs_on(runners::LINUX_SMALL)
             .add_step(steps::checkout_repo())
-            .add_step(steps::cache_rust_dependencies_namespace())
             .add_step(install_cargo_machete())
             .add_step(run_cargo_machete())
             .add_step(check_cargo_lock())
@@ -339,8 +337,8 @@ fn check_workspace_binaries() -> NamedJob {
         release_job(&[])
             .runs_on(runners::LINUX_LARGE)
             .add_step(steps::checkout_repo())
+            .add_step(steps::rust_cache())
             .add_step(steps::setup_cargo_config(Platform::Linux))
-            .add_step(steps::cache_rust_dependencies_namespace())
             .map(steps::install_linux_dependencies)
             .add_step(steps::setup_sccache(Platform::Linux))
             .add_step(steps::script("cargo build -p collab"))
@@ -360,12 +358,13 @@ pub(crate) fn clippy(platform: Platform) -> NamedJob {
         name: format!("clippy_{platform}"),
         job: release_job(&[])
             .runs_on(runner)
+            .timeout_minutes(180u32)
             .add_step(steps::checkout_repo())
+            .when(platform == Platform::Windows, |job| {
+                job.add_step(steps::enable_git_long_paths())
+            })
+            .add_step(steps::rust_cache())
             .add_step(steps::setup_cargo_config(platform))
-            .when(
-                platform == Platform::Linux || platform == Platform::Mac,
-                |this| this.add_step(steps::cache_rust_dependencies_namespace()),
-            )
             .when(
                 platform == Platform::Linux,
                 steps::install_linux_dependencies,
@@ -394,6 +393,7 @@ fn run_platform_tests_impl(platform: Platform, filter_packages: bool) -> NamedJo
         name: format!("run_tests_{platform}"),
         job: release_job(&[])
             .runs_on(runner)
+            .timeout_minutes(180u32)
             .when(platform == Platform::Linux, |job| {
                 job.add_service(
                     "postgres",
@@ -409,20 +409,17 @@ fn run_platform_tests_impl(platform: Platform, filter_packages: bool) -> NamedJo
                 )
             })
             .add_step(steps::checkout_repo())
+            .when(platform == Platform::Windows, |job| {
+                job.add_step(steps::enable_git_long_paths())
+            })
+            .add_step(steps::rust_cache())
             .add_step(steps::setup_cargo_config(platform))
-            .when(
-                platform == Platform::Linux || platform == Platform::Mac,
-                |this| this.add_step(steps::cache_rust_dependencies_namespace()),
-            )
             .when(
                 platform == Platform::Linux,
                 steps::install_linux_dependencies,
             )
             .add_step(steps::setup_node())
-            .when(
-                platform == Platform::Linux || platform == Platform::Mac,
-                |job| job.add_step(steps::cargo_install_nextest()),
-            )
+            .add_step(steps::cargo_install_nextest())
             .add_step(steps::clear_target_dir_if_large(platform))
             .add_step(steps::setup_sccache(platform))
             .when(filter_packages, |job| {
@@ -489,7 +486,7 @@ fn doctests() -> NamedJob {
         release_job(&[])
             .runs_on(runners::LINUX_DEFAULT)
             .add_step(steps::checkout_repo())
-            .add_step(steps::cache_rust_dependencies_namespace())
+            .add_step(steps::rust_cache())
             .map(steps::install_linux_dependencies)
             .add_step(steps::setup_cargo_config(Platform::Linux))
             .add_step(steps::setup_sccache(Platform::Linux))
@@ -504,7 +501,6 @@ fn check_licenses() -> NamedJob {
         Job::default()
             .runs_on(runners::LINUX_SMALL)
             .add_step(steps::checkout_repo())
-            .add_step(steps::cache_rust_dependencies_namespace())
             .add_step(steps::script("./script/check-licenses"))
             .add_step(steps::script("./script/generate-licenses")),
     )
@@ -542,9 +538,9 @@ fn check_docs() -> NamedJob {
         release_job(&[])
             .runs_on(runners::LINUX_LARGE)
             .add_step(steps::checkout_repo())
+            .add_step(steps::rust_cache())
             .add_step(steps::setup_cargo_config(Platform::Linux))
             // todo(ci): un-inline build_docs/action.yml here
-            .add_step(steps::cache_rust_dependencies_namespace())
             .add_step(
                 lychee_link_check("./docs/src/**/*"), // check markdown links
             )

@@ -63,7 +63,6 @@ fn check_rust() -> NamedJob {
         .runs_on(runners::LINUX_LARGE_RAM)
         .timeout_minutes(6u32)
         .add_step(steps::checkout_repo())
-        .add_step(steps::cache_rust_dependencies_namespace())
         .add_step(install_rust_target())
         .add_step(steps::cargo_fmt())
         .add_step(run_clippy())

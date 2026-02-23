@@ -11,7 +11,7 @@ on:
 jobs:
   run_bump_patch_version:
     if: github.repository_owner == 'zed-industries'
-    runs-on: namespace-profile-16x32-ubuntu-2204
+    runs-on: ubuntu-latest
     steps:
     - id: get-app-token
       name: steps::authenticate_as_zippy

@@ -116,7 +116,6 @@ fn run_autofix(pr_number: &WorkflowInput, run_clippy: &WorkflowInput) -> NamedJo
             .add_step(steps::checkout_repo())
             .add_step(checkout_pr(pr_number))
             .add_step(steps::setup_cargo_config(runners::Platform::Linux))
-            .add_step(steps::cache_rust_dependencies_namespace())
             .map(steps::install_linux_dependencies)
             .add_step(steps::setup_pnpm())
             .add_step(install_cargo_machete().if_condition(Expression::new(run_clippy.to_string())))

@@ -7,10 +7,10 @@ use crate::tasks::workflows::{
     run_bundling::{bundle_linux, bundle_mac, bundle_windows},
     run_tests::{clippy, run_platform_tests_no_filter},
     runners::{Arch, Platform, ReleaseChannel},
-    steps::{CommonJobConditions, FluentBuilder, NamedJob},
+    steps::{FluentBuilder, NamedJob},
 };
 
-use super::{runners, steps, steps::named, vars};
+use super::{runners, steps, steps::named};
 use gh_workflow::*;
 
 /// Generates the release_nightly.yml workflow
@@ -22,12 +22,12 @@ pub fn release_nightly() -> Workflow {
     let nightly = Some(ReleaseChannel::Nightly);
 
     let bundle = ReleaseBundleJobs {
-        linux_aarch64: bundle_linux(Arch::AARCH64, nightly, &[&style, &tests, &clippy_job]),
-        linux_x86_64: bundle_linux(Arch::X86_64, nightly, &[&style, &tests, &clippy_job]),
-        mac_aarch64: bundle_mac(Arch::AARCH64, nightly, &[&style, &tests, &clippy_job]),
-        mac_x86_64: bundle_mac(Arch::X86_64, nightly, &[&style, &tests, &clippy_job]),
-        windows_aarch64: bundle_windows(Arch::AARCH64, nightly, &[&style, &tests, &clippy_job]),
-        windows_x86_64: bundle_windows(Arch::X86_64, nightly, &[&style, &tests, &clippy_job]),
+        linux_aarch64: bundle_linux(Arch::AARCH64, nightly, &[]),
+        linux_x86_64: bundle_linux(Arch::X86_64, nightly, &[]),
+        mac_aarch64: bundle_mac(Arch::AARCH64, nightly, &[]),
+        mac_x86_64: bundle_mac(Arch::X86_64, nightly, &[]),
+        windows_aarch64: bundle_windows(Arch::AARCH64, nightly, &[]),
+        windows_x86_64: bundle_windows(Arch::X86_64, nightly, &[]),
     };
 
     let nix_linux_x86 = build_nix(
@@ -72,6 +72,7 @@ pub fn release_nightly() -> Workflow {
 fn check_style() -> NamedJob {
     let job = release_job(&[])
         .runs_on(runners::MAC_DEFAULT)
+        .timeout_minutes(180u32)
         .add_step(steps::checkout_repo().with_full_history())
         .add_step(steps::cargo_fmt())
         .add_step(steps::script("./script/clippy"));
@@ -80,8 +81,7 @@ fn check_style() -> NamedJob {
 }
 
 fn release_job(deps: &[&NamedJob]) -> Job {
-    let job = Job::default()
-        .with_repository_owner_guard();
+    let job = Job::default();
     if deps.len() > 0 {
         job.needs(deps.iter().map(|j| j.name.clone()).collect::<Vec<_>>())
     } else {
@@ -103,25 +103,35 @@ fn update_nightly_tag_job(bundle: &ReleaseBundleJobs) -> NamedJob {
         "#})
     }
 
+    fn upload_to_github_release() -> Step<Run> {
+        named::bash(indoc::indoc! {r#"
+            # Delete all existing assets from nightly release to keep only latest
+            echo "Deleting existing assets from nightly release..."
+            gh release view nightly --json assets --jq '.assets[].name' 2>/dev/null | while read asset; do
+              echo "Deleting $asset..."
+              gh release delete-asset nightly "$asset" --yes || true
+            done
+
+            # Upload all new release artifacts to GitHub Releases
+            for file in ./release-artifacts/*; do
+              if [ -f "$file" ]; then
+                echo "Uploading $file to GitHub Release..."
+                gh release upload nightly "$file" || true
+              fi
+            done
+        "#})
+    }
+
     NamedJob {
         name: "update_nightly_tag".to_owned(),
         job: steps::release_job(&bundle.jobs())
             .runs_on(runners::LINUX_MEDIUM)
+            .timeout_minutes(180u32)
             .add_step(steps::checkout_repo().with_full_history())
             .add_step(download_workflow_artifacts())
             .add_step(steps::script("ls -lR ./artifacts"))
             .add_step(prep_release_artifacts())
-            .add_step(
-                steps::script("./script/upload-nightly")
-                    .add_env((
-                        "DIGITALOCEAN_SPACES_ACCESS_KEY",
-                        vars::DIGITALOCEAN_SPACES_ACCESS_KEY,
-                    ))
-                    .add_env((
-                        "DIGITALOCEAN_SPACES_SECRET_KEY",
-                        vars::DIGITALOCEAN_SPACES_SECRET_KEY,
-                    )),
-            )
+            .add_step(upload_to_github_release())
             .add_step(update_nightly_tag())
             .add_step(create_sentry_release()),
     }

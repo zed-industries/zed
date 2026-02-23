@@ -64,7 +64,10 @@ pub fn bundle_envs(platform: Platform) -> Env {
         .add("ZED_MINIDUMP_ENDPOINT", ZED_SENTRY_MINIDUMP_ENDPOINT);
 
     match platform {
-        Platform::Linux => env,
+        Platform::Linux => env
+            .add("CC", "musl-gcc")
+            .add("CC_x86_64_unknown_linux_musl", "musl-gcc")
+            .add("CC_aarch64_unknown_linux_musl", "musl-gcc"),
         Platform::Mac => env
             .add("MACOS_CERTIFICATE", MACOS_CERTIFICATE)
             .add("MACOS_CERTIFICATE_PASSWORD", MACOS_CERTIFICATE_PASSWORD)

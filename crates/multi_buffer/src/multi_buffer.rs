@@ -2453,11 +2453,7 @@ impl MultiBuffer {
         let change_kind = DiffChangeKind::DiffUpdated {
             base_changed: base_text_changed,
         };
-        let edits = Self::sync_diff_transforms(
-            &mut snapshot,
-            excerpt_edits,
-            change_kind,
-        );
+        let edits = Self::sync_diff_transforms(&mut snapshot, excerpt_edits, change_kind);
         if !edits.is_empty() {
             self.subscriptions.publish(edits);
         }
