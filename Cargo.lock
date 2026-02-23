@@ -7641,9 +7641,13 @@ dependencies = [
  "console_error_panic_hook",
  "futures 0.3.31",
  "gpui",
+ "gpui_wgpu",
+ "js-sys",
  "log",
+ "raw-window-handle",
  "uuid",
  "wasm-bindgen",
+ "wasm-bindgen-futures",
  "web-sys",
 ]
 
@@ -7656,12 +7660,16 @@ dependencies = [
  "collections",
  "etagere",
  "gpui",
+ "js-sys",
  "log",
  "parking_lot",
  "pollster 0.4.0",
  "profiling",
  "raw-window-handle",
  "util",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
  "wgpu",
 ]
 

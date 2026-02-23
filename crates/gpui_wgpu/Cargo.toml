@@ -21,6 +21,14 @@ log.workspace = true
 parking_lot.workspace = true
 profiling.workspace = true
 raw-window-handle = "0.6"
-pollster.workspace = true
 util.workspace = true
 wgpu.workspace = true
+
+[target.'cfg(not(target_family = "wasm"))'.dependencies]
+pollster.workspace = true
+
+[target.'cfg(target_family = "wasm")'.dependencies]
+wasm-bindgen.workspace = true
+wasm-bindgen-futures = "0.4"
+web-sys = { version = "0.3", features = ["HtmlCanvasElement"] }
+js-sys = "0.3"

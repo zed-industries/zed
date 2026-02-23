@@ -1,6 +1,7 @@
 use crate::dispatcher::WebDispatcher;
 use crate::display::WebDisplay;
 use crate::keyboard::WebKeyboardLayout;
+use crate::window::WebWindow;
 use anyhow::Result;
 use futures::channel::oneshot;
 use gpui::{
@@ -9,6 +10,7 @@ use gpui::{
     PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem,
     PlatformWindow, Task, ThermalState, WindowAppearance, WindowParams,
 };
+use gpui_wgpu::WgpuContext;
 use std::{
     cell::RefCell,
     path::{Path, PathBuf},
@@ -24,6 +26,7 @@ pub struct WebPlatform {
     active_display: Rc<dyn PlatformDisplay>,
     clipboard: RefCell<Option<ClipboardItem>>,
     callbacks: RefCell<WebPlatformCallbacks>,
+    wgpu_context: Rc<RefCell<Option<WgpuContext>>>,
 }
 
 #[derive(Default)]
@@ -54,6 +57,7 @@ impl WebPlatform {
             active_display,
             clipboard: RefCell::new(None),
             callbacks: RefCell::new(WebPlatformCallbacks::default()),
+            wgpu_context: Rc::new(RefCell::new(None)),
         }
     }
 }
@@ -72,7 +76,21 @@ impl Platform for WebPlatform {
     }
 
     fn run(&self, on_finish_launching: Box<dyn 'static + FnOnce()>) {
-        on_finish_launching();
+        let wgpu_context = self.wgpu_context.clone();
+        wasm_bindgen_futures::spawn_local(async move {
+            match WgpuContext::new_async().await {
+                Ok(context) => {
+                    log::info!("WebGPU context initialized successfully");
+                    *wgpu_context.borrow_mut() = Some(context);
+                    on_finish_launching();
+                }
+                Err(err) => {
+                    log::error!("Failed to initialize WebGPU context: {err:#}");
+                    // Still call the launch callback so the app can display an error
+                    on_finish_launching();
+                }
+            }
+        });
     }
 
     fn quit(&self) {
@@ -103,10 +121,17 @@ impl Platform for WebPlatform {
 
     fn open_window(
         &self,
-        _handle: AnyWindowHandle,
-        _options: WindowParams,
+        handle: AnyWindowHandle,
+        params: WindowParams,
     ) -> anyhow::Result<Box<dyn PlatformWindow>> {
-        anyhow::bail!("WebPlatform::open_window not yet implemented")
+        let context_ref = self.wgpu_context.borrow();
+        let context = context_ref.as_ref().ok_or_else(|| {
+            anyhow::anyhow!("WebGPU context not initialized. Was Platform::run() called?")
+        })?;
+
+        let window = WebWindow::new(handle, params, context)?;
+        *self.active_window.borrow_mut() = Some(handle);
+        Ok(Box::new(window))
     }
 
     fn window_appearance(&self) -> WindowAppearance {
@@ -114,7 +139,9 @@ impl Platform for WebPlatform {
     }
 
     fn open_url(&self, url: &str) {
-        log::info!("WebPlatform::open_url: {url}");
+        if let Some(window) = web_sys::window() {
+            window.open_with_url(url).ok();
+        }
     }
 
     fn on_open_urls(&self, callback: Box<dyn FnMut(Vec<String>)>) {
@@ -205,7 +232,38 @@ impl Platform for WebPlatform {
     }
 
     fn set_cursor_style(&self, style: CursorStyle) {
-        log::debug!("WebPlatform::set_cursor_style: {style:?}");
+        let css_cursor = match style {
+            CursorStyle::Arrow => "default",
+            CursorStyle::IBeam => "text",
+            CursorStyle::Crosshair => "crosshair",
+            CursorStyle::ClosedHand => "grabbing",
+            CursorStyle::OpenHand => "grab",
+            CursorStyle::PointingHand => "pointer",
+            CursorStyle::ResizeLeft | CursorStyle::ResizeRight | CursorStyle::ResizeLeftRight => {
+                "ew-resize"
+            }
+            CursorStyle::ResizeUp | CursorStyle::ResizeDown | CursorStyle::ResizeUpDown => {
+                "ns-resize"
+            }
+            CursorStyle::ResizeUpLeftDownRight => "nesw-resize",
+            CursorStyle::ResizeUpRightDownLeft => "nwse-resize",
+            CursorStyle::ResizeColumn => "col-resize",
+            CursorStyle::ResizeRow => "row-resize",
+            CursorStyle::IBeamCursorForVerticalLayout => "vertical-text",
+            CursorStyle::OperationNotAllowed => "not-allowed",
+            CursorStyle::DragLink => "alias",
+            CursorStyle::DragCopy => "copy",
+            CursorStyle::ContextualMenu => "context-menu",
+            CursorStyle::None => "none",
+        };
+
+        if let Some(window) = web_sys::window() {
+            if let Some(document) = window.document() {
+                if let Some(body) = document.body() {
+                    body.style().set_property("cursor", css_cursor).ok();
+                }
+            }
+        }
     }
 
     fn should_auto_hide_scrollbars(&self) -> bool {

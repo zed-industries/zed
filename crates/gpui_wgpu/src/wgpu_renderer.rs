@@ -5,6 +5,7 @@ use gpui::{
     PolychromeSprite, PrimitiveBatch, Quad, ScaledPixels, Scene, Shadow, Size, SubpixelSprite,
     Underline, get_gamma_correction_ratios,
 };
+#[cfg(not(target_family = "wasm"))]
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use std::num::NonZeroU64;
 use std::sync::Arc;
@@ -123,6 +124,7 @@ impl WgpuRenderer {
     /// # Safety
     /// The caller must ensure that the window handle remains valid for the lifetime
     /// of the returned renderer.
+    #[cfg(not(target_family = "wasm"))]
     pub fn new<W: HasWindowHandle + HasDisplayHandle>(
         context: &WgpuContext,
         window: &W,
@@ -150,6 +152,27 @@ impl WgpuRenderer {
                 .map_err(|e| anyhow::anyhow!("Failed to create surface: {e}"))?
         };
 
+        Self::new_with_surface(context, surface, config)
+    }
+
+    #[cfg(target_family = "wasm")]
+    pub fn new_from_canvas(
+        context: &WgpuContext,
+        canvas: &web_sys::HtmlCanvasElement,
+        config: WgpuSurfaceConfig,
+    ) -> anyhow::Result<Self> {
+        let surface = context
+            .instance
+            .create_surface(wgpu::SurfaceTarget::Canvas(canvas.clone()))
+            .map_err(|e| anyhow::anyhow!("Failed to create surface: {e}"))?;
+        Self::new_with_surface(context, surface, config)
+    }
+
+    pub fn new_with_surface(
+        context: &WgpuContext,
+        surface: wgpu::Surface<'static>,
+        config: WgpuSurfaceConfig,
+    ) -> anyhow::Result<Self> {
         let surface_caps = surface.get_capabilities(&context.adapter);
         // Prefer standard 8-bit non-sRGB formats that don't require special features.
         // Other formats like Rgba16Unorm require TEXTURE_FORMAT_16BIT_NORM which may
@@ -474,9 +497,14 @@ impl WgpuRenderer {
         dual_source_blending: bool,
     ) -> WgpuPipelines {
         let shader_source = include_str!("shaders.wgsl");
+        let shader_source = if dual_source_blending {
+            std::borrow::Cow::Borrowed(shader_source)
+        } else {
+            std::borrow::Cow::Owned(shader_source.replace("enable dual_source_blending;\n", ""))
+        };
         let shader_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("gpui_shaders"),
-            source: wgpu::ShaderSource::Wgsl(shader_source.into()),
+            source: wgpu::ShaderSource::Wgsl(shader_source),
         });
 
         let blend_mode = match alpha_mode {

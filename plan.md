@@ -2078,30 +2078,34 @@ python3 -m http.server 8080
 
 ---
 
-### Phase 1: `PlatformDispatcher` (Async Runtime)
+### Phase 1: `PlatformDispatcher` (Async Runtime) ✅ COMPLETE
 
 **Goal:** Replace the synchronous inline-run stubs in `WebDispatcher` with proper browser-based async scheduling.
 
-**Current state:** `WebDispatcher` exists in `crates/gpui_web/src/dispatcher.rs` and compiles. All methods run tasks inline synchronously, which prevents yielding to the browser event loop and will cause issues with frame scheduling and delayed tasks.
+**What was done:**
 
-**What needs to change:**
+1. **Replaced all inline-run stubs** in `crates/gpui_web/src/dispatcher.rs` with proper browser-based async scheduling:
 
-| Trait Method | Current (stub) | Target |
-|---|---|---|
-| `dispatch(runnable, priority)` | `runnable.run()` inline | `queueMicrotask()` for high priority, `setTimeout(fn, 0)` for normal |
-| `dispatch_on_main_thread(runnable, priority)` | `runnable.run()` inline | Same as `dispatch` (wasm is single-threaded) |
-| `dispatch_after(duration, runnable)` | `runnable.run()` inline (delay ignored) | `setTimeout(fn, duration_ms)` |
-| `spawn_realtime(f)` | `f()` inline | Same as `dispatch` (no real-time threads in wasm) |
+   | Trait Method | Before (stub) | After |
+   |---|---|---|
+   | `dispatch(runnable, priority)` | `runnable.run()` inline | `queueMicrotask()` for High/RealtimeAudio, `setTimeout(fn, 0)` for Medium/Low |
+   | `dispatch_on_main_thread(runnable, priority)` | `runnable.run()` inline | Same as `dispatch` (wasm is single-threaded) |
+   | `dispatch_after(duration, runnable)` | `runnable.run()` inline (delay ignored) | `setTimeout(fn, duration_ms)` with proper delay |
+   | `spawn_realtime(f)` | `f()` inline | `queueMicrotask()` (no real-time threads in wasm) |
 
-**Key design note:** wasm is fundamentally single-threaded (without SharedArrayBuffer). The dispatcher must be cooperative — all "background" tasks initially run on the main thread via microtask scheduling. Web Workers can be added later for true parallelism but are not needed for a first pass.
+2. **JS bindings:** Used `#[wasm_bindgen] extern "C"` to bind the global `queueMicrotask` and `setTimeout` browser APIs directly (no extra `web-sys` features or `js-sys` dependency needed).
 
-**Dependencies needed:** `js-sys` for `setTimeout` / `queueMicrotask`, `wasm-bindgen` closures for passing Rust callbacks to JS timers.
+3. **One-shot closures:** `Closure::once_into_js` converts Rust `FnOnce` closures into JS functions that self-clean after invocation.
 
-**File:** `zed/crates/gpui_web/src/dispatcher.rs` (modify existing)
+4. **Closed-task guard:** Before running a task, `runnable.metadata().is_closed()` is checked (matching the pattern in native dispatchers) so tasks from a closed executor are dropped.
+
+5. **Extracted `schedule_runnable` helper** shared by `dispatch` and `dispatch_on_main_thread`.
+
+**File:** `zed/crates/gpui_web/src/dispatcher.rs`
 
 ---
 
-### Phase 2: `PlatformDisplay` & `PlatformWindow` (Canvas + WebGPU)
+### Phase 2: `PlatformDisplay` & `PlatformWindow` (Canvas + WebGPU) ✅ COMPLETE
 
 **Goal:** Open a canvas element and hook it up to wgpu's WebGPU backend for rendering.
 
@@ -2305,15 +2309,15 @@ zed/crates/gpui_web/
 ## Suggested Implementation Order
 
 1. ~~**Phase 0** — Build infra, get wasm compiling~~ ✅ COMPLETE
-2. **Phase 1** — Proper `WebDispatcher` with `setTimeout`/`queueMicrotask` *(~2-3 days)*
-3. **Phase 2a** — Real `WebDisplay` with browser viewport dimensions *(~1 day)*
+2. ~~**Phase 1** — Proper `WebDispatcher` with `setTimeout`/`queueMicrotask`~~ ✅ COMPLETE
+3. ~~**Phase 2a** — Real `WebDisplay` with browser viewport dimensions~~ ✅ COMPLETE
 4. **Phase 4** — `PlatformTextSystem` with cosmic-text *(~3-5 days)* — can parallel with Phase 2b
-5. **Phase 2b** — `WebWindow` + wgpu WebGPU integration *(~1-2 weeks)* — this is the largest chunk
+5. ~~**Phase 2b** — `WebWindow` + wgpu WebGPU integration~~ ✅ COMPLETE
 6. **Phase 5** — Flesh out `WebPlatform` stubs (clipboard, cursor, open_url) *(~2-3 days)*
 7. **Phase 3** — Input events *(~1 week)*
 8. **Phase 6** — Keyboard layout *(~1-2 days)*
 
-**Next up:** Phase 1 (async dispatcher) and Phase 2b (WebWindow + wgpu) can start in parallel. Phase 2b is the critical path to first pixels on screen.
+**Next up:** Phase 4 (PlatformTextSystem) is the critical path to first pixels on screen — the NoopTextSystem must be replaced with a real text renderer (cosmic-text) before GPUI views can render text.
 
 **First milestone:** A browser window showing a GPUI view with styled `div`s and text, responding to mouse clicks. (~3-4 weeks from now)
 
