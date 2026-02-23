@@ -4922,7 +4922,7 @@ impl Editor {
             };
             this.buffer.update(cx, |buffer, cx| {
                 if has_adjacent_edits {
-                    buffer.edit_non_coalesce(edits, autoindent_mode.clone(), cx);
+                    buffer.edit_non_coalesce(edits, autoindent_mode, cx);
                 } else {
                     buffer.edit(edits, autoindent_mode, cx);
                 }
