@@ -1169,20 +1169,20 @@ impl SplittableEditor {
                             let start = diff_snapshot
                                 .buffer_point_to_base_text_range(
                                     Point::new(range.start.row, 0),
-                                    main_buffer,
+                                    &main_buffer,
                                 )
                                 .start;
                             let end = diff_snapshot
                                 .buffer_point_to_base_text_range(
                                     Point::new(range.end.row, 0),
-                                    main_buffer,
+                                    &main_buffer,
                                 )
                                 .end;
                             let end_column = diff_snapshot.base_text().line_len(end.row);
                             Point::new(start.row, 0)..Point::new(end.row, end_column)
                         };
-                        let primary = excerpt_range.primary.to_point(main_buffer);
-                        let context = excerpt_range.context.to_point(main_buffer);
+                        let primary = excerpt_range.primary.to_point(&main_buffer);
+                        let context = excerpt_range.context.to_point(&main_buffer);
                         ExcerptRange {
                             primary: to_base_text(primary),
                             context: to_base_text(context),
@@ -1190,34 +1190,52 @@ impl SplittableEditor {
                     })
                     .collect();
 
-                let (merged_ranges, counts) = MultiBuffer::merge_excerpt_ranges(lhs_ranges.iter());
+                let (lhs_excerpt_ids, rhs_groups) =
+                    lhs.multibuffer.update(cx, |lhs_multibuffer, lhs_cx| {
+                        let lhs_result = lhs_multibuffer.update_path_excerpts(
+                            path,
+                            diff.read(lhs_cx).base_text_buffer().clone(),
+                            &base_text_buffer_snapshot,
+                            lhs_ranges,
+                            lhs_cx,
+                        );
+                        if !lhs_result.excerpt_ids.is_empty()
+                            && lhs_multibuffer
+                                .diff_for(remote_id)
+                                .is_none_or(|old_diff| old_diff.entity_id() != diff.entity_id())
+                        {
+                            let main_buffer_entity = rhs_multibuffer
+                                .buffer(main_buffer.remote_id())
+                                .expect("main buffer should exist in rhs_multibuffer");
+                            lhs_multibuffer.add_inverted_diff(
+                                diff.clone(),
+                                main_buffer_entity,
+                                lhs_cx,
+                            );
+                        }
 
-                let mut rhs_id_iter = rhs_excerpt_ids.iter().copied();
-                let rhs_groups: Vec<Vec<ExcerptId>> = counts
-                    .iter()
-                    .map(|&count| (&mut rhs_id_iter).take(count).collect())
-                    .collect();
+                        let mut rhs_merge_groups: Vec<Vec<ExcerptId>> = Vec::new();
+                        let mut current_group = Vec::new();
+                        let mut last_lhs_id = None;
+                        for (lhs_id, rhs_id) in lhs_result.excerpt_ids.iter().zip(rhs_excerpt_ids) {
+                            if last_lhs_id == Some(lhs_id) {
+                                current_group.push(rhs_id);
+                            } else {
+                                if !current_group.is_empty() {
+                                    rhs_merge_groups.push(current_group);
+                                }
+                                current_group = vec![rhs_id];
+                                last_lhs_id = Some(lhs_id);
+                            }
+                        }
+                        if !current_group.is_empty() {
+                            rhs_merge_groups.push(current_group);
+                        }
 
-                let lhs_excerpt_ids = lhs.multibuffer.update(cx, |lhs_multibuffer, lhs_cx| {
-                    let lhs_result = lhs_multibuffer.update_path_excerpts(
-                        path,
-                        diff.read(lhs_cx).base_text_buffer().clone(),
-                        &base_text_buffer_snapshot,
-                        merged_ranges,
-                        lhs_cx,
-                    );
-                    if !lhs_result.excerpt_ids.is_empty()
-                        && lhs_multibuffer
-                            .diff_for(remote_id)
-                            .is_none_or(|old_diff| old_diff.entity_id() != diff.entity_id())
-                    {
-                        let main_buffer_entity = rhs_multibuffer
-                            .buffer(main_buffer_id)
-                            .expect("main buffer should exist in rhs_multibuffer");
-                        lhs_multibuffer.add_inverted_diff(diff.clone(), main_buffer_entity, lhs_cx);
-                    }
-                    lhs_result.excerpt_ids
-                });
+                        let deduped_lhs_ids: Vec<ExcerptId> =
+                            lhs_result.excerpt_ids.iter().dedup().copied().collect();
+                        (deduped_lhs_ids, rhs_merge_groups)
+                    });
 
                 let final_rhs_ids: Vec<ExcerptId> = rhs_groups
                     .into_iter()
