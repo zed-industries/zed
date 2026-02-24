@@ -376,7 +376,8 @@ pub fn initialize_workspace(
             return;
         };
         let multi_workspace_handle = cx.entity();
-        let sidebar = cx.new(|cx| Sidebar::new(multi_workspace_handle, window, cx));
+        let workspaces = multi_workspace.workspaces().to_vec();
+        let sidebar = cx.new(|cx| Sidebar::new(multi_workspace_handle, &workspaces, window, cx));
         multi_workspace.register_sidebar(sidebar, window, cx);
     })
     .detach();

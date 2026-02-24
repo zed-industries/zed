@@ -2663,9 +2663,10 @@ fn run_multi_workspace_sidebar_visual_tests(
 
     // Create the sidebar and register it on the MultiWorkspace
     let sidebar = multi_workspace_window
-        .update(cx, |_multi_workspace, window, cx| {
+        .update(cx, |multi_workspace, window, cx| {
             let multi_workspace_handle = cx.entity();
-            cx.new(|cx| sidebar::Sidebar::new(multi_workspace_handle, window, cx))
+            let workspaces = multi_workspace.workspaces().to_vec();
+            cx.new(|cx| sidebar::Sidebar::new(multi_workspace_handle, &workspaces, window, cx))
         })
         .context("Failed to create sidebar")?;
 

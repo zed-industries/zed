@@ -26,8 +26,8 @@ use ui::{
 use ui_input::ErasedEditor;
 use util::ResultExt as _;
 use workspace::{
-    FocusWorkspaceSidebar, MultiWorkspace, NewWorkspaceInWindow, Sidebar as WorkspaceSidebar,
-    SidebarEvent, ToggleWorkspaceSidebar, Workspace,
+    FocusWorkspaceSidebar, MultiWorkspace, NewWorkspaceInWindow, PathList,
+    Sidebar as WorkspaceSidebar, SidebarEvent, ToggleWorkspaceSidebar, Workspace,
 };
 
 #[derive(Clone, Debug)]
@@ -153,43 +153,108 @@ struct ProjectGroup {
     workspaces: Vec<Entity<Workspace>>,
 }
 
-struct ActiveProjectsDelegate {
-    multi_workspace: Entity<MultiWorkspace>,
-    /// The primary list of things shown in the sidebar.
-    active_projects: Vec<ProjectGroup>,
-}
-
-impl ActiveProjectsDelegate {
-    fn new(multi_workspace: Entity<MultiWorkspace>) -> Self {
-        Self {
-            multi_workspace,
-            active_projects: Vec::new(),
-        }
+impl ProjectGroup {
+    const fn len(&self) -> usize {
+        self.workspaces.len()
     }
 }
 
-fn open_recent_project(paths: Vec<PathBuf>, window: &mut Window, cx: &mut App) {
-    let Some(handle) = window.window_handle().downcast::<MultiWorkspace>() else {
-        return;
-    };
+/// Manages a group of [`ProjectGroup`]s
+///
+/// This is responsible for grouping projects by their worktrees, keeping track
+/// of group names, and any sorting we might apply.
+///
+/// Although this is backed by a vec, we should never expose direct vec indices
+/// as part of the [`ActiveProjects`] API.
+struct ActiveProjects {
+    /// An association list mapping keys to projects
+    ///
+    /// We use an associate list because the set of project groups should be
+    /// small enough that iterating a vec is likely to be faster than a more
+    /// complex structure like a BTreeMap. It also let's us sort the groups by
+    /// sorting the vec in different ways.
+    groups: Vec<(PathList, ProjectGroup)>,
+}
 
-    cx.defer(move |cx| {
-        if let Some(task) = handle
-            .update(cx, |multi_workspace, window, cx| {
-                multi_workspace.open_project(paths, window, cx)
-            })
-            .log_err()
-        {
-            task.detach_and_log_err(cx);
+impl ActiveProjects {
+    fn empty() -> Self {
+        Self { groups: Vec::new() }
+    }
+
+    /// Create a new [`ActiveProjects`] populated from a slice of workspaces.
+    fn from_workspaces(workspaces: &[Entity<Workspace>], cx: &App) -> Self {
+        let mut active_projects = Self::empty();
+
+        for workspace in workspaces {
+            active_projects.add_workspace(workspace.clone(), cx);
         }
-    });
+
+        active_projects
+    }
+
+    fn add_workspace(&mut self, workspace: Entity<Workspace>, cx: &App) {
+        let paths = workspace.read(cx).root_paths(cx);
+        let key = PathList::new(&paths);
+
+        match self.groups.iter_mut().find(|(k, _)| *k == key) {
+            Some((_key, group)) => {
+                group.workspaces.push(workspace);
+            }
+            None => {
+                self.groups.push((
+                    key,
+                    ProjectGroup {
+                        workspaces: vec![workspace],
+                    },
+                ));
+            }
+        }
+    }
+
+    /// Returns the total number of projects across all groups.
+    fn num_projects(&self) -> usize {
+        self.groups.iter().map(|(_, group)| group.len()).sum()
+    }
+
+    /// Returns the project, its path list, and whether this is the first item
+    /// in the group (so we can draw a header).
+    fn project_by_ix(&self, mut ix: usize) -> Option<(Entity<Workspace>, Option<&PathList>)> {
+        for (path_list, group) in self.groups.iter() {
+            if ix < group.len() {
+                return Some((group.workspaces[ix].clone(), Some(path_list)));
+            }
+            ix -= group.len();
+        }
+        None
+    }
+}
+
+struct ActiveProjectsDelegate {
+    multi_workspace: Entity<MultiWorkspace>,
+    /// The primary list of things shown in the sidebar.
+    active_projects: ActiveProjects,
+}
+
+impl ActiveProjectsDelegate {
+    fn new(
+        multi_workspace: Entity<MultiWorkspace>,
+        workspaces: &[Entity<Workspace>],
+        cx: &App,
+    ) -> Self {
+        let active_projects = ActiveProjects::from_workspaces(workspaces, cx);
+
+        Self {
+            multi_workspace,
+            active_projects,
+        }
+    }
 }
 
 impl PickerDelegate for ActiveProjectsDelegate {
     type ListItem = AnyElement;
 
     fn match_count(&self) -> usize {
-        0
+        self.active_projects.num_projects()
     }
 
     fn selected_index(&self) -> usize {
@@ -241,7 +306,23 @@ impl PickerDelegate for ActiveProjectsDelegate {
         _window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
-        None
+        let (workspace, paths_if_first) = self.active_projects.project_by_ix(index)?;
+
+        Some(
+            v_flex()
+                .when(paths_if_first.is_some(), |el| {
+                    let header_label: SharedString = paths_if_first
+                        .unwrap()
+                        .ordered_paths()
+                        .filter_map(|p| p.file_name().map(|n| n.to_string_lossy().to_string()))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                        .into();
+                    el.child(ListSubHeader::new(header_label).inset(true))
+                })
+                .child(Label::new("todo: workspace thread row").color(Color::Muted))
+                .into_any_element(),
+        )
     }
 
     fn render_editor(
@@ -286,10 +367,11 @@ impl EventEmitter<SidebarEvent> for Sidebar {}
 impl Sidebar {
     pub fn new(
         multi_workspace: Entity<MultiWorkspace>,
+        workspaces: &[Entity<Workspace>],
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let delegate = ActiveProjectsDelegate::new(multi_workspace.clone());
+        let delegate = ActiveProjectsDelegate::new(multi_workspace.clone(), workspaces, cx);
         let picker = cx.new(|cx| {
             Picker::list(delegate, window, cx)
                 .max_height(None)
@@ -320,61 +402,6 @@ impl Sidebar {
         };
         this.update_entries(window, cx);
         this
-    }
-
-    fn subscribe_to_projects(
-        &mut self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Vec<Subscription> {
-        let projects: Vec<_> = self
-            .multi_workspace
-            .read(cx)
-            .workspaces()
-            .iter()
-            .map(|w| w.read(cx).project().clone())
-            .collect();
-
-        projects
-            .iter()
-            .map(|project| {
-                cx.subscribe_in(
-                    project,
-                    window,
-                    |this, _project, event, window, cx| match event {
-                        ProjectEvent::WorktreeAdded(_)
-                        | ProjectEvent::WorktreeRemoved(_)
-                        | ProjectEvent::WorktreeOrderChanged => {
-                            this.update_entries(window, cx);
-                        }
-                        _ => {}
-                    },
-                )
-            })
-            .collect()
-    }
-
-    fn build_workspace_thread_entries(
-        &self,
-        multi_workspace: &MultiWorkspace,
-        cx: &App,
-    ) -> (Vec<WorkspaceThreadEntry>, usize) {
-        #[allow(unused_mut)]
-        let mut entries: Vec<WorkspaceThreadEntry> = multi_workspace
-            .workspaces()
-            .iter()
-            .enumerate()
-            .map(|(index, workspace)| WorkspaceThreadEntry::new(index, workspace, cx))
-            .collect();
-
-        #[cfg(any(test, feature = "test-support"))]
-        for (index, info) in &self.test_thread_infos {
-            if let Some(entry) = entries.get_mut(*index) {
-                entry.thread_info = Some(info.clone());
-            }
-        }
-
-        (entries, multi_workspace.active_workspace_index())
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -592,9 +619,10 @@ mod tests {
         let (multi_workspace, cx) =
             cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
 
-        let sidebar = multi_workspace.update_in(cx, |_mw, window, cx| {
+        let sidebar = multi_workspace.update_in(cx, |mw, window, cx| {
             let mw_handle = cx.entity();
-            cx.new(|cx| Sidebar::new(mw_handle, window, cx))
+            let workspaces = mw.workspaces().to_vec();
+            cx.new(|cx| Sidebar::new(mw_handle, &workspaces, window, cx))
         });
         multi_workspace.update_in(cx, |mw, window, cx| {
             mw.register_sidebar(sidebar.clone(), window, cx);
@@ -655,9 +683,10 @@ mod tests {
         let (multi_workspace, cx) =
             cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
 
-        let sidebar = multi_workspace.update_in(cx, |_mw, window, cx| {
+        let sidebar = multi_workspace.update_in(cx, |mw, window, cx| {
             let mw_handle = cx.entity();
-            cx.new(|cx| Sidebar::new(mw_handle, window, cx))
+            let workspaces = mw.workspaces().to_vec();
+            cx.new(|cx| Sidebar::new(mw_handle, &workspaces, window, cx))
         });
         multi_workspace.update_in(cx, |mw, window, cx| {
             mw.register_sidebar(sidebar.clone(), window, cx);
@@ -699,9 +728,10 @@ mod tests {
         let (multi_workspace, cx) =
             cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
 
-        let sidebar = multi_workspace.update_in(cx, |_mw, window, cx| {
+        let sidebar = multi_workspace.update_in(cx, |mw, window, cx| {
             let mw_handle = cx.entity();
-            cx.new(|cx| Sidebar::new(mw_handle, window, cx))
+            let workspaces = mw.workspaces().to_vec();
+            cx.new(|cx| Sidebar::new(mw_handle, &workspaces, window, cx))
         });
         multi_workspace.update_in(cx, |mw, window, cx| {
             mw.register_sidebar(sidebar.clone(), window, cx);
