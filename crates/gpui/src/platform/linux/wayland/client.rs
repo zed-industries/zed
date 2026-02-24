@@ -78,8 +78,8 @@ use crate::{
     FileDropEvent, ForegroundExecutor, KeyDownEvent, KeyUpEvent, Keystroke, LinuxCommon,
     LinuxKeyboardLayout, Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent,
     MouseExitEvent, MouseMoveEvent, MouseUpEvent, NavigationDirection, Pixels, PlatformDisplay,
-    PlatformInput, PlatformKeyboardLayout, Point, ResultExt as _, SCROLL_LINES, ScrollDelta,
-    ScrollWheelEvent, Size, TouchPhase, WindowParams, point, profiler, px, size,
+    PlatformInput, PlatformKeyboardLayout, Point, SCROLL_LINES, ScrollDelta, ScrollWheelEvent,
+    Size, TouchPhase, WindowParams, point, profiler, px, size,
 };
 use crate::{
     SharedString,
@@ -204,7 +204,7 @@ pub struct Output {
 pub(crate) struct WaylandClientState {
     serial_tracker: SerialTracker,
     globals: Globals,
-    pub gpu_context: WgpuContext,
+    pub gpu_context: Option<WgpuContext>,
     wl_seat: wl_seat::WlSeat, // TODO: Multi seat support
     wl_pointer: Option<wl_pointer::WlPointer>,
     wl_keyboard: Option<wl_keyboard::WlKeyboard>,
@@ -519,8 +519,7 @@ impl WaylandClient {
             })
             .unwrap();
 
-        // This could be unified with the notification handling in zed/main:fail_to_open_window.
-        let gpu_context = WgpuContext::new().notify_err("Unable to init GPU context");
+        let gpu_context = None;
 
         let seat = seat.unwrap();
         let globals = Globals::new(
@@ -719,13 +718,14 @@ impl LinuxClient for WaylandClient {
 
         let parent = state.keyboard_focused_window.clone();
 
+        let appearance = state.common.appearance;
         let (window, surface_id) = WaylandWindow::new(
             handle,
             state.globals.clone(),
-            &state.gpu_context,
+            &mut state.gpu_context,
             WaylandClientStatePtr(Rc::downgrade(&self.0)),
             params,
-            state.common.appearance,
+            appearance,
             parent,
         )?;
         state.windows.insert(surface_id, window.0.clone());

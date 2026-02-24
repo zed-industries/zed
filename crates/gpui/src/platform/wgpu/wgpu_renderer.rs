@@ -124,7 +124,7 @@ impl WgpuRenderer {
     /// The caller must ensure that the window handle remains valid for the lifetime
     /// of the returned renderer.
     pub fn new<W: HasWindowHandle + HasDisplayHandle>(
-        context: &WgpuContext,
+        gpu_context: &mut Option<WgpuContext>,
         window: &W,
         config: WgpuSurfaceConfig,
     ) -> anyhow::Result<Self> {
@@ -140,20 +140,32 @@ impl WgpuRenderer {
             raw_window_handle: window_handle.as_raw(),
         };
 
+        // Use the existing context's instance if available, otherwise create a new one.
+        // The surface must be created with the same instance that will be used for
+        // adapter selection, otherwise wgpu will panic.
+        let instance = gpu_context
+            .as_ref()
+            .map(|ctx| ctx.instance.clone())
+            .unwrap_or_else(WgpuContext::instance);
+
         // Safety: The caller guarantees that the window handle is valid for the
         // lifetime of this renderer. In practice, the RawWindow struct is created
         // from the native window handles and the surface is dropped before the window.
         let surface = unsafe {
-            context
-                .instance
+            instance
                 .create_surface_unsafe(target)
                 .map_err(|e| anyhow::anyhow!("Failed to create surface: {e}"))?
         };
 
+        let context = match gpu_context {
+            Some(context) => {
+                context.check_compatible_with_surface(&surface)?;
+                context
+            }
+            None => gpu_context.insert(WgpuContext::new(instance, &surface)?),
+        };
+
         let surface_caps = surface.get_capabilities(&context.adapter);
-        // Prefer standard 8-bit non-sRGB formats that don't require special features.
-        // Other formats like Rgba16Unorm require TEXTURE_FORMAT_16BIT_NORM which may
-        // not be available on all devices.
         let preferred_formats = [
             wgpu::TextureFormat::Bgra8Unorm,
             wgpu::TextureFormat::Rgba8Unorm,
@@ -163,26 +175,38 @@ impl WgpuRenderer {
             .find(|f| surface_caps.formats.contains(f))
             .copied()
             .or_else(|| surface_caps.formats.iter().find(|f| !f.is_srgb()).copied())
-            .unwrap_or(surface_caps.formats[0]);
+            .or_else(|| surface_caps.formats.first().copied())
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "Surface reports no supported texture formats for adapter {:?}",
+                    context.adapter.get_info().name
+                )
+            })?;
 
         let pick_alpha_mode =
-            |preferences: &[wgpu::CompositeAlphaMode]| -> wgpu::CompositeAlphaMode {
+            |preferences: &[wgpu::CompositeAlphaMode]| -> anyhow::Result<wgpu::CompositeAlphaMode> {
                 preferences
                     .iter()
                     .find(|p| surface_caps.alpha_modes.contains(p))
                     .copied()
-                    .unwrap_or(surface_caps.alpha_modes[0])
+                    .or_else(|| surface_caps.alpha_modes.first().copied())
+                    .ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "Surface reports no supported alpha modes for adapter {:?}",
+                            context.adapter.get_info().name
+                        )
+                    })
             };
 
         let transparent_alpha_mode = pick_alpha_mode(&[
             wgpu::CompositeAlphaMode::PreMultiplied,
             wgpu::CompositeAlphaMode::Inherit,
-        ]);
+        ])?;
 
         let opaque_alpha_mode = pick_alpha_mode(&[
             wgpu::CompositeAlphaMode::Opaque,
             wgpu::CompositeAlphaMode::Inherit,
-        ]);
+        ])?;
 
         let alpha_mode = if config.transparent {
             transparent_alpha_mode
