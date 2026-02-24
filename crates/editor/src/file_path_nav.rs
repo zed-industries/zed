@@ -108,18 +108,18 @@ fn build_directory_menu(
         _ => a.path.cmp(&b.path),
     });
 
-    entries.iter().fold(menu, |menu, entry| {
+    entries.into_iter().fold(menu, |menu, entry| {
         let Some(name) = entry.path.file_name() else {
             return menu;
         };
         let name = name.to_string();
 
         if entry.is_dir() {
-            let entry_path = entry.path.clone();
+            let entry_path = entry.path;
             let project = project.clone();
             let workspace = workspace.clone();
 
-            menu.submenu(name, move |submenu, window, cx| {
+            menu.submenu_with_icon(name, IconName::Folder, move |submenu, window, cx| {
                 build_directory_menu(
                     submenu,
                     &entry_path,
@@ -131,11 +131,11 @@ fn build_directory_menu(
                 )
             })
         } else {
+            let icon_path = FileIcons::get_icon(entry.path.as_std_path(), cx);
             let project_path = ProjectPath {
                 worktree_id,
-                path: entry.path.clone(),
+                path: entry.path,
             };
-            let icon_path = FileIcons::get_icon(entry.path.as_std_path(), cx);
             let workspace = workspace.clone();
 
             let mut menu_entry = ContextMenuEntry::new(name).handler(move |window, cx| {
