@@ -13,8 +13,8 @@ use context_server::oauth::{
 };
 use context_server::transport::{HttpTransport, TransportError};
 use context_server::{ContextServer, ContextServerCommand, ContextServerId};
-use futures::{FutureExt as _, future::join_all};
 use credentials_provider::CredentialsProvider;
+use futures::future::Either;
 use futures::{FutureExt as _, StreamExt as _, channel::oneshot, future::join_all};
 use gpui::{App, AsyncApp, Context, Entity, EventEmitter, Subscription, Task, WeakEntity, actions};
 use itertools::Itertools;
@@ -56,6 +56,9 @@ pub enum ContextServerStatus {
     /// `OAuthDiscovery` contains everything required to kick off the browser
     /// flow — the UI should show an "Authenticate" button.
     AuthRequired(Arc<OAuthDiscovery>),
+    /// The OAuth browser flow is in progress — the user has been redirected
+    /// to the authorization server and we're waiting for the callback.
+    Authenticating,
 }
 
 impl PartialEq for ContextServerStatus {
@@ -66,6 +69,7 @@ impl PartialEq for ContextServerStatus {
             (Self::Stopped, Self::Stopped) => true,
             (Self::Error(a), Self::Error(b)) => a == b,
             (Self::AuthRequired(_), Self::AuthRequired(_)) => true,
+            (Self::Authenticating, Self::Authenticating) => true,
             _ => false,
         }
     }
@@ -93,6 +97,7 @@ impl ContextServerStatus {
             ContextServerState::AuthRequired { discovery, .. } => {
                 ContextServerStatus::AuthRequired(discovery.clone())
             }
+            ContextServerState::Authenticating { .. } => ContextServerStatus::Authenticating,
         }
     }
 }
@@ -123,6 +128,13 @@ enum ContextServerState {
         configuration: Arc<ContextServerConfiguration>,
         discovery: Arc<OAuthDiscovery>,
     },
+    /// The OAuth browser flow is in progress. The user has been redirected
+    /// to the authorization server and we're waiting for the callback.
+    Authenticating {
+        server: Arc<ContextServer>,
+        configuration: Arc<ContextServerConfiguration>,
+        _task: Task<()>,
+    },
 }
 
 impl ContextServerState {
@@ -132,7 +144,8 @@ impl ContextServerState {
             | ContextServerState::Running { server, .. }
             | ContextServerState::Stopped { server, .. }
             | ContextServerState::Error { server, .. }
-            | ContextServerState::AuthRequired { server, .. } => server.clone(),
+            | ContextServerState::AuthRequired { server, .. }
+            | ContextServerState::Authenticating { server, .. } => server.clone(),
         }
     }
 
@@ -142,7 +155,8 @@ impl ContextServerState {
             | ContextServerState::Running { configuration, .. }
             | ContextServerState::Stopped { configuration, .. }
             | ContextServerState::Error { configuration, .. }
-            | ContextServerState::AuthRequired { configuration, .. } => configuration.clone(),
+            | ContextServerState::AuthRequired { configuration, .. }
+            | ContextServerState::Authenticating { configuration, .. } => configuration.clone(),
         }
     }
 }
@@ -504,6 +518,20 @@ impl ContextServerStore {
         self.servers.get(id).map(ContextServerStatus::from_state)
     }
 
+    /// Returns true if the given server is in a state where OAuth credentials
+    /// may exist (Running, AuthRequired, or Authenticating). The UI uses this
+    /// to decide whether to show a "Log Out" menu item.
+    pub fn server_may_have_oauth_credentials(&self, id: &ContextServerId) -> bool {
+        matches!(
+            self.servers.get(id),
+            Some(
+                ContextServerState::Running { .. }
+                    | ContextServerState::AuthRequired { .. }
+                    | ContextServerState::Authenticating { .. }
+            )
+        )
+    }
+
     pub fn configuration_for_server(
         &self,
         id: &ContextServerId,
@@ -642,7 +670,11 @@ impl ContextServerStore {
         let id = server.id();
         if matches!(
             self.servers.get(&id),
-            Some(ContextServerState::Starting { .. } | ContextServerState::Running { .. })
+            Some(
+                ContextServerState::Starting { .. }
+                    | ContextServerState::Running { .. }
+                    | ContextServerState::Authenticating { .. },
+            )
         ) {
             self.stop_server(&id, cx).log_err();
         }
@@ -1093,35 +1125,57 @@ impl ContextServerStore {
             _ => anyhow::bail!("Server is not in AuthRequired state"),
         };
 
+        // Clean up any stale pending OAuth flow entries whose receivers have
+        // been dropped (e.g. from a previous cancelled attempt).
+        self.pending_oauth_flows
+            .retain(|_, sender| !sender.is_canceled());
+
         let id = id.clone();
 
-        cx.spawn(async move |this, cx| {
-            let result = Self::run_oauth_flow(
-                this.clone(),
-                id.clone(),
-                discovery.clone(),
-                configuration.clone(),
-                cx,
-            )
-            .await;
+        let task = cx.spawn({
+            let id = id.clone();
+            let server = server.clone();
+            let configuration = configuration.clone();
+            let discovery = discovery.clone();
+            async move |this, cx| {
+                let result = Self::run_oauth_flow(
+                    this.clone(),
+                    id.clone(),
+                    discovery.clone(),
+                    configuration.clone(),
+                    cx,
+                )
+                .await;
 
-            if let Err(err) = &result {
-                log::error!("{} OAuth authentication failed: {}", id, err);
-                this.update(cx, |this, cx| {
-                    this.update_server_state(
-                        id.clone(),
-                        ContextServerState::Error {
-                            server,
-                            configuration,
-                            error: err.to_string().into(),
-                        },
-                        cx,
-                    )
-                })
-                .log_err();
+                if let Err(err) = &result {
+                    log::error!("{} OAuth authentication failed: {}", id, err);
+                    // Transition back to AuthRequired so the user can retry
+                    // rather than landing in a terminal Error state.
+                    this.update(cx, |this, cx| {
+                        this.update_server_state(
+                            id.clone(),
+                            ContextServerState::AuthRequired {
+                                server,
+                                configuration,
+                                discovery,
+                            },
+                            cx,
+                        )
+                    })
+                    .log_err();
+                }
             }
-        })
-        .detach();
+        });
+
+        self.update_server_state(
+            id,
+            ContextServerState::Authenticating {
+                server,
+                configuration,
+                _task: task,
+            },
+            cx,
+        );
 
         Ok(())
     }
@@ -1177,9 +1231,17 @@ impl ContextServerStore {
 
         cx.update(|cx| cx.open_url(auth_url.as_str()));
 
-        let callback = callback_rx
-            .await
-            .map_err(|_| anyhow::anyhow!("OAuth flow was cancelled"))?;
+        let callback = match callback_rx.await {
+            Ok(callback) => callback,
+            Err(_) => {
+                // Clean up the pending flow entry since no callback will arrive.
+                this.update(cx, |this, _| {
+                    this.pending_oauth_flows.remove(&state_param);
+                })
+                .log_err();
+                anyhow::bail!("OAuth flow was cancelled");
+            }
+        };
 
         let http_client = cx.update(|cx| cx.http_client());
 
@@ -1192,7 +1254,8 @@ impl ContextServerStore {
             &pkce.verifier,
             &resource,
         )
-        .await?;
+        .await
+        .context("Failed to exchange authorization code for tokens")?;
 
         // Persist tokens in the keychain.
         let credentials_provider = cx.update(|cx| <dyn CredentialsProvider>::global(cx));
@@ -1200,7 +1263,9 @@ impl ContextServerStore {
             ContextServerConfiguration::Http { url, .. } => url.clone(),
             _ => anyhow::bail!("OAuth authentication only supported for HTTP servers"),
         };
-        Self::store_tokens(&credentials_provider, &server_url, &tokens, cx).await?;
+        Self::store_tokens(&credentials_provider, &server_url, &tokens, cx)
+            .await
+            .context("Failed to persist OAuth tokens in keychain")?;
 
         // Create a token provider and restart the server with it. The channel
         // lets us persist refreshed tokens back to the keychain without the
@@ -1234,6 +1299,7 @@ impl ContextServerStore {
                         log::warn!("{} failed to persist refreshed tokens: {}", id, err);
                     }
                 }
+                log::debug!("{} token refresh persistence task ended", id);
             })
             .detach();
         }

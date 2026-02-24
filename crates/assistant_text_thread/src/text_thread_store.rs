@@ -910,7 +910,7 @@ impl TextThreadStore {
                     self.slash_commands.remove(&slash_command_ids);
                 }
             }
-            ContextServerStatus::Starting => {}
+            ContextServerStatus::Starting | ContextServerStatus::Authenticating => {}
         }
     }
 

@@ -919,7 +919,7 @@ fn wait_for_context_server(
                     let _ = tx.send(Err("Authentication required".into()));
                 }
             }
-            _ => {}
+            ContextServerStatus::Starting | ContextServerStatus::Authenticating => {}
         }
     });
 

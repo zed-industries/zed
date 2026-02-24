@@ -647,6 +647,7 @@ impl AgentConfiguration {
             None
         };
         let auth_required = matches!(server_status, ContextServerStatus::AuthRequired(_));
+        let authenticating = matches!(server_status, ContextServerStatus::Authenticating);
         let context_server_store = self.context_server_store.clone();
 
         let tool_count = self
@@ -695,11 +696,27 @@ impl AgentConfiguration {
                 Indicator::dot().color(Color::Warning).into_any_element(),
                 "Authentication required.",
             ),
+            ContextServerStatus::Authenticating => (
+                Icon::new(IconName::LoadCircle)
+                    .size(IconSize::XSmall)
+                    .color(Color::Accent)
+                    .with_keyed_rotate_animation(
+                        SharedString::from(format!("{}-authenticating", context_server_id.0)),
+                        3,
+                    )
+                    .into_any_element(),
+                "Waiting for authorization...",
+            ),
         };
         let is_remote = server_configuration
             .as_ref()
             .map(|config| matches!(config.as_ref(), ContextServerConfiguration::Http { .. }))
             .unwrap_or(false);
+        let may_have_oauth_credentials = is_remote
+            && self
+                .context_server_store
+                .read(cx)
+                .server_may_have_oauth_credentials(&context_server_id);
         let context_server_configuration_menu = PopoverMenu::new("context-server-config-menu")
             .trigger_with_tooltip(
                 IconButton::new("context-server-config-menu", IconName::Settings)
@@ -761,7 +778,7 @@ impl AgentConfiguration {
                                 .ok();
                             }
                         }))
-                        .when(is_remote, |this| {
+                        .when(may_have_oauth_credentials, |this| {
                             this.entry("Log Out", None, {
                                 let context_server_store = context_server_store.clone();
                                 let context_server_id = context_server_id.clone();
@@ -988,6 +1005,21 @@ impl AgentConfiguration {
                                             });
                                         }
                                     }),
+                            ),
+                    );
+                }
+                if authenticating {
+                    return parent.child(
+                        h_flex()
+                            .gap_2()
+                            .pr_4()
+                            .py_0p5()
+                            .items_center()
+                            .child(h_flex().flex_none().w_3().mr_2())
+                            .child(
+                                Label::new("Waiting for authorization...")
+                                    .color(Color::Muted)
+                                    .size(LabelSize::Small),
                             ),
                     );
                 }
