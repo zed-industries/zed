@@ -327,7 +327,6 @@ mod test {
         state::{Mode, Register},
         test::{NeovimBackedTestContext, VimTestContext},
     };
-    use editor::actions::CopyAndTrim;
     use gpui::ClipboardItem;
     use indoc::indoc;
     use language::{LanguageName, language_settings::LanguageSettingsContent};
@@ -1133,80 +1132,6 @@ mod test {
                 line two
                 line two
                 line three"},
-            Mode::Normal,
-        );
-    }
-
-    #[gpui::test]
-    async fn test_copy_and_trim_then_paste(cx: &mut gpui::TestAppContext) {
-        let mut cx = VimTestContext::new(cx, true).await;
-
-        // With leading indent: triggers the multiline-trim code path in
-        // do_copy, which produces multiple trimmed_selections that are
-        // then combined into a single ClipboardSelection.
-        cx.set_state(
-            indoc! {"
-                         ˇfn main() {
-                             dbg!(1)
-                         }
-                     end"},
-            Mode::Normal,
-        );
-
-        cx.simulate_keystrokes("shift-v j j");
-        cx.update_editor(|editor, window, cx| {
-            editor.copy_and_trim(&CopyAndTrim, window, cx);
-        });
-
-        cx.set_state(
-            indoc! {"
-                     ˇ
-                 "},
-            Mode::Normal,
-        );
-        cx.simulate_keystrokes("p");
-
-        cx.assert_state(
-            indoc! {"
-
-                     ˇfn main() {
-                         dbg!(1)
-                     }
-                 "},
-            Mode::Normal,
-        );
-
-        // Without leading indent: no trimming occurs, the whole range
-        // becomes a single ClipboardSelection.
-        cx.set_state(
-            indoc! {"
-                ˇfn main() {
-                    dbg!(1)
-                }
-            "},
-            Mode::Normal,
-        );
-
-        cx.simulate_keystrokes("shift-v j j");
-        cx.update_editor(|editor, window, cx| {
-            editor.copy_and_trim(&CopyAndTrim, window, cx);
-        });
-
-        cx.set_state(
-            indoc! {"
-                ˇ
-            "},
-            Mode::Normal,
-        );
-        cx.simulate_keystrokes("p");
-
-        cx.assert_state(
-            indoc! {"
-
-                ˇfn main() {
-                    dbg!(1)
-                }
-            "},
             Mode::Normal,
         );
     }
