@@ -1430,6 +1430,250 @@ mod tests {
         assert_eq!(full_counter_toml.load(atomic::Ordering::Acquire), 2);
     }
 
+    #[gpui::test]
+    async fn test_modifier_based_styling_rules(cx: &mut TestAppContext) {
+        use gpui::UpdateGlobal as _;
+        use settings::SemanticTokenRule;
+
+        init_test(cx, |_| {});
+
+        update_test_language_settings(cx, |language_settings| {
+            language_settings.languages.0.insert(
+                "Rust".into(),
+                LanguageSettingsContent {
+                    semantic_tokens: Some(SemanticTokens::Full),
+                    ..LanguageSettingsContent::default()
+                },
+            );
+        });
+
+        cx.update(|cx| {
+            SettingsStore::update_global(cx, |store, _| {
+                store.set_language_semantic_token_rules(
+                    "Rust".into(),
+                    SemanticTokenRules {
+                        rules: vec![
+                            SemanticTokenRule {
+                                token_modifiers: vec!["unsafe".into()],
+                                font_weight: Some(
+                                    settings::SemanticTokenFontWeight::Bold,
+                                ),
+                                ..SemanticTokenRule::default()
+                            },
+                            SemanticTokenRule {
+                                token_modifiers: vec!["mutable".into()],
+                                underline: Some(
+                                    settings::SemanticTokenColorOverride::InheritForeground(
+                                        true,
+                                    ),
+                                ),
+                                ..SemanticTokenRule::default()
+                            },
+                            SemanticTokenRule {
+                                token_modifiers: vec!["consuming".into()],
+                                font_style: Some(
+                                    settings::SemanticTokenFontStyle::Italic,
+                                ),
+                                ..SemanticTokenRule::default()
+                            },
+                            SemanticTokenRule {
+                                token_modifiers: vec!["deprecated".into()],
+                                strikethrough: Some(
+                                    settings::SemanticTokenColorOverride::InheritForeground(
+                                        true,
+                                    ),
+                                ),
+                                ..SemanticTokenRule::default()
+                            },
+                        ],
+                    },
+                );
+            });
+        });
+
+        let mut cx = EditorLspTestContext::new_rust(
+            lsp::ServerCapabilities {
+                semantic_tokens_provider: Some(
+                    lsp::SemanticTokensServerCapabilities::SemanticTokensOptions(
+                        lsp::SemanticTokensOptions {
+                            legend: lsp::SemanticTokensLegend {
+                                token_types: vec!["function".into()],
+                                token_modifiers: vec![
+                                    "unsafe".into(),
+                                    "mutable".into(),
+                                    "consuming".into(),
+                                    "deprecated".into(),
+                                ],
+                            },
+                            full: Some(lsp::SemanticTokensFullOptions::Delta { delta: None }),
+                            ..lsp::SemanticTokensOptions::default()
+                        },
+                    ),
+                ),
+                ..lsp::ServerCapabilities::default()
+            },
+            cx,
+        )
+        .await;
+
+        // Test unsafe modifier (bit 0) → bold
+        let mut full_request = cx
+            .set_request_handler::<lsp::request::SemanticTokensFullRequest, _, _>(
+                move |_, _, _| async move {
+                    Ok(Some(lsp::SemanticTokensResult::Tokens(
+                        lsp::SemanticTokens {
+                            data: vec![
+                                0, // delta_line
+                                3, // delta_start
+                                4, // length
+                                0, // token_type (function)
+                                1, // token_modifiers_bitset (bit 0 = unsafe)
+                            ],
+                            result_id: None,
+                        },
+                    )))
+                },
+            );
+
+        cx.set_state("ˇfn main() {}");
+        full_request.next().await;
+        cx.run_until_parked();
+
+        let styles = extract_semantic_highlight_styles(&cx.editor, &cx);
+        assert_eq!(styles.len(), 1, "Should have one highlight style");
+        assert_eq!(
+            styles[0].font_weight,
+            Some(FontWeight::BOLD),
+            "Token with unsafe modifier should be bold"
+        );
+
+        // Test mutable modifier (bit 1) → underline
+        let mut full_request = cx
+            .set_request_handler::<lsp::request::SemanticTokensFullRequest, _, _>(
+                move |_, _, _| async move {
+                    Ok(Some(lsp::SemanticTokensResult::Tokens(
+                        lsp::SemanticTokens {
+                            data: vec![
+                                0, // delta_line
+                                3, // delta_start
+                                4, // length
+                                0, // token_type (function)
+                                2, // token_modifiers_bitset (bit 1 = mutable)
+                            ],
+                            result_id: None,
+                        },
+                    )))
+                },
+            );
+
+        cx.set_state("ˇfn main() { }");
+        full_request.next().await;
+        cx.run_until_parked();
+
+        let styles = extract_semantic_highlight_styles(&cx.editor, &cx);
+        assert_eq!(styles.len(), 1, "Should have one highlight style");
+        assert!(
+            styles[0].underline.is_some(),
+            "Token with mutable modifier should be underlined"
+        );
+
+        // Test consuming modifier (bit 2) → italic
+        let mut full_request = cx
+            .set_request_handler::<lsp::request::SemanticTokensFullRequest, _, _>(
+                move |_, _, _| async move {
+                    Ok(Some(lsp::SemanticTokensResult::Tokens(
+                        lsp::SemanticTokens {
+                            data: vec![
+                                0, // delta_line
+                                3, // delta_start
+                                4, // length
+                                0, // token_type (function)
+                                4, // token_modifiers_bitset (bit 2 = consuming)
+                            ],
+                            result_id: None,
+                        },
+                    )))
+                },
+            );
+
+        cx.set_state("ˇfn main() {  }");
+        full_request.next().await;
+        cx.run_until_parked();
+
+        let styles = extract_semantic_highlight_styles(&cx.editor, &cx);
+        assert_eq!(styles.len(), 1, "Should have one highlight style");
+        assert_eq!(
+            styles[0].font_style,
+            Some(FontStyle::Italic),
+            "Token with consuming modifier should be italic"
+        );
+
+        // Test deprecated modifier (bit 3) → strikethrough
+        let mut full_request = cx
+            .set_request_handler::<lsp::request::SemanticTokensFullRequest, _, _>(
+                move |_, _, _| async move {
+                    Ok(Some(lsp::SemanticTokensResult::Tokens(
+                        lsp::SemanticTokens {
+                            data: vec![
+                                0, // delta_line
+                                3, // delta_start
+                                4, // length
+                                0, // token_type (function)
+                                8, // token_modifiers_bitset (bit 3 = deprecated)
+                            ],
+                            result_id: None,
+                        },
+                    )))
+                },
+            );
+
+        cx.set_state("ˇfn main() {   }");
+        full_request.next().await;
+        cx.run_until_parked();
+
+        let styles = extract_semantic_highlight_styles(&cx.editor, &cx);
+        assert_eq!(styles.len(), 1, "Should have one highlight style");
+        assert!(
+            styles[0].strikethrough.is_some(),
+            "Token with deprecated modifier should have strikethrough"
+        );
+
+        // Test combined modifiers: unsafe (bit 0) + mutable (bit 1) → bold + underline
+        let mut full_request = cx
+            .set_request_handler::<lsp::request::SemanticTokensFullRequest, _, _>(
+                move |_, _, _| async move {
+                    Ok(Some(lsp::SemanticTokensResult::Tokens(
+                        lsp::SemanticTokens {
+                            data: vec![
+                                0, // delta_line
+                                3, // delta_start
+                                4, // length
+                                0, // token_type (function)
+                                3, // token_modifiers_bitset (bits 0+1 = unsafe + mutable)
+                            ],
+                            result_id: None,
+                        },
+                    )))
+                },
+            );
+
+        cx.set_state("ˇfn main() {    }");
+        full_request.next().await;
+        cx.run_until_parked();
+
+        let styles = extract_semantic_highlight_styles(&cx.editor, &cx);
+        assert_eq!(styles.len(), 1, "Should have one highlight style");
+        assert_eq!(
+            styles[0].font_weight,
+            Some(FontWeight::BOLD),
+            "Combined modifiers: should be bold from unsafe"
+        );
+        assert!(
+            styles[0].underline.is_some(),
+            "Combined modifiers: should be underlined from mutable"
+        );
+    }
+
     fn extract_semantic_highlights(
         editor: &Entity<Editor>,
         cx: &TestAppContext,

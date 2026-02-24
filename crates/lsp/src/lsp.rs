@@ -389,6 +389,22 @@ pub const SEMANTIC_TOKEN_MODIFIERS: &[SemanticTokenModifier] = &[
     // Language specific things below.
     // Rust
     SemanticTokenModifier::new("constant"),
+    SemanticTokenModifier::new("unsafe"),
+    SemanticTokenModifier::new("mutable"),
+    SemanticTokenModifier::new("consuming"),
+    SemanticTokenModifier::new("callable"),
+    SemanticTokenModifier::new("trait"),
+    SemanticTokenModifier::new("library"),
+    SemanticTokenModifier::new("public"),
+    SemanticTokenModifier::new("reference"),
+    SemanticTokenModifier::new("controlFlow"),
+    SemanticTokenModifier::new("crateRoot"),
+    SemanticTokenModifier::new("injected"),
+    SemanticTokenModifier::new("intraDocLink"),
+    SemanticTokenModifier::new("associated"),
+    SemanticTokenModifier::new("attribute"),
+    SemanticTokenModifier::new("macro"),
+    SemanticTokenModifier::new("procMacro"),
 ];
 
 impl LanguageServer {

@@ -1,5 +1,26 @@
 [
   {
+    "token_modifiers": ["unsafe"],
+    "font_weight": "bold"
+  },
+  {
+    "token_modifiers": ["mutable"],
+    "underline": true
+  },
+  {
+    "token_modifiers": ["consuming"],
+    "font_style": "italic"
+  },
+  {
+    "token_modifiers": ["deprecated"],
+    "strikethrough": true
+  },
+  {
+    "token_type": "keyword",
+    "token_modifiers": ["controlFlow"],
+    "style": ["keyword.control", "keyword"]
+  },
+  {
     "token_type": "angle",
     "style": ["punctuation.bracket"]
   },
