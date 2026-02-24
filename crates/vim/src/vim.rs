@@ -23,8 +23,8 @@ use crate::normal::paste::Paste as VimPaste;
 use collections::{HashMap, HashSet};
 use editor::display_map::{BlockProperties, CustomBlockId};
 use editor::{
-    Anchor, Bias, Editor, EditorEvent, EditorSettings, HideMouseCursorOrigin, MultiBufferOffset,
-    SelectionEffects,
+    Anchor, Bias, Editor, EditorEvent, EditorSettings, HideMouseCursorOrigin, HighlightKey,
+    MultiBufferOffset, SelectionEffects,
     actions::Paste,
     display_map::ToDisplayPoint,
     movement::{self, FindRange},
@@ -537,8 +537,6 @@ impl Render for Vim {
         gpui::Empty
     }
 }
-
-pub(crate) struct HelixJumpHighlight;
 
 #[derive(Default)]
 struct HelixJumpUi {
@@ -1732,7 +1730,7 @@ impl Vim {
     fn clear_helix_jump_ui(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
         let state = self.helix_jump_ui.take();
         self.update_editor(cx, move |_, editor, cx| {
-            editor.clear_highlights::<HelixJumpHighlight>(cx);
+            editor.clear_highlights(HighlightKey::VimHelixJump, cx);
             if let Some(state) = state {
                 if !state.block_ids.is_empty() {
                     let block_ids: HashSet<_> = state.block_ids.into_iter().collect();
@@ -1752,7 +1750,8 @@ impl Vim {
         self.clear_helix_jump_ui(window, cx);
         let Some(block_ids) = self.update_editor(cx, |_, editor, cx| {
             if !highlight_ranges.is_empty() {
-                editor.highlight_text::<HelixJumpHighlight>(
+                editor.highlight_text(
+                    HighlightKey::VimHelixJump,
                     highlight_ranges,
                     HighlightStyle {
                         fade_out: Some(1.0),
@@ -1838,7 +1837,7 @@ impl Vim {
             }
             HelixJumpBehaviour::Extend => {
                 editor.change_selections(Default::default(), window, cx, |s| {
-                    s.move_with(|map, selection| {
+                    s.move_with(&mut |map, selection| {
                         let word_start = candidate.range.start.to_display_point(map);
                         let word_end = candidate.range.end.to_display_point(map);
                         let tail = selection.tail();
