@@ -1197,7 +1197,6 @@ impl SplittableEditor {
                             Point::new(rhs_hunk.row_range.start.0, 0),
                         )
                     };
-
                 let lhs_point = lhs_snapshot.point_to_display_point(lhs_point, Bias::Left);
                 let rhs_point = rhs_snapshot.point_to_display_point(rhs_point, Bias::Left);
                 assert_eq!(

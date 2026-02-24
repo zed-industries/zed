@@ -536,9 +536,9 @@ impl DiffState {
 }
 
 #[derive(Clone)]
-pub struct DiffStateSnapshot {
-    pub diff: BufferDiffSnapshot,
-    pub main_buffer: Option<language::BufferSnapshot>,
+struct DiffStateSnapshot {
+    diff: BufferDiffSnapshot,
+    main_buffer: Option<language::BufferSnapshot>,
 }
 
 impl std::ops::Deref for DiffStateSnapshot {
@@ -595,16 +595,12 @@ impl DiffState {
                             base_text_changed_range,
                             extended_range: _,
                         }) => {
-                            if let Some(base_text_changed_range) = base_text_changed_range.clone() {
-                                this.inverted_buffer_diff_changed(
-                                    diff,
-                                    main_buffer,
-                                    base_text_changed_range,
-                                    cx,
-                                )
-                            } else {
-                                this.refresh_inverted_diff_snapshot(diff, main_buffer, cx);
-                            }
+                            this.inverted_buffer_diff_changed(
+                                diff,
+                                main_buffer,
+                                base_text_changed_range.clone(),
+                                cx,
+                            );
                             cx.emit(Event::BufferDiffChanged);
                         }
                         BufferDiffEvent::LanguageChanged => {
@@ -2204,7 +2200,19 @@ impl MultiBuffer {
         drop(snapshot);
 
         self.resize_excerpt(excerpt_ids[0], union_range, cx);
-        self.remove_excerpts(excerpt_ids[1..].iter().copied(), cx);
+        let removed = &excerpt_ids[1..];
+        for &excerpt_id in removed {
+            if let Some(path) = self.paths_by_excerpt.get(&excerpt_id) {
+                if let Some(excerpt_list) = self.excerpts_by_path.get_mut(path) {
+                    excerpt_list.retain(|id| *id != excerpt_id);
+                    if excerpt_list.is_empty() {
+                        let path = path.clone();
+                        self.excerpts_by_path.remove(&path);
+                    }
+                }
+            }
+        }
+        self.remove_excerpts(removed.iter().copied(), cx);
 
         excerpt_ids[0]
     }
@@ -2232,6 +2240,7 @@ impl MultiBuffer {
         let mut removed_excerpts_for_buffers = HashSet::default();
 
         while let Some(excerpt_id) = excerpt_ids.next() {
+            self.paths_by_excerpt.remove(&excerpt_id);
             // Seek to the next excerpt to remove, preserving any preceding excerpts.
             let locator = snapshot.excerpt_locator_for_id(excerpt_id);
             new_excerpts.append(cursor.slice(&Some(locator), Bias::Left), ());
@@ -2293,16 +2302,6 @@ impl MultiBuffer {
         let changed_trailing_excerpt = suffix.is_empty();
         new_excerpts.append(suffix, ());
         drop(cursor);
-        for &excerpt_id in &ids {
-            if let Some(path) = self.paths_by_excerpt.remove(&excerpt_id) {
-                if let Some(excerpt_list) = self.excerpts_by_path.get_mut(&path) {
-                    excerpt_list.retain(|id| *id != excerpt_id);
-                    if excerpt_list.is_empty() {
-                        self.excerpts_by_path.remove(&path);
-                    }
-                }
-            }
-        }
         for buffer_id in removed_excerpts_for_buffers {
             match self.buffers.get(&buffer_id) {
                 Some(buffer_state) => {
@@ -2496,29 +2495,11 @@ impl MultiBuffer {
         });
     }
 
-    fn refresh_inverted_diff_snapshot(
-        &mut self,
-        diff: Entity<BufferDiff>,
-        main_buffer: Entity<language::Buffer>,
-        cx: &mut Context<Self>,
-    ) {
-        let base_text_buffer_id = diff.read(cx).base_text_buffer().read(cx).remote_id();
-        let main_buffer_snapshot = main_buffer.read(cx).snapshot();
-        let new_diff = DiffStateSnapshot {
-            diff: diff.read(cx).snapshot(cx),
-            main_buffer: Some(main_buffer_snapshot),
-        };
-        self.snapshot
-            .get_mut()
-            .diffs
-            .insert_or_replace(base_text_buffer_id, new_diff);
-    }
-
     fn inverted_buffer_diff_changed(
         &mut self,
         diff: Entity<BufferDiff>,
         main_buffer: Entity<language::Buffer>,
-        diff_change_range: Range<usize>,
+        diff_change_range: Option<Range<usize>>,
         cx: &mut Context<Self>,
     ) {
         self.sync_mut(cx);
@@ -2538,6 +2519,10 @@ impl MultiBuffer {
         snapshot
             .diffs
             .insert_or_replace(base_text_buffer_id, new_diff);
+
+        let Some(diff_change_range) = diff_change_range else {
+            return;
+        };
 
         let excerpt_edits = snapshot.excerpt_edits_for_diff_change(buffer_state, diff_change_range);
         let edits = Self::sync_diff_transforms(
@@ -2734,7 +2719,12 @@ impl MultiBuffer {
         let base_text_buffer_id = snapshot.remote_id();
         let diff_change_range = 0..snapshot.len();
         self.snapshot.get_mut().has_inverted_diff = true;
-        self.inverted_buffer_diff_changed(diff.clone(), main_buffer.clone(), diff_change_range, cx);
+        self.inverted_buffer_diff_changed(
+            diff.clone(),
+            main_buffer.clone(),
+            Some(diff_change_range),
+            cx,
+        );
         self.diffs.insert(
             base_text_buffer_id,
             DiffState::new_inverted(diff, main_buffer, cx),
@@ -7154,10 +7144,6 @@ impl MultiBufferSnapshot {
 
     pub fn diff_for_buffer_id(&self, buffer_id: BufferId) -> Option<&BufferDiffSnapshot> {
         self.diffs.get(&buffer_id).map(|diff| &diff.diff)
-    }
-
-    pub fn diff_state_for(&self, buffer_id: BufferId) -> Option<&DiffStateSnapshot> {
-        self.diffs.get(&buffer_id)
     }
 
     pub fn all_diff_hunks_expanded(&self) -> bool {
