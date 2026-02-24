@@ -9,8 +9,7 @@ use file_icons::FileIcons;
 use gpui::{AnyElement, App, Context, ElementId, IntoElement, WeakEntity, Window};
 use project::{Entry, Project, ProjectPath, WorktreeId};
 use ui::{
-    ButtonLike, ButtonStyle, Color, ContextMenu, ContextMenuEntry, PopoverMenu, PopoverMenuHandle,
-    prelude::*,
+    ButtonLike, ButtonStyle, Color, ContextMenu, PopoverMenu, PopoverMenuHandle, prelude::*,
 };
 use util::rel_path::RelPath;
 use workspace::{Workspace, notifications::NotifyTaskExt as _};
@@ -32,7 +31,7 @@ struct InlineMenuRow {
     depth: usize,
     is_directory: bool,
     is_expanded: bool,
-    file_icon: Option<SharedString>,
+    icon_path: Option<SharedString>,
 }
 
 /// A horizontal row of clickable path segments for the editor breadcrumb toolbar.
@@ -182,11 +181,11 @@ fn build_inline_directory_menu(
 
                 rows.push(InlineMenuRow {
                     name: SharedString::from(name),
+                    icon_path: FileIcons::get_folder_icon(is_expanded, path.as_std_path(), cx),
                     path,
                     depth,
                     is_directory: true,
                     is_expanded,
-                    file_icon: None,
                 });
             } else {
                 let icon_path = FileIcons::get_icon(entry.path.as_std_path(), cx);
@@ -196,7 +195,7 @@ fn build_inline_directory_menu(
                     depth,
                     is_directory: false,
                     is_expanded: false,
-                    file_icon: icon_path,
+                    icon_path,
                 });
             }
         }
@@ -296,44 +295,97 @@ fn build_inline_directory_menu(
         });
 
     for row in rows {
-        let indentation = "  ".repeat(row.depth);
+        let indentation = px((row.depth as f32) * 12.0);
 
         if row.is_directory {
-            let chevron = if row.is_expanded { "v " } else { "> " };
-            let label = format!("{indentation}{chevron}{}", row.name);
             let directory_path = row.path;
+            let label = row.name.clone();
+            let icon_path = row.icon_path.clone();
             let expanded_directories = expanded_directories.clone();
+            let is_expanded = row.is_expanded;
 
-            menu = menu.item(
-                ContextMenuEntry::new(label)
-                    .icon(IconName::Folder)
-                    .handler(move |_window, _cx| {
-                        let mut expanded = expanded_directories.borrow_mut();
-                        if expanded.contains(&directory_path) {
-                            expanded.remove(&directory_path);
-                        } else {
-                            expanded.insert(directory_path.clone());
-                        }
-                    }),
+            menu = menu.custom_entry(
+                move |_window, _cx| {
+                    h_flex()
+                        .w_full()
+                        .pl(indentation)
+                        .gap_1p5()
+                        .child(
+                            Icon::new(if is_expanded {
+                                IconName::ChevronDown
+                            } else {
+                                IconName::ChevronRight
+                            })
+                            .size(IconSize::XSmall)
+                            .color(Color::Muted),
+                        )
+                        .child(
+                            icon_path
+                                .clone()
+                                .map(|path| {
+                                    Icon::from_path(path)
+                                        .size(IconSize::Small)
+                                        .color(Color::Muted)
+                                        .into_any_element()
+                                })
+                                .unwrap_or_else(|| {
+                                    Icon::new(IconName::Folder)
+                                        .size(IconSize::Small)
+                                        .color(Color::Muted)
+                                        .into_any_element()
+                                }),
+                        )
+                        .child(Label::new(label.clone()).color(Color::Default).truncate())
+                        .into_any_element()
+                },
+                move |_window, _cx| {
+                    let mut expanded = expanded_directories.borrow_mut();
+                    if expanded.contains(&directory_path) {
+                        expanded.remove(&directory_path);
+                    } else {
+                        expanded.insert(directory_path.clone());
+                    }
+                },
             );
         } else {
-            let label = format!("{indentation}  {}", row.name);
+            let label = row.name.clone();
             let workspace = workspace.clone();
             let project_path = ProjectPath {
                 worktree_id,
                 path: row.path,
             };
+            let icon_path = row.icon_path.clone();
 
-            let mut entry = ContextMenuEntry::new(label)
-                .handler(move |window, cx| {
+            menu = menu.custom_entry(
+                move |_window, _cx| {
+                    h_flex()
+                        .w_full()
+                        .pl(indentation)
+                        .gap_1p5()
+                        .child(div().w(px(10.)).flex_none())
+                        .child(
+                            icon_path
+                                .clone()
+                                .map(|path| {
+                                    Icon::from_path(path)
+                                        .size(IconSize::Small)
+                                        .color(Color::Muted)
+                                        .into_any_element()
+                                })
+                                .unwrap_or_else(|| {
+                                    Icon::new(IconName::File)
+                                        .size(IconSize::Small)
+                                        .color(Color::Muted)
+                                        .into_any_element()
+                                }),
+                        )
+                        .child(Label::new(label.clone()).color(Color::Default).truncate())
+                        .into_any_element()
+                },
+                move |window, cx| {
                     open_breadcrumb_file(project_path.clone(), &workspace, window, cx);
-                });
-
-            if let Some(icon) = row.file_icon {
-                entry = entry.custom_icon_path(icon);
-            }
-
-            menu = menu.item(entry);
+                },
+            );
         }
     }
 
