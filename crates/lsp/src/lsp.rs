@@ -1315,14 +1315,13 @@ impl LanguageServer {
                 self.version
                     .as_ref()
                     .and_then(|obj| {
-                        let json: serde_json::Value = serde_json::from_str(obj.as_str()).ok()?;
-                        Some(
-                            json["Version"]
-                                .as_str()?
-                                .trim_start_matches("v")
-                                .to_owned()
-                                .into(),
-                        )
+                        #[derive(Deserialize)]
+                        struct GoplsVersion<'a> {
+                            #[serde(rename = "Version")]
+                            version: &'a str,
+                        }
+                        let parsed: GoplsVersion = serde_json::from_str(obj.as_str()).ok()?;
+                        Some(parsed.version.trim_start_matches("v").to_owned().into())
                     })
                     .or_else(|| self.version.clone())
             }

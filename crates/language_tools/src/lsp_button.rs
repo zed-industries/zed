@@ -230,7 +230,7 @@ impl LanguageServerState {
                         (
                             server_id,
                             (
-                                status.readable_version.clone(),
+                                status.server_readable_version.clone(),
                                 status.binary.as_ref().map(|b| b.path.clone()),
                                 status.process_id,
                             ),
