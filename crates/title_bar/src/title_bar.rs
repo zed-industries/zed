@@ -821,7 +821,7 @@ impl TitleBar {
                         workspace.downgrade(),
                         effective_repository.clone(),
                         git_ui::git_picker::GitPickerTab::Branches,
-                        gpui::rems(36.),
+                        gpui::rems(34.),
                         window,
                         cx,
                     ))
