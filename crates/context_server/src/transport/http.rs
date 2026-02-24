@@ -142,14 +142,25 @@ impl HttpTransport {
                     error_description: None,
                 });
 
-            if let Some(ref provider) = self.token_provider {
-                if provider.try_refresh().await.unwrap_or(false) {
-                    // Retry with the refreshed token.
-                    let retry_request = self.build_request(message.as_bytes())?;
-                    response = self.http_client.send(retry_request).await?;
+            // When the error indicates the client registration itself is
+            // invalid (e.g. `invalid_token`), refreshing is futile — the
+            // store should discard the DCR cache and re-discover.
+            let should_skip_refresh = www_authenticate
+                .error
+                .is_some_and(|e| e.indicates_invalid_client());
 
-                    // If still 401 after refresh, give up.
-                    if response.status().as_u16() == 401 {
+            if !should_skip_refresh {
+                if let Some(ref provider) = self.token_provider {
+                    if provider.try_refresh().await.unwrap_or(false) {
+                        // Retry with the refreshed token.
+                        let retry_request = self.build_request(message.as_bytes())?;
+                        response = self.http_client.send(retry_request).await?;
+
+                        // If still 401 after refresh, give up.
+                        if response.status().as_u16() == 401 {
+                            return Err(TransportError::AuthRequired { www_authenticate }.into());
+                        }
+                    } else {
                         return Err(TransportError::AuthRequired { www_authenticate }.into());
                     }
                 } else {

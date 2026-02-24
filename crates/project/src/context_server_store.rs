@@ -8,13 +8,14 @@ use std::time::Duration;
 use anyhow::{Context as _, Result};
 use collections::{HashMap, HashSet};
 use context_server::oauth::{
-    self, McpOAuthTokenProvider, OAuthClientRegistration, OAuthDiscovery, OAuthTokens,
+    self, CALLBACK_URI, McpOAuthTokenProvider, OAuthCallback, OAuthClientRegistration,
+    OAuthDiscovery, OAuthTokens,
 };
 use context_server::transport::{HttpTransport, TransportError};
 use context_server::{ContextServer, ContextServerCommand, ContextServerId};
 use futures::{FutureExt as _, future::join_all};
 use credentials_provider::CredentialsProvider;
-use futures::{FutureExt as _, StreamExt as _, future::join_all};
+use futures::{FutureExt as _, StreamExt as _, channel::oneshot, future::join_all};
 use gpui::{App, AsyncApp, Context, Entity, EventEmitter, Subscription, Task, WeakEntity, actions};
 use itertools::Itertools;
 use registry::ContextServerDescriptorRegistry;
@@ -270,6 +271,9 @@ pub struct ContextServerStore {
     context_server_factory: Option<ContextServerFactory>,
     needs_server_update: bool,
     ai_disabled: bool,
+    /// Pending OAuth flows awaiting a callback via `zed://mcp/oauth/callback`.
+    /// Keyed by the random `state` parameter sent in the authorization request.
+    pending_oauth_flows: HashMap<String, oneshot::Sender<OAuthCallback>>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -476,6 +480,7 @@ impl ContextServerStore {
             server_ids: Default::default(),
             update_servers_task: None,
             context_server_factory,
+            pending_oauth_flows: HashMap::default(),
         };
         if maintain_server_loop && !DisableAiSettings::get_global(cx).disable_ai {
             this.available_context_servers_changed(cx);
@@ -695,14 +700,33 @@ impl ContextServerStore {
 
                                 let credentials_provider =
                                     cx.update(|cx| <dyn CredentialsProvider>::global(cx));
-                                let cached_dcr = Self::load_dcr_registration(
-                                    &credentials_provider,
-                                    &server_url,
-                                    &cx,
-                                )
-                                .await
-                                .ok()
-                                .flatten();
+
+                                // When the bearer error indicates the client
+                                // registration itself is invalid, clear the
+                                // cached DCR so discovery performs a fresh one.
+                                let invalid_client = www_authenticate
+                                    .error
+                                    .is_some_and(|e| e.indicates_invalid_client());
+
+                                let cached_dcr = if invalid_client {
+                                    Self::clear_dcr_registration(
+                                        &credentials_provider,
+                                        &server_url,
+                                        &cx,
+                                    )
+                                    .await
+                                    .log_err();
+                                    None
+                                } else {
+                                    Self::load_dcr_registration(
+                                        &credentials_provider,
+                                        &server_url,
+                                        &cx,
+                                    )
+                                    .await
+                                    .ok()
+                                    .flatten()
+                                };
 
                                 match context_server::oauth::discover(
                                     &http_client,
@@ -1102,6 +1126,20 @@ impl ContextServerStore {
         Ok(())
     }
 
+    /// Handle an OAuth callback received via the `zed://mcp/oauth/callback` URL
+    /// scheme. Resolves the pending flow identified by the `state` parameter.
+    pub fn handle_oauth_callback(&mut self, callback: OAuthCallback, _cx: &mut Context<Self>) {
+        if let Some(sender) = self.pending_oauth_flows.remove(&callback.state) {
+            if sender.send(callback).is_err() {
+                log::warn!("OAuth callback receiver was dropped before the callback arrived");
+            }
+        } else {
+            log::error!(
+                "Received MCP OAuth callback with unknown state parameter (flow may have timed out or been cancelled)"
+            );
+        }
+    }
+
     async fn run_oauth_flow(
         this: WeakEntity<Self>,
         id: ContextServerId,
@@ -1109,8 +1147,6 @@ impl ContextServerStore {
         configuration: Arc<ContextServerConfiguration>,
         cx: &mut AsyncApp,
     ) -> Result<()> {
-        let (port, callback_task) = oauth::start_callback_server().await?;
-        let redirect_uri = format!("http://127.0.0.1:{}/callback", port);
         let resource = oauth::canonical_server_uri(&discovery.resource_metadata.resource);
         let pkce = oauth::generate_pkce_challenge();
 
@@ -1121,10 +1157,18 @@ impl ContextServerStore {
             .map(|b| format!("{:02x}", b))
             .collect();
 
+        // Register a oneshot channel so `handle_oauth_callback` can deliver
+        // the authorization code when the browser redirects back to Zed.
+        let (callback_tx, callback_rx) = oneshot::channel::<OAuthCallback>();
+        this.update(cx, |this, _cx| {
+            this.pending_oauth_flows
+                .insert(state_param.clone(), callback_tx);
+        })?;
+
         let auth_url = oauth::build_authorization_url(
             &discovery.auth_server_metadata,
             &discovery.client_registration.client_id,
-            &redirect_uri,
+            CALLBACK_URI,
             &discovery.scopes,
             &resource,
             &pkce,
@@ -1133,11 +1177,9 @@ impl ContextServerStore {
 
         cx.update(|cx| cx.open_url(auth_url.as_str()));
 
-        let callback = callback_task.await?;
-
-        if callback.state != state_param {
-            anyhow::bail!("OAuth state parameter mismatch");
-        }
+        let callback = callback_rx
+            .await
+            .map_err(|_| anyhow::anyhow!("OAuth flow was cancelled"))?;
 
         let http_client = cx.update(|cx| cx.http_client());
 
@@ -1146,7 +1188,7 @@ impl ContextServerStore {
             &discovery.auth_server_metadata,
             &callback.code,
             &discovery.client_registration.client_id,
-            &redirect_uri,
+            CALLBACK_URI,
             &pkce.verifier,
             &resource,
         )

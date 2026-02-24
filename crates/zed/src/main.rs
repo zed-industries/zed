@@ -899,6 +899,18 @@ fn main() {
 fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut App) {
     if let Some(kind) = request.kind {
         match kind {
+            OpenRequestKind::McpOAuthCallback { callback } => {
+                cx.defer(move |cx| {
+                    workspace::with_active_or_new_workspace(cx, move |workspace, _window, cx| {
+                        let context_server_store =
+                            workspace.project().read(cx).context_server_store();
+
+                        context_server_store.update(cx, |store, cx| {
+                            store.handle_oauth_callback(callback, cx);
+                        });
+                    });
+                });
+            }
             OpenRequestKind::CliConnection(connection) => {
                 cx.spawn(async move |cx| handle_cli_connection(connection, app_state, cx).await)
                     .detach();

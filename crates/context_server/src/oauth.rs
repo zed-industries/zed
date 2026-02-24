@@ -1,11 +1,13 @@
 use anyhow::{Context as _, Result, anyhow, bail};
 use async_trait::async_trait;
+use base64::Engine as _;
 use futures::AsyncReadExt as _;
 use futures::channel::mpsc;
 use http_client::{AsyncBody, HttpClient, Request};
 use parking_lot::Mutex as SyncMutex;
 use serde::{Deserialize, Serialize};
-use smol::net::TcpListener;
+use sha2::{Digest, Sha256};
+
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 use url::Url;
@@ -61,6 +63,37 @@ pub struct OAuthDiscovery {
     pub scopes: Vec<String>,
 }
 
+/// Error codes defined by RFC 6750 Section 3.1 for Bearer token authentication.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BearerError {
+    /// The request is missing a required parameter, includes an unsupported
+    /// parameter or parameter value, or is otherwise malformed.
+    InvalidRequest,
+    /// The access token provided is expired, revoked, malformed, or invalid.
+    InvalidToken,
+    /// The request requires higher privileges than provided by the access token.
+    InsufficientScope,
+    /// An unrecognized error code (extension or future spec addition).
+    Other,
+}
+
+impl BearerError {
+    fn parse(value: &str) -> Self {
+        match value {
+            "invalid_request" => BearerError::InvalidRequest,
+            "invalid_token" => BearerError::InvalidToken,
+            "insufficient_scope" => BearerError::InsufficientScope,
+            _ => BearerError::Other,
+        }
+    }
+
+    /// Returns true if the error indicates the OAuth client registration may
+    /// be invalid and should be discarded to force re-registration.
+    pub fn indicates_invalid_client(&self) -> bool {
+        matches!(self, BearerError::InvalidToken | BearerError::Other)
+    }
+}
+
 /// Fields extracted from a `WWW-Authenticate: Bearer` header.
 ///
 /// Per RFC 9728 Section 5.1, MCP servers include `resource_metadata` to point
@@ -70,8 +103,8 @@ pub struct OAuthDiscovery {
 pub struct WwwAuthenticate {
     pub resource_metadata: Option<Url>,
     pub scope: Option<Vec<String>>,
-    /// The `error` parameter, if present (e.g. "insufficient_scope").
-    pub error: Option<String>,
+    /// The parsed `error` parameter per RFC 6750 Section 3.1.
+    pub error: Option<BearerError>,
     pub error_description: Option<String>,
 }
 
@@ -115,7 +148,7 @@ pub fn parse_www_authenticate(header: &str) -> Result<WwwAuthenticate> {
         .get("scope")
         .map(|v| v.split_whitespace().map(String::from).collect());
 
-    let error = params.get("error").cloned();
+    let error = params.get("error").map(|v| BearerError::parse(v));
     let error_description = params.get("error_description").cloned();
 
     Ok(WwwAuthenticate {
@@ -353,10 +386,11 @@ pub struct PkceChallenge {
 /// The challenge is `BASE64URL(SHA256(verifier))`.
 pub fn generate_pkce_challenge() -> PkceChallenge {
     let random_bytes: Vec<u8> = (0..32).map(|_| rand::random::<u8>()).collect();
-    let verifier = base64_url_encode(&random_bytes);
+    let engine = base64::engine::general_purpose::URL_SAFE_NO_PAD;
+    let verifier = engine.encode(&random_bytes);
 
-    let digest = simple_sha256(verifier.as_bytes());
-    let challenge = base64_url_encode(&digest);
+    let digest = Sha256::digest(verifier.as_bytes());
+    let challenge = engine.encode(digest);
 
     PkceChallenge {
         verifier,
@@ -464,122 +498,6 @@ pub fn dcr_registration_body() -> serde_json::Value {
         "response_types": ["code"],
         "token_endpoint_auth_method": "none"
     })
-}
-
-// -- Helpers (vendored to avoid extra deps) ----------------------------------
-
-/// Base64url-encode without padding, per RFC 4648 Section 5.
-fn base64_url_encode(bytes: &[u8]) -> String {
-    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
-
-    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
-    for chunk in bytes.chunks(3) {
-        let b0 = chunk[0] as u32;
-        let b1 = if chunk.len() > 1 { chunk[1] as u32 } else { 0 };
-        let b2 = if chunk.len() > 2 { chunk[2] as u32 } else { 0 };
-        let triple = (b0 << 16) | (b1 << 8) | b2;
-
-        out.push(ALPHABET[((triple >> 18) & 0x3F) as usize] as char);
-        out.push(ALPHABET[((triple >> 12) & 0x3F) as usize] as char);
-        if chunk.len() > 1 {
-            out.push(ALPHABET[((triple >> 6) & 0x3F) as usize] as char);
-        }
-        if chunk.len() > 2 {
-            out.push(ALPHABET[(triple & 0x3F) as usize] as char);
-        }
-    }
-    out
-}
-
-/// Minimal SHA-256 implementation (avoids pulling in a crypto crate just for
-/// PKCE challenge derivation).
-fn simple_sha256(data: &[u8]) -> [u8; 32] {
-    const K: [u32; 64] = [
-        0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4,
-        0xab1c5ed5, 0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe,
-        0x9bdc06a7, 0xc19bf174, 0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f,
-        0x4a7484aa, 0x5cb0a9dc, 0x76f988da, 0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7,
-        0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967, 0x27b70a85, 0x2e1b2138, 0x4d2c6dfc,
-        0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85, 0xa2bfe8a1, 0xa81a664b,
-        0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070, 0x19a4c116,
-        0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
-        0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7,
-        0xc67178f2,
-    ];
-
-    let mut h: [u32; 8] = [
-        0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab,
-        0x5be0cd19,
-    ];
-
-    // Pre-processing: pad the message.
-    let bit_len = (data.len() as u64) * 8;
-    let mut msg = data.to_vec();
-    msg.push(0x80);
-    while (msg.len() % 64) != 56 {
-        msg.push(0);
-    }
-    msg.extend_from_slice(&bit_len.to_be_bytes());
-
-    // Process each 512-bit (64-byte) block.
-    for block in msg.chunks_exact(64) {
-        let mut w = [0u32; 64];
-        for i in 0..16 {
-            w[i] = u32::from_be_bytes([
-                block[i * 4],
-                block[i * 4 + 1],
-                block[i * 4 + 2],
-                block[i * 4 + 3],
-            ]);
-        }
-        for i in 16..64 {
-            let s0 = w[i - 15].rotate_right(7) ^ w[i - 15].rotate_right(18) ^ (w[i - 15] >> 3);
-            let s1 = w[i - 2].rotate_right(17) ^ w[i - 2].rotate_right(19) ^ (w[i - 2] >> 10);
-            w[i] = w[i - 16]
-                .wrapping_add(s0)
-                .wrapping_add(w[i - 7])
-                .wrapping_add(s1);
-        }
-
-        let [mut a, mut b, mut c, mut d, mut e, mut f, mut g, mut hh] = h;
-
-        for i in 0..64 {
-            let s1 = e.rotate_right(6) ^ e.rotate_right(11) ^ e.rotate_right(25);
-            let ch = (e & f) ^ ((!e) & g);
-            let temp1 = hh
-                .wrapping_add(s1)
-                .wrapping_add(ch)
-                .wrapping_add(K[i])
-                .wrapping_add(w[i]);
-            let s0 = a.rotate_right(2) ^ a.rotate_right(13) ^ a.rotate_right(22);
-            let maj = (a & b) ^ (a & c) ^ (b & c);
-            let temp2 = s0.wrapping_add(maj);
-
-            hh = g;
-            g = f;
-            f = e;
-            e = d.wrapping_add(temp1);
-            d = c;
-            c = b;
-            b = a;
-            a = temp1.wrapping_add(temp2);
-        }
-
-        h[0] = h[0].wrapping_add(a);
-        h[1] = h[1].wrapping_add(b);
-        h[2] = h[2].wrapping_add(c);
-        h[3] = h[3].wrapping_add(d);
-        h[4] = h[4].wrapping_add(e);
-        h[5] = h[5].wrapping_add(f);
-        h[6] = h[6].wrapping_add(g);
-        h[7] = h[7].wrapping_add(hh);
-    }
-
-    let mut result = [0u8; 32];
-    for (i, val) in h.iter().enumerate() {
-        result[i * 4..i * 4 + 4].copy_from_slice(&val.to_be_bytes());
-    }
-    result
 }
 
 // -- Discovery (async, hits real endpoints) ----------------------------------
@@ -867,87 +785,51 @@ async fn post_token_request(
     Ok(token_response.into_tokens())
 }
 
-// -- Local callback server ---------------------------------------------------
+// -- OAuth callback via zed:// URL scheme ------------------------------------
 
-/// Result of awaiting the OAuth callback on the local server.
+/// The redirect URI used in authorization requests. The authorization server
+/// redirects the browser here after the user grants (or denies) access. Zed
+/// registers a handler for the `zed://` URL scheme, which routes the callback
+/// to `ContextServerStore::handle_oauth_callback`.
+pub const CALLBACK_URI: &str = "zed://mcp/oauth/callback";
+
+/// An OAuth authorization callback received via the `zed://` URL scheme.
 #[derive(Debug)]
-pub struct AuthorizationCallback {
+pub struct OAuthCallback {
     pub code: String,
     pub state: String,
 }
 
-/// Start a local HTTP server on an ephemeral port to receive the OAuth callback.
-///
-/// Returns the bound port and a future that resolves when the callback is
-/// received. The server responds with a simple HTML page telling the user
-/// they can close the tab, then shuts down.
-pub async fn start_callback_server() -> Result<(u16, smol::Task<Result<AuthorizationCallback>>)> {
-    let listener = TcpListener::bind("127.0.0.1:0").await?;
-    let port = listener.local_addr()?.port();
+impl OAuthCallback {
+    /// Parse the query string from a `zed://mcp/oauth/callback?code=...&state=...` URL.
+    pub fn parse_query(query: &str) -> Result<Self> {
+        let mut code: Option<String> = None;
+        let mut state: Option<String> = None;
 
-    let task = smol::spawn(async move {
-        let (mut stream, _) = listener.accept().await?;
-
-        // Read the full HTTP request head into a buffer. We read byte-by-byte
-        // looking for the "\r\n\r\n" delimiter so we never over-read past the
-        // headers (there is no body in a GET callback request).
-        let mut head = Vec::with_capacity(1024);
-        let mut found_end = false;
-        let mut buf = [0u8; 1];
-        while smol::io::AsyncReadExt::read(&mut stream, &mut buf).await? > 0 {
-            head.push(buf[0]);
-            if head.len() >= 4 && head[head.len() - 4..] == *b"\r\n\r\n" {
-                found_end = true;
+        for (key, value) in url::form_urlencoded::parse(query.as_bytes()) {
+            match key.as_ref() {
+                "code" => {
+                    if !value.is_empty() {
+                        code = Some(value.into_owned());
+                    }
+                }
+                "state" => {
+                    if !value.is_empty() {
+                        state = Some(value.into_owned());
+                    }
+                }
+                _ => {}
+            }
+            if code.is_some() && state.is_some() {
                 break;
             }
-            // Safety valve — a real callback request should be well under 8 KiB.
-            if head.len() > 8192 {
-                bail!("OAuth callback request too large");
-            }
-        }
-        if !found_end {
-            bail!("OAuth callback connection closed before end of headers");
         }
 
-        let head_str = String::from_utf8_lossy(&head);
+        let code = code.ok_or_else(|| anyhow!("missing 'code' parameter in OAuth callback"))?;
+        let state = state.ok_or_else(|| anyhow!("missing 'state' parameter in OAuth callback"))?;
 
-        // Parse "GET /callback?code=...&state=... HTTP/1.1\r\n..."
-        let request_line = head_str
-            .lines()
-            .next()
-            .ok_or_else(|| anyhow!("empty HTTP request"))?;
-
-        let path = request_line
-            .split_whitespace()
-            .nth(1)
-            .ok_or_else(|| anyhow!("malformed HTTP request line"))?;
-
-        let dummy_base = Url::parse("http://127.0.0.1")?;
-        let full_url = dummy_base.join(path)?;
-        let query_pairs: std::collections::HashMap<_, _> = full_url.query_pairs().collect();
-
-        let code = query_pairs
-            .get("code")
-            .ok_or_else(|| anyhow!("missing 'code' parameter in OAuth callback"))?
-            .to_string();
-        let state = query_pairs
-            .get("state")
-            .ok_or_else(|| anyhow!("missing 'state' parameter in OAuth callback"))?
-            .to_string();
-
-        // Send a minimal response.
-        let html = "<!DOCTYPE html><html><body><h1>Authorization complete</h1><p>You can close this tab and return to Zed.</p></body></html>";
-        let response = format!(
-            "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-            html.len(),
-            html
-        );
-        smol::io::AsyncWriteExt::write_all(&mut stream, response.as_bytes()).await?;
-
-        Ok(AuthorizationCallback { code, state })
-    });
-
-    Ok((port, task))
+        Ok(Self { code, state })
+    }
 }
 
 // -- JSON fetch helper -------------------------------------------------------
@@ -1162,7 +1044,7 @@ mod tests {
         let header = r#"Bearer error="insufficient_scope", scope="files:read files:write", resource_metadata="https://mcp.example.com/.well-known/oauth-protected-resource", error_description="Additional file write permission required""#;
         let result = parse_www_authenticate(header).unwrap();
 
-        assert_eq!(result.error.as_deref(), Some("insufficient_scope"));
+        assert_eq!(result.error, Some(BearerError::InsufficientScope));
         assert_eq!(
             result.error_description.as_deref(),
             Some("Additional file write permission required")
@@ -1172,6 +1054,39 @@ mod tests {
             Some(vec!["files:read".to_string(), "files:write".to_string()])
         );
         assert!(result.resource_metadata.is_some());
+    }
+
+    #[test]
+    fn test_parse_www_authenticate_invalid_token_error() {
+        let header =
+            r#"Bearer error="invalid_token", error_description="The access token expired""#;
+        let result = parse_www_authenticate(header).unwrap();
+        assert_eq!(result.error, Some(BearerError::InvalidToken));
+        assert!(result.error.unwrap().indicates_invalid_client());
+    }
+
+    #[test]
+    fn test_parse_www_authenticate_invalid_request_error() {
+        let header = r#"Bearer error="invalid_request""#;
+        let result = parse_www_authenticate(header).unwrap();
+        assert_eq!(result.error, Some(BearerError::InvalidRequest));
+        assert!(!result.error.unwrap().indicates_invalid_client());
+    }
+
+    #[test]
+    fn test_parse_www_authenticate_unknown_error() {
+        let header = r#"Bearer error="some_future_error""#;
+        let result = parse_www_authenticate(header).unwrap();
+        assert_eq!(result.error, Some(BearerError::Other));
+        assert!(result.error.unwrap().indicates_invalid_client());
+    }
+
+    #[test]
+    fn test_bearer_error_indicates_invalid_client() {
+        assert!(!BearerError::InvalidRequest.indicates_invalid_client());
+        assert!(BearerError::InvalidToken.indicates_invalid_client());
+        assert!(!BearerError::InsufficientScope.indicates_invalid_client());
+        assert!(BearerError::Other.indicates_invalid_client());
     }
 
     #[test]
@@ -1428,8 +1343,9 @@ mod tests {
     #[test]
     fn test_pkce_challenge_is_s256_of_verifier() {
         let pkce = generate_pkce_challenge();
-        let expected_digest = simple_sha256(pkce.verifier.as_bytes());
-        let expected_challenge = base64_url_encode(&expected_digest);
+        let engine = base64::engine::general_purpose::URL_SAFE_NO_PAD;
+        let expected_digest = Sha256::digest(pkce.verifier.as_bytes());
+        let expected_challenge = engine.encode(expected_digest);
         assert_eq!(pkce.challenge, expected_challenge);
     }
 
@@ -1438,27 +1354,6 @@ mod tests {
         let a = generate_pkce_challenge();
         let b = generate_pkce_challenge();
         assert_ne!(a.verifier, b.verifier);
-    }
-
-    #[test]
-    fn test_sha256_known_vector() {
-        // SHA-256 of empty string.
-        let hash = simple_sha256(b"");
-        let hex: String = hash.iter().map(|b| format!("{:02x}", b)).collect();
-        assert_eq!(
-            hex,
-            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-        );
-    }
-
-    #[test]
-    fn test_sha256_hello() {
-        let hash = simple_sha256(b"hello");
-        let hex: String = hash.iter().map(|b| format!("{:02x}", b)).collect();
-        assert_eq!(
-            hex,
-            "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
-        );
     }
 
     // -- Authorization URL tests ---------------------------------------------
@@ -2252,62 +2147,61 @@ mod tests {
         });
     }
 
-    // -- Callback server tests -----------------------------------------------
+    // -- OAuthCallback parse tests -------------------------------------------
 
     #[test]
-    fn test_callback_server_receives_code() {
-        smol::block_on(async {
-            let (port, task) = start_callback_server().await.unwrap();
-
-            let mut stream = smol::net::TcpStream::connect(format!("127.0.0.1:{}", port))
-                .await
-                .unwrap();
-
-            let request = format!(
-                "GET /callback?code=test_auth_code&state=test_state HTTP/1.1\r\nHost: 127.0.0.1:{}\r\n\r\n",
-                port
-            );
-            smol::io::AsyncWriteExt::write_all(&mut stream, request.as_bytes())
-                .await
-                .unwrap();
-
-            // Shut down the write half so the server sees EOF and can respond.
-            stream.shutdown(std::net::Shutdown::Write).unwrap();
-
-            let mut response = Vec::new();
-            smol::io::AsyncReadExt::read_to_end(&mut stream, &mut response)
-                .await
-                .unwrap();
-            let response_str = String::from_utf8_lossy(&response);
-            assert!(response_str.contains("200 OK"));
-            assert!(response_str.contains("Authorization complete"));
-
-            let callback = task.await.unwrap();
-            assert_eq!(callback.code, "test_auth_code");
-            assert_eq!(callback.state, "test_state");
-        });
+    fn test_oauth_callback_parse_query() {
+        let callback = OAuthCallback::parse_query("code=test_auth_code&state=test_state").unwrap();
+        assert_eq!(callback.code, "test_auth_code");
+        assert_eq!(callback.state, "test_state");
     }
 
     #[test]
-    fn test_callback_server_rejects_missing_code() {
-        smol::block_on(async {
-            let (port, task) = start_callback_server().await.unwrap();
+    fn test_oauth_callback_parse_query_reversed_order() {
+        let callback = OAuthCallback::parse_query("state=test_state&code=test_auth_code").unwrap();
+        assert_eq!(callback.code, "test_auth_code");
+        assert_eq!(callback.state, "test_state");
+    }
 
-            let mut stream = smol::net::TcpStream::connect(format!("127.0.0.1:{}", port))
-                .await
+    #[test]
+    fn test_oauth_callback_parse_query_with_extra_params() {
+        let callback =
+            OAuthCallback::parse_query("code=test_auth_code&state=test_state&extra=ignored")
                 .unwrap();
+        assert_eq!(callback.code, "test_auth_code");
+        assert_eq!(callback.state, "test_state");
+    }
 
-            let request = format!(
-                "GET /callback?state=test_state HTTP/1.1\r\nHost: 127.0.0.1:{}\r\n\r\n",
-                port
-            );
-            smol::io::AsyncWriteExt::write_all(&mut stream, request.as_bytes())
-                .await
-                .unwrap();
+    #[test]
+    fn test_oauth_callback_parse_query_missing_code() {
+        let result = OAuthCallback::parse_query("state=test_state");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("code"));
+    }
 
-            let result = task.await;
-            assert!(result.is_err());
-            assert!(result.unwrap_err().to_string().contains("code"));
-        });
+    #[test]
+    fn test_oauth_callback_parse_query_missing_state() {
+        let result = OAuthCallback::parse_query("code=test_auth_code");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("state"));
+    }
+
+    #[test]
+    fn test_oauth_callback_parse_query_empty_code() {
+        let result = OAuthCallback::parse_query("code=&state=test_state");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_oauth_callback_parse_query_empty_state() {
+        let result = OAuthCallback::parse_query("code=test_auth_code&state=");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_oauth_callback_parse_query_url_encoded_values() {
+        let callback = OAuthCallback::parse_query("code=abc%20def&state=test%3Dstate").unwrap();
+        assert_eq!(callback.code, "abc def");
+        assert_eq!(callback.state, "test=state");
     }
 }
