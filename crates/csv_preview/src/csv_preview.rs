@@ -143,6 +143,16 @@ impl CsvPreviewView {
         self.list_state = gpui::ListState::new(visible_rows, ListAlignment::Top, px(1.));
     }
 
+    pub fn resolve_active_item_as_csv_editor(
+        workspace: &Workspace,
+        cx: &mut Context<Workspace>,
+    ) -> Option<Entity<Editor>> {
+        let editor = workspace
+            .active_item(cx)
+            .and_then(|item| item.act_as::<Editor>(cx))?;
+        Self::is_csv_file(&editor, cx).then_some(editor)
+    }
+
     fn is_csv_file(editor: &Entity<Editor>, cx: &App) -> bool {
         editor
             .read(cx)

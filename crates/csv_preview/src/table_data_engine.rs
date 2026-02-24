@@ -69,15 +69,12 @@ impl DisplayToDataMapping {
         let data_rows: Vec<DataRow> = (0..rows.len()).map(DataRow).collect();
 
         let sorted_rows = if let Some(sorting) = sorting {
-            log::debug!("Sorting data rows by {sorting:?}");
             sort_data_rows(&rows, data_rows, sorting)
         } else {
-            log::debug!("Disabling sorting");
             data_rows
         };
 
         self.sorted_rows = sorted_rows;
-        log::trace!("Sorted mapping: {:?}", self.sorted_rows);
     }
 
     /// Take pre-computed sorting and filtering results, and apply them to the mapping
