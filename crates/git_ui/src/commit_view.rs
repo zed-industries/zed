@@ -1013,13 +1013,8 @@ impl Render for CommitViewToolbar {
             return div();
         };
 
-        let is_stash = commit_view.read(cx).stash.is_some();
-
-        if is_stash {
-            return div();
-        }
-
         let commit_view_ref = commit_view.read(cx);
+        let is_stash = commit_view_ref.stash.is_some();
 
         let (additions, deletions) = commit_view_ref.calculate_changed_lines(cx);
 
@@ -1068,32 +1063,34 @@ impl Render for CommitViewToolbar {
                         );
                     }),
             )
-            .when(cx.has_flag::<GitGraphFeatureFlag>(), |el| {
-                el.child(
-                    IconButton::new("show-in-git-graph", IconName::GitGraph)
-                        .icon_size(IconSize::Small)
-                        .tooltip(Tooltip::text("Show in Git Graph"))
-                        .on_click(move |_, window, cx| {
-                            window.dispatch_action(
-                                Box::new(crate::git_panel::OpenAtCommit {
-                                    sha: sha_for_graph.clone(),
-                                }),
-                                cx,
-                            );
-                        }),
-                )
-            })
-            .children(remote_info.map(|(provider_name, url)| {
-                let icon = match provider_name.as_str() {
-                    "GitHub" => IconName::Github,
-                    _ => IconName::Link,
-                };
+            .when(!is_stash, |this| {
+                this.when(cx.has_flag::<GitGraphFeatureFlag>(), |this| {
+                    this.child(
+                        IconButton::new("show-in-git-graph", IconName::GitGraph)
+                            .icon_size(IconSize::Small)
+                            .tooltip(Tooltip::text("Show in Git Graph"))
+                            .on_click(move |_, window, cx| {
+                                window.dispatch_action(
+                                    Box::new(crate::git_panel::OpenAtCommit {
+                                        sha: sha_for_graph.clone(),
+                                    }),
+                                    cx,
+                                );
+                            }),
+                    )
+                })
+                .children(remote_info.map(|(provider_name, url)| {
+                    let icon = match provider_name.as_str() {
+                        "GitHub" => IconName::Github,
+                        _ => IconName::Link,
+                    };
 
-                IconButton::new("view_on_provider", icon)
-                    .icon_size(IconSize::Small)
-                    .tooltip(Tooltip::text(format!("View on {}", provider_name)))
-                    .on_click(move |_, _, cx| cx.open_url(&url))
-            }))
+                    IconButton::new("view_on_provider", icon)
+                        .icon_size(IconSize::Small)
+                        .tooltip(Tooltip::text(format!("View on {}", provider_name)))
+                        .on_click(move |_, _, cx| cx.open_url(&url))
+                }))
+            })
     }
 }
 
