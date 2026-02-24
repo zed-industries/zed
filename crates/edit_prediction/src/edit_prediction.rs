@@ -35,7 +35,9 @@ use project::{DisableAiSettings, Project, ProjectPath, WorktreeId};
 use release_channel::AppVersion;
 use semver::Version;
 use serde::de::DeserializeOwned;
-use settings::{EditPredictionProvider, Settings as _, update_settings_file};
+use settings::{
+    EditPredictionPromptFormat, EditPredictionProvider, Settings as _, update_settings_file,
+};
 use std::collections::{VecDeque, hash_map};
 use std::env;
 use text::Edit;
@@ -55,6 +57,7 @@ use workspace::notifications::{ErrorMessagePrompt, NotificationId, show_app_noti
 
 pub mod cursor_excerpt;
 pub mod example_spec;
+pub mod fim;
 mod license_detection;
 pub mod mercury;
 pub mod ollama;
@@ -67,15 +70,13 @@ pub mod udiff;
 
 mod capture_example;
 mod zed_edit_prediction_delegate;
-pub mod zeta1;
-pub mod zeta2;
+pub mod zeta;
 
 #[cfg(test)]
 mod edit_prediction_tests;
 
 use crate::license_detection::LicenseDetectionWatcher;
 use crate::mercury::Mercury;
-use crate::ollama::Ollama;
 use crate::onboarding_modal::ZedPredictModal;
 pub use crate::prediction::EditPrediction;
 pub use crate::prediction::EditPredictionId;
@@ -138,21 +139,19 @@ pub struct EditPredictionStore {
     zeta2_raw_config: Option<Zeta2RawConfig>,
     pub sweep_ai: SweepAi,
     pub mercury: Mercury,
-    pub ollama: Ollama,
     data_collection_choice: DataCollectionChoice,
     reject_predictions_tx: mpsc::UnboundedSender<EditPredictionRejection>,
     shown_predictions: VecDeque<EditPrediction>,
     rated_predictions: HashSet<EditPredictionId>,
 }
 
-#[derive(Copy, Clone, Default, PartialEq, Eq)]
+#[derive(Copy, Clone, PartialEq, Eq)]
 pub enum EditPredictionModel {
-    #[default]
     Zeta1,
     Zeta2,
+    Fim { format: EditPredictionPromptFormat },
     Sweep,
     Mercury,
-    Ollama,
 }
 
 #[derive(Clone)]
@@ -697,7 +696,6 @@ impl EditPredictionStore {
             zeta2_raw_config: Self::zeta2_raw_config_from_env(),
             sweep_ai: SweepAi::new(cx),
             mercury: Mercury::new(cx),
-            ollama: Ollama::new(),
 
             data_collection_choice,
             reject_predictions_tx: reject_tx,
@@ -727,7 +725,7 @@ impl EditPredictionStore {
         self.zeta2_raw_config.as_ref()
     }
 
-    pub fn icons(&self) -> edit_prediction_types::EditPredictionIconSet {
+    pub fn icons(&self, cx: &App) -> edit_prediction_types::EditPredictionIconSet {
         use ui::IconName;
         match self.edit_prediction_model {
             EditPredictionModel::Sweep => {
@@ -747,8 +745,16 @@ impl EditPredictionStore {
                     .with_down(IconName::ZedPredictDown)
                     .with_error(IconName::ZedPredictError)
             }
-            EditPredictionModel::Ollama => {
-                edit_prediction_types::EditPredictionIconSet::new(IconName::AiOllama)
+            EditPredictionModel::Fim { .. } => {
+                let settings = &all_language_settings(None, cx).edit_predictions;
+                match settings.provider {
+                    EditPredictionProvider::Ollama => {
+                        edit_prediction_types::EditPredictionIconSet::new(IconName::AiOllama)
+                    }
+                    _ => {
+                        edit_prediction_types::EditPredictionIconSet::new(IconName::AiOpenAiCompat)
+                    }
+                }
             }
         }
     }
@@ -861,7 +867,10 @@ impl EditPredictionStore {
     }
 
     pub fn usage(&self, cx: &App) -> Option<EditPredictionUsage> {
-        if matches!(self.edit_prediction_model, EditPredictionModel::Zeta2) {
+        if matches!(
+            self.edit_prediction_model,
+            EditPredictionModel::Zeta2 | EditPredictionModel::Zeta1
+        ) {
             self.user_store.read(cx).edit_prediction_usage()
         } else {
             None
@@ -1004,6 +1013,9 @@ impl EditPredictionStore {
         event: &project::Event,
         cx: &mut Context<Self>,
     ) {
+        if !is_ep_store_provider(all_language_settings(None, cx).edit_predictions.provider) {
+            return;
+        }
         // TODO [zeta2] init with recent paths
         match event {
             project::Event::ActiveEntryChanged(Some(active_entry_id)) => {
@@ -1300,10 +1312,16 @@ impl EditPredictionStore {
                     cx,
                 );
             }
-            EditPredictionModel::Ollama => {}
             EditPredictionModel::Zeta1 | EditPredictionModel::Zeta2 => {
-                zeta2::edit_prediction_accepted(self, current_prediction, cx)
+                let is_cloud = !matches!(
+                    all_language_settings(None, cx).edit_predictions.provider,
+                    EditPredictionProvider::Ollama | EditPredictionProvider::OpenAiCompatibleApi
+                );
+                if is_cloud {
+                    zeta::edit_prediction_accepted(self, current_prediction, cx)
+                }
             }
+            EditPredictionModel::Fim { .. } => {}
         }
     }
 
@@ -1438,15 +1456,20 @@ impl EditPredictionStore {
     ) {
         match self.edit_prediction_model {
             EditPredictionModel::Zeta1 | EditPredictionModel::Zeta2 => {
-                self.reject_predictions_tx
-                    .unbounded_send(EditPredictionRejection {
-                        request_id: prediction_id.to_string(),
-                        reason,
-                        was_shown,
-                    })
-                    .log_err();
+                let is_cloud = !matches!(
+                    all_language_settings(None, cx).edit_predictions.provider,
+                    EditPredictionProvider::Ollama | EditPredictionProvider::OpenAiCompatibleApi
+                );
+                if is_cloud {
+                    self.reject_predictions_tx
+                        .unbounded_send(EditPredictionRejection {
+                            request_id: prediction_id.to_string(),
+                            reason,
+                            was_shown,
+                        })
+                        .log_err();
+                }
             }
-            EditPredictionModel::Sweep | EditPredictionModel::Ollama => {}
             EditPredictionModel::Mercury => {
                 mercury::edit_prediction_rejected(
                     prediction_id,
@@ -1456,6 +1479,7 @@ impl EditPredictionStore {
                     cx,
                 );
             }
+            EditPredictionModel::Sweep | EditPredictionModel::Fim { .. } => {}
         }
     }
 
@@ -1513,6 +1537,10 @@ impl EditPredictionStore {
         scope: DiagnosticSearchScope,
         cx: &mut Context<Self>,
     ) {
+        if !is_ep_store_provider(all_language_settings(None, cx).edit_predictions.provider) {
+            return;
+        }
+
         let Some(project_state) = self.projects.get_mut(&project.entity_id()) else {
             return;
         };
@@ -1644,7 +1672,24 @@ impl EditPredictionStore {
     }
 
     pub const THROTTLE_TIMEOUT: Duration = Duration::from_millis(300);
+}
 
+fn is_ep_store_provider(provider: EditPredictionProvider) -> bool {
+    match provider {
+        EditPredictionProvider::Zed
+        | EditPredictionProvider::Sweep
+        | EditPredictionProvider::Mercury
+        | EditPredictionProvider::Ollama
+        | EditPredictionProvider::OpenAiCompatibleApi
+        | EditPredictionProvider::Experimental(_) => true,
+        EditPredictionProvider::None
+        | EditPredictionProvider::Copilot
+        | EditPredictionProvider::Supermaven
+        | EditPredictionProvider::Codestral => false,
+    }
+}
+
+impl EditPredictionStore {
     fn queue_prediction_refresh(
         &mut self,
         project: Entity<Project>,
@@ -1670,9 +1715,24 @@ impl EditPredictionStore {
             }
         }
 
-        let is_ollama = self.edit_prediction_model == EditPredictionModel::Ollama;
-        let drop_on_cancel = is_ollama;
-        let max_pending_predictions = if is_ollama { 1 } else { 2 };
+        let (needs_acceptance_tracking, max_pending_predictions) =
+            match all_language_settings(None, cx).edit_predictions.provider {
+                EditPredictionProvider::Zed
+                | EditPredictionProvider::Sweep
+                | EditPredictionProvider::Mercury
+                | EditPredictionProvider::Experimental(_) => (true, 2),
+                EditPredictionProvider::Ollama => (false, 1),
+                EditPredictionProvider::OpenAiCompatibleApi => (false, 2),
+                EditPredictionProvider::None
+                | EditPredictionProvider::Copilot
+                | EditPredictionProvider::Supermaven
+                | EditPredictionProvider::Codestral => {
+                    log::error!("queue_prediction_refresh called with non-store provider");
+                    return;
+                }
+            };
+
+        let drop_on_cancel = !needs_acceptance_tracking;
         let throttle_timeout = Self::THROTTLE_TIMEOUT;
         let project_state = self.get_or_init_project(&project, cx);
         let pending_prediction_id = project_state.next_pending_prediction_id;
@@ -1889,22 +1949,22 @@ impl EditPredictionStore {
             user_actions,
         };
 
-        let task = match &self.edit_prediction_model {
-            EditPredictionModel::Zeta1 => zeta2::request_prediction_with_zeta2(
+        let task = match self.edit_prediction_model {
+            EditPredictionModel::Zeta1 => zeta::request_prediction_with_zeta(
                 self,
                 inputs,
                 Some(zeta_prompt::EditPredictionModelKind::Zeta1),
                 cx,
             ),
-            EditPredictionModel::Zeta2 => zeta2::request_prediction_with_zeta2(
+            EditPredictionModel::Zeta2 => zeta::request_prediction_with_zeta(
                 self,
                 inputs,
                 Some(zeta_prompt::EditPredictionModelKind::Zeta2),
                 cx,
             ),
+            EditPredictionModel::Fim { format } => fim::request_prediction(inputs, format, cx),
             EditPredictionModel::Sweep => self.sweep_ai.request_prediction_with_sweep(inputs, cx),
             EditPredictionModel::Mercury => self.mercury.request_prediction(inputs, cx),
-            EditPredictionModel::Ollama => self.ollama.request_prediction(inputs, cx),
         };
 
         cx.spawn(async move |this, cx| {
@@ -1925,7 +1985,7 @@ impl EditPredictionStore {
         })
     }
 
-    async fn next_diagnostic_location(
+    pub(crate) async fn next_diagnostic_location(
         active_buffer: Entity<Buffer>,
         active_buffer_snapshot: &BufferSnapshot,
         active_buffer_diagnostic_search_range: Range<Point>,
@@ -1933,7 +1993,13 @@ impl EditPredictionStore {
         project: &Entity<Project>,
         cx: &mut AsyncApp,
     ) -> Result<Option<(Entity<Buffer>, language::Anchor)>> {
-        // find the closest diagnostic to the cursor that wasn't close enough to be included in the last request
+        let collaborator_cursor_rows: Vec<u32> = active_buffer_snapshot
+            .selections_in_range(Anchor::MIN..Anchor::MAX, false)
+            .flat_map(|(_, _, _, selections)| {
+                selections.map(|s| s.head().to_point(active_buffer_snapshot).row)
+            })
+            .collect();
+
         let mut jump_location = active_buffer_snapshot
             .diagnostic_groups(None)
             .into_iter()
@@ -1942,10 +2008,17 @@ impl EditPredictionStore {
                     .range
                     .to_point(&active_buffer_snapshot);
                 if range.overlaps(&active_buffer_diagnostic_search_range) {
-                    None
-                } else {
-                    Some(range.start)
+                    return None;
                 }
+                let near_collaborator = collaborator_cursor_rows.iter().any(|&collab_row| {
+                    range.start.row.abs_diff(collab_row) <= DIAGNOSTIC_LINES_RANGE
+                });
+                let near_local = active_buffer_cursor_point.row.abs_diff(range.start.row)
+                    <= DIAGNOSTIC_LINES_RANGE;
+                if near_collaborator && !near_local {
+                    return None;
+                }
+                Some(range.start)
             })
             .min_by_key(|probe| probe.row.abs_diff(active_buffer_cursor_point.row))
             .map(|position| {
@@ -1965,13 +2038,13 @@ impl EditPredictionStore {
                 })
             });
 
-            let buffer_task = project.update(cx, |project, cx| {
-                let (path, _, _) = project
+            let mut candidates: Vec<(ProjectPath, usize)> = project.read_with(cx, |project, cx| {
+                project
                     .diagnostic_summaries(false, cx)
                     .filter(|(path, _, _)| Some(path) != active_buffer_path.as_ref())
-                    .max_by_key(|(path, _, _)| {
-                        // find the buffer with errors that shares most parent directories
-                        path.path
+                    .map(|(path, _, _)| {
+                        let shared_prefix = path
+                            .path
                             .components()
                             .zip(
                                 active_buffer_path
@@ -1980,24 +2053,42 @@ impl EditPredictionStore {
                                     .unwrap_or_default(),
                             )
                             .take_while(|(a, b)| a == b)
-                            .count()
-                    })?;
-
-                Some(project.open_buffer(path, cx))
+                            .count();
+                        (path, shared_prefix)
+                    })
+                    .collect()
             });
 
-            if let Some(buffer_task) = buffer_task {
-                let closest_buffer = buffer_task.await?;
+            candidates.sort_by(|a, b| b.1.cmp(&a.1));
 
-                jump_location = closest_buffer
-                    .read_with(cx, |buffer, _cx| {
-                        buffer
+            for (path, _) in candidates {
+                let candidate_buffer = project
+                    .update(cx, |project, cx| project.open_buffer(path, cx))
+                    .await?;
+
+                let (has_collaborators, diagnostic_position) =
+                    candidate_buffer.read_with(cx, |buffer, _cx| {
+                        let snapshot = buffer.snapshot();
+                        let has_collaborators = snapshot
+                            .selections_in_range(Anchor::MIN..Anchor::MAX, false)
+                            .next()
+                            .is_some();
+                        let position = buffer
                             .buffer_diagnostics(None)
                             .into_iter()
                             .min_by_key(|entry| entry.diagnostic.severity)
-                            .map(|entry| entry.range.start)
-                    })
-                    .map(|position| (closest_buffer, position));
+                            .map(|entry| entry.range.start);
+                        (has_collaborators, position)
+                    });
+
+                if has_collaborators {
+                    continue;
+                }
+
+                if let Some(position) = diagnostic_position {
+                    jump_location = Some((candidate_buffer, position));
+                    break;
+                }
             }
         }
 
@@ -2121,9 +2212,7 @@ impl EditPredictionStore {
     {
         let http_client = client.http_client();
 
-        let mut token = if let Ok(custom_token) = std::env::var("ZED_PREDICT_EDITS_TOKEN") {
-            Some(custom_token)
-        } else if require_auth {
+        let mut token = if require_auth {
             Some(llm_token.acquire(&client).await?)
         } else {
             llm_token.acquire(&client).await.ok()

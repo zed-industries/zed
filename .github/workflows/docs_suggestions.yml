@@ -52,13 +52,15 @@ env:
 
 jobs:
   # Job for PRs merged to main - batch suggestions to branch
+  # Only runs for PRs from the same repo (not forks) since secrets aren't available for fork PRs
   batch-suggestions:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     if: |
       (github.event_name == 'pull_request' && 
        github.event.pull_request.merged == true &&
-       github.event.pull_request.base.ref == 'main') ||
+       github.event.pull_request.base.ref == 'main' &&
+       github.event.pull_request.head.repo.full_name == github.repository) ||
       (github.event_name == 'workflow_dispatch' && inputs.mode == 'batch')
     
     steps:

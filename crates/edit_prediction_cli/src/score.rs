@@ -30,11 +30,11 @@ pub async fn run_scoring(
     let progress = example_progress.start(Step::Score);
 
     progress.set_substatus("applying patches");
-    let original_text = &example
+    let prompt_inputs = example
         .prompt_inputs
         .as_ref()
-        .context("prompt_inputs is required for scoring - run prediction first or ensure JSON includes prompt_inputs")?
-        .content;
+        .context("prompt_inputs is required for scoring - run prediction first or ensure JSON includes prompt_inputs")?;
+    let original_text: &str = prompt_inputs.cursor_excerpt.as_ref();
     let expected_patches_with_cursors = example.spec.expected_patches_with_cursor_positions();
 
     let expected_texts: Vec<String> = expected_patches_with_cursors
@@ -80,7 +80,6 @@ pub async fn run_scoring(
         deleted_tokens: 0,
     };
 
-    let prompt_inputs = example.prompt_inputs.as_ref().unwrap();
     let cursor_path = example.spec.cursor_path.as_ref();
 
     progress.set_substatus("computing metrics");

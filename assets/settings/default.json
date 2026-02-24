@@ -1040,7 +1040,7 @@
           "save_file": true,
           "open": true,
           "grep": true,
-          "subagent": true,
+          "spawn_agent": true,
           "terminal": true,
           "thinking": true,
           "web_search": true,
@@ -1060,7 +1060,7 @@
           "read_file": true,
           "open": true,
           "grep": true,
-          "subagent": true,
+          "spawn_agent": true,
           "thinking": true,
           "web_search": true,
         },
@@ -1576,6 +1576,13 @@
     "ollama": {
       "api_url": "http://localhost:11434",
       "model": "qwen2.5-coder:7b-base",
+      "prompt_format": "infer",
+      "max_output_tokens": 64,
+    },
+    "open_ai_compatible_api": {
+      "api_url": "",
+      "model": "",
+      "prompt_format": "infer",
       "max_output_tokens": 64,
     },
     // Whether edit predictions are enabled when editing text threads in the agent panel.

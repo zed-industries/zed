@@ -452,15 +452,18 @@ pub fn execute_run(
     let app = gpui_platform::headless();
     let pid = std::process::id();
     let id = pid.to_string();
-    app.background_executor()
-        .spawn(crashes::init(crashes::InitCrashHandler {
+    crashes::init(
+        crashes::InitCrashHandler {
             session_id: id,
             zed_version: VERSION.to_owned(),
             binary: "zed-remote-server".to_string(),
             release_channel: release_channel::RELEASE_CHANNEL_NAME.clone(),
             commit_sha: option_env!("ZED_COMMIT_SHA").unwrap_or("no_sha").to_owned(),
-        }))
-        .detach();
+        },
+        |task| {
+            app.background_executor().spawn(task).detach();
+        },
+    );
     let log_rx = init_logging_server(&log_file)?;
     log::info!(
         "starting up with PID {}:\npid_file: {:?}, log_file: {:?}, stdin_socket: {:?}, stdout_socket: {:?}, stderr_socket: {:?}",
@@ -514,7 +517,7 @@ pub fn execute_run(
 
         let is_wsl_interop = if cfg!(target_os = "linux") {
             // See: https://learn.microsoft.com/en-us/windows/wsl/filesystems#disable-interoperability
-            matches!(std::fs::read_to_string("/proc/sys/fs/binfmt_misc/WSLInterop"), Ok(s) if s.contains("enabled"))
+            matches!(std::fs::read_to_string("/proc/sys/fs/binfmt_misc/WSLInterop").or_else(|_| std::fs::read_to_string("/proc/sys/fs/binfmt_misc/WSLInterop-late")), Ok(s) if s.contains("enabled"))
         } else {
             false
         };
@@ -704,14 +707,18 @@ pub(crate) fn execute_proxy(
     let server_paths = ServerPaths::new(&identifier)?;
 
     let id = std::process::id().to_string();
-    smol::spawn(crashes::init(crashes::InitCrashHandler {
-        session_id: id,
-        zed_version: VERSION.to_owned(),
-        binary: "zed-remote-server".to_string(),
-        release_channel: release_channel::RELEASE_CHANNEL_NAME.clone(),
-        commit_sha: option_env!("ZED_COMMIT_SHA").unwrap_or("no_sha").to_owned(),
-    }))
-    .detach();
+    crashes::init(
+        crashes::InitCrashHandler {
+            session_id: id,
+            zed_version: VERSION.to_owned(),
+            binary: "zed-remote-server".to_string(),
+            release_channel: release_channel::RELEASE_CHANNEL_NAME.clone(),
+            commit_sha: option_env!("ZED_COMMIT_SHA").unwrap_or("no_sha").to_owned(),
+        },
+        |task| {
+            smol::spawn(task).detach();
+        },
+    );
 
     log::info!("starting proxy process. PID: {}", std::process::id());
     let server_pid = {

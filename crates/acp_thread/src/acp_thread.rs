@@ -400,7 +400,7 @@ impl ToolCall {
     }
 
     pub fn is_subagent(&self) -> bool {
-        self.tool_name.as_ref().is_some_and(|s| s == "subagent")
+        self.tool_name.as_ref().is_some_and(|s| s == "spawn_agent")
             || self.subagent_session_id.is_some()
     }
 
@@ -895,15 +895,17 @@ pub struct TokenUsage {
     pub max_output_tokens: Option<u64>,
 }
 
+pub const TOKEN_USAGE_WARNING_THRESHOLD: f32 = 0.8;
+
 impl TokenUsage {
     pub fn ratio(&self) -> TokenUsageRatio {
         #[cfg(debug_assertions)]
         let warning_threshold: f32 = std::env::var("ZED_THREAD_WARNING_THRESHOLD")
-            .unwrap_or("0.8".to_string())
+            .unwrap_or(TOKEN_USAGE_WARNING_THRESHOLD.to_string())
             .parse()
             .unwrap();
         #[cfg(not(debug_assertions))]
-        let warning_threshold: f32 = 0.8;
+        let warning_threshold: f32 = TOKEN_USAGE_WARNING_THRESHOLD;
 
         // When the maximum is unknown because there is no selected model,
         // avoid showing the token limit warning.
@@ -977,7 +979,8 @@ pub enum AcpThreadEvent {
     TokenUsageUpdated,
     EntryUpdated(usize),
     EntriesRemoved(Range<usize>),
-    ToolAuthorizationRequired,
+    ToolAuthorizationRequested(acp::ToolCallId),
+    ToolAuthorizationReceived(acp::ToolCallId),
     Retry(RetryStatus),
     SubagentSpawned(acp::SessionId),
     Stopped,
@@ -1666,7 +1669,7 @@ impl AcpThread {
             })
     }
 
-    pub fn tool_call(&mut self, id: &acp::ToolCallId) -> Option<(usize, &ToolCall)> {
+    pub fn tool_call(&self, id: &acp::ToolCallId) -> Option<(usize, &ToolCall)> {
         self.entries
             .iter()
             .enumerate()
@@ -1680,6 +1683,17 @@ impl AcpThread {
                     None
                 }
             })
+    }
+
+    pub fn tool_call_for_subagent(&self, session_id: &acp::SessionId) -> Option<&ToolCall> {
+        self.entries.iter().find_map(|entry| match entry {
+            AgentThreadEntry::ToolCall(tool_call)
+                if tool_call.subagent_session_id.as_ref() == Some(session_id) =>
+            {
+                Some(tool_call)
+            }
+            _ => None,
+        })
     }
 
     pub fn resolve_locations(&mut self, id: acp::ToolCallId, cx: &mut Context<Self>) {
@@ -1744,7 +1758,7 @@ impl AcpThread {
         tool_call: acp::ToolCallUpdate,
         options: PermissionOptions,
         cx: &mut Context<Self>,
-    ) -> Result<BoxFuture<'static, acp::RequestPermissionOutcome>> {
+    ) -> Result<Task<acp::RequestPermissionOutcome>> {
         let (tx, rx) = oneshot::channel();
 
         let status = ToolCallStatus::WaitingForConfirmation {
@@ -1752,20 +1766,25 @@ impl AcpThread {
             respond_tx: tx,
         };
 
+        let tool_call_id = tool_call.tool_call_id.clone();
         self.upsert_tool_call_inner(tool_call, status, cx)?;
-        cx.emit(AcpThreadEvent::ToolAuthorizationRequired);
+        cx.emit(AcpThreadEvent::ToolAuthorizationRequested(
+            tool_call_id.clone(),
+        ));
 
-        let fut = async {
-            match rx.await {
+        Ok(cx.spawn(async move |this, cx| {
+            let outcome = match rx.await {
                 Ok(option) => acp::RequestPermissionOutcome::Selected(
                     acp::SelectedPermissionOutcome::new(option),
                 ),
                 Err(oneshot::Canceled) => acp::RequestPermissionOutcome::Cancelled,
-            }
-        }
-        .boxed();
-
-        Ok(fut)
+            };
+            this.update(cx, |_this, cx| {
+                cx.emit(AcpThreadEvent::ToolAuthorizationReceived(tool_call_id))
+            })
+            .ok();
+            outcome
+        }))
     }
 
     pub fn authorize_tool_call(
@@ -1798,29 +1817,6 @@ impl AcpThread {
         }
 
         cx.emit(AcpThreadEvent::EntryUpdated(ix));
-    }
-
-    pub fn first_tool_awaiting_confirmation(&self) -> Option<&ToolCall> {
-        let mut first_tool_call = None;
-
-        for entry in self.entries.iter().rev() {
-            match &entry {
-                AgentThreadEntry::ToolCall(call) => {
-                    if let ToolCallStatus::WaitingForConfirmation { .. } = call.status {
-                        first_tool_call = Some(call);
-                    } else {
-                        continue;
-                    }
-                }
-                AgentThreadEntry::UserMessage(_) | AgentThreadEntry::AssistantMessage(_) => {
-                    // Reached the beginning of the turn.
-                    // If we had pending permission requests in the previous turn, they have been cancelled.
-                    break;
-                }
-            }
-        }
-
-        first_tool_call
     }
 
     pub fn plan(&self) -> &Plan {
@@ -2334,7 +2330,7 @@ impl AcpThread {
                     text_diff(old_text.as_str(), &content)
                         .into_iter()
                         .map(|(range, replacement)| {
-                            (snapshot.anchor_range_between(range), replacement)
+                            (snapshot.anchor_range_around(range), replacement)
                         })
                         .collect::<Vec<_>>()
                 })

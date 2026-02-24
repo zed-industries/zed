@@ -28,11 +28,12 @@ test-support = [
 ]
 inspector = ["gpui_macros/inspector"]
 leak-detection = ["backtrace"]
-runtime_shaders = []
 wayland = [
     "bitflags",
 ]
-x11 = []
+x11 = [
+    "scap?/x11",
+]
 screen-capture = [
     "scap",
 ]

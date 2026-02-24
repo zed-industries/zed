@@ -1709,7 +1709,7 @@ pub(crate) mod shader_resources {
             let mut compile_blob = None;
             let mut error_blob = None;
             let shader_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                .join(&format!("src/platform/windows/{}", shader_name))
+                .join(&format!("src/{}", shader_name))
                 .canonicalize()?;
 
             let entry_point = PCSTR::from_raw(entry.as_ptr());

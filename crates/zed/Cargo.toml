@@ -30,6 +30,7 @@ test-support = [
 visual-tests = [
     "gpui/test-support",
     "gpui_platform/screen-capture",
+    "gpui_platform/test-support",
     "dep:image",
     "dep:semver",
     "dep:tempfile",
@@ -119,6 +120,7 @@ go_to_line.workspace = true
 system_specs.workspace = true
 gpui = { workspace = true, features = [
     "wayland",
+    "windows-manifest",
     "x11",
 ] }
 gpui_platform = {workspace = true, features=["screen-capture", "font-kit", "wayland", "x11"]}
@@ -228,6 +230,7 @@ zlog.workspace = true
 zlog_settings.workspace = true
 
 [target.'cfg(target_os = "windows")'.dependencies]
+etw_tracing.workspace = true
 windows.workspace = true
 
 [target.'cfg(target_os = "windows")'.build-dependencies]

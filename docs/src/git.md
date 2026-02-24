@@ -70,6 +70,33 @@ To disable word diff for specific languages only, add this to your settings.json
 }
 ```
 
+### Diff View Styles
+
+> **Changed in Preview (v0.225).** See [release notes](/releases#0.225).
+
+Zed displays diffs in two modes: **split** (side-by-side comparison) or **unified** (inline changes). Split view is the default.
+
+#### Changing the diff view
+
+Open the Settings Editor ({#kb zed::OpenSettings}) and search for "diff view style". Select either **Split** or **Unified**.
+
+To change the default, add this to your `settings.json`:
+
+```json
+{
+  "diff_view_style": "unified"
+}
+```
+
+See [Configuring Zed](./configuring-zed.md) for more about the Settings Editor.
+
+#### Split vs unified
+
+- **Split**: Shows the original and modified versions side by side. Useful for comparing file structure or reviewing large changes.
+- **Unified**: Shows changes inline with additions and deletions in a single view. Useful for focusing on specific line changes.
+
+You can switch between modes at any time. Your preference applies to [Project Diff](#project-diff), [File History](#file-history), and [Stash Diff View](#stash-diff-view). These diff views function as [multibuffers](./multibuffers.md), allowing you to edit multiple excerpts simultaneously.
+
 ## File History
 
 File History shows the commit history for an individual file. Each entry displays the commit's author, timestamp, and message. Selecting a commit opens a diff view filtered to show only the changes made to that file in that commit.

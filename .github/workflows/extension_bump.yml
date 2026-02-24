@@ -38,7 +38,6 @@ jobs:
       name: extension_bump::compare_versions
       run: |
         CURRENT_VERSION="$(sed -n 's/^version = \"\(.*\)\"/\1/p' < extension.toml | tr -d '[:space:]')"
-        PR_PARENT_SHA="${{ github.event.pull_request.head.sha }}"
 
         if [[ "${{ github.event_name }}" == "pull_request" ]]; then
             PR_FORK_POINT="$(git merge-base --fork-point main)"

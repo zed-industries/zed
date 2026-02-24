@@ -129,8 +129,9 @@ impl Editor {
         }
 
         let editor_background = cx.theme().colors().editor_background;
+        let accents = cx.theme().accents().clone();
         for (accent_number, bracket_highlights) in bracket_matches_by_accent {
-            let bracket_color = cx.theme().accents().color_for_index(accent_number as u32);
+            let bracket_color = accents.color_for_index(accent_number as u32);
             let adjusted_color = ensure_minimum_contrast(bracket_color, editor_background, 55.0);
             let style = HighlightStyle {
                 color: Some(adjusted_color),
@@ -1039,7 +1040,7 @@ mod foo «1{
         let actual_ranges = cx.update_editor(|editor, window, cx| {
             editor
                 .snapshot(window, cx)
-                .all_text_highlight_ranges(|key| matches!(key, HighlightKey::ColorizeBracket(_)))
+                .all_text_highlight_ranges(&|key| matches!(key, HighlightKey::ColorizeBracket(_)))
         });
 
         let mut highlighted_brackets = HashMap::default();
@@ -1067,7 +1068,7 @@ mod foo «1{
         let ranges_after_scrolling = cx.update_editor(|editor, window, cx| {
             editor
                 .snapshot(window, cx)
-                .all_text_highlight_ranges(|key| matches!(key, HighlightKey::ColorizeBracket(_)))
+                .all_text_highlight_ranges(&|key| matches!(key, HighlightKey::ColorizeBracket(_)))
         });
         let new_last_bracket = ranges_after_scrolling
             .iter()
@@ -1095,7 +1096,7 @@ mod foo «1{
             let colored_brackets = cx.update_editor(|editor, window, cx| {
                 editor
                     .snapshot(window, cx)
-                    .all_text_highlight_ranges(|key| {
+                    .all_text_highlight_ranges(&|key| {
                         matches!(key, HighlightKey::ColorizeBracket(_))
                     })
             });
@@ -1424,7 +1425,7 @@ mod foo «1{
         }
 
         let actual_ranges = snapshot
-            .all_text_highlight_ranges(|key| matches!(key, HighlightKey::ColorizeBracket(_)));
+            .all_text_highlight_ranges(&|key| matches!(key, HighlightKey::ColorizeBracket(_)));
         let editor_text = snapshot.text();
 
         let mut next_index = 1;

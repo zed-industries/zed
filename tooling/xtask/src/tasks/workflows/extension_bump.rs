@@ -149,7 +149,6 @@ pub(crate) fn compare_versions() -> (Step<Run>, StepOutput, StepOutput) {
     let check_needs_bump = named::bash(formatdoc! {
     r#"
         CURRENT_VERSION="$({VERSION_CHECK})"
-        PR_PARENT_SHA="${{{{ github.event.pull_request.head.sha }}}}"
 
         if [[ "${{{{ github.event_name }}}}" == "pull_request" ]]; then
             PR_FORK_POINT="$(git merge-base --fork-point main)"

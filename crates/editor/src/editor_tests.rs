@@ -50,7 +50,7 @@ use serde_json::{self, json};
 use settings::{
     AllLanguageSettingsContent, DelayMs, EditorSettingsContent, GlobalLspSettingsContent,
     IndentGuideBackgroundColoring, IndentGuideColoring, InlayHintSettingsContent,
-    ProjectSettingsContent, SearchSettingsContent, SettingsStore,
+    ProjectSettingsContent, SearchSettingsContent, SettingsContent, SettingsStore,
 };
 use std::{cell::RefCell, future::Future, rc::Rc, sync::atomic::AtomicBool, time::Instant};
 use std::{
@@ -3702,7 +3702,7 @@ async fn test_newline_comments(cx: &mut TestAppContext) {
     "});
     }
     // Ensure that comment continuations can be disabled.
-    update_test_language_settings(cx, |settings| {
+    update_test_language_settings(cx, &|settings| {
         settings.defaults.extend_comment_on_newline = Some(false);
     });
     let mut cx = EditorTestContext::new(cx).await;
@@ -3748,6 +3748,51 @@ async fn test_newline_comments_with_multiple_delimiters(cx: &mut TestAppContext)
         cx.assert_editor_state(indoc! {"
         ///
         /// ˇ
+    "});
+    }
+}
+
+#[gpui::test]
+async fn test_newline_comments_repl_separators(cx: &mut TestAppContext) {
+    init_test(cx, |settings| {
+        settings.defaults.tab_size = NonZeroU32::new(4)
+    });
+    let language = Arc::new(Language::new(
+        LanguageConfig {
+            line_comments: vec!["# ".into()],
+            ..LanguageConfig::default()
+        },
+        None,
+    ));
+
+    {
+        let mut cx = EditorTestContext::new(cx).await;
+        cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
+        cx.set_state(indoc! {"
+        # %%ˇ
+    "});
+        cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+        cx.assert_editor_state(indoc! {"
+        # %%
+        ˇ
+    "});
+
+        cx.set_state(indoc! {"
+            # %%%%%ˇ
+    "});
+        cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+        cx.assert_editor_state(indoc! {"
+            # %%%%%
+            ˇ
+    "});
+
+        cx.set_state(indoc! {"
+            # %ˇ%
+    "});
+        cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+        cx.assert_editor_state(indoc! {"
+            # %
+            # ˇ%
     "});
     }
 }
@@ -3952,7 +3997,7 @@ async fn test_newline_documentation_comments(cx: &mut TestAppContext) {
     "});
     }
     // Ensure that comment continuations can be disabled.
-    update_test_language_settings(cx, |settings| {
+    update_test_language_settings(cx, &|settings| {
         settings.defaults.extend_comment_on_newline = Some(false);
     });
     let mut cx = EditorTestContext::new(cx).await;
@@ -8248,6 +8293,38 @@ async fn test_paste_content_from_other_app(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_paste_multiline_from_other_app_into_matching_cursors(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    cx.write_to_clipboard(ClipboardItem::new_string("alpha\nbeta\ngamma".into()));
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    // Paste into 3 cursors: each cursor should receive one line.
+    cx.set_state("ˇ one ˇ two ˇ three");
+    cx.update_editor(|e, window, cx| e.paste(&Paste, window, cx));
+    cx.assert_editor_state("alphaˇ one betaˇ two gammaˇ three");
+
+    // Paste into 2 cursors: line count doesn't match, so paste entire text at each cursor.
+    cx.write_to_clipboard(ClipboardItem::new_string("alpha\nbeta\ngamma".into()));
+    cx.set_state("ˇ one ˇ two");
+    cx.update_editor(|e, window, cx| e.paste(&Paste, window, cx));
+    cx.assert_editor_state("alpha\nbeta\ngammaˇ one alpha\nbeta\ngammaˇ two");
+
+    // Paste into a single cursor: should paste everything as-is.
+    cx.write_to_clipboard(ClipboardItem::new_string("alpha\nbeta\ngamma".into()));
+    cx.set_state("ˇ one");
+    cx.update_editor(|e, window, cx| e.paste(&Paste, window, cx));
+    cx.assert_editor_state("alpha\nbeta\ngammaˇ one");
+
+    // Paste with selections: each selection is replaced with its corresponding line.
+    cx.write_to_clipboard(ClipboardItem::new_string("xx\nyy\nzz".into()));
+    cx.set_state("«aˇ» one «bˇ» two «cˇ» three");
+    cx.update_editor(|e, window, cx| e.paste(&Paste, window, cx));
+    cx.assert_editor_state("xxˇ one yyˇ two zzˇ three");
+}
+
+#[gpui::test]
 fn test_select_all(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
@@ -9107,7 +9184,7 @@ async fn test_select_next(cx: &mut TestAppContext) {
     let mut cx = EditorTestContext::new(cx).await;
 
     // Enable case sensitive search.
-    update_test_editor_settings(&mut cx, |settings| {
+    update_test_editor_settings(&mut cx, &|settings| {
         let mut search_settings = SearchSettingsContent::default();
         search_settings.case_sensitive = Some(true);
         settings.search = Some(search_settings);
@@ -9152,7 +9229,7 @@ async fn test_select_next(cx: &mut TestAppContext) {
     cx.assert_editor_state("«ˇfoo»\nFOO\nFoo\n«ˇfoo»");
 
     // Disable case sensitive search.
-    update_test_editor_settings(&mut cx, |settings| {
+    update_test_editor_settings(&mut cx, &|settings| {
         let mut search_settings = SearchSettingsContent::default();
         search_settings.case_sensitive = Some(false);
         settings.search = Some(search_settings);
@@ -9172,7 +9249,7 @@ async fn test_select_all_matches(cx: &mut TestAppContext) {
     let mut cx = EditorTestContext::new(cx).await;
 
     // Enable case sensitive search.
-    update_test_editor_settings(&mut cx, |settings| {
+    update_test_editor_settings(&mut cx, &|settings| {
         let mut search_settings = SearchSettingsContent::default();
         search_settings.case_sensitive = Some(true);
         settings.search = Some(search_settings);
@@ -9231,7 +9308,7 @@ async fn test_select_all_matches(cx: &mut TestAppContext) {
     cx.assert_editor_state("«fooˇ»\nFOO\nFoo");
 
     // Disable case sensitive search.
-    update_test_editor_settings(&mut cx, |settings| {
+    update_test_editor_settings(&mut cx, &|settings| {
         let mut search_settings = SearchSettingsContent::default();
         search_settings.case_sensitive = Some(false);
         settings.search = Some(search_settings);
@@ -9617,7 +9694,7 @@ async fn test_select_previous_with_single_selection(cx: &mut TestAppContext) {
     let mut cx = EditorTestContext::new(cx).await;
 
     // Enable case sensitive search.
-    update_test_editor_settings(&mut cx, |settings| {
+    update_test_editor_settings(&mut cx, &|settings| {
         let mut search_settings = SearchSettingsContent::default();
         search_settings.case_sensitive = Some(true);
         settings.search = Some(search_settings);
@@ -9659,7 +9736,7 @@ async fn test_select_previous_with_single_selection(cx: &mut TestAppContext) {
     cx.assert_editor_state("«ˇfoo»\nFOO\nFoo\n«ˇfoo»");
 
     // Disable case sensitive search.
-    update_test_editor_settings(&mut cx, |settings| {
+    update_test_editor_settings(&mut cx, &|settings| {
         let mut search_settings = SearchSettingsContent::default();
         search_settings.case_sensitive = Some(false);
         settings.search = Some(search_settings);
@@ -11259,7 +11336,11 @@ async fn test_autoclose_with_embedded_language(cx: &mut TestAppContext) {
             .collect::<Vec<_>>();
         assert_eq!(
             languages,
-            &["HTML".into(), "JavaScript".into(), "HTML".into()]
+            &[
+                LanguageName::from("HTML"),
+                LanguageName::from("JavaScript"),
+                LanguageName::from("HTML"),
+            ]
         );
     });
 
@@ -12503,7 +12584,7 @@ async fn test_document_format_during_save(cx: &mut TestAppContext) {
     }
 
     // Set rust language override and assert overridden tabsize is sent to language server
-    update_test_language_settings(cx, |settings| {
+    update_test_language_settings(cx, &|settings| {
         settings.languages.0.insert(
             "Rust".into(),
             LanguageSettingsContent {
@@ -13158,7 +13239,7 @@ async fn test_range_format_respects_language_tab_size_override(cx: &mut TestAppC
     let (project, editor, cx, fake_server) = setup_range_format_test(cx).await;
 
     // Set Rust language override and assert overridden tabsize is sent to language server
-    update_test_language_settings(cx, |settings| {
+    update_test_language_settings(cx, &|settings| {
         settings.languages.0.insert(
             "Rust".into(),
             LanguageSettingsContent {
@@ -13224,7 +13305,7 @@ async fn test_document_format_manual_trigger(cx: &mut TestAppContext) {
         },
         Some(tree_sitter_rust::LANGUAGE.into()),
     )));
-    update_test_language_settings(cx, |settings| {
+    update_test_language_settings(cx, &|settings| {
         // Enable Prettier formatting for the same buffer, and ensure
         // LSP is called instead of Prettier.
         settings.defaults.prettier.get_or_insert_default().allowed = Some(true);
@@ -13606,7 +13687,7 @@ async fn test_organize_imports_manual_trigger(cx: &mut TestAppContext) {
         },
         Some(tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into()),
     )));
-    update_test_language_settings(cx, |settings| {
+    update_test_language_settings(cx, &|settings| {
         settings.defaults.prettier.get_or_insert_default().allowed = Some(true);
     });
     let mut fake_servers = language_registry.register_fake_lsp(
@@ -15036,7 +15117,7 @@ async fn test_completion_mode(cx: &mut TestAppContext) {
                 run.run_description,
             );
 
-            update_test_language_settings(&mut cx, |settings| {
+            update_test_language_settings(&mut cx, &|settings| {
                 settings.defaults.completions = Some(CompletionSettingsContent {
                     lsp_insert_mode: Some(lsp_insert_mode),
                     words: Some(WordsCompletionMode::Disabled),
@@ -15106,7 +15187,7 @@ async fn test_completion_with_mode_specified_by_action(cx: &mut TestAppContext) 
     let expected_with_insert_mode = "SubscriptionErrorˇError";
     let expected_with_replace_mode = "SubscriptionErrorˇ";
 
-    update_test_language_settings(&mut cx, |settings| {
+    update_test_language_settings(&mut cx, &|settings| {
         settings.defaults.completions = Some(CompletionSettingsContent {
             words: Some(WordsCompletionMode::Disabled),
             words_min_length: Some(0),
@@ -15142,7 +15223,7 @@ async fn test_completion_with_mode_specified_by_action(cx: &mut TestAppContext) 
     handle_resolve_completion_request(&mut cx, None).await;
     apply_additional_edits.await.unwrap();
 
-    update_test_language_settings(&mut cx, |settings| {
+    update_test_language_settings(&mut cx, &|settings| {
         settings.defaults.completions = Some(CompletionSettingsContent {
             words: Some(WordsCompletionMode::Disabled),
             words_min_length: Some(0),
@@ -15724,7 +15805,7 @@ async fn test_completion(cx: &mut TestAppContext) {
 
     apply_additional_edits.await.unwrap();
 
-    update_test_language_settings(&mut cx, |settings| {
+    update_test_language_settings(&mut cx, &|settings| {
         settings.defaults.show_completions_on_input = Some(false);
     });
     cx.set_state("editorˇ");
@@ -18711,7 +18792,7 @@ fn test_split_words() {
 #[test]
 fn test_split_words_for_snippet_prefix() {
     fn split(text: &str) -> Vec<&str> {
-        snippet_candidate_suffixes(text, |c| c.is_alphanumeric() || c == '_').collect()
+        snippet_candidate_suffixes(text, &|c| c.is_alphanumeric() || c == '_').collect()
     }
 
     assert_eq!(split("HelloWorld"), &["HelloWorld"]);
@@ -19112,7 +19193,7 @@ async fn test_language_server_restart_due_to_settings_change(cx: &mut TestAppCon
         .await
         .unwrap();
     let _fake_server = fake_servers.next().await.unwrap();
-    update_test_language_settings(cx, |language_settings| {
+    update_test_language_settings(cx, &|language_settings| {
         language_settings.languages.0.insert(
             language_name.clone().0.to_string(),
             LanguageSettingsContent {
@@ -19128,7 +19209,7 @@ async fn test_language_server_restart_due_to_settings_change(cx: &mut TestAppCon
         "Should not restart LSP server on an unrelated change"
     );
 
-    update_test_project_settings(cx, |project_settings| {
+    update_test_project_settings(cx, &|project_settings| {
         project_settings.lsp.0.insert(
             "Some other server name".into(),
             LspSettings {
@@ -19149,7 +19230,7 @@ async fn test_language_server_restart_due_to_settings_change(cx: &mut TestAppCon
         "Should not restart LSP server on an unrelated LSP settings change"
     );
 
-    update_test_project_settings(cx, |project_settings| {
+    update_test_project_settings(cx, &|project_settings| {
         project_settings.lsp.0.insert(
             language_server_name.into(),
             LspSettings {
@@ -19170,7 +19251,7 @@ async fn test_language_server_restart_due_to_settings_change(cx: &mut TestAppCon
         "Should restart LSP server on a related LSP settings change"
     );
 
-    update_test_project_settings(cx, |project_settings| {
+    update_test_project_settings(cx, &|project_settings| {
         project_settings.lsp.0.insert(
             language_server_name.into(),
             LspSettings {
@@ -19191,7 +19272,7 @@ async fn test_language_server_restart_due_to_settings_change(cx: &mut TestAppCon
         "Should not restart LSP server on a related LSP settings change that is the same"
     );
 
-    update_test_project_settings(cx, |project_settings| {
+    update_test_project_settings(cx, &|project_settings| {
         project_settings.lsp.0.insert(
             language_server_name.into(),
             LspSettings {
@@ -20036,7 +20117,7 @@ async fn test_document_format_with_prettier(cx: &mut TestAppContext) {
         },
         Some(tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into()),
     )));
-    update_test_language_settings(cx, |settings| {
+    update_test_language_settings(cx, &|settings| {
         settings.defaults.prettier.get_or_insert_default().allowed = Some(true);
     });
 
@@ -20082,7 +20163,7 @@ async fn test_document_format_with_prettier(cx: &mut TestAppContext) {
         "Test prettier formatting was not applied to the original buffer text",
     );
 
-    update_test_language_settings(cx, |settings| {
+    update_test_language_settings(cx, &|settings| {
         settings.defaults.formatter = Some(FormatterList::default())
     });
     let format = editor.update_in(cx, |editor, window, cx| {
@@ -20130,7 +20211,7 @@ async fn test_document_format_with_prettier_explicit_language(cx: &mut TestAppCo
 
     language_registry.add(ts_lang.clone());
 
-    update_test_language_settings(cx, |settings| {
+    update_test_language_settings(cx, &|settings| {
         settings.defaults.prettier.get_or_insert_default().allowed = Some(true);
     });
 
@@ -20180,7 +20261,7 @@ async fn test_document_format_with_prettier_explicit_language(cx: &mut TestAppCo
         "Test prettier formatting was not applied to the original buffer text",
     );
 
-    update_test_language_settings(cx, |settings| {
+    update_test_language_settings(cx, &|settings| {
         settings.defaults.formatter = Some(FormatterList::default())
     });
     let format = editor.update_in(cx, |editor, window, cx| {
@@ -24551,7 +24632,7 @@ async fn test_edit_prediction_text(cx: &mut TestAppContext) {
         vec![(Point::new(0, 6)..Point::new(0, 6), " beautiful".into())],
         true,
         cx,
-        |highlighted_edits, cx| {
+        &|highlighted_edits, cx| {
             assert_eq!(highlighted_edits.text, "Hello, beautiful world!");
             assert_eq!(highlighted_edits.highlights.len(), 1);
             assert_eq!(highlighted_edits.highlights[0].0, 6..16);
@@ -24569,7 +24650,7 @@ async fn test_edit_prediction_text(cx: &mut TestAppContext) {
         vec![(Point::new(0, 0)..Point::new(0, 4), "That".into())],
         false,
         cx,
-        |highlighted_edits, cx| {
+        &|highlighted_edits, cx| {
             assert_eq!(highlighted_edits.text, "That is a test.");
             assert_eq!(highlighted_edits.highlights.len(), 1);
             assert_eq!(highlighted_edits.highlights[0].0, 0..4);
@@ -24590,7 +24671,7 @@ async fn test_edit_prediction_text(cx: &mut TestAppContext) {
         ],
         false,
         cx,
-        |highlighted_edits, cx| {
+        &|highlighted_edits, cx| {
             assert_eq!(highlighted_edits.text, "Greetings, world and universe!");
             assert_eq!(highlighted_edits.highlights.len(), 2);
             assert_eq!(highlighted_edits.highlights[0].0, 0..9);
@@ -24620,7 +24701,7 @@ async fn test_edit_prediction_text(cx: &mut TestAppContext) {
         ],
         false,
         cx,
-        |highlighted_edits, cx| {
+        &|highlighted_edits, cx| {
             assert_eq!(
                 highlighted_edits.text,
                 "Second modified\nNew third line\nFourth updated line"
@@ -24650,7 +24731,7 @@ async fn test_edit_prediction_text_with_deletions(cx: &mut TestAppContext) {
         vec![(Point::new(0, 5)..Point::new(0, 11), "".to_string())],
         true,
         cx,
-        |highlighted_edits, cx| {
+        &|highlighted_edits, cx| {
             assert_eq!(highlighted_edits.text, "Hello, world!");
             assert_eq!(highlighted_edits.highlights.len(), 1);
             assert_eq!(highlighted_edits.highlights[0].0, 5..11);
@@ -24668,7 +24749,7 @@ async fn test_edit_prediction_text_with_deletions(cx: &mut TestAppContext) {
         vec![(Point::new(0, 6)..Point::new(0, 6), " digital".to_string())],
         true,
         cx,
-        |highlighted_edits, cx| {
+        &|highlighted_edits, cx| {
             assert_eq!(highlighted_edits.highlights.len(), 1);
             assert_eq!(highlighted_edits.highlights[0].0, 6..14);
             assert_eq!(
@@ -24685,7 +24766,7 @@ async fn assert_highlighted_edits(
     edits: Vec<(Range<Point>, String)>,
     include_deletions: bool,
     cx: &mut TestAppContext,
-    assertion_fn: impl Fn(HighlightedText, &App),
+    assertion_fn: &dyn Fn(HighlightedText, &App),
 ) {
     let window = cx.add_window(|window, cx| {
         let buffer = MultiBuffer::build_simple(text, cx);
@@ -26955,7 +27036,7 @@ async fn test_outdent_after_input_for_python(cx: &mut TestAppContext) {
 #[gpui::test]
 async fn test_indent_on_newline_for_python(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
-    update_test_language_settings(cx, |settings| {
+    update_test_language_settings(cx, &|settings| {
         settings.defaults.extend_comment_on_newline = Some(false);
     });
     let mut cx = EditorTestContext::new(cx).await;
@@ -27360,7 +27441,7 @@ async fn test_outdent_after_input_for_bash(cx: &mut TestAppContext) {
 #[gpui::test]
 async fn test_indent_on_newline_for_bash(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
-    update_test_language_settings(cx, |settings| {
+    update_test_language_settings(cx, &|settings| {
         settings.defaults.extend_comment_on_newline = Some(false);
     });
     let mut cx = EditorTestContext::new(cx).await;
@@ -27914,18 +27995,20 @@ fn handle_resolve_completion_request(
 
 pub(crate) fn update_test_language_settings(
     cx: &mut TestAppContext,
-    f: impl Fn(&mut AllLanguageSettingsContent),
+    f: &dyn Fn(&mut AllLanguageSettingsContent),
 ) {
     cx.update(|cx| {
         SettingsStore::update_global(cx, |store, cx| {
-            store.update_user_settings(cx, |settings| f(&mut settings.project.all_languages));
+            store.update_user_settings(cx, &|settings: &mut SettingsContent| {
+                f(&mut settings.project.all_languages)
+            });
         });
     });
 }
 
 pub(crate) fn update_test_project_settings(
     cx: &mut TestAppContext,
-    f: impl Fn(&mut ProjectSettingsContent),
+    f: &dyn Fn(&mut ProjectSettingsContent),
 ) {
     cx.update(|cx| {
         SettingsStore::update_global(cx, |store, cx| {
@@ -27936,7 +28019,7 @@ pub(crate) fn update_test_project_settings(
 
 pub(crate) fn update_test_editor_settings(
     cx: &mut TestAppContext,
-    f: impl Fn(&mut EditorSettingsContent),
+    f: &dyn Fn(&mut EditorSettingsContent),
 ) {
     cx.update(|cx| {
         SettingsStore::update_global(cx, |store, cx| {
@@ -27955,7 +28038,7 @@ pub(crate) fn init_test(cx: &mut TestAppContext, f: fn(&mut AllLanguageSettingsC
         crate::init(cx);
     });
     zlog::init_test();
-    update_test_language_settings(cx, f);
+    update_test_language_settings(cx, &f);
 }
 
 #[track_caller]
@@ -28390,7 +28473,7 @@ async fn test_inlay_hints_request_timeout(cx: &mut TestAppContext) {
     let request_count = Arc::new(AtomicU32::new(0));
     let closure_request_count = request_count.clone();
 
-    init_test(cx, |settings| {
+    init_test(cx, &|settings| {
         settings.defaults.inlay_hints = Some(InlayHintSettingsContent {
             enabled: Some(true),
             ..InlayHintSettingsContent::default()
@@ -28398,7 +28481,7 @@ async fn test_inlay_hints_request_timeout(cx: &mut TestAppContext) {
     });
     cx.update(|cx| {
         SettingsStore::update_global(cx, |store, cx| {
-            store.update_user_settings(cx, |settings| {
+            store.update_user_settings(cx, &|settings: &mut SettingsContent| {
                 settings.global_lsp_settings = Some(GlobalLspSettingsContent {
                     request_timeout: Some(BASE_TIMEOUT_SECS),
                     button: Some(true),
@@ -29627,6 +29710,7 @@ fn test_relative_line_numbers(cx: &mut TestAppContext) {
             .into_iter()
             .enumerate()
             .map(|(i, row)| (DisplayRow(row), i.abs_diff(base_row) as u32))
+            .filter(|(_, relative_line_number)| *relative_line_number != 0)
             .collect_vec();
         let actual_relative_numbers = snapshot
             .calculate_relative_line_numbers(
