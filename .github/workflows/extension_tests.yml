@@ -115,7 +115,7 @@ jobs:
         CURRENT_VERSION="$(sed -n 's/^version = \"\(.*\)\"/\1/p' < extension.toml | tr -d '[:space:]')"
 
         if [[ "${{ github.event_name }}" == "pull_request" ]]; then
-            PR_FORK_POINT="$(git merge-base --fork-point origin/main HEAD)"
+            PR_FORK_POINT="$(git merge-base origin/main HEAD)"
             git checkout "$PR_FORK_POINT"
         elif BRANCH_PARENT_SHA="$(git merge-base origin/main origin/zed-zippy-autobump)"; then
             git checkout "$BRANCH_PARENT_SHA"
@@ -137,12 +137,6 @@ jobs:
             echo "Version changes happen in separate PRs and will be performed by the zed-zippy bot"
             exit 42
         fi
-    - name: extension_tests::breakpoint
-      if: failure()
-      uses: namespacelabs/breakpoint-action@ca62bf12510ebf1115a560cf337a35fad5eb052b
-      with:
-        duration: 15m
-        authorized-users: MrSubidubi
     timeout-minutes: 6
   tests_pass:
     needs:

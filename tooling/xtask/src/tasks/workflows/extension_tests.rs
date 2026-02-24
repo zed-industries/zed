@@ -95,21 +95,9 @@ pub(crate) fn check_extension() -> NamedJob {
         .add_step(cache_rust_dependencies_namespace()) // Extensions can compile Rust, so provide the cache if needed.
         .add_step(check())
         .add_step(check_version_job)
-        .add_step(verify_version_did_not_change(version_changed))
-        .add_step(breakpoint());
+        .add_step(verify_version_did_not_change(version_changed));
 
     named::job(job)
-}
-
-fn breakpoint() -> Step<Use> {
-    named::uses(
-        "namespacelabs",
-        "breakpoint-action",
-        "ca62bf12510ebf1115a560cf337a35fad5eb052b",
-    )
-    .if_condition(Expression::new("failure()"))
-    .add_with(("duration", "15m"))
-    .add_with(("authorized-users", "MrSubidubi"))
 }
 
 pub fn cache_zed_extension_cli() -> (Step<Use>, StepOutput) {
