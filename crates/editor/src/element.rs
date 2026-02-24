@@ -1383,7 +1383,10 @@ impl EditorElement {
                 .snapshot
                 .display_point_to_anchor(valid_point, Bias::Left);
 
-            if let Some((buffer_snapshot, file)) = position_map
+            if !editor.anchor_supports_breakpoint_placement(buffer_anchor, cx) {
+                editor.gutter_breakpoint_indicator.1 = None;
+                None
+            } else if let Some((buffer_snapshot, file)) = position_map
                 .snapshot
                 .buffer_snapshot()
                 .buffer_for_excerpt(buffer_anchor.excerpt_id)

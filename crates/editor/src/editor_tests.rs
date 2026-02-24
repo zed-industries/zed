@@ -25013,6 +25013,152 @@ async fn test_breakpoint_toggling(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_breakpoint_toggling_in_non_debuggable_file(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let sample_text = "First line\nSecond line\nThird line\nFourth line".to_string();
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/a"),
+        json!({
+            "notes.txt": sample_text,
+        }),
+    )
+    .await;
+    let project = Project::test(fs, [path!("/a").as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    let cx = &mut VisualTestContext::from_window(*window, cx);
+    let worktree_id = workspace.update_in(cx, |workspace, _window, cx| {
+        workspace.project().update(cx, |project, cx| {
+            project.worktrees(cx).next().unwrap().read(cx).id()
+        })
+    });
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_buffer((worktree_id, rel_path("notes.txt")), cx)
+        })
+        .await
+        .unwrap();
+
+    let (editor, cx) = cx.add_window_view(|window, cx| {
+        Editor::new(
+            EditorMode::full(),
+            MultiBuffer::build_from_buffer(buffer, cx),
+            Some(project.clone()),
+            window,
+            cx,
+        )
+    });
+
+    editor.update_in(cx, |editor, window, cx| {
+        editor.toggle_breakpoint(&actions::ToggleBreakpoint, window, cx);
+        editor.move_to_end(&MoveToEnd, window, cx);
+        editor.toggle_breakpoint(&actions::ToggleBreakpoint, window, cx);
+    });
+
+    let breakpoints = editor.update(cx, |editor, cx| {
+        editor
+            .breakpoint_store()
+            .as_ref()
+            .unwrap()
+            .read(cx)
+            .all_source_breakpoints(cx)
+    });
+
+    assert_eq!(0, breakpoints.len());
+}
+
+#[gpui::test]
+async fn test_breakpoint_toggling_ignores_blank_and_comment_lines(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let sample_text =
+        "// comment only\n\nfn main() {\n    // also comment only\n    let value = 1;\n}".to_string();
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/a"),
+        json!({
+            "main.rs": sample_text,
+        }),
+    )
+    .await;
+    let project = Project::test(fs, [path!("/a").as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    let cx = &mut VisualTestContext::from_window(*window, cx);
+    let worktree_id = workspace.update_in(cx, |workspace, _window, cx| {
+        workspace.project().update(cx, |project, cx| {
+            project.worktrees(cx).next().unwrap().read(cx).id()
+        })
+    });
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_buffer((worktree_id, rel_path("main.rs")), cx)
+        })
+        .await
+        .unwrap();
+
+    let (editor, cx) = cx.add_window_view(|window, cx| {
+        Editor::new(
+            EditorMode::full(),
+            MultiBuffer::build_from_buffer(buffer, cx),
+            Some(project.clone()),
+            window,
+            cx,
+        )
+    });
+
+    let project_path = editor.update(cx, |editor, cx| editor.project_path(cx).unwrap());
+    let abs_path = project.read_with(cx, |project, cx| {
+        project
+            .absolute_path(&project_path, cx)
+            .map(Arc::from)
+            .unwrap()
+    });
+
+    editor.update_in(cx, |editor, window, cx| {
+        // row 0: comment
+        editor.toggle_breakpoint(&actions::ToggleBreakpoint, window, cx);
+
+        // row 1: blank line
+        editor.move_down(&MoveDown, window, cx);
+        editor.toggle_breakpoint(&actions::ToggleBreakpoint, window, cx);
+
+        // row 3: comment inside code
+        editor.move_down(&MoveDown, window, cx);
+        editor.move_down(&MoveDown, window, cx);
+        editor.toggle_breakpoint(&actions::ToggleBreakpoint, window, cx);
+
+        // row 4: executable line
+        editor.move_down(&MoveDown, window, cx);
+        editor.toggle_breakpoint(&actions::ToggleBreakpoint, window, cx);
+    });
+
+    let breakpoints = editor.update(cx, |editor, cx| {
+        editor
+            .breakpoint_store()
+            .as_ref()
+            .unwrap()
+            .read(cx)
+            .all_source_breakpoints(cx)
+    });
+
+    assert_eq!(1, breakpoints.len());
+    assert_breakpoint(
+        &breakpoints,
+        &abs_path,
+        vec![(4, Breakpoint::new_standard())],
+    );
+}
+
+#[gpui::test]
 async fn test_log_breakpoint_editing(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
