@@ -86,7 +86,6 @@ pub struct BufferSearchBar {
     configured_options: SearchOptions,
     query_error: Option<String>,
     dismissed: bool,
-    cancel_suppressed: bool,
     search_history: SearchHistory,
     search_history_cursor: SearchHistoryCursor,
     replace_enabled: bool,
@@ -881,7 +880,6 @@ impl BufferSearchBar {
             pending_search: None,
             query_error: None,
             dismissed: true,
-            cancel_suppressed: false,
             search_history: SearchHistory::new(
                 Some(MAX_BUFFER_SEARCH_HISTORY_SIZE),
                 project::search_history::QueryInsertionBehavior::ReplacePreviousIfContains,
@@ -901,17 +899,25 @@ impl BufferSearchBar {
         self.dismissed
     }
 
-    pub fn set_cancel_suppressed(&mut self, suppressed: bool) {
-        self.cancel_suppressed = suppressed;
+    pub fn dismiss(&mut self, _: &Dismiss, window: &mut Window, cx: &mut Context<Self>) {
+        self.dismiss_inner(false, window, cx);
     }
 
-    pub fn dismiss(&mut self, _: &Dismiss, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn dismiss_preserving_highlights(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.dismiss_inner(true, window, cx);
+    }
+
+    fn dismiss_inner(&mut self, preserve_highlights: bool, window: &mut Window, cx: &mut Context<Self>) {
         self.dismissed = true;
         cx.emit(Event::Dismissed);
         self.query_error = None;
         self.sync_select_next_case_sensitivity(cx);
 
-        if !self.cancel_suppressed {
+        if !preserve_highlights {
             for searchable_item in self.searchable_items_with_matches.keys() {
                 if let Some(searchable_item) =
                     WeakSearchableItemHandle::upgrade(searchable_item.as_ref(), cx)
@@ -920,7 +926,6 @@ impl BufferSearchBar {
                 }
             }
         }
-        self.cancel_suppressed = false;
 
         let needs_collapse_expand = self.needs_expand_collapse_option(cx);
 
@@ -946,6 +951,16 @@ impl BufferSearchBar {
             ToolbarItemLocation::Hidden,
         ));
         cx.notify();
+    }
+
+    pub fn clear_all_matches(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        for searchable_item in self.searchable_items_with_matches.keys() {
+            if let Some(searchable_item) =
+                WeakSearchableItemHandle::upgrade(searchable_item.as_ref(), cx)
+            {
+                searchable_item.clear_matches(window, cx);
+            }
+        }
     }
 
     pub fn deploy(&mut self, deploy: &Deploy, window: &mut Window, cx: &mut Context<Self>) -> bool {

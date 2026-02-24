@@ -42,7 +42,7 @@ use multi_buffer::ToPoint as _;
 use normal::search::SearchSubmit;
 use object::Object;
 use schemars::JsonSchema;
-use search::{BufferSearchBar, buffer_search::Dismiss as BufferSearchDismiss};
+use search::BufferSearchBar;
 use serde::Deserialize;
 use settings::RegisterSetting;
 pub use settings::{
@@ -163,8 +163,6 @@ actions!(
     [
         /// Switches to normal mode.
         SwitchToNormalMode,
-        /// Cancels current operation, preserving search highlights (vim normal mode ESC behavior).
-        Cancel,
         /// Switches to insert mode.
         SwitchToInsertMode,
         /// Switches to replace mode.
@@ -686,11 +684,8 @@ impl Vim {
                     vim.switch_mode(Mode::HelixNormal, true, window, cx)
                 },
             );
-            Vim::action(editor, cx, |vim, _: &Cancel, window, cx| {
+            Vim::action(editor, cx, |vim, _: &editor::actions::Cancel, window, cx| {
                 vim.clear_operator(window, cx);
-                // Preserve search highlights: set flag before dispatching editor::Cancel.
-                // The flag causes dismiss() to skip clear_matches(), so the bar hides
-                // but highlights remain visible.
                 if let Some(pane) = vim.pane(window, cx) {
                     pane.update(cx, |pane, cx| {
                         if let Some(search_bar) =
@@ -698,15 +693,15 @@ impl Vim {
                         {
                             search_bar.update(cx, |bar, cx| {
                                 if bar.is_dismissed() {
-                                    bar.dismiss(&BufferSearchDismiss, window, cx);
+                                    bar.clear_all_matches(window, cx);
                                 } else {
-                                    bar.set_cancel_suppressed(true);
+                                    bar.dismiss_preserving_highlights(window, cx);
                                 }
                             });
                         }
                     });
                 }
-                window.dispatch_action(editor::actions::Cancel.boxed_clone(), cx);
+                cx.propagate();
             });
             Vim::action(editor, cx, |_, _: &PushForcedMotion, _, cx| {
                 Vim::globals(cx).forced_motion = true;
