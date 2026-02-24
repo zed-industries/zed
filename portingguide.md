@@ -84,13 +84,26 @@ These files contain Helix-specific changes that must be preserved during rebases
 - **Thread creation callback**: Wires up thread_service to create threads
 - **Thread open callback**: Wires up thread_service to open existing threads
 - **Onboarding dismissal**: Auto-dismisses `OnboardingUpsell` when WebSocket sync is active
-- **`SerializedAcpSession`**: Serializes active thread info for debugging (not restored on load — the API sends `open_thread` on resume instead)
+- **`acp_history_store()`**: Accessor for `ThreadStore` entity, used by WebSocket integration setup (cfg-gated)
+- **`NativeAgentSessionList` import**: Required for thread persistence in `ThreadDisplayNotification` handler
 
 ### `crates/agent_ui/src/acp/thread_view.rs`
+- **`HeadlessConnection`**: No-op `AgentConnection` impl for WebSocket-created threads (cfg-gated)
 - **`UserCreatedThread` event**: Sends when user creates a thread via UI (not via WebSocket)
 - **`ThreadTitleChanged` event**: Forwards title changes to Helix
-- **`from_existing_thread()` constructor**: Creates an `AcpServerView` wrapping an existing `Entity<AcpThread>` with a `HeadlessConnection` — used when thread_service loads a thread and needs to display it
-- **Thread registry integration**: Registers threads from `from_existing_thread` into `THREAD_REGISTRY`
+- **`from_existing_thread()` constructor**: Creates an `AcpServerView` wrapping an existing `Entity<AcpThread>` with a `HeadlessConnection`. Uses `ConnectedServerState` with `active_id`, `threads` HashMap, and `Conversation` entity. Used when thread_service loads a thread and needs to display it
+- **Thread registry integration**: Registers threads from both `from_existing_thread` and `initial_state` into `THREAD_REGISTRY`
+- **History refresh**: Calls `history.refresh()` on `Stopped` and `TitleUpdated` events
+
+### `crates/extensions_ui/src/extensions_ui.rs`
+- **Agent keyword removal**: Claude/Codex/Gemini keywords removed from search (enterprise — users should use corporate LLMs)
+- **Agent upsell removal**: Claude/Codex/Gemini upsell banners removed from extensions UI
+
+### `crates/recent_projects/src/dev_container_suggest.rs`
+- **`suggest_dev_container` check**: Early return if `RemoteSettings::suggest_dev_container` is false
+
+### `crates/feature_flags/src/flags.rs`
+- **ACP beta feature flag override**: `AcpBetaFeatureFlag::enabled_for_all()` returns `true` to enable session list/load/resume in release builds
 
 ### `crates/acp_thread/src/acp_thread.rs`
 - **`content_only()` method on `AssistantMessage`**: Returns content without the `## Assistant\n\n` heading. Used by thread_service.rs for WebSocket sync to avoid sending the heading to Helix.
@@ -219,22 +232,27 @@ Pending request queues (`PENDING_*`) buffer requests that arrive before callback
 
 ## Rebase Checklist
 
-When rebasing against upstream Zed:
+When rebasing/merging against upstream Zed:
 
 1. **Preserve the `external_websocket_sync` crate** — it's self-contained and rarely conflicts
 2. **Check `agent.rs` `load_session()`** — ensure the entity lifetime fix is present (Critical Fix #1)
 3. **Check `thread_view.rs` event handlers** — ensure no duplicate WebSocket sends (Critical Fix #2)
 4. **Check `acp_thread.rs` `AssistantMessage`** — ensure `content_only()` exists (Critical Fix #3)
 5. **Check `thread_service.rs` follow-up path** — ensure `notify_thread_display()` is called (Critical Fix #4)
-6. **Check `agent_panel.rs` cfg-gated blocks** — callback setup, `from_existing_thread`, onboarding dismissal
-7. **Check `thread_view.rs` cfg-gated blocks** — `UserCreatedThread`, `ThreadTitleChanged`, `from_existing_thread()`
-8. **Check `http_client_tls.rs`** — `NoCertVerifier` and `ZED_HTTP_INSECURE_TLS` support
-9. **Check `reqwest_client.rs`** — insecure TLS support
-10. **Check `title_bar`** — connection status indicator
-11. **Check `agent_settings`** — `show_onboarding`, `auto_open_panel` fields
-12. **Check `.dockerignore`** — simplified for Helix builds
-13. **Run E2E test** after rebase to verify all 4 phases pass
-14. **Run `cargo test -p external_websocket_sync`** — 37 unit tests
+6. **Check `agent_panel.rs` cfg-gated blocks** — callback setup, `from_existing_thread`, onboarding dismissal, `acp_history_store()`
+7. **Check `thread_view.rs` cfg-gated blocks** — `HeadlessConnection`, `UserCreatedThread`, `ThreadTitleChanged`, `from_existing_thread()`, THREAD_REGISTRY registration in `initial_state`, history refresh on Stopped/TitleUpdated
+8. **Check `from_existing_thread()` matches `ConnectedServerState` struct** — upstream may change fields (currently: `active_id`, `threads` HashMap, `conversation` Entity)
+9. **Check `extensions_ui.rs`** — agent keyword/upsell removal preserved
+10. **Check `dev_container_suggest.rs`** — `suggest_dev_container` early return preserved
+13. **Check `feature_flags/flags.rs`** — `AcpBetaFeatureFlag::enabled_for_all()` returns `true`
+14. **Check `http_client_tls.rs`** — `NoCertVerifier` and `ZED_HTTP_INSECURE_TLS` support
+15. **Check `reqwest_client.rs`** — insecure TLS support
+16. **Check `title_bar`** — connection status indicator + `external_websocket_sync` dependency
+17. **Check `agent_settings`** — `show_onboarding`, `auto_open_panel` fields
+18. **Check `.dockerignore`** — simplified for Helix builds
+19. **Run `cargo check --package zed --features external_websocket_sync`** — must compile
+20. **Run `cargo test -p external_websocket_sync`** — unit tests
+21. **Run E2E test** after merge to verify all 4 phases pass
 
 ## Building
 

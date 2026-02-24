@@ -27,17 +27,11 @@ use crate::{
     ui::EndTrialUpsell,
 };
 use crate::{
-    AgentInitialContent, ExternalAgent, NewExternalAgentThread, NewNativeAgentThreadFromSummary,
-};
-use crate::{
-    ExpandMessageEditor,
-    acp::{AcpThreadHistory, ThreadHistoryEvent},
-    text_thread_history::{TextThreadHistory, TextThreadHistoryEvent},
-};
-use crate::{
-    ExternalAgent, ExternalAgentInitialContent, ManageProfiles, NewExternalAgentThread,
+    AgentInitialContent, ExternalAgent, ManageProfiles, NewExternalAgentThread,
     NewNativeAgentThreadFromSummary,
-    acp::thread_view::AcpThreadView,
+    ExpandMessageEditor,
+    acp::{AcpThreadHistory, ThreadHistoryEvent, thread_view::AcpThreadView},
+    text_thread_history::{TextThreadHistory, TextThreadHistoryEvent},
 };
 #[cfg(feature = "external_websocket_sync")]
 use external_websocket_sync_dep as external_websocket_sync;
@@ -787,8 +781,8 @@ impl AgentPanel {
                         // if the view is Uninitialized — we need to set our view first
                         // to prevent that race.
                         // Check if current view is already for this thread
-                        if let ActiveView::AgentThread { thread_view } = &this.active_view {
-                            if let Some(active_thread) = thread_view.read(cx).as_active_thread() {
+                        if let ActiveView::AgentThread { server_view } = &this.active_view {
+                            if let Some(active_thread) = server_view.read(cx).active_thread() {
                                 let existing_session_id = active_thread.read(cx).thread.read(cx).session_id().to_string();
                                 if existing_session_id == incoming_session_id {
                                     eprintln!("🔄 [AGENT_PANEL] Already showing thread {}, skipping", incoming_session_id);
@@ -803,7 +797,7 @@ impl AgentPanel {
                         // instance). Instead, wrap the existing Entity<AcpThread> directly.
                         let server = crate::ExternalAgent::NativeAgent
                             .server(this.fs.clone(), this.thread_store.clone());
-                        let thread_view = cx.new(|cx| {
+                        let server_view = cx.new(|cx| {
                             crate::acp::AcpServerView::from_existing_thread(
                                 notification.thread_entity.clone(),
                                 server,
@@ -819,7 +813,7 @@ impl AgentPanel {
                         });
 
                         this.set_active_view(
-                            ActiveView::AgentThread { thread_view },
+                            ActiveView::AgentThread { server_view },
                             true,
                             window,
                             cx,
@@ -865,8 +859,8 @@ impl AgentPanel {
                     let query_id = query.query_id.clone();
                     this.update(cx, |this, cx| {
                         let (active_view_str, thread_id, entry_count) = match &this.active_view {
-                            ActiveView::AgentThread { thread_view } => {
-                                if let Some(acp_thread_view) = thread_view.read(cx).as_active_thread() {
+                            ActiveView::AgentThread { server_view } => {
+                                if let Some(acp_thread_view) = server_view.read(cx).active_thread() {
                                     let thread_entity = &acp_thread_view.read(cx).thread;
                                     let thread = thread_entity.read(cx);
                                     (

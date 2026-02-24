@@ -1146,7 +1146,6 @@ impl acp::Client for ClientDelegate {
             thread.request_tool_call_authorization(
                 arguments.tool_call,
                 acp_thread::PermissionOptions::Flat(arguments.options),
-                true,
                 cx,
             )
         })??;

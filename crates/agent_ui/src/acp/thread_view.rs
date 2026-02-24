@@ -173,13 +173,13 @@ impl AgentConnection for HeadlessConnection {
         "headless".into()
     }
 
-    fn new_thread(
+    fn new_session(
         self: Rc<Self>,
         _project: Entity<Project>,
         _cwd: &std::path::Path,
         _cx: &mut gpui::App,
     ) -> Task<Result<Entity<AcpThread>>> {
-        Task::ready(Err(anyhow!("headless connection cannot create threads")))
+        Task::ready(Err(anyhow!("headless connection cannot create sessions")))
     }
 
     fn auth_methods(&self) -> &[acp::AuthMethod] {
@@ -646,7 +646,7 @@ impl AcpServerView {
                 this.update_in(cx, |this, window, cx| {
                     if let Some(thread) = thread_for_spawn.upgrade() {
                         // Sync new entries to the UI
-                        if let Some(active) = this.as_active_thread() {
+                        if let Some(active) = this.active_thread() {
                             let total = thread.read(cx).entries().len();
                             if total > synced_count {
                                 let entry_view_state = active.read(cx).entry_view_state.clone();
@@ -681,16 +681,24 @@ impl AcpServerView {
         let connection: Rc<dyn AgentConnection> = Rc::new(HeadlessConnection);
 
         let weak = cx.weak_entity();
+        let agent_icon = agent.logo();
+        let conversation_entity = cx.new(|cx| {
+            let mut conv = Conversation::default();
+            conv.register_thread(thread.clone(), cx);
+            conv
+        });
         let current = cx.new(|cx| {
             AcpThreadView::new(
+                None, // parent_id
                 thread.clone(),
+                conversation_entity.clone(),
                 None, // login
                 weak,
+                agent_icon,
                 agent_shared_name.clone(),
                 display_name,
                 workspace.clone(),
                 entry_view_state,
-                None, // title_editor
                 None, // config_options_view
                 None, // mode_selector
                 None, // model_selector
@@ -711,18 +719,13 @@ impl AcpServerView {
             )
         });
 
+        let id = thread.read(cx).session_id().clone();
+
         // Register thread in THREAD_REGISTRY
         {
-            let session_id_str = thread.read(cx).session_id().to_string();
+            let session_id_str = id.to_string();
             external_websocket_sync::register_thread(session_id_str, thread);
         }
-
-        let id = thread.read(cx).session_id().clone();
-        let conversation = cx.new(|cx| {
-            let mut conversation = Conversation::default();
-            conversation.register_thread(thread.clone(), cx);
-            conversation
-        });
 
         Self {
             agent,
@@ -736,7 +739,7 @@ impl AcpServerView {
                 auth_state: AuthState::Ok,
                 active_id: Some(id.clone()),
                 threads: HashMap::from_iter([(id, current)]),
-                conversation,
+                conversation: conversation_entity,
             }),
             login: None,
             notifications: Vec::new(),
@@ -932,6 +935,9 @@ impl AcpServerView {
                             conversation
                         });
 
+                        #[cfg(feature = "external_websocket_sync")]
+                        let is_resume = resume_thread.is_some();
+
                         let current = this.new_thread_view(
                             None,
                             thread,
@@ -973,7 +979,7 @@ impl AcpServerView {
                         // Notify external system when user created a new thread (not resume)
                         #[cfg(feature = "external_websocket_sync")]
                         {
-                            if resume_thread.is_none() {
+                            if !is_resume {
                                 let thread_entity = &current.read(cx).thread;
                                 let entry_count = thread_entity.read(cx).entries().len();
                                 if entry_count > 0 {

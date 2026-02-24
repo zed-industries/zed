@@ -61,18 +61,6 @@ pub struct AgentSettingsContent {
     pub default_view: Option<DefaultAgentView>,
     /// The available agent profiles.
     pub profiles: Option<IndexMap<Arc<str>, AgentProfileContent>>,
-    /// Whenever a tool action would normally wait for your confirmation
-    /// that you allow it, always choose to allow it.
-    ///
-    /// **Security note**: Even with this enabled, Zed's built-in security rules
-    /// still block some tool actions, such as the terminal tool running `rm -rf /`, `rm -rf ~`,
-    /// `rm -rf $HOME`, `rm -rf .`, or `rm -rf ..`, to prevent certain classes of failures
-    /// from happening.
-    ///
-    /// This applies to all agents, including external agents like Claude Code.
-    ///
-    /// Default: false
-    pub always_allow_tool_actions: Option<bool>,
     /// Where to show a popup notification when the agent is waiting for user input.
     ///
     /// Default: "primary_screen"

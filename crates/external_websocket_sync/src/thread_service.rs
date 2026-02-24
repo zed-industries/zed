@@ -475,7 +475,7 @@ fn create_new_thread_sync(
                 })
             });
         let thread_entity: Entity<AcpThread> = cx.update(|cx| {
-            connection.new_thread(project_clone.clone(), &cwd, cx)
+            connection.new_session(project_clone.clone(), &cwd, cx)
         }).await?;
 
         let acp_thread_id = cx.update(|cx| {
@@ -848,7 +848,7 @@ async fn load_thread_from_agent(
     // Check if agent supports session loading
     {
         let connection = connection.clone();
-        let supports_load = cx.update(|cx| connection.supports_load_session(cx));
+        let supports_load = cx.update(|_cx| connection.supports_load_session());
         if !supports_load {
             let err = anyhow::anyhow!("Agent does not support session loading");
             eprintln!("⚠️ [THREAD_SERVICE] {}", err);
@@ -1045,7 +1045,7 @@ fn open_existing_thread_sync(
         // Check if agent supports session loading
         {
             let connection = connection.clone();
-            if !cx.update(|cx| connection.supports_load_session(cx)) {
+            if !cx.update(|_cx| connection.supports_load_session()) {
                 eprintln!("⚠️ [THREAD_SERVICE] Agent does not support session loading");
                 log::warn!("⚠️ [THREAD_SERVICE] Agent does not support session loading");
                 return Err(anyhow::anyhow!("Agent does not support session loading"));
