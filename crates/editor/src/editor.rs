@@ -1347,7 +1347,7 @@ pub struct Editor {
     suppress_selection_callback: bool,
     applicable_language_settings: HashMap<Option<LanguageName>, LanguageSettings>,
     accent_data: Option<AccentData>,
-    fetched_tree_sitter_chunks: HashMap<ExcerptId, HashSet<Range<BufferRow>>>,
+    bracket_fetched_tree_sitter_chunks: HashMap<ExcerptId, HashSet<Range<BufferRow>>>,
     semantic_token_state: SemanticTokenState,
     pub(crate) refresh_matching_bracket_highlights_task: Task<()>,
     refresh_document_symbols_task: Shared<Task<()>>,
@@ -1356,6 +1356,7 @@ pub struct Editor {
     outline_symbols_at_cursor: Option<(BufferId, Vec<OutlineItem<Anchor>>)>,
     sticky_headers_task: Task<()>,
     sticky_headers: Option<Vec<OutlineItem<Anchor>>>,
+    pub(crate) colorize_brackets_task: Task<()>,
 }
 
 #[derive(Debug, PartialEq)]
@@ -2600,7 +2601,7 @@ impl Editor {
             applicable_language_settings: HashMap::default(),
             semantic_token_state: SemanticTokenState::new(cx, full_mode),
             accent_data: None,
-            fetched_tree_sitter_chunks: HashMap::default(),
+            bracket_fetched_tree_sitter_chunks: HashMap::default(),
             number_deleted_lines: false,
             refresh_matching_bracket_highlights_task: Task::ready(()),
             refresh_document_symbols_task: Task::ready(()).shared(),
@@ -2609,6 +2610,7 @@ impl Editor {
             outline_symbols_at_cursor: None,
             sticky_headers_task: Task::ready(()),
             sticky_headers: None,
+            colorize_brackets_task: Task::ready(()),
         };
 
         if is_minimap {
@@ -24165,7 +24167,7 @@ impl Editor {
                 self.refresh_document_highlights(cx);
                 let snapshot = multibuffer.read(cx).snapshot(cx);
                 for id in ids {
-                    self.fetched_tree_sitter_chunks.remove(id);
+                    self.bracket_fetched_tree_sitter_chunks.remove(id);
                     if let Some(buffer) = snapshot.buffer_for_excerpt(*id) {
                         self.semantic_token_state
                             .invalidate_buffer(&buffer.remote_id());
