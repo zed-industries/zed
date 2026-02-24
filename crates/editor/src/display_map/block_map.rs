@@ -292,6 +292,7 @@ pub struct BlockContext<'a, 'b> {
     pub height: u32,
     pub selected: bool,
     pub editor_style: &'b EditorStyle,
+    pub indent_guide_padding: Pixels,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Ord, PartialOrd, Hash)]
@@ -1711,6 +1712,7 @@ pub(crate) fn balancing_block(
                 cx.block_id,
                 cx.height,
                 cx.line_height,
+                cx.indent_guide_padding,
                 cx.window,
                 cx.app,
             )

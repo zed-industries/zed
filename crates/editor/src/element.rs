@@ -39,7 +39,17 @@ use feature_flags::{DiffReviewFeatureFlag, FeatureFlagAppExt as _};
 use file_icons::FileIcons;
 use git::{Oid, blame::BlameEntry, commit::ParsedCommitMessage, status::FileStatus};
 use gpui::{
-    Action, Along, AnyElement, App, AppContext, AvailableSpace, Axis as ScrollbarAxis, BorderStyle, Bounds, ClickEvent, ClipboardItem, ContentMask, Context, Corner, Corners, CursorStyle, DispatchPhase, Edges, Element, ElementInputHandler, Entity, Focusable as _, FontId, FontWeight, GlobalElementId, Hitbox, HitboxBehavior, Hsla, InteractiveElement, IntoElement, IsZero, KeybindingKeystroke, Length, Modifiers, ModifiersChangedEvent, MouseButton, MouseClickEvent, MouseDownEvent, MouseMoveEvent, MousePressureEvent, MouseUpEvent, PaintQuad, ParentElement, Pixels, PressureStage, ScrollDelta, ScrollHandle, ScrollWheelEvent, ShapedLine, SharedString, Size, StatefulInteractiveElement, Style, Styled, StyledText, TextAlign, TextRun, TextStyleRefinement, WeakEntity, Window, anchored, checkerboard, deferred, div, fill, linear_color_stop, linear_gradient, outline, pattern_slash, point, px, quad, relative, size, solid_background, transparent_black
+    Action, Along, AnyElement, App, AppContext, AvailableSpace, Axis as ScrollbarAxis, BorderStyle,
+    Bounds, ClickEvent, ClipboardItem, ContentMask, Context, Corner, Corners, CursorStyle,
+    DispatchPhase, Edges, Element, ElementInputHandler, Entity, Focusable as _, FontId, FontWeight,
+    GlobalElementId, Hitbox, HitboxBehavior, Hsla, InteractiveElement, IntoElement, IsZero,
+    KeybindingKeystroke, Length, Modifiers, ModifiersChangedEvent, MouseButton, MouseClickEvent,
+    MouseDownEvent, MouseMoveEvent, MousePressureEvent, MouseUpEvent, PaintQuad, ParentElement,
+    Pixels, PressureStage, ScrollDelta, ScrollHandle, ScrollWheelEvent, ShapedLine, SharedString,
+    Size, StatefulInteractiveElement, Style, Styled, StyledText, TextAlign, TextRun,
+    TextStyleRefinement, WeakEntity, Window, anchored, checkerboard, deferred, div, fill,
+    linear_color_stop, linear_gradient, outline, pattern_slash, point, px, quad, relative, size,
+    solid_background, transparent_black,
 };
 use itertools::Itertools;
 use language::{IndentGuideSettings, language_settings::ShowWhitespaceSetting};
@@ -2960,11 +2970,12 @@ impl EditorElement {
                             - scroll_pixel_position.x,
                     );
                     if start_x >= text_origin.x {
-                        let (offset_y, length) = Self::calculate_indent_guide_bounds(
-                            indent_guide.start_row..indent_guide.end_row,
-                            line_height,
-                            snapshot,
-                        );
+                        let (offset_y, length, display_row_range) =
+                            Self::calculate_indent_guide_bounds(
+                                indent_guide.start_row..indent_guide.end_row,
+                                line_height,
+                                snapshot,
+                            );
 
                         let start_y = Pixels::from(
                             ScrollOffset::from(content_origin.y) + offset_y
@@ -2975,6 +2986,7 @@ impl EditorElement {
                             origin: point(start_x, start_y),
                             length,
                             single_indent_width,
+                            display_row_range,
                             depth: indent_guide.depth,
                             active: active_indent_guide_indices.contains(&i),
                             settings: indent_guide.settings,
@@ -2985,6 +2997,22 @@ impl EditorElement {
                 })
                 .collect(),
         )
+    }
+
+    fn depth_zero_indent_guide_padding_for_row(
+        indent_guides: &[IndentGuideLayout],
+        row: DisplayRow,
+    ) -> Pixels {
+        indent_guides
+            .iter()
+            .find(|guide| guide.depth == 0 && guide.display_row_range.contains(&row))
+            .and_then(|guide| {
+                guide
+                    .settings
+                    .visible_line_width(guide.active)
+                    .map(|width| px(width as f32 * 2.0))
+            })
+            .unwrap_or(px(0.0))
     }
 
     fn layout_wrap_guides(
@@ -3024,11 +3052,11 @@ impl EditorElement {
         row_range: Range<MultiBufferRow>,
         line_height: Pixels,
         snapshot: &DisplaySnapshot,
-    ) -> (f64, gpui::Pixels) {
+    ) -> (f64, gpui::Pixels, Range<DisplayRow>) {
         let start_point = Point::new(row_range.start.0, 0);
         let end_point = Point::new(row_range.end.0, 0);
 
-        let row_range = start_point.to_display_point(snapshot).row()
+        let mut row_range = start_point.to_display_point(snapshot).row()
             ..end_point.to_display_point(snapshot).row();
 
         let mut prev_line = start_point;
@@ -3066,6 +3094,7 @@ impl EditorElement {
         if !found_excerpt_header {
             offset_y -= block_offset as f64 * f64::from(line_height);
             length += block_height as f32 * line_height;
+            row_range = DisplayRow(row_range.start.0.saturating_sub(block_offset))..row_range.end;
         }
 
         // If there is a block (e.g. diagnostic) at the end of an multibuffer excerpt,
@@ -3083,9 +3112,11 @@ impl EditorElement {
         }
         if found_excerpt_header {
             length -= block_height as f32 * line_height;
+        } else {
+            row_range = row_range.start..cons_line;
         }
 
-        (offset_y, length)
+        (offset_y, length, row_range)
     }
 
     fn layout_breakpoints(
@@ -3847,6 +3878,7 @@ impl EditorElement {
         latest_selection_anchors: &HashMap<BufferId, Anchor>,
         is_row_soft_wrapped: impl Copy + Fn(usize) -> bool,
         sticky_header_excerpt_id: Option<ExcerptId>,
+        indent_guides: &Option<Vec<IndentGuideLayout>>,
         block_resize_offset: &mut i32,
         window: &mut Window,
         cx: &mut App,
@@ -3898,19 +3930,30 @@ impl EditorElement {
 
                 div()
                     .size_full()
-                    .child(custom.render(&mut BlockContext {
-                        window,
-                        app: cx,
-                        anchor_x,
-                        margins: editor_margins,
-                        line_height,
-                        em_width,
-                        block_id,
-                        height: custom.height.unwrap_or(1),
-                        selected,
-                        max_width: text_hitbox.size.width.max(*scroll_width),
-                        editor_style: &self.style,
-                    }))
+                    .child(
+                        custom.render(&mut BlockContext {
+                            window,
+                            app: cx,
+                            anchor_x,
+                            margins: editor_margins,
+                            line_height,
+                            em_width,
+                            block_id,
+                            height: custom.height.unwrap_or(1),
+                            selected,
+                            max_width: text_hitbox.size.width.max(*scroll_width),
+                            editor_style: &self.style,
+                            indent_guide_padding: indent_guides
+                                .as_ref()
+                                .map(|guides| {
+                                    Self::depth_zero_indent_guide_padding_for_row(
+                                        guides,
+                                        block_row_start,
+                                    )
+                                })
+                                .unwrap_or(px(0.0)),
+                        }),
+                    )
                     .into_any()
             }
 
@@ -3998,7 +4041,20 @@ impl EditorElement {
             }
 
             Block::Spacer { height, .. } => {
-                Self::render_spacer_block(block_id, *height, line_height, window, cx)
+                let indent_guide_padding = indent_guides
+                    .as_ref()
+                    .map(|guides| {
+                        Self::depth_zero_indent_guide_padding_for_row(guides, block_row_start)
+                    })
+                    .unwrap_or(px(0.0));
+                Self::render_spacer_block(
+                    block_id,
+                    *height,
+                    line_height,
+                    indent_guide_padding,
+                    window,
+                    cx,
+                )
             }
         };
 
@@ -4085,15 +4141,14 @@ impl EditorElement {
         block_id: BlockId,
         block_height: u32,
         line_height: Pixels,
+        indent_guide_padding: Pixels,
         window: &mut Window,
         cx: &App,
     ) -> AnyElement {
         let target_size = 16.0;
         let scale = window.scale_factor();
-        let pattern_size = Self::spacer_pattern_period(
-            f32::from(line_height) * scale,
-            target_size * scale,
-        );
+        let pattern_size =
+            Self::spacer_pattern_period(f32::from(line_height) * scale, target_size * scale);
         let color = cx.theme().colors().panel_background;
         let background = pattern_slash(color, 2.0, pattern_size - 2.0);
 
@@ -4103,12 +4158,7 @@ impl EditorElement {
             .h((block_height as f32) * line_height)
             .flex()
             .flex_row()
-            .child(
-                div()
-                    .flex_shrink_0()
-                    .w(indent_guide_padding)
-                    .h_full(),
-            )
+            .child(div().flex_shrink_0().w(indent_guide_padding).h_full())
             .child(
                 div()
                     .flex_1()
@@ -4168,6 +4218,7 @@ impl EditorElement {
         latest_selection_anchors: &HashMap<BufferId, Anchor>,
         is_row_soft_wrapped: impl Copy + Fn(usize) -> bool,
         sticky_header_excerpt_id: Option<ExcerptId>,
+        indent_guides: &Option<Vec<IndentGuideLayout>>,
         window: &mut Window,
         cx: &mut App,
     ) -> RenderBlocksOutput {
@@ -4213,6 +4264,7 @@ impl EditorElement {
                 latest_selection_anchors,
                 is_row_soft_wrapped,
                 sticky_header_excerpt_id,
+                indent_guides,
                 &mut block_resize_offset,
                 window,
                 cx,
@@ -4280,6 +4332,7 @@ impl EditorElement {
                 latest_selection_anchors,
                 is_row_soft_wrapped,
                 sticky_header_excerpt_id,
+                indent_guides,
                 &mut block_resize_offset,
                 window,
                 cx,
@@ -4342,6 +4395,7 @@ impl EditorElement {
                 latest_selection_anchors,
                 is_row_soft_wrapped,
                 sticky_header_excerpt_id,
+                indent_guides,
                 &mut block_resize_offset,
                 window,
                 cx,
@@ -4399,7 +4453,10 @@ impl EditorElement {
             };
 
             if block.style == BlockStyle::FlexClipped {
-                origin += point(gutter_hitbox.size.width + editor_margins.gutter.margin, Pixels::ZERO);
+                origin += point(
+                    gutter_hitbox.size.width + editor_margins.gutter.margin,
+                    Pixels::ZERO,
+                );
             }
 
             if !matches!(block.style, BlockStyle::Sticky) {
@@ -6052,22 +6109,18 @@ impl EditorElement {
                 )),
             };
 
-            let requested_line_width = if indent_guide.active {
-                settings.active_line_width
-            } else {
-                settings.line_width
-            }
-            .clamp(1, 10);
             let mut line_indicator_width = 0.;
-            if let Some(color) = line_color {
-                window.paint_quad(fill(
-                    Bounds {
-                        origin: indent_guide.origin,
-                        size: size(px(requested_line_width as f32), indent_guide.length),
-                    },
-                    color,
-                ));
-                line_indicator_width = requested_line_width as f32;
+            if let Some(requested_line_width) = settings.visible_line_width(indent_guide.active) {
+                if let Some(color) = line_color {
+                    window.paint_quad(fill(
+                        Bounds {
+                            origin: indent_guide.origin,
+                            size: size(px(requested_line_width as f32), indent_guide.length),
+                        },
+                        color,
+                    ));
+                    line_indicator_width = requested_line_width as f32;
+                }
             }
 
             if let Some(color) = background_color {
@@ -10245,6 +10298,26 @@ impl Element for EditorElement {
                     let sticky_header_excerpt_id =
                         sticky_header_excerpt.as_ref().map(|top| top.excerpt.id);
 
+                    let buffer = snapshot.buffer_snapshot();
+                    let start_buffer_row = MultiBufferRow(start_anchor.to_point(&buffer).row);
+                    let end_buffer_row = MultiBufferRow(end_anchor.to_point(&buffer).row);
+
+                    let preliminary_scroll_pixel_position = point(
+                        scroll_position.x * f64::from(em_layout_width),
+                        scroll_position.y * f64::from(line_height),
+                    );
+                    let indent_guides = self.layout_indent_guides(
+                        content_origin,
+                        text_hitbox.origin,
+                        start_buffer_row..end_buffer_row,
+                        preliminary_scroll_pixel_position,
+                        line_height,
+                        &snapshot,
+                        window,
+                        cx,
+                    );
+                    let indent_guides_for_spacers = indent_guides.clone();
+
                     let blocks = (!is_minimap)
                         .then(|| {
                             window.with_element_namespace("blocks", |window| {
@@ -10265,6 +10338,7 @@ impl Element for EditorElement {
                                     &latest_selection_anchors,
                                     is_row_soft_wrapped,
                                     sticky_header_excerpt_id,
+                                    &indent_guides_for_spacers,
                                     window,
                                     cx,
                                 )
@@ -10322,11 +10396,6 @@ impl Element for EditorElement {
                     } else {
                         None
                     };
-
-                    let start_buffer_row =
-                        MultiBufferRow(start_anchor.to_point(&snapshot.buffer_snapshot()).row);
-                    let end_buffer_row =
-                        MultiBufferRow(end_anchor.to_point(&snapshot.buffer_snapshot()).row);
 
                     let scroll_max: gpui::Point<ScrollPixelOffset> = point(
                         ScrollPixelOffset::from(
@@ -10388,16 +10457,21 @@ impl Element for EditorElement {
                             sticky_headers.as_ref().map_or(0, |h| h.lines.len()),
                         );
                     });
-                    let indent_guides = self.layout_indent_guides(
-                        content_origin,
-                        text_hitbox.origin,
-                        start_buffer_row..end_buffer_row,
-                        scroll_pixel_position,
-                        line_height,
-                        &snapshot,
-                        window,
-                        cx,
-                    );
+                    let indent_guides =
+                        if scroll_pixel_position != preliminary_scroll_pixel_position {
+                            self.layout_indent_guides(
+                                content_origin,
+                                text_hitbox.origin,
+                                start_buffer_row..end_buffer_row,
+                                scroll_pixel_position,
+                                line_height,
+                                &snapshot,
+                                window,
+                                cx,
+                            )
+                        } else {
+                            indent_guides
+                        };
 
                     let crease_trailers =
                         window.with_element_namespace("crease_trailers", |window| {
@@ -11878,11 +11952,12 @@ pub fn layout_line(
     .unwrap()
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct IndentGuideLayout {
     origin: gpui::Point<Pixels>,
     length: Pixels,
     single_indent_width: Pixels,
+    display_row_range: Range<DisplayRow>,
     depth: u32,
     active: bool,
     settings: IndentGuideSettings,
@@ -13388,7 +13463,7 @@ mod tests {
     }
 
     #[test]
-    fn test_checkerboard_size() {
+    fn test_spacer_pattern_period() {
         // line height is smaller than target height, so we just return half the line height
         assert_eq!(EditorElement::spacer_pattern_period(10.0, 20.0), 5.0);
 
