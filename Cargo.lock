@@ -4086,7 +4086,7 @@ dependencies = [
  "bincode",
  "cfg-if",
  "crash-handler",
- "extension_host",
+ "futures 0.3.31",
  "log",
  "mach2 0.5.0",
  "minidumper",
