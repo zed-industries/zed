@@ -953,6 +953,7 @@
       "alt-d": "project_panel::CompareMarkedFiles",
       "cmd-alt-backspace": ["project_panel::Delete", { "skip_prompt": false }],
       "cmd-alt-shift-f": "project_panel::NewSearchInDirectory",
+      "cmd-shift-v": "project_panel::OpenMarkdownPreview",
       "shift-down": "menu::SelectNext",
       "shift-up": "menu::SelectPrevious",
       "escape": "menu::Cancel",

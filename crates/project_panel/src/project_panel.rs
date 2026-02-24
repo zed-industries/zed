@@ -367,6 +367,8 @@ actions!(
         SelectPrevDirectory,
         /// Opens a diff view to compare two marked files.
         CompareMarkedFiles,
+        /// Opens a markdown preview for the selected markdown file.
+        OpenMarkdownPreview,
     ]
 );
 
@@ -553,6 +555,55 @@ pub fn init(cx: &mut App) {
                         cx,
                     );
                 }
+            }
+        });
+
+        workspace.register_action(|workspace, _: &OpenMarkdownPreview, window, cx| {
+            let Some(panel) = workspace.panel::<ProjectPanel>(cx) else {
+                return;
+            };
+            let maybe_project_path = panel.read(cx).selection.and_then(|selection| {
+                let project = workspace.project().read(cx);
+                let worktree = project.worktree_for_id(selection.worktree_id, cx)?;
+                let entry = worktree.read(cx).entry_for_id(selection.entry_id)?;
+                if entry.is_file()
+                    && entry.path.extension().is_some_and(|ext| {
+                        ext.eq_ignore_ascii_case("md") || ext.eq_ignore_ascii_case("markdown")
+                    })
+                {
+                    Some(ProjectPath {
+                        worktree_id: selection.worktree_id,
+                        path: entry.path.clone(),
+                    })
+                } else {
+                    None
+                }
+            });
+
+            if let Some(project_path) = maybe_project_path {
+                let open_task = workspace.open_path_preview(
+                    project_path,
+                    None,
+                    true,
+                    false,
+                    true,
+                    window,
+                    cx,
+                );
+                window
+                    .spawn(cx, async move |cx| {
+                        open_task.await?;
+                        cx.update(|window, cx| {
+                            if let Some(focus) = window.focused(cx) {
+                                focus.dispatch_action(
+                                    &zed_actions::preview::markdown::OpenPreview,
+                                    window,
+                                    cx,
+                                );
+                            }
+                        })
+                    })
+                    .detach_and_log_err(cx);
             }
         });
     })
@@ -1124,6 +1175,10 @@ impl ProjectPanel {
                 && (cfg!(target_os = "windows")
                     || (settings.hide_root && visible_worktrees_count == 1));
             let should_show_compare = !is_dir && self.file_abs_paths_to_diff(cx).is_some();
+            let is_markdown = !is_dir
+                && entry.path.extension().is_some_and(|ext| {
+                    ext.eq_ignore_ascii_case("md") || ext.eq_ignore_ascii_case("markdown")
+                });
 
             let has_git_repo = !is_dir && {
                 let project_path = project::ProjectPath {
@@ -1143,6 +1198,12 @@ impl ProjectPanel {
                     if is_read_only {
                         menu.when(is_dir, |menu| {
                             menu.action("Search Inside", Box::new(NewSearchInDirectory))
+                        })
+                        .when(is_markdown, |menu| {
+                            menu.action(
+                                "Open Markdown Preview",
+                                Box::new(OpenMarkdownPreview),
+                            )
                         })
                     } else {
                         menu.action("New File", Box::new(NewFile))
@@ -1164,6 +1225,12 @@ impl ProjectPanel {
                                 menu.action("Open in Default App", Box::new(OpenWithSystem))
                             })
                             .action("Open in Terminal", Box::new(OpenInTerminal))
+                            .when(is_markdown, |menu| {
+                                menu.action(
+                                    "Open Markdown Preview",
+                                    Box::new(OpenMarkdownPreview),
+                                )
+                            })
                             .when(is_dir, |menu| {
                                 menu.separator()
                                     .action("Find in Folder…", Box::new(NewSearchInDirectory))
