@@ -1408,8 +1408,9 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
     }
 
     fn session_list(&self, cx: &mut App) -> Option<Rc<dyn AgentSessionList>> {
+        let agent = self.0.downgrade();
         let thread_store = self.0.read(cx).thread_store.clone();
-        Some(Rc::new(NativeAgentSessionList::new(thread_store, cx)) as _)
+        Some(Rc::new(NativeAgentSessionList::new(agent, thread_store, cx)) as _)
     }
 
     fn telemetry(&self) -> Option<Rc<dyn acp_thread::AgentTelemetry>> {
@@ -1439,6 +1440,7 @@ impl acp_thread::AgentTelemetry for NativeAgentConnection {
 }
 
 pub struct NativeAgentSessionList {
+    agent: WeakEntity<NativeAgent>,
     thread_store: Entity<ThreadStore>,
     updates_tx: smol::channel::Sender<acp_thread::SessionListUpdate>,
     updates_rx: smol::channel::Receiver<acp_thread::SessionListUpdate>,
@@ -1446,7 +1448,11 @@ pub struct NativeAgentSessionList {
 }
 
 impl NativeAgentSessionList {
-    fn new(thread_store: Entity<ThreadStore>, cx: &mut App) -> Self {
+    fn new(
+        agent: WeakEntity<NativeAgent>,
+        thread_store: Entity<ThreadStore>,
+        cx: &mut App,
+    ) -> Self {
         let (tx, rx) = smol::channel::unbounded();
         let this_tx = tx.clone();
         let subscription = cx.observe(&thread_store, move |_, _| {
@@ -1455,6 +1461,7 @@ impl NativeAgentSessionList {
                 .ok();
         });
         Self {
+            agent,
             thread_store,
             updates_tx: tx,
             updates_rx: rx,
@@ -1497,11 +1504,27 @@ impl AgentSessionList for NativeAgentSessionList {
     }
 
     fn delete_session(&self, session_id: &acp::SessionId, cx: &mut App) -> Task<Result<()>> {
+        // Remove the session from `NativeAgent` first to drop the `cx.observe`
+        // subscription and cancel any pending save task. Without this, the
+        // auto-save observer can get in a race condition  with the DB delete
+        // and resurrect the thread via `INSERT` OR `REPLACE`.
+        if let Some(agent) = self.agent.upgrade() {
+            agent.update(cx, |agent, _cx| {
+                agent.sessions.remove(session_id);
+            });
+        }
+
         self.thread_store
             .update(cx, |store, cx| store.delete_thread(session_id.clone(), cx))
     }
 
     fn delete_sessions(&self, cx: &mut App) -> Task<Result<()>> {
+        if let Some(agent) = self.agent.upgrade() {
+            agent.update(cx, |agent, _cx| {
+                agent.sessions.clear();
+            });
+        }
+
         self.thread_store
             .update(cx, |store, cx| store.delete_threads(cx))
     }
