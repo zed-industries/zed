@@ -33141,3 +33141,51 @@ async fn test_file_path_nav_prefix_none_for_untitled(cx: &mut TestAppContext) {
         );
     });
 }
+
+/// Exercises the `build_directory_menu` code path with a deeply nested
+/// directory structure to verify recursive menu construction does not panic.
+#[gpui::test]
+async fn test_file_path_nav_nested_directory_structure(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/project"),
+        json!({
+            "Cargo.toml": "[package]\nname = \"project\"",
+            "src": {
+                "main.rs": "fn main() {}",
+                "components": {
+                    "mod.rs": "pub mod ui;",
+                    "ui": {
+                        "button.rs": "pub struct Button;",
+                        "input.rs": "pub struct Input;",
+                    }
+                }
+            }
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/project/src/components/ui/button.rs"), cx)
+        })
+        .await
+        .unwrap();
+
+    let (editor, cx) = cx.add_window_view(|window, cx| {
+        let multibuffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+        build_editor_with_project(project.clone(), multibuffer, window, cx)
+    });
+
+    editor.update_in(cx, |editor, window, cx| {
+        let prefix = editor.breadcrumb_prefix(window, cx);
+        assert!(
+            prefix.is_some(),
+            "breadcrumb_prefix should return Some for a deeply nested file"
+        );
+    });
+}
