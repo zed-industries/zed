@@ -1121,9 +1121,10 @@ impl SplittableEditor {
 #[cfg(test)]
 impl SplittableEditor {
     fn check_invariants(&self, quiesced: bool, cx: &mut App) {
-        use multi_buffer::MultiBufferRow;
+        use multi_buffer::ExcerptId;
         use text::Bias;
 
+        use crate::DisplaySnapshot;
         use crate::display_map::Block;
         use crate::display_map::DisplayRow;
 
@@ -1176,7 +1177,7 @@ impl SplittableEditor {
                     "mismatch in hunk statuses"
                 );
 
-                let (lhs_point, rhs_point) =
+                let (mut lhs_point, mut rhs_point) =
                     if lhs_hunk.row_range.is_empty() || rhs_hunk.row_range.is_empty() {
                         (
                             Point::new(lhs_hunk.row_range.end.0, 0),
@@ -1188,6 +1189,24 @@ impl SplittableEditor {
                             Point::new(rhs_hunk.row_range.start.0, 0),
                         )
                     };
+
+                let exceeds_excerpt =
+                    |point: Point, excerpt_id: ExcerptId, snapshot: &DisplaySnapshot| {
+                        snapshot
+                            .range_for_excerpt(excerpt_id)
+                            .map_or(false, |range| point >= range.end)
+                    };
+                let lhs_exceeds = exceeds_excerpt(lhs_point, lhs_hunk.excerpt_id, &lhs_snapshot);
+                let rhs_exceeds = exceeds_excerpt(rhs_point, rhs_hunk.excerpt_id, &rhs_snapshot);
+                if lhs_exceeds != rhs_exceeds {
+                    if lhs_exceeds && lhs_point.row > 0 {
+                        lhs_point = Point::new(lhs_point.row - 1, 0);
+                    }
+                    if rhs_exceeds && rhs_point.row > 0 {
+                        rhs_point = Point::new(rhs_point.row - 1, 0);
+                    }
+                }
+
                 let lhs_point = lhs_snapshot.point_to_display_point(lhs_point, Bias::Left);
                 let rhs_point = rhs_snapshot.point_to_display_point(rhs_point, Bias::Left);
                 assert_eq!(
@@ -1196,29 +1215,6 @@ impl SplittableEditor {
                     "mismatch in hunk position"
                 );
             }
-        }
-    }
-
-    #[track_caller]
-    fn check_sides_match<T: std::fmt::Debug + PartialEq>(
-        &self,
-        cx: &mut App,
-        mut extract: impl FnMut(&crate::DisplaySnapshot) -> T,
-    ) {
-        let lhs = self.lhs.as_ref().expect("requires split");
-        let rhs_snapshot = self.rhs_editor.update(cx, |editor, cx| {
-            editor.display_map.update(cx, |map, cx| map.snapshot(cx))
-        });
-        let lhs_snapshot = lhs.editor.update(cx, |editor, cx| {
-            editor.display_map.update(cx, |map, cx| map.snapshot(cx))
-        });
-
-        let rhs_t = extract(&rhs_snapshot);
-        let lhs_t = extract(&lhs_snapshot);
-
-        if rhs_t != lhs_t {
-            self.debug_print(cx);
-            pretty_assertions::assert_eq!(rhs_t, lhs_t);
         }
     }
 
