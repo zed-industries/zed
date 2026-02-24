@@ -39,7 +39,7 @@ use ui::{
 };
 use workspace::{
     Workspace,
-    item::{Item, ItemEvent, SerializableItem},
+    item::{Item, ItemEvent, SerializableItem, TabTooltipContent},
 };
 
 const COMMIT_CIRCLE_RADIUS: Pixels = px(3.5);
@@ -710,29 +710,66 @@ pub fn init(cx: &mut App) {
                 |div| {
                     let workspace = workspace.weak_handle();
 
-                    div.on_action(move |_: &git_ui::git_panel::Open, window, cx| {
-                        workspace
-                            .update(cx, |workspace, cx| {
-                                let existing = workspace.items_of_type::<GitGraph>(cx).next();
-                                if let Some(existing) = existing {
-                                    workspace.activate_item(&existing, true, true, window, cx);
-                                    return;
-                                }
+                    div.on_action({
+                        let workspace = workspace.clone();
+                        move |_: &git_ui::git_panel::Open, window, cx| {
+                            workspace
+                                .update(cx, |workspace, cx| {
+                                    let existing = workspace.items_of_type::<GitGraph>(cx).next();
+                                    if let Some(existing) = existing {
+                                        workspace.activate_item(&existing, true, true, window, cx);
+                                        return;
+                                    }
 
-                                let project = workspace.project().clone();
-                                let workspace_handle = workspace.weak_handle();
-                                let git_graph = cx
-                                    .new(|cx| GitGraph::new(project, workspace_handle, window, cx));
-                                workspace.add_item_to_active_pane(
-                                    Box::new(git_graph),
-                                    None,
-                                    true,
-                                    window,
-                                    cx,
-                                );
-                            })
-                            .ok();
+                                    let project = workspace.project().clone();
+                                    let workspace_handle = workspace.weak_handle();
+                                    let git_graph = cx.new(|cx| {
+                                        GitGraph::new(project, workspace_handle, window, cx)
+                                    });
+                                    workspace.add_item_to_active_pane(
+                                        Box::new(git_graph),
+                                        None,
+                                        true,
+                                        window,
+                                        cx,
+                                    );
+                                })
+                                .ok();
+                        }
                     })
+                    .on_action(
+                        move |action: &git_ui::git_panel::OpenAtCommit, window, cx| {
+                            let sha = action.sha.clone();
+                            workspace
+                                .update(cx, |workspace, cx| {
+                                    let existing = workspace.items_of_type::<GitGraph>(cx).next();
+                                    if let Some(existing) = existing {
+                                        existing.update(cx, |graph, cx| {
+                                            graph.select_commit_by_sha(&sha, cx);
+                                        });
+                                        workspace.activate_item(&existing, true, true, window, cx);
+                                        return;
+                                    }
+
+                                    let project = workspace.project().clone();
+                                    let workspace_handle = workspace.weak_handle();
+                                    let git_graph = cx.new(|cx| {
+                                        let mut graph =
+                                            GitGraph::new(project, workspace_handle, window, cx);
+                                        graph.select_commit_by_sha(&sha, cx);
+                                        graph
+                                    });
+                                    workspace.add_item_to_active_pane(
+                                        Box::new(git_graph),
+                                        None,
+                                        true,
+                                        window,
+                                        cx,
+                                    );
+                                })
+                                .ok();
+                        },
+                    )
                 },
             )
         });
@@ -821,6 +858,7 @@ pub struct GitGraph {
     commit_details_split_state: Entity<SplitState>,
     selected_repo_id: Option<RepositoryId>,
     changed_files_scroll_handle: UniformListScrollHandle,
+    pending_select_sha: Option<String>,
 }
 
 impl GitGraph {
@@ -918,6 +956,7 @@ impl GitGraph {
             commit_details_split_state: cx.new(|_cx| SplitState::new()),
             selected_repo_id: active_repository,
             changed_files_scroll_handle: UniformListScrollHandle::new(),
+            pending_select_sha: None,
         };
 
         this.fetch_initial_graph_data(cx);
@@ -944,6 +983,9 @@ impl GitGraph {
                     self.graph_data.add_commits(commits);
                 });
                 cx.notify();
+                if let Some(sha) = self.pending_select_sha.take() {
+                    self.select_commit_by_sha(&sha, cx);
+                }
             }
             RepositoryEvent::BranchChanged | RepositoryEvent::MergeHeadsChanged => {
                 // Only invalidate if we scanned atleast once,
@@ -1151,6 +1193,17 @@ impl GitGraph {
         }));
 
         cx.notify();
+    }
+
+    pub fn select_commit_by_sha(&mut self, sha: &str, cx: &mut Context<Self>) {
+        for (idx, commit) in self.graph_data.commits.iter().enumerate() {
+            if commit.data.sha.to_string() == sha {
+                self.pending_select_sha = None;
+                self.select_entry(idx, cx);
+                return;
+            }
+        }
+        self.pending_select_sha = Some(sha.to_string());
     }
 
     fn open_selected_commit_view(&mut self, window: &mut Window, cx: &mut Context<Self>) {
