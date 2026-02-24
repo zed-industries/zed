@@ -6196,6 +6196,12 @@ impl AcpThreadView {
             .as_ref()
             .map_or(false, |thread| !thread.read(cx).entries().is_empty());
 
+        let tooltip_meta_description = if is_expanded {
+            "Click to Collapse"
+        } else {
+            "Click to Preview"
+        };
+
         v_flex()
             .w_full()
             .rounded_md()
@@ -6231,7 +6237,7 @@ impl AcpThreadView {
                                     .child(icon)
                                     .child(
                                         Label::new(title.to_string())
-                                            .size(LabelSize::Small)
+                                            .size(LabelSize::Custom(self.tool_name_font_size()))
                                             .truncate(),
                                     )
                                     .when(files_changed > 0, |this| {
@@ -6241,7 +6247,7 @@ impl AcpThreadView {
                                                 files_changed,
                                                 if files_changed == 1 { "file" } else { "files" }
                                             ))
-                                            .size(LabelSize::Small)
+                                            .size(LabelSize::Custom(self.tool_name_font_size()))
                                             .color(Color::Muted),
                                         )
                                         .child(
@@ -6249,7 +6255,10 @@ impl AcpThreadView {
                                                 diff_stat_id.clone(),
                                                 diff_stats.lines_added as usize,
                                                 diff_stats.lines_removed as usize,
-                                            ),
+                                            )
+                                            .label_size(LabelSize::Custom(
+                                                self.tool_name_font_size(),
+                                            )),
                                         )
                                     }),
                             )
@@ -6258,7 +6267,7 @@ impl AcpThreadView {
                                     Tooltip::with_meta(
                                         title.to_string(),
                                         None,
-                                        "Click to View Preview",
+                                        tooltip_meta_description,
                                         cx,
                                     )
                                 })
@@ -6357,14 +6366,19 @@ impl AcpThreadView {
                                 .when(is_canceled_or_failed, |this| this.border_dashed())
                                 .border_color(cx.theme().colors().border_variant)
                                 .child(
-                                    Button::new(format!("expand-subagent-{}", entry_ix), "Expand")
-                                        .full_width()
-                                        .style(ButtonStyle::Outlined)
-                                        .icon(IconName::Maximize)
-                                        .icon_color(Color::Muted)
-                                        .icon_size(IconSize::Small)
-                                        .icon_position(IconPosition::Start)
-                                        .on_click(cx.listener(move |this, _event, window, cx| {
+                                    Button::new(
+                                        format!("expand-subagent-{}", entry_ix),
+                                        "Full Screen",
+                                    )
+                                    .full_width()
+                                    .style(ButtonStyle::Outlined)
+                                    .label_size(LabelSize::Small)
+                                    .icon(IconName::Maximize)
+                                    .icon_color(Color::Muted)
+                                    .icon_size(IconSize::Small)
+                                    .icon_position(IconPosition::Start)
+                                    .on_click(cx.listener(
+                                        move |this, _event, window, cx| {
                                             this.server_view
                                                 .update(cx, |this, cx| {
                                                     this.navigate_to_session(
@@ -6374,7 +6388,8 @@ impl AcpThreadView {
                                                     );
                                                 })
                                                 .ok();
-                                        })),
+                                        },
+                                    )),
                                 ),
                         )
                     })
@@ -6399,6 +6414,14 @@ impl AcpThreadView {
         let subagent_view = thread_view.read(cx);
         let session_id = subagent_view.thread.read(cx).session_id().clone();
 
+        let scroll_handle = self
+            .subagent_scroll_handles
+            .borrow_mut()
+            .entry(session_id.clone())
+            .or_default()
+            .clone();
+        scroll_handle.scroll_to_bottom();
+
         let base_container = || {
             div()
                 .id(format!("subagent-content-{}", session_id))
@@ -6417,14 +6440,6 @@ impl AcpThreadView {
             let total_entries = entries.len();
             let start_ix = total_entries.saturating_sub(MAX_PREVIEW_ENTRIES);
 
-            let scroll_handle = self
-                .subagent_scroll_handles
-                .borrow_mut()
-                .entry(session_id.clone())
-                .or_default()
-                .clone();
-            scroll_handle.scroll_to_bottom();
-
             let rendered_entries: Vec<AnyElement> = entries[start_ix..]
                 .iter()
                 .enumerate()
@@ -6435,7 +6450,6 @@ impl AcpThreadView {
                 .collect();
 
             base_container()
-                .id(format!("subagent-content-{}", session_id))
                 .child(
                     div()
                         .id(format!("subagent-entries-{}", session_id))
@@ -6462,33 +6476,35 @@ impl AcpThreadView {
                 .into_any_element()
         } else {
             base_container()
-                .children(
-                    tool_call
-                        .content
-                        .iter()
-                        .enumerate()
-                        .map(|(content_ix, content)| {
-                            div().id(("tool-call-output", entry_ix)).pb_1().child(
-                                self.render_tool_call_content(
-                                    active_session_id,
-                                    entry_ix,
-                                    content,
-                                    content_ix,
-                                    tool_call,
-                                    true,
-                                    false,
-                                    matches!(
-                                        tool_call.status,
-                                        ToolCallStatus::Failed
-                                            | ToolCallStatus::Rejected
-                                            | ToolCallStatus::Canceled
+                .child(
+                    v_flex()
+                        .id(format!("subagent-done-content-{}", session_id))
+                        .size_full()
+                        .justify_end()
+                        .children(tool_call.content.iter().enumerate().map(
+                            |(content_ix, content)| {
+                                div().id(("tool-call-output", entry_ix)).p_2().child(
+                                    self.render_tool_call_content(
+                                        active_session_id,
+                                        entry_ix,
+                                        content,
+                                        content_ix,
+                                        tool_call,
+                                        true,
+                                        false,
+                                        matches!(
+                                            tool_call.status,
+                                            ToolCallStatus::Failed
+                                                | ToolCallStatus::Rejected
+                                                | ToolCallStatus::Canceled
+                                        ),
+                                        focus_handle,
+                                        window,
+                                        cx,
                                     ),
-                                    focus_handle,
-                                    window,
-                                    cx,
-                                ),
-                            )
-                        }),
+                                )
+                            },
+                        )),
                 )
                 .into_any_element()
         }
