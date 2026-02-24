@@ -137,6 +137,12 @@ jobs:
             echo "Version changes happen in separate PRs and will be performed by the zed-zippy bot"
             exit 42
         fi
+    - name: extension_tests::breakpoint
+      if: failure()
+      uses: namespacelabs/breakpoint-action@ca62bf12510ebf1115a560cf337a35fad5eb052b
+      with:
+        duration: 15m
+        authorized-users: MrSubidubi
     timeout-minutes: 6
   tests_pass:
     needs:
