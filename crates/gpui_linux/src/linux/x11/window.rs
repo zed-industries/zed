@@ -391,7 +391,7 @@ impl X11WindowState {
         handle: AnyWindowHandle,
         client: X11ClientStatePtr,
         executor: ForegroundExecutor,
-        gpu_context: &WgpuContext,
+        gpu_context: &mut Option<WgpuContext>,
         params: WindowParams,
         xcb: &Rc<XCBConnection>,
         client_side_decorations_supported: bool,
@@ -798,7 +798,7 @@ impl X11Window {
         handle: AnyWindowHandle,
         client: X11ClientStatePtr,
         executor: ForegroundExecutor,
-        gpu_context: &WgpuContext,
+        gpu_context: &mut Option<WgpuContext>,
         params: WindowParams,
         xcb: &Rc<XCBConnection>,
         client_side_decorations_supported: bool,
@@ -1465,7 +1465,10 @@ impl PlatformWindow for X11Window {
             .upgrade()
             .map(|ref_cell| {
                 let state = ref_cell.borrow();
-                state.gpu_context.supports_dual_source_blending()
+                state
+                    .gpu_context
+                    .as_ref()
+                    .is_some_and(|ctx| ctx.supports_dual_source_blending())
             })
             .unwrap_or_default()
     }

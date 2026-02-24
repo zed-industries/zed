@@ -17,8 +17,6 @@ use crate::{AgentTool, Thread, ThreadEnvironment, ToolCallEventStream};
 /// - Complete a self-contained task where you need to know if it succeeded or failed (and how), but none of its intermediate output.
 /// - Perform an investigation where all you need to know is the outcome, not the research that led to that outcome.
 ///
-/// Do NOT use this tool for simple tasks you could accomplish directly with one or two tool calls (e.g. reading a file, running a single command). Each agent has startup overhead.
-///
 /// You control what the agent does by providing a prompt describing what the agent should do. The agent has access to the same tools you do, but does NOT see your conversation history or any context the user attached. You must include all relevant context (file paths, requirements, constraints) in the prompt.
 ///
 /// You will receive only the agent's final message as output.

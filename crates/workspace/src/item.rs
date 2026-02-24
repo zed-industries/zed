@@ -219,6 +219,7 @@ pub trait Item: Focusable + EventEmitter<Self::Event> + Render + Sized {
     fn discarded(&self, _project: Entity<Project>, _window: &mut Window, _cx: &mut Context<Self>) {}
     fn on_removed(&self, _cx: &mut Context<Self>) {}
     fn workspace_deactivated(&mut self, _window: &mut Window, _: &mut Context<Self>) {}
+    fn pane_changed(&mut self, _new_pane_id: EntityId, _cx: &mut Context<Self>) {}
     fn navigate(
         &mut self,
         _: Arc<dyn Any + Send>,
@@ -737,11 +738,22 @@ impl<T: Item> ItemHandle for Entity<T> {
                 .log_err();
         }
 
-        if workspace
+        let new_pane_id = pane.entity_id();
+        let old_item_pane = workspace
             .panes_by_item
-            .insert(self.item_id(), pane.downgrade())
-            .is_none()
-        {
+            .insert(self.item_id(), pane.downgrade());
+
+        if old_item_pane.as_ref().is_none_or(|old_pane| {
+            old_pane
+                .upgrade()
+                .is_some_and(|old_pane| old_pane.entity_id() != new_pane_id)
+        }) {
+            self.update(cx, |this, cx| {
+                this.pane_changed(new_pane_id, cx);
+            });
+        }
+
+        if old_item_pane.is_none() {
             let mut pending_autosave = DelayedDebouncedEditAction::new();
             let (pending_update_tx, mut pending_update_rx) = mpsc::unbounded();
             let pending_update = Rc::new(RefCell::new(None));

@@ -89,7 +89,7 @@ pub(crate) fn check_extension() -> NamedJob {
         .with_repository_owner_guard()
         .runs_on(runners::LINUX_LARGE_RAM)
         .timeout_minutes(6u32)
-        .add_step(steps::checkout_repo().with_deep_history_on_non_main())
+        .add_step(steps::checkout_repo().with_full_history())
         .add_step(cache_download)
         .add_step(download_zed_extension_cli(cache_hit))
         .add_step(cache_rust_dependencies_namespace()) // Extensions can compile Rust, so provide the cache if needed.

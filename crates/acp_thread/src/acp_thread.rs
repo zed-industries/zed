@@ -895,15 +895,17 @@ pub struct TokenUsage {
     pub max_output_tokens: Option<u64>,
 }
 
+pub const TOKEN_USAGE_WARNING_THRESHOLD: f32 = 0.8;
+
 impl TokenUsage {
     pub fn ratio(&self) -> TokenUsageRatio {
         #[cfg(debug_assertions)]
         let warning_threshold: f32 = std::env::var("ZED_THREAD_WARNING_THRESHOLD")
-            .unwrap_or("0.8".to_string())
+            .unwrap_or(TOKEN_USAGE_WARNING_THRESHOLD.to_string())
             .parse()
             .unwrap();
         #[cfg(not(debug_assertions))]
-        let warning_threshold: f32 = 0.8;
+        let warning_threshold: f32 = TOKEN_USAGE_WARNING_THRESHOLD;
 
         // When the maximum is unknown because there is no selected model,
         // avoid showing the token limit warning.
@@ -1683,6 +1685,17 @@ impl AcpThread {
             })
     }
 
+    pub fn tool_call_for_subagent(&self, session_id: &acp::SessionId) -> Option<&ToolCall> {
+        self.entries.iter().find_map(|entry| match entry {
+            AgentThreadEntry::ToolCall(tool_call)
+                if tool_call.subagent_session_id.as_ref() == Some(session_id) =>
+            {
+                Some(tool_call)
+            }
+            _ => None,
+        })
+    }
+
     pub fn resolve_locations(&mut self, id: acp::ToolCallId, cx: &mut Context<Self>) {
         let project = self.project.clone();
         let Some((_, tool_call)) = self.tool_call_mut(&id) else {
@@ -2317,7 +2330,7 @@ impl AcpThread {
                     text_diff(old_text.as_str(), &content)
                         .into_iter()
                         .map(|(range, replacement)| {
-                            (snapshot.anchor_range_between(range), replacement)
+                            (snapshot.anchor_range_around(range), replacement)
                         })
                         .collect::<Vec<_>>()
                 })

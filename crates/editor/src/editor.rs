@@ -360,7 +360,7 @@ pub fn init(cx: &mut App) {
                     Editor::new_file(workspace, &Default::default(), window, cx)
                 },
             )
-            .detach();
+            .detach_and_log_err(cx);
         }
     })
     .on_action(move |_: &workspace::NewWindow, cx| {
@@ -375,7 +375,7 @@ pub fn init(cx: &mut App) {
                     Editor::new_file(workspace, &Default::default(), window, cx)
                 },
             )
-            .detach();
+            .detach_and_log_err(cx);
         }
     });
     _ = ui_input::ERASED_EDITOR_FACTORY.set(|window, cx| {
@@ -22801,11 +22801,35 @@ impl Editor {
         maybe!({
             let breakpoint_store = self.breakpoint_store.as_ref()?;
 
-            let Some(active_stack_frame) = breakpoint_store.read(cx).active_position().cloned()
-            else {
+            let (active_stack_frame, debug_line_pane_id) = {
+                let store = breakpoint_store.read(cx);
+                let active_stack_frame = store.active_position().cloned();
+                let debug_line_pane_id = store.active_debug_line_pane_id();
+                (active_stack_frame, debug_line_pane_id)
+            };
+
+            let Some(active_stack_frame) = active_stack_frame else {
                 self.clear_row_highlights::<ActiveDebugLine>();
                 return None;
             };
+
+            if let Some(debug_line_pane_id) = debug_line_pane_id {
+                if let Some(workspace) = self
+                    .workspace
+                    .as_ref()
+                    .and_then(|(workspace, _)| workspace.upgrade())
+                {
+                    let editor_pane_id = workspace
+                        .read(cx)
+                        .pane_for_item_id(cx.entity_id())
+                        .map(|pane| pane.entity_id());
+
+                    if editor_pane_id.is_some_and(|id| id != debug_line_pane_id) {
+                        self.clear_row_highlights::<ActiveDebugLine>();
+                        return None;
+                    }
+                }
+            }
 
             let position = active_stack_frame.position;
             let buffer_id = position.buffer_id?;

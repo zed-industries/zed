@@ -1,6 +1,6 @@
 #![allow(clippy::reversed_empty_ranges)]
 use crate::TestServer;
-use call::{ActiveCall, ParticipantLocation};
+use call::ActiveCall;
 use client::ChannelId;
 use collab_ui::{
     channel_view::ChannelView,
@@ -17,7 +17,10 @@ use serde_json::json;
 use settings::SettingsStore;
 use text::{Point, ToPoint};
 use util::{path, rel_path::rel_path, test::sample_text};
-use workspace::{CollaboratorId, MultiWorkspace, SplitDirection, Workspace, item::ItemHandle as _};
+use workspace::{
+    CollaboratorId, MultiWorkspace, ParticipantLocation, SplitDirection, Workspace,
+    item::ItemHandle as _,
+};
 
 use super::TestClient;
 

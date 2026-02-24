@@ -7835,7 +7835,7 @@ pub fn render_breadcrumb_text(
             return styled_element;
         }
 
-        StyledText::new(segment.text.replace('\n', "⏎"))
+        StyledText::new(segment.text.replace('\n', " "))
             .with_default_highlights(&text_style, segment.highlights.unwrap_or_default())
             .into_any()
     });
@@ -8139,6 +8139,7 @@ pub(crate) fn render_buffer_header(
         .h(FILE_HEADER_HEIGHT as f32 * window.line_height())
         .child(
             h_flex()
+                .group("buffer-header-group")
                 .size_full()
                 .flex_basis(Length::Definite(DefiniteLength::Fraction(0.667)))
                 .pl_1()
@@ -8332,31 +8333,36 @@ pub(crate) fn render_buffer_header(
                                     })
                             },
                         ))
-                        .when(
-                            can_open_excerpts && is_selected && relative_path.is_some(),
-                            |el| {
-                                el.child(
-                                    Button::new("open-file-button", "Open File")
-                                        .style(ButtonStyle::OutlinedGhost)
-                                        .key_binding(KeyBinding::for_action_in(
-                                            &OpenExcerpts,
-                                            &focus_handle,
-                                            cx,
-                                        ))
-                                        .on_click(window.listener_for(editor, {
-                                            let jump_data = jump_data.clone();
-                                            move |editor, e: &ClickEvent, window, cx| {
-                                                editor.open_excerpts_common(
-                                                    Some(jump_data.clone()),
-                                                    e.modifiers().secondary(),
-                                                    window,
+                        .when(can_open_excerpts && relative_path.is_some(), |this| {
+                            this.child(
+                                div()
+                                    .when(!is_selected, |this| {
+                                        this.visible_on_hover("buffer-header-group")
+                                    })
+                                    .child(
+                                        Button::new("open-file-button", "Open File")
+                                            .style(ButtonStyle::OutlinedGhost)
+                                            .when(is_selected, |this| {
+                                                this.key_binding(KeyBinding::for_action_in(
+                                                    &OpenExcerpts,
+                                                    &focus_handle,
                                                     cx,
-                                                );
-                                            }
-                                        })),
-                                )
-                            },
-                        )
+                                                ))
+                                            })
+                                            .on_click(window.listener_for(editor, {
+                                                let jump_data = jump_data.clone();
+                                                move |editor, e: &ClickEvent, window, cx| {
+                                                    editor.open_excerpts_common(
+                                                        Some(jump_data.clone()),
+                                                        e.modifiers().secondary(),
+                                                        window,
+                                                        cx,
+                                                    );
+                                                }
+                                            })),
+                                    ),
+                            )
+                        })
                         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                         .on_click(window.listener_for(editor, {
                             let buffer_id = for_excerpt.buffer_id;

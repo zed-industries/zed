@@ -2484,6 +2484,7 @@ dependencies = [
  "settings",
  "telemetry",
  "util",
+ "workspace",
 ]
 
 [[package]]
@@ -4086,7 +4087,7 @@ dependencies = [
  "bincode",
  "cfg-if",
  "crash-handler",
- "extension_host",
+ "futures 0.3.31",
  "log",
  "mach2 0.5.0",
  "minidumper",
@@ -7156,6 +7157,7 @@ dependencies = [
  "git",
  "git_ui",
  "gpui",
+ "language",
  "menu",
  "project",
  "rand 0.9.2",
@@ -15511,7 +15513,6 @@ dependencies = [
  "acp_thread",
  "agent_ui",
  "chrono",
- "db",
  "editor",
  "feature_flags",
  "fs",
@@ -15520,7 +15521,6 @@ dependencies = [
  "picker",
  "project",
  "recent_projects",
- "serde_json",
  "settings",
  "theme",
  "ui",

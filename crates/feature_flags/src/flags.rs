@@ -56,3 +56,13 @@ impl FeatureFlag for DiffReviewFeatureFlag {
         false
     }
 }
+
+pub struct StreamingEditFileToolFeatureFlag;
+
+impl FeatureFlag for StreamingEditFileToolFeatureFlag {
+    const NAME: &'static str = "streaming-edit-file-tool";
+
+    fn enabled_for_staff() -> bool {
+        false
+    }
+}
