@@ -92,13 +92,13 @@ function generateAlias(shell, scriptDir) {
   switch (shell) {
     case "zsh":
     case "bash":
-      return `\n# Zed cargo timing wrapper\ncargo() { local w="${cargoWrapper}"; [[ -x "$w" ]] && "$w" "$@" || command cargo "$@"; }\n`;
+      return `\n# Zed cargo timing wrapper\ncargo() { local w="${cargoWrapper}"; if [[ -x "$w" ]]; then "$w" "$@"; else command cargo "$@"; fi; }\n`;
     case "fish":
-      return `\n# Zed cargo timing wrapper\nfunction cargo\n    set -l w "${cargoWrapper}"\n    if test -x "$w"\n        "$w" $argv\n    else\n        command cargo $argv\n    end\nend\n`;
+      return `\n# Zed cargo timing wrapper\nfunction cargo\n    set -l w "${cargoWrapper}"\n    if test -x "$w"\n        "$w" $argv\n        return $status\n    else\n        command cargo $argv\n    end\nend\n`;
     case "powershell":
       return `\n# Zed cargo timing wrapper\nfunction cargo {\n    \$wrapper = "${cargoWrapper}"\n    if (Test-Path \$wrapper) {\n        node \$wrapper @args\n    } else {\n        & (Get-Command -Name cargo -CommandType Application | Select-Object -First 1).Source @args\n    }\n}\n`;
     default:
-      return `cargo() { local w="${cargoWrapper}"; [[ -x "$w" ]] && "$w" "$@" || command cargo "$@"; }`;
+      return `cargo() { local w="${cargoWrapper}"; if [[ -x "$w" ]]; then "$w" "$@"; else command cargo "$@"; fi; }`;
   }
 }
 
