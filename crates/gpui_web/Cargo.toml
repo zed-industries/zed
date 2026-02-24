@@ -52,7 +52,3 @@ web-sys = { version = "0.3", features = [
     "WheelEvent",
     "Window",
 ] }
-
-[[example]]
-name = "hello_web"
-path = "examples/hello_web.rs"

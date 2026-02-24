@@ -31,8 +31,6 @@ static BUNDLED_FONTS: &[&[u8]] = &[
     include_bytes!("../../../assets/fonts/lilex/Lilex-BoldItalic.ttf"),
 ];
 
-const CREDENTIAL_KEY_PREFIX: &str = "zed-credential:";
-
 pub struct WebPlatform {
     background_executor: BackgroundExecutor,
     foreground_executor: ForegroundExecutor,
@@ -63,10 +61,6 @@ fn get_browser_window() -> Option<web_sys::Window> {
 
 fn get_document() -> Option<web_sys::Document> {
     get_browser_window()?.document()
-}
-
-fn get_local_storage() -> Option<web_sys::Storage> {
-    get_browser_window()?.local_storage().ok()?
 }
 
 fn detect_window_appearance() -> WindowAppearance {
@@ -183,7 +177,7 @@ impl Platform for WebPlatform {
     }
 
     fn quit(&self) {
-        log::warn!("WebPlatform::quit called, but quitting is not supported in the browser");
+        log::warn!("WebPlatform::quit called, but quitting is not supported in the browser .");
     }
 
     fn restart(&self, _binary_path: Option<PathBuf>) {}
