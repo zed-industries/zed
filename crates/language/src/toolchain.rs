@@ -117,7 +117,7 @@ pub trait ToolchainLister: Send + Sync + 'static {
     fn activation_script(
         &self,
         toolchain: &Toolchain,
-        shell: Option<ShellKind>,
+        shell: ShellKind,
         cx: &App,
     ) -> BoxFuture<'static, Vec<String>>;
 

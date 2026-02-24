@@ -1,6 +1,7 @@
 [
   (field_expression)
   (assignment_expression)
+  (init_declarator)
   (if_statement)
   (for_statement)
   (while_statement)
@@ -10,6 +11,9 @@
 
 (_ "{" "}" @end) @indent
 (_ "(" ")" @end) @indent
+
+((comment) @indent
+ (#match? @indent "^/\\*"))
 
 (if_statement) @start.if
 (for_statement) @start.for

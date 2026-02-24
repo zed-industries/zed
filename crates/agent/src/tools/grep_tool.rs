@@ -1,6 +1,6 @@
 use crate::{AgentTool, ToolCallEventStream};
 use agent_client_protocol as acp;
-use anyhow::{Result, anyhow};
+use anyhow::Result;
 use futures::{FutureExt as _, StreamExt};
 use gpui::{App, Entity, SharedString, Task};
 use language::{OffsetRangeExt, ParseStatus, Point};
@@ -80,9 +80,7 @@ impl AgentTool for GrepTool {
     type Input = GrepToolInput;
     type Output = String;
 
-    fn name() -> &'static str {
-        "grep"
-    }
+    const NAME: &'static str = "grep";
 
     fn kind() -> acp::ToolKind {
         acp::ToolKind::Search
@@ -119,7 +117,7 @@ impl AgentTool for GrepTool {
         input: Self::Input,
         event_stream: ToolCallEventStream,
         cx: &mut App,
-    ) -> Task<Result<Self::Output>> {
+    ) -> Task<Result<Self::Output, Self::Output>> {
         const CONTEXT_LINES: u32 = 2;
         const MAX_ANCESTOR_LINES: u32 = 10;
 
@@ -135,7 +133,7 @@ impl AgentTool for GrepTool {
         ) {
             Ok(matcher) => matcher,
             Err(error) => {
-                return Task::ready(Err(anyhow!("invalid include glob pattern: {error}")));
+                return Task::ready(Err(format!("invalid include glob pattern: {error}")));
             }
         };
 
@@ -150,7 +148,7 @@ impl AgentTool for GrepTool {
             match PathMatcher::new(exclude_patterns, path_style) {
                 Ok(matcher) => matcher,
                 Err(error) => {
-                    return Task::ready(Err(anyhow!("invalid exclude pattern: {error}")));
+                    return Task::ready(Err(format!("invalid exclude pattern: {error}")));
                 }
             }
         };
@@ -167,7 +165,7 @@ impl AgentTool for GrepTool {
             None,
         ) {
             Ok(query) => query,
-            Err(error) => return Task::ready(Err(error)),
+            Err(error) => return Task::ready(Err(error.to_string())),
         };
 
         let results = self
@@ -190,7 +188,7 @@ impl AgentTool for GrepTool {
                 let search_result = futures::select! {
                     result = rx.next().fuse() => result,
                     _ = event_stream.cancelled_by_user().fuse() => {
-                        anyhow::bail!("Search cancelled by user");
+                        return Err("Search cancelled by user".to_string());
                     }
                 };
                 let Some(SearchResult::Buffer { buffer, ranges }) = search_result else {
@@ -220,7 +218,7 @@ impl AgentTool for GrepTool {
                 }
 
                 while *parse_status.borrow() != ParseStatus::Idle {
-                    parse_status.changed().await?;
+                    parse_status.changed().await.map_err(|e| e.to_string())?;
                 }
 
                 let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot());
@@ -282,7 +280,8 @@ impl AgentTool for GrepTool {
                     }
 
                     if !file_header_written {
-                        writeln!(output, "\n## Matches in {}", path.display())?;
+                        writeln!(output, "\n## Matches in {}", path.display())
+                            .ok();
                         file_header_written = true;
                     }
 
@@ -290,13 +289,16 @@ impl AgentTool for GrepTool {
                     output.push_str("\n### ");
 
                     for symbol in parent_symbols {
-                        write!(output, "{} › ", symbol.text)?;
+                        write!(output, "{} › ", symbol.text)
+                            .ok();
                     }
 
                     if range.start.row == end_row {
-                        writeln!(output, "L{}", range.start.row + 1)?;
+                        writeln!(output, "L{}", range.start.row + 1)
+                            .ok();
                     } else {
-                        writeln!(output, "L{}-{}", range.start.row + 1, end_row + 1)?;
+                        writeln!(output, "L{}-{}", range.start.row + 1, end_row + 1)
+                            .ok();
                     }
 
                     output.push_str("```\n");
@@ -306,7 +308,8 @@ impl AgentTool for GrepTool {
                     if let Some(ancestor_range) = ancestor_range
                         && end_row < ancestor_range.end.row {
                             let remaining_lines = ancestor_range.end.row - end_row;
-                            writeln!(output, "\n{} lines remaining in ancestor node. Read the file to see all.", remaining_lines)?;
+                            writeln!(output, "\n{} lines remaining in ancestor node. Read the file to see all.", remaining_lines)
+                                .ok();
                         }
 
                     matches_found += 1;

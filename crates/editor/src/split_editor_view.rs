@@ -9,6 +9,7 @@ use gpui::{
 };
 use multi_buffer::{Anchor, ExcerptId};
 use settings::Settings;
+use smallvec::smallvec;
 use text::BufferId;
 use theme::ActiveTheme;
 use ui::scrollbars::ShowScrollbar;
@@ -171,7 +172,10 @@ impl RenderOnce for SplitEditorView {
         let state_for_drag = self.split_state.downgrade();
         let state_for_drop = self.split_state.downgrade();
 
-        let buffer_headers = SplitBufferHeadersElement::new(rhs_editor, self.style.clone());
+        let buffer_headers = SplitBufferHeadersElement::new(rhs_editor.clone(), self.style.clone());
+
+        let lhs_editor_for_order = lhs_editor;
+        let rhs_editor_for_order = rhs_editor;
 
         div()
             .id("split-editor-view-container")
@@ -179,6 +183,14 @@ impl RenderOnce for SplitEditorView {
             .relative()
             .child(
                 h_flex()
+                    .with_dynamic_prepaint_order(move |_window, cx| {
+                        let lhs_needs = lhs_editor_for_order.read(cx).has_autoscroll_request();
+                        let rhs_needs = rhs_editor_for_order.read(cx).has_autoscroll_request();
+                        match (lhs_needs, rhs_needs) {
+                            (false, true) => smallvec![2, 1, 0],
+                            _ => smallvec![0, 1, 2],
+                        }
+                    })
                     .id("split-editor-view")
                     .size_full()
                     .on_drag_move::<DraggedSplitHandle>(move |event, window, cx| {

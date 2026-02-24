@@ -11,7 +11,7 @@ For operations that Zed doesn't support natively, you can use the integrated ter
 
 ## Git Panel
 
-The Git Panel gives you a birds-eye view of the state of your working tree and of Git's staging area.
+The Git Panel shows the state of your working tree and Git's staging area.
 
 You can open the Git Panel using {#action git_panel::ToggleFocus}, or by clicking the Git icon in the status bar.
 
@@ -69,6 +69,33 @@ To disable word diff for specific languages only, add this to your settings.json
   }
 }
 ```
+
+### Diff View Styles
+
+> **Changed in Preview (v0.225).** See [release notes](/releases#0.225).
+
+Zed displays diffs in two modes: **split** (side-by-side comparison) or **unified** (inline changes). Split view is the default.
+
+#### Changing the diff view
+
+Open the Settings Editor ({#kb zed::OpenSettings}) and search for "diff view style". Select either **Split** or **Unified**.
+
+To change the default, add this to your `settings.json`:
+
+```json
+{
+  "diff_view_style": "unified"
+}
+```
+
+See [Configuring Zed](./configuring-zed.md) for more about the Settings Editor.
+
+#### Split vs unified
+
+- **Split**: Shows the original and modified versions side by side. Useful for comparing file structure or reviewing large changes.
+- **Unified**: Shows changes inline with additions and deletions in a single view. Useful for focusing on specific line changes.
+
+You can switch between modes at any time. Your preference applies to [Project Diff](#project-diff), [File History](#file-history), and [Stash Diff View](#stash-diff-view). These diff views function as [multibuffers](./multibuffers.md), allowing you to edit multiple excerpts simultaneously.
 
 ## File History
 
@@ -249,7 +276,9 @@ Zed currently supports links to the hosted versions of
 
 ### Self-Hosted Instances
 
-For self-hosted GitHub, GitLab, or Bitbucket instances, add them to the `git_hosting_providers` setting so commit hashes and permalinks resolve to your domain:
+Zed automatically identifies Git hosting providers by checking for keywords in your Git remote URL. For example, if your self-hosted URL contains `gitlab`, `gitea`, or other recognized provider names, Zed will automatically register that hosting provider without any configuration needed.
+
+However, if your self-hosted Git instance URL doesn't contain identifying keywords, you can manually configure Zed to create clickable links to your instance by adding a `git_hosting_providers` setting so commit hashes and permalinks resolve to your domain:
 
 ```json [settings]
 {
@@ -263,7 +292,9 @@ For self-hosted GitHub, GitLab, or Bitbucket instances, add them to the `git_hos
 }
 ```
 
-Supported `provider` values are `github`, `gitlab`, `bitbucket`, `gitea`, `forgejo`, and `sourcehut`. The `name` field is optional and used for display purposes.
+The `provider` field specifies which type of hosting service you're using. Supported `provider` values are `github`, `gitlab`, `bitbucket`, `gitea`, `forgejo`, and `sourcehut`. The `name` is optional and used as a display name for your instance, and `base_url` is the root URL of your self-hosted server.
+
+You can configure multiple custom providers if you work with several self-hosted instances.
 
 ### Permalinks
 

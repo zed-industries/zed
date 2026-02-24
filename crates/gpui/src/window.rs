@@ -14,7 +14,7 @@ use crate::{
     Replay, ResizeEdge, SMOOTH_SVG_SCALE_FACTOR, SUBPIXEL_VARIANTS_X, SUBPIXEL_VARIANTS_Y,
     ScaledPixels, Scene, Shadow, SharedString, Size, StrikethroughStyle, Style, SubpixelSprite,
     SubscriberSet, Subscription, SystemWindowTab, SystemWindowTabController, TabStopMap,
-    TaffyLayoutEngine, Task, TextRenderingMode, TextStyle, TextStyleRefinement,
+    TaffyLayoutEngine, Task, TextRenderingMode, TextStyle, TextStyleRefinement, ThermalState,
     TransformationMatrix, Underline, UnderlineStyle, WindowAppearance, WindowBackgroundAppearance,
     WindowBounds, WindowControls, WindowDecorations, WindowOptions, WindowParams, WindowTextSystem,
     point, prelude::*, px, rems, size, transparent_black,
@@ -59,7 +59,8 @@ mod prompts;
 use crate::util::atomic_incr_if_not_zero;
 pub use prompts::*;
 
-pub(crate) const DEFAULT_WINDOW_SIZE: Size<Pixels> = size(px(1536.), px(864.));
+/// Default window size used when no explicit size is provided.
+pub const DEFAULT_WINDOW_SIZE: Size<Pixels> = size(px(1536.), px(864.));
 
 /// A 6:5 aspect ratio minimum window size to be used for functional,
 /// additional-to-main-Zed windows, like the settings and rules library windows.
@@ -1155,6 +1156,7 @@ impl Window {
         let needs_present = Rc::new(Cell::new(false));
         let next_frame_callbacks: Rc<RefCell<Vec<FrameCallback>>> = Default::default();
         let input_rate_tracker = Rc::new(RefCell::new(InputRateTracker::default()));
+        let last_frame_time = Rc::new(Cell::new(None));
 
         platform_window
             .request_decorations(window_decorations.unwrap_or(WindowDecorations::Server));
@@ -1184,6 +1186,23 @@ impl Window {
             let next_frame_callbacks = next_frame_callbacks.clone();
             let input_rate_tracker = input_rate_tracker.clone();
             move |request_frame_options| {
+                let thermal_state = handle
+                    .update(&mut cx, |_, _, cx| cx.thermal_state())
+                    .log_err();
+
+                if thermal_state == Some(ThermalState::Serious)
+                    || thermal_state == Some(ThermalState::Critical)
+                {
+                    let now = Instant::now();
+                    let last_frame_time = last_frame_time.replace(Some(now));
+
+                    if let Some(last_frame) = last_frame_time
+                        && now.duration_since(last_frame) < Duration::from_micros(16667)
+                    {
+                        return;
+                    }
+                }
+
                 let next_frame_callbacks = next_frame_callbacks.take();
                 if !next_frame_callbacks.is_empty() {
                     handle
@@ -1432,7 +1451,8 @@ impl Window {
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub(crate) struct DispatchEventResult {
+#[expect(missing_docs)]
+pub struct DispatchEventResult {
     pub propagate: bool,
     pub default_prevented: bool,
 }
@@ -2221,9 +2241,8 @@ impl Window {
     }
 
     fn record_entities_accessed(&mut self, cx: &mut App) {
-        let mut entities_ref = cx.entities.accessed_entities.borrow_mut();
+        let mut entities_ref = cx.entities.accessed_entities.get_mut();
         let mut entities = mem::take(entities_ref.deref_mut());
-        drop(entities_ref);
         let handle = self.handle;
         cx.record_entities_accessed(
             handle,
@@ -2231,7 +2250,7 @@ impl Window {
             self.invalidator.clone(),
             &entities,
         );
-        let mut entities_ref = cx.entities.accessed_entities.borrow_mut();
+        let mut entities_ref = cx.entities.accessed_entities.get_mut();
         mem::swap(&mut entities, entities_ref.deref_mut());
     }
 

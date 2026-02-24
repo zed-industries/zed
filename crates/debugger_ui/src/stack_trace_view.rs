@@ -6,8 +6,8 @@ use std::{
 use collections::HashMap;
 use dap::StackFrameId;
 use editor::{
-    Anchor, Bias, DebugStackFrameLine, Editor, EditorEvent, ExcerptId, ExcerptRange, MultiBuffer,
-    RowHighlightOptions, SelectionEffects, ToPoint, scroll::Autoscroll,
+    Anchor, Bias, DebugStackFrameLine, Editor, EditorEvent, ExcerptId, ExcerptRange, HighlightKey,
+    MultiBuffer, RowHighlightOptions, SelectionEffects, ToPoint, scroll::Autoscroll,
 };
 use gpui::{
     App, AppContext, Entity, EventEmitter, Focusable, IntoElement, Render, SharedString,
@@ -47,6 +47,8 @@ impl StackTraceView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        telemetry::event!("Stack Trace View Deployed");
+
         let multibuffer = cx.new(|_| MultiBuffer::new(Capability::ReadWrite));
         let editor = cx.new(|cx| {
             let mut editor =
@@ -150,7 +152,7 @@ impl StackTraceView {
     fn update_excerpts(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.refresh_task.take();
         self.editor.update(cx, |editor, cx| {
-            editor.clear_highlights::<DebugStackFrameLine>(cx)
+            editor.clear_highlights(HighlightKey::DebugStackFrameLine, cx)
         });
 
         let stack_frames = self
@@ -325,7 +327,7 @@ impl Focusable for StackTraceView {
 impl Item for StackTraceView {
     type Event = EditorEvent;
 
-    fn to_item_events(event: &EditorEvent, f: impl FnMut(ItemEvent)) {
+    fn to_item_events(event: &EditorEvent, f: &mut dyn FnMut(ItemEvent)) {
         Editor::to_item_events(event, f)
     }
 
@@ -439,8 +441,8 @@ impl Item for StackTraceView {
         ToolbarItemLocation::PrimaryLeft
     }
 
-    fn breadcrumbs(&self, theme: &theme::Theme, cx: &App) -> Option<Vec<BreadcrumbText>> {
-        self.editor.breadcrumbs(theme, cx)
+    fn breadcrumbs(&self, cx: &App) -> Option<Vec<BreadcrumbText>> {
+        self.editor.breadcrumbs(cx)
     }
 
     fn added_to_workspace(

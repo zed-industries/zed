@@ -30,7 +30,7 @@ use project::{Project, debugger::session::ThreadStatus};
 use rpc::proto::{self};
 use settings::Settings;
 use std::sync::{Arc, LazyLock};
-use task::{DebugScenario, TaskContext};
+use task::{DebugScenario, SharedTaskContext};
 use tree_sitter::{Query, StreamingIterator as _};
 use ui::{
     ContextMenu, Divider, PopoverMenu, PopoverMenuHandle, SplitButton, Tab, Tooltip, prelude::*,
@@ -176,7 +176,7 @@ impl DebugPanel {
     pub fn start_session(
         &mut self,
         scenario: DebugScenario,
-        task_context: TaskContext,
+        task_context: SharedTaskContext,
         active_buffer: Option<Entity<Buffer>>,
         worktree_id: Option<WorktreeId>,
         window: &mut Window,
@@ -227,9 +227,6 @@ impl DebugPanel {
             inventory.update(cx, |inventory, _| {
                 inventory.scenario_scheduled(
                     scenario.clone(),
-                    // todo(debugger): Task context is cloned three times
-                    // once in Session,inventory, and in resolve scenario
-                    // we should wrap it in an RC instead to save some memory
                     task_context.clone(),
                     worktree_id,
                     active_buffer.as_ref().map(|buffer| buffer.downgrade()),
@@ -518,7 +515,9 @@ impl DebugPanel {
             }
             session.update(cx, |session, cx| session.shutdown(cx));
             this.update(cx, |this, cx| {
-                this.retain_sessions(|other| entity_id != other.entity_id());
+                this.retain_sessions(&|other: &Entity<DebugSession>| {
+                    entity_id != other.entity_id()
+                });
                 if let Some(active_session_id) = this
                     .active_session
                     .as_ref()
@@ -1332,7 +1331,7 @@ impl DebugPanel {
         None
     }
 
-    fn retain_sessions(&mut self, keep: impl Fn(&Entity<DebugSession>) -> bool) {
+    fn retain_sessions(&mut self, keep: &dyn Fn(&Entity<DebugSession>) -> bool) {
         self.sessions_with_children
             .retain(|session, _| keep(session));
         for children in self.sessions_with_children.values_mut() {
@@ -1467,7 +1466,7 @@ async fn register_session_inner(
             .keys()
             .find(|p| Some(p.read(cx).session_id(cx)) == session.read(cx).parent_id(cx))
             .cloned();
-        this.retain_sessions(|session| {
+        this.retain_sessions(&|session: &Entity<DebugSession>| {
             !session
                 .read(cx)
                 .running_state()
@@ -1957,7 +1956,7 @@ impl workspace::DebuggerProvider for DebuggerProvider {
     fn start_session(
         &self,
         definition: DebugScenario,
-        context: TaskContext,
+        context: SharedTaskContext,
         buffer: Option<Entity<Buffer>>,
         worktree_id: Option<WorktreeId>,
         window: &mut Window,

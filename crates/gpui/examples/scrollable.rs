@@ -1,7 +1,5 @@
-use gpui::{
-    App, Application, Bounds, Context, Window, WindowBounds, WindowOptions, div, prelude::*, px,
-    size,
-};
+use gpui::{App, Bounds, Context, Window, WindowBounds, WindowOptions, div, prelude::*, px, size};
+use gpui_platform::application;
 
 struct Scrollable {}
 
@@ -45,7 +43,7 @@ impl Render for Scrollable {
 }
 
 fn main() {
-    Application::new().run(|cx: &mut App| {
+    application().run(|cx: &mut App| {
         let bounds = Bounds::centered(None, size(px(500.), px(500.0)), cx);
         cx.open_window(
             WindowOptions {

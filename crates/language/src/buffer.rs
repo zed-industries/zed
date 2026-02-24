@@ -122,7 +122,7 @@ pub struct Buffer {
     reparse: Option<Task<()>>,
     parse_status: (watch::Sender<ParseStatus>, watch::Receiver<ParseStatus>),
     non_text_state_update_count: usize,
-    diagnostics: SmallVec<[(LanguageServerId, DiagnosticSet); 2]>,
+    diagnostics: TreeMap<LanguageServerId, DiagnosticSet>,
     remote_selections: TreeMap<ReplicaId, SelectionSet>,
     diagnostics_timestamp: clock::Lamport,
     completion_triggers: BTreeSet<String>,
@@ -151,16 +151,16 @@ pub struct TreeSitterData {
 const MAX_ROWS_IN_A_CHUNK: u32 = 50;
 
 impl TreeSitterData {
-    fn clear(&mut self, snapshot: text::BufferSnapshot) {
-        self.chunks = RowChunks::new(snapshot, MAX_ROWS_IN_A_CHUNK);
+    fn clear(&mut self, snapshot: &text::BufferSnapshot) {
+        self.chunks = RowChunks::new(&snapshot, MAX_ROWS_IN_A_CHUNK);
         self.brackets_by_chunks.get_mut().clear();
         self.brackets_by_chunks
             .get_mut()
             .resize(self.chunks.len(), None);
     }
 
-    fn new(snapshot: text::BufferSnapshot) -> Self {
-        let chunks = RowChunks::new(snapshot, MAX_ROWS_IN_A_CHUNK);
+    fn new(snapshot: &text::BufferSnapshot) -> Self {
+        let chunks = RowChunks::new(&snapshot, MAX_ROWS_IN_A_CHUNK);
         Self {
             brackets_by_chunks: Mutex::new(vec![None; chunks.len()]),
             chunks,
@@ -188,12 +188,12 @@ struct BufferBranchState {
 pub struct BufferSnapshot {
     pub text: text::BufferSnapshot,
     pub syntax: SyntaxSnapshot,
-    file: Option<Arc<dyn File>>,
-    diagnostics: SmallVec<[(LanguageServerId, DiagnosticSet); 2]>,
+    tree_sitter_data: Arc<TreeSitterData>,
+    diagnostics: TreeMap<LanguageServerId, DiagnosticSet>,
     remote_selections: TreeMap<ReplicaId, SelectionSet>,
     language: Option<Arc<Language>>,
+    file: Option<Arc<dyn File>>,
     non_text_state_update_count: usize,
-    tree_sitter_data: Arc<TreeSitterData>,
     pub capability: Capability,
 }
 
@@ -576,6 +576,8 @@ pub struct Chunk<'a> {
     pub tabs: u128,
     /// Bitmap of character indices in this chunk
     pub chars: u128,
+    /// Bitmap of newline indices in this chunk
+    pub newlines: u128,
     /// Whether this chunk of text is marked as unnecessary.
     pub is_unnecessary: bool,
     /// Whether this chunk of text was originally a tab character.
@@ -918,6 +920,12 @@ impl EditPreview {
         })
     }
 
+    pub fn anchor_to_offset_in_result(&self, anchor: Anchor) -> usize {
+        anchor
+            .bias_right(&self.old_snapshot)
+            .to_offset(&self.applied_edits_snapshot)
+    }
+
     pub fn compute_visible_range<T>(&self, edits: &[(Range<Anchor>, T)]) -> Option<Range<Point>> {
         let (first, _) = edits.first()?;
         let (last, _) = edits.last()?;
@@ -1049,7 +1057,7 @@ impl Buffer {
             })
         }));
 
-        for (server_id, diagnostics) in &self.diagnostics {
+        for (server_id, diagnostics) in self.diagnostics.iter() {
             operations.push(proto::serialize_operation(&Operation::UpdateDiagnostics {
                 lamport_timestamp: self.diagnostics_timestamp,
                 server_id: *server_id,
@@ -1152,6 +1160,7 @@ impl Buffer {
         }
     }
 
+    #[ztracing::instrument(skip_all)]
     pub fn build_snapshot(
         text: Rope,
         language: Option<Arc<Language>>,
@@ -1162,14 +1171,14 @@ impl Buffer {
         let buffer_id = entity_id.as_non_zero_u64().into();
         async move {
             let text =
-                TextBuffer::new_normalized(ReplicaId::LOCAL, buffer_id, Default::default(), text)
-                    .snapshot();
+                TextBuffer::new_normalized(ReplicaId::LOCAL, buffer_id, Default::default(), text);
+            let text = text.into_snapshot();
             let mut syntax = SyntaxMap::new(&text).snapshot();
             if let Some(language) = language.clone() {
                 let language_registry = language_registry.clone();
                 syntax.reparse(&text, language_registry, language);
             }
-            let tree_sitter_data = TreeSitterData::new(text.clone());
+            let tree_sitter_data = TreeSitterData::new(&text);
             BufferSnapshot {
                 text,
                 syntax,
@@ -1192,10 +1201,10 @@ impl Buffer {
             buffer_id,
             Default::default(),
             Rope::new(),
-        )
-        .snapshot();
+        );
+        let text = text.into_snapshot();
         let syntax = SyntaxMap::new(&text).snapshot();
-        let tree_sitter_data = TreeSitterData::new(text.clone());
+        let tree_sitter_data = TreeSitterData::new(&text);
         BufferSnapshot {
             text,
             syntax,
@@ -1220,12 +1229,12 @@ impl Buffer {
         let buffer_id = entity_id.as_non_zero_u64().into();
         let text =
             TextBuffer::new_normalized(ReplicaId::LOCAL, buffer_id, Default::default(), text)
-                .snapshot();
+                .into_snapshot();
         let mut syntax = SyntaxMap::new(&text).snapshot();
         if let Some(language) = language.clone() {
             syntax.reparse(&text, language_registry, language);
         }
-        let tree_sitter_data = TreeSitterData::new(text.clone());
+        let tree_sitter_data = TreeSitterData::new(&text);
         BufferSnapshot {
             text,
             syntax,
@@ -1243,18 +1252,21 @@ impl Buffer {
     /// cheap, and allows reading from the buffer on a background thread.
     pub fn snapshot(&self) -> BufferSnapshot {
         let text = self.text.snapshot();
-        let mut syntax_map = self.syntax_map.lock();
-        syntax_map.interpolate(&text);
-        let syntax = syntax_map.snapshot();
+
+        let syntax = {
+            let mut syntax_map = self.syntax_map.lock();
+            syntax_map.interpolate(text);
+            syntax_map.snapshot()
+        };
 
         let tree_sitter_data = if self.text.version() != *self.tree_sitter_data.version() {
-            Arc::new(TreeSitterData::new(text.clone()))
+            Arc::new(TreeSitterData::new(text))
         } else {
             self.tree_sitter_data.clone()
         };
 
         BufferSnapshot {
-            text,
+            text: text.clone(),
             syntax,
             tree_sitter_data,
             file: self.file.clone(),
@@ -1291,6 +1303,7 @@ impl Buffer {
         })
     }
 
+    #[ztracing::instrument(skip_all)]
     pub fn preview_edits(
         &self,
         edits: Arc<[(Range<Anchor>, Arc<str>)]>,
@@ -1298,7 +1311,7 @@ impl Buffer {
     ) -> Task<EditPreview> {
         let registry = self.language_registry();
         let language = self.language().cloned();
-        let old_snapshot = self.text.snapshot();
+        let old_snapshot = self.text.snapshot().clone();
         let mut branch_buffer = self.text.branch();
         let mut syntax_snapshot = self.syntax_map.lock().snapshot();
         cx.background_spawn(async move {
@@ -1317,7 +1330,7 @@ impl Buffer {
             }
             EditPreview {
                 old_snapshot,
-                applied_edits_snapshot: branch_buffer.snapshot(),
+                applied_edits_snapshot: branch_buffer.into_snapshot(),
                 syntax_snapshot,
             }
         })
@@ -1410,8 +1423,7 @@ impl Buffer {
         }
     }
 
-    #[cfg(test)]
-    pub(crate) fn as_text_snapshot(&self) -> &text::BufferSnapshot {
+    pub fn as_text_snapshot(&self) -> &text::BufferSnapshot {
         &self.text
     }
 
@@ -1419,7 +1431,8 @@ impl Buffer {
     /// language-related state like the syntax tree or diagnostics.
     #[ztracing::instrument(skip_all)]
     pub fn text_snapshot(&self) -> text::BufferSnapshot {
-        self.text.snapshot()
+        // todo lw
+        self.text.snapshot().clone()
     }
 
     /// The file associated with the buffer, if any.
@@ -1474,6 +1487,9 @@ impl Buffer {
         may_block: bool,
         cx: &mut Context<Self>,
     ) {
+        if language == self.language {
+            return;
+        }
         self.non_text_state_update_count += 1;
         self.syntax_map.lock().clear(&self.text);
         let old_language = std::mem::replace(&mut self.language, language);
@@ -1702,28 +1718,14 @@ impl Buffer {
     /// Returns the [`Language`] at the given location.
     pub fn language_at<D: ToOffset>(&self, position: D) -> Option<Arc<Language>> {
         let offset = position.to_offset(self);
-        let mut is_first = true;
-        let start_anchor = self.anchor_before(offset);
-        let end_anchor = self.anchor_after(offset);
+        let text: &TextBufferSnapshot = &self.text;
         self.syntax_map
             .lock()
-            .layers_for_range(offset..offset, &self.text, false)
+            .layers_for_range(offset..offset, text, false)
             .filter(|layer| {
-                if is_first {
-                    is_first = false;
-                    return true;
-                }
-
                 layer
                     .included_sub_ranges
-                    .map(|sub_ranges| {
-                        sub_ranges.iter().any(|sub_range| {
-                            let is_before_start = sub_range.end.cmp(&start_anchor, self).is_lt();
-                            let is_after_end = sub_range.start.cmp(&end_anchor, self).is_gt();
-                            !is_before_start && !is_after_end
-                        })
-                    })
-                    .unwrap_or(true)
+                    .is_none_or(|ranges| offset_in_sub_ranges(ranges, offset, text))
             })
             .last()
             .map(|info| info.language.clone())
@@ -1733,10 +1735,17 @@ impl Buffer {
     /// Returns each [`Language`] for the active syntax layers at the given location.
     pub fn languages_at<D: ToOffset>(&self, position: D) -> Vec<Arc<Language>> {
         let offset = position.to_offset(self);
+        let text: &TextBufferSnapshot = &self.text;
         let mut languages: Vec<Arc<Language>> = self
             .syntax_map
             .lock()
-            .layers_for_range(offset..offset, &self.text, false)
+            .layers_for_range(offset..offset, text, false)
+            .filter(|layer| {
+                // For combined injections, check if offset is within the actual sub-ranges.
+                layer
+                    .included_sub_ranges
+                    .is_none_or(|ranges| offset_in_sub_ranges(ranges, offset, text))
+            })
             .map(|info| info.language.clone())
             .collect();
 
@@ -1772,12 +1781,15 @@ impl Buffer {
         self.sync_parse_timeout = timeout;
     }
 
-    fn invalidate_tree_sitter_data(&mut self, snapshot: text::BufferSnapshot) {
-        match Arc::get_mut(&mut self.tree_sitter_data) {
+    fn invalidate_tree_sitter_data(
+        tree_sitter_data: &mut Arc<TreeSitterData>,
+        snapshot: &text::BufferSnapshot,
+    ) {
+        match Arc::get_mut(tree_sitter_data) {
             Some(tree_sitter_data) => tree_sitter_data.clear(snapshot),
             None => {
-                let tree_sitter_data = TreeSitterData::new(snapshot);
-                self.tree_sitter_data = Arc::new(tree_sitter_data)
+                let new_tree_sitter_data = TreeSitterData::new(snapshot);
+                *tree_sitter_data = Arc::new(new_tree_sitter_data)
             }
         }
     }
@@ -1808,7 +1820,7 @@ impl Buffer {
     #[ztracing::instrument(skip_all)]
     pub fn reparse(&mut self, cx: &mut Context<Self>, may_block: bool) {
         if self.text.version() != *self.tree_sitter_data.version() {
-            self.invalidate_tree_sitter_data(self.text.snapshot());
+            Self::invalidate_tree_sitter_data(&mut self.tree_sitter_data, self.text.snapshot());
         }
         if self.reparse.is_some() {
             return;
@@ -1836,7 +1848,7 @@ impl Buffer {
                 language.clone(),
                 sync_parse_timeout,
             ) {
-                self.did_finish_parsing(syntax_snapshot, Duration::from_millis(300), cx);
+                self.did_finish_parsing(syntax_snapshot, Some(Duration::from_millis(300)), cx);
                 self.reparse = None;
                 return;
             }
@@ -1868,7 +1880,7 @@ impl Buffer {
                 let parse_again = this.version.changed_since(&parsed_version)
                     || language_registry_changed()
                     || grammar_changed();
-                this.did_finish_parsing(new_syntax_map, Duration::ZERO, cx);
+                this.did_finish_parsing(new_syntax_map, None, cx);
                 this.reparse = None;
                 if parse_again {
                     this.reparse(cx, false);
@@ -1881,7 +1893,7 @@ impl Buffer {
     fn did_finish_parsing(
         &mut self,
         syntax_snapshot: SyntaxSnapshot,
-        block_budget: Duration,
+        block_budget: Option<Duration>,
         cx: &mut Context<Self>,
     ) {
         self.non_text_state_update_count += 1;
@@ -1889,7 +1901,7 @@ impl Buffer {
         self.was_changed();
         self.request_autoindent(cx, block_budget);
         self.parse_status.0.send(ParseStatus::Idle).unwrap();
-        self.invalidate_tree_sitter_data(self.text.snapshot());
+        Self::invalidate_tree_sitter_data(&mut self.tree_sitter_data, &self.text.snapshot());
         cx.emit(BufferEvent::Reparsed);
         cx.notify();
     }
@@ -1933,10 +1945,10 @@ impl Buffer {
         for_server: Option<LanguageServerId>,
     ) -> Vec<&DiagnosticEntry<Anchor>> {
         match for_server {
-            Some(server_id) => match self.diagnostics.binary_search_by_key(&server_id, |v| v.0) {
-                Ok(idx) => self.diagnostics[idx].1.iter().collect(),
-                Err(_) => Vec::new(),
-            },
+            Some(server_id) => self
+                .diagnostics
+                .get(&server_id)
+                .map_or_else(Vec::new, |diagnostics| diagnostics.iter().collect()),
             None => self
                 .diagnostics
                 .iter()
@@ -1945,9 +1957,19 @@ impl Buffer {
         }
     }
 
-    fn request_autoindent(&mut self, cx: &mut Context<Self>, block_budget: Duration) {
+    fn request_autoindent(&mut self, cx: &mut Context<Self>, block_budget: Option<Duration>) {
         if let Some(indent_sizes) = self.compute_autoindents() {
             let indent_sizes = cx.background_spawn(indent_sizes);
+            let Some(block_budget) = block_budget else {
+                self.pending_autoindent = Some(cx.spawn(async move |this, cx| {
+                    let indent_sizes = indent_sizes.await;
+                    this.update(cx, |this, cx| {
+                        this.apply_autoindents(indent_sizes, cx);
+                    })
+                    .ok();
+                }));
+                return;
+            };
             match cx
                 .foreground_executor()
                 .block_with_timeout(block_budget, indent_sizes)
@@ -2855,7 +2877,7 @@ impl Buffer {
             is_block_mode: false,
             ignore_empty_lines: true,
         }));
-        self.request_autoindent(cx, Duration::from_micros(300));
+        self.request_autoindent(cx, Some(Duration::from_micros(300)));
     }
 
     // Inserts newlines at the given position to create an empty line, returning the start of the new line.
@@ -3060,16 +3082,10 @@ impl Buffer {
         cx: &mut Context<Self>,
     ) {
         if lamport_timestamp > self.diagnostics_timestamp {
-            let ix = self.diagnostics.binary_search_by_key(&server_id, |e| e.0);
             if diagnostics.is_empty() {
-                if let Ok(ix) = ix {
-                    self.diagnostics.remove(ix);
-                }
+                self.diagnostics.remove(&server_id);
             } else {
-                match ix {
-                    Err(ix) => self.diagnostics.insert(ix, (server_id, diagnostics)),
-                    Ok(ix) => self.diagnostics[ix].1 = diagnostics,
-                };
+                self.diagnostics.insert(server_id, diagnostics);
             }
             self.diagnostics_timestamp = lamport_timestamp;
             self.non_text_state_update_count += 1;
@@ -3318,6 +3334,21 @@ impl Buffer {
 }
 
 impl EventEmitter<BufferEvent> for Buffer {}
+
+fn offset_in_sub_ranges(
+    sub_ranges: &[Range<Anchor>],
+    offset: usize,
+    snapshot: &TextBufferSnapshot,
+) -> bool {
+    let start_anchor = snapshot.anchor_before(offset);
+    let end_anchor = snapshot.anchor_after(offset);
+
+    sub_ranges.iter().any(|sub_range| {
+        let is_before_start = sub_range.end.cmp(&start_anchor, snapshot).is_lt();
+        let is_after_end = sub_range.start.cmp(&end_anchor, snapshot).is_gt();
+        !is_before_start && !is_after_end
+    })
+}
 
 impl Deref for Buffer {
     type Target = TextBuffer;
@@ -3777,6 +3808,10 @@ impl BufferSnapshot {
             .layers_for_range(range, &self.text, include_hidden)
     }
 
+    pub fn syntax_layers_languages(&self) -> impl Iterator<Item = &Arc<Language>> {
+        self.syntax.languages(&self, true)
+    }
+
     pub fn smallest_syntax_layer_containing<D: ToOffset>(
         &self,
         range: Range<D>,
@@ -3829,12 +3864,19 @@ impl BufferSnapshot {
         let offset = position.to_offset(self);
         let mut scope = None;
         let mut smallest_range_and_depth: Option<(Range<usize>, usize)> = None;
+        let text: &TextBufferSnapshot = self;
 
         // Use the layer that has the smallest node intersecting the given point.
         for layer in self
             .syntax
             .layers_for_range(offset..offset, &self.text, false)
         {
+            if let Some(ranges) = layer.included_sub_ranges
+                && !offset_in_sub_ranges(ranges, offset, text)
+            {
+                continue;
+            }
+
             let mut cursor = layer.node().walk();
 
             let mut range = None;
@@ -5224,12 +5266,6 @@ impl BufferSnapshot {
         })
     }
 
-    /// Raw access to the diagnostic sets. Typically `diagnostic_groups` or `diagnostic_group`
-    /// should be used instead.
-    pub fn diagnostic_sets(&self) -> &SmallVec<[(LanguageServerId, DiagnosticSet); 2]> {
-        &self.diagnostics
-    }
-
     /// Returns all the diagnostic groups associated with the given
     /// language server ID. If no language server ID is provided,
     /// all diagnostics groups are returned.
@@ -5240,13 +5276,8 @@ impl BufferSnapshot {
         let mut groups = Vec::new();
 
         if let Some(language_server_id) = language_server_id {
-            if let Ok(ix) = self
-                .diagnostics
-                .binary_search_by_key(&language_server_id, |e| e.0)
-            {
-                self.diagnostics[ix]
-                    .1
-                    .groups(language_server_id, &mut groups, self);
+            if let Some(set) = self.diagnostics.get(&language_server_id) {
+                set.groups(language_server_id, &mut groups, self);
             }
         } else {
             for (language_server_id, diagnostics) in self.diagnostics.iter() {
@@ -5634,6 +5665,7 @@ impl<'a> Iterator for BufferChunks<'a> {
             text: chunk,
             chars: chars_map,
             tabs,
+            newlines,
         }) = self.chunks.peek_with_bitmaps()
         {
             let chunk_start = self.range.start;
@@ -5655,6 +5687,7 @@ impl<'a> Iterator for BufferChunks<'a> {
             let mask = 1u128.unbounded_shl(bit_end as u32).wrapping_sub(1);
             let tabs = (tabs >> bit_start) & mask;
             let chars = (chars_map >> bit_start) & mask;
+            let newlines = (newlines >> bit_start) & mask;
 
             self.range.start = chunk_end;
             if self.range.start == self.chunks.offset() + chunk.len() {
@@ -5669,6 +5702,7 @@ impl<'a> Iterator for BufferChunks<'a> {
                 is_unnecessary: self.current_code_is_unnecessary(),
                 tabs,
                 chars,
+                newlines,
                 ..Chunk::default()
             })
         } else {

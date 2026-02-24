@@ -4,7 +4,6 @@ use debugger_panel::DebugPanel;
 use editor::{Editor, MultiBufferOffsetUtf16};
 use gpui::{Action, App, DispatchPhase, EntityInputHandler, actions};
 use new_process_modal::{NewProcessModal, NewProcessMode};
-use onboarding_modal::DebuggerOnboardingModal;
 use project::debugger::{self, breakpoint_store::SourceBreakpoint, session::ThreadStatus};
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -15,13 +14,12 @@ use ui::{FluentBuilder, InteractiveElement};
 use util::maybe;
 use workspace::{ItemHandle, ShutdownDebugAdapters, Workspace};
 use zed_actions::debug_panel::{Toggle, ToggleFocus};
-use zed_actions::debugger::OpenOnboardingModal;
+
 
 pub mod attach_modal;
 pub mod debugger_panel;
 mod dropdown_menus;
 mod new_process_modal;
-mod onboarding_modal;
 mod persistence;
 pub(crate) mod session;
 mod stack_trace_view;
@@ -29,6 +27,7 @@ mod stack_trace_view;
 #[cfg(any(test, feature = "test-support"))]
 pub mod tests;
 
+// Let's see the diff-test in action.
 actions!(
     debugger,
     [
@@ -146,9 +145,6 @@ pub fn init(cx: &mut App) {
                     })
                 },
             )
-            .register_action(|workspace, _: &OpenOnboardingModal, window, cx| {
-                DebuggerOnboardingModal::toggle(workspace, window, cx)
-            })
             .register_action_renderer(|div, workspace, _, cx| {
                 let Some(debug_panel) = workspace.panel::<DebugPanel>(cx) else {
                     return div;

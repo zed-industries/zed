@@ -2,6 +2,8 @@ use std::error::Error;
 use std::sync::{LazyLock, OnceLock};
 use std::{borrow::Cow, mem, pin::Pin, task::Poll, time::Duration};
 
+use util::defer;
+
 use anyhow::anyhow;
 use bytes::{BufMut, Bytes, BytesMut};
 use futures::{AsyncRead, FutureExt as _, TryStreamExt as _};
@@ -249,10 +251,11 @@ impl http_client::HttpClient for ReqwestClient {
 
         let handle = self.handle.clone();
         async move {
-            let mut response = handle
-                .spawn(async { request.send().await })
-                .await?
-                .map_err(redact_error)?;
+            let join_handle = handle.spawn(async { request.send().await });
+            let abort_handle = join_handle.abort_handle();
+            let _abort_on_drop = defer(move || abort_handle.abort());
+
+            let mut response = join_handle.await?.map_err(redact_error)?;
 
             let headers = mem::take(response.headers_mut());
             let mut builder = http::Response::builder()

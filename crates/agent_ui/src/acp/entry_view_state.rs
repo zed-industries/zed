@@ -1,7 +1,6 @@
 use std::{cell::RefCell, ops::Range, rc::Rc};
 
 use super::thread_history::AcpThreadHistory;
-use crate::user_slash_command::{CommandLoadError, UserSlashCommand};
 use acp_thread::{AcpThread, AgentThreadEntry};
 use agent::ThreadStore;
 use agent_client_protocol::{self as acp, ToolCallId};
@@ -31,8 +30,6 @@ pub struct EntryViewState {
     entries: Vec<Entry>,
     prompt_capabilities: Rc<RefCell<acp::PromptCapabilities>>,
     available_commands: Rc<RefCell<Vec<acp::AvailableCommand>>>,
-    cached_user_commands: Rc<RefCell<HashMap<String, UserSlashCommand>>>,
-    cached_user_command_errors: Rc<RefCell<Vec<CommandLoadError>>>,
     agent_name: SharedString,
 }
 
@@ -45,8 +42,6 @@ impl EntryViewState {
         prompt_store: Option<Entity<PromptStore>>,
         prompt_capabilities: Rc<RefCell<acp::PromptCapabilities>>,
         available_commands: Rc<RefCell<Vec<acp::AvailableCommand>>>,
-        cached_user_commands: Rc<RefCell<HashMap<String, UserSlashCommand>>>,
-        cached_user_command_errors: Rc<RefCell<Vec<CommandLoadError>>>,
         agent_name: SharedString,
     ) -> Self {
         Self {
@@ -58,8 +53,6 @@ impl EntryViewState {
             entries: Vec::new(),
             prompt_capabilities,
             available_commands,
-            cached_user_commands,
-            cached_user_command_errors,
             agent_name,
         }
     }
@@ -82,6 +75,7 @@ impl EntryViewState {
         match thread_entry {
             AgentThreadEntry::UserMessage(message) => {
                 let has_id = message.id.is_some();
+                let is_subagent = thread.read(cx).parent_session_id().is_some();
                 let chunks = message.chunks.clone();
                 if let Some(Entry::UserMessage(editor)) = self.entries.get_mut(index) {
                     if !editor.focus_handle(cx).is_focused(window) {
@@ -93,7 +87,7 @@ impl EntryViewState {
                     }
                 } else {
                     let message_editor = cx.new(|cx| {
-                        let mut editor = MessageEditor::new_with_cache(
+                        let mut editor = MessageEditor::new(
                             self.workspace.clone(),
                             self.project.clone(),
                             self.thread_store.clone(),
@@ -101,8 +95,6 @@ impl EntryViewState {
                             self.prompt_store.clone(),
                             self.prompt_capabilities.clone(),
                             self.available_commands.clone(),
-                            self.cached_user_commands.clone(),
-                            self.cached_user_command_errors.clone(),
                             self.agent_name.clone(),
                             "Edit message － @ to include context",
                             editor::EditorMode::AutoHeight {
@@ -112,7 +104,7 @@ impl EntryViewState {
                             window,
                             cx,
                         );
-                        if !has_id {
+                        if !has_id || is_subagent {
                             editor.set_read_only(true, cx);
                         }
                         editor.set_message(chunks, window, cx);
@@ -427,7 +419,7 @@ mod tests {
     use serde_json::json;
     use settings::SettingsStore;
     use util::path;
-    use workspace::Workspace;
+    use workspace::MultiWorkspace;
 
     #[gpui::test]
     async fn test_diff_sync(cx: &mut TestAppContext) {
@@ -442,8 +434,9 @@ mod tests {
         .await;
         let project = Project::test(fs, [Path::new(path!("/project"))], cx).await;
 
-        let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
         let tool_call = acp::ToolCall::new("tool", "Tool call")
             .status(acp::ToolCallStatus::InProgress)
@@ -455,7 +448,7 @@ mod tests {
             .update(|_, cx| {
                 connection
                     .clone()
-                    .new_thread(project.clone(), Path::new(path!("/project")), cx)
+                    .new_session(project.clone(), Path::new(path!("/project")), cx)
             })
             .await
             .unwrap();
@@ -476,8 +469,6 @@ mod tests {
                 thread_store,
                 history.downgrade(),
                 None,
-                Default::default(),
-                Default::default(),
                 Default::default(),
                 Default::default(),
                 "Test Agent".into(),

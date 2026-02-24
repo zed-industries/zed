@@ -416,6 +416,7 @@ impl SyntaxSnapshot {
         self.layers = layers;
     }
 
+    #[ztracing::instrument(skip_all)]
     pub fn reparse(
         &mut self,
         text: &BufferSnapshot,
@@ -425,6 +426,7 @@ impl SyntaxSnapshot {
         self.reparse_(text, registry, root_language, None).ok();
     }
 
+    #[ztracing::instrument(skip_all)]
     pub fn reparse_with_timeout(
         &mut self,
         text: &BufferSnapshot,
@@ -702,7 +704,7 @@ impl SyntaxSnapshot {
                             text.as_rope(),
                             step_start_byte,
                             &included_ranges,
-                            Some(old_tree.clone()),
+                            Some(old_tree),
                             budget,
                         );
                         match result {
@@ -969,6 +971,30 @@ impl SyntaxSnapshot {
             query,
             options,
         )
+    }
+
+    pub fn languages<'a>(
+        &'a self,
+        buffer: &'a BufferSnapshot,
+        include_hidden: bool,
+    ) -> impl Iterator<Item = &'a Arc<Language>> {
+        let mut cursor = self.layers.cursor::<()>(buffer);
+        cursor.next();
+        iter::from_fn(move || {
+            while let Some(layer) = cursor.item() {
+                let mut info = None;
+                if let SyntaxLayerContent::Parsed { language, .. } = &layer.content {
+                    if include_hidden || !language.config.hidden {
+                        info = Some(language);
+                    }
+                }
+                cursor.next();
+                if info.is_some() {
+                    return info;
+                }
+            }
+            None
+        })
     }
 
     #[cfg(test)]
@@ -1450,7 +1476,7 @@ fn parse_text(
     text: &Rope,
     start_byte: usize,
     ranges: &[tree_sitter::Range],
-    old_tree: Option<tree_sitter::Tree>,
+    old_tree: Option<&tree_sitter::Tree>,
     parse_budget: &mut Option<Duration>,
 ) -> anyhow::Result<tree_sitter::Tree> {
     with_parser(|parser| {
@@ -1478,7 +1504,7 @@ fn parse_text(
                     chunks.seek(start_byte + offset);
                     chunks.next().unwrap_or("").as_bytes()
                 },
-                old_tree.as_ref(),
+                old_tree,
                 progress_callback
                     .as_mut()
                     .map(|progress_callback| tree_sitter::ParseOptions {

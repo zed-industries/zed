@@ -123,6 +123,7 @@
       "ctrl-i": "editor::ShowSignatureHelp",
       "alt-g b": "git::Blame",
       "alt-g m": "git::OpenModifiedFiles",
+      "alt-g r": "git::ReviewDiff",
       "menu": "editor::OpenContextMenu",
       "shift-f10": "editor::OpenContextMenu",
       "ctrl-alt-e": "editor::ToggleEditPrediction",
@@ -248,7 +249,10 @@
       "shift-alt-l": "agent::OpenRulesLibrary",
       "shift-alt-p": "agent::ManageProfiles",
       "ctrl-i": "agent::ToggleProfileSelector",
+      "shift-tab": "agent::CycleModeSelector",
       "alt-tab": "agent::CycleFavoriteModels",
+      // `alt-l` is provided as an alternative to `alt-tab` as the latter breaks on Windows under the `AgentPanel` context
+      "alt-l": "agent::CycleFavoriteModels",
       "shift-alt-/": "agent::ToggleModelSelector",
       "shift-alt-j": "agent::ToggleNavigationMenu",
       "shift-alt-i": "agent::ToggleOptionsMenu",
@@ -301,6 +305,12 @@
     },
   },
   {
+    "context": "AcpThread",
+    "bindings": {
+      "ctrl--": "pane::GoBack",
+    },
+  },
+  {
     "context": "AcpThread > Editor",
     "use_key_equivalents": true,
     "bindings": {
@@ -308,6 +318,7 @@
       "ctrl-shift-d": "git::Diff",
       "shift-alt-y": "agent::KeepAll",
       "shift-alt-z": "agent::RejectAll",
+      "shift-alt-u": "agent::UndoLastReject",
       "ctrl-enter": "agent::ChatWithFollow",
       "ctrl-shift-enter": "agent::SendImmediately",
       "ctrl-shift-alt-enter": "agent::SendNextQueuedMessage",
@@ -317,9 +328,13 @@
       "ctrl-shift-v": "agent::PasteRaw",
       "ctrl-i": "agent::ToggleProfileSelector",
       "shift-tab": "agent::CycleModeSelector",
+      // `alt-l` is provided as an alternative to `alt-tab` as the latter breaks on Windows under the `AcpThread > Editor` context
       "alt-tab": "agent::CycleFavoriteModels",
+      "alt-l": "agent::CycleFavoriteModels",
       "ctrl-;": "agent::OpenAddContextMenu",
       "ctrl-alt-k": "agent::ToggleThinkingMode",
+      "ctrl-alt-'": "agent::ToggleThinkingEffortMenu",
+      "ctrl-'": "agent::CycleThinkingEffort",
     },
   },
   {
@@ -563,7 +578,6 @@
       // "ctrl-shift-alt-o": "["projects::OpenRemote", { "from_existing_connection": true }]",
       "ctrl-shift-alt-o": ["projects::OpenRemote", { "from_existing_connection": false, "create_new_window": false }],
       "shift-alt-b": "branches::OpenRecent",
-      "ctrl-alt-p": "workspace::SwitchProject",
       "shift-alt-enter": "toast::RunAction",
       "ctrl-shift-`": "workspace::NewTerminal",
       "ctrl-s": "workspace::Save",
@@ -585,6 +599,8 @@
       "ctrl-alt-b": "workspace::ToggleRightDock",
       "ctrl-b": "workspace::ToggleLeftDock",
       "ctrl-j": "workspace::ToggleBottomDock",
+      "ctrl-alt-j": "multi_workspace::ToggleWorkspaceSidebar",
+      "ctrl-alt-;": "multi_workspace::FocusWorkspaceSidebar",
       "ctrl-shift-y": "workspace::ToggleAllDocks",
       "alt-r": "workspace::ResetActiveDockSize",
       // For 0px parameter, uses UI font size value.
@@ -651,6 +667,13 @@
     "use_key_equivalents": true,
     "bindings": {
       "f5": "debugger::Continue",
+    },
+  },
+  {
+    "context": "WorkspaceSidebar",
+    "use_key_equivalents": true,
+    "bindings": {
+      "ctrl-n": "multi_workspace::NewWorkspaceInWindow",
     },
   },
   {
@@ -733,8 +756,8 @@
       "alt-tab": "editor::AcceptEditPrediction",
       "alt-l": "editor::AcceptEditPrediction",
       "tab": "editor::AcceptEditPrediction",
-      "ctrl-shift-right": "editor::AcceptNextWordEditPrediction",
-      "ctrl-shift-down": "editor::AcceptNextLineEditPrediction",
+      "alt-k": "editor::AcceptNextWordEditPrediction",
+      "alt-j": "editor::AcceptNextLineEditPrediction",
     },
   },
   {
@@ -743,8 +766,8 @@
     "bindings": {
       "alt-tab": "editor::AcceptEditPrediction",
       "alt-l": "editor::AcceptEditPrediction",
-      "ctrl-shift-right": "editor::AcceptNextWordEditPrediction",
-      "ctrl-shift-down": "editor::AcceptNextLineEditPrediction",
+      "alt-k": "editor::AcceptNextWordEditPrediction",
+      "alt-j": "editor::AcceptNextLineEditPrediction",
     },
   },
   {
@@ -1087,6 +1110,14 @@
     },
   },
   {
+    "context": "RecentProjects || (RecentProjects > Picker > Editor)",
+    "use_key_equivalents": true,
+    "bindings": {
+      "ctrl-k": "recent_projects::ToggleActionsMenu",
+      "ctrl-shift-a": "workspace::AddFolderToProject",
+    },
+  },
+  {
     "context": "TabSwitcher",
     "use_key_equivalents": true,
     "bindings": {
@@ -1396,9 +1427,17 @@
     },
   },
   {
-    "context": "MultiProjectDropdown",
+    "context": "NotebookEditor",
     "bindings": {
-      "shift-backspace": "project_dropdown::RemoveSelectedFolder",
+      "shift-enter": "notebook::Run",
+      "ctrl-enter": "notebook::Run",
+      "ctrl-shift-enter": "notebook::RunAll",
+      "alt-up": "notebook::MoveCellUp",
+      "alt-down": "notebook::MoveCellDown",
+      "ctrl-m": "notebook::AddCodeBlock",
+      "ctrl-shift-m": "notebook::AddMarkdownBlock",
+      "ctrl-shift-r": "notebook::RestartKernel",
+      "ctrl-c": "notebook::InterruptKernel",
     },
   },
   {

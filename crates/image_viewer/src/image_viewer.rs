@@ -11,13 +11,13 @@ use gpui::{
     FocusHandle, Focusable, GlobalElementId, InspectorElementId, InteractiveElement, IntoElement,
     LayoutId, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels,
     Point, Render, ScrollDelta, ScrollWheelEvent, Style, Styled, Task, WeakEntity, Window, actions,
-    canvas, div, img, opaque_grey, point, px, size,
+    checkerboard, div, img, point, px, size,
 };
 use language::File as _;
 use persistence::IMAGE_VIEWER;
 use project::{ImageItem, Project, ProjectPath, image_store::ImageItemEvent};
 use settings::Settings;
-use theme::{Theme, ThemeSettings};
+use theme::ThemeSettings;
 use ui::{Tooltip, prelude::*};
 use util::paths::PathExt;
 use workspace::{
@@ -50,7 +50,7 @@ const MIN_ZOOM: f32 = 0.1;
 const MAX_ZOOM: f32 = 20.0;
 const ZOOM_STEP: f32 = 1.1;
 const SCROLL_LINE_MULTIPLIER: f32 = 20.0;
-const BASE_SQUARE_SIZE: f32 = 48.0;
+const BASE_SQUARE_SIZE: f32 = 32.0;
 
 pub struct ImageView {
     image_item: Entity<ImageItem>,
@@ -378,53 +378,17 @@ impl Element for ImageContentElement {
                     .w(scaled_width)
                     .h(scaled_height)
                     .child(
-                        canvas(
-                            |_, _, _| {},
-                            move |bounds, _, window, _cx| {
-                                let bounds_x: f32 = bounds.origin.x.into();
-                                let bounds_y: f32 = bounds.origin.y.into();
-                                let bounds_width: f32 = bounds.size.width.into();
-                                let bounds_height: f32 = bounds.size.height.into();
-                                let square_size = BASE_SQUARE_SIZE * zoom_level;
-                                let cols = (bounds_width / square_size).ceil() as i32 + 1;
-                                let rows = (bounds_height / square_size).ceil() as i32 + 1;
-                                for row in 0..rows {
-                                    for col in 0..cols {
-                                        if (row + col) % 2 == 0 {
-                                            continue;
-                                        }
-                                        let x = bounds_x + col as f32 * square_size;
-                                        let y = bounds_y + row as f32 * square_size;
-                                        let w = square_size.min(bounds_x + bounds_width - x);
-                                        let h = square_size.min(bounds_y + bounds_height - y);
-                                        if w > 0.0 && h > 0.0 {
-                                            let rect = Bounds::new(
-                                                point(px(x), px(y)),
-                                                size(px(w), px(h)),
-                                            );
-                                            window.paint_quad(gpui::fill(
-                                                rect,
-                                                opaque_grey(0.6, 1.0),
-                                            ));
-                                        }
-                                    }
-                                }
-                                let border_rect = Bounds::new(
-                                    point(px(bounds_x), px(bounds_y)),
-                                    size(px(bounds_width), px(bounds_height)),
-                                );
-                                window.paint_quad(gpui::outline(
-                                    border_rect,
-                                    border_color,
-                                    gpui::BorderStyle::default(),
-                                ));
-                            },
-                        )
-                        .size_full()
-                        .absolute()
-                        .top_0()
-                        .left_0()
-                        .bg(gpui::rgb(0xCCCCCD)),
+                        div()
+                            .size_full()
+                            .absolute()
+                            .top_0()
+                            .left_0()
+                            .child(div().size_full().bg(checkerboard(
+                                cx.theme().colors().panel_background,
+                                BASE_SQUARE_SIZE * zoom_level,
+                            )))
+                            .border_1()
+                            .border_color(border_color),
                     )
                     .child({
                         img(image)
@@ -479,7 +443,7 @@ impl EventEmitter<ImageViewEvent> for ImageView {}
 impl Item for ImageView {
     type Event = ImageViewEvent;
 
-    fn to_item_events(event: &Self::Event, mut f: impl FnMut(workspace::item::ItemEvent)) {
+    fn to_item_events(event: &Self::Event, f: &mut dyn FnMut(workspace::item::ItemEvent)) {
         match event {
             ImageViewEvent::TitleChanged => {
                 f(workspace::item::ItemEvent::UpdateTab);
@@ -558,7 +522,7 @@ impl Item for ImageView {
         }
     }
 
-    fn breadcrumbs(&self, _theme: &Theme, cx: &App) -> Option<Vec<BreadcrumbText>> {
+    fn breadcrumbs(&self, cx: &App) -> Option<Vec<BreadcrumbText>> {
         let text = breadcrumbs_text_for_image(self.project.read(cx), self.image_item.read(cx), cx);
         let settings = ThemeSettings::get_global(cx);
 

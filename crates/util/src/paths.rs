@@ -86,7 +86,7 @@ pub trait PathExt {
     fn multiple_extensions(&self) -> Option<String>;
 
     /// Try to make a shell-safe representation of the path.
-    fn try_shell_safe(&self, shell_kind: Option<&ShellKind>) -> anyhow::Result<String>;
+    fn try_shell_safe(&self, shell_kind: ShellKind) -> anyhow::Result<String>;
 }
 
 impl<T: AsRef<Path>> PathExt for T {
@@ -164,19 +164,13 @@ impl<T: AsRef<Path>> PathExt for T {
         Some(parts.into_iter().join("."))
     }
 
-    fn try_shell_safe(&self, shell_kind: Option<&ShellKind>) -> anyhow::Result<String> {
+    fn try_shell_safe(&self, shell_kind: ShellKind) -> anyhow::Result<String> {
         let path_str = self
             .as_ref()
             .to_str()
             .with_context(|| "Path contains invalid UTF-8")?;
-        let quoted = match shell_kind {
-            Some(kind) => kind.try_quote(path_str),
-            #[cfg(windows)]
-            None => Some(ShellKind::quote_powershell(path_str)),
-            #[cfg(unix)]
-            None => shlex::try_quote(path_str).ok(),
-        };
-        quoted
+        shell_kind
+            .try_quote(path_str)
             .as_deref()
             .map(ToOwned::to_owned)
             .context("Failed to quote path")
@@ -434,7 +428,17 @@ impl PathStyle {
             .find_map(|sep| parent.strip_suffix(sep))
             .unwrap_or(parent);
         let child = child.to_str()?;
-        let stripped = child.strip_prefix(parent)?;
+
+        // Match behavior of std::path::Path, which is case-insensitive for drive letters (e.g., "C:" == "c:")
+        let stripped = if self.is_windows()
+            && child.as_bytes().get(1) == Some(&b':')
+            && parent.as_bytes().get(1) == Some(&b':')
+            && child.as_bytes()[0].eq_ignore_ascii_case(&parent.as_bytes()[0])
+        {
+            child[2..].strip_prefix(&parent[2..])?
+        } else {
+            child.strip_prefix(parent)?
+        };
         if let Some(relative) = self
             .separators()
             .iter()
@@ -791,7 +795,7 @@ impl PathWithPosition {
         })
     }
 
-    pub fn to_string(&self, path_to_string: impl Fn(&PathBuf) -> String) -> String {
+    pub fn to_string(&self, path_to_string: &dyn Fn(&PathBuf) -> String) -> String {
         let path_string = path_to_string(&self.path);
         if let Some(row) = self.row {
             if let Some(column) = self.column {
@@ -1180,8 +1184,8 @@ pub fn compare_rel_paths_mixed(
                 let ordering = match (a_key, b_key) {
                     (Some(a), Some(b)) => natural_sort_no_tiebreak(a, b)
                         .then_with(|| match (a_leaf_file, b_leaf_file) {
-                            (true, false) if a == b => Ordering::Greater,
-                            (false, true) if a == b => Ordering::Less,
+                            (true, false) if a.eq_ignore_ascii_case(b) => Ordering::Greater,
+                            (false, true) if a.eq_ignore_ascii_case(b) => Ordering::Less,
                             _ => Ordering::Equal,
                         })
                         .then_with(|| {
@@ -1823,6 +1827,35 @@ mod tests {
     }
 
     #[perf]
+    fn compare_rel_paths_mixed_same_name_different_case_file_and_dir() {
+        let mut paths = vec![
+            (RelPath::unix("Hello.txt").unwrap(), true),
+            (RelPath::unix("hello").unwrap(), false),
+        ];
+        paths.sort_by(|&a, &b| compare_rel_paths_mixed(a, b));
+        assert_eq!(
+            paths,
+            vec![
+                (RelPath::unix("hello").unwrap(), false),
+                (RelPath::unix("Hello.txt").unwrap(), true),
+            ]
+        );
+
+        let mut paths = vec![
+            (RelPath::unix("hello").unwrap(), false),
+            (RelPath::unix("Hello.txt").unwrap(), true),
+        ];
+        paths.sort_by(|&a, &b| compare_rel_paths_mixed(a, b));
+        assert_eq!(
+            paths,
+            vec![
+                (RelPath::unix("hello").unwrap(), false),
+                (RelPath::unix("Hello.txt").unwrap(), true),
+            ]
+        );
+    }
+
+    #[perf]
     fn compare_rel_paths_mixed_with_nested_paths() {
         // Test that nested paths still work correctly
         let mut paths = vec![
@@ -1957,8 +1990,8 @@ mod tests {
         assert_eq!(
             paths,
             vec![
-                (RelPath::unix("A/B.txt").unwrap(), true),
                 (RelPath::unix("a/b/c.txt").unwrap(), true),
+                (RelPath::unix("A/B.txt").unwrap(), true),
                 (RelPath::unix("a.txt").unwrap(), true),
                 (RelPath::unix("A.txt").unwrap(), true),
             ]

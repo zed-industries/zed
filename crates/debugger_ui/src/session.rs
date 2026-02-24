@@ -141,7 +141,7 @@ impl FollowableItem for DebugSession {
         self.remote_id
     }
 
-    fn to_state_proto(&self, _window: &Window, _cx: &App) -> Option<proto::view::Variant> {
+    fn to_state_proto(&self, _window: &mut Window, _cx: &mut App) -> Option<proto::view::Variant> {
         None
     }
 
@@ -159,8 +159,8 @@ impl FollowableItem for DebugSession {
         &self,
         _event: &Self::Event,
         _update: &mut Option<proto::update_view::Variant>,
-        _window: &Window,
-        _cx: &App,
+        _window: &mut Window,
+        _cx: &mut App,
     ) -> bool {
         // update.get_or_insert_with(|| proto::update_view::Variant::DebugPanel(Default::default()));
 

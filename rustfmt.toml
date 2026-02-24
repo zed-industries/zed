@@ -1,0 +1,3 @@
+# https://github.com/rust-lang/rustfmt?tab=readme-ov-file#rusts-editions 
+edition = "2024"
+style_edition = "2024"

@@ -48,8 +48,8 @@ use serde_json::Value;
 use settings::Settings;
 use stack_frame_list::StackFrameList;
 use task::{
-    BuildTaskDefinition, DebugScenario, Shell, ShellBuilder, SpawnInTerminal, TaskContext,
-    ZedDebugConfig, substitute_variables_in_str,
+    BuildTaskDefinition, DebugScenario, SharedTaskContext, Shell, ShellBuilder, SpawnInTerminal,
+    TaskContext, ZedDebugConfig, substitute_variables_in_str,
 };
 use terminal_view::TerminalView;
 use ui::{
@@ -956,7 +956,7 @@ impl RunningState {
     pub(crate) fn resolve_scenario(
         &self,
         scenario: DebugScenario,
-        task_context: TaskContext,
+        task_context: SharedTaskContext,
         buffer: Option<Entity<Buffer>>,
         worktree_id: Option<WorktreeId>,
         window: &Window,
@@ -971,6 +971,7 @@ impl RunningState {
         let task_store = project.read(cx).task_store().downgrade();
         let weak_project = project.downgrade();
         let weak_workspace = workspace.downgrade();
+        let is_windows = project.read(cx).path_style(cx).is_windows();
         let remote_shell = project
             .read(cx)
             .remote_client()
@@ -1088,7 +1089,7 @@ impl RunningState {
                     task.resolved.shell = Shell::Program(remote_shell);
                 }
 
-                let builder = ShellBuilder::new(&task.resolved.shell);
+                let builder = ShellBuilder::new(&task.resolved.shell, is_windows);
                 let command_label = builder.command_label(task.resolved.command.as_deref().unwrap_or(""));
                 let (command, args) =
                     builder.build(task.resolved.command.clone(), &task.resolved.args);
