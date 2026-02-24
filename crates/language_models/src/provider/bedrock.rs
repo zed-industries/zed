@@ -417,7 +417,12 @@ impl BedrockLanguageModelProvider {
         }
     }
 
-    fn create_language_model(&self, model: bedrock::Model) -> Arc<dyn LanguageModel> {
+    fn create_language_model(
+        &self,
+        model: bedrock::Model,
+        allow_extended_context: bool,
+    ) -> Arc<dyn LanguageModel> {
+        let use_extended_context = allow_extended_context && model.supports_extended_context();
         Arc::new(BedrockModel {
             id: LanguageModelId::from(model.id().to_string()),
             model,
@@ -426,6 +431,7 @@ impl BedrockLanguageModelProvider {
             state: self.state.clone(),
             client: OnceCell::new(),
             request_limiter: RateLimiter::new(4),
+            use_extended_context,
         })
     }
 }
@@ -443,16 +449,23 @@ impl LanguageModelProvider for BedrockLanguageModelProvider {
         IconOrSvg::Icon(IconName::AiBedrock)
     }
 
-    fn default_model(&self, _cx: &App) -> Option<Arc<dyn LanguageModel>> {
-        Some(self.create_language_model(bedrock::Model::default()))
+    fn default_model(&self, cx: &App) -> Option<Arc<dyn LanguageModel>> {
+        let allow_extended_context = self.state.read(cx).get_allow_extended_context();
+        Some(self.create_language_model(bedrock::Model::default(), allow_extended_context))
     }
 
     fn default_fast_model(&self, cx: &App) -> Option<Arc<dyn LanguageModel>> {
-        let region = self.state.read(cx).get_region();
-        Some(self.create_language_model(bedrock::Model::default_fast(region.as_str())))
+        let state = self.state.read(cx);
+        let region = state.get_region();
+        let allow_extended_context = state.get_allow_extended_context();
+        Some(self.create_language_model(
+            bedrock::Model::default_fast(region.as_str()),
+            allow_extended_context,
+        ))
     }
 
     fn provided_models(&self, cx: &App) -> Vec<Arc<dyn LanguageModel>> {
+        let allow_extended_context = self.state.read(cx).get_allow_extended_context();
         let mut models = BTreeMap::default();
 
         for model in bedrock::Model::iter() {
@@ -487,7 +500,7 @@ impl LanguageModelProvider for BedrockLanguageModelProvider {
 
         models
             .into_values()
-            .map(|model| self.create_language_model(model))
+            .map(|model| self.create_language_model(model, allow_extended_context))
             .collect()
     }
 
@@ -530,6 +543,7 @@ struct BedrockModel {
     client: OnceCell<BedrockClient>,
     state: Entity<State>,
     request_limiter: RateLimiter,
+    use_extended_context: bool,
 }
 
 impl BedrockModel {
@@ -663,7 +677,11 @@ impl LanguageModel for BedrockModel {
     }
 
     fn max_token_count(&self) -> u64 {
-        self.model.max_token_count()
+        if self.use_extended_context {
+            1_000_000
+        } else {
+            self.model.max_token_count()
+        }
     }
 
     fn max_output_tokens(&self) -> Option<u64> {
