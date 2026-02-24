@@ -221,6 +221,20 @@ impl ActiveProjects {
         None
     }
 
+    /// Returns the flat index of a given workspace entity, if present.
+    fn index_of_workspace(&self, workspace: &Entity<Workspace>) -> Option<usize> {
+        let mut offset = 0;
+        for (_key, group) in &self.groups {
+            for entry in &group.entries {
+                if entry.workspace == *workspace {
+                    return Some(offset);
+                }
+                offset += 1;
+            }
+        }
+        None
+    }
+
     /// Preserve thread info from a previous snapshot for workspaces that
     /// temporarily have no active thread (e.g. mid-switch).
     fn preserve_thread_info_from(&mut self, old: &ActiveProjects) {
@@ -244,19 +258,25 @@ struct ActiveProjectsDelegate {
     multi_workspace: Entity<MultiWorkspace>,
     /// The primary list of things shown in the sidebar.
     active_projects: ActiveProjects,
+    selected_index: usize,
 }
 
 impl ActiveProjectsDelegate {
     fn new(
         multi_workspace: Entity<MultiWorkspace>,
         workspaces: &[Entity<Workspace>],
+        active_workspace: &Entity<Workspace>,
         cx: &App,
     ) -> Self {
         let active_projects = ActiveProjects::from_workspaces(workspaces, cx);
+        let selected_index = active_projects
+            .index_of_workspace(active_workspace)
+            .unwrap_or(0);
 
         Self {
             multi_workspace,
             active_projects,
+            selected_index,
         }
     }
 }
@@ -269,7 +289,7 @@ impl PickerDelegate for ActiveProjectsDelegate {
     }
 
     fn selected_index(&self) -> usize {
-        0
+        self.selected_index
     }
 
     fn set_selected_index(
@@ -278,6 +298,7 @@ impl PickerDelegate for ActiveProjectsDelegate {
         _window: &mut Window,
         _cx: &mut Context<Picker<Self>>,
     ) {
+        self.selected_index = ix;
     }
 
     fn can_select(
@@ -286,7 +307,7 @@ impl PickerDelegate for ActiveProjectsDelegate {
         _window: &mut Window,
         _cx: &mut Context<Picker<Self>>,
     ) -> bool {
-        false
+        true
     }
 
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
@@ -306,7 +327,15 @@ impl PickerDelegate for ActiveProjectsDelegate {
         cx.spawn_in(window, async move |_picker, cx| {})
     }
 
-    fn confirm(&mut self, _secondary: bool, window: &mut Window, cx: &mut Context<Picker<Self>>) {}
+    fn confirm(&mut self, _secondary: bool, window: &mut Window, cx: &mut Context<Picker<Self>>) {
+        let Some((entry, _)) = self.active_projects.project_by_ix(self.selected_index) else {
+            return;
+        };
+        let workspace = entry.workspace.clone();
+        self.multi_workspace.update(cx, |multi_workspace, cx| {
+            multi_workspace.activate(workspace, cx);
+        });
+    }
 
     fn dismissed(&mut self, _window: &mut Window, _cx: &mut Context<Picker<Self>>) {}
 
@@ -387,7 +416,11 @@ impl Sidebar {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let delegate = ActiveProjectsDelegate::new(multi_workspace.clone(), workspaces, cx);
+        let active_workspace = workspaces
+            .first()
+            .expect("must have at least one workspace");
+        let delegate =
+            ActiveProjectsDelegate::new(multi_workspace.clone(), workspaces, active_workspace, cx);
         let picker = cx.new(|cx| {
             Picker::list(delegate, window, cx)
                 .max_height(None)
@@ -459,7 +492,10 @@ impl Sidebar {
     fn update_entries(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let multi_workspace = self.multi_workspace.clone();
         cx.defer_in(window, move |this, window, cx| {
-            let workspaces = multi_workspace.read(cx).workspaces().to_vec();
+            let (workspaces, active_workspace) = {
+                let mw = multi_workspace.read(cx);
+                (mw.workspaces().to_vec(), mw.workspace().clone())
+            };
 
             // Rebuild the active projects from scratch, preserving thread info
             // for workspaces that temporarily have no active thread.
@@ -467,6 +503,11 @@ impl Sidebar {
             this.picker.update(cx, |picker, cx| {
                 active_projects.preserve_thread_info_from(&picker.delegate.active_projects);
                 picker.delegate.active_projects = active_projects;
+                picker.delegate.selected_index = picker
+                    .delegate
+                    .active_projects
+                    .index_of_workspace(&active_workspace)
+                    .unwrap_or(0);
                 let query = picker.query(cx);
                 picker.update_matches(query, window, cx);
             });
