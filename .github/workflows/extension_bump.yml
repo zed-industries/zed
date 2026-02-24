@@ -38,10 +38,10 @@ jobs:
       name: extension_bump::compare_versions
       run: |
         CURRENT_VERSION="$(sed -n 's/^version = \"\(.*\)\"/\1/p' < extension.toml | tr -d '[:space:]')"
-        PR_PARENT_SHA="${{ github.event.pull_request.head.sha }}"
+        PR_PARENT_REF="${{ github.head_ref }}"
 
-        if [[ -n "$PR_PARENT_SHA" ]]; then
-            git checkout "$PR_PARENT_SHA"
+        if [[ -n "$PR_PARENT_REF" ]]; then
+            git checkout "$PR_PARENT_REF"
         elif BRANCH_PARENT_SHA="$(git merge-base origin/main origin/zed-zippy-autobump)"; then
             git checkout "$BRANCH_PARENT_SHA"
         else
