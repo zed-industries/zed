@@ -7034,16 +7034,16 @@ impl MultiBufferSnapshot {
     /// afterwards.
     fn excerpt(&self, excerpt_id: ExcerptId) -> Option<&Excerpt> {
         let excerpt_id = self.latest_excerpt_id(excerpt_id);
-        let mut cursor = self.excerpts.cursor::<Option<&Locator>>(());
         let locator = self.excerpt_locator_for_id(excerpt_id);
-        cursor.seek(&Some(locator), Bias::Left);
-        if let Some(excerpt) = cursor.item()
+        let (_, _, item) =
+            self.excerpts
+                .find::<Option<&Locator>, _>((), &Some(locator), Bias::Left);
+        if let Some(excerpt) = item
             && excerpt.id == excerpt_id
         {
             return Some(excerpt);
-        } else if cursor.item().is_none() && excerpt_id == ExcerptId::max() {
-            cursor.prev();
-            return cursor.item();
+        } else if item.is_none() && excerpt_id == ExcerptId::max() {
+            return self.excerpts.last();
         }
         None
     }
