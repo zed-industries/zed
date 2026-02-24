@@ -83,6 +83,79 @@ impl FilePathNav {
     }
 }
 
+fn build_directory_menu(
+    menu: ContextMenu,
+    dir_path: &RelPath,
+    worktree_id: WorktreeId,
+    project: &WeakEntity<Project>,
+    workspace: &Option<WeakEntity<Workspace>>,
+    _window: &mut Window,
+    cx: &mut Context<ContextMenu>,
+) -> ContextMenu {
+    let Some(project_entity) = project.upgrade() else {
+        return menu;
+    };
+    let Some(worktree) = project_entity.read(cx).worktree_for_id(worktree_id, cx) else {
+        return menu;
+    };
+
+    let snapshot = worktree.read(cx);
+    let mut entries: Vec<Entry> = snapshot.child_entries(dir_path).cloned().collect();
+
+    entries.sort_by(|a, b| match (a.is_dir(), b.is_dir()) {
+        (true, false) => std::cmp::Ordering::Less,
+        (false, true) => std::cmp::Ordering::Greater,
+        _ => a.path.cmp(&b.path),
+    });
+
+    entries.iter().fold(menu, |menu, entry| {
+        let Some(name) = entry.path.file_name() else {
+            return menu;
+        };
+        let name = name.to_string();
+
+        if entry.is_dir() {
+            let entry_path = entry.path.clone();
+            let project = project.clone();
+            let workspace = workspace.clone();
+
+            menu.submenu(name, move |submenu, window, cx| {
+                build_directory_menu(
+                    submenu,
+                    &entry_path,
+                    worktree_id,
+                    &project,
+                    &workspace,
+                    window,
+                    cx,
+                )
+            })
+        } else {
+            let project_path = ProjectPath {
+                worktree_id,
+                path: entry.path.clone(),
+            };
+            let icon_path = FileIcons::get_icon(entry.path.as_std_path(), cx);
+            let workspace = workspace.clone();
+
+            let mut menu_entry = ContextMenuEntry::new(name).handler(move |window, cx| {
+                if let Some(workspace) = workspace.as_ref().and_then(|w| w.upgrade()) {
+                    workspace.update(cx, |ws: &mut Workspace, cx| {
+                        ws.open_path(project_path.clone(), None, true, window, cx)
+                            .detach_and_log_err(cx);
+                    });
+                }
+            });
+
+            if let Some(icon) = icon_path {
+                menu_entry = menu_entry.custom_icon_path(icon);
+            }
+
+            menu.item(menu_entry)
+        }
+    })
+}
+
 impl RenderOnce for FilePathNav {
     fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
         let worktree_id = self.worktree_id;
@@ -112,67 +185,20 @@ impl RenderOnce for FilePathNav {
             let segment = PopoverMenu::new(menu_id)
                 .anchor(gpui::Corner::TopLeft)
                 .menu(move |window, cx| {
-                    let Some(project_entity) = project.upgrade() else {
-                        return None;
-                    };
-                    let Some(worktree) = project_entity.read(cx).worktree_for_id(worktree_id, cx)
-                    else {
-                        return None;
-                    };
-
-                    let snapshot = worktree.read(cx);
-                    let mut entries: Vec<Entry> =
-                        snapshot.child_entries(&parent_dir).cloned().collect();
-
-                    entries.sort_by(|a, b| match (a.is_dir(), b.is_dir()) {
-                        (true, false) => std::cmp::Ordering::Less,
-                        (false, true) => std::cmp::Ordering::Greater,
-                        _ => a.path.cmp(&b.path),
-                    });
-
+                    let project = project.clone();
                     let workspace = workspace.clone();
-                    Some(ContextMenu::build(window, cx, move |menu, _, cx: &mut Context<ContextMenu>| {
-                        entries.iter().fold(menu, |menu, entry| {
-                            let Some(name) = entry.path.file_name() else {
-                                return menu;
-                            };
-                            let name = name.to_string();
-                            let entry_is_dir = entry.is_dir();
-                            let project_path = ProjectPath {
-                                worktree_id,
-                                path: entry.path.clone(),
-                            };
-                            let icon_path = if entry_is_dir {
-                                FileIcons::get_folder_icon(false, entry.path.as_std_path(), cx)
-                            } else {
-                                FileIcons::get_icon(entry.path.as_std_path(), cx)
-                            };
+                    let parent_dir = parent_dir.clone();
 
-                            let workspace = workspace.clone();
-                            let mut menu_entry =
-                                ContextMenuEntry::new(name).handler(move |window, cx| {
-                                    if !entry_is_dir {
-                                        if let Some(workspace) = workspace.as_ref().and_then(|w| w.upgrade()) {
-                                            workspace.update(cx, |ws: &mut Workspace, cx| {
-                                                ws.open_path(
-                                                    project_path.clone(),
-                                                    None,
-                                                    true,
-                                                    window,
-                                                    cx,
-                                                )
-                                                .detach_and_log_err(cx);
-                                            });
-                                        }
-                                    }
-                                });
-
-                            if let Some(icon) = icon_path {
-                                menu_entry = menu_entry.custom_icon_path(icon);
-                            }
-
-                            menu.item(menu_entry)
-                        })
+                    Some(ContextMenu::build(window, cx, move |menu, window, cx| {
+                        build_directory_menu(
+                            menu,
+                            &parent_dir,
+                            worktree_id,
+                            &project,
+                            &workspace,
+                            window,
+                            cx,
+                        )
                     }))
                 })
                 .trigger(
