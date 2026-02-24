@@ -18,7 +18,6 @@ use std::{
     rc::Rc,
     sync::Arc,
 };
-use wasm_bindgen::prelude::*;
 
 static BUNDLED_FONTS: &[&[u8]] = &[
     include_bytes!("../../../assets/fonts/ibm-plex-sans/IBMPlexSans-Regular.ttf"),
@@ -32,15 +31,14 @@ static BUNDLED_FONTS: &[&[u8]] = &[
 ];
 
 pub struct WebPlatform {
+    browser_window: web_sys::Window,
     background_executor: BackgroundExecutor,
     foreground_executor: ForegroundExecutor,
     text_system: Arc<dyn PlatformTextSystem>,
     active_window: RefCell<Option<AnyWindowHandle>>,
     active_display: Rc<dyn PlatformDisplay>,
-    clipboard: Rc<RefCell<Option<ClipboardItem>>>,
     callbacks: RefCell<WebPlatformCallbacks>,
     wgpu_context: Rc<RefCell<Option<WgpuContext>>>,
-    _paste_closure: RefCell<Option<Closure<dyn FnMut(web_sys::ClipboardEvent)>>>,
 }
 
 #[derive(Default)]
@@ -55,66 +53,11 @@ struct WebPlatformCallbacks {
     thermal_state_change: Option<Box<dyn FnMut()>>,
 }
 
-fn get_browser_window() -> Option<web_sys::Window> {
-    web_sys::window()
-}
-
-fn get_document() -> Option<web_sys::Document> {
-    get_browser_window()?.document()
-}
-
-fn detect_window_appearance() -> WindowAppearance {
-    let Some(window) = get_browser_window() else {
-        return WindowAppearance::Light;
-    };
-    let Ok(Some(media_query)) = window.match_media("(prefers-color-scheme: dark)") else {
-        return WindowAppearance::Light;
-    };
-    if media_query.matches() {
-        WindowAppearance::Dark
-    } else {
-        WindowAppearance::Light
-    }
-}
-
-fn write_text_to_navigator_clipboard(text: &str) {
-    let Some(window) = get_browser_window() else {
-        return;
-    };
-    let clipboard = window.navigator().clipboard();
-    let promise = clipboard.write_text(text);
-    let future = wasm_bindgen_futures::JsFuture::from(promise);
-    wasm_bindgen_futures::spawn_local(async move {
-        if let Err(error) = future.await {
-            log::warn!("Failed to write to navigator.clipboard: {error:?}");
-        }
-    });
-}
-
-fn register_paste_listener(
-    clipboard_cache: Rc<RefCell<Option<ClipboardItem>>>,
-) -> Option<Closure<dyn FnMut(web_sys::ClipboardEvent)>> {
-    let document = get_document()?;
-    let closure = Closure::wrap(Box::new(move |event: web_sys::ClipboardEvent| {
-        if let Some(data_transfer) = event.clipboard_data() {
-            if let Ok(text) = data_transfer.get_data("text/plain") {
-                if !text.is_empty() {
-                    *clipboard_cache.borrow_mut() = Some(ClipboardItem::new_string(text));
-                }
-            }
-        }
-    }) as Box<dyn FnMut(web_sys::ClipboardEvent)>);
-
-    document
-        .add_event_listener_with_callback("paste", closure.as_ref().unchecked_ref())
-        .ok()?;
-
-    Some(closure)
-}
-
 impl WebPlatform {
     pub fn new() -> Self {
-        let dispatcher = Arc::new(WebDispatcher::new());
+        let browser_window =
+            web_sys::window().expect("must be running in a browser window context");
+        let dispatcher = Arc::new(WebDispatcher::new(browser_window.clone()));
         let background_executor = BackgroundExecutor::new(dispatcher.clone());
         let foreground_executor = ForegroundExecutor::new(dispatcher);
         let text_system =
@@ -127,21 +70,18 @@ impl WebPlatform {
             log::error!("failed to load bundled fonts: {error:#}");
         }
         let text_system: Arc<dyn PlatformTextSystem> = text_system;
-        let active_display: Rc<dyn PlatformDisplay> = Rc::new(WebDisplay::new());
-        let clipboard: Rc<RefCell<Option<ClipboardItem>>> = Rc::new(RefCell::new(None));
-
-        let paste_closure = register_paste_listener(Rc::clone(&clipboard));
+        let active_display: Rc<dyn PlatformDisplay> =
+            Rc::new(WebDisplay::new(browser_window.clone()));
 
         Self {
+            browser_window,
             background_executor,
             foreground_executor,
             text_system,
             active_window: RefCell::new(None),
             active_display,
-            clipboard,
             callbacks: RefCell::new(WebPlatformCallbacks::default()),
             wgpu_context: Rc::new(RefCell::new(None)),
-            _paste_closure: RefCell::new(paste_closure),
         }
     }
 }
@@ -212,20 +152,28 @@ impl Platform for WebPlatform {
             anyhow::anyhow!("WebGPU context not initialized. Was Platform::run() called?")
         })?;
 
-        let window = WebWindow::new(handle, params, context)?;
+        let window = WebWindow::new(handle, params, context, self.browser_window.clone())?;
         *self.active_window.borrow_mut() = Some(handle);
         Ok(Box::new(window))
     }
 
     fn window_appearance(&self) -> WindowAppearance {
-        detect_window_appearance()
+        let Ok(Some(media_query)) = self
+            .browser_window
+            .match_media("(prefers-color-scheme: dark)")
+        else {
+            return WindowAppearance::Light;
+        };
+        if media_query.matches() {
+            WindowAppearance::Dark
+        } else {
+            WindowAppearance::Light
+        }
     }
 
     fn open_url(&self, url: &str) {
-        if let Some(window) = get_browser_window() {
-            if let Err(error) = window.open_with_url(url) {
-                log::warn!("Failed to open URL '{url}': {error:?}");
-            }
+        if let Err(error) = self.browser_window.open_with_url(url) {
+            log::warn!("Failed to open URL '{url}': {error:?}");
         }
     }
 
@@ -343,7 +291,7 @@ impl Platform for WebPlatform {
             CursorStyle::None => "none",
         };
 
-        if let Some(document) = get_document() {
+        if let Some(document) = self.browser_window.document() {
             if let Some(body) = document.body() {
                 if let Err(error) = body.style().set_property("cursor", css_cursor) {
                     log::warn!("Failed to set cursor style: {error:?}");
@@ -357,15 +305,10 @@ impl Platform for WebPlatform {
     }
 
     fn read_from_clipboard(&self) -> Option<ClipboardItem> {
-        self.clipboard.borrow().clone()
+        None
     }
 
-    fn write_to_clipboard(&self, item: ClipboardItem) {
-        if let Some(text) = item.text() {
-            write_text_to_navigator_clipboard(&text);
-        }
-        *self.clipboard.borrow_mut() = Some(item);
-    }
+    fn write_to_clipboard(&self, _item: ClipboardItem) {}
 
     fn write_credentials(&self, _url: &str, _username: &str, _password: &[u8]) -> Task<Result<()>> {
         Task::ready(Err(anyhow::anyhow!(

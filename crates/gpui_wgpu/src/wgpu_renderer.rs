@@ -841,6 +841,10 @@ impl WgpuRenderer {
         &self.atlas
     }
 
+    pub fn supports_dual_source_blending(&self) -> bool {
+        self.dual_source_blending
+    }
+
     pub fn gpu_specs(&self) -> GpuSpecs {
         GpuSpecs {
             is_software_emulated: self.adapter_info.device_type == wgpu::DeviceType::Cpu,

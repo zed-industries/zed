@@ -3,40 +3,41 @@ use std::time::Duration;
 use wasm_bindgen::prelude::*;
 use web_time::Instant;
 
-#[wasm_bindgen]
-extern "C" {
-    #[wasm_bindgen(js_name = "queueMicrotask")]
-    fn queue_microtask(callback: &JsValue);
-
-    #[wasm_bindgen(js_name = "setTimeout")]
-    fn set_timeout(callback: &JsValue, timeout: i32) -> i32;
-}
-
-fn schedule_runnable(runnable: RunnableVariant, priority: Priority) {
-    let callback = Closure::once_into_js(move || {
-        if !runnable.metadata().is_closed() {
-            runnable.run();
-        }
-    });
-
-    match priority {
-        Priority::RealtimeAudio | Priority::High => {
-            queue_microtask(&callback);
-        }
-        Priority::Medium | Priority::Low => {
-            set_timeout(&callback, 0);
-        }
-    }
-}
-
 pub struct WebDispatcher {
     main_thread_id: std::thread::ThreadId,
+    browser_window: web_sys::Window,
 }
 
+// Safety: WASM is single-threaded — there is no concurrent access to `web_sys::Window`.
+// TODO-Wasm: This won't be true soon.
+unsafe impl Send for WebDispatcher {}
+unsafe impl Sync for WebDispatcher {}
+
 impl WebDispatcher {
-    pub fn new() -> Self {
+    pub fn new(browser_window: web_sys::Window) -> Self {
         Self {
             main_thread_id: std::thread::current().id(),
+            browser_window,
+        }
+    }
+
+    fn schedule_runnable(&self, runnable: RunnableVariant, priority: Priority) {
+        let callback = Closure::once_into_js(move || {
+            if !runnable.metadata().is_closed() {
+                runnable.run();
+            }
+        });
+        let callback: &js_sys::Function = callback.unchecked_ref();
+
+        match priority {
+            Priority::RealtimeAudio | Priority::High => {
+                self.browser_window.queue_microtask(callback);
+            }
+            Priority::Medium | Priority::Low => {
+                self.browser_window
+                    .set_timeout_with_callback_and_timeout_and_arguments_0(callback, 0)
+                    .ok();
+            }
         }
     }
 }
@@ -60,11 +61,11 @@ impl PlatformDispatcher for WebDispatcher {
     }
 
     fn dispatch(&self, runnable: RunnableVariant, priority: Priority) {
-        schedule_runnable(runnable, priority);
+        self.schedule_runnable(runnable, priority);
     }
 
     fn dispatch_on_main_thread(&self, runnable: RunnableVariant, priority: Priority) {
-        schedule_runnable(runnable, priority);
+        self.schedule_runnable(runnable, priority);
     }
 
     fn dispatch_after(&self, duration: Duration, runnable: RunnableVariant) {
@@ -75,14 +76,17 @@ impl PlatformDispatcher for WebDispatcher {
         });
 
         let millis = duration.as_millis().min(i32::MAX as u128) as i32;
-        set_timeout(&callback, millis);
+        self.browser_window
+            .set_timeout_with_callback_and_timeout_and_arguments_0(callback.unchecked_ref(), millis)
+            .ok();
     }
 
     fn spawn_realtime(&self, function: Box<dyn FnOnce() + Send>) {
         let callback = Closure::once_into_js(move || {
             function();
         });
-        queue_microtask(&callback);
+        self.browser_window
+            .queue_microtask(callback.unchecked_ref());
     }
 
     fn now(&self) -> Instant {

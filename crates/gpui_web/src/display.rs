@@ -5,29 +5,24 @@ use gpui::{Bounds, DisplayId, Pixels, PlatformDisplay, Point, Size, px};
 pub struct WebDisplay {
     id: DisplayId,
     uuid: uuid::Uuid,
+    browser_window: web_sys::Window,
 }
 
+// Safety: WASM is single-threaded — there is no concurrent access to `web_sys::Window`.
+unsafe impl Send for WebDisplay {}
+unsafe impl Sync for WebDisplay {}
+
 impl WebDisplay {
-    pub fn new() -> Self {
+    pub fn new(browser_window: web_sys::Window) -> Self {
         WebDisplay {
             id: DisplayId::new(1),
             uuid: uuid::Uuid::new_v4(),
+            browser_window,
         }
     }
 
-    fn web_window() -> Option<web_sys::Window> {
-        web_sys::window()
-    }
-
-    fn screen_size() -> Size<Pixels> {
-        let Some(window) = Self::web_window() else {
-            return Size {
-                width: px(1920.),
-                height: px(1080.),
-            };
-        };
-
-        let Some(screen) = window.screen().ok() else {
+    fn screen_size(&self) -> Size<Pixels> {
+        let Some(screen) = self.browser_window.screen().ok() else {
             return Size {
                 width: px(1920.),
                 height: px(1080.),
@@ -43,17 +38,15 @@ impl WebDisplay {
         }
     }
 
-    fn viewport_size() -> Size<Pixels> {
-        let Some(window) = Self::web_window() else {
-            return Self::screen_size();
-        };
-
-        let width = window
+    fn viewport_size(&self) -> Size<Pixels> {
+        let width = self
+            .browser_window
             .inner_width()
             .ok()
             .and_then(|v| v.as_f64())
             .unwrap_or(1920.0) as f32;
-        let height = window
+        let height = self
+            .browser_window
             .inner_height()
             .ok()
             .and_then(|v| v.as_f64())
@@ -76,7 +69,7 @@ impl PlatformDisplay for WebDisplay {
     }
 
     fn bounds(&self) -> Bounds<Pixels> {
-        let size = Self::screen_size();
+        let size = self.screen_size();
         Bounds {
             origin: Point::default(),
             size,
@@ -84,7 +77,7 @@ impl PlatformDisplay for WebDisplay {
     }
 
     fn visible_bounds(&self) -> Bounds<Pixels> {
-        let size = Self::viewport_size();
+        let size = self.viewport_size();
         Bounds {
             origin: Point::default(),
             size,

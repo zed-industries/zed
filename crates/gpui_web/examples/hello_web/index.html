@@ -2,7 +2,7 @@
 <html lang="en">
     <head>
         <meta charset="utf-8" />
-        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <meta name="viewport" content="width=device-width, height=device-height, initial-scale=1.0, user-scalable=0" />
         <title>GPUI Web: hello_web</title>
         <link data-trunk rel="rust" data-bin="hello_web" data-wasm-opt="z" />
         <style>
@@ -13,15 +13,17 @@
             }
             html,
             body {
-                width: 100%;
-                height: 100%;
-                overflow: hidden;
-                background: #1e1e2e;
+                margin: 0; /* remove the default margin          */
+                height: 100%; /* make the html,body fill the page   */
             }
             canvas {
                 display: block;
                 width: 100%;
                 height: 100%;
+                touch-action: none;
+                outline: none;
+                -webkit-user-select: none;
+                user-select: none;
             }
         </style>
     </head>

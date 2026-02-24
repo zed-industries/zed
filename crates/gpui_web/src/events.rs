@@ -55,11 +55,12 @@ pub fn register_event_listeners(
     canvas: &web_sys::HtmlCanvasElement,
     callbacks: Rc<RefCell<WebWindowCallbacks>>,
     state: Rc<RefCell<WebWindowMutableState>>,
+    browser_window: &web_sys::Window,
 ) -> WebEventListeners {
     let mut closures: Vec<Closure<dyn FnMut(JsValue)>> = Vec::new();
     let click_state = Rc::new(RefCell::new(ClickState::default()));
     let pressed_button: Rc<RefCell<Option<MouseButton>>> = Rc::new(RefCell::new(None));
-    let is_mac = is_mac_platform();
+    let is_mac = is_mac_platform(browser_window);
 
     register_pointer_down(
         canvas,
@@ -308,12 +309,8 @@ fn register_wheel(
 
         let delta_mode = event.delta_mode();
         let delta = if delta_mode == 1 {
-            // DOM_DELTA_LINE
-            // Negate: DOM positive = scroll down, GPUI positive = scroll up
             ScrollDelta::Lines(point(-event.delta_x() as f32, -event.delta_y() as f32))
         } else {
-            // DOM_DELTA_PIXEL (0) or DOM_DELTA_PAGE (2, treat as pixels)
-            // Negate: DOM positive = scroll down, GPUI positive = scroll up
             ScrollDelta::Pixels(point(
                 px(-event.delta_x() as f32),
                 px(-event.delta_y() as f32),
@@ -335,9 +332,24 @@ fn register_wheel(
             }),
         );
     });
-    canvas
-        .add_event_listener_with_callback("wheel", closure.as_ref().unchecked_ref())
-        .ok();
+    // Wheel events are passive by default in modern browsers, which causes
+    // preventDefault() to be silently ignored. We must register with
+    // {passive: false} to ensure our scroll handling works correctly.
+    // We use raw JS interop to call addEventListener with options directly,
+    // avoiding the need for the AddEventListenerOptions web-sys feature.
+    {
+        let canvas_js: &JsValue = canvas.as_ref();
+        let callback_js: &JsValue = closure.as_ref();
+        let options = js_sys::Object::new();
+        js_sys::Reflect::set(&options, &"passive".into(), &false.into()).ok();
+        if let Ok(add_fn_val) = js_sys::Reflect::get(canvas_js, &"addEventListener".into()) {
+            if let Ok(add_fn) = add_fn_val.dyn_into::<js_sys::Function>() {
+                add_fn
+                    .call3(canvas_js, &"wheel".into(), callback_js, &options)
+                    .ok();
+            }
+        }
+    }
     closures.push(closure);
 }
 
@@ -637,10 +649,7 @@ fn capslock_from_keyboard_event(event: &web_sys::KeyboardEvent) -> Capslock {
     }
 }
 
-fn is_mac_platform() -> bool {
-    let Some(browser_window) = web_sys::window() else {
-        return false;
-    };
+fn is_mac_platform(browser_window: &web_sys::Window) -> bool {
     let navigator = browser_window.navigator();
 
     #[allow(deprecated)]
