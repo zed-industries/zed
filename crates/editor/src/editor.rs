@@ -12091,6 +12091,10 @@ impl Editor {
             return false;
         };
 
+        if !self.buffer_supports_breakpoints(&buffer, cx) {
+            return false;
+        }
+
         let snapshot = self.buffer.read(cx).snapshot(cx);
         if snapshot.is_line_blank(row) {
             return false;
@@ -12099,17 +12103,9 @@ impl Editor {
         let line_len = snapshot.line_len(row);
         let indent = snapshot.indent_size_for_line(row).len.min(line_len);
         let point_at_code_start = Point::new(row.0, indent);
-        let language_scope = snapshot.language_scope_at(point_at_code_start);
-        let has_comment_syntax = language_scope.as_ref().is_some_and(|scope| {
-            !scope.line_comment_prefixes().is_empty()
-                || scope.block_comment().is_some()
-                || scope.documentation_comment().is_some()
-        });
-        if !self.buffer_supports_breakpoints(&buffer, cx) && !has_comment_syntax {
-            return false;
-        }
-
-        !language_scope.is_some_and(|scope| scope.override_name() == Some("comment"))
+        !snapshot
+            .language_scope_at(point_at_code_start)
+            .is_some_and(|scope| scope.override_name() == Some("comment"))
     }
 
     fn buffer_supports_breakpoints(&self, buffer: &Entity<Buffer>, cx: &App) -> bool {
