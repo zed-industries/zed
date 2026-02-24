@@ -217,8 +217,8 @@ impl WgpuRenderer {
         let surface_config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
             format: surface_format,
-            width: config.size.width.0 as u32,
-            height: config.size.height.0 as u32,
+            width: (config.size.width.0 as u32).max(1),
+            height: (config.size.height.0 as u32).max(1),
             present_mode: wgpu::PresentMode::Fifo,
             desired_maximum_frame_latency: 2,
             alpha_mode,
