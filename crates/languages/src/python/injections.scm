@@ -15,7 +15,7 @@
                 (comment) @comment
                 (string
                     (string_content) @injection.content
-                )
+                ) @injection.host
         ))
 
         ; string variables
@@ -25,7 +25,7 @@
                 (assignment
                     right: (string
                         (string_content) @injection.content
-                    )
+                    ) @injection.host
                 )
         ))
     ]

@@ -935,6 +935,127 @@ fn test_comment_triggered_injection_toggle(cx: &mut App) {
 }
 
 #[gpui::test]
+fn test_python_sql_injection_host_grouped(cx: &mut App) {
+    let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
+
+    let python = Arc::new(python_lang());
+    let comment = Arc::new(comment_lang());
+    let sql = Arc::new(sql_lang());
+    registry.add(python.clone());
+    registry.add(comment);
+    registry.add(sql);
+
+    // Case 1: Simple string (no interpolation) — should produce 1 SQL layer.
+    let buffer = Buffer::new(
+        ReplicaId::LOCAL,
+        BufferId::new(1).unwrap(),
+        r#"
+# sql
+cmd = "SELECT col1, col2 FROM tbl"
+"#
+        .unindent(),
+    );
+    let mut syntax_map = SyntaxMap::new(&buffer);
+    syntax_map.set_language_registry(registry.clone());
+    syntax_map.reparse(python.clone(), &buffer);
+
+    let sql_layers: Vec<_> = syntax_map
+        .layers_for_range(0..buffer.len(), &buffer, true)
+        .filter(|layer| layer.language.name().as_ref() == "SQL")
+        .collect();
+    assert_eq!(sql_layers.len(), 1, "Case 1: expected 1 SQL layer for simple string");
+
+    // Case 2: F-string with interpolation — should produce 1 SQL layer (grouped by host).
+    let buffer = Buffer::new(
+        ReplicaId::LOCAL,
+        BufferId::new(2).unwrap(),
+        r#"
+# sql
+cmd = f"SELECT col1 FROM tbl WHERE col2 = '{my_var}'"
+"#
+        .unindent(),
+    );
+    let mut syntax_map = SyntaxMap::new(&buffer);
+    syntax_map.set_language_registry(registry.clone());
+    syntax_map.reparse(python.clone(), &buffer);
+
+    let sql_layers: Vec<_> = syntax_map
+        .layers_for_range(0..buffer.len(), &buffer, true)
+        .filter(|layer| layer.language.name().as_ref() == "SQL")
+        .collect();
+    assert_eq!(sql_layers.len(), 1, "Case 2: expected 1 SQL layer for f-string with interpolation");
+
+    // Case 3: F-string with multiple interpolations — should produce 1 SQL layer.
+    let buffer = Buffer::new(
+        ReplicaId::LOCAL,
+        BufferId::new(3).unwrap(),
+        r#"
+# sql
+cmd = f"SELECT {col1}, {col2} FROM {tbl} WHERE id = {my_id}"
+"#
+        .unindent(),
+    );
+    let mut syntax_map = SyntaxMap::new(&buffer);
+    syntax_map.set_language_registry(registry.clone());
+    syntax_map.reparse(python.clone(), &buffer);
+
+    let sql_layers: Vec<_> = syntax_map
+        .layers_for_range(0..buffer.len(), &buffer, true)
+        .filter(|layer| layer.language.name().as_ref() == "SQL")
+        .collect();
+    assert_eq!(sql_layers.len(), 1, "Case 3: expected 1 SQL layer for f-string with multiple interpolations");
+
+    // Case 4: Function call with f-string — should produce 1 SQL layer.
+    let buffer = Buffer::new(
+        ReplicaId::LOCAL,
+        BufferId::new(4).unwrap(),
+        r#"
+cursor.execute(
+    # sql
+    f"SELECT col1 FROM tbl WHERE col2 = '{my_var}'"
+)
+"#
+        .unindent(),
+    );
+    let mut syntax_map = SyntaxMap::new(&buffer);
+    syntax_map.set_language_registry(registry.clone());
+    syntax_map.reparse(python.clone(), &buffer);
+
+    let sql_layers: Vec<_> = syntax_map
+        .layers_for_range(0..buffer.len(), &buffer, true)
+        .filter(|layer| layer.language.name().as_ref() == "SQL")
+        .collect();
+    assert_eq!(sql_layers.len(), 1, "Case 4: expected 1 SQL layer for function call with f-string");
+
+    // Case 5: Two separate SQL strings — should produce 2 separate SQL layers (not combined).
+    let buffer = Buffer::new(
+        ReplicaId::LOCAL,
+        BufferId::new(5).unwrap(),
+        r#"
+cursor.execute(
+    # sql
+    f"SELECT col1 FROM tbl WHERE col2 = '{my_var}'"
+)
+
+cursor.execute(
+    # sql
+    f"INSERT INTO tbl VALUES ('{val1}', '{val2}')"
+)
+"#
+        .unindent(),
+    );
+    let mut syntax_map = SyntaxMap::new(&buffer);
+    syntax_map.set_language_registry(registry);
+    syntax_map.reparse(python, &buffer);
+
+    let sql_layers: Vec<_> = syntax_map
+        .layers_for_range(0..buffer.len(), &buffer, true)
+        .filter(|layer| layer.language.name().as_ref() == "SQL")
+        .collect();
+    assert_eq!(sql_layers.len(), 2, "Case 5: expected 2 separate SQL layers for two separate strings");
+}
+
+#[gpui::test]
 fn test_syntax_map_languages_loading_with_erb(cx: &mut App) {
     let text = r#"
         <body>
@@ -1505,6 +1626,21 @@ fn comment_lang() -> Language {
     Language::new(
         LanguageConfig {
             name: "comment".into(),
+            ..Default::default()
+        },
+        Some(tree_sitter_json::LANGUAGE.into()),
+    )
+}
+
+fn sql_lang() -> Language {
+    // Mock "SQL" language using JSON grammar as a stand-in.
+    Language::new(
+        LanguageConfig {
+            name: "SQL".into(),
+            matcher: LanguageMatcher {
+                path_suffixes: vec!["sql".to_string()],
+                ..Default::default()
+            },
             ..Default::default()
         },
         Some(tree_sitter_json::LANGUAGE.into()),
