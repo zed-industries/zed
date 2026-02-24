@@ -35,6 +35,7 @@ use tree_sitter::{Query, StreamingIterator as _};
 use ui::{
     ContextMenu, Divider, PopoverMenu, PopoverMenuHandle, SplitButton, Tab, Tooltip, prelude::*,
 };
+use util::redact::redact_command;
 use util::rel_path::RelPath;
 use util::{ResultExt, debug_panic, maybe};
 use workspace::SplitDirection;
@@ -275,12 +276,13 @@ impl DebugPanel {
 
             async move |_, cx| {
                 if let Err(error) = task.await {
-                    log::error!("{error:#}");
+                    let redacted_error = redact_command(&format!("{error:#}"));
+                    log::error!("{redacted_error}");
                     session
                         .update(cx, |session, cx| {
                             session
                                 .console_output(cx)
-                                .unbounded_send(format!("error: {:#}", error))
+                                .unbounded_send(format!("error: {:#}", redacted_error))
                                 .ok();
                             session.shutdown(cx)
                         })
