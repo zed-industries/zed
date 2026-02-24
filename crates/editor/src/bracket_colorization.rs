@@ -4,15 +4,13 @@
 
 use std::ops::Range;
 
-use crate::Editor;
+use crate::{Editor, HighlightKey};
 use collections::HashMap;
 use gpui::{Context, HighlightStyle};
 use itertools::Itertools;
 use language::language_settings;
 use multi_buffer::{Anchor, ExcerptId};
 use ui::{ActiveTheme, utils::ensure_minimum_contrast};
-
-struct ColorizedBracketsHighlight;
 
 impl Editor {
     pub(crate) fn colorize_brackets(&mut self, invalidate: bool, cx: &mut Context<Editor>) {
@@ -26,20 +24,11 @@ impl Editor {
 
         let accents_count = cx.theme().accents().0.len();
         let multi_buffer_snapshot = self.buffer().read(cx).snapshot(cx);
-        let all_excerpts = self.buffer().read(cx).excerpt_ids();
         let anchors_in_multi_buffer = |current_excerpt: ExcerptId,
                                        text_anchors: [text::Anchor; 4]|
          -> Option<[Option<_>; 4]> {
             multi_buffer_snapshot
-                .anchors_in_excerpt(current_excerpt, text_anchors)
-                .or_else(|| {
-                    all_excerpts
-                        .iter()
-                        .filter(|&&excerpt_id| excerpt_id != current_excerpt)
-                        .find_map(|&excerpt_id| {
-                            multi_buffer_snapshot.anchors_in_excerpt(excerpt_id, text_anchors)
-                        })
-                })?
+                .anchors_in_excerpt(current_excerpt, text_anchors)?
                 .collect_array()
         };
 
@@ -75,12 +64,10 @@ impl Editor {
                         .filter_map(|pair| {
                             let color_index = pair.color_index?;
 
-                            let buffer_open_range = buffer_snapshot
-                                .anchor_before(pair.open_range.start)
-                                ..buffer_snapshot.anchor_after(pair.open_range.end);
-                            let buffer_close_range = buffer_snapshot
-                                .anchor_before(pair.close_range.start)
-                                ..buffer_snapshot.anchor_after(pair.close_range.end);
+                            let buffer_open_range =
+                                buffer_snapshot.anchor_range_around(pair.open_range);
+                            let buffer_close_range =
+                                buffer_snapshot.anchor_range_around(pair.close_range);
                             let [
                                 buffer_open_range_start,
                                 buffer_open_range_end,
@@ -135,20 +122,24 @@ impl Editor {
         );
 
         if invalidate {
-            self.clear_highlights::<ColorizedBracketsHighlight>(cx);
+            self.clear_highlights_with(
+                &mut |key| matches!(key, HighlightKey::ColorizeBracket(_)),
+                cx,
+            );
         }
 
         let editor_background = cx.theme().colors().editor_background;
+        let accents = cx.theme().accents().clone();
         for (accent_number, bracket_highlights) in bracket_matches_by_accent {
-            let bracket_color = cx.theme().accents().color_for_index(accent_number as u32);
+            let bracket_color = accents.color_for_index(accent_number as u32);
             let adjusted_color = ensure_minimum_contrast(bracket_color, editor_background, 55.0);
             let style = HighlightStyle {
                 color: Some(adjusted_color),
                 ..HighlightStyle::default()
             };
 
-            self.highlight_text_key::<ColorizedBracketsHighlight>(
-                accent_number,
+            self.highlight_text_key(
+                HighlightKey::ColorizeBracket(accent_number),
                 bracket_highlights,
                 style,
                 true,
@@ -1049,7 +1040,7 @@ mod foo «1{
         let actual_ranges = cx.update_editor(|editor, window, cx| {
             editor
                 .snapshot(window, cx)
-                .all_text_highlight_ranges::<ColorizedBracketsHighlight>()
+                .all_text_highlight_ranges(&|key| matches!(key, HighlightKey::ColorizeBracket(_)))
         });
 
         let mut highlighted_brackets = HashMap::default();
@@ -1077,7 +1068,7 @@ mod foo «1{
         let ranges_after_scrolling = cx.update_editor(|editor, window, cx| {
             editor
                 .snapshot(window, cx)
-                .all_text_highlight_ranges::<ColorizedBracketsHighlight>()
+                .all_text_highlight_ranges(&|key| matches!(key, HighlightKey::ColorizeBracket(_)))
         });
         let new_last_bracket = ranges_after_scrolling
             .iter()
@@ -1105,7 +1096,9 @@ mod foo «1{
             let colored_brackets = cx.update_editor(|editor, window, cx| {
                 editor
                     .snapshot(window, cx)
-                    .all_text_highlight_ranges::<ColorizedBracketsHighlight>()
+                    .all_text_highlight_ranges(&|key| {
+                        matches!(key, HighlightKey::ColorizeBracket(_))
+                    })
             });
             for (color, range) in colored_brackets.clone() {
                 assert!(
@@ -1431,7 +1424,8 @@ mod foo «1{
             offset
         }
 
-        let actual_ranges = snapshot.all_text_highlight_ranges::<ColorizedBracketsHighlight>();
+        let actual_ranges = snapshot
+            .all_text_highlight_ranges(&|key| matches!(key, HighlightKey::ColorizeBracket(_)));
         let editor_text = snapshot.text();
 
         let mut next_index = 1;

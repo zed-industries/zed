@@ -65,9 +65,7 @@ impl AgentTool for TerminalTool {
     type Input = TerminalToolInput;
     type Output = String;
 
-    fn name() -> &'static str {
-        "terminal"
-    }
+    const NAME: &'static str = "terminal";
 
     fn kind() -> acp::ToolKind {
         acp::ToolKind::Execute
@@ -90,31 +88,33 @@ impl AgentTool for TerminalTool {
         input: Self::Input,
         event_stream: ToolCallEventStream,
         cx: &mut App,
-    ) -> Task<Result<Self::Output>> {
+    ) -> Task<Result<Self::Output, Self::Output>> {
         let working_dir = match working_dir(&input, &self.project, cx) {
             Ok(dir) => dir,
-            Err(err) => return Task::ready(Err(err)),
+            Err(err) => return Task::ready(Err(err.to_string())),
         };
 
         let settings = AgentSettings::get_global(cx);
-        let decision = decide_permission_from_settings(Self::name(), &input.command, settings);
+        let decision = decide_permission_from_settings(
+            Self::NAME,
+            std::slice::from_ref(&input.command),
+            settings,
+        );
 
         let authorize = match decision {
             ToolPermissionDecision::Allow => None,
             ToolPermissionDecision::Deny(reason) => {
-                return Task::ready(Err(anyhow::anyhow!("{}", reason)));
+                return Task::ready(Err(reason));
             }
             ToolPermissionDecision::Confirm => {
-                let context = crate::ToolPermissionContext {
-                    tool_name: "terminal".to_string(),
-                    input_value: input.command.clone(),
-                };
+                let context =
+                    crate::ToolPermissionContext::new(Self::NAME, vec![input.command.clone()]);
                 Some(event_stream.authorize(self.initial_title(Ok(input.clone()), cx), context, cx))
             }
         };
         cx.spawn(async move |cx| {
             if let Some(authorize) = authorize {
-                authorize.await?;
+                authorize.await.map_err(|e| e.to_string())?;
             }
 
             let terminal = self
@@ -125,9 +125,10 @@ impl AgentTool for TerminalTool {
                     Some(COMMAND_OUTPUT_LIMIT),
                     cx,
                 )
-                .await?;
+                .await
+                .map_err(|e| e.to_string())?;
 
-            let terminal_id = terminal.id(cx)?;
+            let terminal_id = terminal.id(cx).map_err(|e| e.to_string())?;
             event_stream.update_fields(acp::ToolCallUpdateFields::new().content(vec![
                 acp::ToolCallContent::Terminal(acp::Terminal::new(terminal_id)),
             ]));
@@ -136,7 +137,7 @@ impl AgentTool for TerminalTool {
 
             let mut timed_out = false;
             let mut user_stopped_via_signal = false;
-            let wait_for_exit = terminal.wait_for_exit(cx)?;
+            let wait_for_exit = terminal.wait_for_exit(cx).map_err(|e| e.to_string())?;
 
             match timeout {
                 Some(timeout) => {
@@ -146,12 +147,12 @@ impl AgentTool for TerminalTool {
                         _ = wait_for_exit.clone().fuse() => {},
                         _ = timeout_task.fuse() => {
                             timed_out = true;
-                            terminal.kill(cx)?;
+                            terminal.kill(cx).map_err(|e| e.to_string())?;
                             wait_for_exit.await;
                         }
                         _ = event_stream.cancelled_by_user().fuse() => {
                             user_stopped_via_signal = true;
-                            terminal.kill(cx)?;
+                            terminal.kill(cx).map_err(|e| e.to_string())?;
                             wait_for_exit.await;
                         }
                     }
@@ -161,7 +162,7 @@ impl AgentTool for TerminalTool {
                         _ = wait_for_exit.clone().fuse() => {},
                         _ = event_stream.cancelled_by_user().fuse() => {
                             user_stopped_via_signal = true;
-                            terminal.kill(cx)?;
+                            terminal.kill(cx).map_err(|e| e.to_string())?;
                             wait_for_exit.await;
                         }
                     }
@@ -178,7 +179,7 @@ impl AgentTool for TerminalTool {
             let user_stopped_via_terminal = terminal.was_stopped_by_user(cx).unwrap_or(false);
             let user_stopped = user_stopped_via_signal || user_stopped_via_terminal;
 
-            let output = terminal.current_output(cx)?;
+            let output = terminal.current_output(cx).map_err(|e| e.to_string())?;
 
             Ok(process_content(
                 output,

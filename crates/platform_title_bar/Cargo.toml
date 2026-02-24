@@ -13,6 +13,7 @@ path = "src/platform_title_bar.rs"
 doctest = false
 
 [dependencies]
+feature_flags.workspace = true
 gpui.workspace = true
 settings.workspace = true
 smallvec.workspace = true

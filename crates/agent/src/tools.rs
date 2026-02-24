@@ -14,15 +14,13 @@ mod open_tool;
 mod read_file_tool;
 mod restore_file_from_disk_tool;
 mod save_file_tool;
+mod spawn_agent_tool;
 mod streaming_edit_file_tool;
-mod subagent_tool;
 mod terminal_tool;
-mod thinking_tool;
+mod tool_permissions;
 mod web_search_tool;
 
 use crate::AgentTool;
-use feature_flags::{FeatureFlagAppExt, SubagentsFeatureFlag};
-use gpui::App;
 use language_model::{LanguageModelRequestTool, LanguageModelToolSchemaFormat};
 
 pub use context_server_registry::*;
@@ -41,42 +39,65 @@ pub use open_tool::*;
 pub use read_file_tool::*;
 pub use restore_file_from_disk_tool::*;
 pub use save_file_tool::*;
+pub use spawn_agent_tool::*;
 pub use streaming_edit_file_tool::*;
-pub use subagent_tool::*;
 pub use terminal_tool::*;
-pub use thinking_tool::*;
+pub use tool_permissions::*;
 pub use web_search_tool::*;
 
 macro_rules! tools {
     ($($tool:ty),* $(,)?) => {
-        /// A list of all built-in tool names
-        pub fn supported_built_in_tool_names(provider: Option<language_model::LanguageModelProviderId>, cx: &App) -> Vec<String> {
-            let mut tools: Vec<String> = [
-                $(
-                    (if let Some(provider) = provider.as_ref() {
-                        <$tool>::supports_provider(provider)
-                    } else {
-                        true
-                    })
-                    .then(|| <$tool>::name().to_string()),
-                )*
-            ]
-            .into_iter()
-            .flatten()
-            .collect();
+        /// Every built-in tool name, determined at compile time.
+        pub const ALL_TOOL_NAMES: &[&str] = &[
+            $(<$tool>::NAME,)*
+        ];
 
-            if !cx.has_flag::<SubagentsFeatureFlag>() {
-                tools.retain(|name| name != SubagentTool::name());
+        const _: () = {
+            const fn str_eq(a: &str, b: &str) -> bool {
+                let a = a.as_bytes();
+                let b = b.as_bytes();
+                if a.len() != b.len() {
+                    return false;
+                }
+                let mut i = 0;
+                while i < a.len() {
+                    if a[i] != b[i] {
+                        return false;
+                    }
+                    i += 1;
+                }
+                true
             }
 
-            tools
+            const NAMES: &[&str] = ALL_TOOL_NAMES;
+            let mut i = 0;
+            while i < NAMES.len() {
+                let mut j = i + 1;
+                while j < NAMES.len() {
+                    if str_eq(NAMES[i], NAMES[j]) {
+                        panic!("Duplicate tool name in tools! macro");
+                    }
+                    j += 1;
+                }
+                i += 1;
+            }
+        };
+
+        /// Returns whether the tool with the given name supports the given provider.
+        pub fn tool_supports_provider(name: &str, provider: &language_model::LanguageModelProviderId) -> bool {
+            $(
+                if name == <$tool>::NAME {
+                    return <$tool>::supports_provider(provider);
+                }
+            )*
+            false
         }
 
         /// A list of all built-in tools
         pub fn built_in_tools() -> impl Iterator<Item = LanguageModelRequestTool> {
             fn language_model_tool<T: AgentTool>() -> LanguageModelRequestTool {
                 LanguageModelRequestTool {
-                    name: T::name().to_string(),
+                    name: T::NAME.to_string(),
                     description: T::description().to_string(),
                     input_schema: T::input_schema(LanguageModelToolSchemaFormat::JsonSchema).to_value(),
                 }
@@ -107,8 +128,7 @@ tools! {
     ReadFileTool,
     RestoreFileFromDiskTool,
     SaveFileTool,
-    SubagentTool,
+    SpawnAgentTool,
     TerminalTool,
-    ThinkingTool,
     WebSearchTool,
 }

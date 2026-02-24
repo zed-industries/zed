@@ -1,6 +1,11 @@
+---
+title: Glob Patterns - Zed
+description: How glob patterns work in Zed for file matching, search filtering, and configuration. Syntax reference and examples.
+---
+
 # Globs
 
-Zed supports the use of [glob](<https://en.wikipedia.org/wiki/Glob_(programming)>) patterns that are the formal name for Unix shell-style path matching wildcards like `*.md` or `docs/src/**/*.md` supported by sh, bash, zsh, etc. A glob is similar but distinct from a [regex (regular expression)](https://en.wikipedia.org/wiki/Regular_expression). You may be In Zed these are commonly used when matching filenames.
+Zed supports the use of [glob](<https://en.wikipedia.org/wiki/Glob_(programming)>) patterns that are the formal name for Unix shell-style path matching wildcards like `*.md` or `docs/src/**/*.md` supported by sh, bash, zsh, etc. A glob is similar but distinct from a [regex (regular expression)](https://en.wikipedia.org/wiki/Regular_expression). In Zed, globs are commonly used when matching filenames.
 
 ## Glob Flavor
 
@@ -17,6 +22,19 @@ The `glob` crate is implemented entirely in rust and does not rely on the `glob`
 
 A glob "pattern" is used to match a file name or complete file path. For example, when using "Search all files" {#kb project_search::ToggleFocus} you can click the funnel shaped Toggle Filters" button or {#kb project_search::ToggleFilters} and it will show additional search fields for "Include" and "Exclude" which support specifying glob patterns for matching file paths and file names.
 
+### Multiple Patterns
+
+> **Changed in Preview (v0.225).** See [release notes](/releases#0.225).
+
+You can specify multiple glob patterns in Project Search filters by separating them with commas. When using comma-separated patterns, Zed correctly handles braces within individual patterns:
+
+- `*.ts, *.tsx` — Match TypeScript and TSX files
+- `src/{components,utils}/**/*.ts, tests/**/*.test.ts` — Match TypeScript files in specific directories plus test files
+
+Each pattern is evaluated independently. Commas inside braces (like `{a,b}`) are treated as part of the pattern, not as separators.
+
+**Important:** While braces are preserved in patterns, Zed does not expand them into multiple patterns. The pattern `src/{a,b}/*.ts` matches the literal path structure, not `src/a/*.ts` OR `src/b/*.ts`. This differs from shell behavior.
+
 When creating a glob pattern you can use one or multiple special characters:
 
 | Special Character | Meaning                                                           |
@@ -30,7 +48,7 @@ When creating a glob pattern you can use one or multiple special characters:
 
 Notes:
 
-1. Shell-style brace-expansions like `{a,b,c}` are not supported.
+1. Brace characters `{` and `}` are literal pattern characters, not expansion operators. The pattern `src/{a,b}/*.ts` matches paths containing the literal text `{a,b}`, not paths matching either `src/a/*.ts` or `src/b/*.ts` as in shell globbing.
 2. To match a literal `-` character inside brackets it must come first `[-abc]` or last `[abc-]`.
 3. To match the literal `[` character use `[[]` or put it as the first character in the group `[[abc]`.
 4. To match the literal `]` character use `[]]` or put it as the last character in the group `[abc]]`.

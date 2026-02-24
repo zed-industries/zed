@@ -1,3 +1,8 @@
+---
+title: Python
+description: "Configure Python language support in Zed, including language servers, formatting, and debugging."
+---
+
 # How to Set Up Python in Zed
 
 Python support is available natively in Zed.
@@ -75,7 +80,9 @@ Other built-in language servers are:
 - [Pyright](https://github.com/microsoft/pyright)&mdash;The basis for basedpyright.
 - [PyLSP](https://github.com/python-lsp/python-lsp-server)&mdash;A plugin-based language server that integrates with tools like `pycodestyle`, `autopep8`, and `yapf`.
 
-These are disabled by default, but can be enabled in your settings. For example:
+These are disabled by default, but can be enabled in your settings.
+
+Configure language servers in Settings ({#kb zed::OpenSettings}) under Languages > Python, or add to your settings file:
 
 ```json [settings]
 {
@@ -116,7 +123,7 @@ Examples of both kinds of configuration are provided below. Refer to the basedpy
 
 Language server settings for basedpyright in Zed can be set in the `lsp` section of your `settings.json`.
 
-For example, in order to:
+For example, to:
 
 - diagnose all files in the workspace instead of the only open files default
 - disable inlay hints on function arguments
@@ -146,7 +153,7 @@ basedpyright reads project-specific configuration from the `pyrightconfig.json` 
 
 Here's an example `pyrightconfig.json` file that configures basedpyright to use the `strict` type-checking mode and not to issue diagnostics for any files in `__pycache__` directories:
 
-```json [settings]
+```json
 {
   "typeCheckingMode": "strict",
   "ignore": ["**/__pycache__"]
@@ -190,35 +197,66 @@ For most projects, Zed will automatically select the right Python toolchain. In 
 
 ## Code Formatting & Linting
 
-Zed provides the [Ruff](https://docs.astral.sh/ruff/) formatter and linter for Python code. (Specifically, Zed runs Ruff as an LSP server using the `ruff server` subcommand.) Both formatting and linting are enabled by default, including format-on-save.
+Zed uses [Ruff](https://github.com/astral-sh/ruff) for formatting and linting Python code. Specifically, it runs Ruff as an LSP server using the `ruff server` subcommand.
 
-### Configuring formatting
+### Configuring Formatting
 
-You can disable format-on-save for Python files in your `settings.json`:
+Formatting in Zed follows a two-phase pipeline: first, code actions on format (`code_actions_on_format`) are executed, followed by the configured formatter.
+
+Configure formatting in Settings ({#kb zed::OpenSettings}) under Languages > Python, or add to your settings file:
+
+```json [settings]
+{
+  "languages": {
+    "Python": {
+      "code_actions_on_format": {
+        "source.organizeImports.ruff": true
+      },
+      "formatter": {
+        "language_server": {
+          "name": "ruff"
+        }
+      }
+    }
+  }
+}
+```
+
+These two phases are independent. For example, if you prefer [Black](https://github.com/psf/black) for code formatting, but want to keep Ruff's import sorting, you only need to change the formatter phase.
+
+Configure in Settings ({#kb zed::OpenSettings}) under Languages > Python, or add to your settings file:
+
+```json [settings]
+{
+  "languages": {
+    "Python": {
+      "code_actions_on_format": {
+        // Phase 1: Ruff still handles organize imports
+        "source.organizeImports.ruff": true
+      },
+      "formatter": {
+        // Phase 2: Black handles formatting
+        "external": {
+          "command": "black",
+          "arguments": ["--stdin-filename", "{buffer_path}", "-"]
+        }
+      }
+    }
+  }
+}
+```
+
+To completely switch to another tool and prevent Ruff from modifying your code at all, you must explicitly set `source.organizeImports.ruff` to false in the `code_actions_on_format` section, in addition to changing the formatter.
+
+To prevent any formatting actions when you save, you can disable format-on-save for Python files.
+
+Configure in Settings ({#kb zed::OpenSettings}) under Languages > Python, or add to your settings file:
 
 ```json [settings]
 {
   "languages": {
     "Python": {
       "format_on_save": "off"
-    }
-  }
-}
-```
-
-Alternatively, you can use the `black` command-line tool for Python formatting, while keeping Ruff enabled for linting:
-
-```json [settings]
-{
-  "languages": {
-    "Python": {
-      "formatter": {
-        "external": {
-          "command": "black",
-          "arguments": ["--stdin-filename", "{buffer_path}", "-"]
-        }
-      }
-      // Or use `"formatter": null` to disable formatting entirely.
     }
   }
 }
@@ -360,9 +398,9 @@ requirements.txt
 
 These can be combined to tailor the experience for web servers, test runners, or custom scripts.
 
-## Troubleshoot and Maintain a Productive Python Setup
+## Troubleshooting
 
-Zed is designed to minimize configuration overhead, but occasional issues can still arise—especially around environments, language servers, or tooling. Here's how to keep your Python setup working smoothly.
+Issues with Python in Zed typically involve virtual environments, language servers, or tooling configuration.
 
 ### Resolve Language Server Startup Issues
 

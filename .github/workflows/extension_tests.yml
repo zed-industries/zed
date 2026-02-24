@@ -23,6 +23,7 @@ jobs:
     - id: filter
       name: filter
       run: |
+        set -euo pipefail
         if [ -z "$GITHUB_BASE_REF" ]; then
           echo "Not in a PR context (i.e., push to main/stable/preview)"
           COMPARE_REV="$(git rev-parse HEAD~1)"
@@ -44,7 +45,7 @@ jobs:
         }
 
         check_pattern "check_rust" '^(Cargo.lock|Cargo.toml|.*\.rs)$' -qP
-        check_pattern "check_extension" '^.*\.scm$' -qP
+        check_pattern "check_extension" '^(extension\.toml|.*\.scm)$' -qP
     outputs:
       check_rust: ${{ steps.filter.outputs.check_rust }}
       check_extension: ${{ steps.filter.outputs.check_extension }}
@@ -52,7 +53,7 @@ jobs:
     needs:
     - orchestrate
     if: needs.orchestrate.outputs.check_rust == 'true'
-    runs-on: namespace-profile-8x16-ubuntu-2204
+    runs-on: namespace-profile-8x32-ubuntu-2404
     steps:
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -68,11 +69,11 @@ jobs:
     - name: steps::cargo_fmt
       run: cargo fmt --all -- --check
     - name: extension_tests::run_clippy
-      run: cargo clippy --release --all-targets --all-features -- --deny warnings
+      run: cargo clippy --release --all-features -- --deny warnings
     - name: steps::cargo_install_nextest
       uses: taiki-e/install-action@nextest
     - name: steps::cargo_nextest
-      run: 'cargo nextest run --workspace --no-fail-fast --target "$(rustc -vV | sed -n ''s|host: ||p'')"'
+      run: 'cargo nextest run --workspace --no-fail-fast --no-tests=warn --target "$(rustc -vV | sed -n ''s|host: ||p'')"'
       env:
         NEXTEST_NO_TESTS: warn
     timeout-minutes: 6
@@ -86,6 +87,7 @@ jobs:
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       with:
         clean: false
+        fetch-depth: 0
     - id: cache-zed-extension-cli
       name: extension_tests::cache_zed_extension_cli
       uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
@@ -97,12 +99,45 @@ jobs:
       run: |
         wget --quiet "https://zed-extension-cli.nyc3.digitaloceanspaces.com/$ZED_EXTENSION_CLI_SHA/x86_64-unknown-linux-gnu/zed-extension"
         chmod +x zed-extension
+    - name: steps::cache_rust_dependencies_namespace
+      uses: namespacelabs/nscloud-cache-action@v1
+      with:
+        cache: rust
+        path: ~/.rustup
     - name: extension_tests::check
       run: |
         mkdir -p /tmp/ext-scratch
         mkdir -p /tmp/ext-output
         ./zed-extension --source-dir . --scratch-dir /tmp/ext-scratch --output-dir /tmp/ext-output
-    timeout-minutes: 4
+    - id: compare-versions-check
+      name: extension_bump::compare_versions
+      run: |
+        CURRENT_VERSION="$(sed -n 's/^version = \"\(.*\)\"/\1/p' < extension.toml | tr -d '[:space:]')"
+
+        if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            PR_FORK_POINT="$(git merge-base origin/main HEAD)"
+            git checkout "$PR_FORK_POINT"
+        elif BRANCH_PARENT_SHA="$(git merge-base origin/main origin/zed-zippy-autobump)"; then
+            git checkout "$BRANCH_PARENT_SHA"
+        else
+            git checkout "$(git log -1 --format=%H)"~1
+        fi
+
+        PARENT_COMMIT_VERSION="$(sed -n 's/^version = \"\(.*\)\"/\1/p' < extension.toml | tr -d '[:space:]')"
+
+        [[ "$CURRENT_VERSION" == "$PARENT_COMMIT_VERSION" ]] && \
+            echo "version_changed=false" >> "$GITHUB_OUTPUT" || \
+            echo "version_changed=true" >> "$GITHUB_OUTPUT"
+
+        echo "current_version=${CURRENT_VERSION}" >> "$GITHUB_OUTPUT"
+    - name: extension_tests::verify_version_did_not_change
+      run: |
+        if [[ ${{ steps.compare-versions-check.outputs.version_changed }} == "true" && "${{ github.event_name }}" == "pull_request" && "${{ github.event.pull_request.user.login }}" != "zed-zippy[bot]" ]] ; then
+            echo "Version change detected in your change!"
+            echo "Version changes happen in separate PRs and will be performed by the zed-zippy bot"
+            exit 42
+        fi
+    timeout-minutes: 6
   tests_pass:
     needs:
     - orchestrate

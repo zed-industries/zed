@@ -1,8 +1,8 @@
 use crate::{
     Anchor, Editor, EditorSettings, EditorSnapshot, FindAllReferences, GoToDefinition,
     GoToDefinitionSplit, GoToTypeDefinition, GoToTypeDefinitionSplit, GotoDefinitionKind,
-    Navigated, PointForPosition, SelectPhase, editor_settings::GoToDefinitionFallback,
-    scroll::ScrollAmount,
+    HighlightKey, Navigated, PointForPosition, SelectPhase,
+    editor_settings::GoToDefinitionFallback, scroll::ScrollAmount,
 };
 use gpui::{App, AsyncWindowContext, Context, Entity, Modifiers, Task, Window, px};
 use language::{Bias, ToOffset};
@@ -149,7 +149,7 @@ impl Editor {
 
     pub(crate) fn hide_hovered_link(&mut self, cx: &mut Context<Self>) {
         self.hovered_link_state.take();
-        self.clear_highlights::<HoveredLinkState>(cx);
+        self.clear_highlights(HighlightKey::HoveredLinkState, cx);
     }
 
     pub(crate) fn handle_click_hovered_link(
@@ -415,7 +415,7 @@ pub fn show_link_definition(
 
             this.update(cx, |editor, cx| {
                 // Clear any existing highlights
-                editor.clear_highlights::<HoveredLinkState>(cx);
+                editor.clear_highlights(HighlightKey::HoveredLinkState, cx);
                 let Some(hovered_link_state) = editor.hovered_link_state.as_mut() else {
                     editor.hide_hovered_link(cx);
                     return;
@@ -457,10 +457,18 @@ pub fn show_link_definition(
                             });
 
                         match highlight_range {
-                            RangeInEditor::Text(text_range) => editor
-                                .highlight_text::<HoveredLinkState>(vec![text_range], style, cx),
-                            RangeInEditor::Inlay(highlight) => editor
-                                .highlight_inlays::<HoveredLinkState>(vec![highlight], style, cx),
+                            RangeInEditor::Text(text_range) => editor.highlight_text(
+                                HighlightKey::HoveredLinkState,
+                                vec![text_range],
+                                style,
+                                cx,
+                            ),
+                            RangeInEditor::Inlay(highlight) => editor.highlight_inlays(
+                                HighlightKey::HoveredLinkState,
+                                vec![highlight],
+                                style,
+                                cx,
+                            ),
                         }
                     }
                 } else {
@@ -843,18 +851,24 @@ mod tests {
 
         requests.next().await;
         cx.run_until_parked();
-        cx.assert_editor_text_highlights::<HoveredLinkState>(indoc! {"
+        cx.assert_editor_text_highlights(
+            HighlightKey::HoveredLinkState,
+            indoc! {"
             struct A;
             let «variable» = A;
-        "});
+        "},
+        );
 
         cx.simulate_modifiers_change(Modifiers::secondary_key());
         cx.run_until_parked();
         // Assert no link highlights
-        cx.assert_editor_text_highlights::<HoveredLinkState>(indoc! {"
+        cx.assert_editor_text_highlights(
+            HighlightKey::HoveredLinkState,
+            indoc! {"
             struct A;
             let variable = A;
-        "});
+        "},
+        );
 
         cx.simulate_click(screen_coord.unwrap(), modifiers);
 
@@ -912,17 +926,23 @@ mod tests {
         cx.simulate_mouse_move(hover_point, None, Modifiers::secondary_key());
         requests.next().await;
         cx.background_executor.run_until_parked();
-        cx.assert_editor_text_highlights::<HoveredLinkState>(indoc! {"
+        cx.assert_editor_text_highlights(
+            HighlightKey::HoveredLinkState,
+            indoc! {"
                 fn test() { «do_work»(); }
                 fn do_work() { test(); }
-            "});
+            "},
+        );
 
         // Unpress cmd causes highlight to go away
         cx.simulate_modifiers_change(Modifiers::none());
-        cx.assert_editor_text_highlights::<HoveredLinkState>(indoc! {"
+        cx.assert_editor_text_highlights(
+            HighlightKey::HoveredLinkState,
+            indoc! {"
                 fn test() { do_work(); }
                 fn do_work() { test(); }
-            "});
+            "},
+        );
 
         let mut requests =
             cx.set_request_handler::<GotoDefinition, _, _>(move |url, _, _| async move {
@@ -939,10 +959,13 @@ mod tests {
         cx.simulate_mouse_move(hover_point, None, Modifiers::secondary_key());
         requests.next().await;
         cx.background_executor.run_until_parked();
-        cx.assert_editor_text_highlights::<HoveredLinkState>(indoc! {"
+        cx.assert_editor_text_highlights(
+            HighlightKey::HoveredLinkState,
+            indoc! {"
                 fn test() { «do_work»(); }
                 fn do_work() { test(); }
-            "});
+            "},
+        );
 
         // Moving mouse to location with no response dismisses highlight
         let hover_point = cx.pixel_position(indoc! {"
@@ -961,10 +984,13 @@ mod tests {
         cx.background_executor.run_until_parked();
 
         // Assert no link highlights
-        cx.assert_editor_text_highlights::<HoveredLinkState>(indoc! {"
+        cx.assert_editor_text_highlights(
+            HighlightKey::HoveredLinkState,
+            indoc! {"
                 fn test() { do_work(); }
                 fn do_work() { test(); }
-            "});
+            "},
+        );
 
         // // Move mouse without cmd and then pressing cmd triggers highlight
         let hover_point = cx.pixel_position(indoc! {"
@@ -974,10 +1000,13 @@ mod tests {
         cx.simulate_mouse_move(hover_point, None, Modifiers::none());
 
         // Assert no link highlights
-        cx.assert_editor_text_highlights::<HoveredLinkState>(indoc! {"
+        cx.assert_editor_text_highlights(
+            HighlightKey::HoveredLinkState,
+            indoc! {"
                 fn test() { do_work(); }
                 fn do_work() { test(); }
-            "});
+            "},
+        );
 
         let symbol_range = cx.lsp_range(indoc! {"
                 fn test() { do_work(); }
@@ -1005,23 +1034,32 @@ mod tests {
         requests.next().await;
         cx.background_executor.run_until_parked();
 
-        cx.assert_editor_text_highlights::<HoveredLinkState>(indoc! {"
+        cx.assert_editor_text_highlights(
+            HighlightKey::HoveredLinkState,
+            indoc! {"
                 fn test() { do_work(); }
                 fn do_work() { «test»(); }
-            "});
+            "},
+        );
 
         cx.deactivate_window();
-        cx.assert_editor_text_highlights::<HoveredLinkState>(indoc! {"
+        cx.assert_editor_text_highlights(
+            HighlightKey::HoveredLinkState,
+            indoc! {"
                 fn test() { do_work(); }
                 fn do_work() { test(); }
-            "});
+            "},
+        );
 
         cx.simulate_mouse_move(hover_point, None, Modifiers::secondary_key());
         cx.background_executor.run_until_parked();
-        cx.assert_editor_text_highlights::<HoveredLinkState>(indoc! {"
+        cx.assert_editor_text_highlights(
+            HighlightKey::HoveredLinkState,
+            indoc! {"
                 fn test() { do_work(); }
                 fn do_work() { «test»(); }
-            "});
+            "},
+        );
 
         // Moving again within the same symbol range doesn't re-request
         let hover_point = cx.pixel_position(indoc! {"
@@ -1030,10 +1068,13 @@ mod tests {
             "});
         cx.simulate_mouse_move(hover_point, None, Modifiers::secondary_key());
         cx.background_executor.run_until_parked();
-        cx.assert_editor_text_highlights::<HoveredLinkState>(indoc! {"
+        cx.assert_editor_text_highlights(
+            HighlightKey::HoveredLinkState,
+            indoc! {"
                 fn test() { do_work(); }
                 fn do_work() { «test»(); }
-            "});
+            "},
+        );
 
         // Cmd click with existing definition doesn't re-request and dismisses highlight
         cx.simulate_click(hover_point, Modifiers::secondary_key());
@@ -1050,10 +1091,13 @@ mod tests {
             "});
 
         // Assert no link highlights after jump
-        cx.assert_editor_text_highlights::<HoveredLinkState>(indoc! {"
+        cx.assert_editor_text_highlights(
+            HighlightKey::HoveredLinkState,
+            indoc! {"
                 fn test() { do_work(); }
                 fn do_work() { test(); }
-            "});
+            "},
+        );
 
         // Cmd click without existing definition requests and jumps
         let hover_point = cx.pixel_position(indoc! {"
@@ -1123,10 +1167,13 @@ mod tests {
         cx.simulate_mouse_move(hover_point, None, Modifiers::secondary_key());
         cx.background_executor.run_until_parked();
         assert!(requests.try_next().is_err());
-        cx.assert_editor_text_highlights::<HoveredLinkState>(indoc! {"
+        cx.assert_editor_text_highlights(
+            HighlightKey::HoveredLinkState,
+            indoc! {"
                 fn test() { do_work(); }
                 fn do_work() { test(); }
-            "});
+            "},
+        );
         cx.background_executor.run_until_parked();
     }
 
@@ -1242,7 +1289,7 @@ mod tests {
         cx.update_editor(|editor, window, cx| {
             let snapshot = editor.snapshot(window, cx);
             let actual_highlights = snapshot
-                .inlay_highlights::<HoveredLinkState>()
+                .inlay_highlights(HighlightKey::HoveredLinkState)
                 .into_iter()
                 .flat_map(|highlights| highlights.values().map(|(_, highlight)| highlight))
                 .collect::<Vec<_>>();
@@ -1261,7 +1308,7 @@ mod tests {
         cx.update_editor(|editor, window, cx| {
                 let snapshot = editor.snapshot(window, cx);
                 let actual_ranges = snapshot
-                    .text_highlight_ranges::<HoveredLinkState>()
+                    .text_highlight_ranges(HighlightKey::HoveredLinkState)
                     .map(|ranges| ranges.as_ref().clone().1)
                     .unwrap_or_default();
 
@@ -1301,9 +1348,12 @@ mod tests {
             "});
 
         cx.simulate_mouse_move(screen_coord, None, Modifiers::secondary_key());
-        cx.assert_editor_text_highlights::<HoveredLinkState>(indoc! {"
+        cx.assert_editor_text_highlights(
+            HighlightKey::HoveredLinkState,
+            indoc! {"
             Let's test a [complex](«https://zed.dev/channel/had-(oops)ˇ») case.
-        "});
+        "},
+        );
 
         cx.simulate_click(screen_coord, Modifiers::secondary_key());
         assert_eq!(
@@ -1329,7 +1379,8 @@ mod tests {
             cx.pixel_position(indoc! {"https://zed.dev/relˇeases is a cool webpage."});
 
         cx.simulate_mouse_move(screen_coord, None, Modifiers::secondary_key());
-        cx.assert_editor_text_highlights::<HoveredLinkState>(
+        cx.assert_editor_text_highlights(
+            HighlightKey::HoveredLinkState,
             indoc! {"«https://zed.dev/releasesˇ» is a cool webpage."},
         );
 
@@ -1354,7 +1405,8 @@ mod tests {
             cx.pixel_position(indoc! {"A cool webpage is https://zed.dev/releˇases"});
 
         cx.simulate_mouse_move(screen_coord, None, Modifiers::secondary_key());
-        cx.assert_editor_text_highlights::<HoveredLinkState>(
+        cx.assert_editor_text_highlights(
+            HighlightKey::HoveredLinkState,
             indoc! {"A cool webpage is «https://zed.dev/releasesˇ»"},
         );
 
@@ -1548,7 +1600,7 @@ mod tests {
             assert!(
                 editor
                     .snapshot(window, cx)
-                    .text_highlight_ranges::<HoveredLinkState>()
+                    .text_highlight_ranges(HighlightKey::HoveredLinkState)
                     .unwrap_or_default()
                     .1
                     .is_empty()
@@ -1575,21 +1627,27 @@ mod tests {
 
         cx.simulate_mouse_move(screen_coord, None, Modifiers::secondary_key());
         #[cfg(not(target_os = "windows"))]
-        cx.assert_editor_text_highlights::<HoveredLinkState>(indoc! {"
+        cx.assert_editor_text_highlights(
+            HighlightKey::HoveredLinkState,
+            indoc! {"
             You can't go to a file that does_not_exist.txt.
             Go to «file2.rsˇ» if you want.
             Or go to ../dir/file2.rs if you want.
             Or go to /root/dir/file2.rs if project is local.
             Or go to /root/dir/file2 if this is a Rust file.
-        "});
+        "},
+        );
         #[cfg(target_os = "windows")]
-        cx.assert_editor_text_highlights::<HoveredLinkState>(indoc! {"
+        cx.assert_editor_text_highlights(
+            HighlightKey::HoveredLinkState,
+            indoc! {"
             You can't go to a file that does_not_exist.txt.
             Go to «file2.rsˇ» if you want.
             Or go to ../dir/file2.rs if you want.
             Or go to C:/root/dir/file2.rs if project is local.
             Or go to C:/root/dir/file2 if this is a Rust file.
-        "});
+        "},
+        );
 
         // Moving the mouse over a relative path that does exist should highlight it
         #[cfg(not(target_os = "windows"))]
@@ -1611,21 +1669,27 @@ mod tests {
 
         cx.simulate_mouse_move(screen_coord, None, Modifiers::secondary_key());
         #[cfg(not(target_os = "windows"))]
-        cx.assert_editor_text_highlights::<HoveredLinkState>(indoc! {"
+        cx.assert_editor_text_highlights(
+            HighlightKey::HoveredLinkState,
+            indoc! {"
             You can't go to a file that does_not_exist.txt.
             Go to file2.rs if you want.
             Or go to «../dir/file2.rsˇ» if you want.
             Or go to /root/dir/file2.rs if project is local.
             Or go to /root/dir/file2 if this is a Rust file.
-        "});
+        "},
+        );
         #[cfg(target_os = "windows")]
-        cx.assert_editor_text_highlights::<HoveredLinkState>(indoc! {"
+        cx.assert_editor_text_highlights(
+            HighlightKey::HoveredLinkState,
+            indoc! {"
             You can't go to a file that does_not_exist.txt.
             Go to file2.rs if you want.
             Or go to «../dir/file2.rsˇ» if you want.
             Or go to C:/root/dir/file2.rs if project is local.
             Or go to C:/root/dir/file2 if this is a Rust file.
-        "});
+        "},
+        );
 
         // Moving the mouse over an absolute path that does exist should highlight it
         #[cfg(not(target_os = "windows"))]
@@ -1648,21 +1712,27 @@ mod tests {
 
         cx.simulate_mouse_move(screen_coord, None, Modifiers::secondary_key());
         #[cfg(not(target_os = "windows"))]
-        cx.assert_editor_text_highlights::<HoveredLinkState>(indoc! {"
+        cx.assert_editor_text_highlights(
+            HighlightKey::HoveredLinkState,
+            indoc! {"
             You can't go to a file that does_not_exist.txt.
             Go to file2.rs if you want.
             Or go to ../dir/file2.rs if you want.
             Or go to «/root/dir/file2.rsˇ» if project is local.
             Or go to /root/dir/file2 if this is a Rust file.
-        "});
+        "},
+        );
         #[cfg(target_os = "windows")]
-        cx.assert_editor_text_highlights::<HoveredLinkState>(indoc! {"
+        cx.assert_editor_text_highlights(
+            HighlightKey::HoveredLinkState,
+            indoc! {"
             You can't go to a file that does_not_exist.txt.
             Go to file2.rs if you want.
             Or go to ../dir/file2.rs if you want.
             Or go to «C:/root/dir/file2.rsˇ» if project is local.
             Or go to C:/root/dir/file2 if this is a Rust file.
-        "});
+        "},
+        );
 
         // Moving the mouse over a path that exists, if we add the language-specific suffix, it should highlight it
         #[cfg(not(target_os = "windows"))]
@@ -1684,21 +1754,27 @@ mod tests {
 
         cx.simulate_mouse_move(screen_coord, None, Modifiers::secondary_key());
         #[cfg(not(target_os = "windows"))]
-        cx.assert_editor_text_highlights::<HoveredLinkState>(indoc! {"
+        cx.assert_editor_text_highlights(
+            HighlightKey::HoveredLinkState,
+            indoc! {"
             You can't go to a file that does_not_exist.txt.
             Go to file2.rs if you want.
             Or go to ../dir/file2.rs if you want.
             Or go to /root/dir/file2.rs if project is local.
             Or go to «/root/dir/file2ˇ» if this is a Rust file.
-        "});
+        "},
+        );
         #[cfg(target_os = "windows")]
-        cx.assert_editor_text_highlights::<HoveredLinkState>(indoc! {"
+        cx.assert_editor_text_highlights(
+            HighlightKey::HoveredLinkState,
+            indoc! {"
             You can't go to a file that does_not_exist.txt.
             Go to file2.rs if you want.
             Or go to ../dir/file2.rs if you want.
             Or go to C:/root/dir/file2.rs if project is local.
             Or go to «C:/root/dir/file2ˇ» if this is a Rust file.
-        "});
+        "},
+        );
 
         cx.simulate_click(screen_coord, Modifiers::secondary_key());
 
@@ -1755,7 +1831,7 @@ mod tests {
             assert!(
                 editor
                     .snapshot(window, cx)
-                    .text_highlight_ranges::<HoveredLinkState>()
+                    .text_highlight_ranges(HighlightKey::HoveredLinkState)
                     .unwrap_or_default()
                     .1
                     .is_empty()
@@ -1793,7 +1869,7 @@ mod tests {
             assert!(
                 editor
                     .snapshot(window, cx)
-                    .text_highlight_ranges::<HoveredLinkState>()
+                    .text_highlight_ranges(HighlightKey::HoveredLinkState)
                     .unwrap_or_default()
                     .1
                     .is_empty()

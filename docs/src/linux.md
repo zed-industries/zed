@@ -1,8 +1,13 @@
+---
+title: Zed on Linux
+description: "The installation script on the download page is the fastest way to install Zed:"
+---
+
 # Zed on Linux
 
 ## Standard Installation
 
-For most people we recommend using the script on the [download](https://zed.dev/download) page to install Zed:
+The installation script on the [download](https://zed.dev/download) page is the fastest way to install Zed:
 
 ```sh
 curl -f https://zed.dev/install.sh | sh
@@ -60,7 +65,7 @@ We'd love your help making Zed available for everyone. If Zed is not yet availab
 
 The packages in this section provide binary installs for Zed but are not official packages within the associated distributions. These packages are maintained by community members and as such a higher level of caution should be taken when installing them.
 
-#### Debian
+#### Debian and Ubuntu
 
 Zed is available in [this community-maintained repository](https://debian.griffo.io/).
 
@@ -91,9 +96,9 @@ ln -sf ~/.local/zed.app/bin/zed ~/.local/bin/zed
 If you'd like integration with an XDG-compatible desktop environment, you will also need to install the `.desktop` file:
 
 ```sh
-cp ~/.local/zed.app/share/applications/zed.desktop ~/.local/share/applications/dev.zed.Zed.desktop
+install -D ~/.local/zed.app/share/applications/dev.zed.Zed.desktop -t ~/.local/share/applications
 sed -i "s|Icon=zed|Icon=$HOME/.local/zed.app/share/icons/hicolor/512x512/apps/zed.png|g" ~/.local/share/applications/dev.zed.Zed.desktop
-sed -i "s|Exec=zed|Exec=$HOME/.local/zed.app/libexec/zed-editor|g" ~/.local/share/applications/dev.zed.Zed.desktop
+sed -i "s|Exec=zed|Exec=$HOME/.local/zed.app/bin/zed|g" ~/.local/share/applications/dev.zed.Zed.desktop
 ```
 
 ## Uninstalling Zed
@@ -160,8 +165,6 @@ On some systems the file `/etc/prime-discrete` can be used to enforce the use of
 
 On others, you may be able to the environment variable `DRI_PRIME=1` when running Zed to force the use of the discrete GPU.
 
-If you're using an AMD GPU and Zed crashes when selecting long lines, try setting the `ZED_PATH_SAMPLE_COUNT=0` environment variable. (See [#26143](https://github.com/zed-industries/zed/issues/26143))
-
 If you're using an AMD GPU, you might get a 'Broken Pipe' error. Try using the RADV or Mesa drivers. (See [#13880](https://github.com/zed-industries/zed/issues/13880))
 
 If you are using `amdvlk`, the default open-source AMD graphics driver, you may find that Zed consistently fails to launch. This is a known issue for some users, for example on Omarchy (see issue [#28851](https://github.com/zed-industries/zed/issues/28851)). To fix this, you will need to use a different driver. We recommend removing the `amdvlk` and `lib32-amdvlk` packages and installing `vulkan-radeon` instead (see issue [#14141](https://github.com/zed-industries/zed/issues/14141)).
@@ -216,7 +219,7 @@ Additionally, it is extremely beneficial to provide the contents of your Zed log
 
 ```sh
 truncate -s 0 ~/.local/share/zed/logs/Zed.log # Clear the log file
-ZED_LOG=blade_graphics=info zed .
+ZED_LOG=wgpu=info zed .
 cat ~/.local/share/zed/logs/Zed.log
 # copy the output
 ```
@@ -224,7 +227,7 @@ cat ~/.local/share/zed/logs/Zed.log
 Or, if you have the Zed cli setup, you can do
 
 ```sh
-ZED_LOG=blade_graphics=info /path/to/zed/cli --foreground .
+ZED_LOG=wgpu=info /path/to/zed/cli --foreground .
 # copy the output
 ```
 
@@ -384,7 +387,7 @@ Replace `192` with your desired DPI value. This affects the system globally and 
 
 ### Font rendering parameters
 
-When using Blade rendering (Linux platforms and self-compiled builds with the Blade renderer enabled), Zed reads `ZED_FONTS_GAMMA` and `ZED_FONTS_GRAYSCALE_ENHANCED_CONTRAST` environment variables for the values to use for font rendering.
+On Linux, Zed reads `ZED_FONTS_GAMMA` and `ZED_FONTS_GRAYSCALE_ENHANCED_CONTRAST` environment variables for the values to use for font rendering.
 
 `ZED_FONTS_GAMMA` corresponds to [getgamma](https://learn.microsoft.com/en-us/windows/win32/api/dwrite/nf-dwrite-idwriterenderingparams-getgamma) values.
 Allowed range [1.0, 2.2], other values are clipped.

@@ -553,6 +553,92 @@ async fn test_context_server_enabled_disabled(cx: &mut TestAppContext) {
     }
 }
 
+#[gpui::test]
+async fn test_server_ids_includes_disabled_servers(cx: &mut TestAppContext) {
+    const ENABLED_SERVER_ID: &str = "enabled-server";
+    const DISABLED_SERVER_ID: &str = "disabled-server";
+
+    let enabled_server_id = ContextServerId(ENABLED_SERVER_ID.into());
+    let disabled_server_id = ContextServerId(DISABLED_SERVER_ID.into());
+
+    let (_fs, project) = setup_context_server_test(cx, json!({"code.rs": ""}), vec![]).await;
+
+    let executor = cx.executor();
+    let store = project.read_with(cx, |project, _| project.context_server_store());
+    store.update(cx, |store, _| {
+        store.set_context_server_factory(Box::new(move |id, _| {
+            Arc::new(ContextServer::new(
+                id.clone(),
+                Arc::new(create_fake_transport(id.0.to_string(), executor.clone())),
+            ))
+        }));
+    });
+
+    // Configure one enabled and one disabled server
+    set_context_server_configuration(
+        vec![
+            (
+                enabled_server_id.0.clone(),
+                settings::ContextServerSettingsContent::Stdio {
+                    enabled: true,
+                    remote: false,
+                    command: ContextServerCommand {
+                        path: "somebinary".into(),
+                        args: vec![],
+                        env: None,
+                        timeout: None,
+                    },
+                },
+            ),
+            (
+                disabled_server_id.0.clone(),
+                settings::ContextServerSettingsContent::Stdio {
+                    enabled: false,
+                    remote: false,
+                    command: ContextServerCommand {
+                        path: "somebinary".into(),
+                        args: vec![],
+                        env: None,
+                        timeout: None,
+                    },
+                },
+            ),
+        ],
+        cx,
+    );
+
+    cx.run_until_parked();
+
+    // Verify that server_ids includes both enabled and disabled servers
+    cx.update(|cx| {
+        let server_ids = store.read(cx).server_ids().to_vec();
+        assert!(
+            server_ids.contains(&enabled_server_id),
+            "server_ids should include enabled server"
+        );
+        assert!(
+            server_ids.contains(&disabled_server_id),
+            "server_ids should include disabled server"
+        );
+    });
+
+    // Verify that the enabled server is running and the disabled server is not
+    cx.read(|cx| {
+        assert_eq!(
+            store.read(cx).status_for_server(&enabled_server_id),
+            Some(ContextServerStatus::Running),
+            "enabled server should be running"
+        );
+        // Disabled server should not be in the servers map (status returns None)
+        // but should still be in server_ids
+        assert_eq!(
+            store.read(cx).status_for_server(&disabled_server_id),
+            None,
+            "disabled server should not have a status (not in servers map)"
+        );
+    });
+}
+
 fn set_context_server_configuration(
     context_servers: Vec<(Arc<str>, settings::ContextServerSettingsContent)>,
     cx: &mut TestAppContext,
@@ -796,26 +882,25 @@ fn assert_server_events(
         let expected_event_count = expected_events.len();
         let subscription = cx.subscribe(store, {
             let received_event_count = received_event_count.clone();
-            move |_, event, _| match event {
-                Event::ServerStatusChanged {
+            move |_, event, _| {
+                let ServerStatusChangedEvent {
                     server_id: actual_server_id,
                     status: actual_status,
-                } => {
-                    let (expected_server_id, expected_status) = &expected_events[ix];
+                } = event;
+                let (expected_server_id, expected_status) = &expected_events[ix];
 
-                    assert_eq!(
-                        actual_server_id, expected_server_id,
-                        "Expected different server id at index {}",
-                        ix
-                    );
-                    assert_eq!(
-                        actual_status, expected_status,
-                        "Expected different status at index {}",
-                        ix
-                    );
-                    ix += 1;
-                    *received_event_count.borrow_mut() += 1;
-                }
+                assert_eq!(
+                    actual_server_id, expected_server_id,
+                    "Expected different server id at index {}",
+                    ix
+                );
+                assert_eq!(
+                    actual_status, expected_status,
+                    "Expected different status at index {}",
+                    ix
+                );
+                ix += 1;
+                *received_event_count.borrow_mut() += 1;
             }
         });
         ServerEvents {

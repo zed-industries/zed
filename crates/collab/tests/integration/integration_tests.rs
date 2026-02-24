@@ -6,7 +6,7 @@ use anyhow::{Result, anyhow};
 use assistant_slash_command::SlashCommandWorkingSet;
 use assistant_text_thread::TextThreadStore;
 use buffer_diff::{DiffHunkSecondaryStatus, DiffHunkStatus, assert_hunks};
-use call::{ActiveCall, ParticipantLocation, Room, room};
+use call::{ActiveCall, Room, room};
 use client::{RECEIVE_TIMEOUT, User};
 use collab::rpc::{CLEANUP_TIMEOUT, RECONNECT_TIMEOUT};
 use collections::{BTreeMap, HashMap, HashSet};
@@ -26,7 +26,7 @@ use language::{
     language_settings::{Formatter, FormatterList},
     rust_lang, tree_sitter_rust, tree_sitter_typescript,
 };
-use lsp::{LanguageServerId, OneOf};
+use lsp::{DEFAULT_LSP_REQUEST_TIMEOUT, LanguageServerId, OneOf};
 use parking_lot::Mutex;
 use pretty_assertions::assert_eq;
 use project::{
@@ -51,7 +51,7 @@ use std::{
 };
 use unindent::Unindent as _;
 use util::{path, rel_path::rel_path, uri};
-use workspace::Pane;
+use workspace::{Pane, ParticipantLocation};
 
 #[ctor::ctor]
 fn init_logger() {
@@ -2379,11 +2379,11 @@ async fn test_propagate_saves_and_fs_changes(
         .unwrap();
 
     buffer_b.read_with(cx_b, |buffer, _| {
-        assert_eq!(buffer.language().unwrap().name(), "Rust".into());
+        assert_eq!(buffer.language().unwrap().name(), "Rust");
     });
 
     buffer_c.read_with(cx_c, |buffer, _| {
-        assert_eq!(buffer.language().unwrap().name(), "Rust".into());
+        assert_eq!(buffer.language().unwrap().name(), "Rust");
     });
     buffer_b.update(cx_b, |buf, cx| buf.edit([(0..0, "i-am-b, ")], None, cx));
     buffer_c.update(cx_c, |buf, cx| buf.edit([(0..0, "i-am-c, ")], None, cx));
@@ -2486,17 +2486,17 @@ async fn test_propagate_saves_and_fs_changes(
 
     buffer_a.read_with(cx_a, |buffer, _| {
         assert_eq!(buffer.file().unwrap().path().as_ref(), rel_path("file1.js"));
-        assert_eq!(buffer.language().unwrap().name(), "JavaScript".into());
+        assert_eq!(buffer.language().unwrap().name(), "JavaScript");
     });
 
     buffer_b.read_with(cx_b, |buffer, _| {
         assert_eq!(buffer.file().unwrap().path().as_ref(), rel_path("file1.js"));
-        assert_eq!(buffer.language().unwrap().name(), "JavaScript".into());
+        assert_eq!(buffer.language().unwrap().name(), "JavaScript");
     });
 
     buffer_c.read_with(cx_c, |buffer, _| {
         assert_eq!(buffer.file().unwrap().path().as_ref(), rel_path("file1.js"));
-        assert_eq!(buffer.language().unwrap().name(), "JavaScript".into());
+        assert_eq!(buffer.language().unwrap().name(), "JavaScript");
     });
 
     let new_buffer_a = project_a
@@ -4358,9 +4358,12 @@ async fn test_collaborating_with_lsp_progress_updates_and_diagnostics_ordering(
     let fake_language_server = fake_language_servers.next().await.unwrap();
     executor.run_until_parked();
     fake_language_server
-        .request::<lsp::request::WorkDoneProgressCreate>(lsp::WorkDoneProgressCreateParams {
-            token: lsp::NumberOrString::String("the-disk-based-token".to_string()),
-        })
+        .request::<lsp::request::WorkDoneProgressCreate>(
+            lsp::WorkDoneProgressCreateParams {
+                token: lsp::NumberOrString::String("the-disk-based-token".to_string()),
+            },
+            DEFAULT_LSP_REQUEST_TIMEOUT,
+        )
         .await
         .into_response()
         .unwrap();

@@ -1,13 +1,12 @@
 use anyhow::{Result, anyhow};
 use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::BoxStream};
-use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
+use http_client::{AsyncBody, HttpClient, HttpRequestExt, Method, Request as HttpRequest};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::convert::TryFrom;
 use strum::EnumIter;
 
 pub const MISTRAL_API_URL: &str = "https://api.mistral.ai/v1";
-pub const CODESTRAL_API_URL: &str = "https://codestral.mistral.ai";
 
 #[derive(Clone, Copy, Serialize, Deserialize, Debug, Eq, PartialEq)]
 #[serde(rename_all = "lowercase")]
@@ -438,13 +437,17 @@ pub async fn stream_completion(
     api_url: &str,
     api_key: &str,
     request: Request,
+    affinity: Option<String>,
 ) -> Result<BoxStream<'static, Result<StreamResponse>>> {
     let uri = format!("{api_url}/chat/completions");
     let request_builder = HttpRequest::builder()
         .method(Method::POST)
         .uri(uri)
         .header("Content-Type", "application/json")
-        .header("Authorization", format!("Bearer {}", api_key.trim()));
+        .header("Authorization", format!("Bearer {}", api_key.trim()))
+        .when_some(affinity, |this, affinity| {
+            this.header("x-affinity", affinity)
+        });
 
     let request = request_builder.body(AsyncBody::from(serde_json::to_string(&request)?))?;
     let mut response = client.send(request).await?;

@@ -9,10 +9,10 @@ use semver::Version as SemanticVersion;
 use std::time::Instant;
 use std::{
     path::{Path, PathBuf},
-    process::Stdio,
     sync::Arc,
 };
 use util::ResultExt;
+use util::command::Stdio;
 use util::shell::ShellKind;
 use util::{
     paths::{PathStyle, RemotePathBuf},
@@ -33,6 +33,7 @@ use crate::{
 pub struct DockerConnectionOptions {
     pub name: String,
     pub container_id: String,
+    pub remote_user: String,
     pub upload_binary_over_docker_exec: bool,
     pub use_podman: bool,
 }
@@ -115,16 +116,39 @@ impl DockerExecConnection {
         {
             Ok(shell) => match shell.trim() {
                 "" => {
-                    log::error!("$SHELL is not set, falling back to {default_shell}");
-                    default_shell.to_owned()
+                    log::info!("$SHELL is not set, checking passwd for user");
                 }
-                shell => shell.to_owned(),
+                shell => {
+                    return shell.to_owned();
+                }
             },
             Err(e) => {
-                log::error!("Failed to get shell: {e}");
-                default_shell.to_owned()
+                log::error!("Failed to get $SHELL: {e}. Checking passwd for user");
             }
         }
+
+        match self
+            .run_docker_exec(
+                "sh",
+                None,
+                &Default::default(),
+                &["-c", "getent passwd \"$(id -un)\" | cut -d: -f7"],
+            )
+            .await
+        {
+            Ok(shell) => match shell.trim() {
+                "" => {
+                    log::info!("No shell found in passwd, falling back to {default_shell}");
+                }
+                shell => {
+                    return shell.to_owned();
+                }
+            },
+            Err(e) => {
+                log::info!("Error getting shell from passwd: {e}. Falling back to {default_shell}");
+            }
+        }
+        default_shell.to_owned()
     }
 
     async fn check_remote_platform(&self) -> Result<RemotePlatform> {
@@ -370,6 +394,55 @@ impl DockerExecConnection {
         Ok(())
     }
 
+    async fn upload_and_chown(
+        docker_cli: String,
+        connection_options: DockerConnectionOptions,
+        src_path: String,
+        dst_path: String,
+    ) -> Result<()> {
+        let mut command = util::command::new_command(&docker_cli);
+        command.arg("cp");
+        command.arg("-a");
+        command.arg(&src_path);
+        command.arg(format!("{}:{}", connection_options.container_id, dst_path));
+
+        let output = command.output().await?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            log::debug!("failed to upload via docker cp {src_path} -> {dst_path}: {stderr}",);
+            anyhow::bail!(
+                "failed to upload via docker cp {} -> {}: {}",
+                src_path,
+                dst_path,
+                stderr,
+            );
+        }
+
+        let mut chown_command = util::command::new_command(&docker_cli);
+        chown_command.arg("exec");
+        chown_command.arg(connection_options.container_id);
+        chown_command.arg("chown");
+        chown_command.arg(format!(
+            "{}:{}",
+            connection_options.remote_user, connection_options.remote_user,
+        ));
+        chown_command.arg(&dst_path);
+
+        let output = chown_command.output().await?;
+
+        if output.status.success() {
+            return Ok(());
+        }
+
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        log::debug!("failed to change ownership for via chown: {stderr}",);
+        anyhow::bail!(
+            "failed to change ownership for zed_remote_server via chown: {}",
+            stderr,
+        );
+    }
+
     async fn upload_file(
         &self,
         src_path: &Path,
@@ -380,32 +453,15 @@ impl DockerExecConnection {
 
         let src_path_display = src_path.display().to_string();
         let dest_path_str = dest_path.display(self.path_style());
+        let full_server_path = format!("{}/{}", remote_dir_for_server, dest_path_str);
 
-        let mut command = util::command::new_smol_command(self.docker_cli());
-        command.arg("cp");
-        command.arg("-a");
-        command.arg(&src_path_display);
-        command.arg(format!(
-            "{}:{}/{}",
-            &self.connection_options.container_id, remote_dir_for_server, dest_path_str
-        ));
-
-        let output = command.output().await?;
-
-        if output.status.success() {
-            return Ok(());
-        }
-
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        log::debug!(
-            "failed to upload file via docker cp {src_path_display} -> {dest_path_str}: {stderr}",
-        );
-        anyhow::bail!(
-            "failed to upload file via docker cp {} -> {}: {}",
+        Self::upload_and_chown(
+            self.docker_cli().to_string(),
+            self.connection_options.clone(),
             src_path_display,
-            dest_path_str,
-            stderr,
-        );
+            full_server_path,
+        )
+        .await
     }
 
     async fn run_docker_command(
@@ -413,7 +469,7 @@ impl DockerExecConnection {
         subcommand: &str,
         args: &[impl AsRef<str>],
     ) -> Result<String> {
-        let mut command = util::command::new_smol_command(self.docker_cli());
+        let mut command = util::command::new_command(self.docker_cli());
         command.arg(subcommand);
         for arg in args {
             command.arg(arg.as_ref());
@@ -439,6 +495,9 @@ impl DockerExecConnection {
             Some(dir) => vec!["-w".to_string(), dir.to_string()],
             None => vec![],
         };
+
+        args.push("-u".to_string());
+        args.push(self.connection_options.remote_user.clone());
 
         for (k, v) in env.iter() {
             args.push("-e".to_string());
@@ -530,7 +589,7 @@ impl DockerExecConnection {
 
     fn kill_inner(&self) -> Result<()> {
         if let Some(pid) = self.proxy_process.lock().take() {
-            if let Ok(_) = util::command::new_smol_command("kill")
+            if let Ok(_) = util::command::new_command("kill")
                 .arg(pid.to_string())
                 .spawn()
             {
@@ -581,6 +640,8 @@ impl RemoteConnection for DockerExecConnection {
         }
 
         docker_args.extend([
+            "-u".to_string(),
+            self.connection_options.remote_user.to_string(),
             "-w".to_string(),
             self.remote_dir_for_server.clone(),
             "-i".to_string(),
@@ -597,7 +658,7 @@ impl RemoteConnection for DockerExecConnection {
         if reconnect {
             docker_args.push("--reconnect".to_string());
         }
-        let mut command = util::command::new_smol_command(self.docker_cli());
+        let mut command = util::command::new_command(self.docker_cli());
         command
             .kill_on_drop(true)
             .stdin(Stdio::piped())
@@ -641,24 +702,14 @@ impl RemoteConnection for DockerExecConnection {
         let dest_path_str = dest_path.to_string();
         let src_path_display = src_path.display().to_string();
 
-        let mut command = util::command::new_smol_command(self.docker_cli());
-        command.arg("cp");
-        command.arg("-a"); // Archive mode is required to assign the file ownership to the default docker exec user
-        command.arg(src_path_display);
-        command.arg(format!(
-            "{}:{}",
-            self.connection_options.container_id, dest_path_str
-        ));
+        let upload_task = Self::upload_and_chown(
+            self.docker_cli().to_string(),
+            self.connection_options.clone(),
+            src_path_display,
+            dest_path_str,
+        );
 
-        cx.background_spawn(async move {
-            let output = command.output().await?;
-
-            if output.status.success() {
-                Ok(())
-            } else {
-                Err(anyhow::anyhow!("Failed to upload directory"))
-            }
-        })
+        cx.background_spawn(upload_task)
     }
 
     async fn kill(&self) -> Result<()> {
@@ -706,7 +757,11 @@ impl RemoteConnection for DockerExecConnection {
             inner_program.push("-l".to_string());
         };
 
-        let mut docker_args = vec!["exec".to_string()];
+        let mut docker_args = vec![
+            "exec".to_string(),
+            "-u".to_string(),
+            self.connection_options.remote_user.clone(),
+        ];
 
         if let Some(parsed_working_dir) = parsed_working_dir {
             docker_args.push("-w".to_string());

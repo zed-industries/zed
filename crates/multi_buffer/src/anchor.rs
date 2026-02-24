@@ -8,10 +8,22 @@ use std::{
 };
 use sum_tree::Bias;
 
+/// A stable reference to a position within a [`MultiBuffer`](super::MultiBuffer).
+///
+/// Unlike simple offsets, anchors remain valid as the text is edited, automatically
+/// adjusting to reflect insertions and deletions around them.
 #[derive(Clone, Copy, Eq, PartialEq, Hash)]
 pub struct Anchor {
+    /// Identifies which excerpt within the multi-buffer this anchor belongs to.
+    /// A multi-buffer can contain multiple excerpts from different buffers.
     pub excerpt_id: ExcerptId,
+    /// The position within the excerpt's underlying buffer. This is a stable
+    /// reference that remains valid as the buffer text is edited.
     pub text_anchor: text::Anchor,
+    /// When present, indicates this anchor points into deleted text within an
+    /// expanded diff hunk. The anchor references a position in the diff base
+    /// (original) text rather than the current buffer text. This is used when
+    /// displaying inline diffs where deleted lines are shown.
     pub diff_base_anchor: Option<text::Anchor>,
 }
 

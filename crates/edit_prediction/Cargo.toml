@@ -21,6 +21,7 @@ arrayvec.workspace = true
 brotli.workspace = true
 buffer_diff.workspace = true
 client.workspace = true
+cloud_api_types.workspace = true
 cloud_llm_client.workspace = true
 collections.workspace = true
 copilot.workspace = true
@@ -65,10 +66,10 @@ workspace.workspace = true
 worktree.workspace = true
 zed_actions.workspace = true
 zeta_prompt.workspace = true
+zstd.workspace = true
 
 [dev-dependencies]
 clock = { workspace = true, features = ["test-support"] }
-cloud_api_types.workspace = true
 cloud_llm_client = { workspace = true, features = ["test-support"] }
 ctor.workspace = true
 gpui = { workspace = true, features = ["test-support"] }

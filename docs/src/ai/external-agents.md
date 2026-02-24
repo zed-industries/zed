@@ -1,8 +1,13 @@
+---
+title: Use Claude Agent, Gemini CLI, and Codex in Zed
+description: Run Claude Agent, Gemini CLI, Codex, and other AI coding agents directly in Zed via the Agent Client Protocol (ACP).
+---
+
 # External Agents
 
 Zed supports many external agents, including CLI-based ones, through the [Agent Client Protocol (ACP)](https://agentclientprotocol.com).
 
-You can interact with agents like [Gemini CLI](https://github.com/google-gemini/gemini-cli) (that servers as the reference ACP implementation), as well as [Claude Code](https://www.anthropic.com/claude-code), [Codex](https://developers.openai.com/codex), [GitHub Copilot](https://github.com/github/copilot-language-server-release), and many others that [you can add](#add-more-agents).
+Zed supports [Gemini CLI](https://github.com/google-gemini/gemini-cli) (the reference ACP implementation), [Claude Agent](https://platform.claude.com/docs/en/agent-sdk/overview), [Codex](https://developers.openai.com/codex), [GitHub Copilot](https://github.com/github/copilot-language-server-release), and [additional agents](#add-more-agents) you can configure.
 
 > Note that Zed's interaction with external agents is strictly UI-based; the billing, legal, and terms arrangement is directly between you and the agent provider.
 > Zed does not charge for use of external agents, and our [zero-data retention agreements/privacy guarantees](./ai-improvement.md) are **_only_** applicable for Zed's hosted models.
@@ -64,20 +69,18 @@ For more information, see the [Gemini CLI docs](https://github.com/google-gemini
 
 ### Usage
 
-Similar to Zed's first-party agent, you can use Gemini CLI to do anything that you need.
-And to give it context, you can @-mention files, recent threads, symbols, or fetch the web.
+Gemini CLI supports the same workflows as Zed's first-party agent: code generation, refactoring, debugging, and Q&A. Add context by @-mentioning files, recent threads, or symbols.
 
-> Note that some first-party agent features don't yet work with Gemini CLI: editing past messages, resuming threads from history, and checkpointing.
-> We hope to add these features in the near future.
+> Some agent panel features are not yet available with Gemini CLI: editing past messages, resuming threads from history, and checkpointing.
 
-## Claude Code
+## Claude Agent
 
-Similar to Gemini CLI, you can also run [Claude Code](https://www.anthropic.com/claude-code) directly via Zed's [agent panel](./agent-panel.md).
-Under the hood, Zed runs Claude Code and communicate to it over ACP, through [a dedicated adapter](https://github.com/zed-industries/claude-code-acp).
+Similar to Gemini CLI, you can also run [Claude Agent](https://platform.claude.com/docs/en/agent-sdk/overview) directly via Zed's [agent panel](./agent-panel.md).
+Under the hood, Zed runs the Claude Agent SDK, which runs Claude Code under the hood, and communicates to it over ACP, through [a dedicated adapter](https://github.com/zed-industries/claude-agent-acp).
 
 ### Getting Started
 
-Open the agent panel with {#kb agent::ToggleFocus}, and then use the `+` button in the top right to start a new Claude Code thread.
+Open the agent panel with {#kb agent::ToggleFocus}, and then use the `+` button in the top right to start a new Claude Agent thread.
 
 If you'd like to bind this to a keyboard shortcut, you can do so by editing your `keymap.json` file via the `zed: open keymap file` command to include:
 
@@ -93,18 +96,18 @@ If you'd like to bind this to a keyboard shortcut, you can do so by editing your
 
 ### Authentication
 
-As of version `0.202.7`, authentication to Zed's Claude Code installation is decoupled entirely from Zed's agent.
-That is to say, an Anthropic API key added via the [Zed Agent's settings](./llm-providers.md#anthropic) will _not_ be utilized by Claude Code for authentication and billing.
+As of version `0.202.7`, authentication to Zed's Claude Agent installation is decoupled entirely from Zed's agent.
+That is to say, an Anthropic API key added via the [Zed Agent's settings](./llm-providers.md#anthropic) will _not_ be utilized by Claude Agent for authentication and billing.
 
-To ensure you're using your billing method of choice, [open a new Claude Code thread](./agent-panel.md#new-thread).
+To ensure you're using your billing method of choice, [open a new Claude Agent thread](./agent-panel.md#new-thread).
 Then, run `/login`, and authenticate either via API key, or via `Log in with Claude Code` to use a Claude Pro/Max subscription.
 
 #### Installation
 
-The first time you create a Claude Code thread, Zed will install [@zed-industries/claude-code-acp](https://github.com/zed-industries/claude-code-acp).
+The first time you create a Claude Agent thread, Zed will install [@zed-industries/claude-agent-acp](https://github.com/zed-industries/claude-agent-acp).
 This installation is only available to Zed and is kept up to date as you use the agent.
 
-Zed will always use this managed version of the Claude Code adapter, which includes a vendored version of the Claude Code CLI, even if you have it installed globally.
+Zed will always use this managed version of the Claude Agent adapter, which includes a vendored version of the Claude Code CLI, even if you have it installed globally.
 
 If you want to override the executable used by the adapter, you can set the `CLAUDE_CODE_EXECUTABLE` environment variable in your settings to the path of your preferred executable.
 
@@ -122,24 +125,23 @@ If you want to override the executable used by the adapter, you can set the `CLA
 
 ### Usage
 
-Similar to Zed's first-party agent, you can use Claude Code to do anything that you need.
-And to give it context, you can @-mention files, recent threads, diagnostics, symbols, and more.
+Claude Agent supports the same workflows as Zed's first-party agent. Add context by @-mentioning files, recent threads, diagnostics, or symbols.
 
-In complement to talking to it [over ACP](https://agentclientprotocol.com), Zed relies on the [Claude Code SDK](https://docs.anthropic.com/en/docs/claude-code/sdk/sdk-overview) to support some of its specific features.
+In complement to talking to it [over ACP](https://agentclientprotocol.com), Zed relies on the [Claude Agent SDK](https://platform.claude.com/docs/en/agent-sdk/overview) to support some of its specific features.
 However, the SDK doesn't yet expose everything needed to fully support all of them:
 
-- Slash Commands: A subset of [built-in commands](https://docs.anthropic.com/en/docs/claude-code/slash-commands#built-in-slash-commands) are supported, while [custom slash commands](https://docs.anthropic.com/en/docs/claude-code/slash-commands#custom-slash-commands) are fully supported.
-- [Subagents](https://docs.anthropic.com/en/docs/claude-code/sub-agents) are supported.
-- [Hooks](https://docs.anthropic.com/en/docs/claude-code/hooks-guide) are currently _not_ supported.
+- Slash Commands: [Custom slash commands](https://code.claude.com/docs/en/slash-commands#custom-slash-commands) are fully supported, and have been merged into skills. A subset of [built-in commands](https://code.claude.com/docs/en/slash-commands#built-in-slash-commands) are supported.
+- [Subagents](https://code.claude.com/docs/en/sub-agents) are supported.
+- [Agent teams](https://code.claude.com/docs/en/agent-teams) are currently _not_ supported.
+- [Hooks](https://code.claude.com/docs/en/hooks-guide) are currently _not_ supported.
 
-> Also note that some [first-party agent](./agent-panel.md) features don't yet work with Claude Code: editing past messages, resuming threads from history, and checkpointing.
-> We hope to add these features in the near future.
+> Some [agent panel](./agent-panel.md) features are not yet available with Claude Agent: editing past messages, resuming threads from history, and checkpointing.
 
 #### CLAUDE.md
 
-Claude Code in Zed will automatically use any `CLAUDE.md` file found in your project root, project subdirectories, or root `.claude` directory.
+Claude Agent in Zed will automatically use any `CLAUDE.md` file found in your project root, project subdirectories, or root `.claude` directory.
 
-If you don't have a `CLAUDE.md` file, you can ask Claude Code to create one for you through the `init` slash command.
+If you don't have a `CLAUDE.md` file, you can ask Claude Agent to create one for you through the `init` slash command.
 
 ## Codex CLI
 
@@ -188,11 +190,9 @@ Zed will always use this managed version of Codex even if you have it installed 
 
 ### Usage
 
-Similar to Zed's first-party agent, you can use Codex to do anything that you need.
-And to give it context, you can @-mention files, symbols, or fetch the web.
+Codex supports the same workflows as Zed's first-party agent. Add context by @-mentioning files or symbols.
 
-> Note that some first-party agent features don't yet work with Codex: editing past messages, resuming threads from history, and checkpointing.
-> We hope to add these features in the near future.
+> Some agent panel features are not yet available with Codex: editing past messages, resuming threads from history, and checkpointing.
 
 ## Add More Agents {#add-more-agents}
 
@@ -216,8 +216,7 @@ See what agents are available by filtering for "Agent Servers" in the extensions
 
 As mentioned above, the Agent Server extensions will be deprecated in the near future to give room to the ACP Registry.
 
-[The ACP Registry](https://github.com/agentclientprotocol/registry) is an easy way for developers to distribute their ACP-compatible agents to any client that speaks the protocol.
-And for clients, it's the easiest way to find and install agents while keeping their version always up-to-date.
+[The ACP Registry](https://github.com/agentclientprotocol/registry) lets developers distribute ACP-compatible agents to any client that implements the protocol. Agents installed from the registry update automatically.
 
 At the moment, the registry is a curated set of agents, including only the ones that [support authentication](https://agentclientprotocol.com/rfds/auth-methods).
 
@@ -232,7 +231,7 @@ From there, you can click to install your preferred agent and it will become ava
 
 ### Custom Agents
 
-You can also add agents through your `settings.json`, by specifying certain fields under `agent_servers`, like so:
+You can also add agents through your settings file ([how to edit](../configuring-zed.md#settings-files)) by specifying certain fields under `agent_servers`, like so:
 
 ```json [settings]
 {
@@ -258,9 +257,9 @@ This lets you see the messages being sent and received between Zed and the agent
 
 ![The debug view for ACP logs.](https://zed.dev/img/acp/acp-logs.webp)
 
-It's helpful to attach data from this view if you're opening issues about problems with external agents like Claude Code, Codex, OpenCode, etc.
+It's helpful to attach data from this view if you're opening issues about problems with external agents like Claude Agent, Codex, OpenCode, etc.
 
 ## MCP Servers
 
 Note that for external agents, access to MCP servers [installed from Zed](./mcp.md) may vary depending on the ACP implementation.
-For example, Claude Code and Codex both support it, but Gemini CLI does not yet.
+For example, Claude Agent and Codex both support it, but Gemini CLI does not yet.

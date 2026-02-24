@@ -1,11 +1,10 @@
 use anyhow::Result;
-use futures::Future;
+
 use git::repository::{FileHistory, FileHistoryEntry, RepoPath};
 use git::{GitHostingProviderRegistry, GitRemote, parse_git_remote_url};
 use gpui::{
-    AnyElement, AnyEntity, App, Asset, Context, Entity, EventEmitter, FocusHandle, Focusable,
-    IntoElement, Render, ScrollStrategy, Task, UniformListScrollHandle, WeakEntity, Window,
-    actions, uniform_list,
+    AnyElement, AnyEntity, App, Context, Entity, EventEmitter, FocusHandle, Focusable, IntoElement,
+    Render, ScrollStrategy, Task, UniformListScrollHandle, WeakEntity, Window, uniform_list,
 };
 use project::{
     Project, ProjectPath,
@@ -15,24 +14,15 @@ use std::any::{Any, TypeId};
 use std::sync::Arc;
 
 use time::OffsetDateTime;
-use ui::{Avatar, Chip, Divider, ListItem, WithScrollbar, prelude::*};
+use ui::{Chip, Divider, ListItem, WithScrollbar, prelude::*};
 use util::ResultExt;
 use workspace::{
     Item, Workspace,
     item::{ItemEvent, SaveOptions},
 };
 
+use crate::commit_tooltip::CommitAvatar;
 use crate::commit_view::CommitView;
-
-actions!(git, [ViewCommitFromHistory, LoadMoreHistory]);
-
-pub fn init(cx: &mut App) {
-    cx.observe_new(|workspace: &mut Workspace, _window, _cx| {
-        workspace.register_action(|_workspace, _: &ViewCommitFromHistory, _window, _cx| {});
-        workspace.register_action(|_workspace, _: &LoadMoreHistory, _window, _cx| {});
-    })
-    .detach();
-}
 
 const PAGE_SIZE: usize = 50;
 
@@ -286,20 +276,10 @@ impl FileHistoryView {
         author_email: Option<SharedString>,
         window: &mut Window,
         cx: &mut App,
-    ) -> impl IntoElement {
-        let remote = self.remote.as_ref().filter(|r| r.host_supports_avatars());
-        let size = rems_from_px(20.);
-
-        if let Some(remote) = remote {
-            let avatar_asset = CommitAvatarAsset::new(remote.clone(), sha.clone(), author_email);
-            if let Some(Some(url)) = window.use_asset::<CommitAvatarAsset>(&avatar_asset, cx) {
-                Avatar::new(url.to_string()).size(size)
-            } else {
-                Avatar::new("").size(size)
-            }
-        } else {
-            Avatar::new("").size(size)
-        }
+    ) -> AnyElement {
+        CommitAvatar::new(sha, author_email, self.remote.as_ref())
+            .size(rems_from_px(20.))
+            .render(window, cx)
     }
 
     fn render_commit_entry(
@@ -395,60 +375,6 @@ impl FileHistoryView {
                 this.open_commit_view(window, cx);
             }))
             .into_any_element()
-    }
-}
-
-#[derive(Clone, Debug)]
-struct CommitAvatarAsset {
-    sha: SharedString,
-    author_email: Option<SharedString>,
-    remote: GitRemote,
-}
-
-impl std::hash::Hash for CommitAvatarAsset {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.sha.hash(state);
-        self.remote.host.name().hash(state);
-    }
-}
-
-impl CommitAvatarAsset {
-    fn new(remote: GitRemote, sha: SharedString, author_email: Option<SharedString>) -> Self {
-        Self {
-            remote,
-            sha,
-            author_email,
-        }
-    }
-}
-
-impl Asset for CommitAvatarAsset {
-    type Source = Self;
-    type Output = Option<SharedString>;
-
-    fn load(
-        source: Self::Source,
-        cx: &mut App,
-    ) -> impl Future<Output = Self::Output> + Send + 'static {
-        let client = cx.http_client();
-        async move {
-            match source
-                .remote
-                .host
-                .commit_author_avatar_url(
-                    &source.remote.owner,
-                    &source.remote.repo,
-                    source.sha.clone(),
-                    source.author_email.clone(),
-                    client,
-                )
-                .await
-            {
-                Ok(Some(url)) => Some(SharedString::from(url.to_string())),
-                Ok(None) => None,
-                Err(_) => None,
-            }
-        }
     }
 }
 
@@ -552,7 +478,7 @@ impl Render for FileHistoryView {
 impl Item for FileHistoryView {
     type Event = ItemEvent;
 
-    fn to_item_events(event: &Self::Event, mut f: impl FnMut(ItemEvent)) {
+    fn to_item_events(event: &Self::Event, f: &mut dyn FnMut(ItemEvent)) {
         f(*event)
     }
 
@@ -639,11 +565,7 @@ impl Item for FileHistoryView {
         false
     }
 
-    fn breadcrumbs(
-        &self,
-        _theme: &theme::Theme,
-        _cx: &App,
-    ) -> Option<Vec<workspace::item::BreadcrumbText>> {
+    fn breadcrumbs(&self, _cx: &App) -> Option<Vec<workspace::item::BreadcrumbText>> {
         None
     }
 

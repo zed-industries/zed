@@ -31,7 +31,6 @@ use std::{
     sync::Arc,
     time::Duration,
 };
-use theme::Theme;
 use ui::{Color, Icon, IntoElement, Label, LabelCommon};
 use util::ResultExt;
 
@@ -80,6 +79,7 @@ impl Settings for ItemSettings {
             git_status: tabs.git_status.unwrap()
                 && content
                     .git
+                    .as_ref()
                     .unwrap()
                     .enabled
                     .unwrap()
@@ -213,12 +213,13 @@ pub trait Item: Focusable + EventEmitter<Self::Event> + Render + Sized {
         self.tab_tooltip_text(cx).map(TabTooltipContent::Text)
     }
 
-    fn to_item_events(_event: &Self::Event, _f: impl FnMut(ItemEvent)) {}
+    fn to_item_events(_event: &Self::Event, _f: &mut dyn FnMut(ItemEvent)) {}
 
     fn deactivated(&mut self, _window: &mut Window, _: &mut Context<Self>) {}
     fn discarded(&self, _project: Entity<Project>, _window: &mut Window, _cx: &mut Context<Self>) {}
     fn on_removed(&self, _cx: &mut Context<Self>) {}
     fn workspace_deactivated(&mut self, _window: &mut Window, _: &mut Context<Self>) {}
+    fn pane_changed(&mut self, _new_pane_id: EntityId, _cx: &mut Context<Self>) {}
     fn navigate(
         &mut self,
         _: Arc<dyn Any + Send>,
@@ -328,7 +329,7 @@ pub trait Item: Focusable + EventEmitter<Self::Event> + Render + Sized {
         ToolbarItemLocation::Hidden
     }
 
-    fn breadcrumbs(&self, _theme: &Theme, _cx: &App) -> Option<Vec<BreadcrumbText>> {
+    fn breadcrumbs(&self, _cx: &App) -> Option<Vec<BreadcrumbText>> {
         None
     }
 
@@ -535,7 +536,7 @@ pub trait ItemHandle: 'static + Send {
     ) -> gpui::Subscription;
     fn to_searchable_item_handle(&self, cx: &App) -> Option<Box<dyn SearchableItemHandle>>;
     fn breadcrumb_location(&self, cx: &App) -> ToolbarItemLocation;
-    fn breadcrumbs(&self, theme: &Theme, cx: &App) -> Option<Vec<BreadcrumbText>>;
+    fn breadcrumbs(&self, cx: &App) -> Option<Vec<BreadcrumbText>>;
     fn breadcrumb_prefix(&self, window: &mut Window, cx: &mut App) -> Option<gpui::AnyElement>;
     fn show_toolbar(&self, cx: &App) -> bool;
     fn pixel_position_of_cursor(&self, cx: &App) -> Option<Point<Pixels>>;
@@ -580,7 +581,7 @@ impl<T: Item> ItemHandle for Entity<T> {
         handler: Box<dyn Fn(ItemEvent, &mut Window, &mut App)>,
     ) -> gpui::Subscription {
         window.subscribe(self, cx, move |_, event, window, cx| {
-            T::to_item_events(event, |item_event| handler(item_event, window, cx));
+            T::to_item_events(event, &mut |item_event| handler(item_event, window, cx));
         })
     }
 
@@ -737,11 +738,22 @@ impl<T: Item> ItemHandle for Entity<T> {
                 .log_err();
         }
 
-        if workspace
+        let new_pane_id = pane.entity_id();
+        let old_item_pane = workspace
             .panes_by_item
-            .insert(self.item_id(), pane.downgrade())
-            .is_none()
-        {
+            .insert(self.item_id(), pane.downgrade());
+
+        if old_item_pane.as_ref().is_none_or(|old_pane| {
+            old_pane
+                .upgrade()
+                .is_some_and(|old_pane| old_pane.entity_id() != new_pane_id)
+        }) {
+            self.update(cx, |this, cx| {
+                this.pane_changed(new_pane_id, cx);
+            });
+        }
+
+        if old_item_pane.is_none() {
             let mut pending_autosave = DelayedDebouncedEditAction::new();
             let (pending_update_tx, mut pending_update_rx) = mpsc::unbounded();
             let pending_update = Rc::new(RefCell::new(None));
@@ -837,7 +849,7 @@ impl<T: Item> ItemHandle for Entity<T> {
                         workspace.enqueue_item_serialization(item).ok();
                     }
 
-                    T::to_item_events(event, |event| match event {
+                    T::to_item_events(event, &mut |event| match event {
                         ItemEvent::CloseItem => {
                             pane.update(cx, |pane, cx| {
                                 pane.close_item_by_id(
@@ -1059,8 +1071,8 @@ impl<T: Item> ItemHandle for Entity<T> {
         self.read(cx).breadcrumb_location(cx)
     }
 
-    fn breadcrumbs(&self, theme: &Theme, cx: &App) -> Option<Vec<BreadcrumbText>> {
-        self.read(cx).breadcrumbs(theme, cx)
+    fn breadcrumbs(&self, cx: &App) -> Option<Vec<BreadcrumbText>> {
+        self.read(cx).breadcrumbs(cx)
     }
 
     fn breadcrumb_prefix(&self, window: &mut Window, cx: &mut App) -> Option<gpui::AnyElement> {
@@ -1546,7 +1558,7 @@ pub mod test {
     impl Item for TestItem {
         type Event = ItemEvent;
 
-        fn to_item_events(event: &Self::Event, mut f: impl FnMut(ItemEvent)) {
+        fn to_item_events(event: &Self::Event, f: &mut dyn FnMut(ItemEvent)) {
             f(*event)
         }
 

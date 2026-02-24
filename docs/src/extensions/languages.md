@@ -1,3 +1,8 @@
+---
+title: Language Extensions
+description: "Overview of programming language support in Zed, including built-in and extension-based languages."
+---
+
 # Language Extensions
 
 Language support in Zed has several components:
@@ -26,7 +31,7 @@ line_comments = ["# "]
 - `line_comments` is an array of strings that are used to identify line comments in the language. This is used for the `editor::ToggleComments` keybind: {#kb editor::ToggleComments} for toggling lines of code.
 - `tab_size` defines the indentation/tab size used for this language (default is `4`).
 - `hard_tabs` whether to indent with tabs (`true`) or spaces (`false`, the default).
-- `first_line_pattern` is a regular expression, that in addition to `path_suffixes` (above) or `file_types` in settings can be used to match files which should use this language. For example Zed uses this to identify Shell Scripts by matching the [shebangs lines](https://github.com/zed-industries/zed/blob/main/crates/languages/src/bash/config.toml) in the first line of a script.
+- `first_line_pattern` is a regular expression that can be used alongside `path_suffixes` (above) or `file_types` in settings to match files that should use this language. For example, Zed uses this to identify Shell Scripts by matching [shebang lines](https://github.com/zed-industries/zed/blob/main/crates/languages/src/bash/config.toml) in the first line of a script.
 - `debuggers` is an array of strings that are used to identify debuggers in the language. When launching a debugger's `New Process Modal`, Zed will order available debuggers by the order of entries in this array.
 
 <!--
@@ -90,7 +95,7 @@ Here's an example from a `highlights.scm` for JSON:
 (number) @number
 ```
 
-This query marks strings, object keys, and numbers for highlighting. The following is a comprehensive list of captures supported by themes:
+This query marks strings, object keys, and numbers for highlighting. The following is the full list of captures supported by themes:
 
 | Capture                  | Description                            |
 | ------------------------ | -------------------------------------- |
@@ -237,7 +242,7 @@ The `overrides.scm` file defines syntactic _scopes_ that can be used to override
 
 For example, there is a language-specific setting called `word_characters` that controls which non-alphabetic characters are considered part of a word, for example when you double click to select a variable. In JavaScript, "$" and "#" are considered word characters.
 
-There is also a language-specific setting called `completion_query_characters` that controls which characters trigger autocomplete suggestions. In JavaScript, when your cursor is within a _string_, "-" is should be considered a completion query character. To achieve this, the JavaScript `overrides.scm` file contains the following pattern:
+There is also a language-specific setting called `completion_query_characters` that controls which characters trigger autocomplete suggestions. In JavaScript, when your cursor is within a _string_, `-` should be considered a completion query character. To achieve this, the JavaScript `overrides.scm` file contains the following pattern:
 
 ```scheme
 [
@@ -266,7 +271,7 @@ brackets = [
 
 #### Range inclusivity
 
-By default, the ranges defined in `overrides.scm` are _exclusive_. So in the case above, if you cursor was _outside_ the quotation marks delimiting the string, the `string` scope would not take effect. Sometimes, you may want to make the range _inclusive_. You can do this by adding the `.inclusive` suffix to the capture name in the query.
+By default, the ranges defined in `overrides.scm` are _exclusive_. So in the case above, if your cursor was _outside_ the quotation marks delimiting the string, the `string` scope would not take effect. Sometimes, you may want to make the range _inclusive_. You can do this by adding the `.inclusive` suffix to the capture name in the query.
 
 For example, in JavaScript, we also disable auto-closing of single quotes within comments. And the comment scope must extend all the way to the newline after a line comment. To achieve this, the JavaScript `overrides.scm` contains the following pattern:
 
@@ -280,7 +285,7 @@ The `textobjects.scm` file defines rules for navigating by text objects. This wa
 
 Vim provides two levels of granularity for navigating around files. Section-by-section with `[]` etc., and method-by-method with `]m` etc. Even languages that don't support functions and classes can work well by defining similar concepts. For example CSS defines a rule-set as a method, and a media-query as a class.
 
-For languages with closures, these typically should not count as functions in Zed. This is best-effort however, as languages like JavaScript do not syntactically differentiate syntactically between closures and top-level function declarations.
+For languages with closures, these typically should not count as functions in Zed. This is best-effort, however, because languages like JavaScript do not syntactically differentiate between closures and top-level function declarations.
 
 For languages with declarations like C, provide queries that match `@class.around` or `@function.around`. The `if` and `ic` text objects will default to these if there is no inside.
 
@@ -404,6 +409,73 @@ impl zed::Extension for MyExtension {
 ```
 
 You can customize the handling of the language server using several optional methods in the `Extension` trait. For example, you can control how completions are styled using the `label_for_completion` method. For a complete list of methods, see the [API docs for the Zed extension API](https://docs.rs/zed_extension_api).
+
+### Syntax Highlighting with Semantic Tokens
+
+Zed supports syntax highlighting using semantic tokens from the attached language servers. This is currently disabled by default, but can be enabled in your settings file:
+
+```json [settings]
+{
+  // Enable semantic tokens globally, backed by tree-sitter highlights for each language:
+  "semantic_tokens": "combined",
+  // Or, specify per-language:
+  "languages": {
+    "Rust": {
+      // No tree-sitter, only LSP semantic tokens:
+      "semantic_tokens": "full"
+    }
+  }
+}
+```
+
+The `semantic_tokens` setting accepts the following values:
+
+- `"off"` (default): Do not request semantic tokens from language servers.
+- `"combined"`: Use LSP semantic tokens together with tree-sitter highlighting.
+- `"full"`: Use LSP semantic tokens exclusively, replacing tree-sitter highlighting.
+
+#### Customizing Semantic Token Styles
+
+Zed supports customizing the styles used for semantic tokens. You can define rules in your settings file, which customize how semantic tokens get mapped to styles in your theme.
+
+```json [settings]
+{
+  "global_lsp_settings": {
+    "semantic_token_rules": [
+      {
+        // Highlight macros as keywords.
+        "token_type": "macro",
+        "style": ["syntax.keyword"]
+      },
+      {
+        // Highlight unresolved references in bold red.
+        "token_type": "unresolvedReference",
+        "foreground_color": "#c93f3f",
+        "font_weight": "bold"
+      },
+      {
+        // Underline all mutable variables/references/etc.
+        "token_modifiers": ["mutable"],
+        "underline": true
+      }
+    ]
+  }
+}
+```
+
+All rules that match a given `token_type` and `token_modifiers` are applied. Earlier rules take precedence. If no rules match, the token is not highlighted. User-defined rules take priority over the default rules.
+
+Each rule in the `semantic_token_rules` array is defined as follows:
+
+- `token_type`: The semantic token type as defined by the [LSP specification](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#textDocument_semanticTokens). If omitted, the rule matches all token types.
+- `token_modifiers`: A list of semantic token modifiers to match. All modifiers must be present to match.
+- `style`: A list of styles from the current syntax theme to use. The first style found is used. Any settings below override that style.
+- `foreground_color`: The foreground color to use for the token type, in hex format (e.g., `"#ff0000"`).
+- `background_color`: The background color to use for the token type, in hex format (e.g., `"#ff0000"`).
+- `underline`: A boolean or color to underline with, in hex format. If `true`, then the token will be underlined with the text color.
+- `strikethrough`: A boolean or color to strikethrough with, in hex format. If `true`, then the token have a strikethrough with the text color.
+- `font_weight`: One of `"normal"`, `"bold"`.
+- `font_style`: One of `"normal"`, `"italic"`.
 
 ### Multi-Language Support
 

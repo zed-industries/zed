@@ -26,6 +26,7 @@ log.workspace = true
 tokio = { workspace = true, features = ["rt", "rt-multi-thread"] }
 regex.workspace = true
 reqwest.workspace = true
+util.workspace = true
 
 [dev-dependencies]
 gpui.workspace = true

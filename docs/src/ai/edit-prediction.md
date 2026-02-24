@@ -1,30 +1,35 @@
+---
+title: AI Code Completion in Zed - Zeta, Copilot, Sweep, Mercury Coder
+description: Set up AI code completions in Zed with Zeta (built-in), GitHub Copilot, Sweep, Codestral, or Mercury Coder. Multi-line predictions on every keystroke.
+---
+
 # Edit Prediction
 
-Edit Prediction is Zed's LLM mechanism for predicting the code you want to write.
+Edit Prediction is how Zed's AI code completions work: an LLM predicts the code you want to write.
 Each keystroke sends a new request to the edit prediction provider, which returns individual or multi-line suggestions that can be quickly accepted by pressing `tab`.
 
-The default provider is [Zeta, a proprietary open source and open dataset model](https://huggingface.co/zed-industries/zeta), but you can also use [other providers](#other-providers) like GitHub Copilot, Supermaven, and Codestral.
+The default provider is [Zeta, a proprietary open source and open dataset model](https://huggingface.co/zed-industries/zeta), but you can also use [other providers](#other-providers) like GitHub Copilot, Sweep, Mercury Coder, and Codestral.
 
 ## Configuring Zeta
 
-To use Zeta, the only thing you need to do is [to sign in](../authentication.md#what-features-require-signing-in).
-After doing that, you should already see predictions as you type on your files.
+To use Zeta, [sign in](../authentication.md#what-features-require-signing-in).
+Once signed in, predictions appear as you type.
 
-You can confirm that Zeta is properly configured either by verifying whether you have the following code in your `settings.json`:
+You can confirm that Zeta is properly configured either by verifying whether you have the following code in your settings file:
 
 ```json [settings]
-"features": {
-  "edit_prediction_provider": "zed"
-},
+{
+  "edit_predictions": {
+    "provider": "zed"
+  }
+}
 ```
 
-Or you can also look for a little Z icon in the right of your status bar at the bottom.
+The Z icon in the status bar also indicates Zeta is active.
 
 ### Pricing and Plans
 
-From just signing in, while in Zed's free plan, you get 2,000 Zeta-powered edit predictions per month.
-But you can get _**unlimited edit predictions**_ by upgrading to [the Pro plan](../ai/plans-and-usage.md).
-More information can be found in [Zed's pricing page](https://zed.dev/pricing).
+The free plan includes 2,000 Zeta predictions per month. The [Pro plan](../ai/plans-and-usage.md) removes this limit. See [Zed's pricing page](https://zed.dev/pricing) for details.
 
 ### Switching Modes {#switching-modes}
 
@@ -65,7 +70,7 @@ On Linux, `alt-tab` is often used by the window manager for switching windows, s
 
 By default, `tab` is used to accept edit predictions. You can use another keybinding by inserting this in your keymap:
 
-```json [settings]
+```json [keymap]
 {
   "context": "Editor && edit_prediction",
   "bindings": {
@@ -78,7 +83,7 @@ By default, `tab` is used to accept edit predictions. You can use another keybin
 When there's a [conflict with the `tab` key](#edit-predictions-conflict), Zed uses a different key context to accept keybindings (`edit_prediction_conflict`).
 If you want to use a different one, you can insert this in your keymap:
 
-```json [settings]
+```json [keymap]
 {
   "context": "Editor && edit_prediction_conflict",
   "bindings": {
@@ -92,7 +97,7 @@ If your keybinding contains a modifier (`ctrl` in the example above), it will al
 You can also bind this action to keybind without a modifier.
 In that case, Zed will use the default modifier (`alt`) to preview the edit prediction.
 
-```json [settings]
+```json [keymap]
 {
   "context": "Editor && edit_prediction_conflict",
   "bindings": {
@@ -105,7 +110,7 @@ In that case, Zed will use the default modifier (`alt`) to preview the edit pred
 
 To maintain the use of the modifier key for accepting predictions when there is a language server completions menu, but allow `tab` to accept predictions regardless of cursor position, you can specify the context further with `showing_completions`:
 
-```json [settings]
+```json [keymap]
 {
   "context": "Editor && edit_prediction_conflict && !showing_completions",
   "bindings": {
@@ -235,13 +240,13 @@ If you would like to use the default keybinding, you can free it up by either mo
 
 ## Disabling Automatic Edit Prediction
 
-There are different levels in which you can disable edit predictions to be displayed, including not having it turned on at all.
+You can disable edit predictions at several levels, or turn them off entirely.
 
 Alternatively, if you have Zed set as your provider, consider [using Subtle Mode](#switching-modes).
 
 ### On Buffers
 
-To not have predictions appear automatically as you type, set this within `settings.json`:
+To not have predictions appear automatically as you type, set this in your settings file ([how to edit](../configuring-zed.md#settings-files)):
 
 ```json [settings]
 {
@@ -254,12 +259,12 @@ Still, you can trigger edit predictions manually by executing {#action editor::S
 
 ### For Specific Languages
 
-To not have predictions appear automatically as you type when working with a specific language, set this within `settings.json`:
+To not have predictions appear automatically as you type when working with a specific language, set this in your settings file ([how to edit](../configuring-zed.md#settings-files)):
 
 ```json [settings]
 {
-  "language": {
-    "python": {
+  "languages": {
+    "Python": {
       "show_edit_predictions": false
     }
   }
@@ -268,7 +273,7 @@ To not have predictions appear automatically as you type when working with a spe
 
 ### In Specific Directories
 
-To disable edit predictions for specific directories or files, set this within `settings.json`:
+To disable edit predictions for specific directories or files, set this in your settings file ([how to edit](../configuring-zed.md#settings-files)):
 
 ```json [settings]
 {
@@ -283,24 +288,27 @@ To disable edit predictions for specific directories or files, set this within `
 To completely turn off edit prediction across all providers, explicitly set the settings to `none`, like so:
 
 ```json [settings]
-"features": {
-  "edit_prediction_provider": "none"
-},
+{
+  "edit_predictions": {
+    "provider": "none"
+  }
+}
 ```
 
 ## Configuring Other Providers {#other-providers}
 
-Zed's Edit Prediction also work with other completion model providers aside from Zeta.
-Learn about the available ones below.
+Edit Prediction also works with other providers.
 
 ### GitHub Copilot {#github-copilot}
 
-To use GitHub Copilot as your provider, set this within `settings.json`:
+> **Changed in Preview (v0.225).** See [release notes](/releases#0.225).
+
+To use GitHub Copilot as your provider, set this in your settings file ([how to edit](../configuring-zed.md#settings-files)):
 
 ```json [settings]
 {
-  "features": {
-    "edit_prediction_provider": "copilot"
+  "edit_predictions": {
+    "provider": "copilot"
   }
 }
 ```
@@ -309,7 +317,7 @@ To sign in to GitHub Copilot, click on the Copilot icon in the status bar. A pop
 
 #### Using GitHub Copilot Enterprise
 
-If your organization uses GitHub Copilot Enterprise, you can configure Zed to use your enterprise instance by specifying the enterprise URI in your `settings.json`:
+If your organization uses GitHub Copilot Enterprise, you can configure Zed to use your enterprise instance by specifying the enterprise URI in your settings file ([how to edit](../configuring-zed.md#settings-files)):
 
 ```json [settings]
 {
@@ -332,19 +340,49 @@ Copilot can provide multiple completion alternatives, and these can be navigated
 - {#action editor::NextEditPrediction} ({#kb editor::NextEditPrediction}): To cycle to the next edit prediction
 - {#action editor::PreviousEditPrediction} ({#kb editor::PreviousEditPrediction}): To cycle to the previous edit prediction
 
-### Supermaven {#supermaven}
+### Sweep {#sweep}
 
-To use Supermaven as your provider, set this within `settings.json`:
+To use [Sweep](https://sweep.dev/) as your provider:
+
+1. Open the Settings Editor (`Cmd+,` on macOS, `Ctrl+,` on Linux/Windows)
+2. Search for "Edit Predictions" and click **Configure Providers**
+3. Find the Sweep section and enter your API key from the
+   [Sweep dashboard](https://app.sweep.dev/)
+
+Alternatively, click the edit prediction icon in the status bar and select
+**Configure Providers** from the menu.
+
+After adding your API key, Sweep will appear in the provider dropdown in the status bar menu, where you can select it. You can also set it directly in your settings file:
 
 ```json [settings]
 {
-  "features": {
-    "edit_prediction_provider": "supermaven"
+  "edit_predictions": {
+    "provider": "sweep"
   }
 }
 ```
 
-You should be able to sign-in to Supermaven by clicking on the Supermaven icon in the status bar and following the setup instructions.
+### Mercury Coder {#mercury-coder}
+
+To use [Mercury Coder](https://www.inceptionlabs.ai/) by Inception Labs as your provider:
+
+1. Open the Settings Editor (`Cmd+,` on macOS, `Ctrl+,` on Linux/Windows)
+2. Search for "Edit Predictions" and click **Configure Providers**
+3. Find the Mercury section and enter your API key from the
+   [Inception Labs dashboard](https://platform.inceptionlabs.ai/dashboard/api-keys)
+
+Alternatively, click the edit prediction icon in the status bar and select
+**Configure Providers** from the menu.
+
+After adding your API key, Mercury Coder will appear in the provider dropdown in the status bar menu, where you can select it. You can also set it directly in your settings file:
+
+```json [settings]
+{
+  "edit_predictions": {
+    "provider": "mercury"
+  }
+}
+```
 
 ### Codestral {#codestral}
 
@@ -358,16 +396,27 @@ To use Mistral's Codestral as your provider:
 Alternatively, click the edit prediction icon in the status bar and select
 **Configure Providers** from the menu.
 
-After adding your API key, set Codestral as your provider in `settings.json`:
+After adding your API key, Codestral will appear in the provider dropdown in the status bar menu, where you can select it. You can also set it directly in your settings file:
 
 ```json [settings]
 {
-  "features": {
-    "edit_prediction_provider": "codestral"
+  "edit_predictions": {
+    "provider": "codestral"
   }
 }
 ```
 
+### Self-Hosted OpenAI-compatible servers
+
+To configure Zed to use an arbitrary server for edit predictions:
+
+1. Open the Settings Editor (`Cmd+,` on macOS, `Ctrl+,` on Linux/Windows)
+2. Search for "Edit Predictions" and click **Configure Providers**
+3. Find the "OpenAI-compatible API" section and enter the URL and model name. You can also select a prompt format that Zed should use. Zed currently supports several FIM prompt formats, as well as Zed's own Zeta prompt format. If you do not select a prompt format, Zed will attempt to infer it from the model name.
+
+The URL must accept requests according to OpenAI's [Completions API](https://developers.openai.com/api/reference/resources/completions/methods/create)
+
 ## See also
 
-To learn about other ways to interact with AI in Zed, you may also want to see more about the [Agent Panel](./agent-panel.md) or the [Inline Assistant](./inline-assistant.md) feature.
+- [Agent Panel](./agent-panel.md): Agentic editing with file read/write and terminal access
+- [Inline Assistant](./inline-assistant.md): Prompt-driven transformations on selected code

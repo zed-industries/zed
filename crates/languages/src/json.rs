@@ -296,7 +296,7 @@ impl LspAdapter for JsonLspAdapter {
         });
         let project_options = cx.update(|cx| {
             language_server_settings(delegate.as_ref(), &self.name(), cx)
-                .and_then(|s| s.settings.clone())
+                .and_then(|s| worktree_root(delegate, s.settings.clone()))
         });
 
         if let Some(override_options) = project_options {
@@ -318,6 +318,40 @@ impl LspAdapter for JsonLspAdapter {
     fn is_primary_zed_json_schema_adapter(&self) -> bool {
         true
     }
+}
+
+fn worktree_root(delegate: &Arc<dyn LspAdapterDelegate>, settings: Option<Value>) -> Option<Value> {
+    let Some(Value::Object(mut settings_map)) = settings else {
+        return settings;
+    };
+
+    let Some(Value::Object(json_config)) = settings_map.get_mut("json") else {
+        return Some(Value::Object(settings_map));
+    };
+
+    let Some(Value::Array(schemas)) = json_config.get_mut("schemas") else {
+        return Some(Value::Object(settings_map));
+    };
+
+    for schema in schemas.iter_mut() {
+        let Value::Object(schema_map) = schema else {
+            continue;
+        };
+        let Some(Value::String(url)) = schema_map.get_mut("url") else {
+            continue;
+        };
+
+        if !url.starts_with(".") && !url.starts_with("~") {
+            continue;
+        }
+
+        *url = delegate
+            .resolve_relative_path(url.clone().into())
+            .to_string_lossy()
+            .into_owned();
+    }
+
+    Some(Value::Object(settings_map))
 }
 
 async fn get_cached_server_binary(

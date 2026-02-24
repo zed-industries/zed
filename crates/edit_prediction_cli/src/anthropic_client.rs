@@ -11,6 +11,7 @@ use reqwest_client::ReqwestClient;
 use sqlez::bindable::Bind;
 use sqlez::bindable::StaticColumnCount;
 use sqlez_macros::sql;
+use std::collections::HashSet;
 use std::hash::Hash;
 use std::hash::Hasher;
 use std::path::Path;
@@ -47,6 +48,7 @@ impl PlainLlmClient {
             tool_choice: None,
             system: None,
             metadata: None,
+            output_config: None,
             stop_sequences: Vec::new(),
             temperature: None,
             top_k: None,
@@ -85,6 +87,7 @@ impl PlainLlmClient {
             tool_choice: None,
             system: None,
             metadata: None,
+            output_config: None,
             stop_sequences: Vec::new(),
             temperature: None,
             top_k: None,
@@ -509,9 +512,14 @@ impl BatchingLlmClient {
 
     async fn upload_pending_requests(&self) -> Result<Vec<String>> {
         const BATCH_CHUNK_SIZE: i32 = 16_000;
+        const MAX_BATCH_SIZE_BYTES: usize = 100 * 1024 * 1024;
+
         let mut all_batch_ids = Vec::new();
         let mut total_uploaded = 0;
 
+        let mut current_batch_rows = Vec::new();
+        let mut current_batch_size = 0usize;
+        let mut pending_hashes: HashSet<String> = HashSet::new();
         loop {
             let rows: Vec<(String, String)> = {
                 let connection = self.connection.lock().unwrap();
@@ -527,51 +535,149 @@ impl BatchingLlmClient {
                 break;
             }
 
-            let request_hashes: Vec<String> = rows.iter().map(|(hash, _)| hash.clone()).collect();
+            // Split rows into sub-batches based on size
+            let mut batches_to_upload = Vec::new();
+            let mut new_rows_added = 0;
 
-            let batch_requests = rows
+            for row in rows {
+                let (hash, request_str) = row;
+
+                // Skip rows already added to current_batch_rows but not yet uploaded
+                if pending_hashes.contains(&hash) {
+                    continue;
+                }
+                let serializable_request: SerializableRequest = serde_json::from_str(&request_str)?;
+
+                let messages: Vec<Message> = serializable_request
+                    .messages
+                    .into_iter()
+                    .map(|msg| Message {
+                        role: match msg.role.as_str() {
+                            "user" => Role::User,
+                            "assistant" => Role::Assistant,
+                            _ => Role::User,
+                        },
+                        content: vec![RequestContent::Text {
+                            text: msg.content,
+                            cache_control: None,
+                        }],
+                    })
+                    .collect();
+
+                let params = AnthropicRequest {
+                    model: serializable_request.model,
+                    max_tokens: serializable_request.max_tokens,
+                    messages,
+                    tools: Vec::new(),
+                    thinking: None,
+                    tool_choice: None,
+                    system: None,
+                    metadata: None,
+                    output_config: None,
+                    stop_sequences: Vec::new(),
+                    temperature: None,
+                    top_k: None,
+                    top_p: None,
+                };
+
+                let custom_id = format!("req_hash_{}", hash);
+                let batch_request = anthropic::batches::BatchRequest { custom_id, params };
+
+                // Estimate the serialized size of this request
+                let estimated_size = serde_json::to_string(&batch_request)?.len();
+
+                // If adding this request would exceed the limit, start a new batch
+                if !current_batch_rows.is_empty()
+                    && current_batch_size + estimated_size > MAX_BATCH_SIZE_BYTES
+                {
+                    batches_to_upload.push((current_batch_rows, current_batch_size));
+                    current_batch_rows = Vec::new();
+                    current_batch_size = 0;
+                }
+
+                pending_hashes.insert(hash.clone());
+                current_batch_rows.push((hash, batch_request));
+                current_batch_size += estimated_size;
+                new_rows_added += 1;
+            }
+
+            // If no new rows were added this iteration, all pending requests are already
+            // in current_batch_rows, so we should break to avoid an infinite loop
+            if new_rows_added == 0 {
+                break;
+            }
+
+            // Only upload full batches, keep the partial batch for the next iteration
+            // Upload each sub-batch
+            for (batch_rows, batch_size) in batches_to_upload {
+                let request_hashes: Vec<String> =
+                    batch_rows.iter().map(|(hash, _)| hash.clone()).collect();
+
+                // Remove uploaded hashes from pending set
+                for hash in &request_hashes {
+                    pending_hashes.remove(hash);
+                }
+                let batch_requests: Vec<anthropic::batches::BatchRequest> =
+                    batch_rows.into_iter().map(|(_, req)| req).collect();
+
+                let batch_len = batch_requests.len();
+                log::info!(
+                    "Uploading batch with {} requests (~{:.2} MB)",
+                    batch_len,
+                    batch_size as f64 / (1024.0 * 1024.0)
+                );
+
+                let batch = anthropic::batches::create_batch(
+                    self.http_client.as_ref(),
+                    ANTHROPIC_API_URL,
+                    &self.api_key,
+                    anthropic::batches::CreateBatchRequest {
+                        requests: batch_requests,
+                    },
+                )
+                .await
+                .map_err(|e| anyhow::anyhow!("{:?}", e))?;
+
+                {
+                    let connection = self.connection.lock().unwrap();
+                    connection.with_savepoint("batch_upload", || {
+                        let q = sql!(UPDATE cache SET batch_id = ? WHERE request_hash = ?);
+                        let mut exec = connection.exec_bound::<(&str, &str)>(q)?;
+                        for hash in &request_hashes {
+                            exec((batch.id.as_str(), hash.as_str()))?;
+                        }
+                        Ok(())
+                    })?;
+                }
+
+                total_uploaded += batch_len;
+                log::info!(
+                    "Uploaded batch {} with {} requests ({} total)",
+                    batch.id,
+                    batch_len,
+                    total_uploaded
+                );
+
+                all_batch_ids.push(batch.id);
+            }
+        }
+
+        // Upload any remaining partial batch at the end
+        if !current_batch_rows.is_empty() {
+            let request_hashes: Vec<String> = current_batch_rows
                 .iter()
-                .map(|(hash, request_str)| {
-                    let serializable_request: SerializableRequest =
-                        serde_json::from_str(&request_str).unwrap();
-
-                    let messages: Vec<Message> = serializable_request
-                        .messages
-                        .into_iter()
-                        .map(|msg| Message {
-                            role: match msg.role.as_str() {
-                                "user" => Role::User,
-                                "assistant" => Role::Assistant,
-                                _ => Role::User,
-                            },
-                            content: vec![RequestContent::Text {
-                                text: msg.content,
-                                cache_control: None,
-                            }],
-                        })
-                        .collect();
-
-                    let params = AnthropicRequest {
-                        model: serializable_request.model,
-                        max_tokens: serializable_request.max_tokens,
-                        messages,
-                        tools: Vec::new(),
-                        thinking: None,
-                        tool_choice: None,
-                        system: None,
-                        metadata: None,
-                        stop_sequences: Vec::new(),
-                        temperature: None,
-                        top_k: None,
-                        top_p: None,
-                    };
-
-                    let custom_id = format!("req_hash_{}", hash);
-                    anthropic::batches::BatchRequest { custom_id, params }
-                })
-                .collect::<Vec<_>>();
+                .map(|(hash, _)| hash.clone())
+                .collect();
+            let batch_requests: Vec<anthropic::batches::BatchRequest> =
+                current_batch_rows.into_iter().map(|(_, req)| req).collect();
 
             let batch_len = batch_requests.len();
+            log::info!(
+                "Uploading final batch with {} requests (~{:.2} MB)",
+                batch_len,
+                current_batch_size as f64 / (1024.0 * 1024.0)
+            );
+
             let batch = anthropic::batches::create_batch(
                 self.http_client.as_ref(),
                 ANTHROPIC_API_URL,

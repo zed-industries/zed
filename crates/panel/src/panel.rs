@@ -1,8 +1,5 @@
 //! # panel
-use editor::{Editor, EditorElement, EditorStyle};
-use gpui::{Entity, TextStyle, actions};
-use settings::Settings;
-use theme::ThemeSettings;
+use gpui::actions;
 use ui::{Tab, prelude::*};
 
 actions!(
@@ -75,62 +72,4 @@ pub fn panel_icon_button(id: impl Into<SharedString>, icon: IconName) -> ui::Ico
 
 pub fn panel_filled_icon_button(id: impl Into<SharedString>, icon: IconName) -> ui::IconButton {
     panel_icon_button(id, icon).style(ui::ButtonStyle::Filled)
-}
-
-pub fn panel_editor_container(_window: &mut Window, cx: &mut App) -> Div {
-    v_flex()
-        .size_full()
-        .gap(px(8.))
-        .p_2()
-        .bg(cx.theme().colors().editor_background)
-}
-
-pub fn panel_editor_style(monospace: bool, window: &Window, cx: &App) -> EditorStyle {
-    let settings = ThemeSettings::get_global(cx);
-
-    let font_size = TextSize::Small.rems(cx).to_pixels(window.rem_size());
-
-    let (font_family, font_fallbacks, font_features, font_weight, line_height) = if monospace {
-        (
-            settings.buffer_font.family.clone(),
-            settings.buffer_font.fallbacks.clone(),
-            settings.buffer_font.features.clone(),
-            settings.buffer_font.weight,
-            font_size * settings.buffer_line_height.value(),
-        )
-    } else {
-        (
-            settings.ui_font.family.clone(),
-            settings.ui_font.fallbacks.clone(),
-            settings.ui_font.features.clone(),
-            settings.ui_font.weight,
-            window.line_height(),
-        )
-    };
-
-    EditorStyle {
-        background: cx.theme().colors().editor_background,
-        local_player: cx.theme().players().local(),
-        text: TextStyle {
-            color: cx.theme().colors().text,
-            font_family,
-            font_fallbacks,
-            font_features,
-            font_size: TextSize::Small.rems(cx).into(),
-            font_weight,
-            line_height: line_height.into(),
-            ..Default::default()
-        },
-        syntax: cx.theme().syntax().clone(),
-        ..Default::default()
-    }
-}
-
-pub fn panel_editor_element(
-    editor: &Entity<Editor>,
-    monospace: bool,
-    window: &mut Window,
-    cx: &mut App,
-) -> EditorElement {
-    EditorElement::new(editor, panel_editor_style(monospace, window, cx))
 }
