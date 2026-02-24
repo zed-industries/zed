@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use serde::{Deserialize, Serialize};
 use std::fmt::Write;
 use std::ops::Range;
@@ -810,6 +810,8 @@ pub mod v0211_prefill {
 
 pub mod hashline {
 
+    use std::fmt::Display;
+
     use super::*;
 
     pub fn special_tokens() -> &'static [&'static str] {
@@ -838,6 +840,12 @@ pub mod hashline {
     struct LineRef {
         index: usize,
         hash: u8,
+    }
+
+    impl Display for LineRef {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            write!(f, "{}:{:02x}", self.index, self.hash)
+        }
     }
 
     /// A single edit command parsed from the model output.
@@ -1060,6 +1068,231 @@ pub mod hashline {
         result
     }
 
+    /// Convert a unified diff patch into hashline edit commands.
+    ///
+    /// Parses the unified diff `patch` directly to determine which lines of
+    /// `old_text` are deleted/replaced and what new lines are added, then emits
+    /// `<|set|>` and `<|insert|>` edit commands referencing old lines by their
+    /// `{index}:{hash}` identifiers.
+    ///
+    /// `cursor_offset` is an optional byte offset into the first hunk's new
+    /// text (context + additions) where the cursor marker should be placed.
+    pub fn patch_to_edit_commands(
+        old_text: &str,
+        patch: &str,
+        cursor_offset: Option<usize>,
+    ) -> Result<String> {
+        let old_lines: Vec<&str> = old_text.lines().collect();
+        let old_hashes: Vec<u8> = old_lines
+            .iter()
+            .map(|line| hash_line(line.as_bytes()))
+            .collect();
+
+        let mut result = String::new();
+        let mut first_hunk = true;
+
+        struct Hunk<'a> {
+            line_range: Range<usize>,
+            new_text_lines: Vec<&'a str>,
+            cursor_line_offset_in_new_text: Option<(usize, usize)>,
+        }
+
+        // Parse the patch line by line. We only care about hunk headers,
+        // context, deletions, and additions.
+        let mut old_line_index: usize = 0;
+        let mut current_hunk: Option<Hunk> = None;
+        // Byte offset tracking within the hunk's new text for cursor placement.
+        let mut new_text_byte_offset: usize = 0;
+        // The line index of the last old line seen before/in the current hunk
+        // (used for insert-after reference).
+        let mut last_old_line_before_hunk: Option<usize> = None;
+
+        fn flush_hunk(
+            hunk: Hunk,
+            last_old_line: Option<usize>,
+            result: &mut String,
+            old_hashes: &[u8],
+        ) {
+            if hunk.line_range.is_empty() {
+                // Pure insertion — reference the old line to insert after.
+                if let Some(after) = last_old_line {
+                    write!(
+                        result,
+                        "<|insert|>{}\n",
+                        LineRef {
+                            index: after,
+                            hash: old_hashes[after]
+                        }
+                    )
+                    .unwrap();
+                } else {
+                    result.push_str("<|insert|>\n");
+                }
+            } else {
+                let start = hunk.line_range.start;
+                let end_exclusive = hunk.line_range.end;
+                let deleted_line_count = end_exclusive.saturating_sub(start);
+
+                if deleted_line_count == 1 {
+                    write!(
+                        result,
+                        "<|set|>{}\n",
+                        LineRef {
+                            index: start,
+                            hash: old_hashes[start]
+                        }
+                    )
+                    .unwrap();
+                } else {
+                    let end_inclusive = end_exclusive - 1;
+                    write!(
+                        result,
+                        "<|set|>{}-{}\n",
+                        LineRef {
+                            index: start,
+                            hash: old_hashes[start]
+                        },
+                        LineRef {
+                            index: end_inclusive,
+                            hash: old_hashes[end_inclusive]
+                        }
+                    )
+                    .unwrap();
+                }
+            }
+            for (line_offset, line) in hunk.new_text_lines.iter().enumerate() {
+                if let Some((cursor_line_offset, char_offset)) = hunk.cursor_line_offset_in_new_text
+                    && line_offset == cursor_line_offset
+                {
+                    result.push_str(&line[..char_offset]);
+                    result.push_str(CURSOR_MARKER);
+                    result.push_str(&line[char_offset..]);
+                    continue;
+                }
+
+                result.push_str(line);
+            }
+        }
+
+        for raw_line in patch.split_inclusive('\n') {
+            if raw_line.starts_with("@@") {
+                // Flush any pending change hunk from a previous patch hunk.
+                if let Some(hunk) = current_hunk.take() {
+                    flush_hunk(hunk, last_old_line_before_hunk, &mut result, &old_hashes);
+                }
+
+                // Parse hunk header: @@ -old_start[,old_count] +new_start[,new_count] @@
+                let header = raw_line
+                    .strip_prefix("@@")
+                    .and_then(|s| s.trim_start().split_once("@@"))
+                    .map(|(h, _)| h.trim());
+                if let Some(header) = header {
+                    let mut tokens = header.split_whitespace();
+                    if let Some(old_range_str) = tokens.next().and_then(|s| s.strip_prefix('-')) {
+                        let start_str = old_range_str
+                            .split_once(',')
+                            .map_or(old_range_str, |(s, _)| s);
+                        if let Ok(start_1indexed) = start_str.parse::<usize>() {
+                            old_line_index = start_1indexed.saturating_sub(1);
+                        }
+                    }
+                }
+
+                if first_hunk {
+                    new_text_byte_offset = 0;
+                    first_hunk = false;
+                }
+                last_old_line_before_hunk = if old_line_index > 0 {
+                    Some(old_line_index - 1)
+                } else {
+                    None
+                };
+                continue;
+            }
+
+            if raw_line.starts_with("---") || raw_line.starts_with("+++") {
+                continue;
+            }
+            if raw_line.starts_with("\\ No newline") {
+                continue;
+            }
+
+            if raw_line.starts_with('-') {
+                // Extend or start a change hunk with this deleted old line.
+                match &mut current_hunk {
+                    Some(Hunk {
+                        line_range: range, ..
+                    }) => range.end = old_line_index + 1,
+                    None => {
+                        current_hunk = Some(Hunk {
+                            line_range: old_line_index..old_line_index + 1,
+                            new_text_lines: Vec::new(),
+                            cursor_line_offset_in_new_text: None,
+                        });
+                    }
+                }
+                old_line_index += 1;
+            } else if raw_line.starts_with('+') {
+                let added_content = &raw_line[1..];
+
+                // Place cursor marker if cursor_offset falls within this line.
+                let mut cursor_line_offset = None;
+                if let Some(cursor_off) = cursor_offset
+                    && (first_hunk
+                        || cursor_off >= new_text_byte_offset
+                            && cursor_off <= new_text_byte_offset + added_content.len())
+                {
+                    let line_offset = added_content.floor_char_boundary(
+                        cursor_off
+                            .saturating_sub(new_text_byte_offset)
+                            .min(added_content.len()),
+                    );
+                    cursor_line_offset = Some(line_offset);
+                }
+
+                new_text_byte_offset += added_content.len();
+
+                let hunk = current_hunk.get_or_insert(Hunk {
+                    line_range: old_line_index..old_line_index,
+                    new_text_lines: vec![],
+                    cursor_line_offset_in_new_text: None,
+                });
+                hunk.new_text_lines.push(added_content);
+                hunk.cursor_line_offset_in_new_text = cursor_line_offset
+                    .map(|offset_in_line| (hunk.new_text_lines.len() - 1, offset_in_line));
+            } else {
+                // Context line (starts with ' ' or is empty).
+                if let Some(hunk) = current_hunk.take() {
+                    flush_hunk(hunk, last_old_line_before_hunk, &mut result, &old_hashes);
+                }
+                last_old_line_before_hunk = Some(old_line_index);
+                old_line_index += 1;
+                let content = if raw_line.starts_with(' ') {
+                    &raw_line[1..]
+                } else {
+                    raw_line
+                };
+                new_text_byte_offset += content.len();
+            }
+        }
+
+        // Flush final group.
+        if let Some(hunk) = current_hunk.take() {
+            flush_hunk(hunk, last_old_line_before_hunk, &mut result, &old_hashes);
+        }
+
+        if result.is_empty() {
+            return Err(anyhow!("patch produced no edit commands"));
+        }
+
+        // Trim a single trailing newline.
+        if result.ends_with('\n') {
+            result.pop();
+        }
+
+        Ok(result)
+    }
+
     /// Write the hashline-encoded editable region into `out`. Each line of
     /// `editable_text` is prefixed with `{line_index}:{hash}|` and the cursor
     /// marker is inserted at `cursor_offset_in_editable` (byte offset relative
@@ -1084,8 +1317,11 @@ pub mod hashline {
             };
             write!(
                 out,
-                "\n{i}:{:02x}|{head}{cursor}{tail}",
-                hash_line(line.as_bytes())
+                "\n{}|{head}{cursor}{tail}",
+                LineRef {
+                    index: i,
+                    hash: hash_line(line.as_bytes())
+                }
             )
             .unwrap();
             offset += line.len() + 1;
@@ -2576,5 +2812,277 @@ mod tests {
         ));
         assert!(!hashline::output_has_edit_commands("just plain text"));
         assert!(!hashline::output_has_edit_commands("NO_EDITS"));
+    }
+
+    // ---- hashline::patch_to_edit_commands round-trip tests ----
+
+    #[test]
+    fn test_patch_to_edit_commands() {
+        struct Case {
+            name: &'static str,
+            old: &'static str,
+            patch: &'static str,
+            expected_new: &'static str,
+        }
+
+        let cases = [
+            Case {
+                name: "single_line_replacement",
+                old: indoc! {"
+                    let mut total = 0;
+                    for product in products {
+                        total += ;
+                    }
+                    total
+                "},
+                patch: indoc! {"
+                    @@ -1,5 +1,5 @@
+                     let mut total = 0;
+                     for product in products {
+                    -    total += ;
+                    +    total += product.price;
+                     }
+                     total
+                "},
+                expected_new: indoc! {"
+                    let mut total = 0;
+                    for product in products {
+                        total += product.price;
+                    }
+                    total
+                "},
+            },
+            Case {
+                name: "multiline_replacement",
+                old: indoc! {"
+                    fn foo() {
+                        let x = 1;
+                        let y = 2;
+                        let z = 3;
+                    }
+                "},
+                patch: indoc! {"
+                    @@ -1,5 +1,3 @@
+                     fn foo() {
+                    -    let x = 1;
+                    -    let y = 2;
+                    -    let z = 3;
+                    +    let sum = 1 + 2 + 3;
+                     }
+                "},
+                expected_new: indoc! {"
+                    fn foo() {
+                        let sum = 1 + 2 + 3;
+                    }
+                "},
+            },
+            Case {
+                name: "insertion",
+                old: indoc! {"
+                    fn main() {
+                        let x = 1;
+                    }
+                "},
+                patch: indoc! {"
+                    @@ -1,3 +1,4 @@
+                     fn main() {
+                         let x = 1;
+                    +    let y = 2;
+                     }
+                "},
+                expected_new: indoc! {"
+                    fn main() {
+                        let x = 1;
+                        let y = 2;
+                    }
+                "},
+            },
+            Case {
+                name: "insertion_before_first",
+                old: indoc! {"
+                    let x = 1;
+                    let y = 2;
+                "},
+                patch: indoc! {"
+                    @@ -1,2 +1,3 @@
+                    +use std::io;
+                     let x = 1;
+                     let y = 2;
+                "},
+                expected_new: indoc! {"
+                    use std::io;
+                    let x = 1;
+                    let y = 2;
+                "},
+            },
+            Case {
+                name: "deletion",
+                old: indoc! {"
+                    aaa
+                    bbb
+                    ccc
+                    ddd
+                "},
+                patch: indoc! {"
+                    @@ -1,4 +1,2 @@
+                     aaa
+                    -bbb
+                    -ccc
+                     ddd
+                "},
+                expected_new: indoc! {"
+                    aaa
+                    ddd
+                "},
+            },
+            Case {
+                name: "multiple_changes",
+                old: indoc! {"
+                    alpha
+                    beta
+                    gamma
+                    delta
+                    epsilon
+                "},
+                patch: indoc! {"
+                    @@ -1,5 +1,5 @@
+                    -alpha
+                    +ALPHA
+                     beta
+                     gamma
+                    -delta
+                    +DELTA
+                     epsilon
+                "},
+                expected_new: indoc! {"
+                    ALPHA
+                    beta
+                    gamma
+                    DELTA
+                    epsilon
+                "},
+            },
+            Case {
+                name: "replace_with_insertion",
+                old: indoc! {r#"
+                    fn handle() {
+                        modal_state.close();
+                        modal_state.dismiss();
+                "#},
+                patch: indoc! {r#"
+                    @@ -1,3 +1,4 @@
+                     fn handle() {
+                         modal_state.close();
+                    +    eprintln!("");
+                         modal_state.dismiss();
+                "#},
+                expected_new: indoc! {r#"
+                    fn handle() {
+                        modal_state.close();
+                        eprintln!("");
+                        modal_state.dismiss();
+                "#},
+            },
+            Case {
+                name: "complete_replacement",
+                old: indoc! {"
+                    aaa
+                    bbb
+                    ccc
+                "},
+                patch: indoc! {"
+                    @@ -1,3 +1,3 @@
+                    -aaa
+                    -bbb
+                    -ccc
+                    +xxx
+                    +yyy
+                    +zzz
+                "},
+                expected_new: indoc! {"
+                    xxx
+                    yyy
+                    zzz
+                "},
+            },
+            Case {
+                name: "add_function_body",
+                old: indoc! {"
+                    fn foo() {
+                        modal_state.dismiss();
+                    }
+
+                    fn
+
+                    fn handle_keystroke() {
+                "},
+                patch: indoc! {"
+                    @@ -1,6 +1,8 @@
+                     fn foo() {
+                         modal_state.dismiss();
+                     }
+
+                    -fn
+                    +fn handle_submit() {
+                    +    todo()
+                    +}
+
+                     fn handle_keystroke() {
+                "},
+                expected_new: indoc! {"
+                    fn foo() {
+                        modal_state.dismiss();
+                    }
+
+                    fn handle_submit() {
+                        todo()
+                    }
+
+                    fn handle_keystroke() {
+                "},
+            },
+            Case {
+                name: "with_cursor_offset",
+                old: indoc! {r#"
+                    fn main() {
+                        println!();
+                    }
+                "#},
+                patch: indoc! {r#"
+                    @@ -1,3 +1,3 @@
+                     fn main() {
+                    -    println!();
+                    +    eprintln!("");
+                     }
+                "#},
+                expected_new: indoc! {r#"
+                    fn main() {
+                        eprintln!("<|user_cursor|>");
+                    }
+                "#},
+            },
+        ];
+
+        for case in &cases {
+            let cursor_offset = case.expected_new.find(CURSOR_MARKER).map(|offset| {
+                // The cursor_offset for patch_to_edit_commands is relative to
+                // the first hunk's new text (context + additions). We compute
+                // it by finding where the marker sits in the expected output
+                // (which mirrors the new text of the hunk).
+                offset
+            });
+
+            let commands = hashline::patch_to_edit_commands(case.old, case.patch, cursor_offset)
+                .unwrap_or_else(|e| panic!("failed case {}: {e}", case.name));
+
+            assert!(
+                hashline::output_has_edit_commands(&commands),
+                "case {}: expected edit commands, got: {commands:?}",
+                case.name,
+            );
+
+            let applied = hashline::apply_edit_commands(case.old, &commands);
+            assert_eq!(applied, case.expected_new, "case {}", case.name);
+        }
     }
 }

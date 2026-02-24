@@ -12,7 +12,7 @@ use similar::DiffableStr;
 use std::ops::Range;
 use std::sync::Arc;
 use zeta_prompt::{
-    ZetaFormat, excerpt_range_for_format, format_zeta_prompt, resolve_cursor_region,
+    ZetaFormat, excerpt_range_for_format, format_zeta_prompt, hashline, resolve_cursor_region,
 };
 
 pub async fn run_format_prompt(
@@ -99,6 +99,10 @@ pub fn zeta2_output_for_patch(
 
     if !old_editable_region.ends_with_newline() {
         old_editable_region.push('\n');
+    }
+
+    if matches!(version, ZetaFormat::v0224Hashline) {
+        return hashline::patch_to_edit_commands(&old_editable_region, patch, cursor_offset);
     }
 
     let (mut result, first_hunk_offset) =
