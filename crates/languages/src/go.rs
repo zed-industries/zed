@@ -111,7 +111,7 @@ impl LspInstaller for GoLspAdapter {
         delegate: &dyn LspAdapterDelegate,
     ) -> Result<LanguageServerBinary> {
         let go = delegate.which("go".as_ref()).await.unwrap_or("go".into());
-        let go_version_output = util::command::new_smol_command(&go)
+        let go_version_output = util::command::new_command(&go)
             .args(["version"])
             .output()
             .await
@@ -140,7 +140,7 @@ impl LspInstaller for GoLspAdapter {
 
         let gobin_dir = container_dir.join("gobin");
         fs::create_dir_all(&gobin_dir).await?;
-        let install_output = util::command::new_smol_command(go)
+        let install_output = util::command::new_command(go)
             .env("GO111MODULE", "on")
             .env("GOBIN", &gobin_dir)
             .args(["install", "golang.org/x/tools/gopls@latest"])
@@ -159,7 +159,7 @@ impl LspInstaller for GoLspAdapter {
         }
 
         let installed_binary_path = gobin_dir.join(BINARY);
-        let version_output = util::command::new_smol_command(&installed_binary_path)
+        let version_output = util::command::new_command(&installed_binary_path)
             .arg("version")
             .output()
             .await
@@ -334,11 +334,11 @@ impl LspAdapter for GoLspAdapter {
 
     async fn label_for_symbol(
         &self,
-        name: &str,
-        kind: lsp::SymbolKind,
+        symbol: &language::Symbol,
         language: &Arc<Language>,
     ) -> Option<CodeLabel> {
-        let (text, filter_range, display_range) = match kind {
+        let name = &symbol.name;
+        let (text, filter_range, display_range) = match symbol.kind {
             lsp::SymbolKind::METHOD | lsp::SymbolKind::FUNCTION => {
                 let text = format!("func {} () {{}}", name);
                 let filter_range = 5..5 + name.len();
@@ -844,6 +844,40 @@ mod tests {
                 0..9,
                 vec![(4..9, highlight_field), (12..15, highlight_type)],
             ))
+        );
+    }
+
+    #[gpui::test]
+    fn test_go_test_main_ignored(cx: &mut TestAppContext) {
+        let language = language("go", tree_sitter_go::LANGUAGE.into());
+
+        let example_test = r#"
+        package main
+
+        func TestMain(m *testing.M) {
+            os.Exit(m.Run())
+        }
+        "#;
+
+        let buffer =
+            cx.new(|cx| crate::Buffer::local(example_test, cx).with_language(language.clone(), cx));
+        cx.executor().run_until_parked();
+
+        let runnables: Vec<_> = buffer.update(cx, |buffer, _| {
+            let snapshot = buffer.snapshot();
+            snapshot.runnable_ranges(0..example_test.len()).collect()
+        });
+
+        let tag_strings: Vec<String> = runnables
+            .iter()
+            .flat_map(|r| &r.runnable.tags)
+            .map(|tag| tag.0.to_string())
+            .collect();
+
+        assert!(
+            !tag_strings.contains(&"go-test".to_string()),
+            "Should NOT find go-test tag, found: {:?}",
+            tag_strings
         );
     }
 

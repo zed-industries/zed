@@ -7,6 +7,7 @@ use crate::{
 use anyhow::Context as _;
 use derive_more::{Deref, DerefMut};
 use futures::channel::oneshot;
+use smol::future::FutureExt;
 use std::{future::Future, rc::Weak};
 
 use super::{Context, WeakEntity};
@@ -103,6 +104,7 @@ impl AppContext for AsyncApp {
         lock.read_window(window, read)
     }
 
+    #[track_caller]
     fn background_spawn<R>(&self, future: impl Future<Output = R> + Send + 'static) -> Task<R>
     where
         R: Send + 'static,
@@ -184,7 +186,7 @@ impl AsyncApp {
     {
         let mut cx = self.clone();
         self.foreground_executor
-            .spawn(async move { f(&mut cx).await })
+            .spawn(async move { f(&mut cx).await }.boxed_local())
     }
 
     /// Determine whether global state of the specified type has been assigned.
@@ -322,7 +324,7 @@ impl AsyncWindowContext {
     {
         let mut cx = self.clone();
         self.foreground_executor
-            .spawn(async move { f(&mut cx).await })
+            .spawn(async move { f(&mut cx).await }.boxed_local())
     }
 
     /// Present a platform dialog.
@@ -406,6 +408,7 @@ impl AppContext for AsyncWindowContext {
         self.app.read_window(window, read)
     }
 
+    #[track_caller]
     fn background_spawn<R>(&self, future: impl Future<Output = R> + Send + 'static) -> Task<R>
     where
         R: Send + 'static,

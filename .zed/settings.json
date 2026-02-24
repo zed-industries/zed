@@ -38,6 +38,15 @@
       },
     },
   },
+  "lsp": {
+    "rust-analyzer": {
+      "initialization_options": {
+        "procMacro": {
+          "processes": 4,
+        },
+      },
+    },
+  },
   "file_types": {
     "Dockerfile": ["Dockerfile*[!dockerignore]"],
     "JSONC": ["**/assets/**/*.json", "renovate.json"],

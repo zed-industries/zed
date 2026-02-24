@@ -5,7 +5,7 @@ use std::{rc::Rc, sync::LazyLock};
 
 pub use crate::rust_analyzer_ext::expand_macro_recursively;
 use crate::{
-    DisplayPoint, Editor, EditorMode, FoldPlaceholder, MultiBuffer, SelectionEffects,
+    DisplayPoint, Editor, EditorMode, FoldPlaceholder, MultiBuffer, SelectionEffects, Size,
     display_map::{
         Block, BlockPlacement, CustomBlockId, DisplayMap, DisplayRow, DisplaySnapshot,
         ToDisplayPoint,
@@ -19,7 +19,7 @@ use gpui::{
 use multi_buffer::{MultiBufferOffset, ToPoint};
 use pretty_assertions::assert_eq;
 use project::{Project, project_settings::DiagnosticSeverity};
-use ui::{App, BorrowAppContext, px};
+use ui::{App, BorrowAppContext, IntoElement, px};
 use util::test::{generate_marked_text, marked_text_offsets, marked_text_ranges};
 
 #[cfg(test)]
@@ -184,9 +184,18 @@ pub fn editor_content_with_blocks_and_width(
     width: Pixels,
     cx: &mut VisualTestContext,
 ) -> String {
-    let draw_size = size(width, px(3000.0));
+    editor_content_with_blocks_and_size(editor, size(width, px(3000.0)), cx)
+}
+
+pub fn editor_content_with_blocks_and_size(
+    editor: &Entity<Editor>,
+    draw_size: Size<Pixels>,
+    cx: &mut VisualTestContext,
+) -> String {
     cx.simulate_resize(draw_size);
-    cx.draw(gpui::Point::default(), draw_size, |_, _| editor.clone());
+    cx.draw(gpui::Point::default(), draw_size, |_, _| {
+        editor.clone().into_any_element()
+    });
     let (snapshot, mut lines, blocks) = editor.update_in(cx, |editor, window, cx| {
         let snapshot = editor.snapshot(window, cx);
         let text = editor.display_text(cx);
@@ -231,6 +240,9 @@ pub fn editor_content_with_blocks_and_width(
                 first_excerpt,
                 height,
             } => {
+                while lines.len() <= row.0 as usize {
+                    lines.push(String::new());
+                }
                 lines[row.0 as usize].push_str(&cx.update(|_, cx| {
                     format!(
                         "§ {}",
@@ -242,15 +254,24 @@ pub fn editor_content_with_blocks_and_width(
                     )
                 }));
                 for row in row.0 + 1..row.0 + height {
+                    while lines.len() <= row as usize {
+                        lines.push(String::new());
+                    }
                     lines[row as usize].push_str("§ -----");
                 }
             }
             Block::ExcerptBoundary { height, .. } => {
                 for row in row.0..row.0 + height {
+                    while lines.len() <= row as usize {
+                        lines.push(String::new());
+                    }
                     lines[row as usize].push_str("§ -----");
                 }
             }
             Block::BufferHeader { excerpt, height } => {
+                while lines.len() <= row.0 as usize {
+                    lines.push(String::new());
+                }
                 lines[row.0 as usize].push_str(&cx.update(|_, cx| {
                     format!(
                         "§ {}",
@@ -262,6 +283,9 @@ pub fn editor_content_with_blocks_and_width(
                     )
                 }));
                 for row in row.0 + 1..row.0 + height {
+                    while lines.len() <= row as usize {
+                        lines.push(String::new());
+                    }
                     lines[row as usize].push_str("§ -----");
                 }
             }

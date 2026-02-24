@@ -112,6 +112,7 @@ impl MarkdownStyle {
         let theme_settings = ThemeSettings::get_global(cx);
         let colors = cx.theme().colors();
 
+        let buffer_font_weight = theme_settings.buffer_font.weight;
         let (buffer_font_size, ui_font_size) = match font {
             MarkdownFont::Agent => (
                 theme_settings.agent_buffer_font_size(cx),
@@ -196,6 +197,7 @@ impl MarkdownStyle {
                     font_fallbacks: theme_settings.buffer_font.fallbacks.clone(),
                     font_features: Some(theme_settings.buffer_font.features.clone()),
                     font_size: Some(buffer_font_size.into()),
+                    font_weight: Some(buffer_font_weight),
                     ..Default::default()
                 },
                 ..Default::default()
@@ -205,6 +207,7 @@ impl MarkdownStyle {
                 font_fallbacks: theme_settings.buffer_font.fallbacks.clone(),
                 font_features: Some(theme_settings.buffer_font.features.clone()),
                 font_size: Some(buffer_font_size.into()),
+                font_weight: Some(buffer_font_weight),
                 background_color: Some(colors.editor_foreground.opacity(0.08)),
                 ..Default::default()
             },
@@ -2044,19 +2047,33 @@ struct RenderedLink {
 impl RenderedText {
     fn source_index_for_position(&self, position: Point<Pixels>) -> Result<usize, usize> {
         let mut lines = self.lines.iter().peekable();
+        let mut fallback_line: Option<&RenderedLine> = None;
 
         while let Some(line) = lines.next() {
             let line_bounds = line.layout.bounds();
+
+            // Exact match: position is within bounds (handles overlapping bounds like table columns)
+            if line_bounds.contains(&position) {
+                return line.source_index_for_position(position);
+            }
+
+            // Track fallback for Y-coordinate based matching
+            if position.y <= line_bounds.bottom() && fallback_line.is_none() {
+                fallback_line = Some(line);
+            }
+
+            // Handle gap between lines
             if position.y > line_bounds.bottom() {
                 if let Some(next_line) = lines.peek()
                     && position.y < next_line.layout.bounds().top()
                 {
                     return Err(line.source_end);
                 }
-
-                continue;
             }
+        }
 
+        // Fall back to Y-coordinate matched line
+        if let Some(line) = fallback_line {
             return line.source_index_for_position(position);
         }
 
@@ -2188,6 +2205,17 @@ mod tests {
     use language::{Language, LanguageConfig, LanguageMatcher};
     use std::sync::Arc;
 
+    fn ensure_theme_initialized(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            if !cx.has_global::<settings::SettingsStore>() {
+                settings::init(cx);
+            }
+            if !cx.has_global::<theme::GlobalTheme>() {
+                theme::init(theme::LoadThemes::JustBase, cx);
+            }
+        });
+    }
+
     #[gpui::test]
     fn test_mappings(cx: &mut TestAppContext) {
         // Formatting.
@@ -2255,6 +2283,8 @@ mod tests {
                 div()
             }
         }
+
+        ensure_theme_initialized(cx);
 
         let (_, cx) = cx.add_window_view(|_, _| TestWindow);
         let markdown =
@@ -2411,6 +2441,28 @@ mod tests {
         let word_range = rendered.surrounding_word_range(51); // Inside "code"
         let selected_text = rendered.text_for_range(word_range);
         assert_eq!(selected_text, "code");
+    }
+
+    #[gpui::test]
+    fn test_table_column_selection(cx: &mut TestAppContext) {
+        let rendered = render_markdown("| a | b |\n|---|---|\n| c | d |", cx);
+
+        assert!(rendered.lines.len() >= 2);
+        let first_bounds = rendered.lines[0].layout.bounds();
+        let second_bounds = rendered.lines[1].layout.bounds();
+
+        let first_index = match rendered.source_index_for_position(first_bounds.center()) {
+            Ok(index) | Err(index) => index,
+        };
+        let second_index = match rendered.source_index_for_position(second_bounds.center()) {
+            Ok(index) | Err(index) => index,
+        };
+
+        let first_word = rendered.text_for_range(rendered.surrounding_word_range(first_index));
+        let second_word = rendered.text_for_range(rendered.surrounding_word_range(second_index));
+
+        assert_eq!(first_word, "a");
+        assert_eq!(second_word, "b");
     }
 
     #[gpui::test]

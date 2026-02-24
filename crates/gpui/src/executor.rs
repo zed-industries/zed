@@ -14,7 +14,7 @@ use std::{
 };
 use util::TryFutureExt;
 
-pub use scheduler::{FallibleTask, Priority};
+pub use scheduler::{FallibleTask, ForegroundExecutor as SchedulerForegroundExecutor, Priority};
 
 /// A pointer to the executor that is currently running,
 /// for spawning background tasks.
@@ -145,7 +145,7 @@ impl BackgroundExecutor {
     where
         R: Send + 'static,
     {
-        self.spawn_with_priority(Priority::default(), future)
+        self.spawn_with_priority(Priority::default(), future.boxed())
     }
 
     /// Enqueues the given future to be run to completion on a background thread with the given priority.
@@ -269,6 +269,7 @@ impl BackgroundExecutor {
     /// Returns a task that will complete after the given duration.
     /// Depending on other concurrent tasks the elapsed duration may be longer
     /// than requested.
+    #[track_caller]
     pub fn timer(&self, duration: Duration) -> Task<()> {
         if duration.is_zero() {
             return Task::ready(());
@@ -349,10 +350,20 @@ impl BackgroundExecutor {
     /// How many CPUs are available to the dispatcher.
     pub fn num_cpus(&self) -> usize {
         #[cfg(any(test, feature = "test-support"))]
-        if self.dispatcher.as_test().is_some() {
-            return 4;
+        if let Some(test) = self.dispatcher.as_test() {
+            return test.num_cpus_override().unwrap_or(4);
         }
         num_cpus::get()
+    }
+
+    /// Override the number of CPUs reported by this executor in tests.
+    /// Panics if not called on a test executor.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn set_num_cpus(&self, count: usize) {
+        self.dispatcher
+            .as_test()
+            .expect("set_num_cpus can only be called on a test executor")
+            .set_num_cpus(count);
     }
 
     /// Whether we're on the main thread.
@@ -409,7 +420,7 @@ impl ForegroundExecutor {
     where
         R: 'static,
     {
-        Task::from_scheduler(self.inner.spawn(future))
+        Task::from_scheduler(self.inner.spawn(future.boxed_local()))
     }
 
     /// Enqueues the given Task to run on the main thread with the given priority.
@@ -466,6 +477,11 @@ impl ForegroundExecutor {
     #[doc(hidden)]
     pub fn dispatcher(&self) -> &Arc<dyn PlatformDispatcher> {
         &self.dispatcher
+    }
+
+    #[doc(hidden)]
+    pub fn scheduler_executor(&self) -> SchedulerForegroundExecutor {
+        self.inner.clone()
     }
 }
 

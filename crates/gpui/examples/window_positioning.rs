@@ -1,8 +1,9 @@
 use gpui::{
-    App, Application, Bounds, Context, DisplayId, Hsla, Pixels, SharedString, Size, Window,
+    App, Bounds, Context, DisplayId, Hsla, Pixels, SharedString, Size, Window,
     WindowBackgroundAppearance, WindowBounds, WindowKind, WindowOptions, div, point, prelude::*,
     px, rgb,
 };
+use gpui_platform::application;
 
 struct WindowContent {
     text: SharedString,
@@ -68,7 +69,7 @@ fn build_window_options(display_id: DisplayId, bounds: Bounds<Pixels>) -> Window
 }
 
 fn main() {
-    Application::new().run(|cx: &mut App| {
+    application().run(|cx: &mut App| {
         // Create several new windows, positioned in the top right corner of each screen
         let size = Size {
             width: px(350.),

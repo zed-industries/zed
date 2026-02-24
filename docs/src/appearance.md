@@ -1,3 +1,8 @@
+---
+title: Appearance and Visual Customization - Zed
+description: Customize Zed's themes, fonts, icons, UI density, and other visual settings to match your preferences.
+---
+
 # Appearance
 
 Customize Zed's visual appearance to match your preferences. This guide covers themes, fonts, icons, and other visual settings.

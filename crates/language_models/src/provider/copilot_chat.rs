@@ -20,15 +20,17 @@ use http_client::StatusCode;
 use language::language_settings::all_language_settings;
 use language_model::{
     AuthenticateError, IconOrSvg, LanguageModel, LanguageModelCompletionError,
-    LanguageModelCompletionEvent, LanguageModelId, LanguageModelName, LanguageModelProvider,
-    LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
-    LanguageModelRequest, LanguageModelRequestMessage, LanguageModelToolChoice,
-    LanguageModelToolResultContent, LanguageModelToolSchemaFormat, LanguageModelToolUse,
-    MessageContent, RateLimiter, Role, StopReason, TokenUsage,
+    LanguageModelCompletionEvent, LanguageModelCostInfo, LanguageModelId, LanguageModelName,
+    LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
+    LanguageModelProviderState, LanguageModelRequest, LanguageModelRequestMessage,
+    LanguageModelToolChoice, LanguageModelToolResultContent, LanguageModelToolSchemaFormat,
+    LanguageModelToolUse, MessageContent, RateLimiter, Role, StopReason, TokenUsage,
 };
 use settings::SettingsStore;
 use ui::prelude::*;
 use util::debug_panic;
+
+use crate::provider::util::parse_tool_arguments;
 
 const PROVIDER_ID: LanguageModelProviderId = LanguageModelProviderId::new("copilot_chat");
 const PROVIDER_NAME: LanguageModelProviderName =
@@ -267,6 +269,13 @@ impl LanguageModel for CopilotChatLanguageModel {
         }
     }
 
+    fn model_cost_info(&self) -> Option<LanguageModelCostInfo> {
+        LanguageModelCostInfo::RequestCost {
+            cost_per_request: self.model.multiplier(),
+        }
+        .into()
+    }
+
     fn telemetry_id(&self) -> String {
         format!("copilot_chat/{}", self.model.id())
     }
@@ -493,17 +502,9 @@ pub fn map_to_language_model_completion_events(
                                 }
 
                                 events.extend(state.tool_calls_by_index.drain().map(
-                                    |(_, tool_call)| {
-                                        // The model can output an empty string
-                                        // to indicate the absence of arguments.
-                                        // When that happens, create an empty
-                                        // object instead.
-                                        let arguments = if tool_call.arguments.is_empty() {
-                                            Ok(serde_json::Value::Object(Default::default()))
-                                        } else {
-                                            serde_json::Value::from_str(&tool_call.arguments)
-                                        };
-                                        match arguments {
+                                    |(_, tool_call)| match parse_tool_arguments(
+                                        &tool_call.arguments,
+                                    ) {
                                         Ok(input) => Ok(LanguageModelCompletionEvent::ToolUse(
                                             LanguageModelToolUse {
                                                 id: tool_call.id.into(),
@@ -522,7 +523,6 @@ pub fn map_to_language_model_completion_events(
                                                 json_parse_error: error.to_string(),
                                             },
                                         ),
-                                    }
                                     },
                                 ));
 
@@ -607,7 +607,7 @@ impl CopilotResponsesEventMapper {
                     ..
                 } => {
                     let mut events = Vec::new();
-                    match serde_json::from_str::<serde_json::Value>(&arguments) {
+                    match parse_tool_arguments(&arguments) {
                         Ok(input) => events.push(Ok(LanguageModelCompletionEvent::ToolUse(
                             LanguageModelToolUse {
                                 id: call_id.into(),
@@ -929,6 +929,7 @@ fn into_copilot_responses(
         stop: _,
         temperature,
         thinking_allowed: _,
+        thinking_effort: _,
     } = request;
 
     let mut input_items: Vec<responses::ResponseInputItem> = Vec::new();

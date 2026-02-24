@@ -408,6 +408,14 @@ impl AgentServerStore {
             .get::<AllAgentServersSettings>(None)
             .clone();
 
+        // If we don't have agents from the registry loaded yet, trigger a
+        // refresh, which will cause this function to be called again
+        if new_settings.has_registry_agents()
+            && let Some(registry) = AgentRegistryStore::try_global(cx)
+        {
+            registry.update(cx, |registry, cx| registry.refresh_if_stale(cx));
+        }
+
         self.external_agents.clear();
         self.external_agents.insert(
             GEMINI_NAME.into(),
@@ -460,7 +468,7 @@ impl AgentServerStore {
             ),
         );
         self.external_agents.insert(
-            CLAUDE_CODE_NAME.into(),
+            CLAUDE_AGENT_NAME.into(),
             ExternalAgentEntry::new(
                 Box::new(LocalClaudeCode {
                     fs: fs.clone(),
@@ -554,7 +562,7 @@ impl AgentServerStore {
                 CustomAgentServerSettings::Registry { env, .. } => {
                     let Some(agent) = registry_agents_by_id.get(name) else {
                         if registry_store.is_some() {
-                            log::warn!("Registry agent '{}' not found in ACP registry", name);
+                            log::debug!("Registry agent '{}' not found in ACP registry", name);
                         }
                         continue;
                     };
@@ -677,12 +685,12 @@ impl AgentServerStore {
         // will have them.
         let external_agents: [(ExternalAgentServerName, ExternalAgentEntry); 3] = [
             (
-                CLAUDE_CODE_NAME.into(),
+                CLAUDE_AGENT_NAME.into(),
                 ExternalAgentEntry::new(
                     Box::new(RemoteExternalAgentServer {
                         project_id,
                         upstream_client: upstream_client.clone(),
-                        name: CLAUDE_CODE_NAME.into(),
+                        name: CLAUDE_AGENT_NAME.into(),
                         status_tx: None,
                         new_version_available_tx: None,
                     }) as Box<dyn ExternalAgentServer>,
@@ -909,15 +917,25 @@ impl AgentServerStore {
                 .map(|name| {
                     let agent_name = ExternalAgentServerName(name.clone().into());
                     let fallback_source =
-                        if name == GEMINI_NAME || name == CLAUDE_CODE_NAME || name == CODEX_NAME {
+                        if name == GEMINI_NAME || name == CLAUDE_AGENT_NAME || name == CODEX_NAME {
                             ExternalAgentSource::Builtin
                         } else {
                             ExternalAgentSource::Custom
                         };
-                    let (icon, display_name, source) =
-                        metadata
-                            .remove(&agent_name)
-                            .unwrap_or((None, None, fallback_source));
+                    let (icon, display_name, source) = metadata
+                        .remove(&agent_name)
+                        .or_else(|| {
+                            AgentRegistryStore::try_global(cx)
+                                .and_then(|store| store.read(cx).agent(&agent_name.0))
+                                .map(|s| {
+                                    (
+                                        s.icon_path().cloned(),
+                                        Some(s.name().clone()),
+                                        ExternalAgentSource::Registry,
+                                    )
+                                })
+                        })
+                        .unwrap_or((None, None, fallback_source));
                     let source = if fallback_source == ExternalAgentSource::Builtin {
                         ExternalAgentSource::Builtin
                     } else {
@@ -1437,10 +1455,10 @@ impl ExternalAgentServer for LocalClaudeCode {
                 (custom_command, None)
             } else {
                 let mut command = get_or_npm_install_builtin_agent(
-                    "claude-code-acp".into(),
-                    "@zed-industries/claude-code-acp".into(),
-                    "node_modules/@zed-industries/claude-code-acp/dist/index.js".into(),
-                    Some("0.5.2".parse().unwrap()),
+                    "claude-agent-acp".into(),
+                    "@zed-industries/claude-agent-acp".into(),
+                    "node_modules/@zed-industries/claude-agent-acp/dist/index.js".into(),
+                    Some("0.17.0".parse().unwrap()),
                     status_tx,
                     new_version_available_tx,
                     fs,
@@ -1449,26 +1467,8 @@ impl ExternalAgentServer for LocalClaudeCode {
                 )
                 .await?;
                 command.env = Some(env);
-                let login = command
-                    .args
-                    .first()
-                    .and_then(|path| {
-                        path.strip_suffix("/@zed-industries/claude-code-acp/dist/index.js")
-                    })
-                    .map(|path_prefix| task::SpawnInTerminal {
-                        command: Some(command.path.to_string_lossy().into_owned()),
-                        args: vec![
-                            Path::new(path_prefix)
-                                .join("@anthropic-ai/claude-agent-sdk/cli.js")
-                                .to_string_lossy()
-                                .to_string(),
-                            "/login".into(),
-                        ],
-                        env: command.env.clone().unwrap_or_default(),
-                        label: "claude /login".into(),
-                        ..Default::default()
-                    });
-                (command, login)
+
+                (command, None)
             };
 
             command.env.get_or_insert_default().extend(extra_env);
@@ -1836,10 +1836,10 @@ impl ExternalAgentServer for LocalExtensionArchiveAgent {
                                     release.assets.iter().find(|a| a.name == filename)
                                 {
                                     // Strip "sha256:" prefix if present
-                                    asset.digest.as_ref().and_then(|d| {
+                                    asset.digest.as_ref().map(|d| {
                                         d.strip_prefix("sha256:")
                                             .map(|s| s.to_string())
-                                            .or_else(|| Some(d.clone()))
+                                            .unwrap_or_else(|| d.clone())
                                     })
                                 } else {
                                     None
@@ -2229,7 +2229,7 @@ impl ExternalAgentServer for LocalCustomAgent {
 }
 
 pub const GEMINI_NAME: &'static str = "gemini";
-pub const CLAUDE_CODE_NAME: &'static str = "claude";
+pub const CLAUDE_AGENT_NAME: &'static str = "claude";
 pub const CODEX_NAME: &'static str = "codex";
 
 #[derive(Default, Clone, JsonSchema, Debug, PartialEq, RegisterSetting)]
@@ -2239,6 +2239,15 @@ pub struct AllAgentServersSettings {
     pub codex: Option<BuiltinAgentServerSettings>,
     pub custom: HashMap<String, CustomAgentServerSettings>,
 }
+
+impl AllAgentServersSettings {
+    pub fn has_registry_agents(&self) -> bool {
+        self.custom
+            .values()
+            .any(|s| matches!(s, CustomAgentServerSettings::Registry { .. }))
+    }
+}
+
 #[derive(Default, Clone, JsonSchema, Debug, PartialEq)]
 pub struct BuiltinAgentServerSettings {
     pub path: Option<PathBuf>,

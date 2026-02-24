@@ -232,6 +232,11 @@ pub fn migrate_settings(text: &str) -> Result<Option<String>> {
             migrations::m_2025_12_15::SETTINGS_PATTERNS,
             &SETTINGS_QUERY_2025_12_15,
         ),
+        MigrationType::Json(
+            migrations::m_2026_02_02::move_edit_prediction_provider_to_edit_predictions,
+        ),
+        MigrationType::Json(migrations::m_2026_02_03::migrate_experimental_sweep_mercury),
+        MigrationType::Json(migrations::m_2026_02_04::migrate_tool_permission_defaults),
     ];
     run_migrations(text, migrations)
 }
@@ -650,21 +655,23 @@ mod tests {
     #[test]
     fn test_nested_string_replace_for_settings() {
         assert_migrate_settings(
-            r#"
-                {
-                    "features": {
-                        "inline_completion_provider": "zed"
-                    },
-                }
-            "#,
+            &r#"
+            {
+                "features": {
+                    "inline_completion_provider": "zed"
+                },
+            }
+            "#
+            .unindent(),
             Some(
-                r#"
+                &r#"
                 {
-                    "features": {
-                        "edit_prediction_provider": "zed"
-                    },
+                    "edit_predictions": {
+                        "provider": "zed"
+                    }
                 }
-            "#,
+                "#
+                .unindent(),
             ),
         )
     }
@@ -2213,6 +2220,165 @@ mod tests {
                 .unindent(),
             ),
         );
+
+        // Platform key: settings nested inside "linux" should be migrated
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2025_10_17::make_file_finder_include_ignored_an_enum,
+            )],
+            &r#"
+            {
+                "linux": {
+                    "file_finder": {
+                        "include_ignored": true
+                    }
+                }
+            }
+            "#
+            .unindent(),
+            Some(
+                &r#"
+                {
+                    "linux": {
+                        "file_finder": {
+                            "include_ignored": "all"
+                        }
+                    }
+                }
+                "#
+                .unindent(),
+            ),
+        );
+
+        // Profile: settings nested inside profiles should be migrated
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2025_10_17::make_file_finder_include_ignored_an_enum,
+            )],
+            &r#"
+            {
+                "profiles": {
+                    "work": {
+                        "file_finder": {
+                            "include_ignored": false
+                        }
+                    }
+                }
+            }
+            "#
+            .unindent(),
+            Some(
+                &r#"
+                {
+                    "profiles": {
+                        "work": {
+                            "file_finder": {
+                                "include_ignored": "indexed"
+                            }
+                        }
+                    }
+                }
+                "#
+                .unindent(),
+            ),
+        );
+    }
+
+    #[test]
+    fn test_make_relative_line_numbers_an_enum() {
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2025_10_21::make_relative_line_numbers_an_enum,
+            )],
+            &r#"{ }"#.unindent(),
+            None,
+        );
+
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2025_10_21::make_relative_line_numbers_an_enum,
+            )],
+            &r#"{
+                "relative_line_numbers": true
+            }"#
+            .unindent(),
+            Some(
+                &r#"{
+                    "relative_line_numbers": "enabled"
+                }"#
+                .unindent(),
+            ),
+        );
+
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2025_10_21::make_relative_line_numbers_an_enum,
+            )],
+            &r#"{
+                "relative_line_numbers": false
+            }"#
+            .unindent(),
+            Some(
+                &r#"{
+                    "relative_line_numbers": "disabled"
+                }"#
+                .unindent(),
+            ),
+        );
+
+        // Platform key: settings nested inside "macos" should be migrated
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2025_10_21::make_relative_line_numbers_an_enum,
+            )],
+            &r#"
+            {
+                "macos": {
+                    "relative_line_numbers": true
+                }
+            }
+            "#
+            .unindent(),
+            Some(
+                &r#"
+                {
+                    "macos": {
+                        "relative_line_numbers": "enabled"
+                    }
+                }
+                "#
+                .unindent(),
+            ),
+        );
+
+        // Profile: settings nested inside profiles should be migrated
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2025_10_21::make_relative_line_numbers_an_enum,
+            )],
+            &r#"
+            {
+                "profiles": {
+                    "dev": {
+                        "relative_line_numbers": false
+                    }
+                }
+            }
+            "#
+            .unindent(),
+            Some(
+                &r#"
+                {
+                    "profiles": {
+                        "dev": {
+                            "relative_line_numbers": "disabled"
+                        }
+                    }
+                }
+                "#
+                .unindent(),
+            ),
+        );
     }
 
     #[test]
@@ -2255,6 +2421,84 @@ mod tests {
                                 "FOO": "BAR"
                             }
                         },
+                    }
+                }
+                "#
+                .unindent(),
+            ),
+        );
+
+        // Platform key: settings nested inside "linux" should be migrated
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2025_11_25::remove_context_server_source,
+            )],
+            &r#"
+            {
+                "linux": {
+                    "context_servers": {
+                        "my_server": {
+                            "source": "extension",
+                            "settings": {
+                                "key": "value"
+                            }
+                        }
+                    }
+                }
+            }
+            "#
+            .unindent(),
+            Some(
+                &r#"
+                {
+                    "linux": {
+                        "context_servers": {
+                            "my_server": {
+                                "settings": {
+                                    "key": "value"
+                                }
+                            }
+                        }
+                    }
+                }
+                "#
+                .unindent(),
+            ),
+        );
+
+        // Profile: settings nested inside profiles should be migrated
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2025_11_25::remove_context_server_source,
+            )],
+            &r#"
+            {
+                "profiles": {
+                    "work": {
+                        "context_servers": {
+                            "my_server": {
+                                "source": "custom",
+                                "command": "foo",
+                                "args": ["bar"]
+                            }
+                        }
+                    }
+                }
+            }
+            "#
+            .unindent(),
+            Some(
+                &r#"
+                {
+                    "profiles": {
+                        "work": {
+                            "context_servers": {
+                                "my_server": {
+                                    "command": "foo",
+                                    "args": ["bar"]
+                                }
+                            }
+                        }
                     }
                 }
                 "#
@@ -2357,6 +2601,1222 @@ mod tests {
                 }
                 "#
                 .unindent(),
+            ),
+        );
+    }
+
+    #[test]
+    fn test_move_edit_prediction_provider_to_edit_predictions() {
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2026_02_02::move_edit_prediction_provider_to_edit_predictions,
+            )],
+            &r#"{ }"#.unindent(),
+            None,
+        );
+
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2026_02_02::move_edit_prediction_provider_to_edit_predictions,
+            )],
+            &r#"
+            {
+                "features": {
+                    "edit_prediction_provider": "copilot"
+                }
+            }
+            "#
+            .unindent(),
+            Some(
+                &r#"
+                {
+                    "edit_predictions": {
+                        "provider": "copilot"
+                    }
+                }
+                "#
+                .unindent(),
+            ),
+        );
+
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2026_02_02::move_edit_prediction_provider_to_edit_predictions,
+            )],
+            &r#"
+            {
+                "features": {
+                    "edit_prediction_provider": "zed"
+                },
+                "edit_predictions": {
+                    "mode": "eager"
+                }
+            }
+            "#
+            .unindent(),
+            Some(
+                &r#"
+                {
+                    "edit_predictions": {
+                        "provider": "zed",
+                        "mode": "eager"
+                    }
+                }
+                "#
+                .unindent(),
+            ),
+        );
+
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2026_02_02::move_edit_prediction_provider_to_edit_predictions,
+            )],
+            &r#"
+            {
+                "features": {
+                    "edit_prediction_provider": "supermaven"
+                },
+                "edit_predictions": {
+                    "provider": "copilot"
+                }
+            }
+            "#
+            .unindent(),
+            Some(
+                &r#"
+                {
+                    "edit_predictions": {
+                        "provider": "copilot"
+                    }
+                }
+                "#
+                .unindent(),
+            ),
+        );
+
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2026_02_02::move_edit_prediction_provider_to_edit_predictions,
+            )],
+            &r#"
+            {
+                "edit_predictions": {
+                    "provider": "zed"
+                }
+            }
+            "#
+            .unindent(),
+            None,
+        );
+
+        // Non-object edit_predictions (e.g. true) should gracefully skip
+        // instead of bail!-ing and aborting the entire migration chain.
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2026_02_02::move_edit_prediction_provider_to_edit_predictions,
+            )],
+            &r#"
+            {
+                "features": {
+                    "edit_prediction_provider": "copilot"
+                },
+                "edit_predictions": true
+            }
+            "#
+            .unindent(),
+            Some(
+                &r#"
+                {
+                    "edit_predictions": true
+                }
+                "#
+                .unindent(),
+            ),
+        );
+
+        // Platform key: settings nested inside "macos" should be migrated
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2026_02_02::move_edit_prediction_provider_to_edit_predictions,
+            )],
+            &r#"
+            {
+                "macos": {
+                    "features": {
+                        "edit_prediction_provider": "copilot"
+                    }
+                }
+            }
+            "#
+            .unindent(),
+            Some(
+                &r#"
+                {
+                    "macos": {
+                        "edit_predictions": {
+                            "provider": "copilot"
+                        }
+                    }
+                }
+                "#
+                .unindent(),
+            ),
+        );
+
+        // Profile: settings nested inside profiles should be migrated
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2026_02_02::move_edit_prediction_provider_to_edit_predictions,
+            )],
+            &r#"
+            {
+                "profiles": {
+                    "work": {
+                        "features": {
+                            "edit_prediction_provider": "copilot"
+                        }
+                    }
+                }
+            }
+            "#
+            .unindent(),
+            Some(
+                &r#"
+                {
+                    "profiles": {
+                        "work": {
+                            "edit_predictions": {
+                                "provider": "copilot"
+                            }
+                        }
+                    }
+                }
+                "#
+                .unindent(),
+            ),
+        );
+
+        // Combined: root + platform + profile should all be migrated simultaneously
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2026_02_02::move_edit_prediction_provider_to_edit_predictions,
+            )],
+            &r#"
+            {
+                "features": {
+                    "edit_prediction_provider": "copilot"
+                },
+                "macos": {
+                    "features": {
+                        "edit_prediction_provider": "zed"
+                    }
+                },
+                "profiles": {
+                    "work": {
+                        "features": {
+                            "edit_prediction_provider": "supermaven"
+                        }
+                    }
+                }
+            }
+            "#
+            .unindent(),
+            Some(
+                &r#"
+                {
+                    "edit_predictions": {
+                        "provider": "copilot"
+                    },
+                    "macos": {
+                        "edit_predictions": {
+                            "provider": "zed"
+                        }
+                    },
+                    "profiles": {
+                        "work": {
+                            "edit_predictions": {
+                                "provider": "supermaven"
+                            }
+                        }
+                    }
+                }
+                "#
+                .unindent(),
+            ),
+        );
+    }
+
+    #[test]
+    fn test_migrate_experimental_sweep_mercury() {
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2026_02_03::migrate_experimental_sweep_mercury,
+            )],
+            &r#"{ }"#.unindent(),
+            None,
+        );
+
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2026_02_03::migrate_experimental_sweep_mercury,
+            )],
+            &r#"
+            {
+                "edit_predictions": {
+                    "provider": {
+                        "experimental": "sweep"
+                    }
+                }
+            }
+            "#
+            .unindent(),
+            Some(
+                &r#"
+                {
+                    "edit_predictions": {
+                        "provider": "sweep"
+                    }
+                }
+                "#
+                .unindent(),
+            ),
+        );
+
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2026_02_03::migrate_experimental_sweep_mercury,
+            )],
+            &r#"
+            {
+                "edit_predictions": {
+                    "provider": {
+                        "experimental": "mercury"
+                    }
+                }
+            }
+            "#
+            .unindent(),
+            Some(
+                &r#"
+                {
+                    "edit_predictions": {
+                        "provider": "mercury"
+                    }
+                }
+                "#
+                .unindent(),
+            ),
+        );
+
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2026_02_03::migrate_experimental_sweep_mercury,
+            )],
+            &r#"
+            {
+                "features": {
+                    "edit_prediction_provider": {
+                        "experimental": "sweep"
+                    }
+                }
+            }
+            "#
+            .unindent(),
+            Some(
+                &r#"
+                {
+                    "features": {
+                        "edit_prediction_provider": "sweep"
+                    }
+                }
+                "#
+                .unindent(),
+            ),
+        );
+
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2026_02_03::migrate_experimental_sweep_mercury,
+            )],
+            &r#"
+            {
+                "edit_predictions": {
+                    "provider": "zed"
+                }
+            }
+            "#
+            .unindent(),
+            None,
+        );
+
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2026_02_03::migrate_experimental_sweep_mercury,
+            )],
+            &r#"
+            {
+                "edit_predictions": {
+                    "provider": {
+                        "experimental": "zeta2"
+                    }
+                }
+            }
+            "#
+            .unindent(),
+            None,
+        );
+
+        // Platform key: settings nested inside "linux" should be migrated
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2026_02_03::migrate_experimental_sweep_mercury,
+            )],
+            &r#"
+            {
+                "linux": {
+                    "edit_predictions": {
+                        "provider": {
+                            "experimental": "sweep"
+                        }
+                    }
+                }
+            }
+            "#
+            .unindent(),
+            Some(
+                &r#"
+                {
+                    "linux": {
+                        "edit_predictions": {
+                            "provider": "sweep"
+                        }
+                    }
+                }
+                "#
+                .unindent(),
+            ),
+        );
+
+        // Profile: settings nested inside profiles should be migrated
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2026_02_03::migrate_experimental_sweep_mercury,
+            )],
+            &r#"
+            {
+                "profiles": {
+                    "dev": {
+                        "edit_predictions": {
+                            "provider": {
+                                "experimental": "mercury"
+                            }
+                        }
+                    }
+                }
+            }
+            "#
+            .unindent(),
+            Some(
+                &r#"
+                {
+                    "profiles": {
+                        "dev": {
+                            "edit_predictions": {
+                                "provider": "mercury"
+                            }
+                        }
+                    }
+                }
+                "#
+                .unindent(),
+            ),
+        );
+
+        // Combined: root + platform + profile should all be migrated simultaneously
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2026_02_03::migrate_experimental_sweep_mercury,
+            )],
+            &r#"
+            {
+                "edit_predictions": {
+                    "provider": {
+                        "experimental": "sweep"
+                    }
+                },
+                "linux": {
+                    "edit_predictions": {
+                        "provider": {
+                            "experimental": "mercury"
+                        }
+                    }
+                },
+                "profiles": {
+                    "dev": {
+                        "edit_predictions": {
+                            "provider": {
+                                "experimental": "sweep"
+                            }
+                        }
+                    }
+                }
+            }
+            "#
+            .unindent(),
+            Some(
+                &r#"
+                {
+                    "edit_predictions": {
+                        "provider": "sweep"
+                    },
+                    "linux": {
+                        "edit_predictions": {
+                            "provider": "mercury"
+                        }
+                    },
+                    "profiles": {
+                        "dev": {
+                            "edit_predictions": {
+                                "provider": "sweep"
+                            }
+                        }
+                    }
+                }
+                "#
+                .unindent(),
+            ),
+        );
+    }
+
+    #[test]
+    fn test_migrate_always_allow_tool_actions_to_default() {
+        // No agent settings - no change
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2026_02_04::migrate_tool_permission_defaults,
+            )],
+            &r#"{ }"#.unindent(),
+            None,
+        );
+
+        // always_allow_tool_actions: true -> tool_permissions.default: "allow"
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2026_02_04::migrate_tool_permission_defaults,
+            )],
+            &r#"
+            {
+                "agent": {
+                    "always_allow_tool_actions": true
+                }
+            }
+            "#
+            .unindent(),
+            Some(
+                &r#"
+                {
+                    "agent": {
+                        "tool_permissions": {
+                            "default": "allow"
+                        }
+                    }
+                }
+                "#
+                .unindent(),
+            ),
+        );
+
+        // always_allow_tool_actions: false -> just remove it
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2026_02_04::migrate_tool_permission_defaults,
+            )],
+            &r#"
+            {
+                "agent": {
+                    "always_allow_tool_actions": false
+                }
+            }
+            "#
+            .unindent(),
+            Some(
+                // The blank line has spaces because the migration preserves the original indentation
+                "{\n    \"agent\": {\n        \n    }\n}\n",
+            ),
+        );
+
+        // Preserve existing tool_permissions.tools when migrating
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2026_02_04::migrate_tool_permission_defaults,
+            )],
+            &r#"
+            {
+                "agent": {
+                    "always_allow_tool_actions": true,
+                    "tool_permissions": {
+                        "tools": {
+                            "terminal": {
+                                "always_deny": [{ "pattern": "rm\\s+-rf" }]
+                            }
+                        }
+                    }
+                }
+            }
+            "#
+            .unindent(),
+            Some(
+                &r#"
+                {
+                    "agent": {
+                        "tool_permissions": {
+                            "default": "allow",
+                            "tools": {
+                                "terminal": {
+                                    "always_deny": [{ "pattern": "rm\\s+-rf" }]
+                                }
+                            }
+                        }
+                    }
+                }
+                "#
+                .unindent(),
+            ),
+        );
+
+        // Don't override existing default (and migrate default_mode to default)
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2026_02_04::migrate_tool_permission_defaults,
+            )],
+            &r#"
+            {
+                "agent": {
+                    "always_allow_tool_actions": true,
+                    "tool_permissions": {
+                        "default_mode": "confirm"
+                    }
+                }
+            }
+            "#
+            .unindent(),
+            Some(
+                &r#"
+                {
+                    "agent": {
+                        "tool_permissions": {
+                            "default": "confirm"
+                        }
+                    }
+                }
+                "#
+                .unindent(),
+            ),
+        );
+
+        // Migrate existing default_mode to default (no always_allow_tool_actions)
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2026_02_04::migrate_tool_permission_defaults,
+            )],
+            &r#"
+            {
+                "agent": {
+                    "tool_permissions": {
+                        "default_mode": "allow"
+                    }
+                }
+            }
+            "#
+            .unindent(),
+            Some(
+                &r#"
+                {
+                    "agent": {
+                        "tool_permissions": {
+                            "default": "allow"
+                        }
+                    }
+                }
+                "#
+                .unindent(),
+            ),
+        );
+
+        // No migration needed if already using new format with "default"
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2026_02_04::migrate_tool_permission_defaults,
+            )],
+            &r#"
+            {
+                "agent": {
+                    "tool_permissions": {
+                        "default": "allow"
+                    }
+                }
+            }
+            "#
+            .unindent(),
+            None,
+        );
+
+        // Migrate default_mode to default in tool-specific rules
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2026_02_04::migrate_tool_permission_defaults,
+            )],
+            &r#"
+            {
+                "agent": {
+                    "tool_permissions": {
+                        "default_mode": "confirm",
+                        "tools": {
+                            "terminal": {
+                                "default_mode": "allow"
+                            }
+                        }
+                    }
+                }
+            }
+            "#
+            .unindent(),
+            Some(
+                &r#"
+                {
+                    "agent": {
+                        "tool_permissions": {
+                            "default": "confirm",
+                            "tools": {
+                                "terminal": {
+                                    "default": "allow"
+                                }
+                            }
+                        }
+                    }
+                }
+                "#
+                .unindent(),
+            ),
+        );
+
+        // When tool_permissions is null, replace it so always_allow is preserved
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2026_02_04::migrate_tool_permission_defaults,
+            )],
+            &r#"
+            {
+                "agent": {
+                    "always_allow_tool_actions": true,
+                    "tool_permissions": null
+                }
+            }
+            "#
+            .unindent(),
+            Some(
+                &r#"
+                {
+                    "agent": {
+                        "tool_permissions": {
+                            "default": "allow"
+                        }
+                    }
+                }
+                "#
+                .unindent(),
+            ),
+        );
+
+        // Platform-specific agent migration
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2026_02_04::migrate_tool_permission_defaults,
+            )],
+            &r#"
+            {
+                "linux": {
+                    "agent": {
+                        "always_allow_tool_actions": true
+                    }
+                }
+            }
+            "#
+            .unindent(),
+            Some(
+                &r#"
+                {
+                    "linux": {
+                        "agent": {
+                            "tool_permissions": {
+                                "default": "allow"
+                            }
+                        }
+                    }
+                }
+                "#
+                .unindent(),
+            ),
+        );
+
+        // Channel-specific agent migration
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2026_02_04::migrate_tool_permission_defaults,
+            )],
+            &r#"
+            {
+                "agent": {
+                    "always_allow_tool_actions": true
+                },
+                "nightly": {
+                    "agent": {
+                        "tool_permissions": {
+                            "default_mode": "confirm"
+                        }
+                    }
+                }
+            }
+            "#
+            .unindent(),
+            Some(
+                &r#"
+                {
+                    "agent": {
+                        "tool_permissions": {
+                            "default": "allow"
+                        }
+                    },
+                    "nightly": {
+                        "agent": {
+                            "tool_permissions": {
+                                "default": "confirm"
+                            }
+                        }
+                    }
+                }
+                "#
+                .unindent(),
+            ),
+        );
+
+        // Profile-level migration
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2026_02_04::migrate_tool_permission_defaults,
+            )],
+            &r#"
+            {
+                "agent": {
+                    "profiles": {
+                        "custom": {
+                            "always_allow_tool_actions": true,
+                            "tool_permissions": {
+                                "default_mode": "allow"
+                            }
+                        }
+                    }
+                }
+            }
+            "#
+            .unindent(),
+            Some(
+                &r#"
+                {
+                    "agent": {
+                        "profiles": {
+                            "custom": {
+                                "tool_permissions": {
+                                    "default": "allow"
+                                }
+                            }
+                        }
+                    }
+                }
+                "#
+                .unindent(),
+            ),
+        );
+
+        // Platform-specific agent with profiles
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2026_02_04::migrate_tool_permission_defaults,
+            )],
+            &r#"
+            {
+                "macos": {
+                    "agent": {
+                        "always_allow_tool_actions": true,
+                        "profiles": {
+                            "strict": {
+                                "tool_permissions": {
+                                    "default_mode": "deny"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            "#
+            .unindent(),
+            Some(
+                &r#"
+                {
+                    "macos": {
+                        "agent": {
+                            "tool_permissions": {
+                                "default": "allow"
+                            },
+                            "profiles": {
+                                "strict": {
+                                    "tool_permissions": {
+                                        "default": "deny"
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                "#
+                .unindent(),
+            ),
+        );
+
+        // Root-level profile with always_allow_tool_actions
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2026_02_04::migrate_tool_permission_defaults,
+            )],
+            &r#"
+            {
+                "profiles": {
+                    "work": {
+                        "agent": {
+                            "always_allow_tool_actions": true
+                        }
+                    }
+                }
+            }
+            "#
+            .unindent(),
+            Some(
+                &r#"
+                {
+                    "profiles": {
+                        "work": {
+                            "agent": {
+                                "tool_permissions": {
+                                    "default": "allow"
+                                }
+                            }
+                        }
+                    }
+                }
+                "#
+                .unindent(),
+            ),
+        );
+
+        // Root-level profile with default_mode
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2026_02_04::migrate_tool_permission_defaults,
+            )],
+            &r#"
+            {
+                "profiles": {
+                    "work": {
+                        "agent": {
+                            "tool_permissions": {
+                                "default_mode": "allow"
+                            }
+                        }
+                    }
+                }
+            }
+            "#
+            .unindent(),
+            Some(
+                &r#"
+                {
+                    "profiles": {
+                        "work": {
+                            "agent": {
+                                "tool_permissions": {
+                                    "default": "allow"
+                                }
+                            }
+                        }
+                    }
+                }
+                "#
+                .unindent(),
+            ),
+        );
+
+        // Root-level profile + root-level agent both migrated
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2026_02_04::migrate_tool_permission_defaults,
+            )],
+            &r#"
+            {
+                "agent": {
+                    "always_allow_tool_actions": true
+                },
+                "profiles": {
+                    "strict": {
+                        "agent": {
+                            "tool_permissions": {
+                                "default_mode": "deny"
+                            }
+                        }
+                    }
+                }
+            }
+            "#
+            .unindent(),
+            Some(
+                &r#"
+                {
+                    "agent": {
+                        "tool_permissions": {
+                            "default": "allow"
+                        }
+                    },
+                    "profiles": {
+                        "strict": {
+                            "agent": {
+                                "tool_permissions": {
+                                    "default": "deny"
+                                }
+                            }
+                        }
+                    }
+                }
+                "#
+                .unindent(),
+            ),
+        );
+
+        // Non-boolean always_allow_tool_actions (string "true") is left in place
+        // so the schema validator can report it, rather than silently dropping user data.
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2026_02_04::migrate_tool_permission_defaults,
+            )],
+            &r#"
+            {
+                "agent": {
+                    "always_allow_tool_actions": "true"
+                }
+            }
+            "#
+            .unindent(),
+            None,
+        );
+
+        // null always_allow_tool_actions is removed (treated as false)
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2026_02_04::migrate_tool_permission_defaults,
+            )],
+            &r#"
+            {
+                "agent": {
+                    "always_allow_tool_actions": null
+                }
+            }
+            "#
+            .unindent(),
+            Some(&"{\n    \"agent\": {\n        \n    }\n}\n"),
+        );
+
+        // Project-local settings (.zed/settings.json) with always_allow_tool_actions
+        // These files have no platform/channel overrides or root-level profiles.
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2026_02_04::migrate_tool_permission_defaults,
+            )],
+            &r#"
+            {
+                "agent": {
+                    "always_allow_tool_actions": true,
+                    "tool_permissions": {
+                        "tools": {
+                            "terminal": {
+                                "default_mode": "confirm",
+                                "always_deny": [{ "pattern": "rm\\s+-rf" }]
+                            }
+                        }
+                    }
+                }
+            }
+            "#
+            .unindent(),
+            Some(
+                &r#"
+                {
+                    "agent": {
+                        "tool_permissions": {
+                            "default": "allow",
+                            "tools": {
+                                "terminal": {
+                                    "default": "confirm",
+                                    "always_deny": [{ "pattern": "rm\\s+-rf" }]
+                                }
+                            }
+                        }
+                    }
+                }
+                "#
+                .unindent(),
+            ),
+        );
+
+        // Project-local settings with only default_mode (no always_allow_tool_actions)
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2026_02_04::migrate_tool_permission_defaults,
+            )],
+            &r#"
+            {
+                "agent": {
+                    "tool_permissions": {
+                        "default_mode": "deny"
+                    }
+                }
+            }
+            "#
+            .unindent(),
+            Some(
+                &r#"
+                {
+                    "agent": {
+                        "tool_permissions": {
+                            "default": "deny"
+                        }
+                    }
+                }
+                "#
+                .unindent(),
+            ),
+        );
+
+        // Project-local settings with no agent section at all - no change
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2026_02_04::migrate_tool_permission_defaults,
+            )],
+            &r#"
+            {
+                "tab_size": 4,
+                "format_on_save": "on"
+            }
+            "#
+            .unindent(),
+            None,
+        );
+
+        // Existing agent_servers are left untouched
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2026_02_04::migrate_tool_permission_defaults,
+            )],
+            &r#"
+            {
+                "agent": {
+                    "always_allow_tool_actions": true
+                },
+                "agent_servers": {
+                    "claude": {
+                        "default_mode": "plan"
+                    },
+                    "codex": {
+                        "default_mode": "read-only"
+                    }
+                }
+            }
+            "#
+            .unindent(),
+            Some(
+                &r#"
+                {
+                    "agent": {
+                        "tool_permissions": {
+                            "default": "allow"
+                        }
+                    },
+                    "agent_servers": {
+                        "claude": {
+                            "default_mode": "plan"
+                        },
+                        "codex": {
+                            "default_mode": "read-only"
+                        }
+                    }
+                }
+                "#
+                .unindent(),
+            ),
+        );
+
+        // Existing agent_servers are left untouched even with partial entries
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2026_02_04::migrate_tool_permission_defaults,
+            )],
+            &r#"
+            {
+                "agent": {
+                    "always_allow_tool_actions": true
+                },
+                "agent_servers": {
+                    "claude": {
+                        "default_mode": "plan"
+                    }
+                }
+            }
+            "#
+            .unindent(),
+            Some(
+                &r#"
+                {
+                    "agent": {
+                        "tool_permissions": {
+                            "default": "allow"
+                        }
+                    },
+                    "agent_servers": {
+                        "claude": {
+                            "default_mode": "plan"
+                        }
+                    }
+                }
+                "#
+                .unindent(),
+            ),
+        );
+
+        // always_allow_tool_actions: false leaves agent_servers untouched
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2026_02_04::migrate_tool_permission_defaults,
+            )],
+            &r#"
+            {
+                "agent": {
+                    "always_allow_tool_actions": false
+                },
+                "agent_servers": {
+                    "claude": {}
+                }
+            }
+            "#
+            .unindent(),
+            Some(
+                "{\n    \"agent\": {\n        \n    },\n    \"agent_servers\": {\n        \"claude\": {}\n    }\n}\n",
             ),
         );
     }

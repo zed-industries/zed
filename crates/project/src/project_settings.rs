@@ -4,8 +4,9 @@ use context_server::ContextServerCommand;
 use dap::adapters::DebugAdapterName;
 use fs::Fs;
 use futures::StreamExt as _;
+use git::repository::DEFAULT_WORKTREE_DIRECTORY;
 use gpui::{AsyncApp, BorrowAppContext, Context, Entity, EventEmitter, Subscription, Task};
-use lsp::LanguageServerName;
+use lsp::{DEFAULT_LSP_REQUEST_TIMEOUT_SECS, LanguageServerName};
 use paths::{
     EDITORCONFIG_NAME, local_debug_file_relative_path, local_settings_file_relative_path,
     local_tasks_file_relative_path, local_vscode_launch_file_relative_path,
@@ -22,8 +23,8 @@ pub use settings::DirenvSettings;
 pub use settings::LspSettings;
 use settings::{
     DapSettingsContent, EditorconfigEvent, InvalidSettingsError, LocalSettingsKind,
-    LocalSettingsPath, RegisterSetting, Settings, SettingsLocation, SettingsStore,
-    parse_json_with_comments, watch_config_file,
+    LocalSettingsPath, RegisterSetting, SemanticTokenRules, Settings, SettingsLocation,
+    SettingsStore, parse_json_with_comments, watch_config_file,
 };
 use std::{cell::OnceCell, collections::BTreeMap, path::PathBuf, sync::Arc, time::Duration};
 use task::{DebugTaskFile, TaskTemplates, VsCodeDebugTaskFile, VsCodeTaskFile};
@@ -118,13 +119,44 @@ impl From<settings::NodeBinarySettings> for NodeBinarySettings {
 }
 
 /// Common language server settings.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
 pub struct GlobalLspSettings {
     /// Whether to show the LSP servers button in the status bar.
     ///
     /// Default: `true`
     pub button: bool,
+    /// The maximum amount of time to wait for responses from language servers, in seconds.
+    /// A value of `0` will result in no timeout being applied (causing all LSP responses to wait
+    /// indefinitely until completed).
+    /// This should not be used outside of serialization/de-serialization in favor of get_request_timeout.
+    ///
+    /// Default: `120`
+    pub request_timeout: u64,
     pub notifications: LspNotificationSettings,
+
+    /// Rules for highlighting semantic tokens.
+    pub semantic_token_rules: SemanticTokenRules,
+}
+
+impl Default for GlobalLspSettings {
+    fn default() -> Self {
+        Self {
+            button: true,
+            request_timeout: DEFAULT_LSP_REQUEST_TIMEOUT_SECS,
+            notifications: LspNotificationSettings::default(),
+            semantic_token_rules: SemanticTokenRules::default(),
+        }
+    }
+}
+
+impl GlobalLspSettings {
+    /// Returns the timeout duration for LSP-related interactions, or Duration::ZERO if no timeout should be applied.
+    /// Zero durations are treated as no timeout by language servers, so code using this in an async context can
+    /// simply call unwrap_or_default.
+    pub const fn get_request_timeout(&self) -> Duration {
+        Duration::from_secs(self.request_timeout)
+    }
 }
 
 #[derive(Deserialize, Serialize, Clone, PartialEq, Eq, JsonSchema, Debug)]
@@ -135,6 +167,14 @@ pub struct LspNotificationSettings {
     ///
     /// Default: 5000
     pub dismiss_timeout_ms: Option<u64>,
+}
+
+impl Default for LspNotificationSettings {
+    fn default() -> Self {
+        Self {
+            dismiss_timeout_ms: Some(5000),
+        }
+    }
 }
 
 #[derive(Deserialize, Serialize, Clone, PartialEq, Eq, JsonSchema, Debug)]
@@ -382,7 +422,7 @@ impl GoToDiagnosticSeverityFilter {
     }
 }
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Clone, Debug)]
 pub struct GitSettings {
     /// Whether or not git integration is enabled.
     ///
@@ -415,6 +455,13 @@ pub struct GitSettings {
     ///
     /// Default: file_name_first
     pub path_style: GitPathStyle,
+    /// Directory where git worktrees are created, relative to the repository
+    /// working directory. When the resolved directory is outside the project
+    /// root, the project's directory name is automatically appended so that
+    /// sibling repos don't collide.
+    ///
+    /// Default: ../worktrees
+    pub worktree_directory: String,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -604,6 +651,10 @@ impl Settings for ProjectSettings {
             },
             hunk_style: git.hunk_style.unwrap(),
             path_style: git.path_style.unwrap().into(),
+            worktree_directory: git
+                .worktree_directory
+                .clone()
+                .unwrap_or_else(|| DEFAULT_WORKTREE_DIRECTORY.to_string()),
         };
         Self {
             context_servers: project
@@ -626,6 +677,12 @@ impl Settings for ProjectSettings {
                     .unwrap()
                     .button
                     .unwrap(),
+                request_timeout: content
+                    .global_lsp_settings
+                    .as_ref()
+                    .unwrap()
+                    .request_timeout
+                    .unwrap(),
                 notifications: LspNotificationSettings {
                     dismiss_timeout_ms: content
                         .global_lsp_settings
@@ -636,6 +693,14 @@ impl Settings for ProjectSettings {
                         .unwrap()
                         .dismiss_timeout_ms,
                 },
+                semantic_token_rules: content
+                    .global_lsp_settings
+                    .as_ref()
+                    .unwrap()
+                    .semantic_token_rules
+                    .as_ref()
+                    .unwrap()
+                    .clone(),
             },
             dap: project
                 .dap
@@ -1495,8 +1560,8 @@ pub fn local_settings_kind_to_proto(kind: LocalSettingsKind) -> proto::LocalSett
 #[derive(Debug, Clone)]
 pub struct DapSettings {
     pub binary: DapBinary,
-    pub args: Vec<String>,
-    pub env: HashMap<String, String>,
+    pub args: Option<Vec<String>>,
+    pub env: Option<HashMap<String, String>>,
 }
 
 impl From<DapSettingsContent> for DapSettings {
@@ -1505,8 +1570,8 @@ impl From<DapSettingsContent> for DapSettings {
             binary: content
                 .binary
                 .map_or_else(|| DapBinary::Default, |binary| DapBinary::Custom(binary)),
-            args: content.args.unwrap_or_default(),
-            env: content.env.unwrap_or_default(),
+            args: content.args,
+            env: content.env,
         }
     }
 }

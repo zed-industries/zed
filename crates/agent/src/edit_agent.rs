@@ -81,6 +81,7 @@ pub struct EditAgent {
     project: Entity<Project>,
     templates: Arc<Templates>,
     edit_format: EditFormat,
+    thinking_allowed: bool,
 }
 
 impl EditAgent {
@@ -90,6 +91,7 @@ impl EditAgent {
         action_log: Entity<ActionLog>,
         templates: Arc<Templates>,
         edit_format: EditFormat,
+        allow_thinking: bool,
     ) -> Self {
         EditAgent {
             model,
@@ -97,6 +99,7 @@ impl EditAgent {
             action_log,
             templates,
             edit_format,
+            thinking_allowed: allow_thinking,
         }
     }
 
@@ -731,7 +734,8 @@ impl EditAgent {
             tools,
             stop: Vec::new(),
             temperature: None,
-            thinking_allowed: true,
+            thinking_allowed: self.thinking_allowed,
+            thinking_effort: None,
         };
 
         Ok(self.model.stream_completion_text(request, cx).await?.stream)
@@ -1406,6 +1410,10 @@ mod tests {
     }
 
     async fn init_test(cx: &mut TestAppContext) -> EditAgent {
+        init_test_with_thinking(cx, true).await
+    }
+
+    async fn init_test_with_thinking(cx: &mut TestAppContext, thinking_allowed: bool) -> EditAgent {
         cx.update(settings::init);
 
         let project = Project::test(FakeFs::new(cx.executor()), [], cx).await;
@@ -1417,6 +1425,7 @@ mod tests {
             action_log,
             Templates::new(),
             EditFormat::XmlTags,
+            thinking_allowed,
         )
     }
 
@@ -1490,6 +1499,45 @@ mod tests {
             events.contains(&EditAgentOutputEvent::AmbiguousEditRange(ambiguous_ranges)),
             "Should emit AmbiguousEditRange for non-unique text"
         );
+    }
+
+    #[gpui::test]
+    async fn test_thinking_allowed_forwarded_to_request(cx: &mut TestAppContext) {
+        let agent = init_test_with_thinking(cx, false).await;
+        let buffer = cx.new(|cx| Buffer::local("hello\n", cx));
+        let (_apply, _events) = agent.edit(
+            buffer.clone(),
+            String::new(),
+            &LanguageModelRequest::default(),
+            &mut cx.to_async(),
+        );
+        cx.run_until_parked();
+
+        let pending = agent.model.as_fake().pending_completions();
+        assert_eq!(pending.len(), 1);
+        assert!(
+            !pending[0].thinking_allowed,
+            "Expected thinking_allowed to be false when EditAgent is constructed with allow_thinking=false"
+        );
+        agent.model.as_fake().end_last_completion_stream();
+
+        let agent = init_test_with_thinking(cx, true).await;
+        let buffer = cx.new(|cx| Buffer::local("hello\n", cx));
+        let (_apply, _events) = agent.edit(
+            buffer,
+            String::new(),
+            &LanguageModelRequest::default(),
+            &mut cx.to_async(),
+        );
+        cx.run_until_parked();
+
+        let pending = agent.model.as_fake().pending_completions();
+        assert_eq!(pending.len(), 1);
+        assert!(
+            pending[0].thinking_allowed,
+            "Expected thinking_allowed to be true when EditAgent is constructed with allow_thinking=true"
+        );
+        agent.model.as_fake().end_last_completion_stream();
     }
 
     fn drain_events(

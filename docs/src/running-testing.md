@@ -1,6 +1,12 @@
+---
+title: Run and Test Code in Zed
+description: Run and test code in Zed with Terminal, Tasks, REPL, and debugger workflows without leaving the editor.
+---
+
 # Running & Testing
 
-This section covers how to run, test, and debug your code without leaving Zed.
+Use this section to run and test code in Zed, then debug issues without
+leaving the editor.
 
 ## What's here
 

@@ -18,10 +18,7 @@ use release_channel::{AppVersion, ReleaseChannel};
 use rpc::proto::Envelope;
 use semver::Version;
 pub use settings::SshPortForwardOption;
-use smol::{
-    fs,
-    process::{self, Child, Stdio},
-};
+use smol::fs;
 use std::{
     net::IpAddr,
     path::{Path, PathBuf},
@@ -29,6 +26,7 @@ use std::{
     time::Instant,
 };
 use tempfile::TempDir;
+use util::command::{Child, Stdio};
 use util::{
     paths::{PathStyle, RemotePathBuf},
     rel_path::RelPath,
@@ -157,7 +155,7 @@ impl MasterProcess {
             "-o",
         ];
 
-        let mut master_process = util::command::new_smol_command("ssh");
+        let mut master_process = util::command::new_command("ssh");
         master_process
             .kill_on_drop(true)
             .stdin(Stdio::null())
@@ -206,7 +204,7 @@ impl MasterProcess {
             &format!("echo '{}'; exec $0", Self::CONNECTION_ESTABLISHED_MAGIC),
         ];
 
-        let mut master_process = util::command::new_smol_command("ssh");
+        let mut master_process = util::command::new_command("ssh");
         master_process
             .kill_on_drop(true)
             .stdin(Stdio::null())
@@ -315,7 +313,8 @@ impl RemoteConnection for SshRemoteConnection {
                 *ssh_path_style,
                 ssh_shell,
                 *ssh_shell_kind,
-                socket.ssh_args(),
+                socket.ssh_command_options(),
+                &socket.connection_options.ssh_destination(),
                 interactive,
             )
         } else {
@@ -329,7 +328,8 @@ impl RemoteConnection for SshRemoteConnection {
                 *ssh_path_style,
                 ssh_shell,
                 *ssh_shell_kind,
-                socket.ssh_args(),
+                socket.ssh_command_options(),
+                &socket.connection_options.ssh_destination(),
                 interactive,
             )
         }
@@ -340,12 +340,13 @@ impl RemoteConnection for SshRemoteConnection {
         forwards: Vec<(u16, String, u16)>,
     ) -> Result<CommandTemplate> {
         let Self { socket, .. } = self;
-        let mut args = socket.ssh_args();
+        let mut args = socket.ssh_command_options();
         args.push("-N".into());
         for (local_port, host, remote_port) in forwards {
             args.push("-L".into());
             args.push(format!("{local_port}:{host}:{remote_port}"));
         }
+        args.push(socket.connection_options.ssh_destination());
         Ok(CommandTemplate {
             program: "ssh".into(),
             args,
@@ -989,8 +990,8 @@ impl SshRemoteConnection {
         src_path: &Path,
         dest_path_str: &str,
         args: Option<&[&str]>,
-    ) -> process::Command {
-        let mut command = util::command::new_smol_command("scp");
+    ) -> util::command::Command {
+        let mut command = util::command::new_command("scp");
         self.socket.ssh_options(&mut command, false).args(
             self.socket
                 .connection_options
@@ -1009,8 +1010,8 @@ impl SshRemoteConnection {
         command
     }
 
-    fn build_sftp_command(&self) -> process::Command {
-        let mut command = util::command::new_smol_command("sftp");
+    fn build_sftp_command(&self) -> util::command::Command {
+        let mut command = util::command::new_command("sftp");
         self.socket.ssh_options(&mut command, false).args(
             self.socket
                 .connection_options
@@ -1104,7 +1105,7 @@ impl SshSocket {
         let get_password =
             move |_| Task::ready(std::ops::ControlFlow::Continue(Ok(password.clone())));
 
-        let _proxy = askpass::PasswordProxy::new(get_password, executor).await?;
+        let _proxy = askpass::PasswordProxy::new(Box::new(get_password), executor).await?;
         envs.insert("SSH_ASKPASS_REQUIRE".into(), "force".into());
         envs.insert(
             "SSH_ASKPASS".into(),
@@ -1130,8 +1131,8 @@ impl SshSocket {
         program: &str,
         args: &[impl AsRef<str>],
         allow_pseudo_tty: bool,
-    ) -> process::Command {
-        let mut command = util::command::new_smol_command("ssh");
+    ) -> util::command::Command {
+        let mut command = util::command::new_command("ssh");
         let program = shell_kind.prepend_command_prefix(program);
         let mut to_run = shell_kind
             .try_quote_prefix_aware(&program)
@@ -1182,9 +1183,9 @@ impl SshSocket {
 
     fn ssh_options<'a>(
         &self,
-        command: &'a mut process::Command,
+        command: &'a mut util::command::Command,
         include_port_forwards: bool,
-    ) -> &'a mut process::Command {
+    ) -> &'a mut util::command::Command {
         let args = if include_port_forwards {
             self.connection_options.additional_args()
         } else {
@@ -1208,20 +1209,23 @@ impl SshSocket {
         cmd
     }
 
-    // On Windows, we need to use `SSH_ASKPASS` to provide the password to ssh.
-    // On Linux, we use the `ControlPath` option to create a socket file that ssh can use to
-    fn ssh_args(&self) -> Vec<String> {
-        let mut arguments = self.connection_options.additional_args();
+    // Returns the SSH command-line options (without the destination) for building commands.
+    // On Linux, this includes the ControlPath option to reuse the existing connection.
+    // Note: The destination must be added separately after all options to ensure proper
+    // SSH command structure: ssh [options] destination [command]
+    fn ssh_command_options(&self) -> Vec<String> {
+        let arguments = self.connection_options.additional_args();
         #[cfg(not(windows))]
-        arguments.extend(vec![
-            "-o".to_string(),
-            "ControlMaster=no".to_string(),
-            "-o".to_string(),
-            format!("ControlPath={}", self.socket_path.display()),
-            self.connection_options.ssh_destination(),
-        ]);
-        #[cfg(windows)]
-        arguments.push(self.connection_options.ssh_destination());
+        let arguments = {
+            let mut args = arguments;
+            args.extend(vec![
+                "-o".to_string(),
+                "ControlMaster=no".to_string(),
+                "-o".to_string(),
+                format!("ControlPath={}", self.socket_path.display()),
+            ]);
+            args
+        };
         arguments
     }
 
@@ -1571,7 +1575,8 @@ fn build_command_posix(
     ssh_path_style: PathStyle,
     ssh_shell: &str,
     ssh_shell_kind: ShellKind,
-    ssh_args: Vec<String>,
+    ssh_options: Vec<String>,
+    ssh_destination: &str,
     interactive: Interactive,
 ) -> Result<CommandTemplate> {
     use std::fmt::Write as _;
@@ -1632,7 +1637,7 @@ fn build_command_posix(
     };
 
     let mut args = Vec::new();
-    args.extend(ssh_args);
+    args.extend(ssh_options);
 
     if let Some((local_port, host, remote_port)) = port_forward {
         args.push("-L".into());
@@ -1648,6 +1653,8 @@ fn build_command_posix(
         // -T disables pseudo-TTY allocation (for non-interactive piped stdio)
         Interactive::No => args.push("-T".into()),
     }
+    // The destination must come after all options but before the command
+    args.push(ssh_destination.into());
     args.push(exec);
 
     Ok(CommandTemplate {
@@ -1667,7 +1674,8 @@ fn build_command_windows(
     ssh_path_style: PathStyle,
     ssh_shell: &str,
     _ssh_shell_kind: ShellKind,
-    ssh_args: Vec<String>,
+    ssh_options: Vec<String>,
+    ssh_destination: &str,
     interactive: Interactive,
 ) -> Result<CommandTemplate> {
     use base64::Engine as _;
@@ -1719,7 +1727,7 @@ fn build_command_windows(
     };
 
     let mut args = Vec::new();
-    args.extend(ssh_args);
+    args.extend(ssh_options);
 
     if let Some((local_port, host, remote_port)) = port_forward {
         args.push("-L".into());
@@ -1735,6 +1743,9 @@ fn build_command_windows(
         // -T disables pseudo-TTY allocation (for non-interactive piped stdio)
         Interactive::No => args.push("-T".into()),
     }
+
+    // The destination must come after all options but before the command
+    args.push(ssh_destination.into());
 
     // Windows OpenSSH server incorrectly escapes the command string when the PTY is used.
     // The simplest way to work around this is to use a base64 encoded command, which doesn't require escaping.
@@ -1774,6 +1785,7 @@ mod tests {
             "/bin/bash",
             ShellKind::Posix,
             vec!["-o".to_string(), "ControlMaster=auto".to_string()],
+            "user@host",
             Interactive::No,
         )?;
         assert_eq!(command.program, "ssh");
@@ -1793,6 +1805,7 @@ mod tests {
             "/bin/fish",
             ShellKind::Fish,
             vec!["-p".to_string(), "2222".to_string()],
+            "user@host",
             Interactive::Yes,
         )?;
 
@@ -1804,6 +1817,7 @@ mod tests {
                 "2222",
                 "-q",
                 "-t",
+                "user@host",
                 "cd \"$HOME/work\" && exec env INPUT_VA=val remote_program arg1 arg2"
             ]
         );
@@ -1825,6 +1839,7 @@ mod tests {
             "/bin/fish",
             ShellKind::Fish,
             vec!["-p".to_string(), "2222".to_string()],
+            "user@host",
             Interactive::Yes,
         )?;
 
@@ -1838,6 +1853,7 @@ mod tests {
                 "1:foo:2",
                 "-q",
                 "-t",
+                "user@host",
                 "cd && exec env INPUT_VA=val /bin/fish -l"
             ]
         );

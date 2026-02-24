@@ -1,7 +1,8 @@
 use gpui::{
-    App, Application, Context, Corner, Div, Hsla, Stateful, Window, WindowOptions, anchored,
-    deferred, div, prelude::*, px,
+    App, Context, Corner, Div, Hsla, Stateful, Window, WindowOptions, anchored, deferred, div,
+    prelude::*, px,
 };
+use gpui_platform::application;
 
 /// An example show use deferred to create a floating layers.
 struct HelloWorld {
@@ -161,7 +162,7 @@ impl Render for HelloWorld {
 }
 
 fn main() {
-    Application::new().run(|cx: &mut App| {
+    application().run(|cx: &mut App| {
         cx.open_window(WindowOptions::default(), |_, cx| {
             cx.new(|_| HelloWorld {
                 open: false,

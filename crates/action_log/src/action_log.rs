@@ -6,11 +6,41 @@ use futures::{FutureExt, StreamExt, channel::mpsc};
 use gpui::{
     App, AppContext, AsyncApp, Context, Entity, SharedString, Subscription, Task, WeakEntity,
 };
-use language::{Anchor, Buffer, BufferEvent, Point, ToPoint};
+use language::{Anchor, Buffer, BufferEvent, Point, ToOffset, ToPoint};
 use project::{Project, ProjectItem, lsp_store::OpenLspBufferHandle};
 use std::{cmp, ops::Range, sync::Arc};
 use text::{Edit, Patch, Rope};
 use util::{RangeExt, ResultExt as _};
+
+/// Stores undo information for a single buffer's rejected edits
+#[derive(Clone)]
+pub struct PerBufferUndo {
+    pub buffer: WeakEntity<Buffer>,
+    pub edits_to_restore: Vec<(Range<Anchor>, String)>,
+    pub status: UndoBufferStatus,
+}
+
+/// Tracks the buffer status for undo purposes
+#[derive(Clone, Debug)]
+pub enum UndoBufferStatus {
+    Modified,
+    /// Buffer was created by the agent.
+    /// - `had_existing_content: true` - Agent overwrote an existing file. On reject, the
+    ///   original content was restored. Undo is supported: we restore the agent's content.
+    /// - `had_existing_content: false` - Agent created a new file that didn't exist before.
+    ///   On reject, the file was deleted. Undo is NOT currently supported (would require
+    ///   recreating the file). Future TODO.
+    Created {
+        had_existing_content: bool,
+    },
+}
+
+/// Stores undo information for the most recent reject operation
+#[derive(Clone)]
+pub struct LastRejectUndo {
+    /// Per-buffer undo information
+    pub buffers: Vec<PerBufferUndo>,
+}
 
 /// Tracks actions performed by tools in a thread
 pub struct ActionLog {
@@ -18,6 +48,8 @@ pub struct ActionLog {
     tracked_buffers: BTreeMap<Entity<Buffer>, TrackedBuffer>,
     /// The project this action log is associated with
     project: Entity<Project>,
+    /// Stores undo information for the most recent reject operation
+    last_reject_undo: Option<LastRejectUndo>,
 }
 
 impl ActionLog {
@@ -26,6 +58,7 @@ impl ActionLog {
         Self {
             tracked_buffers: BTreeMap::default(),
             project,
+            last_reject_undo: None,
         }
     }
 
@@ -577,17 +610,21 @@ impl ActionLog {
         buffer_ranges: Vec<Range<impl language::ToPoint>>,
         telemetry: Option<ActionLogTelemetry>,
         cx: &mut Context<Self>,
-    ) -> Task<Result<()>> {
+    ) -> (Task<Result<()>>, Option<PerBufferUndo>) {
         let Some(tracked_buffer) = self.tracked_buffers.get_mut(&buffer) else {
-            return Task::ready(Ok(()));
+            return (Task::ready(Ok(())), None);
         };
 
         let mut metrics = ActionLogMetrics::for_buffer(buffer.read(cx));
+        let mut undo_info: Option<PerBufferUndo> = None;
         let task = match &tracked_buffer.status {
             TrackedBufferStatus::Created {
                 existing_file_content,
             } => {
                 let task = if let Some(existing_file_content) = existing_file_content {
+                    // Capture the agent's content before restoring existing file content
+                    let agent_content = buffer.read(cx).text();
+
                     buffer.update(cx, |buffer, cx| {
                         buffer.start_transaction();
                         buffer.set_text("", cx);
@@ -596,6 +633,15 @@ impl ActionLog {
                         }
                         buffer.end_transaction(cx);
                     });
+
+                    undo_info = Some(PerBufferUndo {
+                        buffer: buffer.downgrade(),
+                        edits_to_restore: vec![(Anchor::MIN..Anchor::MAX, agent_content)],
+                        status: UndoBufferStatus::Created {
+                            had_existing_content: true,
+                        },
+                    });
+
                     self.project
                         .update(cx, |project, cx| project.save_buffer(buffer.clone(), cx))
                 } else {
@@ -654,7 +700,7 @@ impl ActionLog {
                 save
             }
             TrackedBufferStatus::Modified => {
-                buffer.update(cx, |buffer, cx| {
+                let edits_to_restore = buffer.update(cx, |buffer, cx| {
                     let mut buffer_row_ranges = buffer_ranges
                         .into_iter()
                         .map(|range| {
@@ -663,6 +709,7 @@ impl ActionLog {
                         .peekable();
 
                     let mut edits_to_revert = Vec::new();
+                    let mut edits_for_undo = Vec::new();
                     for edit in tracked_buffer.unreviewed_edits.edits() {
                         let new_range = tracked_buffer
                             .snapshot
@@ -699,12 +746,30 @@ impl ActionLog {
                                 .diff_base
                                 .chunks_in_range(old_range)
                                 .collect::<String>();
+
+                            // Capture the agent's text before we revert it (for undo)
+                            let new_range_offset =
+                                new_range.start.to_offset(buffer)..new_range.end.to_offset(buffer);
+                            let agent_text =
+                                buffer.text_for_range(new_range_offset).collect::<String>();
+                            edits_for_undo.push((new_range.clone(), agent_text));
+
                             edits_to_revert.push((new_range, old_text));
                         }
                     }
 
                     buffer.edit(edits_to_revert, None, cx);
+                    edits_for_undo
                 });
+
+                if !edits_to_restore.is_empty() {
+                    undo_info = Some(PerBufferUndo {
+                        buffer: buffer.downgrade(),
+                        edits_to_restore,
+                        status: UndoBufferStatus::Modified,
+                    });
+                }
+
                 self.project
                     .update(cx, |project, cx| project.save_buffer(buffer, cx))
             }
@@ -712,7 +777,7 @@ impl ActionLog {
         if let Some(telemetry) = telemetry {
             telemetry_report_rejected_edits(&telemetry, metrics);
         }
-        task
+        (task, undo_info)
     }
 
     pub fn keep_all_edits(
@@ -748,20 +813,95 @@ impl ActionLog {
         telemetry: Option<ActionLogTelemetry>,
         cx: &mut Context<Self>,
     ) -> Task<()> {
-        let futures = self.changed_buffers(cx).into_keys().map(|buffer| {
+        // Clear any previous undo state before starting a new reject operation
+        self.last_reject_undo = None;
+
+        let mut undo_buffers = Vec::new();
+        let mut futures = Vec::new();
+
+        for buffer in self.changed_buffers(cx).into_keys() {
             let buffer_ranges = vec![Anchor::min_max_range_for_buffer(
                 buffer.read(cx).remote_id(),
             )];
-            let reject = self.reject_edits_in_ranges(buffer, buffer_ranges, telemetry.clone(), cx);
+            let (reject_task, undo_info) =
+                self.reject_edits_in_ranges(buffer, buffer_ranges, telemetry.clone(), cx);
 
-            async move {
-                reject.await.log_err();
+            if let Some(undo) = undo_info {
+                undo_buffers.push(undo);
             }
-        });
+
+            futures.push(async move {
+                reject_task.await.log_err();
+            });
+        }
+
+        // Store the undo information if we have any
+        if !undo_buffers.is_empty() {
+            self.last_reject_undo = Some(LastRejectUndo {
+                buffers: undo_buffers,
+            });
+        }
 
         let task = futures::future::join_all(futures);
         cx.background_spawn(async move {
             task.await;
+        })
+    }
+
+    pub fn has_pending_undo(&self) -> bool {
+        self.last_reject_undo.is_some()
+    }
+
+    pub fn set_last_reject_undo(&mut self, undo: LastRejectUndo) {
+        self.last_reject_undo = Some(undo);
+    }
+
+    /// Undoes the most recent reject operation, restoring the rejected agent changes.
+    /// This is a best-effort operation: if buffers have been closed or modified externally,
+    /// those buffers will be skipped.
+    pub fn undo_last_reject(&mut self, cx: &mut Context<Self>) -> Task<()> {
+        let Some(undo) = self.last_reject_undo.take() else {
+            return Task::ready(());
+        };
+
+        let mut save_tasks = Vec::with_capacity(undo.buffers.len());
+
+        for per_buffer_undo in undo.buffers {
+            // Skip if the buffer entity has been deallocated
+            let Some(buffer) = per_buffer_undo.buffer.upgrade() else {
+                continue;
+            };
+
+            buffer.update(cx, |buffer, cx| {
+                let mut valid_edits = Vec::new();
+
+                for (anchor_range, text_to_restore) in per_buffer_undo.edits_to_restore {
+                    if anchor_range.start.buffer_id == Some(buffer.remote_id())
+                        && anchor_range.end.buffer_id == Some(buffer.remote_id())
+                    {
+                        valid_edits.push((anchor_range, text_to_restore));
+                    }
+                }
+
+                if !valid_edits.is_empty() {
+                    buffer.edit(valid_edits, None, cx);
+                }
+            });
+
+            if !self.tracked_buffers.contains_key(&buffer) {
+                self.buffer_edited(buffer.clone(), cx);
+            }
+
+            let save = self
+                .project
+                .update(cx, |project, cx| project.save_buffer(buffer, cx));
+            save_tasks.push(save);
+        }
+
+        cx.notify();
+
+        cx.background_spawn(async move {
+            futures::future::join_all(save_tasks).await;
         })
     }
 
@@ -1417,7 +1557,8 @@ mod tests {
 
         action_log
             .update(cx, |log, cx| {
-                log.reject_edits_in_ranges(buffer.clone(), vec![2..5], None, cx)
+                let (task, _) = log.reject_edits_in_ranges(buffer.clone(), vec![2..5], None, cx);
+                task
             })
             .await
             .unwrap();
@@ -1497,7 +1638,8 @@ mod tests {
 
         action_log
             .update(cx, |log, cx| {
-                log.reject_edits_in_ranges(buffer.clone(), vec![2..5], None, cx)
+                let (task, _) = log.reject_edits_in_ranges(buffer.clone(), vec![2..5], None, cx);
+                task
             })
             .await
             .unwrap();
@@ -1677,12 +1819,13 @@ mod tests {
         // If the rejected range doesn't overlap with any hunk, we ignore it.
         action_log
             .update(cx, |log, cx| {
-                log.reject_edits_in_ranges(
+                let (task, _) = log.reject_edits_in_ranges(
                     buffer.clone(),
                     vec![Point::new(4, 0)..Point::new(4, 0)],
                     None,
                     cx,
-                )
+                );
+                task
             })
             .await
             .unwrap();
@@ -1712,12 +1855,13 @@ mod tests {
 
         action_log
             .update(cx, |log, cx| {
-                log.reject_edits_in_ranges(
+                let (task, _) = log.reject_edits_in_ranges(
                     buffer.clone(),
                     vec![Point::new(0, 0)..Point::new(1, 0)],
                     None,
                     cx,
-                )
+                );
+                task
             })
             .await
             .unwrap();
@@ -1740,12 +1884,13 @@ mod tests {
 
         action_log
             .update(cx, |log, cx| {
-                log.reject_edits_in_ranges(
+                let (task, _) = log.reject_edits_in_ranges(
                     buffer.clone(),
                     vec![Point::new(4, 0)..Point::new(4, 0)],
                     None,
                     cx,
-                )
+                );
+                task
             })
             .await
             .unwrap();
@@ -1818,8 +1963,9 @@ mod tests {
             let range_2 = buffer.read(cx).anchor_before(Point::new(5, 0))
                 ..buffer.read(cx).anchor_before(Point::new(5, 3));
 
-            log.reject_edits_in_ranges(buffer.clone(), vec![range_1, range_2], None, cx)
-                .detach();
+            let (task, _) =
+                log.reject_edits_in_ranges(buffer.clone(), vec![range_1, range_2], None, cx);
+            task.detach();
             assert_eq!(
                 buffer.read_with(cx, |buffer, _| buffer.text()),
                 "abc\ndef\nghi\njkl\nmno"
@@ -1876,12 +2022,13 @@ mod tests {
 
         action_log
             .update(cx, |log, cx| {
-                log.reject_edits_in_ranges(
+                let (task, _) = log.reject_edits_in_ranges(
                     buffer.clone(),
                     vec![Point::new(0, 0)..Point::new(0, 0)],
                     None,
                     cx,
-                )
+                );
+                task
             })
             .await
             .unwrap();
@@ -1932,12 +2079,13 @@ mod tests {
 
         action_log
             .update(cx, |log, cx| {
-                log.reject_edits_in_ranges(
+                let (task, _) = log.reject_edits_in_ranges(
                     buffer.clone(),
                     vec![Point::new(0, 0)..Point::new(0, 11)],
                     None,
                     cx,
-                )
+                );
+                task
             })
             .await
             .unwrap();
@@ -1995,12 +2143,13 @@ mod tests {
         // Reject all
         action_log
             .update(cx, |log, cx| {
-                log.reject_edits_in_ranges(
+                let (task, _) = log.reject_edits_in_ranges(
                     buffer.clone(),
                     vec![Point::new(0, 0)..Point::new(100, 0)],
                     None,
                     cx,
-                )
+                );
+                task
             })
             .await
             .unwrap();
@@ -2068,14 +2217,15 @@ mod tests {
         // User rejects the hunk
         action_log
             .update(cx, |log, cx| {
-                log.reject_edits_in_ranges(
+                let (task, _) = log.reject_edits_in_ranges(
                     buffer.clone(),
                     vec![Anchor::min_max_range_for_buffer(
                         buffer.read(cx).remote_id(),
                     )],
                     None,
                     cx,
-                )
+                );
+                task
             })
             .await
             .unwrap();
@@ -2186,7 +2336,9 @@ mod tests {
                         .update(cx, |log, cx| {
                             let range = buffer.read(cx).random_byte_range(0, &mut rng);
                             log::info!("rejecting edits in range {:?}", range);
-                            log.reject_edits_in_ranges(buffer.clone(), vec![range], None, cx)
+                            let (task, _) =
+                                log.reject_edits_in_ranges(buffer.clone(), vec![range], None, cx);
+                            task
                         })
                         .await
                         .unwrap();
@@ -2403,7 +2555,86 @@ mod tests {
         assert_eq!(unreviewed_hunks(&action_log, cx), vec![]);
     }
 
-    #[derive(Debug, Clone, PartialEq, Eq)]
+    #[gpui::test]
+    async fn test_undo_last_reject(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/dir"),
+            json!({
+                "file1": "abc\ndef\nghi"
+            }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+        let action_log = cx.new(|_| ActionLog::new(project.clone()));
+        let file_path = project
+            .read_with(cx, |project, cx| project.find_project_path("dir/file1", cx))
+            .unwrap();
+
+        let buffer = project
+            .update(cx, |project, cx| project.open_buffer(file_path, cx))
+            .await
+            .unwrap();
+
+        // Track the buffer and make an agent edit
+        cx.update(|cx| {
+            action_log.update(cx, |log, cx| log.buffer_read(buffer.clone(), cx));
+            buffer.update(cx, |buffer, cx| {
+                buffer
+                    .edit(
+                        [(Point::new(1, 0)..Point::new(1, 3), "AGENT_EDIT")],
+                        None,
+                        cx,
+                    )
+                    .unwrap()
+            });
+            action_log.update(cx, |log, cx| log.buffer_edited(buffer.clone(), cx));
+        });
+        cx.run_until_parked();
+
+        // Verify the agent edit is there
+        assert_eq!(
+            buffer.read_with(cx, |buffer, _| buffer.text()),
+            "abc\nAGENT_EDIT\nghi"
+        );
+        assert!(!unreviewed_hunks(&action_log, cx).is_empty());
+
+        // Reject all edits
+        action_log
+            .update(cx, |log, cx| log.reject_all_edits(None, cx))
+            .await;
+        cx.run_until_parked();
+
+        // Verify the buffer is back to original
+        assert_eq!(
+            buffer.read_with(cx, |buffer, _| buffer.text()),
+            "abc\ndef\nghi"
+        );
+        assert!(unreviewed_hunks(&action_log, cx).is_empty());
+
+        // Verify undo state is available
+        assert!(action_log.read_with(cx, |log, _| log.has_pending_undo()));
+
+        // Undo the reject
+        action_log
+            .update(cx, |log, cx| log.undo_last_reject(cx))
+            .await;
+
+        cx.run_until_parked();
+
+        // Verify the agent edit is restored
+        assert_eq!(
+            buffer.read_with(cx, |buffer, _| buffer.text()),
+            "abc\nAGENT_EDIT\nghi"
+        );
+
+        // Verify undo state is cleared
+        assert!(!action_log.read_with(cx, |log, _| log.has_pending_undo()));
+    }
+
+    #[derive(Debug, PartialEq)]
     struct HunkStatus {
         range: Range<Point>,
         diff_status: DiffHunkStatusKind,

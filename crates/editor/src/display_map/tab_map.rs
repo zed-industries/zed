@@ -5,7 +5,7 @@ use super::{
 
 use language::Point;
 use multi_buffer::MultiBufferSnapshot;
-use std::{cmp, mem, num::NonZeroU32, ops::Range};
+use std::{cmp, num::NonZeroU32, ops::Range};
 use sum_tree::Bias;
 
 const MAX_EXPANSION_COLUMN: u32 = 256;
@@ -77,9 +77,10 @@ impl TabMap {
                     false,
                     Highlights::default(),
                 ) {
-                    // todo(performance use tabs bitmask)
-                    for (ix, _) in chunk.text.match_indices('\t') {
-                        let offset_from_edit = offset_from_edit + (ix as u32);
+                    let mut remaining_tabs = chunk.tabs;
+                    while remaining_tabs != 0 {
+                        let ix = remaining_tabs.trailing_zeros();
+                        let offset_from_edit = offset_from_edit + ix;
                         if first_tab_offset.is_none() {
                             first_tab_offset = Some(offset_from_edit);
                         }
@@ -93,6 +94,8 @@ impl TabMap {
                         } else if !was_expanded && !is_expanded {
                             break 'outer;
                         }
+
+                        remaining_tabs &= remaining_tabs - 1;
                     }
 
                     offset_from_edit += chunk.text.len() as u32;
@@ -277,6 +280,7 @@ impl TabSnapshot {
             chunk: Chunk {
                 text: unsafe { std::str::from_utf8_unchecked(&SPACES[..to_next_stop as usize]) },
                 is_tab: true,
+                chars: 1u128.unbounded_shl(to_next_stop) - 1,
                 ..Default::default()
             },
             inside_leading_tab: to_next_stop > 0,
@@ -600,90 +604,110 @@ impl<'a> Iterator for TabChunks<'a> {
 
     #[ztracing::instrument(skip_all)]
     fn next(&mut self) -> Option<Self::Item> {
-        if self.chunk.text.is_empty() {
-            if let Some(chunk) = self.fold_chunks.next() {
-                self.chunk = chunk;
-                if self.inside_leading_tab {
-                    self.chunk.text = &self.chunk.text[1..];
-                    self.inside_leading_tab = false;
-                    self.input_column += 1;
-                }
+        while self.chunk.text.is_empty() {
+            let chunk = self.fold_chunks.next()?;
+            self.chunk = chunk;
+            if self.inside_leading_tab {
+                self.chunk.text = &self.chunk.text[1..];
+                self.chunk.tabs >>= 1;
+                self.chunk.chars >>= 1;
+                self.chunk.newlines >>= 1;
+                self.inside_leading_tab = false;
+                self.input_column += 1;
+            }
+        }
+
+        let first_tab_ix = if self.chunk.tabs != 0 {
+            self.chunk.tabs.trailing_zeros() as usize
+        } else {
+            self.chunk.text.len()
+        };
+
+        if first_tab_ix == 0 {
+            self.chunk.text = &self.chunk.text[1..];
+            self.chunk.tabs >>= 1;
+            self.chunk.chars >>= 1;
+            self.chunk.newlines >>= 1;
+
+            let tab_size = if self.input_column < self.max_expansion_column {
+                self.tab_size.get()
             } else {
-                return None;
-            }
+                1
+            };
+            let mut len = tab_size - self.column % tab_size;
+            let next_output_position = cmp::min(
+                self.output_position + Point::new(0, len),
+                self.max_output_position,
+            );
+            len = next_output_position.column - self.output_position.column;
+            self.column += len;
+            self.input_column += 1;
+            self.output_position = next_output_position;
+
+            return Some(Chunk {
+                text: unsafe { std::str::from_utf8_unchecked(&SPACES[..len as usize]) },
+                is_tab: true,
+                chars: 1u128.unbounded_shl(len) - 1,
+                tabs: 0,
+                newlines: 0,
+                ..self.chunk.clone()
+            });
         }
 
-        //todo(improve performance by using tab cursor)
-        for (ix, c) in self.chunk.text.char_indices() {
-            match c {
-                '\t' if ix > 0 => {
-                    let (prefix, suffix) = self.chunk.text.split_at(ix);
+        let prefix_len = first_tab_ix;
+        let (prefix, suffix) = self.chunk.text.split_at(prefix_len);
 
-                    let mask = 1u128.unbounded_shl(ix as u32).wrapping_sub(1);
-                    let chars = self.chunk.chars & mask;
-                    let tabs = self.chunk.tabs & mask;
-                    self.chunk.tabs = self.chunk.tabs.unbounded_shr(ix as u32);
-                    self.chunk.chars = self.chunk.chars.unbounded_shr(ix as u32);
-                    self.chunk.text = suffix;
-                    return Some(Chunk {
-                        text: prefix,
-                        chars,
-                        tabs,
-                        ..self.chunk.clone()
-                    });
-                }
-                '\t' => {
-                    self.chunk.text = &self.chunk.text[1..];
-                    self.chunk.tabs >>= 1;
-                    self.chunk.chars >>= 1;
-                    let tab_size = if self.input_column < self.max_expansion_column {
-                        self.tab_size.get()
-                    } else {
-                        1
-                    };
-                    let mut len = tab_size - self.column % tab_size;
-                    let next_output_position = cmp::min(
-                        self.output_position + Point::new(0, len),
-                        self.max_output_position,
-                    );
-                    len = next_output_position.column - self.output_position.column;
-                    self.column += len;
-                    self.input_column += 1;
-                    self.output_position = next_output_position;
-                    return Some(Chunk {
-                        text: unsafe { std::str::from_utf8_unchecked(&SPACES[..len as usize]) },
-                        is_tab: true,
-                        chars: 1u128.unbounded_shl(len) - 1,
-                        tabs: 0,
-                        ..self.chunk.clone()
-                    });
-                }
-                '\n' => {
-                    self.column = 0;
-                    self.input_column = 0;
-                    self.output_position += Point::new(1, 0);
-                }
-                _ => {
-                    self.column += 1;
-                    if !self.inside_leading_tab {
-                        self.input_column += c.len_utf8() as u32;
-                    }
-                    self.output_position.column += c.len_utf8() as u32;
-                }
+        let mask = 1u128.unbounded_shl(prefix_len as u32).wrapping_sub(1);
+        let prefix_chars = self.chunk.chars & mask;
+        let prefix_tabs = self.chunk.tabs & mask;
+        let prefix_newlines = self.chunk.newlines & mask;
+
+        self.chunk.text = suffix;
+        self.chunk.tabs = self.chunk.tabs.unbounded_shr(prefix_len as u32);
+        self.chunk.chars = self.chunk.chars.unbounded_shr(prefix_len as u32);
+        self.chunk.newlines = self.chunk.newlines.unbounded_shr(prefix_len as u32);
+
+        let newline_count = prefix_newlines.count_ones();
+        if newline_count > 0 {
+            let last_newline_bit = 128 - prefix_newlines.leading_zeros();
+            let chars_after_last_newline =
+                prefix_chars.unbounded_shr(last_newline_bit).count_ones();
+            let bytes_after_last_newline = prefix_len as u32 - last_newline_bit;
+
+            self.column = chars_after_last_newline;
+            self.input_column = bytes_after_last_newline;
+            self.output_position = Point::new(
+                self.output_position.row + newline_count,
+                bytes_after_last_newline,
+            );
+        } else {
+            let char_count = prefix_chars.count_ones();
+            self.column += char_count;
+            if !self.inside_leading_tab {
+                self.input_column += prefix_len as u32;
             }
+            self.output_position.column += prefix_len as u32;
         }
 
-        Some(mem::take(&mut self.chunk))
+        Some(Chunk {
+            text: prefix,
+            chars: prefix_chars,
+            tabs: prefix_tabs,
+            newlines: prefix_newlines,
+            ..self.chunk.clone()
+        })
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::mem;
+
     use super::*;
     use crate::{
         MultiBuffer,
         display_map::{
-            fold_map::{FoldMap, FoldOffset},
+            fold_map::{FoldMap, FoldOffset, FoldPlaceholder},
             inlay_map::InlayMap,
         },
     };
@@ -1061,6 +1085,44 @@ mod tests {
             }
             chunks
         }
+    }
+
+    #[gpui::test]
+    fn test_empty_chunk_after_leading_tab_trim(cx: &mut gpui::App) {
+        // We fold "hello" (offsets 1..6) so the fold map creates a
+        // transform boundary at offset 1, producing a 1-byte fold chunk
+        // for the tab.
+        let text = "\thello";
+        let buffer = MultiBuffer::build_simple(text, cx);
+        let buffer_snapshot = buffer.read(cx).snapshot(cx);
+        let (_, inlay_snapshot) = InlayMap::new(buffer_snapshot);
+        let mut fold_map = FoldMap::new(inlay_snapshot.clone()).0;
+
+        let (mut writer, _, _) = fold_map.write(inlay_snapshot.clone(), vec![]);
+        writer.fold(vec![(
+            MultiBufferOffset(1)..MultiBufferOffset(6),
+            FoldPlaceholder::test(),
+        )]);
+        let (fold_snapshot, _) = fold_map.read(inlay_snapshot, vec![]);
+
+        let tab_size = NonZeroU32::new(4).unwrap();
+        let (_, tab_snapshot) = TabMap::new(fold_snapshot, tab_size);
+
+        // The tab at column 0 expands to 4 spaces (columns 0‥4).
+        // Seek starting at column 2 (middle of that tab) so that
+        // `inside_leading_tab = true` and `to_next_stop = 2`.
+        // Set the end just past the tab expansion so the iterator must
+        // process the tab byte from the fold chunk.
+        let max = tab_snapshot.max_point();
+        let start = TabPoint::new(0, 2);
+        let end = max;
+
+        // This should not panic.
+        let result: String = tab_snapshot
+            .chunks(start..end, false, Highlights::default())
+            .map(|c| c.text)
+            .collect();
+        assert!(!result.is_empty());
     }
 
     #[gpui::test(iterations = 100)]

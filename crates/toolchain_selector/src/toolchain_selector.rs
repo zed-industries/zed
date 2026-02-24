@@ -110,7 +110,14 @@ impl AddToolchainState {
             .context("Could not find worktree")?;
         Ok(cx.new(|cx| {
             let (lister, rx) = Self::create_path_browser_delegate(project.clone(), cx);
-            let picker = cx.new(|cx| Picker::uniform_list(lister, window, cx));
+            let path_style = project.read(cx).path_style(cx);
+            let picker = cx.new(|cx| {
+                let picker = Picker::uniform_list(lister, window, cx);
+                let mut worktree_root = worktree_root_path.to_string_lossy().into_owned();
+                worktree_root.push_str(path_style.primary_separator());
+                picker.set_query(&worktree_root, window, cx);
+                picker
+            });
 
             Self {
                 state: AddState::Path {

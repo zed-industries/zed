@@ -26,14 +26,12 @@ jobs:
     steps:
     - name: after_release::rebuild_releases_page::refresh_cloud_releases
       run: curl -fX POST https://cloud.zed.dev/releases/refresh?expect_tag=${{ github.event.release.tag_name || inputs.tag_name }}
-      shell: bash -euxo pipefail {0}
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       with:
         clean: false
     - name: after_release::rebuild_releases_page::redeploy_zed_dev
       run: ./script/redeploy-vercel
-      shell: bash -euxo pipefail {0}
       env:
         VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
   post_to_discord:
@@ -52,7 +50,6 @@ jobs:
         fi
 
         echo "URL=$URL" >> "$GITHUB_OUTPUT"
-      shell: bash -euxo pipefail {0}
     - id: get-content
       name: after_release::post_to_discord::get_content
       uses: 2428392/gh-truncate-string-action@b3ff790d21cf42af3ca7579146eedb93c8fb0757
@@ -137,6 +134,8 @@ jobs:
       run: |
         curl -X POST -H 'Content-type: application/json'\
          --data '{"text":"❌ ${{ github.workflow }} failed: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"}' "$SLACK_WEBHOOK"
-      shell: bash -euxo pipefail {0}
       env:
         SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK_WORKFLOW_FAILURES }}
+defaults:
+  run:
+    shell: bash -euxo pipefail {0}

@@ -98,10 +98,27 @@
        (statement_block) @nested
      ])))
 
+; Inline type imports: import { type Foo } or import { type Foo as Bar }
 (import_specifier
   "type"
   name: (identifier) @type
+)
+
+(import_specifier
+  "type"
   alias: (identifier) @type
+)
+
+; Full type imports: import type { Foo } or import type { Foo as Bar }
+(import_statement
+  "type"
+  (import_clause
+    (named_imports
+      (import_specifier
+        name: (identifier) @type
+      )
+    )
+  )
 )
 
 (import_statement
@@ -109,7 +126,6 @@
   (import_clause
     (named_imports
       (import_specifier
-        name: (identifier) @type
         alias: (identifier) @type
       )
     )

@@ -1,10 +1,10 @@
 use crate::{
-    AppState, CollaboratorId, FollowerState, Pane, Workspace, WorkspaceSettings,
+    AnyActiveCall, AppState, CollaboratorId, FollowerState, Pane, ParticipantLocation, Workspace,
+    WorkspaceSettings,
     pane_group::element::pane_axis,
     workspace_settings::{PaneSplitDirectionHorizontal, PaneSplitDirectionVertical},
 };
 use anyhow::Result;
-use call::{ActiveCall, ParticipantLocation};
 use collections::HashMap;
 use gpui::{
     Along, AnyView, AnyWeakView, Axis, Bounds, Entity, Hsla, IntoElement, MouseButton, Pixels,
@@ -206,7 +206,7 @@ impl PaneGroup {
     }
 
     pub fn mark_positions(&mut self, cx: &mut App) {
-        self.root.mark_positions(self.is_center, true, true, cx);
+        self.root.mark_positions(self.is_center, cx);
     }
 
     pub fn render(
@@ -278,37 +278,15 @@ pub enum Member {
 }
 
 impl Member {
-    pub fn mark_positions(
-        &mut self,
-        in_center_group: bool,
-        is_upper_left: bool,
-        is_upper_right: bool,
-        cx: &mut App,
-    ) {
+    pub fn mark_positions(&mut self, in_center_group: bool, cx: &mut App) {
         match self {
             Member::Axis(pane_axis) => {
-                let len = pane_axis.members.len();
-                for (idx, member) in pane_axis.members.iter_mut().enumerate() {
-                    let member_upper_left = match pane_axis.axis {
-                        Axis::Vertical => is_upper_left && idx == 0,
-                        Axis::Horizontal => is_upper_left && idx == 0,
-                    };
-                    let member_upper_right = match pane_axis.axis {
-                        Axis::Vertical => is_upper_right && idx == 0,
-                        Axis::Horizontal => is_upper_right && idx == len - 1,
-                    };
-                    member.mark_positions(
-                        in_center_group,
-                        member_upper_left,
-                        member_upper_right,
-                        cx,
-                    );
+                for member in pane_axis.members.iter_mut() {
+                    member.mark_positions(in_center_group, cx);
                 }
             }
             Member::Pane(entity) => entity.update(cx, |pane, _| {
                 pane.in_center_group = in_center_group;
-                pane.is_upper_left = is_upper_left;
-                pane.is_upper_right = is_upper_right;
             }),
         }
     }
@@ -318,7 +296,7 @@ impl Member {
 pub struct PaneRenderContext<'a> {
     pub project: &'a Entity<Project>,
     pub follower_states: &'a HashMap<CollaboratorId, FollowerState>,
-    pub active_call: Option<&'a Entity<ActiveCall>>,
+    pub active_call: Option<&'a dyn AnyActiveCall>,
     pub active_pane: &'a Entity<Pane>,
     pub app_state: &'a Arc<AppState>,
     pub workspace: &'a WeakEntity<Workspace>,
@@ -380,10 +358,11 @@ impl PaneLeaderDecorator for PaneRenderContext<'_> {
         let status_box;
         match leader_id {
             CollaboratorId::PeerId(peer_id) => {
-                let Some(leader) = self.active_call.as_ref().and_then(|call| {
-                    let room = call.read(cx).room()?.read(cx);
-                    room.remote_participant_for_peer_id(peer_id)
-                }) else {
+                let Some(leader) = self
+                    .active_call
+                    .as_ref()
+                    .and_then(|call| call.remote_participant_for_peer_id(peer_id, cx))
+                else {
                     return LeaderDecoration::default();
                 };
 
