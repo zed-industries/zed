@@ -33037,3 +33037,107 @@ comment */ˇ»;"#},
         assert_text_with_selections(editor, indoc! {r#"let arr = [«1, 2, 3]ˇ»;"#}, cx);
     });
 }
+
+// --- file_path_nav tests ---
+
+/// Opens a singleton editor for a real project file and verifies that
+/// `breadcrumb_prefix` returns `Some(...)` when `file_path_nav` is enabled.
+#[gpui::test]
+async fn test_file_path_nav_prefix_shown_for_file(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/project"),
+        json!({
+            "src": {
+                "lib.rs": "pub fn hello() {}",
+            }
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/project/src/lib.rs"), cx)
+        })
+        .await
+        .unwrap();
+
+    let (editor, cx) = cx.add_window_view(|window, cx| {
+        let multibuffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+        build_editor_with_project(project.clone(), multibuffer, window, cx)
+    });
+
+    // file_path_nav defaults to true — prefix should be present.
+    editor.update_in(cx, |editor, window, cx| {
+        let prefix = editor.breadcrumb_prefix(window, cx);
+        assert!(prefix.is_some(), "breadcrumb_prefix should return Some when file_path_nav is enabled");
+    });
+}
+
+/// Verifies that `breadcrumb_prefix` returns `None` when `file_path_nav` is
+/// disabled, preserving the old single-click-opens-outline behavior.
+#[gpui::test]
+async fn test_file_path_nav_prefix_hidden_when_disabled(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/project"),
+        json!({
+            "main.rs": "fn main() {}",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/project/main.rs"), cx)
+        })
+        .await
+        .unwrap();
+
+    let (editor, cx) = cx.add_window_view(|window, cx| {
+        let multibuffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+        build_editor_with_project(project.clone(), multibuffer, window, cx)
+    });
+
+    // Disable file_path_nav.
+    update_test_editor_settings(cx, &|settings| {
+        settings.toolbar = Some(settings::ToolbarContent {
+            file_path_nav: Some(false),
+            ..Default::default()
+        });
+    });
+
+    editor.update_in(cx, |editor, window, cx| {
+        let prefix = editor.breadcrumb_prefix(window, cx);
+        assert!(prefix.is_none(), "breadcrumb_prefix should return None when file_path_nav is disabled");
+    });
+}
+
+/// Verifies that `breadcrumb_prefix` returns `None` for an untitled buffer
+/// (one with no associated project file), regardless of the setting.
+#[gpui::test]
+async fn test_file_path_nav_prefix_none_for_untitled(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let (editor, cx) = cx.add_window_view(|window, cx| {
+        let buffer = cx.new(|cx| language::Buffer::local("hello", cx));
+        let multibuffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+        build_editor(multibuffer, window, cx)
+    });
+
+    editor.update_in(cx, |editor, window, cx| {
+        let prefix = editor.breadcrumb_prefix(window, cx);
+        assert!(
+            prefix.is_none(),
+            "breadcrumb_prefix should return None for a buffer with no associated file"
+        );
+    });
+}

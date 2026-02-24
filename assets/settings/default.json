@@ -436,6 +436,9 @@
     "agent_review": true,
     // Whether to show code action buttons in the editor toolbar.
     "code_actions": false,
+    // Whether to show clickable file path segments in the breadcrumb toolbar for
+    // incremental project file navigation.
+    "file_path_nav": true,
   },
   // Whether to allow windows to tab together based on the user’s tabbing preference (macOS only).
   "use_system_window_tabs": false,

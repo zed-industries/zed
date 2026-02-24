@@ -986,6 +986,50 @@ impl Item for Editor {
         }
     }
 
+    fn breadcrumb_prefix(
+        &self,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<gpui::AnyElement> {
+        use crate::file_path_nav::FilePathNav;
+
+        if !self.show_breadcrumbs || !EditorSettings::get_global(cx).toolbar.file_path_nav {
+            return None;
+        }
+        if !self.buffer.read(cx).is_singleton() {
+            return None;
+        }
+
+        let buffer = self.buffer.read(cx).as_singleton()?;
+        let file = project::File::from_dyn(buffer.read(cx).file())?;
+        let worktree_id = file.worktree_id(cx);
+        let path = file.path.clone();
+
+        let project = self.project.as_ref()?.downgrade();
+        let workspace = self.workspace.as_ref().map(|w| w.0.clone());
+
+        let show_root = project
+            .upgrade()
+            .map(|p| p.read(cx).visible_worktrees(cx).count() > 1)
+            .unwrap_or(false);
+        let root_name = if show_root {
+            project
+                .upgrade()
+                .and_then(|p| {
+                    p.read(cx)
+                        .worktree_for_id(worktree_id, cx)
+                        .map(|wt| SharedString::from(wt.read(cx).root_name_str().to_owned()))
+                })
+        } else {
+            None
+        };
+
+        Some(
+            FilePathNav::new(worktree_id, path, show_root, root_name, project, workspace)
+                .into_any_element(),
+        )
+    }
+
     fn added_to_workspace(
         &mut self,
         workspace: &mut Workspace,
