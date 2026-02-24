@@ -102,6 +102,23 @@ function generateAlias(shell, scriptDir) {
   }
 }
 
+function aliasBlockRegex(shell) {
+  switch (shell) {
+    case "zsh":
+    case "bash":
+      // Comment line + single-line cargo() { ... } function
+      return /\n?# Zed cargo timing wrapper\ncargo\(\) \{[^\n]*\}\n/;
+    case "fish":
+      // Comment line + multi-line function cargo...end block
+      return /\n?# Zed cargo timing wrapper\nfunction cargo\n[\s\S]*?\nend\n/;
+    case "powershell":
+      // Comment line + multi-line function cargo {...} block
+      return /\n?# Zed cargo timing wrapper\nfunction cargo \{[\s\S]*?\n\}\n/;
+    default:
+      return null;
+  }
+}
+
 function initShellAlias() {
   const scriptDir = __dirname;
   const shell = detectShell();
@@ -115,12 +132,19 @@ function initShellAlias() {
     return;
   }
 
-  // Check if alias already exists
+  // Check if alias already exists; if so, replace it in-place
   if (fs.existsSync(configPath)) {
     const content = fs.readFileSync(configPath, "utf-8");
     if (content.includes("Zed cargo timing wrapper")) {
-      console.log(`Alias already exists in ${configPath}`);
-      console.log("To update, remove the existing alias and run --init again.");
+      const blockRegex = aliasBlockRegex(shell);
+      const updated = blockRegex ? content.replace(blockRegex, "") : content;
+      fs.writeFileSync(configPath, updated + alias);
+      console.log(`Updated cargo timing alias in ${configPath}`);
+      if (shell === "powershell") {
+        console.log(`\nRestart PowerShell or run: . "${configPath}"`);
+      } else {
+        console.log(`\nRestart your shell or run: source ${configPath}`);
+      }
       return;
     }
   }
