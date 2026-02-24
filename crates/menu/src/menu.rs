@@ -30,6 +30,10 @@ actions!(
         SelectChild,
         /// Exits a submenu (navigates to parent menu).
         SelectParent,
+        /// Moves to the next related menu target (for example, next breadcrumb segment).
+        SelectNextTarget,
+        /// Moves to the previous related menu target (for example, previous breadcrumb segment).
+        SelectPreviousTarget,
         /// Restarts the menu from the beginning.
         Restart,
         EndSlot,
