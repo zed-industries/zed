@@ -1,4 +1,5 @@
 use editor::{Editor, EditorEvent};
+use feature_flags::{FeatureFlag, FeatureFlagAppExt as _};
 use gpui::{
     AppContext, Entity, EventEmitter, FocusHandle, Focusable, ListAlignment, Task, actions,
 };
@@ -20,6 +21,12 @@ mod table_data_engine;
 mod types;
 
 actions!(csv, [OpenPreview]);
+
+pub struct TabularDataPreviewFeatureFlag;
+
+impl FeatureFlag for TabularDataPreviewFeatureFlag {
+    const NAME: &'static str = "tabular-data-preview";
+}
 
 pub struct CsvPreviewView {
     pub(crate) engine: TableDataEngine,
@@ -51,8 +58,11 @@ impl CsvPreviewView {
     pub fn register(
         workspace: &mut Workspace,
         _window: &mut Window,
-        _cx: &mut Context<'_, Workspace>,
+        cx: &mut Context<'_, Workspace>,
     ) {
+        if !cx.has_flag::<TabularDataPreviewFeatureFlag>() {
+            return;
+        }
         workspace.register_action(|workspace, _: &OpenPreview, window, cx| {
             if let Some(editor) = workspace
                 .active_item(cx)
@@ -86,8 +96,9 @@ impl CsvPreviewView {
         });
 
         cx.new(|cx| {
-            let subscription =
-                cx.subscribe(editor, |this: &mut CsvPreviewView, _editor, event: &EditorEvent, cx| {
+            let subscription = cx.subscribe(
+                editor,
+                |this: &mut CsvPreviewView, _editor, event: &EditorEvent, cx| {
                     match event {
                         EditorEvent::Edited { .. }
                         | EditorEvent::DirtyChanged
@@ -96,7 +107,8 @@ impl CsvPreviewView {
                         }
                         _ => {}
                     };
-                });
+                },
+            );
 
             let mut view = CsvPreviewView {
                 focus_handle: cx.focus_handle(),
@@ -108,11 +120,7 @@ impl CsvPreviewView {
                 column_widths: ColumnWidths::new(cx, 1),
                 parsing_task: None,
                 performance_metrics: PerformanceMetrics::default(),
-                list_state: gpui::ListState::new(
-                    contents.rows.len(),
-                    ListAlignment::Top,
-                    px(1.),
-                ),
+                list_state: gpui::ListState::new(contents.rows.len(), ListAlignment::Top, px(1.)),
                 settings: CsvPreviewSettings::default(),
                 last_parse_end_time: None,
                 engine: TableDataEngine::default(),
@@ -168,7 +176,6 @@ impl CsvPreviewView {
             })
             .unwrap_or(false)
     }
-
 }
 
 impl Focusable for CsvPreviewView {

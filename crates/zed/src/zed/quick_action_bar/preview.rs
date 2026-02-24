@@ -1,4 +1,5 @@
-use csv_preview::{CsvPreviewView, OpenPreview as CsvOpenPreview};
+use csv_preview::{CsvPreviewView, OpenPreview as CsvOpenPreview, TabularDataPreviewFeatureFlag};
+use feature_flags::FeatureFlagAppExt as _;
 use gpui::{AnyElement, Modifiers, WeakEntity};
 use markdown_preview::{
     OpenPreview as MarkdownOpenPreview, OpenPreviewToTheSide as MarkdownOpenPreviewToTheSide,
@@ -37,7 +38,8 @@ impl QuickActionBar {
                 } else if SvgPreviewView::resolve_active_item_as_svg_buffer(workspace, cx).is_some()
                 {
                     preview_type = Some(PreviewType::Svg);
-                } else if CsvPreviewView::resolve_active_item_as_csv_editor(workspace, cx).is_some()
+                } else if cx.has_flag::<TabularDataPreviewFeatureFlag>()
+                    && CsvPreviewView::resolve_active_item_as_csv_editor(workspace, cx).is_some()
                 {
                     preview_type = Some(PreviewType::Csv);
                 }
