@@ -35,7 +35,7 @@ use tests::{active_debug_session_panel, init_test, init_test_workspace};
 use util::{path, rel_path::rel_path};
 use workspace::item::SaveOptions;
 use workspace::pane_group::SplitDirection;
-use workspace::{Item, dock::Panel};
+use workspace::{Item, dock::Panel, move_active_item};
 
 #[gpui::test]
 async fn test_basic_show_debug_panel(executor: BackgroundExecutor, cx: &mut TestAppContext) {
@@ -2196,6 +2196,140 @@ async fn test_breakpoint_jumps_only_in_proper_split_view(
             assert_eq!(
                 total_active_debug_lines, 1,
                 "There should be exactly one active debug line across all editors after second stop"
+            );
+        })
+        .unwrap();
+
+    // === New case: Move the debug pane (pane B) active item to a new pane C ===
+    // This simulates a user dragging the tab with the active debug line to a new split.
+    // The debugger should track that the debug line moved to pane C and use pane C
+    // for subsequent debug stops.
+
+    // Split pane B to create pane C
+    let pane_c = workspace
+        .update(cx, |multi, window, cx| {
+            multi.workspace().update(cx, |workspace, cx| {
+                workspace.split_pane(pane_b.clone(), SplitDirection::Right, window, cx)
+            })
+        })
+        .unwrap();
+
+    cx.run_until_parked();
+
+    // Move the active item (second.rs with debug line) from pane B to pane C
+    workspace
+        .update(cx, |_multi, window, cx| {
+            move_active_item(&pane_b, &pane_c, true, false, window, cx);
+        })
+        .unwrap();
+
+    cx.run_until_parked();
+
+    // Verify pane C now has second.rs as active item
+    workspace
+        .read_with(cx, |_multi, cx| {
+            let pane_c_active = pane_c.read(cx).active_item().unwrap();
+            let pane_c_editor = pane_c_active.to_any_view().downcast::<Editor>().unwrap();
+            let pane_c_path = pane_c_editor.read(cx).project_path(cx).unwrap();
+            assert_eq!(
+                pane_c_path.path.file_name().unwrap(),
+                "second.rs",
+                "Pane C should have second.rs after moving it from pane B",
+            );
+        })
+        .unwrap();
+
+    // Third breakpoint stop: back on main.rs line 2.
+    // The debug line should appear in pane C because that's where the debug line
+    // was moved to. The debugger should track pane moves.
+    client.on_request::<StackTrace, _>(move |_, args| {
+        assert_eq!(args.thread_id, 1);
+
+        Ok(dap::StackTraceResponse {
+            stack_frames: vec![dap::StackFrame {
+                id: 3,
+                name: "frame 3".into(),
+                source: Some(dap::Source {
+                    name: Some("main.rs".into()),
+                    path: Some(path!("/project/main.rs").into()),
+                    source_reference: None,
+                    presentation_hint: None,
+                    origin: None,
+                    sources: None,
+                    adapter_data: None,
+                    checksums: None,
+                }),
+                line: 2,
+                column: 0,
+                end_line: None,
+                end_column: None,
+                can_restart: None,
+                instruction_pointer_reference: None,
+                module_id: None,
+                presentation_hint: None,
+            }],
+            total_frames: None,
+        })
+    });
+
+    client
+        .fake_event(dap::messages::Events::Stopped(dap::StoppedEvent {
+            reason: dap::StoppedEventReason::Breakpoint,
+            description: None,
+            thread_id: Some(1),
+            preserve_focus_hint: None,
+            text: None,
+            all_threads_stopped: None,
+            hit_breakpoint_ids: None,
+        }))
+        .await;
+
+    cx.run_until_parked();
+
+    // Pane C should now have main.rs as the active tab with the debug line,
+    // because pane C is where the debug line was moved to from pane B.
+    workspace
+        .read_with(cx, |_multi, cx| {
+            let pane_c_active = pane_c.read(cx).active_item().unwrap();
+            let pane_c_editor = pane_c_active.to_any_view().downcast::<Editor>().unwrap();
+            let pane_c_path = pane_c_editor.read(cx).project_path(cx).unwrap();
+            assert_eq!(
+                pane_c_path.path.file_name().unwrap(),
+                "main.rs",
+                "Pane C should have switched to main.rs because it is now the persistent debug pane \
+                 (the debug line was moved here from pane B)",
+            );
+
+            let active_debug_lines: Vec<_> = pane_c_editor
+                .read(cx)
+                .highlighted_rows::<ActiveDebugLine>()
+                .collect();
+
+            assert_eq!(
+                active_debug_lines.len(),
+                1,
+                "Pane C's main.rs editor should have the active debug line"
+            );
+        })
+        .unwrap();
+
+    // There should still be exactly one active debug line across all editors
+    workspace
+        .read_with(cx, |_multi, cx| {
+            let mut total_active_debug_lines = 0;
+            for pane in [&pane_a, &pane_b, &pane_c] {
+                for item in pane.read(cx).items() {
+                    if let Some(editor) = item.to_any_view().downcast::<Editor>().ok() {
+                        total_active_debug_lines += editor
+                            .read(cx)
+                            .highlighted_rows::<ActiveDebugLine>()
+                            .count();
+                    }
+                }
+            }
+            assert_eq!(
+                total_active_debug_lines, 1,
+                "There should be exactly one active debug line across all editors after third stop"
             );
         })
         .unwrap();

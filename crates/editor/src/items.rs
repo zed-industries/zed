@@ -1,7 +1,7 @@
 use crate::{
-    Anchor, Autoscroll, BufferSerialization, Capability, Editor, EditorEvent, EditorSettings,
-    ExcerptId, ExcerptRange, FormatTarget, MultiBuffer, MultiBufferSnapshot, NavigationData,
-    ReportEditorEvent, SelectionEffects, ToPoint as _,
+    ActiveDebugLine, Anchor, Autoscroll, BufferSerialization, Capability, Editor, EditorEvent,
+    EditorSettings, ExcerptId, ExcerptRange, FormatTarget, MultiBuffer, MultiBufferSnapshot,
+    NavigationData, ReportEditorEvent, SelectionEffects, ToPoint as _,
     display_map::HighlightKey,
     editor_settings::SeedQuerySetting,
     persistence::{DB, SerializedEditor},
@@ -1001,6 +1001,19 @@ impl Item for Editor {
                 }
             })
             .detach();
+        }
+    }
+
+    fn pane_changed(&mut self, new_pane_id: EntityId, cx: &mut Context<Self>) {
+        if self
+            .highlighted_rows
+            .get(&TypeId::of::<ActiveDebugLine>())
+            .is_some_and(|lines| !lines.is_empty())
+            && let Some(breakpoint_store) = self.breakpoint_store.as_ref()
+        {
+            breakpoint_store.update(cx, |store, _cx| {
+                store.set_active_debug_pane_id(new_pane_id);
+            });
         }
     }
 

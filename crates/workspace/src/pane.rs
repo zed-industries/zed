@@ -51,16 +51,6 @@ use ui::{
 };
 use util::{ResultExt, debug_panic, maybe, paths::PathStyle, truncate_and_remove_front};
 
-/// A unique identifier for a pane, wrapping its `EntityId`.
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
-pub struct PaneId(EntityId);
-
-impl PaneId {
-    pub fn as_entity_id(self) -> EntityId {
-        self.0
-    }
-}
-
 /// A selected entry in e.g. project panel.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct SelectedEntry {
@@ -373,7 +363,6 @@ impl fmt::Debug for Event {
 /// responsible for managing item tabs, focus and zoom states and drag and drop features.
 /// Can be split, see `PaneGroup` for more details.
 pub struct Pane {
-    pane_id: PaneId,
     alternate_file_items: (
         Option<Box<dyn WeakItemHandle>>,
         Option<Box<dyn WeakItemHandle>>,
@@ -545,10 +534,8 @@ impl Pane {
         ];
 
         let handle = cx.entity().downgrade();
-        let pane_id = PaneId(cx.entity_id());
 
         Self {
-            pane_id,
             alternate_file_items: (None, None),
             focus_handle,
             items: Vec::new(),
@@ -787,10 +774,6 @@ impl Pane {
 
         self.update_diagnostics(cx);
         cx.notify();
-    }
-
-    pub fn pane_id(&self) -> PaneId {
-        self.pane_id
     }
 
     pub fn active_item_index(&self) -> usize {
