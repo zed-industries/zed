@@ -1,0 +1,30 @@
+name: "Label issues with new comments"
+
+on:
+  issue_comment:
+    types:
+      - created
+
+permissions:
+  issues: write
+
+jobs:
+  label-new-comment:
+    if: >
+      github.repository == 'zed-industries/zed' &&
+      github.event.issue.state == 'open' &&
+      github.event.issue.pull_request == null &&
+      github.event.comment.user.type != 'Bot'
+    runs-on: namespace-profile-2x4-ubuntu-2404
+    timeout-minutes: 5
+    steps:
+      - name: Add state:new-comment label
+        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v7.0.1
+        with:
+          script: |
+            await github.rest.issues.addLabels({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              labels: ['state:new comment']
+            });
