@@ -2232,6 +2232,30 @@ impl Focusable for GitGraph {
 impl Item for GitGraph {
     type Event = ItemEvent;
 
+    fn tab_icon(&self, _window: &Window, _cx: &App) -> Option<Icon> {
+        Some(Icon::new(IconName::GitGraph))
+    }
+
+    fn tab_tooltip_content(&self, cx: &App) -> Option<TabTooltipContent> {
+        let repo_name = self.get_selected_repository(cx).and_then(|repo| {
+            repo.read(cx)
+                .work_directory_abs_path
+                .file_name()
+                .map(|name| name.to_string_lossy().to_string())
+        });
+
+        Some(TabTooltipContent::Custom(Box::new(Tooltip::element({
+            move |_, _| {
+                v_flex()
+                    .child(Label::new("Git Graph"))
+                    .when_some(repo_name.clone(), |this, name| {
+                        this.child(Label::new(name).color(Color::Muted).size(LabelSize::Small))
+                    })
+                    .into_any_element()
+            }
+        }))))
+    }
+
     fn tab_content_text(&self, _detail: usize, _cx: &App) -> SharedString {
         "Git Graph".into()
     }
