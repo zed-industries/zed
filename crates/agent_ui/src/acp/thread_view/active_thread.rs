@@ -6367,37 +6367,31 @@ impl AcpThreadView {
                         ))
                         .child(
                             h_flex()
-                                .p_1()
+                                .id(entry_ix)
+                                .py_1()
                                 .w_full()
+                                .justify_center()
                                 .border_t_1()
                                 .when(is_canceled_or_failed, |this| this.border_dashed())
                                 .border_color(cx.theme().colors().border_variant)
+                                .hover(|s| s.bg(cx.theme().colors().element_hover))
                                 .child(
-                                    Button::new(
-                                        format!("expand-subagent-{}", entry_ix),
-                                        "Full Screen",
-                                    )
-                                    .full_width()
-                                    .style(ButtonStyle::Outlined)
-                                    .label_size(LabelSize::Small)
-                                    .icon(IconName::Maximize)
-                                    .icon_color(Color::Muted)
-                                    .icon_size(IconSize::Small)
-                                    .icon_position(IconPosition::Start)
-                                    .on_click(cx.listener(
-                                        move |this, _event, window, cx| {
-                                            this.server_view
-                                                .update(cx, |this, cx| {
-                                                    this.navigate_to_session(
-                                                        session_id.clone(),
-                                                        window,
-                                                        cx,
-                                                    );
-                                                })
-                                                .ok();
-                                        },
-                                    )),
-                                ),
+                                    Icon::new(IconName::Maximize)
+                                        .color(Color::Muted)
+                                        .size(IconSize::Small),
+                                )
+                                .tooltip(Tooltip::text("Make Subagent Full Screen"))
+                                .on_click(cx.listener(move |this, _event, window, cx| {
+                                    this.server_view
+                                        .update(cx, |this, cx| {
+                                            this.navigate_to_session(
+                                                session_id.clone(),
+                                                window,
+                                                cx,
+                                            );
+                                        })
+                                        .ok();
+                                })),
                         )
                     })
                 }
