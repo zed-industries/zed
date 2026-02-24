@@ -173,9 +173,9 @@ impl CsvPreviewView {
                         parent.child(div().text_color(row_identifier_text_color).child(
                             match table_cell {
                                 TableCell::Real { position: pos, .. } => {
-                                    let slv = pos.start.timestamp.value;
+                                    let slv = pos.start.timestamp().value;
                                     let so = pos.start.offset;
-                                    let elv = pos.end.timestamp.value;
+                                    let elv = pos.end.timestamp().value;
                                     let eo = pos.end.offset;
                                     format!("Pos {so}(L{slv})-{eo}(L{elv})")
                                 }

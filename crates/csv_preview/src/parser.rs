@@ -101,7 +101,7 @@ impl CsvPreviewView {
 
             let instant = Instant::now();
             let parsed_csv = cx
-                .background_spawn(async move { from_buffer(buffer_snapshot) })
+                .background_spawn(async move { from_buffer(&buffer_snapshot) })
                 .await;
             let parse_duration = instant.elapsed();
             let parse_end_time: Instant = Instant::now();
@@ -127,7 +127,7 @@ impl CsvPreviewView {
 }
 
 ///// CSV parsing /////
-pub fn from_buffer(buffer_snapshot: BufferSnapshot) -> TableLikeContent {
+pub fn from_buffer(buffer_snapshot: &BufferSnapshot) -> TableLikeContent {
     let text = buffer_snapshot.text();
 
     if text.trim().is_empty() {
