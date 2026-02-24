@@ -21,7 +21,7 @@ log.workspace = true
 parking_lot.workspace = true
 profiling.workspace = true
 raw-window-handle = "0.6"
-util.workspace = true
+gpui_util.workspace = true
 wgpu.workspace = true
 
 [target.'cfg(target_family = "wasm")'.dependencies]

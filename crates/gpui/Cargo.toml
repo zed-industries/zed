@@ -21,7 +21,6 @@ default = ["font-kit", "wayland", "x11", "windows-manifest"]
 test-support = [
     "leak-detection",
     "collections/test-support",
-    "util/test-support",
     "http_client/test-support",
     "wayland",
     "x11",
@@ -89,7 +88,7 @@ strum.workspace = true
 sum_tree.workspace = true
 taffy = "=0.9.0"
 thiserror.workspace = true
-util.workspace = true
+gpui_util.workspace = true
 waker-fn = "1.2.0"
 lyon = "1.0"
 pin-project = "1.1.10"
@@ -150,7 +149,7 @@ pretty_assertions.workspace = true
 rand.workspace = true
 scheduler = { workspace = true, features = ["test-support"] }
 unicode-segmentation.workspace = true
-util = { workspace = true, features = ["test-support"] }
+gpui_util = { workspace = true }
 
 [target.'cfg(not(target_family = "wasm"))'.dev-dependencies]
 http_client = { workspace = true, features = ["test-support"] }

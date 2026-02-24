@@ -7,6 +7,7 @@ use crate::{
 use anyhow::Result;
 
 use futures::Future;
+use gpui_util::ResultExt;
 use image::{
     AnimationDecoder, DynamicImage, Frame, ImageError, ImageFormat, Rgba,
     codecs::{gif::GifDecoder, webp::WebPDecoder},
@@ -22,7 +23,6 @@ use std::{
     time::Duration,
 };
 use thiserror::Error;
-use util::ResultExt;
 use web_time::Instant;
 
 use super::{Stateful, StatefulInteractiveElement};

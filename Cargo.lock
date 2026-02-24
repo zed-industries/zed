@@ -7461,6 +7461,7 @@ dependencies = [
  "getrandom 0.3.4",
  "gpui_macros",
  "gpui_platform",
+ "gpui_util",
  "http_client",
  "image",
  "inventory",
@@ -7504,7 +7505,6 @@ dependencies = [
  "unicode-segmentation",
  "url",
  "usvg",
- "util",
  "util_macros",
  "uuid",
  "waker-fn",
@@ -7557,6 +7557,7 @@ dependencies = [
  "open",
  "parking_lot",
  "pathfinder_geometry",
+ "pollster 0.4.0",
  "profiling",
  "raw-window-handle",
  "smallvec",
@@ -7653,6 +7654,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "gpui_util"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "log",
+]
+
+[[package]]
 name = "gpui_web"
 version = "0.1.0"
 dependencies = [
@@ -7685,7 +7694,6 @@ dependencies = [
  "js-sys",
  "log",
  "parking_lot",
- "pollster 0.4.0",
  "profiling",
  "raw-window-handle",
  "util",
@@ -18649,6 +18657,7 @@ dependencies = [
  "futures-lite 1.13.0",
  "git2",
  "globset",
+ "gpui_util",
  "indoc",
  "itertools 0.14.0",
  "libc",

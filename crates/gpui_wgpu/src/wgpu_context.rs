@@ -1,9 +1,8 @@
 #[cfg(not(target_family = "wasm"))]
 use anyhow::Context as _;
-use std::sync::Arc;
 #[cfg(not(target_family = "wasm"))]
-use util::ResultExt;
-use wgpu::Adapter;
+use gpui_util::ResultExt;
+use std::sync::Arc;
 
 pub struct WgpuContext {
     pub instance: wgpu::Instance,

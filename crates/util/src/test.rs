@@ -4,9 +4,7 @@ mod marked_text;
 pub use assertions::*;
 pub use marked_text::*;
 
-#[cfg(not(target_family = "wasm"))]
 use git2;
-#[cfg(not(target_family = "wasm"))]
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use tempfile::TempDir;
