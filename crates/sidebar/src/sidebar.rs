@@ -320,7 +320,14 @@ impl PickerDelegate for ActiveProjectsDelegate {
                         .into();
                     el.child(ListSubHeader::new(header_label).inset(true))
                 })
-                .child(Label::new("todo: workspace thread row").color(Color::Muted))
+                .child(
+                    Label::new(
+                        workspace_thread_info(&workspace, cx)
+                            .map(|info| info.title)
+                            .unwrap_or_else(|| "New Thread".into()),
+                    )
+                    .color(Color::Muted),
+                )
                 .into_any_element(),
         )
     }
