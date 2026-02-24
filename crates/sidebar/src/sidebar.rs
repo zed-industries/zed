@@ -123,29 +123,6 @@ fn workspace_thread_info(workspace: &Entity<Workspace>, cx: &App) -> Option<Agen
     })
 }
 
-#[derive(Clone)]
-enum SidebarEntry {
-    Separator(SharedString),
-    WorkspaceThread(WorkspaceThreadEntry),
-    RecentProject(RecentProjectEntry),
-}
-
-impl SidebarEntry {
-    fn searchable_text(&self) -> &str {
-        match self {
-            SidebarEntry::Separator(_) => "",
-            SidebarEntry::WorkspaceThread(entry) => entry.worktree_label.as_ref(),
-            SidebarEntry::RecentProject(entry) => entry.name.as_ref(),
-        }
-    }
-}
-
-#[derive(Clone)]
-struct SidebarMatch {
-    entry: SidebarEntry,
-    positions: Vec<usize>,
-}
-
 /// A ProjectGroup is a group of workspaces, each one associated with a specific
 /// git worktree or the main worktree.
 #[derive(Default)]
@@ -218,6 +195,10 @@ impl ActiveProjects {
 
     /// Returns the project, its path list, and whether this is the first item
     /// in the group (so we can draw a header).
+    ///
+    /// FIXME: This violates the principle of not wanting to leak indices. We
+    /// probably want [`ActiveProjects`] to look up only by key and then have
+    /// [`ActiveProjectDelegate`] handle the mapping of those to indices.
     fn project_by_ix(&self, mut ix: usize) -> Option<(Entity<Workspace>, Option<&PathList>)> {
         for (path_list, group) in self.groups.iter() {
             if ix < group.len() {
