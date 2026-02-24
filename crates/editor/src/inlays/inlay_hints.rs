@@ -578,6 +578,7 @@ impl Editor {
             if let Some(hovered_hint) = self
                 .visible_inlay_hints(cx)
                 .into_iter()
+                .filter(|hint| snapshot.can_resolve(&hint.position))
                 .skip_while(|hint| {
                     hint.position
                         .cmp(&previous_valid_anchor, &buffer_snapshot)
