@@ -1615,7 +1615,6 @@ impl GitStore {
                     .detach();
                 }
             }
-            _ => {}
         }
     }
 
@@ -3744,9 +3743,11 @@ impl Repository {
             })
             .shared();
 
-        cx.subscribe_self(|this, event: &RepositoryEvent, _| match event {
+        cx.subscribe_self(move |this, event: &RepositoryEvent, _| match event {
             RepositoryEvent::BranchChanged | RepositoryEvent::MergeHeadsChanged => {
-                this.initial_graph_data.clear();
+                if this.scan_id > 1 {
+                    this.initial_graph_data.clear();
+                }
             }
             _ => {}
         })

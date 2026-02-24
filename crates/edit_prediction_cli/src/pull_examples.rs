@@ -15,15 +15,11 @@ use zeta_prompt::ZetaPromptInput;
 use crate::example::Example;
 use crate::progress::{InfoStyle, Progress, Step};
 const EDIT_PREDICTION_DEPLOYMENT_EVENT: &str = "Edit Prediction Deployment";
-use edit_prediction::example_spec::{
-    CapturedEvent, CapturedPromptInput, CapturedRelatedExcerpt, CapturedRelatedFile, ExampleSpec,
-    TelemetrySource,
-};
+use edit_prediction::example_spec::{ExampleSpec, TelemetrySource};
 use std::fmt::Write as _;
 
 pub(crate) const SNOWFLAKE_SUCCESS_CODE: &str = "090001";
 pub(crate) const SNOWFLAKE_ASYNC_IN_PROGRESS_CODE: &str = "333334";
-const EDIT_PREDICTION_EXAMPLE_CAPTURED_EVENT: &str = "Edit Prediction Example Captured";
 const PREDICTIVE_EDIT_REQUESTED_EVENT: &str = "Predictive Edit Requested";
 const PREDICTIVE_EDIT_REJECTED_EVENT: &str = "Predictive Edit Rejected";
 const EDIT_PREDICTION_RATED_EVENT: &str = "Edit Prediction Rated";
@@ -71,135 +67,6 @@ pub fn parse_rated_after_input(input: &str) -> Option<(&str, Option<EditPredicti
     }
 }
 
-pub async fn fetch_captured_examples_after(
-    http_client: Arc<dyn HttpClient>,
-    after_timestamps: &[String],
-    max_rows_per_timestamp: usize,
-    offset: usize,
-    background_executor: BackgroundExecutor,
-    _min_capture_version: Option<MinCaptureVersion>,
-) -> Result<Vec<Example>> {
-    if after_timestamps.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    let progress = Progress::global();
-
-    let token = std::env::var("EP_SNOWFLAKE_API_KEY")
-        .context("missing required environment variable EP_SNOWFLAKE_API_KEY")?;
-    let base_url = std::env::var("EP_SNOWFLAKE_BASE_URL").context(
-        "missing required environment variable EP_SNOWFLAKE_BASE_URL (e.g. https://<account>.snowflakecomputing.com)",
-    )?;
-    let role = std::env::var("EP_SNOWFLAKE_ROLE").ok();
-
-    let mut all_examples = Vec::new();
-
-    for after_date in after_timestamps.iter() {
-        let step_progress_name = format!(">{after_date}");
-        let step_progress = progress.start(Step::PullExamples, &step_progress_name);
-        step_progress.set_substatus("querying");
-
-        let statement = indoc! {r#"
-            SELECT
-                event_properties:example AS example
-            FROM events
-            WHERE event_type = ?
-                AND time > TRY_TO_TIMESTAMP_NTZ(?)
-                AND event_properties:can_collect_data = true
-            ORDER BY time ASC
-            LIMIT ?
-            OFFSET ?
-        "#};
-
-        let request = json!({
-            "statement": statement,
-            "timeout": DEFAULT_STATEMENT_TIMEOUT_SECONDS,
-            "database": "EVENTS",
-            "schema": "PUBLIC",
-            "warehouse": "DBT",
-            "role": role,
-            "bindings": {
-                "1": { "type": "TEXT", "value": EDIT_PREDICTION_EXAMPLE_CAPTURED_EVENT },
-                "2": { "type": "TEXT", "value": after_date },
-                "3": { "type": "FIXED", "value": max_rows_per_timestamp.to_string() },
-                "4": { "type": "FIXED", "value": offset.to_string() }
-            }
-        });
-
-        let response = run_sql_with_polling(
-            http_client.clone(),
-            &base_url,
-            &token,
-            &request,
-            &step_progress,
-            background_executor.clone(),
-        )
-        .await?;
-
-        let total_rows = response
-            .result_set_meta_data
-            .as_ref()
-            .and_then(|m| m.num_rows)
-            .unwrap_or(response.data.len() as i64);
-
-        let num_partitions = response
-            .result_set_meta_data
-            .as_ref()
-            .map(|m| m.partition_info.len())
-            .unwrap_or(1)
-            .max(1);
-
-        step_progress.set_info(format!("{} rows", total_rows), InfoStyle::Normal);
-        step_progress.set_substatus("parsing");
-
-        let example_index = response
-            .result_set_meta_data
-            .as_ref()
-            .and_then(|m| {
-                m.row_type.iter().enumerate().find_map(|(index, col)| {
-                    if col.name.eq_ignore_ascii_case("example") {
-                        Some(index)
-                    } else {
-                        None
-                    }
-                })
-            })
-            .unwrap_or(0);
-
-        all_examples.extend(examples_from_response(&response, example_index)?);
-
-        if num_partitions > 1 {
-            let statement_handle = response
-                .statement_handle
-                .as_ref()
-                .context("response has multiple partitions but no statementHandle")?;
-
-            for partition in 1..num_partitions {
-                step_progress.set_substatus(format!(
-                    "fetching partition {}/{}",
-                    partition + 1,
-                    num_partitions
-                ));
-
-                let partition_response = fetch_partition(
-                    http_client.clone(),
-                    &base_url,
-                    &token,
-                    statement_handle,
-                    partition,
-                )
-                .await?;
-
-                all_examples.extend(examples_from_response(&partition_response, example_index)?);
-            }
-        }
-
-        step_progress.set_substatus("done");
-    }
-
-    Ok(all_examples)
-}
-
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct SnowflakeStatementResponse {
@@ -234,56 +101,6 @@ struct SnowflakePartitionInfo {}
 struct SnowflakeColumnMeta {
     #[serde(default)]
     name: String,
-}
-
-fn examples_from_response(
-    response: &SnowflakeStatementResponse,
-    example_index: usize,
-) -> Result<impl Iterator<Item = Example> + '_> {
-    if let Some(code) = &response.code {
-        if code != SNOWFLAKE_SUCCESS_CODE {
-            anyhow::bail!(
-                "snowflake sql api returned error code={code} message={}",
-                response.message.as_deref().unwrap_or("<no message>")
-            );
-        }
-    }
-
-    let iter = response.data.iter().enumerate().filter_map(move |(row_index, data_row)| {
-        let Some(example_value) = data_row.get(example_index) else {
-            return None;
-        };
-        if example_value.is_null() {
-            return None;
-        }
-
-        let parse_result = match example_value {
-            JsonValue::String(encoded_json) => serde_json::from_str::<ExampleSpec>(encoded_json),
-            _ => serde_json::from_value::<ExampleSpec>(example_value.clone()),
-        };
-
-        match parse_result {
-            Ok(spec) => Some(Example {
-                spec,
-                prompt_inputs: None,
-                prompt: None,
-                predictions: Vec::new(),
-                score: Vec::new(),
-                qa: Vec::new(),
-                state: None,
-            }),
-            Err(error) => {
-                let raw_json = serde_json::to_string_pretty(example_value)
-                    .unwrap_or_else(|_| "<failed to serialize json>".to_string());
-                log::error!(
-                    "failed to parse ExampleSpec for row {row_index}: {error:#}\nraw json:\n{raw_json}"
-                );
-                None
-            }
-        }
-    });
-
-    Ok(iter)
 }
 
 async fn run_sql_with_polling(
@@ -1306,47 +1123,8 @@ fn build_example_from_snowflake(
     rejection: Option<RejectionInfo>,
     zed_version: Option<String>,
 ) -> Example {
-    let events: Vec<CapturedEvent> = input
-        .events
-        .iter()
-        .map(|event| match event.as_ref() {
-            zeta_prompt::Event::BufferChange {
-                path,
-                old_path,
-                diff,
-                predicted,
-                in_open_source_repo,
-            } => CapturedEvent {
-                path: path.clone(),
-                old_path: old_path.clone(),
-                diff: diff.clone(),
-                predicted: *predicted,
-                in_open_source_repo: *in_open_source_repo,
-            },
-        })
-        .collect();
-
-    let related_files: Vec<CapturedRelatedFile> = input
-        .related_files
-        .iter()
-        .map(|rf| CapturedRelatedFile {
-            path: rf.path.clone(),
-            max_row: rf.max_row,
-            excerpts: rf
-                .excerpts
-                .iter()
-                .map(|e| CapturedRelatedExcerpt {
-                    row_range: e.row_range.clone(),
-                    text: e.text.to_string(),
-                })
-                .collect(),
-        })
-        .collect();
-
     let cursor_excerpt = input.cursor_excerpt.as_ref();
     let cursor_offset = input.cursor_offset_in_excerpt;
-
-    let (cursor_row, cursor_column) = compute_row_column(cursor_excerpt, cursor_offset);
 
     let mut edit_history = String::new();
     for event in &input.events {
@@ -1371,17 +1149,6 @@ fn build_example_from_snowflake(
         edit_history,
         expected_patches: Vec::new(),
         rejected_patch: None,
-        captured_prompt_input: Some(CapturedPromptInput {
-            cursor_file_content: cursor_excerpt.to_string(),
-            cursor_offset,
-            cursor_row,
-            cursor_column,
-            excerpt_start_row: None,
-            events,
-            related_files,
-            in_open_source_repo: input.in_open_source_repo,
-            zed_version,
-        }),
         telemetry: Some(TelemetrySource {
             request_id,
             device_id,
@@ -1395,29 +1162,14 @@ fn build_example_from_snowflake(
 
     Example {
         spec,
-        prompt_inputs: None,
+        zed_version,
+        prompt_inputs: Some(input),
         prompt: None,
         predictions: Vec::new(),
         score: Vec::new(),
         qa: Vec::new(),
         state: None,
     }
-}
-
-fn compute_row_column(text: &str, offset: usize) -> (u32, u32) {
-    let mut row = 0u32;
-    let mut last_newline_offset = 0;
-    for (i, c) in text.char_indices() {
-        if i >= offset {
-            break;
-        }
-        if c == '\n' {
-            row += 1;
-            last_newline_offset = i + 1;
-        }
-    }
-    let column = (offset - last_newline_offset) as u32;
-    (row, column)
 }
 
 fn build_cursor_position(excerpt: &str, cursor_offset: usize) -> String {

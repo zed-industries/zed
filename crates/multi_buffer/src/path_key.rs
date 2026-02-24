@@ -188,7 +188,13 @@ impl MultiBuffer {
         direction: ExpandExcerptDirection,
         cx: &mut Context<Self>,
     ) {
-        let grouped = ids
+        let mut sorted_ids: Vec<ExcerptId> = ids.into_iter().collect();
+        sorted_ids.sort_by(|a, b| {
+            let path_a = self.paths_by_excerpt.get(a);
+            let path_b = self.paths_by_excerpt.get(b);
+            path_a.cmp(&path_b)
+        });
+        let grouped = sorted_ids
             .into_iter()
             .chunk_by(|id| self.paths_by_excerpt.get(id).cloned())
             .into_iter()

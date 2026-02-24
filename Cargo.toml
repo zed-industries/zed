@@ -523,7 +523,7 @@ cocoa-foundation = "=0.2.0"
 convert_case = "0.8.0"
 core-foundation = "=0.10.0"
 core-foundation-sys = "0.8.6"
-core-video = { version = "0.4.3", features = ["metal"] }
+core-video = { version = "0.5.2", features = ["metal"] }
 cpal = "0.17"
 crash-handler = "0.6"
 criterion = { version = "0.5", features = ["html_reports"] }
@@ -574,12 +574,12 @@ log = { version = "0.4.16", features = ["kv_unstable_serde", "serde"] }
 lsp-types = { git = "https://github.com/zed-industries/lsp-types", rev = "a4f410987660bf560d1e617cb78117c6b6b9f599" }
 mach2 = "0.5"
 markup5ever_rcdom = "0.3.0"
-metal = "0.29"
+metal = "0.33"
 minidumper = "0.8"
 moka = { version = "0.12.10", features = ["sync"] }
 naga = { version = "28.0", features = ["wgsl-in"] }
 nanoid = "0.4"
-nbformat = "1.0.0"
+nbformat = "1.1.0"
 nix = "0.29"
 num-format = "0.4.4"
 objc = "0.2"

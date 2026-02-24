@@ -1288,7 +1288,7 @@ fn run_settings_ui_subpage_visual_tests(
         )
     });
 
-    let workspace_window: WindowHandle<Workspace> = cx
+    let workspace_window: WindowHandle<MultiWorkspace> = cx
         .update(|cx| {
             cx.open_window(
                 WindowOptions {
@@ -1298,9 +1298,10 @@ fn run_settings_ui_subpage_visual_tests(
                     ..Default::default()
                 },
                 |window, cx| {
-                    cx.new(|cx| {
+                    let workspace = cx.new(|cx| {
                         Workspace::new(None, project.clone(), app_state.clone(), window, cx)
-                    })
+                    });
+                    cx.new(|cx| MultiWorkspace::new(workspace, window, cx))
                 },
             )
         })
@@ -2343,7 +2344,7 @@ fn run_tool_permissions_visual_tests(
         )
     });
 
-    let workspace_window: WindowHandle<Workspace> = cx
+    let workspace_window: WindowHandle<MultiWorkspace> = cx
         .update(|cx| {
             cx.open_window(
                 WindowOptions {
@@ -2353,9 +2354,10 @@ fn run_tool_permissions_visual_tests(
                     ..Default::default()
                 },
                 |window, cx| {
-                    cx.new(|cx| {
+                    let workspace = cx.new(|cx| {
                         Workspace::new(None, project.clone(), app_state.clone(), window, cx)
-                    })
+                    });
+                    cx.new(|cx| MultiWorkspace::new(workspace, window, cx))
                 },
             )
         })

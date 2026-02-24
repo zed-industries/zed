@@ -38,7 +38,6 @@ Popular servers available as an extension include:
 - [Brave Search](https://zed.dev/extensions/brave-search-mcp-server)
 - [Prisma](https://github.com/aqrln/prisma-mcp-zed)
 - [Framelink Figma](https://zed.dev/extensions/framelink-figma-mcp-server)
-- [Linear](https://zed.dev/extensions/linear-mcp-server)
 - [Resend](https://zed.dev/extensions/resend-mcp-server)
 
 ### As Custom Servers

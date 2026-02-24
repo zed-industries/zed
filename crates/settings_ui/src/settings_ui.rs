@@ -1163,7 +1163,9 @@ fn render_settings_item(
         .child(
             v_flex()
                 .relative()
-                .w_3_4()
+                .w_full()
+                .max_w_2_3()
+                .min_w_0()
                 .child(
                     h_flex()
                         .w_full()

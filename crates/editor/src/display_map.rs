@@ -358,6 +358,19 @@ impl Companion {
         }
     }
 
+    #[cfg(test)]
+    pub(crate) fn excerpt_mappings(
+        &self,
+    ) -> (
+        &HashMap<ExcerptId, ExcerptId>,
+        &HashMap<ExcerptId, ExcerptId>,
+    ) {
+        (
+            &self.lhs_excerpt_to_rhs_excerpt,
+            &self.rhs_excerpt_to_lhs_excerpt,
+        )
+    }
+
     fn buffer_to_companion_buffer(&self, display_map_id: EntityId) -> &HashMap<BufferId, BufferId> {
         if self.is_rhs(display_map_id) {
             &self.rhs_buffer_to_lhs_buffer
@@ -1207,26 +1220,26 @@ impl DisplayMap {
     pub fn highlight_text(
         &mut self,
         key: HighlightKey,
-        ranges: Vec<Range<Anchor>>,
+        mut ranges: Vec<Range<Anchor>>,
         style: HighlightStyle,
         merge: bool,
         cx: &App,
     ) {
         let multi_buffer_snapshot = self.buffer.read(cx).snapshot(cx);
-        let to_insert = match self.text_highlights.remove(&key).filter(|_| merge) {
-            Some(previous) => {
-                let mut merged_ranges = previous.1.clone();
-                for new_range in ranges {
-                    let i = merged_ranges
-                        .binary_search_by(|probe| {
-                            probe.start.cmp(&new_range.start, &multi_buffer_snapshot)
-                        })
-                        .unwrap_or_else(|i| i);
-                    merged_ranges.insert(i, new_range);
+        let to_insert = match self.text_highlights.remove(&key) {
+            Some(mut previous) if merge => match Arc::get_mut(&mut previous) {
+                Some((_, previous_ranges)) => {
+                    previous_ranges.extend(ranges);
+                    previous_ranges.sort_by(|a, b| a.start.cmp(&b.start, &multi_buffer_snapshot));
+                    previous
                 }
-                Arc::new((style, merged_ranges))
-            }
-            None => Arc::new((style, ranges)),
+                None => Arc::new((style, {
+                    ranges.extend(previous.1.iter().cloned());
+                    ranges.sort_by(|a, b| a.start.cmp(&b.start, &multi_buffer_snapshot));
+                    ranges
+                })),
+            },
+            _ => Arc::new((style, ranges)),
         };
         self.text_highlights.insert(key, to_insert);
     }

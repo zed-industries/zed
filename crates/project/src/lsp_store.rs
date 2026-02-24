@@ -62,7 +62,7 @@ use futures::{
     select, select_biased,
     stream::FuturesUnordered,
 };
-use globset::{Candidate, Glob, GlobBuilder, GlobMatcher, GlobSet, GlobSetBuilder};
+use globset::{Glob, GlobBuilder, GlobMatcher, GlobSet, GlobSetBuilder};
 use gpui::{
     App, AppContext, AsyncApp, Context, Entity, EventEmitter, PromptLevel, SharedString,
     Subscription, Task, WeakEntity,
@@ -3527,12 +3527,12 @@ impl LocalLspStore {
         servers_to_remove.into_iter().collect()
     }
 
-    fn build_watched_paths_registration(
-        &self,
+    fn rebuild_watched_paths_inner<'a>(
+        &'a self,
         language_server_id: LanguageServerId,
-        watchers: &[FileSystemWatcher],
+        watchers: impl Iterator<Item = &'a FileSystemWatcher>,
         cx: &mut Context<LspStore>,
-    ) -> WatchedPathsRegistration {
+    ) -> LanguageServerWatchedPathsBuilder {
         let worktrees = self
             .worktree_store
             .read(cx)
@@ -3636,55 +3636,18 @@ impl LocalLspStore {
             }
         }
 
-        let worktree_globs = worktree_globs
-            .into_iter()
-            .filter_map(|(worktree_id, builder)| builder.build().ok().map(|gs| (worktree_id, gs)))
-            .collect();
-
-        let lsp_store = self.weak.clone();
-        let fs = self.fs.clone();
-        const LSP_ABS_PATH_OBSERVE: Duration = Duration::from_millis(100);
-
-        let abs_path_watchers = abs_globs
-            .into_iter()
-            .filter_map(|(abs_path, builder): (Arc<Path>, _)| {
-                let globset = builder.build().ok()?;
-                let task = cx.spawn({
-                    let fs = fs.clone();
-                    let lsp_store = lsp_store.clone();
-                    async move |_, cx| {
-                        maybe!(async move {
-                            let mut push_updates = fs.watch(&abs_path, LSP_ABS_PATH_OBSERVE).await;
-                            while let Some(update) = push_updates.0.next().await {
-                                let matching_entries: Vec<_> = update
-                                    .into_iter()
-                                    .filter(|event| globset.is_match(&event.path))
-                                    .collect();
-                                if matching_entries.is_empty() {
-                                    continue;
-                                }
-                                lsp_store
-                                    .update(cx, |this, _| {
-                                        this.lsp_notify_abs_paths_changed(
-                                            language_server_id,
-                                            matching_entries,
-                                        );
-                                    })
-                                    .ok()?;
-                            }
-                            Some(())
-                        })
-                        .await;
-                    }
-                });
-                Some(task)
-            })
-            .collect();
-
-        WatchedPathsRegistration {
-            worktree_globs,
-            _abs_path_watchers: abs_path_watchers,
+        let mut watch_builder = LanguageServerWatchedPathsBuilder::default();
+        for (worktree_id, builder) in worktree_globs {
+            if let Ok(globset) = builder.build() {
+                watch_builder.watch_worktree(worktree_id, globset);
+            }
         }
+        for (abs_path, builder) in abs_globs {
+            if let Ok(globset) = builder.build() {
+                watch_builder.watch_abs_path(abs_path, globset);
+            }
+        }
+        watch_builder
     }
 
     fn worktree_and_path_for_file_watcher(
@@ -3730,6 +3693,30 @@ impl LocalLspStore {
         })
     }
 
+    fn rebuild_watched_paths(
+        &mut self,
+        language_server_id: LanguageServerId,
+        cx: &mut Context<LspStore>,
+    ) {
+        let Some(registrations) = self
+            .language_server_dynamic_registrations
+            .get(&language_server_id)
+        else {
+            return;
+        };
+
+        let watch_builder = self.rebuild_watched_paths_inner(
+            language_server_id,
+            registrations.did_change_watched_files.values().flatten(),
+            cx,
+        );
+        let watcher = watch_builder.build(self.fs.clone(), language_server_id, cx);
+        self.language_server_watched_paths
+            .insert(language_server_id, watcher);
+
+        cx.notify();
+    }
+
     fn on_lsp_did_change_watched_files(
         &mut self,
         language_server_id: LanguageServerId,
@@ -3737,22 +3724,16 @@ impl LocalLspStore {
         params: DidChangeWatchedFilesRegistrationOptions,
         cx: &mut Context<LspStore>,
     ) {
-        let registration =
-            self.build_watched_paths_registration(language_server_id, &params.watchers, cx);
-
-        self.language_server_dynamic_registrations
+        let registrations = self
+            .language_server_dynamic_registrations
             .entry(language_server_id)
-            .or_default()
+            .or_default();
+
+        registrations
             .did_change_watched_files
             .insert(registration_id.to_string(), params.watchers);
 
-        self.language_server_watched_paths
-            .entry(language_server_id)
-            .or_default()
-            .registrations
-            .insert(registration_id.to_string(), registration);
-
-        cx.notify();
+        self.rebuild_watched_paths(language_server_id, cx);
     }
 
     fn on_lsp_unregister_did_change_watched_files(
@@ -3784,14 +3765,7 @@ impl LocalLspStore {
             );
         }
 
-        if let Some(watched_paths) = self
-            .language_server_watched_paths
-            .get_mut(&language_server_id)
-        {
-            watched_paths.registrations.remove(registration_id);
-        }
-
-        cx.notify();
+        self.rebuild_watched_paths(language_server_id, cx);
     }
 
     async fn initialization_options_for_adapter(
@@ -11668,34 +11642,20 @@ impl LspStore {
         language_server_ids.sort();
         language_server_ids.dedup();
 
-        let active_servers: Vec<(LanguageServerId, &LanguageServerWatchedPaths)> =
-            language_server_ids
-                .iter()
-                .filter_map(|server_id| {
-                    if !matches!(
-                        local.language_servers.get(server_id),
-                        Some(LanguageServerState::Running { .. })
-                    ) {
-                        return None;
-                    }
-                    let watched_paths = local.language_server_watched_paths.get(server_id)?;
-                    Some((*server_id, watched_paths))
-                })
-                .collect();
-
-        for (server_id, watched_paths) in &active_servers {
+        // let abs_path = worktree_handle.read(cx).abs_path();
+        for server_id in &language_server_ids {
             if let Some(LanguageServerState::Running { server, .. }) =
                 local.language_servers.get(server_id)
+                && let Some(watched_paths) = local
+                    .language_server_watched_paths
+                    .get(server_id)
+                    .and_then(|paths| paths.worktree_paths.get(&worktree_id))
             {
                 let params = lsp::DidChangeWatchedFilesParams {
                     changes: changes
                         .iter()
                         .filter_map(|(path, _, change)| {
-                            let candidate = Candidate::new(path.as_std_path());
-
-                            if !watched_paths
-                                .is_worktree_path_match_candidate(worktree_id, &candidate)
-                            {
+                            if !watched_paths.is_match(path.as_std_path()) {
                                 return None;
                             }
                             let typ = match change {
@@ -11705,9 +11665,10 @@ impl LspStore {
                                 PathChange::Updated => lsp::FileChangeType::CHANGED,
                                 PathChange::AddedOrUpdated => lsp::FileChangeType::CHANGED,
                             };
-                            let uri =
-                                lsp::Uri::from_file_path(worktree_handle.read(cx).absolutize(path))
-                                    .ok()?;
+                            let uri = lsp::Uri::from_file_path(
+                                worktree_handle.read(cx).absolutize(&path),
+                            )
+                            .ok()?;
                             Some(lsp::FileEvent { uri, typ })
                         })
                         .collect(),
@@ -13527,25 +13488,87 @@ impl RenameActionPredicate {
 
 #[derive(Default)]
 struct LanguageServerWatchedPaths {
-    registrations: HashMap<String, WatchedPathsRegistration>,
+    worktree_paths: HashMap<WorktreeId, GlobSet>,
+    abs_paths: HashMap<Arc<Path>, (GlobSet, Task<()>)>,
 }
 
-struct WatchedPathsRegistration {
-    worktree_globs: HashMap<WorktreeId, GlobSet>,
-    _abs_path_watchers: Vec<Task<()>>,
+#[derive(Default)]
+struct LanguageServerWatchedPathsBuilder {
+    worktree_paths: HashMap<WorktreeId, GlobSet>,
+    abs_paths: HashMap<Arc<Path>, GlobSet>,
 }
 
-impl LanguageServerWatchedPaths {
-    fn is_worktree_path_match_candidate(
-        &self,
-        worktree_id: WorktreeId,
-        candidate: &Candidate,
-    ) -> bool {
-        self.registrations.values().any(|reg| {
-            reg.worktree_globs
-                .get(&worktree_id)
-                .is_some_and(|gs| gs.is_match_candidate(candidate))
-        })
+impl LanguageServerWatchedPathsBuilder {
+    fn watch_worktree(&mut self, worktree_id: WorktreeId, glob_set: GlobSet) {
+        self.worktree_paths.insert(worktree_id, glob_set);
+    }
+    fn watch_abs_path(&mut self, path: Arc<Path>, glob_set: GlobSet) {
+        self.abs_paths.insert(path, glob_set);
+    }
+    fn build(
+        self,
+        fs: Arc<dyn Fs>,
+        language_server_id: LanguageServerId,
+        cx: &mut Context<LspStore>,
+    ) -> LanguageServerWatchedPaths {
+        let lsp_store = cx.weak_entity();
+
+        const LSP_ABS_PATH_OBSERVE: Duration = Duration::from_millis(100);
+        let abs_paths = self
+            .abs_paths
+            .into_iter()
+            .map(|(abs_path, globset)| {
+                let task = cx.spawn({
+                    let abs_path = abs_path.clone();
+                    let fs = fs.clone();
+
+                    let lsp_store = lsp_store.clone();
+                    async move |_, cx| {
+                        maybe!(async move {
+                            let mut push_updates = fs.watch(&abs_path, LSP_ABS_PATH_OBSERVE).await;
+                            while let Some(update) = push_updates.0.next().await {
+                                let action = lsp_store
+                                    .update(cx, |this, _| {
+                                        let Some(local) = this.as_local() else {
+                                            return ControlFlow::Break(());
+                                        };
+                                        let Some(watcher) = local
+                                            .language_server_watched_paths
+                                            .get(&language_server_id)
+                                        else {
+                                            return ControlFlow::Break(());
+                                        };
+                                        let (globs, _) = watcher.abs_paths.get(&abs_path).expect(
+                                            "Watched abs path is not registered with a watcher",
+                                        );
+                                        let matching_entries = update
+                                            .into_iter()
+                                            .filter(|event| globs.is_match(&event.path))
+                                            .collect::<Vec<_>>();
+                                        this.lsp_notify_abs_paths_changed(
+                                            language_server_id,
+                                            matching_entries,
+                                        );
+                                        ControlFlow::Continue(())
+                                    })
+                                    .ok()?;
+
+                                if action.is_break() {
+                                    break;
+                                }
+                            }
+                            Some(())
+                        })
+                        .await;
+                    }
+                });
+                (abs_path, (globset, task))
+            })
+            .collect();
+        LanguageServerWatchedPaths {
+            worktree_paths: self.worktree_paths,
+            abs_paths,
+        }
     }
 }
 

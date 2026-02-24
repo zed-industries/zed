@@ -5,8 +5,8 @@ use gpui::{App, SharedString, Task, WeakEntity};
 use language_model::LanguageModelToolResultContent;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use std::rc::Rc;
 use std::sync::Arc;
-use std::{rc::Rc, time::Duration};
 
 use crate::{AgentTool, Thread, ThreadEnvironment, ToolCallEventStream};
 
@@ -16,8 +16,6 @@ use crate::{AgentTool, Thread, ThreadEnvironment, ToolCallEventStream};
 /// - Run multiple tasks in parallel that would take significantly longer to run sequentially.
 /// - Complete a self-contained task where you need to know if it succeeded or failed (and how), but none of its intermediate output.
 /// - Perform an investigation where all you need to know is the outcome, not the research that led to that outcome.
-///
-/// Do NOT use this tool for simple tasks you could accomplish directly with one or two tool calls (e.g. reading a file, running a single command). Each agent has startup overhead.
 ///
 /// You control what the agent does by providing a prompt describing what the agent should do. The agent has access to the same tools you do, but does NOT see your conversation history or any context the user attached. You must include all relevant context (file paths, requirements, constraints) in the prompt.
 ///
@@ -33,13 +31,10 @@ pub struct SpawnAgentToolInput {
     /// Short label displayed in the UI while the agent runs (e.g., "Researching alternatives")
     pub label: String,
     /// Describe the task for the agent to perform. Be specific about what you want accomplished. Include all necessary context (file paths, requirements, constraints) since the agent cannot see your conversation.
-    pub task: String,
-    /// Optional session ID of an existing agent session to continue a conversation with. When provided, the task is sent as a follow-up message to that session instead of creating a new one. Use this to ask clarifying questions, request changes based on previous output, or retry after errors.
+    pub message: String,
+    /// Optional session ID of an existing agent session to continue a conversation with. When provided, the message is sent as a follow-up to that session instead of creating a new one. Use this to ask clarifying questions, request changes based on previous output, or retry after errors.
     #[serde(default)]
     pub session_id: Option<acp::SessionId>,
-    /// Optional maximum runtime in seconds. The purpose of this timeout is to prevent the agent from getting stuck in infinite loops, NOT to estimate task duration. Be generous if setting. If not set, the agent runs until it completes or is cancelled.
-    #[serde(default)]
-    pub timeout_secs: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -114,21 +109,11 @@ impl AgentTool for SpawnAgentTool {
         };
 
         let subagent = if let Some(session_id) = input.session_id {
-            self.environment.resume_subagent(
-                parent_thread_entity,
-                session_id,
-                input.task,
-                input.timeout_secs.map(Duration::from_secs),
-                cx,
-            )
+            self.environment
+                .resume_subagent(parent_thread_entity, session_id, input.message, cx)
         } else {
-            self.environment.create_subagent(
-                parent_thread_entity,
-                input.label,
-                input.task,
-                input.timeout_secs.map(Duration::from_secs),
-                cx,
-            )
+            self.environment
+                .create_subagent(parent_thread_entity, input.label, input.message, cx)
         };
         let subagent = match subagent {
             Ok(subagent) => subagent,
@@ -148,19 +133,26 @@ impl AgentTool for SpawnAgentTool {
         )]);
         event_stream.update_fields_with_meta(acp::ToolCallUpdateFields::new(), Some(meta));
 
-        cx.spawn(async move |cx| {
-            let output =
-                subagent
-                    .wait_for_output(cx)
-                    .await
-                    .map_err(|e| SpawnAgentToolOutput::Error {
-                        session_id: Some(subagent_session_id.clone()),
-                        error: e.to_string(),
-                    })?;
-            Ok(SpawnAgentToolOutput::Success {
-                session_id: subagent_session_id,
-                output,
-            })
+        cx.spawn(async move |cx| match subagent.wait_for_output(cx).await {
+            Ok(output) => {
+                event_stream.update_fields(
+                    acp::ToolCallUpdateFields::new().content(vec![output.clone().into()]),
+                );
+                Ok(SpawnAgentToolOutput::Success {
+                    session_id: subagent_session_id,
+                    output,
+                })
+            }
+            Err(e) => {
+                let error = e.to_string();
+                event_stream.update_fields(
+                    acp::ToolCallUpdateFields::new().content(vec![error.clone().into()]),
+                );
+                Err(SpawnAgentToolOutput::Error {
+                    session_id: Some(subagent_session_id),
+                    error,
+                })
+            }
         })
     }
 
@@ -184,6 +176,12 @@ impl AgentTool for SpawnAgentTool {
             )]);
             event_stream.update_fields_with_meta(acp::ToolCallUpdateFields::new(), Some(meta));
         }
+
+        let content = match &output {
+            SpawnAgentToolOutput::Success { output, .. } => output.into(),
+            SpawnAgentToolOutput::Error { error, .. } => error.into(),
+        };
+        event_stream.update_fields(acp::ToolCallUpdateFields::new().content(vec![content]));
 
         Ok(())
     }
