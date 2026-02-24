@@ -5,9 +5,21 @@ description: Chat with LLMs directly in your editor with Zed's text threads. Ful
 
 # Text Threads
 
-## Overview {#overview}
+Text threads in the [Agent Panel](./agent-panel.md) work like a regular editor.
+You can use custom keybindings, multiple cursors, and all the standard editing features while chatting.
 
-Text threads in the [Agent Panel](./agent-panel.md) work like a regular editor. You can use custom keybindings, multiple cursors, and all standard editing features.
+## Text Threads vs. Threads
+
+Text Threads were Zed's original AI interface.
+In May 2025, Zed introduced the current [Agent Panel](./agent-panel.md), designed for agentic workflows.
+
+The key difference: text threads don't support tool calls and many other more modern agentic features.
+They can't autonomously read files, write code, or run commands on your behalf.
+Text Threads are for simpler conversational interactions where you send text and receive text responses back.
+
+Therefore, [MCP servers](./mcp.md) and [external agents](./external-agents.md) are also not available in Text Threads.
+
+## Usage Overview
 
 Text threads organize content into message blocks with roles:
 
@@ -15,34 +27,21 @@ Text threads organize content into message blocks with roles:
 - `Assistant`
 - `System`
 
-To begin, type a message in a `You` block.
+To begin, type your message in a `You` block.
+As you type, the remaining token count for the selected model updates automatically.
 
-![Asking a question](https://zed.dev/img/assistant/ask-a-question.png)
+To add context from an editor, highlight text and run `agent: add selection to thread` ({#kb agent::AddSelectionToThread}).
+If the selection is code, Zed will wrap it in a fenced code block.
 
-As you type, the remaining tokens count for the selected model is updated.
+To submit a message, use {#kb assistant::Assist} (`assistant: assist`).
+In text threads, {#kb editor::Newline} inserts a new line instead of submitting, which preserves standard editor behavior.
 
-Inserting text from an editor is as simple as highlighting the text and running `agent: add selection to thread` ({#kb agent::AddSelectionToThread}); Zed will wrap it in a fenced code block if it is code.
+After you submit a message, the response is streamed below in an `Assistant` message block.
+You can cancel the stream at any point with <kbd>escape</kbd>, or start a new conversation at any time via <kbd>cmd-n|ctrl-n</kbd>.
 
-![Quoting a selection](https://zed.dev/img/assistant/quoting-a-selection.png)
+Text threads support straightforward conversations, but you can also go back and edit earlier messages—including previous LLM responses—to change direction, refine context, or correct mistakes without starting a new thread or spending tokens on follow-up corrections.
+If you want to remove a message block entirely, place your cursor at the beginning of the block and use the `delete` key.
 
-To submit a message, use {#kb assistant::Assist}(`assistant: assist`).
-In text threads, {#kb editor::Newline} inserts a new line rather than submitting. This preserves standard editor behavior.
-
-After submitting a message, the response will be streamed below, in an `Assistant` message block.
-
-![Receiving an answer](https://zed.dev/img/assistant/receiving-an-answer.png)
-
-The stream can be canceled at any point with <kbd>escape</kbd>.
-This is useful if you realize early on that the response is not what you were looking for.
-
-If you want to start a new conversation at any time, you can hit <kbd>cmd-n|ctrl-n</kbd> or use the `New Chat` menu option in the hamburger menu at the top left of the panel.
-
-Text threads support straightforward conversations, but you can also go back and modify earlier messages to change direction.
-
-## Editing a Text Thread {#edit-text-thread}
-
-You can edit any text in a thread, including previous LLM responses.
-If you want to remove a message block entirely, simply place your cursor at the beginning of the block and use the `delete` key.
 A typical workflow might involve making edits and adjustments throughout the context to refine your inquiry or provide additional information.
 Here's an example:
 
@@ -54,14 +53,7 @@ Here's an example:
 6. Add additional context to your original message.
 7. Submit the message with {#kb assistant::Assist}.
 
-Being able to edit previous messages gives you control over how tokens are used.
-You don't need to start up a new chat to correct a mistake or to add additional information, and you don't have to waste tokens by submitting follow-up corrections.
-
-> **Note**: The act of editing past messages is often referred to as "Rewriting History" in the context of the language models.
-
-Some additional points to keep in mind:
-
-- You can cycle the role of a message block by clicking on the role, which is useful when you receive a response in an `Assistant` block that you want to edit and send back up as a `You` block.
+You can also cycle the role of a message block by clicking on the role, which is useful when you receive a response in an `Assistant` block that you want to edit and send back up as a `You` block.
 
 ## Commands Overview {#commands}
 
@@ -161,7 +153,11 @@ Usage: `/selection`
 [Commands](#commands) can be used in rules, in the Rules Library (previously known as Prompt Library), to insert dynamic content or perform actions.
 For example, if you want to create a rule where it is important for the model to know the date, you can use the `/now` command to insert the current date.
 
-> **Warn:** Slash commands in rules **only** work when they are used in text threads. Using them in non-text threads is not supported.
+<div class="warning">
+
+Slash commands in rules **only** work when they are used in text threads. Using them in non-text threads is not supported.
+
+</div>
 
 > **Note:** Slash commands in rules **must** be on their own line.
 
@@ -207,7 +203,7 @@ Title: Zed-Flavored Rust
 
 _The text in parentheses above are comments and are not part of the rule._
 
-> **Note:** While you technically _can_ nest a rule within itself, we wouldn't recommend it (in the strongest of terms.) Use at your own risk!
+> **Note:** You can technically nest a rule within itself, but we don't recommend doing so.
 
 By using nested rules, you can create modular and reusable rule components that can be combined in various ways to suit different scenarios.
 
@@ -218,14 +214,6 @@ By using nested rules, you can create modular and reusable rule components that 
 Additional slash commands can be provided by extensions.
 
 See [Extension: Slash Commands](../extensions/slash-commands.md) to learn how to create your own.
-
-## Text Threads vs. Threads
-
-Text threads were Zed's original AI interface. In May 2025, Zed introduced the current [Agent Panel](./agent-panel.md), optimized for readability and agentic workflows.
-
-The key difference: text threads don't support tool calls. They can't read files, write code, or run commands on your behalf. Text threads are for conversational interaction where you only receive text responses.
-
-[MCP servers](./mcp.md) and [external agents](./external-agents.md) are not available in text threads.
 
 ## Advanced Concepts
 

@@ -11,7 +11,7 @@ Settings for Zed's Agent Panel, including model selection, UI preferences, and t
 
 ### Default Model {#default-model}
 
-If you're using [Zed's hosted LLM service](./subscription.md), it sets `claude-sonnet-4` as the default model for agentic work (agent panel, inline assistant) and `gpt-5-nano` as the default "fast" model (thread summarization, git commit messages). If you're not subscribed or want to change these defaults, you can manually edit the `default_model` object in your settings:
+If you're using [Zed's hosted LLM service](./subscription.md), it sets `claude-sonnet-4-5` as the default model for agentic work (agent panel, inline assistant) and `gpt-5-nano` as the default "fast" model (thread summarization, git commit messages). If you're not subscribed or want to change these defaults, you can manually edit the `default_model` object in your settings:
 
 ```json [settings]
 {
@@ -37,7 +37,7 @@ You can assign distinct and specific models for the following AI-powered feature
   "agent": {
     "default_model": {
       "provider": "zed.dev",
-      "model": "claude-sonnet-4"
+      "model": "claude-sonnet-4-5"
     },
     "inline_assistant_model": {
       "provider": "anthropic",
@@ -61,14 +61,14 @@ You can assign distinct and specific models for the following AI-powered feature
 
 With the Inline Assistant in particular, you can send the same prompt to multiple models at once.
 
-Here's how you can customize your `settings.json` to add this functionality:
+Here's how you can customize your settings file ([how to edit](../configuring-zed.md#settings-files)) to add this functionality:
 
 ```json [settings]
 {
   "agent": {
     "default_model": {
       "provider": "zed.dev",
-      "model": "claude-sonnet-4"
+      "model": "claude-sonnet-4-5"
     },
     "inline_alternatives": [
       {
@@ -85,14 +85,14 @@ When multiple models are configured, you'll see in the Inline Assistant UI butto
 The models you specify here are always used in _addition_ to your [default model](#default-model).
 
 For example, the following configuration will generate three outputs for every assist.
-One with Claude Sonnet 4 (the default model), another with GPT-5-mini, and another one with Gemini 2.5 Flash.
+One with Claude Sonnet 4.5 (the default model), another with GPT-5-mini, and another one with Gemini 3 Flash.
 
 ```json [settings]
 {
   "agent": {
     "default_model": {
       "provider": "zed.dev",
-      "model": "claude-sonnet-4"
+      "model": "claude-sonnet-4-5"
     },
     "inline_alternatives": [
       {
@@ -101,7 +101,7 @@ One with Claude Sonnet 4 (the default model), another with GPT-5-mini, and anoth
       },
       {
         "provider": "zed.dev",
-        "model": "gemini-2.5-flash"
+        "model": "gemini-3-flash"
       }
     ]
   }
@@ -128,7 +128,7 @@ Specify a custom temperature for a provider and/or model:
       // To set parameters for a specific provider and model:
       {
         "provider": "zed.dev",
-        "model": "claude-sonnet-4",
+        "model": "claude-sonnet-4-5",
         "temperature": 1.0
       }
     ]
@@ -242,8 +242,20 @@ Patterns are **case-insensitive** by default. To make a pattern case-sensitive, 
 
 ```json [settings]
 {
-  "pattern": "^Makefile$",
-  "case_sensitive": true
+  "agent": {
+    "tool_permissions": {
+      "tools": {
+        "edit_file": {
+          "always_deny": [
+            {
+              "pattern": "^Makefile$",
+              "case_sensitive": true
+            }
+          ]
+        }
+      }
+    }
+  }
 }
 ```
 

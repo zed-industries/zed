@@ -1,3 +1,8 @@
+---
+title: Zed on Linux
+description: "The installation script on the download page is the fastest way to install Zed:"
+---
+
 # Zed on Linux
 
 ## Standard Installation

@@ -1,6 +1,6 @@
 use crate::{AgentTool, ToolCallEventStream};
 use agent_client_protocol as acp;
-use anyhow::{Result, anyhow};
+use anyhow::Result;
 use futures::FutureExt as _;
 use gpui::{App, Entity, Task};
 use language::{DiagnosticSeverity, OffsetRangeExt};
@@ -90,11 +90,11 @@ impl AgentTool for DiagnosticsTool {
         input: Self::Input,
         event_stream: ToolCallEventStream,
         cx: &mut App,
-    ) -> Task<Result<Self::Output>> {
+    ) -> Task<Result<Self::Output, Self::Output>> {
         match input.path {
             Some(path) if !path.is_empty() => {
                 let Some(project_path) = self.project.read(cx).find_project_path(&path, cx) else {
-                    return Task::ready(Err(anyhow!("Could not find path {path} in project",)));
+                    return Task::ready(Err(format!("Could not find path {path} in project")));
                 };
 
                 let open_buffer_task = self
@@ -103,9 +103,9 @@ impl AgentTool for DiagnosticsTool {
 
                 cx.spawn(async move |cx| {
                     let buffer = futures::select! {
-                        result = open_buffer_task.fuse() => result?,
+                        result = open_buffer_task.fuse() => result.map_err(|e| e.to_string())?,
                         _ = event_stream.cancelled_by_user().fuse() => {
-                            anyhow::bail!("Diagnostics cancelled by user");
+                            return Err("Diagnostics cancelled by user".to_string());
                         }
                     };
                     let mut output = String::new();
@@ -126,7 +126,8 @@ impl AgentTool for DiagnosticsTool {
                             severity,
                             range.start.row + 1,
                             entry.diagnostic.message
-                        )?;
+                        )
+                        .ok();
                     }
 
                     if output.is_empty() {

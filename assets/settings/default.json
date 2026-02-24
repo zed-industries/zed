@@ -145,6 +145,10 @@
   "restore_on_file_reopen": true,
   // Whether to automatically close files that have been deleted on disk.
   "close_on_file_delete": false,
+  // Whether toggling a panel (e.g. with its keyboard shortcut) also closes
+  // the panel when it is already focused, instead of just moving focus back
+  // to the editor.
+  "close_panel_on_toggle": false,
   // Relative size of the drop target in the editor that will open dropped file as a split pane (0-0.5)
   // E.g. 0.25 == If you drop onto the top/bottom quarter of the pane a new vertical split will be used
   //              If you drop onto the left/right quarter of the pane a new horizontal split will be used
@@ -1036,7 +1040,7 @@
           "save_file": true,
           "open": true,
           "grep": true,
-          "subagent": true,
+          "spawn_agent": true,
           "terminal": true,
           "thinking": true,
           "web_search": true,
@@ -1056,7 +1060,7 @@
           "read_file": true,
           "open": true,
           "grep": true,
-          "subagent": true,
+          "spawn_agent": true,
           "thinking": true,
           "web_search": true,
         },
@@ -1481,6 +1485,25 @@
     // Should the name or path be displayed first in the git view.
     // "path_style": "file_name_first" or "file_path_first"
     "path_style": "file_name_first",
+    // Directory where git worktrees are created, relative to the repository
+    // working directory.
+    //
+    // When the resolved directory is outside the project root, the
+    // project's directory name is automatically appended so that
+    // sibling repos don't collide. For example, with the default
+    // "../worktrees" and a project at ~/code/zed, worktrees are
+    // created under ~/code/worktrees/zed/.
+    //
+    // When the resolved directory is inside the project root, no
+    // extra component is added (it's already project-scoped).
+    //
+    // Examples:
+    //   "../worktrees" — ~/code/worktrees/<project>/ (default)
+    //   ".git/zed-worktrees" — <project>/.git/zed-worktrees/
+    //   "my-worktrees" — <project>/my-worktrees/
+    //
+    // Trailing slashes are ignored.
+    "worktree_directory": "../worktrees",
   },
   // The list of custom Git hosting providers.
   "git_hosting_providers": [
@@ -1553,6 +1576,13 @@
     "ollama": {
       "api_url": "http://localhost:11434",
       "model": "qwen2.5-coder:7b-base",
+      "prompt_format": "infer",
+      "max_output_tokens": 64,
+    },
+    "open_ai_compatible_api": {
+      "api_url": "",
+      "model": "",
+      "prompt_format": "infer",
       "max_output_tokens": 64,
     },
     // Whether edit predictions are enabled when editing text threads in the agent panel.
@@ -2095,7 +2125,7 @@
       "language_servers": ["basedpyright", "ruff", "!ty", "!pyrefly", "!pyright", "!pylsp", "..."],
     },
     "Ruby": {
-      "language_servers": ["solargraph", "!ruby-lsp", "!rubocop", "!sorbet", "!steep", "..."],
+      "language_servers": ["solargraph", "!ruby-lsp", "!rubocop", "!sorbet", "!steep", "!kanayago", "..."],
     },
     "Rust": {
       "debuggers": ["CodeLLDB"],

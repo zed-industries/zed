@@ -1,5 +1,5 @@
 use assets::Assets;
-use gpui::{Application, Entity, KeyBinding, StyleRefinement, WindowOptions, prelude::*, rgb};
+use gpui::{Entity, KeyBinding, StyleRefinement, WindowOptions, prelude::*, rgb};
 use language::LanguageRegistry;
 use markdown::{Markdown, MarkdownElement, MarkdownStyle};
 use node_runtime::NodeRuntime;
@@ -35,7 +35,7 @@ Remember, markdown processors may have slight differences and extensions, so alw
 
 pub fn main() {
     env_logger::init();
-    Application::new().with_assets(Assets).run(|cx| {
+    gpui_platform::application().with_assets(Assets).run(|cx| {
         let store = SettingsStore::test(cx);
         cx.set_global(store);
         cx.bind_keys([KeyBinding::new("cmd-c", markdown::Copy, None)]);

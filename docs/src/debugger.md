@@ -255,7 +255,7 @@ The settings for the debugger are grouped under the `debugger` key in `settings.
 
 - Description: Whether the button should be displayed in the debugger toolbar.
 - Default: `true`
-- Setting: `debugger.show_button`
+- Setting: `debugger.button`
 
 **Options**
 
@@ -264,7 +264,7 @@ The settings for the debugger are grouped under the `debugger` key in `settings.
 ```json [settings]
 {
   "debugger": {
-    "show_button": true
+    "button": true
   }
 }
 ```

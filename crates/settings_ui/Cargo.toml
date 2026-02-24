@@ -20,7 +20,6 @@ agent.workspace = true
 agent_settings.workspace = true
 anyhow.workspace = true
 audio.workspace = true
-bm25 = "2.3.2"
 component.workspace = true
 codestral.workspace = true
 copilot.workspace = true

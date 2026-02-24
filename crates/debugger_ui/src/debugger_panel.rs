@@ -515,7 +515,9 @@ impl DebugPanel {
             }
             session.update(cx, |session, cx| session.shutdown(cx));
             this.update(cx, |this, cx| {
-                this.retain_sessions(|other| entity_id != other.entity_id());
+                this.retain_sessions(&|other: &Entity<DebugSession>| {
+                    entity_id != other.entity_id()
+                });
                 if let Some(active_session_id) = this
                     .active_session
                     .as_ref()
@@ -1329,7 +1331,7 @@ impl DebugPanel {
         None
     }
 
-    fn retain_sessions(&mut self, keep: impl Fn(&Entity<DebugSession>) -> bool) {
+    fn retain_sessions(&mut self, keep: &dyn Fn(&Entity<DebugSession>) -> bool) {
         self.sessions_with_children
             .retain(|session, _| keep(session));
         for children in self.sessions_with_children.values_mut() {
@@ -1464,7 +1466,7 @@ async fn register_session_inner(
             .keys()
             .find(|p| Some(p.read(cx).session_id(cx)) == session.read(cx).parent_id(cx))
             .cloned();
-        this.retain_sessions(|session| {
+        this.retain_sessions(&|session: &Entity<DebugSession>| {
             !session
                 .read(cx)
                 .running_state()

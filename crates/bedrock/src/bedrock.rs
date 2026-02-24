@@ -1,6 +1,6 @@
 mod models;
 
-use anyhow::{Context, Error, Result, anyhow};
+use anyhow::{Result, anyhow};
 use aws_sdk_bedrockruntime as bedrock;
 pub use aws_sdk_bedrockruntime as bedrock_client;
 use aws_sdk_bedrockruntime::types::InferenceConfiguration;
@@ -37,7 +37,7 @@ pub const CONTEXT_1M_BETA_HEADER: &str = "context-1m-2025-08-07";
 pub async fn stream_completion(
     client: bedrock::Client,
     request: Request,
-) -> Result<BoxStream<'static, Result<BedrockStreamingResponse, BedrockError>>, Error> {
+) -> Result<BoxStream<'static, Result<BedrockStreamingResponse, anyhow::Error>>, BedrockError> {
     let mut response = bedrock::Client::converse_stream(&client)
         .model_id(request.model.clone())
         .set_messages(request.messages.into());
@@ -94,10 +94,30 @@ pub async fn stream_completion(
         }
     }
 
-    let output = response
-        .send()
-        .await
-        .context("Failed to send API request to Bedrock");
+    let output = response.send().await.map_err(|err| match err {
+        bedrock::error::SdkError::ServiceError(ctx) => {
+            use bedrock::operation::converse_stream::ConverseStreamError;
+            let err = ctx.into_err();
+            match &err {
+                ConverseStreamError::ValidationException(e) => {
+                    BedrockError::Validation(e.message().unwrap_or("validation error").to_string())
+                }
+                ConverseStreamError::ThrottlingException(_) => BedrockError::RateLimited,
+                ConverseStreamError::ServiceUnavailableException(_)
+                | ConverseStreamError::ModelNotReadyException(_) => {
+                    BedrockError::ServiceUnavailable
+                }
+                ConverseStreamError::AccessDeniedException(e) => {
+                    BedrockError::AccessDenied(e.message().unwrap_or("access denied").to_string())
+                }
+                ConverseStreamError::InternalServerException(e) => BedrockError::InternalServer(
+                    e.message().unwrap_or("internal server error").to_string(),
+                ),
+                _ => BedrockError::Other(err.into()),
+            }
+        }
+        other => BedrockError::Other(other.into()),
+    });
 
     let stream = Box::pin(stream::unfold(
         output?.stream,
@@ -106,10 +126,10 @@ pub async fn stream_completion(
                 Ok(Some(output)) => Some((Ok(output), stream)),
                 Ok(None) => None,
                 Err(err) => Some((
-                    Err(BedrockError::ClientError(anyhow!(
+                    Err(anyhow!(
                         "{}",
                         aws_sdk_bedrockruntime::error::DisplayErrorContext(err)
-                    ))),
+                    )),
                     stream,
                 )),
             }
@@ -196,10 +216,16 @@ pub struct Metadata {
 
 #[derive(Error, Debug)]
 pub enum BedrockError {
-    #[error("client error: {0}")]
-    ClientError(anyhow::Error),
-    #[error("extension error: {0}")]
-    ExtensionError(anyhow::Error),
+    #[error("{0}")]
+    Validation(String),
+    #[error("rate limited")]
+    RateLimited,
+    #[error("service unavailable")]
+    ServiceUnavailable,
+    #[error("{0}")]
+    AccessDenied(String),
+    #[error("{0}")]
+    InternalServer(String),
     #[error(transparent)]
     Other(#[from] anyhow::Error),
 }
