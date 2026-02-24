@@ -48,6 +48,7 @@ const LANE_WIDTH: Pixels = px(16.0);
 const LEFT_PADDING: Pixels = px(12.0);
 const LINE_WIDTH: Pixels = px(1.5);
 const RESIZE_HANDLE_WIDTH: f32 = 8.0;
+const PENDING_SELECT_MAX_RETRIES: usize = 5;
 const COPIED_STATE_DURATION: Duration = Duration::from_secs(2);
 
 struct CopiedState {
@@ -852,7 +853,7 @@ pub struct GitGraph {
     commit_details_split_state: Entity<SplitState>,
     selected_repo_id: Option<RepositoryId>,
     changed_files_scroll_handle: UniformListScrollHandle,
-    pending_select_sha: Option<String>,
+    pending_select_sha: Option<(String, usize)>,
 }
 
 impl GitGraph {
@@ -977,11 +978,10 @@ impl GitGraph {
                     self.graph_data.add_commits(commits);
                 });
                 cx.notify();
-                if let Some(sha) = self.pending_select_sha.take() {
-                    self.select_commit_by_sha(&sha, cx);
-                }
+                self.retry_pending_select(cx);
             }
             RepositoryEvent::BranchChanged | RepositoryEvent::MergeHeadsChanged => {
+                self.pending_select_sha = None;
                 // Only invalidate if we scanned atleast once,
                 // meaning we are not inside the initial repo loading state
                 // NOTE: this fixes an loading performance regression
@@ -1200,7 +1200,24 @@ impl GitGraph {
                 return;
             }
         }
-        self.pending_select_sha = Some(sha.to_string());
+        self.pending_select_sha = Some((sha.to_string(), PENDING_SELECT_MAX_RETRIES));
+    }
+
+    fn retry_pending_select(&mut self, cx: &mut Context<Self>) {
+        let Some((sha, retries_remaining)) = self.pending_select_sha.take() else {
+            return;
+        };
+        if let Ok(oid) = sha.parse::<Oid>() {
+            for (idx, commit) in self.graph_data.commits.iter().enumerate() {
+                if commit.data.sha == oid {
+                    self.select_entry(idx, cx);
+                    return;
+                }
+            }
+        }
+        if retries_remaining > 0 {
+            self.pending_select_sha = Some((sha, retries_remaining - 1));
+        }
     }
 
     fn open_selected_commit_view(&mut self, window: &mut Window, cx: &mut Context<Self>) {
