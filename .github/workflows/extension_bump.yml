@@ -38,7 +38,6 @@ jobs:
       name: extension_bump::compare_versions
       run: |
         CURRENT_VERSION="$(sed -n 's/^version = \"\(.*\)\"/\1/p' < extension.toml | tr -d '[:space:]')"
-        PR_PARENT_REF="${{ github.head_ref }}"
 
         if [[ -n "$PR_PARENT_REF" ]]; then
             git checkout "$PR_PARENT_REF"
@@ -55,6 +54,8 @@ jobs:
             echo "version_changed=true" >> "$GITHUB_OUTPUT"
 
         echo "current_version=${CURRENT_VERSION}" >> "$GITHUB_OUTPUT"
+      env:
+        PR_PARENT_REF: ${{ github.head_ref }}
     outputs:
       version_changed: ${{ steps.compare-versions-check.outputs.version_changed }}
       current_version: ${{ steps.compare-versions-check.outputs.current_version }}
