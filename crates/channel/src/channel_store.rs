@@ -49,6 +49,8 @@ pub struct ChannelStore {
     _watch_connection_status: Task<Option<()>>,
     disconnect_channel_buffers_task: Option<Task<()>>,
     _update_channels: Task<()>,
+    #[cfg(any(test, feature = "test-support"))]
+    rejoin_barrier: Option<futures::channel::oneshot::Receiver<()>>,
 }
 
 #[derive(Clone, Debug)]
@@ -196,6 +198,8 @@ impl ChannelStore {
             _rpc_subscriptions: rpc_subscriptions,
             _watch_connection_status: watch_connection_status,
             disconnect_channel_buffers_task: None,
+            #[cfg(any(test, feature = "test-support"))]
+            rejoin_barrier: None,
             _update_channels: cx.spawn(async move |this, cx| {
                 maybe!(async move {
                     while let Some(update_channels) = update_channels_rx.next().await {
@@ -228,6 +232,16 @@ impl ChannelStore {
         {
             self.did_subscribe = true;
         }
+    }
+
+    /// Set a barrier that `handle_connect` will wait on after sending
+    /// `RejoinChannelBuffers` but before processing the response.
+    /// Returns a sender that releases the barrier when dropped or sent to.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn set_rejoin_barrier(&mut self) -> futures::channel::oneshot::Sender<()> {
+        let (tx, rx) = futures::channel::oneshot::channel();
+        self.rejoin_barrier = Some(rx);
+        tx
     }
 
     pub fn wait_for_channels(
@@ -855,12 +869,18 @@ impl ChannelStore {
             if let OpenEntityHandle::Open(buffer) = buffer
                 && let Some(buffer) = buffer.upgrade()
             {
-                let channel_buffer = buffer.read(cx);
-                let buffer = channel_buffer.buffer().read(cx);
-                buffer_versions.push(proto::ChannelBufferVersion {
-                    channel_id: channel_buffer.channel_id.0,
-                    epoch: channel_buffer.epoch(),
-                    version: language::proto::serialize_version(&buffer.version()),
+                buffer.update(cx, |channel_buffer, cx| {
+                    // Block on_buffer_update from sending UpdateChannelBuffer messages
+                    // until the rejoin completes. This prevents a race condition where
+                    // edits made during the rejoin async gap could inflate the server
+                    // version, causing offline edits to be filtered out by serialize_ops.
+                    channel_buffer.set_rejoining(true);
+                    let inner_buffer = channel_buffer.buffer().read(cx);
+                    buffer_versions.push(proto::ChannelBufferVersion {
+                        channel_id: channel_buffer.channel_id.0,
+                        epoch: channel_buffer.epoch(),
+                        version: language::proto::serialize_version(&inner_buffer.version()),
+                    });
                 });
             }
         }
@@ -873,8 +893,36 @@ impl ChannelStore {
             buffers: buffer_versions,
         });
 
+        #[cfg(any(test, feature = "test-support"))]
+        let rejoin_barrier = self.rejoin_barrier.take();
+
         cx.spawn(async move |this, cx| {
-            let mut response = response.await?;
+            // Wait on test barrier if set, to allow tests to simulate race conditions
+            #[cfg(any(test, feature = "test-support"))]
+            if let Some(barrier) = rejoin_barrier {
+                let _ = barrier.await;
+            }
+
+            let response = match response.await {
+                Ok(response) => response,
+                Err(err) => {
+                    // Clear rejoining flag on all buffers since the rejoin failed
+                    this.update(cx, |this, cx| {
+                        for buffer in this.opened_buffers.values() {
+                            if let OpenEntityHandle::Open(buffer) = buffer {
+                                if let Some(buffer) = buffer.upgrade() {
+                                    buffer.update(cx, |channel_buffer, _| {
+                                        channel_buffer.set_rejoining(false);
+                                    });
+                                }
+                            }
+                        }
+                    })
+                    .ok();
+                    return Err(err);
+                }
+            };
+            let mut response = response;
 
             this.update(cx, |this, cx| {
                 this.opened_buffers.retain(|_, buffer| match buffer {
