@@ -521,23 +521,27 @@ impl CommitView {
                         ),
                     ),
             )
-            .child(
-                Button::new("sha", "Commit SHA")
-                    .icon(copy_icon)
-                    .icon_color(copy_icon_color)
-                    .icon_position(IconPosition::Start)
-                    .icon_size(IconSize::Small)
-                    .tooltip({
-                        let commit_sha = commit_sha.clone();
-                        move |_, cx| {
-                            Tooltip::with_meta("Copy Commit SHA", None, commit_sha.clone(), cx)
-                        }
-                    })
-                    .on_click(move |_, _, cx| {
-                        cx.stop_propagation();
-                        cx.write_to_clipboard(ClipboardItem::new_string(commit_sha.to_string()));
-                    }),
-            )
+            .when(self.stash.is_none(), |this| {
+                this.child(
+                    Button::new("sha", "Commit SHA")
+                        .icon(copy_icon)
+                        .icon_color(copy_icon_color)
+                        .icon_position(IconPosition::Start)
+                        .icon_size(IconSize::Small)
+                        .tooltip({
+                            let commit_sha = commit_sha.clone();
+                            move |_, cx| {
+                                Tooltip::with_meta("Copy Commit SHA", None, commit_sha.clone(), cx)
+                            }
+                        })
+                        .on_click(move |_, _, cx| {
+                            cx.stop_propagation();
+                            cx.write_to_clipboard(ClipboardItem::new_string(
+                                commit_sha.to_string(),
+                            ));
+                        }),
+                )
+            })
     }
 
     fn apply_stash(workspace: &mut Workspace, window: &mut Window, cx: &mut App) {
@@ -1039,12 +1043,16 @@ impl Render for CommitViewToolbar {
         h_flex()
             .gap_1()
             .when(additions > 0 || deletions > 0, |this| {
-                this.child(h_flex().gap_2().child(DiffStat::new(
-                    "toolbar-diff-stat",
-                    additions as usize,
-                    deletions as usize,
-                )))
-                .child(Divider::vertical())
+                this.child(
+                    h_flex()
+                        .gap_2()
+                        .child(DiffStat::new(
+                            "toolbar-diff-stat",
+                            additions as usize,
+                            deletions as usize,
+                        ))
+                        .child(Divider::vertical()),
+                )
             })
             .child(
                 IconButton::new("buffer-search", IconName::MagnifyingGlass)
