@@ -1121,10 +1121,8 @@ impl SplittableEditor {
 #[cfg(test)]
 impl SplittableEditor {
     fn check_invariants(&self, quiesced: bool, cx: &mut App) {
-        use multi_buffer::ExcerptId;
         use text::Bias;
 
-        use crate::DisplaySnapshot;
         use crate::display_map::Block;
         use crate::display_map::DisplayRow;
 
@@ -1177,35 +1175,28 @@ impl SplittableEditor {
                     "mismatch in hunk statuses"
                 );
 
-                let (mut lhs_point, mut rhs_point) =
+                let (lhs_point, rhs_point) =
                     if lhs_hunk.row_range.is_empty() || rhs_hunk.row_range.is_empty() {
-                        (
-                            Point::new(lhs_hunk.row_range.end.0, 0),
-                            Point::new(rhs_hunk.row_range.end.0, 0),
-                        )
+                        let lhs_end = Point::new(lhs_hunk.row_range.end.0, 0);
+                        let rhs_end = Point::new(rhs_hunk.row_range.end.0, 0);
+
+                        let lhs_exceeds = lhs_snapshot
+                            .range_for_excerpt(lhs_hunk.excerpt_id)
+                            .map_or(false, |range| lhs_end >= range.end);
+                        let rhs_exceeds = rhs_snapshot
+                            .range_for_excerpt(rhs_hunk.excerpt_id)
+                            .map_or(false, |range| rhs_end >= range.end);
+                        if lhs_exceeds != rhs_exceeds {
+                            continue;
+                        }
+
+                        (lhs_end, rhs_end)
                     } else {
                         (
                             Point::new(lhs_hunk.row_range.start.0, 0),
                             Point::new(rhs_hunk.row_range.start.0, 0),
                         )
                     };
-
-                let exceeds_excerpt =
-                    |point: Point, excerpt_id: ExcerptId, snapshot: &DisplaySnapshot| {
-                        snapshot
-                            .range_for_excerpt(excerpt_id)
-                            .map_or(false, |range| point >= range.end)
-                    };
-                let lhs_exceeds = exceeds_excerpt(lhs_point, lhs_hunk.excerpt_id, &lhs_snapshot);
-                let rhs_exceeds = exceeds_excerpt(rhs_point, rhs_hunk.excerpt_id, &rhs_snapshot);
-                if lhs_exceeds != rhs_exceeds {
-                    if lhs_exceeds && lhs_point.row > 0 {
-                        lhs_point = Point::new(lhs_point.row - 1, 0);
-                    }
-                    if rhs_exceeds && rhs_point.row > 0 {
-                        rhs_point = Point::new(rhs_point.row - 1, 0);
-                    }
-                }
 
                 let lhs_point = lhs_snapshot.point_to_display_point(lhs_point, Bias::Left);
                 let rhs_point = rhs_snapshot.point_to_display_point(rhs_point, Bias::Left);
