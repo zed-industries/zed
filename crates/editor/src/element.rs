@@ -8139,6 +8139,7 @@ pub(crate) fn render_buffer_header(
         .h(FILE_HEADER_HEIGHT as f32 * window.line_height())
         .child(
             h_flex()
+                .group("buffer-header-group")
                 .size_full()
                 .flex_basis(Length::Definite(DefiniteLength::Fraction(0.667)))
                 .pl_1()
@@ -8157,7 +8158,6 @@ pub(crate) fn render_buffer_header(
                     border.border_color(border_color)
                 })
                 .bg(colors.editor_subheader_background)
-                .group("buffer-header-group")
                 .hover(|style| style.bg(colors.element_hover))
                 .map(|header| {
                     let editor = editor.clone();
