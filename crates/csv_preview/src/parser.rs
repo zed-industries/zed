@@ -538,6 +538,8 @@ Jane,"Simple name""#;
 impl TableLikeContent {
     #[cfg(test)]
     pub fn from_str(text: String) -> Self {
+        use text::{Buffer, BufferId, ReplicaId};
+
         let buffer_id = BufferId::new(1).unwrap();
         let buffer = Buffer::new(ReplicaId::LOCAL, buffer_id, text);
         let snapshot = buffer.snapshot();

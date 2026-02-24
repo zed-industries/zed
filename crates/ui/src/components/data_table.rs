@@ -764,7 +764,7 @@ impl Table {
         }
     }
 
-    /// Disables based styling of row cell (paddings, text elipsis, nowrap, etc), keeping width settings
+    /// Disables based styling of row cell (paddings, text ellipsis, nowrap, etc), keeping width settings
     ///
     /// Doesn't affect base style of header cell.
     /// Doesn't remove overflow-hidden

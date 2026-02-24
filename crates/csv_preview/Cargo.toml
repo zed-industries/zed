@@ -15,9 +15,7 @@ editor.workspace = true
 ui.workspace = true
 workspace.workspace = true
 log.workspace = true
-derive_more.workspace = true
 text.workspace = true
-menu.workspace = true
 
 [lints]
 workspace = true

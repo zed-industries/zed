@@ -4388,11 +4388,9 @@ name = "csv_preview"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "derive_more 0.99.20",
  "editor",
  "gpui",
  "log",
- "menu",
  "text",
  "ui",
  "workspace",
