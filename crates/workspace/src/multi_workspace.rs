@@ -412,6 +412,7 @@ impl MultiWorkspace {
             .update(cx, |workspace, cx| workspace.focus_panel::<T>(window, cx))
     }
 
+    // used in a test
     pub fn toggle_modal<V: ModalView, B>(
         &mut self,
         window: &mut Window,
@@ -674,11 +675,12 @@ impl Render for MultiWorkspace {
         };
 
         let workspace = self.workspace().clone();
-        let root = workspace.update(cx, |workspace, cx| workspace.actions(div(), window, cx));
+        let root = workspace.update(cx, |workspace, cx| workspace.actions(h_flex(), window, cx));
 
         // todo!(Add workspace key context status information here)
         client_side_decorations(
             root.key_context("MultiWorkspace")
+                .relative()
                 .size_full()
                 .on_action(
                     cx.listener(|this: &mut Self, _: &NewWorkspaceInWindow, window, cx| {
@@ -726,7 +728,8 @@ impl Render for MultiWorkspace {
                         .size_full()
                         .overflow_hidden()
                         .child(self.workspace().clone()),
-                ),
+                )
+                .child(self.workspace().read(cx).modal_layer.clone()),
             window,
             cx,
             Tiling {

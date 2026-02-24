@@ -1248,7 +1248,7 @@ pub struct Workspace {
     last_active_center_pane: Option<WeakEntity<Pane>>,
     last_active_view_id: Option<proto::ViewId>,
     status_bar: Entity<StatusBar>,
-    modal_layer: Entity<ModalLayer>,
+    pub(crate) modal_layer: Entity<ModalLayer>,
     toast_layer: Entity<ToastLayer>,
     titlebar_item: Option<AnyView>,
     notifications: Notifications,
@@ -7864,7 +7864,6 @@ impl Render for Workspace {
                         .when(self.status_bar_visible(cx), |parent| {
                             parent.child(self.status_bar.clone())
                         })
-                        .child(self.modal_layer.clone())
                         .child(self.toast_layer.clone()),
                 )
     }
