@@ -123,16 +123,22 @@ fn workspace_thread_info(workspace: &Entity<Workspace>, cx: &App) -> Option<Agen
     })
 }
 
+/// A single workspace entry within a project group, with snapshotted thread info.
+struct ProjectEntry {
+    workspace: Entity<Workspace>,
+    thread_info: Option<AgentThreadInfo>,
+}
+
 /// A ProjectGroup is a group of workspaces, each one associated with a specific
 /// git worktree or the main worktree.
 #[derive(Default)]
 struct ProjectGroup {
-    workspaces: Vec<Entity<Workspace>>,
+    entries: Vec<ProjectEntry>,
 }
 
 impl ProjectGroup {
     const fn len(&self) -> usize {
-        self.workspaces.len()
+        self.entries.len()
     }
 }
 
@@ -172,16 +178,22 @@ impl ActiveProjects {
     fn add_workspace(&mut self, workspace: Entity<Workspace>, cx: &App) {
         let paths = workspace.read(cx).root_paths(cx);
         let key = PathList::new(&paths);
+        let thread_info = workspace_thread_info(&workspace, cx);
+
+        let entry = ProjectEntry {
+            workspace,
+            thread_info,
+        };
 
         match self.groups.iter_mut().find(|(k, _)| *k == key) {
             Some((_key, group)) => {
-                group.workspaces.push(workspace);
+                group.entries.push(entry);
             }
             None => {
                 self.groups.push((
                     key,
                     ProjectGroup {
-                        workspaces: vec![workspace],
+                        entries: vec![entry],
                     },
                 ));
             }
@@ -199,14 +211,32 @@ impl ActiveProjects {
     /// FIXME: This violates the principle of not wanting to leak indices. We
     /// probably want [`ActiveProjects`] to look up only by key and then have
     /// [`ActiveProjectDelegate`] handle the mapping of those to indices.
-    fn project_by_ix(&self, mut ix: usize) -> Option<(Entity<Workspace>, Option<&PathList>)> {
+    fn project_by_ix(&self, mut ix: usize) -> Option<(&ProjectEntry, Option<&PathList>)> {
         for (path_list, group) in self.groups.iter() {
             if ix < group.len() {
-                return Some((group.workspaces[ix].clone(), Some(path_list)));
+                return Some((&group.entries[ix], (ix == 0).then_some(path_list)));
             }
             ix -= group.len();
         }
         None
+    }
+
+    /// Preserve thread info from a previous snapshot for workspaces that
+    /// temporarily have no active thread (e.g. mid-switch).
+    fn preserve_thread_info_from(&mut self, old: &ActiveProjects) {
+        for (_key, group) in &mut self.groups {
+            for entry in &mut group.entries {
+                if entry.thread_info.is_none() {
+                    // Find the same workspace in the old data and carry forward its info.
+                    entry.thread_info = old
+                        .groups
+                        .iter()
+                        .flat_map(|(_, g)| &g.entries)
+                        .find(|old_entry| old_entry.workspace == entry.workspace)
+                        .and_then(|old_entry| old_entry.thread_info.clone());
+                }
+            }
+        }
     }
 }
 
@@ -287,13 +317,18 @@ impl PickerDelegate for ActiveProjectsDelegate {
         _window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
-        let (workspace, paths_if_first) = self.active_projects.project_by_ix(index)?;
+        let (project_entry, paths_if_first) = self.active_projects.project_by_ix(index)?;
+
+        let thread_title = project_entry
+            .thread_info
+            .as_ref()
+            .map(|info| info.title.clone())
+            .unwrap_or_else(|| "New Thread".into());
 
         Some(
             v_flex()
-                .when(paths_if_first.is_some(), |el| {
-                    let header_label: SharedString = paths_if_first
-                        .unwrap()
+                .when_some(paths_if_first, |el, path_list| {
+                    let header_label: SharedString = path_list
                         .ordered_paths()
                         .filter_map(|p| p.file_name().map(|n| n.to_string_lossy().to_string()))
                         .collect::<Vec<_>>()
@@ -301,14 +336,7 @@ impl PickerDelegate for ActiveProjectsDelegate {
                         .into();
                     el.child(ListSubHeader::new(header_label).inset(true))
                 })
-                .child(
-                    Label::new(
-                        workspace_thread_info(&workspace, cx)
-                            .map(|info| info.title)
-                            .unwrap_or_else(|| "New Thread".into()),
-                    )
-                    .color(Color::Muted),
-                )
+                .child(Label::new(thread_title).color(Color::Muted))
                 .into_any_element(),
         )
     }
@@ -428,7 +456,76 @@ impl Sidebar {
 
     /// Reconciles the sidebar's displayed entries with the current state of all
     /// workspaces and their agent threads.
-    fn update_entries(&mut self, window: &mut Window, cx: &mut Context<Self>) {}
+    fn update_entries(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let multi_workspace = self.multi_workspace.clone();
+        cx.defer_in(window, move |this, window, cx| {
+            let workspaces = multi_workspace.read(cx).workspaces().to_vec();
+
+            // Rebuild the active projects from scratch, preserving thread info
+            // for workspaces that temporarily have no active thread.
+            let mut active_projects = ActiveProjects::from_workspaces(&workspaces, cx);
+            this.picker.update(cx, |picker, cx| {
+                active_projects.preserve_thread_info_from(&picker.delegate.active_projects);
+                picker.delegate.active_projects = active_projects;
+                let query = picker.query(cx);
+                picker.update_matches(query, window, cx);
+            });
+
+            // Re-subscribe to project worktree changes (add/remove/reorder).
+            this._project_subscriptions = workspaces
+                .iter()
+                .map(|workspace| {
+                    let project = workspace.read(cx).project().clone();
+                    cx.subscribe_in(&project, window, |this, _project, event, window, cx| {
+                        // FIXME: we should be able to handle these more cheaply
+                        // than rebuilding everything at once.
+                        match event {
+                            ProjectEvent::WorktreeAdded(_)
+                            | ProjectEvent::WorktreeRemoved(_)
+                            | ProjectEvent::WorktreeOrderChanged => {
+                                this.update_entries(window, cx);
+                            }
+                            _ => {}
+                        }
+                    })
+                })
+                .collect();
+
+            // Re-subscribe to agent panel events (thread switched, etc.).
+            this._agent_panel_subscriptions = workspaces
+                .iter()
+                .map(|workspace| {
+                    if let Some(agent_panel) = workspace.read(cx).panel::<AgentPanel>(cx) {
+                        cx.subscribe_in(
+                            &agent_panel,
+                            window,
+                            |this, _, _event: &AgentPanelEvent, window, cx| {
+                                this.update_entries(window, cx);
+                            },
+                        )
+                    } else {
+                        // Panel hasn't loaded yet — observe the workspace so we
+                        // re-subscribe once the panel appears.
+                        cx.observe_in(workspace, window, |this, _, window, cx| {
+                            this.update_entries(window, cx);
+                        })
+                    }
+                })
+                .collect();
+
+            // Re-subscribe to active thread changes (title, status).
+            this._thread_subscriptions = workspaces
+                .iter()
+                .filter_map(|workspace| {
+                    let agent_panel = workspace.read(cx).panel::<AgentPanel>(cx)?;
+                    let thread = agent_panel.read(cx).active_agent_thread(cx)?;
+                    Some(cx.observe_in(&thread, window, |this, _, window, cx| {
+                        this.update_entries(window, cx);
+                    }))
+                })
+                .collect();
+        });
+    }
 }
 
 impl WorkspaceSidebar for Sidebar {
