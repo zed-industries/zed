@@ -143,7 +143,6 @@ impl TitleBar {
 
         h_flex()
             .id("collaborator-list")
-            .occlude()
             .w_full()
             .gap_1()
             .overflow_x_scroll()
@@ -227,6 +226,7 @@ impl TitleBar {
                                             .ok();
                                     })
                                 })
+                                .occlude()
                                 .tooltip({
                                     let login = collaborator.user.github_login.clone();
                                     Tooltip::text(format!("Follow {login}"))
