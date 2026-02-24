@@ -1300,6 +1300,7 @@ impl AcpServerView {
                         }
                     });
                 }
+                cx.notify();
             }
             AcpThreadEvent::PromptCapabilitiesUpdated => {
                 if let Some(active) = self.thread_view(&thread_id) {
