@@ -124,7 +124,7 @@ impl WgpuRenderer {
     /// The caller must ensure that the window handle remains valid for the lifetime
     /// of the returned renderer.
     pub fn new<W: HasWindowHandle + HasDisplayHandle>(
-        context: &mut WgpuContext,
+        gpu_context: &mut Option<WgpuContext>,
         window: &W,
         config: WgpuSurfaceConfig,
     ) -> anyhow::Result<Self> {
@@ -140,17 +140,30 @@ impl WgpuRenderer {
             raw_window_handle: window_handle.as_raw(),
         };
 
+        // Use the existing context's instance if available, otherwise create a new one.
+        // The surface must be created with the same instance that will be used for
+        // adapter selection, otherwise wgpu will panic.
+        let instance = gpu_context
+            .as_ref()
+            .map(|ctx| ctx.instance.clone())
+            .unwrap_or_else(WgpuContext::instance);
+
         // Safety: The caller guarantees that the window handle is valid for the
         // lifetime of this renderer. In practice, the RawWindow struct is created
         // from the native window handles and the surface is dropped before the window.
         let surface = unsafe {
-            context
-                .instance
+            instance
                 .create_surface_unsafe(target)
                 .map_err(|e| anyhow::anyhow!("Failed to create surface: {e}"))?
         };
 
-        context.ensure_compatible_with_surface(&surface)?;
+        let context = match gpu_context {
+            Some(context) => {
+                context.check_compatible_with_surface(&surface)?;
+                context
+            }
+            None => gpu_context.insert(WgpuContext::new(instance, &surface)?),
+        };
 
         let surface_caps = surface.get_capabilities(&context.adapter);
         let preferred_formats = [
