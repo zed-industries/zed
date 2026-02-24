@@ -5,10 +5,11 @@ use indoc::formatdoc;
 use indoc::indoc;
 use serde_json::json;
 
+use crate::tasks::workflows::steps::CheckoutStep;
 use crate::tasks::workflows::{
     extension_bump::{RepositoryTarget, generate_token},
     runners,
-    steps::{self, NamedJob, named},
+    steps::{self, DEFAULT_REPOSITORY_OWNER_GUARD, NamedJob, named},
     vars::{self, StepOutput},
 };
 
@@ -58,6 +59,9 @@ fn fetch_extension_repos() -> NamedJob {
     let (get_org_repositories, list_repos_output) = get_repositories();
 
     let job = Job::default()
+        .cond(Expression::new(format!(
+            "{DEFAULT_REPOSITORY_OWNER_GUARD} && github.ref == 'refs/heads/main'"
+        )))
         .runs_on(runners::LINUX_SMALL)
         .timeout_minutes(5u32)
         .outputs([("repos".to_owned(), list_repos_output.to_string())])
@@ -67,17 +71,19 @@ fn fetch_extension_repos() -> NamedJob {
 }
 
 fn rollout_workflows_to_extension(fetch_repos_job: &NamedJob) -> NamedJob {
-    fn checkout_zed_repo() -> Step<Use> {
+    fn checkout_zed_repo() -> CheckoutStep {
         steps::checkout_repo()
-            .name("checkout_zed_repo")
-            .add_with(("path", "zed"))
-            .add_with(("fetch-depth", "0"))
+            .with_full_history()
+            .with_path("zed")
+            .with_custom_name("checkout_zed_repo")
     }
 
-    fn checkout_extension_repo(token: &StepOutput) -> Step<Use> {
-        steps::checkout_repo_with_token(token)
-            .add_with(("repository", "zed-extensions/${{ matrix.repo }}"))
-            .add_with(("path", "extension"))
+    fn checkout_extension_repo(token: &StepOutput) -> CheckoutStep {
+        steps::checkout_repo()
+            .with_custom_name("checkout_extension_repo")
+            .with_token(token)
+            .with_repository("zed-extensions/${{ matrix.repo }}")
+            .with_path("extension")
     }
 
     fn get_previous_tag_commit() -> (Step<Run>, StepOutput) {
@@ -168,7 +174,7 @@ fn rollout_workflows_to_extension(fetch_repos_job: &NamedJob) -> NamedJob {
     }
 
     fn create_pull_request(token: &StepOutput, short_sha: &StepOutput) -> Step<Use> {
-        let title = format!("Update CI workflows to `zed@{}`", short_sha);
+        let title = format!("Update CI workflows to `{short_sha}`");
 
         named::uses("peter-evans", "create-pull-request", "v7")
             .add_with(("path", "extension"))
@@ -234,7 +240,7 @@ fn rollout_workflows_to_extension(fetch_repos_job: &NamedJob) -> NamedJob {
         .strategy(
             Strategy::default()
                 .fail_fast(false)
-                .max_parallel(5u32)
+                .max_parallel(10u32)
                 .matrix(json!({
                     "repo": format!("${{{{ fromJson(needs.{}.outputs.repos) }}}}", fetch_repos_job.name)
                 })),
@@ -253,8 +259,8 @@ fn rollout_workflows_to_extension(fetch_repos_job: &NamedJob) -> NamedJob {
 }
 
 fn create_rollout_tag(rollout_job: &NamedJob) -> NamedJob {
-    fn checkout_zed_repo(token: &StepOutput) -> Step<Use> {
-        steps::checkout_repo_with_token(token).add_with(("fetch-depth", "0"))
+    fn checkout_zed_repo(token: &StepOutput) -> CheckoutStep {
+        steps::checkout_repo().with_full_history().with_token(token)
     }
 
     fn update_rollout_tag() -> Step<Run> {

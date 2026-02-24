@@ -1,3 +1,8 @@
+---
+title: Zig
+description: "Configure Zig language support in Zed, including language servers, formatting, and debugging."
+---
+
 # Zig
 
 Zig support is available through the [Zig extension](https://github.com/zed-extensions/zig).

@@ -1,7 +1,7 @@
 use crate::{
     DebugEvent, EditPredictionFinishedDebugEvent, EditPredictionId, EditPredictionModelInput,
     EditPredictionStartedDebugEvent, open_ai_response::text_from_response,
-    prediction::EditPredictionResult, zeta1::compute_edits,
+    prediction::EditPredictionResult, zeta::compute_edits,
 };
 use anyhow::{Context as _, Result};
 use cloud_llm_client::EditPredictionRejectReason;
@@ -97,6 +97,10 @@ impl Mercury {
                     - context_offset_range.start)
                     ..(editable_offset_range.end - context_offset_range.start),
                 excerpt_start_row: Some(context_start_row),
+                excerpt_ranges: None,
+                preferred_model: None,
+                in_open_source_repo: false,
+                can_collect_data: false,
             };
 
             let prompt = build_prompt(&inputs);

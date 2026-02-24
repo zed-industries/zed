@@ -9,7 +9,7 @@ env:
 
 jobs:
   notify-slack:
-    if: github.repository_owner == 'zed-industries'
+    if: github.repository_owner == 'zed-industries' && github.event.issue.state == 'open'
     runs-on: namespace-profile-2x4-ubuntu-2404
 
     steps:

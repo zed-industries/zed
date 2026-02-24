@@ -8,7 +8,9 @@ use editor::{Editor, EditorMode, MultiBuffer};
 use extension::ExtensionHostProxy;
 use fs::{FakeFs, Fs as _, RemoveOptions};
 use futures::StreamExt as _;
-use gpui::{AppContext as _, BackgroundExecutor, TestAppContext, UpdateGlobal as _, VisualContext};
+use gpui::{
+    AppContext as _, BackgroundExecutor, TestAppContext, UpdateGlobal as _, VisualContext as _,
+};
 use http_client::BlockedHttpClient;
 use language::{
     FakeLspAdapter, Language, LanguageConfig, LanguageMatcher, LanguageRegistry,
@@ -98,6 +100,7 @@ async fn test_sharing_an_ssh_remote_project(
                 node_runtime: node,
                 languages,
                 extension_host_proxy: Arc::new(ExtensionHostProxy::new()),
+                startup_time: std::time::Instant::now(),
             },
             false,
             cx,
@@ -259,6 +262,7 @@ async fn test_ssh_collaboration_git_branches(
                 node_runtime: node,
                 languages,
                 extension_host_proxy: Arc::new(ExtensionHostProxy::new()),
+                startup_time: std::time::Instant::now(),
             },
             false,
             cx,
@@ -464,6 +468,7 @@ async fn test_ssh_collaboration_formatting_with_prettier(
                 node_runtime: NodeRuntime::unavailable(),
                 languages,
                 extension_host_proxy: Arc::new(ExtensionHostProxy::new()),
+                startup_time: std::time::Instant::now(),
             },
             false,
             cx,
@@ -626,6 +631,7 @@ async fn test_remote_server_debugger(
                 node_runtime: node,
                 languages,
                 extension_host_proxy: Arc::new(ExtensionHostProxy::new()),
+                startup_time: std::time::Instant::now(),
             },
             false,
             cx,
@@ -663,7 +669,7 @@ async fn test_remote_server_debugger(
 
     let workspace_window = cx_a
         .window_handle()
-        .downcast::<workspace::Workspace>()
+        .downcast::<workspace::MultiWorkspace>()
         .unwrap();
 
     let session = debugger_ui::tests::start_debug_session(&workspace_window, cx_a, |_| {}).unwrap();
@@ -671,13 +677,16 @@ async fn test_remote_server_debugger(
     debug_panel.update(cx_a, |debug_panel, cx| {
         assert_eq!(
             debug_panel.active_session().unwrap().read(cx).session(cx),
-            session
+            session.clone()
         )
     });
 
-    session.update(cx_a, |session, _| {
-        assert_eq!(session.binary().unwrap().command.as_deref(), Some("mock"));
-    });
+    session.update(
+        cx_a,
+        |session: &mut project::debugger::session::Session, _| {
+            assert_eq!(session.binary().unwrap().command.as_deref(), Some("mock"));
+        },
+    );
 
     let shutdown_session = workspace.update(cx_a, |workspace, cx| {
         workspace.project().update(cx, |project, cx| {
@@ -735,6 +744,7 @@ async fn test_slow_adapter_startup_retries(
                 node_runtime: node,
                 languages,
                 extension_host_proxy: Arc::new(ExtensionHostProxy::new()),
+                startup_time: std::time::Instant::now(),
             },
             false,
             cx,
@@ -772,7 +782,7 @@ async fn test_slow_adapter_startup_retries(
 
     let workspace_window = cx_a
         .window_handle()
-        .downcast::<workspace::Workspace>()
+        .downcast::<workspace::MultiWorkspace>()
         .unwrap();
 
     let count = Arc::new(AtomicUsize::new(0));
@@ -804,7 +814,10 @@ async fn test_slow_adapter_startup_retries(
     .unwrap();
     cx_a.run_until_parked();
 
-    let client = session.update(cx_a, |session, _| session.adapter_client().unwrap());
+    let client = session.update(
+        cx_a,
+        |session: &mut project::debugger::session::Session, _| session.adapter_client().unwrap(),
+    );
     client
         .fake_event(dap::messages::Events::Stopped(dap::StoppedEvent {
             reason: dap::StoppedEventReason::Pause,
@@ -938,6 +951,7 @@ async fn test_ssh_remote_worktree_trust(cx_a: &mut TestAppContext, server_cx: &m
                 node_runtime: node,
                 languages,
                 extension_host_proxy: Arc::new(ExtensionHostProxy::new()),
+                startup_time: std::time::Instant::now(),
             },
             true,
             cx,

@@ -5,6 +5,7 @@ use crate::{
     repair,
 };
 use anyhow::{Context as _, Result};
+use edit_prediction::example_spec::encode_cursor_in_patch;
 use zeta_prompt::{CURSOR_MARKER, ZetaFormat};
 
 pub fn run_parse_output(example: &mut Example) -> Result<()> {
@@ -55,9 +56,15 @@ fn extract_zeta2_current_region(prompt: &str, format: ZetaFormat) -> Result<Stri
         ZetaFormat::V0113Ordered | ZetaFormat::V0114180EditableRegion => {
             ("<|fim_middle|>current\n", "<|fim_suffix|>")
         }
-        ZetaFormat::V0120GitMergeMarkers | ZetaFormat::V0131GitMergeMarkersPrefix => (
+        ZetaFormat::V0120GitMergeMarkers
+        | ZetaFormat::V0131GitMergeMarkersPrefix
+        | ZetaFormat::V0211Prefill => (
             zeta_prompt::v0120_git_merge_markers::START_MARKER,
             zeta_prompt::v0120_git_merge_markers::SEPARATOR,
+        ),
+        ZetaFormat::V0211SeedCoder => (
+            zeta_prompt::seed_coder::START_MARKER,
+            zeta_prompt::seed_coder::SEPARATOR,
         ),
     };
 
@@ -101,11 +108,14 @@ fn parse_zeta2_output(
     };
 
     let suffix = match format {
-        ZetaFormat::V0131GitMergeMarkersPrefix => {
+        ZetaFormat::V0131GitMergeMarkersPrefix | ZetaFormat::V0211Prefill => {
             zeta_prompt::v0131_git_merge_markers_prefix::END_MARKER
         }
         ZetaFormat::V0120GitMergeMarkers => zeta_prompt::v0120_git_merge_markers::END_MARKER,
-        _ => "",
+        ZetaFormat::V0112MiddleAtEnd
+        | ZetaFormat::V0113Ordered
+        | ZetaFormat::V0114180EditableRegion => "",
+        ZetaFormat::V0211SeedCoder => zeta_prompt::seed_coder::END_MARKER,
     };
     if !suffix.is_empty() {
         new_text = new_text
@@ -123,20 +133,18 @@ fn parse_zeta2_output(
     }
 
     let old_text_trimmed = old_text.trim_end_matches('\n');
-    let (editable_region_offset, _) = prompt_inputs
-        .content
+    let excerpt = prompt_inputs.cursor_excerpt.as_ref();
+    let (editable_region_offset, _) = excerpt
         .match_indices(old_text_trimmed)
-        .min_by_key(|(index, _)| index.abs_diff(prompt_inputs.cursor_offset))
+        .min_by_key(|(index, _)| index.abs_diff(prompt_inputs.cursor_offset_in_excerpt))
         .with_context(|| {
             format!(
                 "could not find editable region in content.\nLooking for:\n{}\n\nIn content:\n{}",
-                old_text_trimmed, &prompt_inputs.content
+                old_text_trimmed, excerpt
             )
         })?;
 
-    let editable_region_start_line = prompt_inputs.content[..editable_region_offset]
-        .matches('\n')
-        .count();
+    let editable_region_start_line = excerpt[..editable_region_offset].matches('\n').count();
 
     // Use full context so cursor offset (relative to editable region start) aligns with diff content
     let editable_region_lines = old_text_normalized.lines().count() as u32;
@@ -153,12 +161,14 @@ fn parse_zeta2_output(
         path = example.spec.cursor_path.to_string_lossy(),
     );
 
+    let formatted_diff = encode_cursor_in_patch(&formatted_diff, cursor_offset);
+
     let actual_cursor = cursor_offset.map(|editable_region_cursor_offset| {
         ActualCursor::from_editable_region(
             &example.spec.cursor_path,
             editable_region_cursor_offset,
             &new_text,
-            &prompt_inputs.content,
+            excerpt,
             editable_region_offset,
             editable_region_start_line,
         )

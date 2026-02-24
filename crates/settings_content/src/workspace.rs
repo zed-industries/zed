@@ -113,6 +113,12 @@ pub struct WorkspaceSettingsContent {
     ///
     /// Default: true
     pub zoomed_padding: Option<bool>,
+    /// Whether toggling a panel (e.g. with its keyboard shortcut) also closes
+    /// the panel when it is already focused, instead of just moving focus back
+    /// to the editor.
+    ///
+    /// Default: false
+    pub close_panel_on_toggle: Option<bool>,
     /// What draws window decorations/titlebar, the client application (Zed) or display server
     /// Default: client
     pub window_decorations: Option<WindowDecorations>,
@@ -858,5 +864,38 @@ impl DocumentFoldingRanges {
     /// Returns true if LSP folding ranges should be requested from language servers.
     pub fn enabled(&self) -> bool {
         self != &Self::Off
+    }
+}
+
+#[derive(
+    Debug,
+    PartialEq,
+    Eq,
+    Clone,
+    Copy,
+    Default,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum DocumentSymbols {
+    /// Use tree-sitter queries to compute document symbols for outlines and breadcrumbs (default).
+    #[default]
+    #[serde(alias = "tree_sitter")]
+    Off,
+    /// Use the language server's `textDocument/documentSymbol` LSP response for outlines and
+    /// breadcrumbs. When enabled, tree-sitter is not used for document symbols.
+    #[serde(alias = "language_server")]
+    On,
+}
+
+impl DocumentSymbols {
+    /// Returns true if LSP document symbols should be used instead of tree-sitter.
+    pub fn lsp_enabled(&self) -> bool {
+        self == &Self::On
     }
 }

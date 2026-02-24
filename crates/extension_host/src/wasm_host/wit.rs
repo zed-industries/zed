@@ -1007,6 +1007,20 @@ impl Extension {
         resource: Resource<Arc<dyn WorktreeDelegate>>,
     ) -> Result<Result<DebugAdapterBinary, String>> {
         match self {
+            Extension::V0_8_0(ext) => {
+                let dap_binary = ext
+                    .call_get_dap_binary(
+                        store,
+                        &adapter_name,
+                        &task.try_into()?,
+                        user_installed_path.as_ref().and_then(|p| p.to_str()),
+                        resource,
+                    )
+                    .await?
+                    .map_err(|e| anyhow!("{e:?}"))?;
+
+                Ok(Ok(dap_binary))
+            }
             Extension::V0_6_0(ext) => {
                 let dap_binary = ext
                     .call_get_dap_binary(
@@ -1021,7 +1035,16 @@ impl Extension {
 
                 Ok(Ok(dap_binary))
             }
-            _ => anyhow::bail!("`get_dap_binary` not available prior to v0.6.0"),
+            Extension::V0_5_0(_)
+            | Extension::V0_4_0(_)
+            | Extension::V0_3_0(_)
+            | Extension::V0_2_0(_)
+            | Extension::V0_1_0(_)
+            | Extension::V0_0_6(_)
+            | Extension::V0_0_4(_)
+            | Extension::V0_0_1(_) => {
+                anyhow::bail!("`get_dap_binary` not available prior to v0.6.0");
+            }
         }
     }
 
@@ -1032,6 +1055,16 @@ impl Extension {
         config: serde_json::Value,
     ) -> Result<Result<StartDebuggingRequestArgumentsRequest, String>> {
         match self {
+            Extension::V0_8_0(ext) => {
+                let config =
+                    serde_json::to_string(&config).context("Adapter config is not a valid JSON")?;
+                let dap_binary = ext
+                    .call_dap_request_kind(store, &adapter_name, &config)
+                    .await?
+                    .map_err(|e| anyhow!("{e:?}"))?;
+
+                Ok(Ok(dap_binary))
+            }
             Extension::V0_6_0(ext) => {
                 let config =
                     serde_json::to_string(&config).context("Adapter config is not a valid JSON")?;
@@ -1042,7 +1075,16 @@ impl Extension {
 
                 Ok(Ok(dap_binary))
             }
-            _ => anyhow::bail!("`dap_request_kind` not available prior to v0.6.0"),
+            Extension::V0_5_0(_)
+            | Extension::V0_4_0(_)
+            | Extension::V0_3_0(_)
+            | Extension::V0_2_0(_)
+            | Extension::V0_1_0(_)
+            | Extension::V0_0_6(_)
+            | Extension::V0_0_4(_)
+            | Extension::V0_0_1(_) => {
+                anyhow::bail!("`dap_request_kind` not available prior to v0.6.0");
+            }
         }
     }
 
@@ -1052,6 +1094,15 @@ impl Extension {
         config: ZedDebugConfig,
     ) -> Result<Result<DebugScenario, String>> {
         match self {
+            Extension::V0_8_0(ext) => {
+                let config = config.into();
+                let dap_binary = ext
+                    .call_dap_config_to_scenario(store, &config)
+                    .await?
+                    .map_err(|e| anyhow!("{e:?}"))?;
+
+                Ok(Ok(dap_binary.try_into()?))
+            }
             Extension::V0_6_0(ext) => {
                 let config = config.into();
                 let dap_binary = ext
@@ -1061,7 +1112,16 @@ impl Extension {
 
                 Ok(Ok(dap_binary.try_into()?))
             }
-            _ => anyhow::bail!("`dap_config_to_scenario` not available prior to v0.6.0"),
+            Extension::V0_5_0(_)
+            | Extension::V0_4_0(_)
+            | Extension::V0_3_0(_)
+            | Extension::V0_2_0(_)
+            | Extension::V0_1_0(_)
+            | Extension::V0_0_6(_)
+            | Extension::V0_0_4(_)
+            | Extension::V0_0_1(_) => {
+                anyhow::bail!("`dap_config_to_scenario` not available prior to v0.6.0");
+            }
         }
     }
 
@@ -1074,6 +1134,20 @@ impl Extension {
         debug_adapter_name: String,
     ) -> Result<Option<DebugScenario>> {
         match self {
+            Extension::V0_8_0(ext) => {
+                let build_config_template = build_config_template.into();
+                let dap_binary = ext
+                    .call_dap_locator_create_scenario(
+                        store,
+                        &locator_name,
+                        &build_config_template,
+                        &resolved_label,
+                        &debug_adapter_name,
+                    )
+                    .await?;
+
+                Ok(dap_binary.map(TryInto::try_into).transpose()?)
+            }
             Extension::V0_6_0(ext) => {
                 let build_config_template = build_config_template.into();
                 let dap_binary = ext
@@ -1088,7 +1162,16 @@ impl Extension {
 
                 Ok(dap_binary.map(TryInto::try_into).transpose()?)
             }
-            _ => anyhow::bail!("`dap_locator_create_scenario` not available prior to v0.6.0"),
+            Extension::V0_5_0(_)
+            | Extension::V0_4_0(_)
+            | Extension::V0_3_0(_)
+            | Extension::V0_2_0(_)
+            | Extension::V0_1_0(_)
+            | Extension::V0_0_6(_)
+            | Extension::V0_0_4(_)
+            | Extension::V0_0_1(_) => {
+                anyhow::bail!("`dap_locator_create_scenario` not available prior to v0.6.0");
+            }
         }
     }
 
@@ -1099,6 +1182,15 @@ impl Extension {
         resolved_build_task: SpawnInTerminal,
     ) -> Result<Result<DebugRequest, String>> {
         match self {
+            Extension::V0_8_0(ext) => {
+                let build_config_template = resolved_build_task.try_into()?;
+                let dap_request = ext
+                    .call_run_dap_locator(store, &locator_name, &build_config_template)
+                    .await?
+                    .map_err(|e| anyhow!("{e:?}"))?;
+
+                Ok(Ok(dap_request.into()))
+            }
             Extension::V0_6_0(ext) => {
                 let build_config_template = resolved_build_task.try_into()?;
                 let dap_request = ext
@@ -1108,7 +1200,16 @@ impl Extension {
 
                 Ok(Ok(dap_request.into()))
             }
-            _ => anyhow::bail!("`dap_locator_create_scenario` not available prior to v0.6.0"),
+            Extension::V0_5_0(_)
+            | Extension::V0_4_0(_)
+            | Extension::V0_3_0(_)
+            | Extension::V0_2_0(_)
+            | Extension::V0_1_0(_)
+            | Extension::V0_0_6(_)
+            | Extension::V0_0_4(_)
+            | Extension::V0_0_1(_) => {
+                anyhow::bail!("`run_dap_locator` not available prior to v0.6.0");
+            }
         }
     }
 }

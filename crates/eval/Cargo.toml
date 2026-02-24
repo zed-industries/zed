@@ -38,6 +38,7 @@ extension.workspace = true
 fs.workspace = true
 futures.workspace = true
 gpui.workspace = true
+gpui_platform.workspace = true
 gpui_tokio.workspace = true
 handlebars.workspace = true
 language.workspace = true

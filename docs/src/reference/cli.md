@@ -1,6 +1,11 @@
+---
+title: CLI Reference
+description: "Reference for Zed's command-line interface (CLI), including opening files and directories, integrating with tools, and controlling Zed from scripts."
+---
+
 # CLI Reference
 
-Zed includes a command-line interface (CLI) for opening files and directories, integrating with other tools, and controlling Zed from scripts.
+Use Zed's command-line interface (CLI) to open files and directories, integrate with other tools, and control Zed from scripts.
 
 ## Installation
 
@@ -66,7 +71,9 @@ zed -n ~/projects/myproject
 
 ### `-a`, `--add`
 
-Add paths to the currently focused workspace instead of opening a new window:
+> **Changed in Preview (v0.225).** See [release notes](/releases#0.225).
+
+Add paths to the currently focused workspace instead of opening a new window. When multiple workspace windows are open, files open in the focused window:
 
 ```sh
 zed -a newfile.txt

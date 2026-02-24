@@ -1,18 +1,17 @@
 use anyhow::{Context as _, Result};
 use futures::{
-    AsyncBufReadExt as _, SinkExt as _,
+    AsyncBufReadExt as _, StreamExt as _,
     channel::mpsc::{self},
     io::BufReader,
-    stream::{FuturesUnordered, SelectAll, StreamExt},
 };
-use gpui::{App, AppContext as _, Entity, EntityId, Task, Window};
+use gpui::{App, Entity, EntityId, Task, Window};
 use jupyter_protocol::{
-    ExecutionState, JupyterKernelspec, JupyterMessage, JupyterMessageContent, KernelInfoReply,
+    ExecutionState, JupyterKernelspec, JupyterMessage, KernelInfoReply,
     connection_info::{ConnectionInfo, Transport},
 };
 use project::Fs;
 use runtimelib::dirs;
-use smol::{net::TcpListener, process::Command};
+use smol::net::TcpListener;
 use std::{
     env,
     fmt::Debug,
@@ -20,9 +19,10 @@ use std::{
     path::PathBuf,
     sync::Arc,
 };
+use util::command::Command;
 use uuid::Uuid;
 
-use super::{KernelSession, RunningKernel};
+use super::{KernelSession, RunningKernel, start_kernel_tasks};
 
 #[derive(Debug, Clone)]
 pub struct LocalKernelSpecification {
@@ -52,7 +52,7 @@ impl LocalKernelSpecification {
             self.name
         );
 
-        let mut cmd = util::command::new_smol_command(&argv[0]);
+        let mut cmd = util::command::new_command(&argv[0]);
 
         for arg in &argv[1..] {
             if arg == "{connection_file}" {
@@ -63,7 +63,13 @@ impl LocalKernelSpecification {
         }
 
         if let Some(env) = &self.kernelspec.env {
+            log::info!(
+                "LocalKernelSpecification: applying env to command: {:?}",
+                env.keys()
+            );
             cmd.envs(env);
+        } else {
+            log::info!("LocalKernelSpecification: no env in kernelspec");
         }
 
         Ok(cmd)
@@ -85,11 +91,12 @@ async fn peek_ports(ip: IpAddr) -> Result<[u16; 5]> {
 }
 
 pub struct NativeRunningKernel {
-    pub process: smol::process::Child,
+    pub process: util::command::Child,
     connection_path: PathBuf,
     _process_status_task: Option<Task<()>>,
     pub working_directory: PathBuf,
     pub request_tx: mpsc::Sender<JupyterMessage>,
+    pub stdin_tx: mpsc::Sender<JupyterMessage>,
     pub execution_state: ExecutionState,
     pub kernel_info: Option<KernelInfoReply>,
 }
@@ -142,165 +149,69 @@ impl NativeRunningKernel {
 
             let mut process = cmd
                 .current_dir(&working_directory)
-                .stdout(std::process::Stdio::piped())
-                .stderr(std::process::Stdio::piped())
-                .stdin(std::process::Stdio::piped())
+                .stdout(util::command::Stdio::piped())
+                .stderr(util::command::Stdio::piped())
+                .stdin(util::command::Stdio::piped())
                 .kill_on_drop(true)
                 .spawn()
                 .context("failed to start the kernel process")?;
 
             let session_id = Uuid::new_v4().to_string();
 
-            let mut iopub_socket =
+            let iopub_socket =
                 runtimelib::create_client_iopub_connection(&connection_info, "", &session_id)
                     .await?;
-            let mut shell_socket =
-                runtimelib::create_client_shell_connection(&connection_info, &session_id).await?;
-            let mut control_socket =
+            let control_socket =
                 runtimelib::create_client_control_connection(&connection_info, &session_id).await?;
 
-            let (request_tx, mut request_rx) =
-                futures::channel::mpsc::channel::<JupyterMessage>(100);
+            let peer_identity = runtimelib::peer_identity_for_session(&session_id)?;
+            let shell_socket = runtimelib::create_client_shell_connection_with_identity(
+                &connection_info,
+                &session_id,
+                peer_identity.clone(),
+            )
+            .await?;
+            let stdin_socket = runtimelib::create_client_stdin_connection_with_identity(
+                &connection_info,
+                &session_id,
+                peer_identity,
+            )
+            .await?;
 
-            let (mut control_reply_tx, control_reply_rx) = futures::channel::mpsc::channel(100);
-            let (mut shell_reply_tx, shell_reply_rx) = futures::channel::mpsc::channel(100);
-
-            let mut messages_rx = SelectAll::new();
-            messages_rx.push(control_reply_rx);
-            messages_rx.push(shell_reply_rx);
-
-            cx.spawn({
-                let session = session.clone();
-
-                async move |cx| {
-                    while let Some(message) = messages_rx.next().await {
-                        session
-                            .update_in(cx, |session, window, cx| {
-                                session.route(&message, window, cx);
-                            })
-                            .ok();
-                    }
-                }
-            })
-            .detach();
-
-            // iopub task
-            let iopub_task = cx.spawn({
-                let session = session.clone();
-
-                async move |cx| -> anyhow::Result<()> {
-                    loop {
-                        let message = iopub_socket.read().await?;
-                        session
-                            .update_in(cx, |session, window, cx| {
-                                session.route(&message, window, cx);
-                            })
-                            .ok();
-                    }
-                }
-            });
-
-            let (mut control_request_tx, mut control_request_rx) =
-                futures::channel::mpsc::channel(100);
-            let (mut shell_request_tx, mut shell_request_rx) = futures::channel::mpsc::channel(100);
-
-            let routing_task = cx.background_spawn({
-                async move {
-                    while let Some(message) = request_rx.next().await {
-                        match message.content {
-                            JupyterMessageContent::DebugRequest(_)
-                            | JupyterMessageContent::InterruptRequest(_)
-                            | JupyterMessageContent::ShutdownRequest(_) => {
-                                control_request_tx.send(message).await?;
-                            }
-                            _ => {
-                                shell_request_tx.send(message).await?;
-                            }
-                        }
-                    }
-                    anyhow::Ok(())
-                }
-            });
-
-            let shell_task = cx.background_spawn({
-                async move {
-                    while let Some(message) = shell_request_rx.next().await {
-                        shell_socket.send(message).await.ok();
-                        let reply = shell_socket.read().await?;
-                        shell_reply_tx.send(reply).await?;
-                    }
-                    anyhow::Ok(())
-                }
-            });
-
-            let control_task = cx.background_spawn({
-                async move {
-                    while let Some(message) = control_request_rx.next().await {
-                        control_socket.send(message).await.ok();
-                        let reply = control_socket.read().await?;
-                        control_reply_tx.send(reply).await?;
-                    }
-                    anyhow::Ok(())
-                }
-            });
+            let (request_tx, stdin_tx) = start_kernel_tasks(
+                session.clone(),
+                iopub_socket,
+                shell_socket,
+                control_socket,
+                stdin_socket,
+                cx,
+            );
 
             let stderr = process.stderr.take();
-
-            cx.spawn(async move |_cx| {
-                if stderr.is_none() {
-                    return;
-                }
-                let reader = BufReader::new(stderr.unwrap());
-                let mut lines = reader.lines();
-                while let Some(Ok(line)) = lines.next().await {
-                    log::error!("kernel: {}", line);
-                }
-            })
-            .detach();
-
             let stdout = process.stdout.take();
 
             cx.spawn(async move |_cx| {
-                if stdout.is_none() {
-                    return;
-                }
-                let reader = BufReader::new(stdout.unwrap());
-                let mut lines = reader.lines();
-                while let Some(Ok(line)) = lines.next().await {
-                    log::info!("kernel: {}", line);
-                }
-            })
-            .detach();
+                use futures::future::Either;
 
-            cx.spawn({
-                let session = session.clone();
-                async move |cx| {
-                    async fn with_name(
-                        name: &'static str,
-                        task: Task<Result<()>>,
-                    ) -> (&'static str, Result<()>) {
-                        (name, task.await)
-                    }
-
-                    let mut tasks = FuturesUnordered::new();
-                    tasks.push(with_name("iopub task", iopub_task));
-                    tasks.push(with_name("shell task", shell_task));
-                    tasks.push(with_name("control task", control_task));
-                    tasks.push(with_name("routing task", routing_task));
-
-                    while let Some((name, result)) = tasks.next().await {
-                        if let Err(err) = result {
-                            log::error!("kernel: handling failed for {name}: {err:?}");
-
-                            session.update(cx, |session, cx| {
-                                session.kernel_errored(
-                                    format!("handling failed for {name}: {err}"),
-                                    cx,
-                                );
-                                cx.notify();
-                            });
-                        }
-                    }
+                let stderr_lines = match stderr {
+                    Some(s) => Either::Left(
+                        BufReader::new(s)
+                            .lines()
+                            .map(|line| (log::Level::Error, line)),
+                    ),
+                    None => Either::Right(futures::stream::empty()),
+                };
+                let stdout_lines = match stdout {
+                    Some(s) => Either::Left(
+                        BufReader::new(s)
+                            .lines()
+                            .map(|line| (log::Level::Info, line)),
+                    ),
+                    None => Either::Right(futures::stream::empty()),
+                };
+                let mut lines = futures::stream::select(stderr_lines, stdout_lines);
+                while let Some((level, Ok(line))) = lines.next().await {
+                    log::log!(level, "kernel: {}", line);
                 }
             })
             .detach();
@@ -334,6 +245,7 @@ impl NativeRunningKernel {
             anyhow::Ok(Box::new(Self {
                 process,
                 request_tx,
+                stdin_tx,
                 working_directory,
                 _process_status_task: Some(process_status_task),
                 connection_path,
@@ -347,6 +259,10 @@ impl NativeRunningKernel {
 impl RunningKernel for NativeRunningKernel {
     fn request_tx(&self) -> mpsc::Sender<JupyterMessage> {
         self.request_tx.clone()
+    }
+
+    fn stdin_tx(&self) -> mpsc::Sender<JupyterMessage> {
+        self.stdin_tx.clone()
     }
 
     fn working_directory(&self) -> &PathBuf {
@@ -370,17 +286,22 @@ impl RunningKernel for NativeRunningKernel {
     }
 
     fn force_shutdown(&mut self, _window: &mut Window, _cx: &mut App) -> Task<anyhow::Result<()>> {
+        self.kill();
+        Task::ready(Ok(()))
+    }
+
+    fn kill(&mut self) {
         self._process_status_task.take();
         self.request_tx.close_channel();
-        Task::ready(self.process.kill().context("killing the kernel process"))
+        self.stdin_tx.close_channel();
+        self.process.kill().ok();
     }
 }
 
 impl Drop for NativeRunningKernel {
     fn drop(&mut self) {
         std::fs::remove_file(&self.connection_path).ok();
-        self.request_tx.close_channel();
-        self.process.kill().ok();
+        self.kill();
     }
 }
 
@@ -444,7 +365,7 @@ pub async fn local_kernel_specifications(fs: Arc<dyn Fs>) -> Result<Vec<LocalKer
     }
 
     // Search for kernels inside the base python environment
-    let command = util::command::new_smol_command("python")
+    let command = util::command::new_command("python")
         .arg("-c")
         .arg("import sys; print(sys.prefix)")
         .output()

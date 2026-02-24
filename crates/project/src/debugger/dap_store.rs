@@ -265,7 +265,7 @@ impl DapStore {
                     DapBinary::Default => None,
                     DapBinary::Custom(binary) => {
                         let path = PathBuf::from(binary);
-                        Some(worktree.read(cx).resolve_executable_path(path))
+                        Some(worktree.read(cx).resolve_relative_path(path))
                     }
                 });
                 let user_args = dap_settings.and_then(|s| s.args.clone());

@@ -1,5 +1,5 @@
 use crate::{
-    example::{Example, ExamplePromptInputs},
+    example::Example,
     headless::EpAppState,
     load_project::run_load_project,
     progress::{ExampleProgress, InfoStyle, Step, StepProgress},
@@ -20,41 +20,18 @@ pub async fn run_context_retrieval(
     example_progress: &ExampleProgress,
     mut cx: AsyncApp,
 ) -> anyhow::Result<()> {
-    if example
-        .prompt_inputs
-        .as_ref()
-        .is_some_and(|inputs| inputs.related_files.is_some())
-    {
-        return Ok(());
-    }
+    if example.prompt_inputs.is_some() {
+        if example.spec.repository_url.is_empty() {
+            return Ok(());
+        }
 
-    if let Some(captured) = &example.spec.captured_prompt_input {
-        let step_progress = example_progress.start(Step::Context);
-        step_progress.set_substatus("using captured prompt input");
-
-        let edit_history: Vec<Arc<zeta_prompt::Event>> = captured
-            .events
-            .iter()
-            .map(|e| Arc::new(e.to_event()))
-            .collect();
-
-        let related_files: Vec<zeta_prompt::RelatedFile> = captured
-            .related_files
-            .iter()
-            .map(|rf| rf.to_related_file())
-            .collect();
-
-        example.prompt_inputs = Some(ExamplePromptInputs {
-            content: captured.cursor_file_content.clone(),
-            cursor_row: captured.cursor_row,
-            cursor_column: captured.cursor_column,
-            cursor_offset: captured.cursor_offset,
-            excerpt_start_row: captured.excerpt_start_row,
-            edit_history,
-            related_files: Some(related_files),
-        });
-
-        return Ok(());
+        if example
+            .prompt_inputs
+            .as_ref()
+            .is_some_and(|inputs| !inputs.related_files.is_empty())
+        {
+            return Ok(());
+        }
     }
 
     run_load_project(example, app_state.clone(), example_progress, cx.clone()).await?;
@@ -95,7 +72,7 @@ pub async fn run_context_retrieval(
     step_progress.set_info(format!("{} excerpts", excerpt_count), InfoStyle::Normal);
 
     if let Some(prompt_inputs) = example.prompt_inputs.as_mut() {
-        prompt_inputs.related_files = Some(context_files);
+        prompt_inputs.related_files = context_files;
     }
     Ok(())
 }

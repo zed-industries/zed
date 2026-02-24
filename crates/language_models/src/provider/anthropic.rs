@@ -24,6 +24,8 @@ use ui::{ButtonLink, ConfiguredApiCard, List, ListBulletItem, prelude::*};
 use ui_input::InputField;
 use util::ResultExt;
 
+use crate::provider::util::parse_tool_arguments;
+
 pub use settings::AnthropicAvailableModel as AvailableModel;
 
 const PROVIDER_ID: LanguageModelProviderId = language_model::ANTHROPIC_PROVIDER_ID;
@@ -139,8 +141,8 @@ impl LanguageModelProvider for AnthropicLanguageModelProvider {
 
     fn recommended_models(&self, _cx: &App) -> Vec<Arc<dyn LanguageModel>> {
         [
-            anthropic::Model::ClaudeSonnet4_5,
-            anthropic::Model::ClaudeSonnet4_5Thinking,
+            anthropic::Model::ClaudeSonnet4_6,
+            anthropic::Model::ClaudeSonnet4_6Thinking,
         ]
         .into_iter()
         .map(|model| self.create_language_model(model))
@@ -513,6 +515,10 @@ impl LanguageModel for AnthropicModel {
         }
     }
 
+    fn supports_thinking(&self) -> bool {
+        matches!(self.model.mode(), AnthropicModelMode::Thinking { .. })
+    }
+
     fn telemetry_id(&self) -> String {
         format!("anthropic/{}", self.model.id())
     }
@@ -829,12 +835,7 @@ impl AnthropicEventMapper {
             Event::ContentBlockStop { index } => {
                 if let Some(tool_use) = self.tool_uses_by_index.remove(&index) {
                     let input_json = tool_use.input_json.trim();
-                    let input_value = if input_json.is_empty() {
-                        Ok(serde_json::Value::Object(serde_json::Map::default()))
-                    } else {
-                        serde_json::Value::from_str(input_json)
-                    };
-                    let event_result = match input_value {
+                    let event_result = match parse_tool_arguments(input_json) {
                         Ok(input) => Ok(LanguageModelCompletionEvent::ToolUse(
                             LanguageModelToolUse {
                                 id: tool_use.id.into(),

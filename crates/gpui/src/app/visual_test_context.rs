@@ -42,15 +42,18 @@ impl VisualTestAppContext {
     ///
     /// Note: This uses a no-op asset source, so SVG icons won't render.
     /// Use `with_asset_source` to provide real assets for icon rendering.
-    pub fn new() -> Self {
-        Self::with_asset_source(Arc::new(()))
+    pub fn new(platform: Rc<dyn Platform>) -> Self {
+        Self::with_asset_source(platform, Arc::new(()))
     }
 
     /// Creates a new `VisualTestAppContext` with a custom asset source.
     ///
     /// Use this when you need SVG icons to render properly in visual tests.
     /// Pass the real `Assets` struct to enable icon rendering.
-    pub fn with_asset_source(asset_source: Arc<dyn AssetSource>) -> Self {
+    pub fn with_asset_source(
+        platform: Rc<dyn Platform>,
+        asset_source: Arc<dyn AssetSource>,
+    ) -> Self {
         // Use a seeded RNG for deterministic behavior
         let seed = std::env::var("SEED")
             .ok()
@@ -59,7 +62,7 @@ impl VisualTestAppContext {
 
         // Create a visual test platform that combines real Mac rendering
         // with controllable TestDispatcher for deterministic task scheduling
-        let platform = Rc::new(VisualTestPlatform::new(seed));
+        let platform = Rc::new(VisualTestPlatform::new(platform, seed));
 
         // Get the dispatcher and executors from the platform
         let dispatcher = platform.dispatcher().clone();
@@ -391,12 +394,6 @@ impl VisualTestAppContext {
     }
 }
 
-impl Default for VisualTestAppContext {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl AppContext for VisualTestAppContext {
     fn new<T: 'static>(&mut self, build_entity: impl FnOnce(&mut Context<T>) -> T) -> Entity<T> {
         let mut app = self.app.borrow_mut();
@@ -474,114 +471,5 @@ impl AppContext for VisualTestAppContext {
     {
         let app = self.app.borrow();
         callback(app.global::<G>(), &app)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::Empty;
-    use std::cell::RefCell;
-
-    // Note: All VisualTestAppContext tests are ignored by default because they require
-    // the macOS main thread. Standard Rust tests run on worker threads, which causes
-    // SIGABRT when interacting with macOS AppKit/Cocoa APIs.
-    //
-    // To run these tests, use:
-    // cargo test -p gpui visual_test_context -- --ignored --test-threads=1
-
-    #[test]
-    #[ignore] // Requires macOS main thread
-    fn test_foreground_tasks_run_with_run_until_parked() {
-        let mut cx = VisualTestAppContext::new();
-
-        let task_ran = Rc::new(RefCell::new(false));
-
-        // Spawn a foreground task via the App's spawn method
-        // This should use our TestDispatcher, not the MacDispatcher
-        {
-            let task_ran = task_ran.clone();
-            cx.update(|cx| {
-                cx.spawn(async move |_| {
-                    *task_ran.borrow_mut() = true;
-                })
-                .detach();
-            });
-        }
-
-        // The task should not have run yet
-        assert!(!*task_ran.borrow());
-
-        // Run until parked should execute the foreground task
-        cx.run_until_parked();
-
-        // Now the task should have run
-        assert!(*task_ran.borrow());
-    }
-
-    #[test]
-    #[ignore] // Requires macOS main thread
-    fn test_advance_clock_triggers_delayed_tasks() {
-        let mut cx = VisualTestAppContext::new();
-
-        let task_ran = Rc::new(RefCell::new(false));
-
-        // Spawn a task that waits for a timer
-        {
-            let task_ran = task_ran.clone();
-            let executor = cx.background_executor.clone();
-            cx.update(|cx| {
-                cx.spawn(async move |_| {
-                    executor.timer(Duration::from_millis(500)).await;
-                    *task_ran.borrow_mut() = true;
-                })
-                .detach();
-            });
-        }
-
-        // Run until parked - the task should be waiting on the timer
-        cx.run_until_parked();
-        assert!(!*task_ran.borrow());
-
-        // Advance clock past the timer duration
-        cx.advance_clock(Duration::from_millis(600));
-
-        // Now the task should have completed
-        assert!(*task_ran.borrow());
-    }
-
-    #[test]
-    #[ignore] // Requires macOS main thread - window creation fails on test threads
-    fn test_window_spawn_uses_test_dispatcher() {
-        let mut cx = VisualTestAppContext::new();
-
-        let task_ran = Rc::new(RefCell::new(false));
-
-        let window = cx
-            .open_offscreen_window_default(|_, cx| cx.new(|_| Empty))
-            .expect("Failed to open window");
-
-        // Spawn a task via window.spawn - this is the critical test case
-        // for tooltip behavior, as tooltips use window.spawn for delayed show
-        {
-            let task_ran = task_ran.clone();
-            cx.update_window(window.into(), |_, window, cx| {
-                window
-                    .spawn(cx, async move |_| {
-                        *task_ran.borrow_mut() = true;
-                    })
-                    .detach();
-            })
-            .ok();
-        }
-
-        // The task should not have run yet
-        assert!(!*task_ran.borrow());
-
-        // Run until parked should execute the foreground task spawned via window
-        cx.run_until_parked();
-
-        // Now the task should have run
-        assert!(*task_ran.borrow());
     }
 }

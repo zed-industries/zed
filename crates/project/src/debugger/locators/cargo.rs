@@ -3,10 +3,10 @@ use async_trait::async_trait;
 use dap::{DapLocator, DebugRequest, adapters::DebugAdapterName};
 use gpui::{BackgroundExecutor, SharedString};
 use serde_json::{Value, json};
-use smol::{io::AsyncReadExt, process::Stdio};
+use smol::{io::AsyncReadExt, process::Stdio as SmolStdio};
 use std::time::Duration;
 use task::{BuildTaskDefinition, DebugScenario, ShellBuilder, SpawnInTerminal, TaskTemplate};
-use util::command::new_smol_command;
+use util::command::{Stdio, new_command};
 
 pub(crate) struct CargoLocator;
 
@@ -19,7 +19,7 @@ async fn find_best_executable(
         return executables.first().cloned();
     }
     for executable in executables {
-        let Some(mut child) = new_smol_command(&executable)
+        let Some(mut child) = new_command(&executable)
             .arg("--list")
             .stdout(Stdio::piped())
             .spawn()
@@ -136,7 +136,7 @@ impl DapLocator for CargoLocator {
             )
             .envs(build_config.env.iter().map(|(k, v)| (k.clone(), v.clone())))
             .current_dir(cwd)
-            .stdout(Stdio::piped())
+            .stdout(SmolStdio::piped())
             .spawn()?;
 
         let mut output = String::new();

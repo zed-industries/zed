@@ -44,10 +44,6 @@ impl StreamingFuzzyMatcher {
     /// Returns `Some(range)` if a match has been found with the accumulated
     /// query so far, or `None` if no suitable match exists yet.
     pub fn push(&mut self, chunk: &str, line_hint: Option<u32>) -> Option<Range<usize>> {
-        if line_hint.is_some() {
-            self.line_hint = line_hint;
-        }
-
         // Add the chunk to our incomplete line buffer
         self.incomplete_line.push_str(chunk);
         self.line_hint = line_hint;
