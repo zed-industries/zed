@@ -2015,7 +2015,7 @@ impl GitRepository for RealGitRepository {
                     DiffType::MergeBase { base_ref } => {
                         new_command(&git_binary_path)
                             .current_dir(&working_directory)
-                            .args(["diff", "--merge-base", base_ref.as_ref(), "HEAD"])
+                            .args(["diff", "--merge-base", base_ref.as_ref()])
                             .output()
                             .await?
                     }
