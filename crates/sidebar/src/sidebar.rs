@@ -411,54 +411,6 @@ impl Sidebar {
     ) {
     }
 
-    fn subscribe_to_agent_panels(
-        &mut self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Vec<Subscription> {
-        let workspaces: Vec<_> = self.multi_workspace.read(cx).workspaces().to_vec();
-
-        workspaces
-            .iter()
-            .map(|workspace| {
-                if let Some(agent_panel) = workspace.read(cx).panel::<AgentPanel>(cx) {
-                    cx.subscribe_in(
-                        &agent_panel,
-                        window,
-                        |this, _, _event: &AgentPanelEvent, window, cx| {
-                            this.update_entries(window, cx);
-                        },
-                    )
-                } else {
-                    // Panel hasn't loaded yet — observe the workspace so we
-                    // re-subscribe once the panel appears on its dock.
-                    cx.observe_in(workspace, window, |this, _, window, cx| {
-                        this.update_entries(window, cx);
-                    })
-                }
-            })
-            .collect()
-    }
-
-    fn subscribe_to_threads(
-        &mut self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Vec<Subscription> {
-        let workspaces: Vec<_> = self.multi_workspace.read(cx).workspaces().to_vec();
-
-        workspaces
-            .iter()
-            .filter_map(|workspace| {
-                let agent_panel = workspace.read(cx).panel::<AgentPanel>(cx)?;
-                let thread = agent_panel.read(cx).active_agent_thread(cx)?;
-                Some(cx.observe_in(&thread, window, |this, _, window, cx| {
-                    this.update_entries(window, cx);
-                }))
-            })
-            .collect()
-    }
-
     /// Reconciles the sidebar's displayed entries with the current state of all
     /// workspaces and their agent threads.
     fn update_entries(&mut self, window: &mut Window, cx: &mut Context<Self>) {}
