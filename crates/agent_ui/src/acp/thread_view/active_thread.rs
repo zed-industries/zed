@@ -6432,6 +6432,20 @@ impl AcpThreadView {
                 .overflow_hidden()
         };
 
+        let editor_bg = cx.theme().colors().editor_background;
+        let overlay = || {
+            div()
+                .absolute()
+                .inset_0()
+                .size_full()
+                .bg(linear_gradient(
+                    180.,
+                    linear_color_stop(editor_bg, 0.),
+                    linear_color_stop(editor_bg.opacity(0.), 0.1),
+                ))
+                .block_mouse_except_scroll()
+        };
+
         let show_thread_entries = is_running || tool_call.content.is_empty();
 
         if show_thread_entries {
@@ -6467,21 +6481,7 @@ impl AcpThreadView {
                         .pb_1()
                         .children(rendered_entries),
                 )
-                .when(is_running, |this| {
-                    let editor_bg = cx.theme().colors().editor_background;
-                    this.child(
-                        div()
-                            .absolute()
-                            .inset_0()
-                            .size_full()
-                            .bg(linear_gradient(
-                                180.,
-                                linear_color_stop(editor_bg, 0.),
-                                linear_color_stop(editor_bg.opacity(0.), 0.15),
-                            ))
-                            .block_mouse_except_scroll(),
-                    )
-                })
+                .child(overlay())
                 .into_any_element()
         } else {
             base_container()
@@ -6513,6 +6513,7 @@ impl AcpThreadView {
                             },
                         )),
                 )
+                .child(overlay())
                 .into_any_element()
         }
     }
