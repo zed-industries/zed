@@ -673,9 +673,12 @@ impl Render for MultiWorkspace {
             None
         };
 
+        let workspace = self.workspace().clone();
+        let root = workspace.update(cx, |workspace, cx| workspace.actions(div(), window, cx));
+
+        // todo!(Add workspace key context status information here)
         client_side_decorations(
-            h_flex()
-                .key_context("Workspace")
+            root.key_context("MultiWorkspace")
                 .size_full()
                 .on_action(
                     cx.listener(|this: &mut Self, _: &NewWorkspaceInWindow, window, cx| {

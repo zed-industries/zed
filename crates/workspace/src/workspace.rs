@@ -6333,7 +6333,8 @@ impl Workspace {
         })
     }
 
-    fn actions(&self, div: Div, window: &mut Window, cx: &mut Context<Self>) -> Div {
+    /// Multiworkspace uses this to add workspace action handling to itself
+    pub fn actions(&self, div: Div, window: &mut Window, cx: &mut Context<Self>) -> Div {
         self.add_workspace_actions_listeners(div, window, cx)
             .on_action(cx.listener(
                 |_workspace, action_sequence: &settings::ActionSequence, window, cx| {
@@ -7462,7 +7463,7 @@ impl Render for Workspace {
             .collect::<Vec<_>>();
         let bottom_dock_layout = WorkspaceSettings::get_global(cx).bottom_dock_layout;
 
-        self.actions(div(), window, cx)
+        div()
             .key_context(context)
             .relative()
             .size_full()
