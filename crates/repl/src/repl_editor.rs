@@ -1281,4 +1281,38 @@ mod tests {
         let text: String = snapshot.text_for_range(range.unwrap()).collect();
         assert_eq!(text, "console.log(\"done\");");
     }
+
+    #[gpui::test]
+    fn test_block_range_tsx_multiline(cx: &mut App) {
+        let tsx = languages::language("tsx", tree_sitter_typescript::LANGUAGE_TSX.into());
+
+        // Test multi-line JSX expression
+        let buffer = cx.new(|cx| {
+            let mut buffer = Buffer::local(
+                "renderToJupyter(\n  <div>\n    <h1>Hello</h1>\n  </div>,\n);\n",
+                cx,
+            );
+            buffer.set_language(Some(tsx.clone()), cx);
+            buffer
+        });
+        let snapshot = buffer.read(cx).snapshot();
+
+        // Cursor on closing </div> tag should select entire call expression
+        let range = block_range(&snapshot, Point::new(3, 2)..Point::new(3, 2));
+        assert!(range.is_some());
+        let text: String = snapshot.text_for_range(range.unwrap()).collect();
+        assert_eq!(
+            text,
+            "renderToJupyter(\n  <div>\n    <h1>Hello</h1>\n  </div>,\n);"
+        );
+
+        // Cursor inside nested h1 should also select entire call
+        let range = block_range(&snapshot, Point::new(2, 8)..Point::new(2, 8));
+        assert!(range.is_some());
+        let text: String = snapshot.text_for_range(range.unwrap()).collect();
+        assert_eq!(
+            text,
+            "renderToJupyter(\n  <div>\n    <h1>Hello</h1>\n  </div>,\n);"
+        );
+    }
 }
