@@ -185,7 +185,7 @@ impl WgpuRenderer {
 
         let pick_alpha_mode =
             |preferences: &[wgpu::CompositeAlphaMode]| -> anyhow::Result<wgpu::CompositeAlphaMode> {
-                Ok(preferences
+                preferences
                     .iter()
                     .find(|p| surface_caps.alpha_modes.contains(p))
                     .copied()
@@ -195,7 +195,7 @@ impl WgpuRenderer {
                             "Surface reports no supported alpha modes for adapter {:?}",
                             context.adapter.get_info().name
                         )
-                    })?)
+                    })
             };
 
         let transparent_alpha_mode = pick_alpha_mode(&[
