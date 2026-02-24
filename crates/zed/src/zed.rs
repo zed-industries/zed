@@ -1122,7 +1122,7 @@ fn register_actions(
                             Editor::new_file(workspace, &Default::default(), window, cx)
                         },
                     )
-                    .detach();
+                    .detach_and_log_err(cx);
                 }
             }
         })
