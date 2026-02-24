@@ -24,9 +24,6 @@ raw-window-handle = "0.6"
 util.workspace = true
 wgpu.workspace = true
 
-[target.'cfg(not(target_family = "wasm"))'.dependencies]
-pollster.workspace = true
-
 [target.'cfg(target_family = "wasm")'.dependencies]
 wasm-bindgen.workspace = true
 wasm-bindgen-futures = "0.4"

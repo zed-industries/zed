@@ -3,6 +3,7 @@ use anyhow::Context as _;
 use std::sync::Arc;
 #[cfg(not(target_family = "wasm"))]
 use util::ResultExt;
+use wgpu::Adapter;
 
 pub struct WgpuContext {
     pub instance: wgpu::Instance,
@@ -14,7 +15,7 @@ pub struct WgpuContext {
 
 impl WgpuContext {
     #[cfg(not(target_family = "wasm"))]
-    pub fn new() -> anyhow::Result<Self> {
+    pub async fn new() -> anyhow::Result<Self> {
         let device_id_filter = match std::env::var("ZED_DEVICE_ID") {
             Ok(val) => parse_pci_id(&val)
                 .context("Failed to parse device ID from `ZED_DEVICE_ID` environment variable")
@@ -34,49 +35,13 @@ impl WgpuContext {
             memory_budget_thresholds: wgpu::MemoryBudgetThresholds::default(),
         });
 
-        let adapter = pollster::block_on(Self::select_adapter(&instance, device_id_filter))?;
+        let adapter = Self::select_adapter(&instance, device_id_filter).await?;
 
-        log::info!(
-            "Selected GPU adapter: {:?} ({:?})",
-            adapter.get_info().name,
-            adapter.get_info().backend
-        );
-
-        let dual_source_blending_available = adapter
-            .features()
-            .contains(wgpu::Features::DUAL_SOURCE_BLENDING);
-
-        let mut required_features = wgpu::Features::empty();
-        if dual_source_blending_available {
-            required_features |= wgpu::Features::DUAL_SOURCE_BLENDING;
-        } else {
-            log::warn!(
-                "Dual-source blending not available on this GPU. \
-                Subpixel text antialiasing will be disabled."
-            );
-        }
-
-        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-            label: Some("gpui_device"),
-            required_features,
-            required_limits: wgpu::Limits::default(),
-            memory_hints: wgpu::MemoryHints::MemoryUsage,
-            trace: wgpu::Trace::Off,
-            experimental_features: wgpu::ExperimentalFeatures::disabled(),
-        }))
-        .map_err(|e| anyhow::anyhow!("Failed to create wgpu device: {e}"))?;
-
-        Ok(Self {
-            instance,
-            adapter,
-            device: Arc::new(device),
-            queue: Arc::new(queue),
-            dual_source_blending: dual_source_blending_available,
-        })
+        Self::create_context(instance, adapter).await
     }
 
     #[cfg(target_family = "wasm")]
-    pub async fn new_async() -> anyhow::Result<Self> {
+    pub async fn new_web() -> anyhow::Result<Self> {
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
             backends: wgpu::Backends::BROWSER_WEBGPU | wgpu::Backends::GL,
             flags: wgpu::InstanceFlags::default(),
@@ -92,7 +57,13 @@ impl WgpuContext {
             })
             .await
             .map_err(|e| anyhow::anyhow!("Failed to request GPU adapter: {e}"))?;
+        Self::create_context(instance, adapter).await
+    }
 
+    async fn create_context(
+        instance: wgpu::Instance,
+        adapter: wgpu::Adapter,
+    ) -> anyhow::Result<Self> {
         log::info!(
             "Selected GPU adapter: {:?} ({:?})",
             adapter.get_info().name,
@@ -107,7 +78,7 @@ impl WgpuContext {
         if dual_source_blending_available {
             required_features |= wgpu::Features::DUAL_SOURCE_BLENDING;
         } else {
-            log::warn!(
+            log::info!(
                 "Dual-source blending not available on this GPU. \
                 Subpixel text antialiasing will be disabled."
             );

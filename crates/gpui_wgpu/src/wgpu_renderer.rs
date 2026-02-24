@@ -496,16 +496,24 @@ impl WgpuRenderer {
         path_sample_count: u32,
         dual_source_blending: bool,
     ) -> WgpuPipelines {
-        let shader_source = include_str!("shaders.wgsl");
-        let shader_source = if dual_source_blending {
-            std::borrow::Cow::Borrowed(shader_source)
-        } else {
-            std::borrow::Cow::Owned(shader_source.replace("enable dual_source_blending;\n", ""))
-        };
+        let base_shader_source = include_str!("shaders.wgsl");
         let shader_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("gpui_shaders"),
-            source: wgpu::ShaderSource::Wgsl(shader_source),
+            source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(base_shader_source)),
         });
+
+        let subpixel_shader_source = include_str!("shaders_subpixel.wgsl");
+        let subpixel_shader_module = if dual_source_blending {
+            let combined = format!(
+                "enable dual_source_blending;\n{base_shader_source}\n{subpixel_shader_source}"
+            );
+            Some(device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("gpui_subpixel_shaders"),
+                source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Owned(combined)),
+            }))
+        } else {
+            None
+        };
 
         let blend_mode = match alpha_mode {
             wgpu::CompositeAlphaMode::PreMultiplied => {
@@ -527,7 +535,8 @@ impl WgpuRenderer {
                                data_layout: &wgpu::BindGroupLayout,
                                topology: wgpu::PrimitiveTopology,
                                color_targets: &[Option<wgpu::ColorTargetState>],
-                               sample_count: u32| {
+                               sample_count: u32,
+                               module: &wgpu::ShaderModule| {
             let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some(&format!("{name}_layout")),
                 bind_group_layouts: &[globals_layout, data_layout],
@@ -538,13 +547,13 @@ impl WgpuRenderer {
                 label: Some(name),
                 layout: Some(&pipeline_layout),
                 vertex: wgpu::VertexState {
-                    module: &shader_module,
+                    module,
                     entry_point: Some(vs_entry),
                     buffers: &[],
                     compilation_options: wgpu::PipelineCompilationOptions::default(),
                 },
                 fragment: Some(wgpu::FragmentState {
-                    module: &shader_module,
+                    module,
                     entry_point: Some(fs_entry),
                     targets: color_targets,
                     compilation_options: wgpu::PipelineCompilationOptions::default(),
@@ -578,6 +587,7 @@ impl WgpuRenderer {
             wgpu::PrimitiveTopology::TriangleStrip,
             &[Some(color_target.clone())],
             1,
+            &shader_module,
         );
 
         let shadows = create_pipeline(
@@ -589,6 +599,7 @@ impl WgpuRenderer {
             wgpu::PrimitiveTopology::TriangleStrip,
             &[Some(color_target.clone())],
             1,
+            &shader_module,
         );
 
         let path_rasterization = create_pipeline(
@@ -604,6 +615,7 @@ impl WgpuRenderer {
                 write_mask: wgpu::ColorWrites::ALL,
             })],
             path_sample_count,
+            &shader_module,
         );
 
         let paths_blend = wgpu::BlendState {
@@ -632,6 +644,7 @@ impl WgpuRenderer {
                 write_mask: wgpu::ColorWrites::ALL,
             })],
             1,
+            &shader_module,
         );
 
         let underlines = create_pipeline(
@@ -643,6 +656,7 @@ impl WgpuRenderer {
             wgpu::PrimitiveTopology::TriangleStrip,
             &[Some(color_target.clone())],
             1,
+            &shader_module,
         );
 
         let mono_sprites = create_pipeline(
@@ -654,9 +668,10 @@ impl WgpuRenderer {
             wgpu::PrimitiveTopology::TriangleStrip,
             &[Some(color_target.clone())],
             1,
+            &shader_module,
         );
 
-        let subpixel_sprites = if dual_source_blending {
+        let subpixel_sprites = if let Some(subpixel_module) = &subpixel_shader_module {
             let subpixel_blend = wgpu::BlendState {
                 color: wgpu::BlendComponent {
                     src_factor: wgpu::BlendFactor::Src1,
@@ -683,6 +698,7 @@ impl WgpuRenderer {
                     write_mask: wgpu::ColorWrites::COLOR,
                 })],
                 1,
+                subpixel_module,
             ))
         } else {
             None
@@ -697,6 +713,7 @@ impl WgpuRenderer {
             wgpu::PrimitiveTopology::TriangleStrip,
             &[Some(color_target.clone())],
             1,
+            &shader_module,
         );
 
         let surfaces = create_pipeline(
@@ -708,6 +725,7 @@ impl WgpuRenderer {
             wgpu::PrimitiveTopology::TriangleStrip,
             &[Some(color_target)],
             1,
+            &shader_module,
         );
 
         WgpuPipelines {

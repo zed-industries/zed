@@ -64,6 +64,7 @@ libc.workspace = true
 log.workspace = true
 parking_lot.workspace = true
 pathfinder_geometry = "0.5"
+pollster.workspace = true
 profiling.workspace = true
 smallvec.workspace = true
 smol.workspace = true

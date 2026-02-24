@@ -102,7 +102,7 @@ impl Platform for WebPlatform {
     fn run(&self, on_finish_launching: Box<dyn 'static + FnOnce()>) {
         let wgpu_context = self.wgpu_context.clone();
         wasm_bindgen_futures::spawn_local(async move {
-            match WgpuContext::new_async().await {
+            match WgpuContext::new_web().await {
                 Ok(context) => {
                     log::info!("WebGPU context initialized successfully");
                     *wgpu_context.borrow_mut() = Some(context);

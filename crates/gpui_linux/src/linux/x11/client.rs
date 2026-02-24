@@ -421,7 +421,8 @@ impl X11Client {
             .to_string();
         let keyboard_layout = LinuxKeyboardLayout::new(layout_name.into());
 
-        let gpu_context = WgpuContext::new().notify_err("Unable to init GPU context");
+        let gpu_context =
+            pollster::block_on(WgpuContext::new()).notify_err("Unable to init GPU context");
 
         let resource_database = x11rb::resource_manager::new_from_default(&xcb_connection)
             .context("Failed to create resource database")?;
