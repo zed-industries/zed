@@ -903,28 +903,23 @@ impl BufferSearchBar {
         self.dismiss_inner(false, window, cx);
     }
 
-    pub fn dismiss_preserving_highlights(
-        &mut self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    pub fn dismiss_preserving_highlights(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.dismiss_inner(true, window, cx);
     }
 
-    fn dismiss_inner(&mut self, preserve_highlights: bool, window: &mut Window, cx: &mut Context<Self>) {
+    fn dismiss_inner(
+        &mut self,
+        preserve_highlights: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.dismissed = true;
         cx.emit(Event::Dismissed);
         self.query_error = None;
         self.sync_select_next_case_sensitivity(cx);
 
         if !preserve_highlights {
-            for searchable_item in self.searchable_items_with_matches.keys() {
-                if let Some(searchable_item) =
-                    WeakSearchableItemHandle::upgrade(searchable_item.as_ref(), cx)
-                {
-                    searchable_item.clear_matches(window, cx);
-                }
-            }
+            self.clear_all_matches(window, cx);
         }
 
         let needs_collapse_expand = self.needs_expand_collapse_option(cx);
