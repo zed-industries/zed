@@ -1190,8 +1190,11 @@ impl GitGraph {
     }
 
     pub fn select_commit_by_sha(&mut self, sha: &str, cx: &mut Context<Self>) {
+        let Ok(oid) = sha.parse::<Oid>() else {
+            return;
+        };
         for (idx, commit) in self.graph_data.commits.iter().enumerate() {
-            if commit.data.sha.to_string() == sha {
+            if commit.data.sha == oid {
                 self.pending_select_sha = None;
                 self.select_entry(idx, cx);
                 return;
