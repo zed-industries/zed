@@ -53,6 +53,8 @@ actions!(
         // repo-wide
         /// Stages all changes in the repository.
         StageAll,
+        /// Stages all untracked files in the repository.
+        StageUntracked,
         /// Unstages all changes in the repository.
         UnstageAll,
         /// Stashes all changes in the repository, including untracked files.
