@@ -8157,6 +8157,7 @@ pub(crate) fn render_buffer_header(
                     border.border_color(border_color)
                 })
                 .bg(colors.editor_subheader_background)
+                .group("buffer-header-group")
                 .hover(|style| style.bg(colors.element_hover))
                 .map(|header| {
                     let editor = editor.clone();
@@ -8332,31 +8333,34 @@ pub(crate) fn render_buffer_header(
                                     })
                             },
                         ))
-                        .when(
-                            can_open_excerpts && is_selected && relative_path.is_some(),
-                            |el| {
-                                el.child(
-                                    Button::new("open-file-button", "Open File")
-                                        .style(ButtonStyle::OutlinedGhost)
-                                        .key_binding(KeyBinding::for_action_in(
-                                            &OpenExcerpts,
-                                            &focus_handle,
-                                            cx,
-                                        ))
-                                        .on_click(window.listener_for(editor, {
-                                            let jump_data = jump_data.clone();
-                                            move |editor, e: &ClickEvent, window, cx| {
-                                                editor.open_excerpts_common(
-                                                    Some(jump_data.clone()),
-                                                    e.modifiers().secondary(),
-                                                    window,
-                                                    cx,
-                                                );
-                                            }
-                                        })),
-                                )
-                            },
-                        )
+                        .when(can_open_excerpts && relative_path.is_some(), |el| {
+                            el.child(
+                                div()
+                                    .when(!is_selected, |this| {
+                                        this.visible_on_hover("buffer-header-group")
+                                    })
+                                    .child(
+                                        Button::new("open-file-button", "Open File")
+                                            .style(ButtonStyle::OutlinedGhost)
+                                            .key_binding(KeyBinding::for_action_in(
+                                                &OpenExcerpts,
+                                                &focus_handle,
+                                                cx,
+                                            ))
+                                            .on_click(window.listener_for(editor, {
+                                                let jump_data = jump_data.clone();
+                                                move |editor, e: &ClickEvent, window, cx| {
+                                                    editor.open_excerpts_common(
+                                                        Some(jump_data.clone()),
+                                                        e.modifiers().secondary(),
+                                                        window,
+                                                        cx,
+                                                    );
+                                                }
+                                            })),
+                                    ),
+                            )
+                        })
                         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                         .on_click(window.listener_for(editor, {
                             let buffer_id = for_excerpt.buffer_id;
