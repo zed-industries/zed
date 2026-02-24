@@ -41,7 +41,9 @@ pub fn parse_prediction_output(
         PredictionProvider::Teacher(_) | PredictionProvider::TeacherNonBatching(_) => {
             TeacherPrompt::parse(example, actual_output)
         }
-        PredictionProvider::Zeta2(version) => parse_zeta2_output(example, actual_output, version),
+        PredictionProvider::Zeta2(version) => {
+            parse_zeta2_output(example, actual_output, version.unwrap_or_default())
+        }
         PredictionProvider::Repair => repair::parse(example, actual_output),
         _ => anyhow::bail!(
             "parse-output only supports Teacher and Zeta2 providers, got {:?}",

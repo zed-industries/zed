@@ -345,7 +345,7 @@ enum PredictionProvider {
     Sweep,
     Mercury,
     Zeta1,
-    Zeta2(ZetaFormat),
+    Zeta2(Option<ZetaFormat>),
     Teacher(TeacherBackend),
     TeacherNonBatching(TeacherBackend),
     Repair,
@@ -353,7 +353,7 @@ enum PredictionProvider {
 
 impl Default for PredictionProvider {
     fn default() -> Self {
-        PredictionProvider::Zeta2(ZetaFormat::default())
+        PredictionProvider::Zeta2(None)
     }
 }
 
@@ -363,7 +363,13 @@ impl std::fmt::Display for PredictionProvider {
             PredictionProvider::Sweep => write!(f, "sweep"),
             PredictionProvider::Mercury => write!(f, "mercury"),
             PredictionProvider::Zeta1 => write!(f, "zeta1"),
-            PredictionProvider::Zeta2(format) => write!(f, "zeta2:{format}"),
+            PredictionProvider::Zeta2(format) => {
+                if let Some(format) = format {
+                    write!(f, "zeta2:{format}")
+                } else {
+                    write!(f, "zeta2")
+                }
+            }
             PredictionProvider::Teacher(backend) => write!(f, "teacher:{backend}"),
             PredictionProvider::TeacherNonBatching(backend) => {
                 write!(f, "teacher-non-batching:{backend}")
@@ -385,7 +391,7 @@ impl std::str::FromStr for PredictionProvider {
             "mercury" => Ok(PredictionProvider::Mercury),
             "zeta1" => Ok(PredictionProvider::Zeta1),
             "zeta2" => {
-                let format = arg.map(ZetaFormat::parse).transpose()?.unwrap_or_default();
+                let format = arg.map(ZetaFormat::parse).transpose()?;
                 Ok(PredictionProvider::Zeta2(format))
             }
             "teacher" => {

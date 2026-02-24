@@ -55,8 +55,9 @@ pub async fn run_format_prompt(
         PredictionProvider::Zeta2(zeta_format) => {
             step_progress.set_substatus("formatting zeta2 prompt");
 
-            let prompt = format_zeta_prompt(prompt_inputs, zeta_format);
-            let prefill = zeta_prompt::get_prefill(prompt_inputs, zeta_format);
+            let format = zeta_format.unwrap_or_default();
+            let prompt = format_zeta_prompt(prompt_inputs, format);
+            let prefill = zeta_prompt::get_prefill(prompt_inputs, format);
             let (expected_patch, expected_cursor_offset) = example
                 .spec
                 .expected_patches_with_cursor_positions()
@@ -67,11 +68,12 @@ pub async fn run_format_prompt(
                 prompt_inputs,
                 &expected_patch,
                 expected_cursor_offset,
-                zeta_format,
+                format,
             )?;
-            let rejected_output = example.spec.rejected_patch.as_ref().and_then(|patch| {
-                zeta2_output_for_patch(prompt_inputs, patch, None, zeta_format).ok()
-            });
+            let rejected_output =
+                example.spec.rejected_patch.as_ref().and_then(|patch| {
+                    zeta2_output_for_patch(prompt_inputs, patch, None, format).ok()
+                });
 
             example.prompt = Some(ExamplePrompt {
                 input: prompt,
