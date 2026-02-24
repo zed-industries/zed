@@ -2351,20 +2351,16 @@ impl AcpThreadView {
             )
     }
 
-    pub(crate) fn render_subagent_titlebar(&mut self, cx: &mut Context<Self>) -> Option<Div> {
-        let Some(parent_session_id) = self.parent_id.clone() else {
-            return None;
+    fn is_subagent_canceled_or_failed(&self, cx: &App) -> bool {
+        let Some(parent_session_id) = self.parent_id.as_ref() else {
+            return false;
         };
 
-        let server_view = self.server_view.clone();
-        let thread = self.thread.clone();
-        let is_done = thread.read(cx).status() == ThreadStatus::Idle;
-        let my_session_id = thread.read(cx).session_id().clone();
+        let my_session_id = self.thread.read(cx).session_id().clone();
 
-        let is_canceled_or_failed = self
-            .server_view
+        self.server_view
             .upgrade()
-            .and_then(|sv| sv.read(cx).thread_view(&parent_session_id))
+            .and_then(|sv| sv.read(cx).thread_view(parent_session_id))
             .is_some_and(|parent_view| {
                 parent_view
                     .read(cx)
@@ -2379,7 +2375,18 @@ impl AcpThreadView {
                                 | ToolCallStatus::Rejected
                         )
                     })
-            });
+            })
+    }
+
+    pub(crate) fn render_subagent_titlebar(&mut self, cx: &mut Context<Self>) -> Option<Div> {
+        let Some(parent_session_id) = self.parent_id.clone() else {
+            return None;
+        };
+
+        let server_view = self.server_view.clone();
+        let thread = self.thread.clone();
+        let is_done = thread.read(cx).status() == ThreadStatus::Idle;
+        let is_canceled_or_failed = self.is_subagent_canceled_or_failed(cx);
 
         Some(
             h_flex()
@@ -6414,14 +6421,6 @@ impl AcpThreadView {
         let subagent_view = thread_view.read(cx);
         let session_id = subagent_view.thread.read(cx).session_id().clone();
 
-        let scroll_handle = self
-            .subagent_scroll_handles
-            .borrow_mut()
-            .entry(session_id.clone())
-            .or_default()
-            .clone();
-        scroll_handle.scroll_to_bottom();
-
         let base_container = || {
             div()
                 .id(format!("subagent-content-{}", session_id))
@@ -6436,6 +6435,16 @@ impl AcpThreadView {
         let show_thread_entries = is_running || tool_call.content.is_empty();
 
         if show_thread_entries {
+            let scroll_handle = self
+                .subagent_scroll_handles
+                .borrow_mut()
+                .entry(session_id.clone())
+                .or_default()
+                .clone();
+            if is_running {
+                scroll_handle.scroll_to_bottom();
+            }
+
             let entries = subagent_view.thread.read(cx).entries();
             let total_entries = entries.len();
             let start_ix = total_entries.saturating_sub(MAX_PREVIEW_ENTRIES);
@@ -6483,26 +6492,24 @@ impl AcpThreadView {
                         .justify_end()
                         .children(tool_call.content.iter().enumerate().map(
                             |(content_ix, content)| {
-                                div().id(("tool-call-output", entry_ix)).p_2().child(
-                                    self.render_tool_call_content(
-                                        active_session_id,
-                                        entry_ix,
-                                        content,
-                                        content_ix,
-                                        tool_call,
-                                        true,
-                                        false,
-                                        matches!(
-                                            tool_call.status,
-                                            ToolCallStatus::Failed
-                                                | ToolCallStatus::Rejected
-                                                | ToolCallStatus::Canceled
-                                        ),
-                                        focus_handle,
-                                        window,
-                                        cx,
+                                div().p_2().child(self.render_tool_call_content(
+                                    active_session_id,
+                                    entry_ix,
+                                    content,
+                                    content_ix,
+                                    tool_call,
+                                    true,
+                                    false,
+                                    matches!(
+                                        tool_call.status,
+                                        ToolCallStatus::Failed
+                                            | ToolCallStatus::Rejected
+                                            | ToolCallStatus::Canceled
                                     ),
-                                )
+                                    focus_handle,
+                                    window,
+                                    cx,
+                                ))
                             },
                         )),
                 )
