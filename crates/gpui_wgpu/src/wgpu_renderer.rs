@@ -5,6 +5,7 @@ use gpui::{
     PolychromeSprite, PrimitiveBatch, Quad, ScaledPixels, Scene, Shadow, Size, SubpixelSprite,
     Underline, get_gamma_correction_ratios,
 };
+use log::warn;
 #[cfg(not(target_family = "wasm"))]
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use std::num::NonZeroU64;
@@ -825,6 +826,20 @@ impl WgpuRenderer {
         let height = size.height.0 as u32;
 
         if width != self.surface_config.width || height != self.surface_config.height {
+            // Wait for any in-flight GPU work to complete before destroying textures
+            if let Err(e) = self.device.poll(wgpu::PollType::Wait {
+                submission_index: None,
+                timeout: None,
+            }) {
+                warn!("Failed to poll device during resize: {e:?}");
+            }
+
+            // Destroy old textures before allocating new ones to avoid GPU memory spikes
+            self.path_intermediate_texture.destroy();
+            if let Some(ref texture) = self.path_msaa_texture {
+                texture.destroy();
+            }
+
             self.surface_config.width = width.max(1);
             self.surface_config.height = height.max(1);
             self.surface.configure(&self.device, &self.surface_config);
