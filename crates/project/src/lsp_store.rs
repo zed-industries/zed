@@ -1635,10 +1635,30 @@ impl LocalLspStore {
         // handle whitespace formatting
         if settings.remove_trailing_whitespace_on_save {
             zlog::trace!(logger => "removing trailing whitespace");
-            let diff = buffer
-                .handle
-                .read_with(cx, |buffer, cx| buffer.remove_trailing_whitespace(cx))
-                .await;
+            let diff = if let Some(ranges) = buffer.ranges.as_ref() {
+                let row_ranges = buffer.handle.read_with(cx, |buffer, _cx| {
+                    let snapshot = buffer.snapshot();
+                    ranges
+                        .iter()
+                        .map(|r| {
+                            let start = r.start.to_point(&snapshot).row;
+                            let end = r.end.to_point(&snapshot).row;
+                            start..end + 1
+                        })
+                        .collect::<Vec<std::ops::Range<u32>>>()
+                });
+                buffer
+                    .handle
+                    .read_with(cx, |buffer, cx| {
+                        buffer.remove_trailing_whitespace_in_ranges(&row_ranges, cx)
+                    })
+                    .await
+            } else {
+                buffer
+                    .handle
+                    .read_with(cx, |buffer, cx| buffer.remove_trailing_whitespace(cx))
+                    .await
+            };
             extend_formatting_transaction(buffer, formatting_transaction_id, cx, |buffer, cx| {
                 buffer.apply_diff(diff, cx);
             })?;
@@ -1646,9 +1666,42 @@ impl LocalLspStore {
 
         if settings.ensure_final_newline_on_save {
             zlog::trace!(logger => "ensuring final newline");
-            extend_formatting_transaction(buffer, formatting_transaction_id, cx, |buffer, cx| {
-                buffer.ensure_final_newline(cx);
-            })?;
+            if let Some(ranges) = buffer.ranges.as_ref() {
+                let row_ranges = buffer.handle.read_with(cx, |buffer, _cx| {
+                    let snapshot = buffer.snapshot();
+                    ranges
+                        .iter()
+                        .map(|r| {
+                            let start = r.start.to_point(&snapshot).row;
+                            let end = r.end.to_point(&snapshot).row;
+                            start..end + 1
+                        })
+                        .collect::<Vec<std::ops::Range<u32>>>()
+                });
+                let diff = buffer
+                    .handle
+                    .read_with(cx, |buffer, cx| {
+                        buffer.ensure_final_newline_in_range(&row_ranges, cx)
+                    })
+                    .await;
+                extend_formatting_transaction(
+                    buffer,
+                    formatting_transaction_id,
+                    cx,
+                    |buffer, cx| {
+                        buffer.apply_diff(diff, cx);
+                    },
+                )?;
+            } else {
+                extend_formatting_transaction(
+                    buffer,
+                    formatting_transaction_id,
+                    cx,
+                    |buffer, cx| {
+                        buffer.ensure_final_newline(cx);
+                    },
+                )?;
+            }
         }
 
         // Formatter for `code_actions_on_format` that runs before
@@ -1679,9 +1732,13 @@ impl LocalLspStore {
 
         let formatters = match (trigger, &settings.format_on_save) {
             (FormatTrigger::Save, FormatOnSave::Off) => &[],
-            (FormatTrigger::Manual, _) | (FormatTrigger::Save, FormatOnSave::On) => {
-                settings.formatter.as_ref()
-            }
+            (FormatTrigger::Manual, _)
+            | (
+                FormatTrigger::Save,
+                FormatOnSave::On
+                | FormatOnSave::Modifications
+                | FormatOnSave::ModificationsIfAvailable,
+            ) => settings.formatter.as_ref(),
         };
 
         let formatters = code_actions_on_format_formatters
@@ -2216,11 +2273,11 @@ impl LocalLspStore {
     ) -> Result<Vec<(Range<Anchor>, Arc<str>)>> {
         let capabilities = &language_server.capabilities();
         let range_formatting_provider = capabilities.document_range_formatting_provider.as_ref();
-        if range_formatting_provider == Some(&OneOf::Left(false)) {
-            anyhow::bail!(
-                "{} language server does not support range formatting",
-                language_server.name()
-            );
+        if !matches!(
+            range_formatting_provider,
+            Some(OneOf::Left(true) | OneOf::Right(_))
+        ) {
+            return Ok(Vec::new());
         }
 
         let uri = file_path_to_lsp_url(abs_path)?;

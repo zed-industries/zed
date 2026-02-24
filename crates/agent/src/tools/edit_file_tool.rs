@@ -937,7 +937,7 @@ mod tests {
                 Arc::new(EditFileTool::new(
                     project.clone(),
                     thread.downgrade(),
-                    language_registry,
+                    language_registry.clone(),
                     Templates::new(),
                 ))
                 .run(input, ToolCallEventStream::test().0, cx)
@@ -962,6 +962,56 @@ mod tests {
             new_content.replace("\r\n", "\n"),
             UNFORMATTED_CONTENT,
             "Code should not be formatted when format_on_save is disabled"
+        );
+        // Finally, test with format_on_save set to Modifications
+        // In agent context, this should behave the same as On (full file formatting)
+        cx.update(|cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.project.all_languages.defaults.format_on_save =
+                        Some(FormatOnSave::Modifications);
+                    settings.project.all_languages.defaults.formatter =
+                        Some(language::language_settings::FormatterList::default());
+                });
+            });
+        });
+
+        // Stream unformatted edits again
+        let edit_result = {
+            let edit_task = cx.update(|cx| {
+                let input = EditFileToolInput {
+                    display_description: "Update with Modifications".into(),
+                    path: "root/src/main.rs".into(),
+                    mode: EditFileMode::Overwrite,
+                };
+                Arc::new(EditFileTool::new(
+                    project.clone(),
+                    thread.downgrade(),
+                    language_registry,
+                    Templates::new(),
+                ))
+                .run(input, ToolCallEventStream::test().0, cx)
+            });
+
+            // Stream the unformatted content
+            cx.executor().run_until_parked();
+            model.send_last_completion_stream_text_chunk(UNFORMATTED_CONTENT.to_string());
+            model.end_last_completion_stream();
+
+            edit_task.await
+        };
+        assert!(edit_result.is_ok());
+
+        // Wait for any async operations (e.g. formatting) to complete
+        cx.executor().run_until_parked();
+
+        // Verify the file was formatted (ModifiedLines behaves like On in agent context)
+        let new_content = fs.load(path!("/root/src/main.rs").as_ref()).await.unwrap();
+        assert_eq!(
+            // Ignore carriage returns on Windows
+            new_content.replace("\r\n", "\n"),
+            FORMATTED_CONTENT,
+            "Code should be formatted when format_on_save is Modifications (agents use full formatting)"
         );
     }
 

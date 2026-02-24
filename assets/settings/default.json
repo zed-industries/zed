@@ -1288,7 +1288,7 @@
   // Removes any lines containing only whitespace at the end of the file and
   // ensures just one newline at the end.
   "ensure_final_newline_on_save": true,
-  // Whether or not to perform a buffer format before saving: [on, off]
+  // Whether or not to perform a buffer format before saving: [on, off, modifications, modificationsIfAvailable]
   // Keep in mind, if the autosave with delay is enabled, format_on_save will be ignored
   "format_on_save": "on",
   // How to perform a buffer format. This setting can take multiple values:
