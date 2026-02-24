@@ -684,21 +684,6 @@ async fn load_examples(
     } else {
         let max_rows_per_timestamp = remaining_limit_for_snowflake.unwrap_or(5000);
 
-        if !captured_after_timestamps.is_empty() {
-            captured_after_timestamps.sort();
-
-            let mut captured_examples = pull_examples::fetch_captured_examples_after(
-                http_client.clone(),
-                &captured_after_timestamps,
-                max_rows_per_timestamp,
-                remaining_offset,
-                background_executor.clone(),
-                Some(MIN_CAPTURE_VERSION),
-            )
-            .await?;
-            examples.append(&mut captured_examples);
-        }
-
         if !rejected_after_timestamps.is_empty() {
             rejected_after_timestamps.sort();
 
