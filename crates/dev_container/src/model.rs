@@ -1,6 +1,7 @@
 use std::{
     collections::HashMap,
     fmt::Debug,
+    hash::{DefaultHasher, Hash, Hasher},
     path::{Path, PathBuf},
     process::Output,
     sync::Arc,
@@ -263,7 +264,8 @@ impl std::fmt::Display for FeatureOptionValue {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct DevContainerFeatureJson {
-    id: Option<String>,
+    #[serde(rename = "id")]
+    _id: Option<String>,
     #[serde(default)]
     options: HashMap<String, FeatureOptionDefinition>,
 }
@@ -655,131 +657,56 @@ pub(crate) async fn spawn_dev_container_v2(
         ),
     ];
 
-    // 5. If dockerfile or image config
-    match devcontainer.build_type() {
-        DevContainerBuildType::Image => {
-            log::info!("DevContainer is using an image to build. Checking for existing container");
-            //     1. check for existing container by params + id labels (pending rebuild)
-            if let Some(docker_ps) = check_for_existing_container(&labels).await? {
-                log::info!("Dev container already found. Proceeding with it");
-                //     2. If exists and running, return it
-                //
-                let docker_inspect = inspect_running_container(&docker_ps).await?;
-                //     3. If exists and not running, start it
-                log::info!("TODO start the container if it's not running");
+    log::info!("Checking for existing container");
+    if let Some(docker_ps) = check_for_existing_container(&labels).await? {
+        log::info!("Dev container already found. Proceeding with it");
+        //     2. If exists and running, return it
+        //
+        let docker_inspect = inspect_running_container(&docker_ps).await?;
+        //     3. If exists and not running, start it
+        log::info!("TODO start the container if it's not running");
 
-                let remote_user = get_remote_user_from_config(&docker_inspect, &devcontainer)?;
+        let remote_user = get_remote_user_from_config(&docker_inspect, &devcontainer)?;
 
-                let remote_folder = get_remote_dir_from_config(
-                    &docker_inspect,
-                    (&local_project_path.display()).to_string(),
-                )?;
+        let remote_folder = get_remote_dir_from_config(
+            &docker_inspect,
+            (&local_project_path.display()).to_string(),
+        )?;
 
-                return Ok(DevContainerUp {
-                    _outcome: "todo".to_string(),
-                    container_id: docker_ps.id,
-                    remote_user: remote_user,
-                    remote_workspace_folder: remote_folder,
-                });
-            } else {
-                let devcontainer_dir = config_path.parent().expect(
-                    "TODO, this should actually combine the dockerfile property with the parent",
-                );
-                let built_docker_image = build_image(
-                    http_client,
-                    &devcontainer,
-                    devcontainer_dir.display().to_string(),
-                )
-                .await?;
+        Ok(DevContainerUp {
+            _outcome: "todo".to_string(),
+            container_id: docker_ps.id,
+            remote_user: remote_user,
+            remote_workspace_folder: remote_folder,
+        })
+    } else {
+        log::info!("Existing container not found. Building");
 
-                let running_container = run_docker_image(
-                    &devcontainer,
-                    &built_docker_image,
-                    &labels,
-                    &local_project_path,
-                )
-                .await?;
+        let devcontainer_dir = config_path
+            .parent()
+            .expect("TODO, this should actually combine the dockerfile property with the parent");
+        let built_docker_image = build_docker_image(
+            http_client,
+            &devcontainer,
+            devcontainer_dir.display().to_string(),
+        )
+        .await?;
 
-                let remote_user = get_remote_user_from_config(&running_container, &devcontainer)?;
-                let remote_workspace_folder = get_remote_dir_from_config(
-                    &running_container,
-                    (&local_project_path.display()).to_string(),
-                )?;
+        let running_container =
+            run_docker_image(&built_docker_image, &labels, &local_project_path).await?;
 
-                return Ok(DevContainerUp {
-                    _outcome: "todo".to_string(),
-                    container_id: running_container.id,
-                    remote_user,
-                    remote_workspace_folder,
-                });
-            }
-        }
-        DevContainerBuildType::Dockerfile => {
-            log::info!("DevContainer is a Dockerfile. First, checking for existing container");
-            //     1. check for existing container by params + id labels (pending rebuild)
-            if let Some(docker_ps) = check_for_existing_container(&labels).await? {
-                log::info!("Dev container already found. Proceeding with it");
-                //     2. If exists and running, return it
-                //
-                let docker_inspect = inspect_running_container(&docker_ps).await?;
-                //     3. If exists and not running, start it
-                log::info!("TODO start the container if it's not running");
+        let remote_user = get_remote_user_from_config(&running_container, &devcontainer)?;
+        let remote_workspace_folder = get_remote_dir_from_config(
+            &running_container,
+            (&local_project_path.display()).to_string(),
+        )?;
 
-                let remote_user = get_remote_user_from_config(&docker_inspect, &devcontainer)?;
-
-                let remote_folder = get_remote_dir_from_config(
-                    &docker_inspect,
-                    (&local_project_path.display()).to_string(),
-                )?;
-
-                return Ok(DevContainerUp {
-                    _outcome: "todo".to_string(),
-                    container_id: docker_ps.id,
-                    remote_user: remote_user,
-                    remote_workspace_folder: remote_folder,
-                });
-            } else {
-                let devcontainer_dir = config_path.parent().expect(
-                    "TODO, this should actually combine the dockerfile property with the parent",
-                );
-                let built_docker_image = build_image(
-                    http_client,
-                    &devcontainer,
-                    devcontainer_dir.display().to_string(),
-                )
-                .await?;
-
-                let running_container = run_docker_image(
-                    &devcontainer,
-                    &built_docker_image,
-                    &labels,
-                    &local_project_path,
-                )
-                .await?;
-
-                let remote_user = get_remote_user_from_config(&running_container, &devcontainer)?;
-                let remote_workspace_folder = get_remote_dir_from_config(
-                    &running_container,
-                    (&local_project_path.display()).to_string(),
-                )?;
-
-                return Ok(DevContainerUp {
-                    _outcome: "todo".to_string(),
-                    container_id: running_container.id,
-                    remote_user,
-                    remote_workspace_folder,
-                });
-            }
-            // 5. If dockerfile or image config
-            //     1. check for existing container by params + id labels (pending rebuild)
-            //     2. If exists and running, return it
-            //     3. If exists and not running, start it
-            //     4. If not exists
-            //         1. Build it
-            //         2. Run the built thing you just made
-        }
-        DevContainerBuildType::DockerCompose => todo!("Not yet implemented"),
-        DevContainerBuildType::None => todo!(),
+        Ok(DevContainerUp {
+            _outcome: "todo".to_string(),
+            container_id: running_container.id,
+            remote_user,
+            remote_workspace_folder,
+        })
     }
     // 5. If dockerfile or image config
     //     1. check for existing container by params + id labels (pending rebuild)
@@ -794,13 +721,11 @@ pub(crate) async fn spawn_dev_container_v2(
 }
 
 async fn run_docker_image(
-    devcontainer: &DevContainer,
     built_docker_image: &DockerInspect,
     labels: &Vec<(&str, String)>,
     local_project_path: &Arc<&Path>,
 ) -> Result<DockerInspect, RenameMeError> {
     let mut docker_run_command = create_docker_run_command(
-        &devcontainer,
         local_project_path,
         &built_docker_image.config.labels,
         Some(labels),
@@ -838,18 +763,21 @@ async fn inspect_image(devcontainer: &DevContainer) -> Result<DockerInspect, Ren
     Ok(docker_inspect)
 }
 
-/// Generates a tag for the features-extended image.
-///
-/// Mirrors the CLI's `getFolderImageName` + `-features` suffix convention.
-/// The tag is derived from the base image name so rebuilds produce the same tag.
-fn generate_features_image_tag(base_image: &str) -> String {
-    use std::collections::hash_map::DefaultHasher;
-    use std::hash::{Hash, Hasher};
-
+fn generate_features_image_tag(
+    dev_container: &DevContainer,
+    dockerfile_build_path: String,
+) -> String {
     let mut hasher = DefaultHasher::new();
-    base_image.hash(&mut hasher);
+    let prefix = match &dev_container.name {
+        Some(name) => &get_safe_id(name),
+        None => "zed-dc",
+    };
+    let prefix = prefix.get(..6).unwrap_or(prefix);
+
+    dockerfile_build_path.hash(&mut hasher);
+
     let hash = hasher.finish();
-    format!("vsc-{:x}-features", hash)
+    format!("{}-{:x}-features", prefix, hash)
 }
 
 /// Prepares a `FeaturesBuildInfo` for an image-based dev container that has features.
@@ -861,75 +789,36 @@ fn prepare_features_build_info(
     dev_container: &DevContainer,
     image_user: &str,
 ) -> Result<FeaturesBuildInfo, RenameMeError> {
-    match dev_container.build_type() {
-        DevContainerBuildType::Image => {
-            let Some(image) = &dev_container.image else {
-                return Err(RenameMeError::UnmappedError);
-            };
+    // Covers both image and Dockefile cases, not yet docker-compose
+    let temp_base = std::env::temp_dir().join("devcontainer-zed");
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    let features_content_dir = temp_base.join(format!("container-features-{}", timestamp));
+    let empty_context_dir = temp_base.join("empty-folder");
 
-            let temp_base = std::env::temp_dir().join("devcontainer-zed");
-            let timestamp = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_millis())
-                .unwrap_or(0);
-            let features_content_dir = temp_base.join(format!("container-features-{}", timestamp));
-            let empty_context_dir = temp_base.join("empty-folder");
+    std::fs::create_dir_all(&features_content_dir).map_err(|e| {
+        log::error!("Failed to create features content dir: {e}");
+        RenameMeError::UnmappedError
+    })?;
+    std::fs::create_dir_all(&empty_context_dir).map_err(|e| {
+        log::error!("Failed to create empty context dir: {e}");
+        RenameMeError::UnmappedError
+    })?;
 
-            std::fs::create_dir_all(&features_content_dir).map_err(|e| {
-                log::error!("Failed to create features content dir: {e}");
-                RenameMeError::UnmappedError
-            })?;
-            std::fs::create_dir_all(&empty_context_dir).map_err(|e| {
-                log::error!("Failed to create empty context dir: {e}");
-                RenameMeError::UnmappedError
-            })?;
+    let dockerfile_path = features_content_dir.join("Dockerfile.extended");
+    let image_tag =
+        generate_features_image_tag(dev_container, dockerfile_path.clone().display().to_string());
 
-            let dockerfile_path = features_content_dir.join("Dockerfile.extended");
-            let image_tag = generate_features_image_tag(image);
-
-            Ok(FeaturesBuildInfo {
-                dockerfile_path,
-                features_content_dir,
-                empty_context_dir,
-                base_image: Some(image.clone()),
-                image_user: image_user.to_string(),
-                image_tag,
-            })
-        }
-        DevContainerBuildType::Dockerfile => {
-            let temp_base = std::env::temp_dir().join("devcontainer-zed");
-            let timestamp = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_millis())
-                .unwrap_or(0);
-            let features_content_dir = temp_base.join(format!("container-features-{}", timestamp));
-            let empty_context_dir = temp_base.join("empty-folder");
-
-            std::fs::create_dir_all(&features_content_dir).map_err(|e| {
-                log::error!("Failed to create features content dir: {e}");
-                RenameMeError::UnmappedError
-            })?;
-            std::fs::create_dir_all(&empty_context_dir).map_err(|e| {
-                log::error!("Failed to create empty context dir: {e}");
-                RenameMeError::UnmappedError
-            })?;
-
-            let dockerfile_path = features_content_dir.join("Dockerfile.extended");
-            let image_tag =
-                generate_features_image_tag(&format!("todo_hash_differently-{}", timestamp));
-
-            Ok(FeaturesBuildInfo {
-                dockerfile_path,
-                features_content_dir,
-                empty_context_dir,
-                base_image: None,
-                image_user: image_user.to_string(),
-                image_tag,
-            })
-        }
-        DevContainerBuildType::DockerCompose => todo!(),
-        DevContainerBuildType::None => Err(RenameMeError::UnmappedError),
-    }
+    Ok(FeaturesBuildInfo {
+        dockerfile_path,
+        features_content_dir,
+        empty_context_dir,
+        base_image: dev_container.image.clone(),
+        image_user: image_user.to_string(),
+        image_tag,
+    })
 }
 
 /// Destination folder inside the container where feature content is staged during build.
@@ -979,7 +868,7 @@ fn get_safe_id(input: &str) -> String {
     } else {
         replaced
     };
-    result.to_uppercase()
+    result.to_lowercase()
 }
 
 /// Extracts the short feature ID from a full feature reference string.
@@ -1468,7 +1357,7 @@ async fn construct_features_build_resources(
     Ok(())
 }
 
-async fn build_image(
+async fn build_docker_image(
     http_client: Arc<dyn HttpClient>,
     dev_container: &DevContainer,
     dockerfile_dir: String,
@@ -1484,107 +1373,47 @@ async fn build_image(
                 log::info!("No features to add. Using base image");
                 return Ok(base_image.clone());
             }
-
-            // TODO
-            // The CLI determines the image user from `imageDetails.Config.User || 'root'`.
-            // Our DockerInspect doesn't yet carry the User field, so we default to "root".
-            let image_user = "root";
-
-            let build_info = prepare_features_build_info(dev_container, image_user)?;
-
-            // Use http_client to do the actual OCI retrieval here
-            construct_features_build_resources(
-                dev_container,
-                &build_info,
-                &http_client,
-                &dockerfile_dir,
-            )
-            .await?;
-
-            let mut command = create_docker_build(&build_info, dev_container, &dockerfile_dir)?;
-
-            let output = command.output().await.map_err(|e| {
-                log::error!("Error building docker image: {e}");
-                RenameMeError::UnmappedError
-            })?;
-
-            if !output.status.success() {
-                let stderr = String::from_utf8_lossy(&output.stderr);
-                log::error!("docker buildx build failed: {stderr}");
-                return Err(RenameMeError::UnmappedError);
-            }
-
-            // After a successful build, inspect the newly tagged image to get its metadata
-            let mut inspect_command = create_docker_inspect(&build_info.image_tag)?;
-            let inspect_output = inspect_command.output().await.map_err(|e| {
-                log::error!("Error inspecting built image: {e}");
-                RenameMeError::UnmappedError
-            })?;
-
-            let Some(docker_inspect): Option<DockerInspect> =
-                deserialize_json_output(inspect_output)?
-            else {
-                log::error!("Could not inspect the newly built features image");
-                return Err(RenameMeError::UnmappedError);
-            };
-            Ok(docker_inspect)
         }
-        DevContainerBuildType::Dockerfile => {
-            //Ok build here works the same except:
-            // - Instaed of pointing at the empty folder, we point at the .devcontainer folder itself (because that's where the Dockerfile is)
-            // - We need --build-arg key=value for each arg passed through in the build object
-            // - _DEV_CONTAINERS_BASE_IMAGE build arg changes. It was the image in the previous case. In this case, It's  "dev_container_auto_added_stage_label"? What does that mean?
-            //   - Basically it's the default if "build": { "target": "development" } or equivalent is not constructed
-            // let base_image =
-            //
-            // TODO
-            // The CLI determines the image user from `imageDetails.Config.User || 'root'`.
-            // Our DockerInspect doesn't yet carry the User field, so we default to "root".
-            let image_user = "root";
-
-            let build_info = prepare_features_build_info(dev_container, image_user)?;
-
-            // Use http_client to do the actual OCI retrieval here
-            construct_features_build_resources(
-                dev_container,
-                &build_info,
-                &http_client,
-                &dockerfile_dir,
-            )
-            .await?;
-
-            // TODO send in the actual folder in the case of dockerbuild
-            let mut command = create_docker_build(&build_info, dev_container, &dockerfile_dir)?;
-
-            let output = command.output().await.map_err(|e| {
-                log::error!("Error building docker image: {e}");
-                RenameMeError::UnmappedError
-            })?;
-
-            if !output.status.success() {
-                let stderr = String::from_utf8_lossy(&output.stderr);
-                log::error!("docker buildx build failed: {stderr}");
-                return Err(RenameMeError::UnmappedError);
-            }
-
-            // After a successful build, inspect the newly tagged image to get its metadata
-            let mut inspect_command = create_docker_inspect(&build_info.image_tag)?;
-            let inspect_output = inspect_command.output().await.map_err(|e| {
-                log::error!("Error inspecting built image: {e}");
-                RenameMeError::UnmappedError
-            })?;
-
-            let Some(docker_inspect): Option<DockerInspect> =
-                deserialize_json_output(inspect_output)?
-            else {
-                log::error!("Could not inspect the newly built features image");
-                return Err(RenameMeError::UnmappedError);
-            };
-            Ok(docker_inspect)
-        }
+        DevContainerBuildType::Dockerfile => {}
         DevContainerBuildType::DockerCompose => todo!("not yet implemented"),
-        DevContainerBuildType::None => Err(RenameMeError::UnmappedError),
+        DevContainerBuildType::None => return Err(RenameMeError::UnmappedError),
+    };
+    // TODO
+    // The CLI determines the image user from `imageDetails.Config.User || 'root'`.
+    // Our DockerInspect doesn't yet carry the User field, so we default to "root".
+    let image_user = "root";
+
+    let build_info = prepare_features_build_info(dev_container, image_user)?;
+
+    // Use http_client to do the actual OCI retrieval here
+    construct_features_build_resources(dev_container, &build_info, &http_client, &dockerfile_dir)
+        .await?;
+    let mut command = create_docker_build(&build_info, dev_container, &dockerfile_dir)?;
+
+    let output = command.output().await.map_err(|e| {
+        log::error!("Error building docker image: {e}");
+        RenameMeError::UnmappedError
+    })?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        log::error!("docker buildx build failed: {stderr}");
+        return Err(RenameMeError::UnmappedError);
     }
+
+    // After a successful build, inspect the newly tagged image to get its metadata
+    let mut inspect_command = create_docker_inspect(&build_info.image_tag)?;
+    let inspect_output = inspect_command.output().await.map_err(|e| {
+        log::error!("Error inspecting built image: {e}");
+        RenameMeError::UnmappedError
+    })?;
+
+    let Some(docker_inspect): Option<DockerInspect> = deserialize_json_output(inspect_output)?
+    else {
+        log::error!("Could not inspect the newly built features image");
+        return Err(RenameMeError::UnmappedError);
+    };
+    Ok(docker_inspect)
 }
 
 async fn inspect_running_container(docker_ps: &DockerPs) -> Result<DockerInspect, RenameMeError> {
@@ -1768,7 +1597,6 @@ fn create_docker_query_containers(
 }
 
 fn create_docker_run_command(
-    devcontainer: &DevContainer,
     local_project_directory: &Arc<&Path>,
     image_labels: &DockerConfigLabels,
     labels: Option<&Vec<(&str, String)>>,
@@ -1897,8 +1725,7 @@ mod test {
         UserEnvProbe, construct_features_build_resources, create_docker_build,
         create_docker_inspect, create_docker_run_command, deserialize_devcontainer_json,
         deserialize_json_output, extract_feature_id, generate_dockerfile_extended,
-        get_ent_passwd_shell_command, get_remote_dir_from_config, get_remote_user_from_config,
-        get_safe_id,
+        get_remote_dir_from_config, get_remote_user_from_config, get_safe_id,
     };
 
     fn fake_http_client() -> Arc<dyn HttpClient> {
@@ -2804,11 +2631,15 @@ mod test {
 
     #[test]
     fn should_get_safe_id() {
-        assert_eq!(get_safe_id("version"), "VERSION");
-        assert_eq!(get_safe_id("aws-cli"), "AWS_CLI");
-        assert_eq!(get_safe_id("optionA"), "OPTIONA");
-        assert_eq!(get_safe_id("123abc"), "_ABC");
-        assert_eq!(get_safe_id("___test"), "_TEST");
+        assert_eq!(get_safe_id("version"), "version");
+        assert_eq!(get_safe_id("aws-cli"), "aws_cli");
+        assert_eq!(get_safe_id("optionA"), "optiona");
+        assert_eq!(get_safe_id("123abc"), "_abc");
+        assert_eq!(get_safe_id("___test"), "_test");
+        assert_eq!(
+            get_safe_id("DevContainer Name for (Greatness"),
+            "devcontainer_name_for__greatness"
+        );
     }
 
     #[test]
@@ -3103,13 +2934,6 @@ mod test {
             "remoteUser".to_string(),
             serde_json_lenient::Value::String("vsCode".to_string()),
         );
-        let given_devcontainer = DevContainer {
-            image: Some("mcr.microsoft.com/devcontainers/base:ubuntu".to_string()),
-            name: Some("DevContainerName".to_string()),
-            remote_user: None,
-            ..Default::default()
-        };
-
         let labels = vec![
             ("label1", "value1".to_string()),
             ("label2", "value2".to_string()),
@@ -3148,7 +2972,6 @@ mod test {
         };
 
         let docker_run_command = create_docker_run_command(
-            &given_devcontainer,
             &Arc::new(Path::new("/local/project_app")),
             &image_labels,
             Some(&labels),
