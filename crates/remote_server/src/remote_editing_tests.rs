@@ -2,7 +2,9 @@
 /// The tests in this file assume that server_cx is running on Windows too.
 /// We neead to find a way to test Windows-Non-Windows interactions.
 use crate::headless_project::HeadlessProject;
-use agent::{AgentTool, ReadFileTool, ReadFileToolInput, Templates, Thread, ToolCallEventStream};
+use agent::{
+    AgentTool, ReadFileTool, ReadFileToolInput, Templates, Thread, ToolCallEventStream, ToolInput,
+};
 use client::{Client, UserStore};
 use clock::FakeSystemClock;
 use collections::{HashMap, HashSet};
@@ -1962,7 +1964,11 @@ async fn test_remote_agent_fs_tool_calls(cx: &mut TestAppContext, server_cx: &mu
     let read_tool = Arc::new(ReadFileTool::new(thread.downgrade(), project, action_log));
     let (event_stream, _) = ToolCallEventStream::test();
 
-    let exists_result = cx.update(|cx| read_tool.clone().run(input, event_stream.clone(), cx));
+    let exists_result = cx.update(|cx| {
+        read_tool
+            .clone()
+            .run(ToolInput::resolved(input), event_stream.clone(), cx)
+    });
     let output = exists_result.await.unwrap();
     assert_eq!(output, LanguageModelToolResultContent::Text("B".into()));
 
@@ -1971,7 +1977,8 @@ async fn test_remote_agent_fs_tool_calls(cx: &mut TestAppContext, server_cx: &mu
         start_line: None,
         end_line: None,
     };
-    let does_not_exist_result = cx.update(|cx| read_tool.run(input, event_stream, cx));
+    let does_not_exist_result =
+        cx.update(|cx| read_tool.run(ToolInput::resolved(input), event_stream, cx));
     does_not_exist_result.await.unwrap_err();
 }
 

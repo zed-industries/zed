@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use std::rc::Rc;
 use std::sync::Arc;
 
-use crate::{AgentTool, Thread, ThreadEnvironment, ToolCallEventStream};
+use crate::{AgentTool, Thread, ThreadEnvironment, ToolCallEventStream, ToolInput};
 
 /// Spawns an agent to perform a delegated task.
 ///
@@ -97,61 +97,78 @@ impl AgentTool for SpawnAgentTool {
 
     fn run(
         self: Arc<Self>,
-        input: Self::Input,
+        input: ToolInput<Self::Input>,
         event_stream: ToolCallEventStream,
         cx: &mut App,
     ) -> Task<Result<Self::Output, Self::Output>> {
-        let Some(parent_thread_entity) = self.parent_thread.upgrade() else {
-            return Task::ready(Err(SpawnAgentToolOutput::Error {
-                session_id: None,
-                error: "Parent thread no longer exists".to_string(),
-            }));
-        };
+        cx.spawn(async move |cx| {
+            let input = input
+                .recv()
+                .await
+                .map_err(|e| SpawnAgentToolOutput::Error {
+                    session_id: None,
+                    error: format!("Failed to receive tool input: {e}"),
+                })?;
 
-        let subagent = if let Some(session_id) = input.session_id {
-            self.environment
-                .resume_subagent(parent_thread_entity, session_id, input.message, cx)
-        } else {
-            self.environment
-                .create_subagent(parent_thread_entity, input.label, input.message, cx)
-        };
-        let subagent = match subagent {
-            Ok(subagent) => subagent,
-            Err(err) => {
-                return Task::ready(Err(SpawnAgentToolOutput::Error {
+            let (subagent, subagent_session_id) = cx.update(|cx| {
+                let Some(parent_thread_entity) = self.parent_thread.upgrade() else {
+                    return Err(SpawnAgentToolOutput::Error {
+                        session_id: None,
+                        error: "Parent thread no longer exists".to_string(),
+                    });
+                };
+
+                let subagent = if let Some(session_id) = input.session_id {
+                    self.environment.resume_subagent(
+                        parent_thread_entity,
+                        session_id,
+                        input.message,
+                        cx,
+                    )
+                } else {
+                    self.environment.create_subagent(
+                        parent_thread_entity,
+                        input.label,
+                        input.message,
+                        cx,
+                    )
+                };
+                let subagent = subagent.map_err(|err| SpawnAgentToolOutput::Error {
                     session_id: None,
                     error: err.to_string(),
-                }));
-            }
-        };
-        let subagent_session_id = subagent.id();
+                })?;
+                let subagent_session_id = subagent.id();
 
-        event_stream.subagent_spawned(subagent_session_id.clone());
-        let meta = acp::Meta::from_iter([(
-            SUBAGENT_SESSION_ID_META_KEY.into(),
-            subagent_session_id.to_string().into(),
-        )]);
-        event_stream.update_fields_with_meta(acp::ToolCallUpdateFields::new(), Some(meta));
+                event_stream.subagent_spawned(subagent_session_id.clone());
+                let meta = acp::Meta::from_iter([(
+                    SUBAGENT_SESSION_ID_META_KEY.into(),
+                    subagent_session_id.to_string().into(),
+                )]);
+                event_stream.update_fields_with_meta(acp::ToolCallUpdateFields::new(), Some(meta));
 
-        cx.spawn(async move |cx| match subagent.wait_for_output(cx).await {
-            Ok(output) => {
-                event_stream.update_fields(
-                    acp::ToolCallUpdateFields::new().content(vec![output.clone().into()]),
-                );
-                Ok(SpawnAgentToolOutput::Success {
-                    session_id: subagent_session_id,
-                    output,
-                })
-            }
-            Err(e) => {
-                let error = e.to_string();
-                event_stream.update_fields(
-                    acp::ToolCallUpdateFields::new().content(vec![error.clone().into()]),
-                );
-                Err(SpawnAgentToolOutput::Error {
-                    session_id: Some(subagent_session_id),
-                    error,
-                })
+                Ok((subagent, subagent_session_id))
+            })?;
+
+            match subagent.wait_for_output(cx).await {
+                Ok(output) => {
+                    event_stream.update_fields(
+                        acp::ToolCallUpdateFields::new().content(vec![output.clone().into()]),
+                    );
+                    Ok(SpawnAgentToolOutput::Success {
+                        session_id: subagent_session_id,
+                        output,
+                    })
+                }
+                Err(e) => {
+                    let error = e.to_string();
+                    event_stream.update_fields(
+                        acp::ToolCallUpdateFields::new().content(vec![error.clone().into()]),
+                    );
+                    Err(SpawnAgentToolOutput::Error {
+                        session_id: Some(subagent_session_id),
+                        error,
+                    })
+                }
             }
         })
     }
