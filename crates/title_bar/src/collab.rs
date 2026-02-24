@@ -1,7 +1,7 @@
 use std::rc::Rc;
 use std::sync::Arc;
 
-use call::{ActiveCall, ParticipantLocation, Room};
+use call::{ActiveCall, Room};
 use channel::ChannelStore;
 use client::{User, proto::PeerId};
 use gpui::{
@@ -18,7 +18,7 @@ use ui::{
     Facepile, PopoverMenu, SplitButton, SplitButtonStyle, TintColor, Tooltip, prelude::*,
 };
 use util::rel_path::RelPath;
-use workspace::notifications::DetachAndPromptErr;
+use workspace::{ParticipantLocation, notifications::DetachAndPromptErr};
 
 use crate::TitleBar;
 

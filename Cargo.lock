@@ -2484,6 +2484,7 @@ dependencies = [
  "settings",
  "telemetry",
  "util",
+ "workspace",
 ]
 
 [[package]]
