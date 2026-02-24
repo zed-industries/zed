@@ -624,7 +624,7 @@ pub struct MultiBufferSnapshot {
     diffs: TreeMap<BufferId, DiffStateSnapshot>,
     diff_transforms: SumTree<DiffTransform>,
     excerpt_ids: SumTree<ExcerptIdMapping>,
-    replaced_excerpts: TreeMap<ExcerptId, ExcerptId>,
+    replaced_excerpts: Arc<HashMap<ExcerptId, ExcerptId>>,
     non_text_state_update_count: usize,
     edit_count: usize,
     is_dirty: bool,
@@ -1967,7 +1967,10 @@ impl MultiBuffer {
         *has_deleted_file = false;
         *has_conflict = false;
         *has_inverted_diff = false;
-        replaced_excerpts.clear();
+        match Arc::get_mut(replaced_excerpts) {
+            Some(replaced_excerpts) => replaced_excerpts.clear(),
+            None => *replaced_excerpts = Default::default(),
+        }
 
         let edits = Self::sync_diff_transforms(
             self.snapshot.get_mut(),
