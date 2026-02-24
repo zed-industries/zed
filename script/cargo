@@ -209,6 +209,10 @@ async function main() {
 
   // Handle --init flag
   if (args[0] === "--init") {
+    if (process.env.NIX_WRAPPER === "1") {
+      console.error("`--init` not supported when going through the nix wrapper");
+      process.exit(1);
+    }
     initShellAlias();
     return;
   }
