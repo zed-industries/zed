@@ -6086,6 +6086,22 @@ impl Workspace {
                 let display = window.display(cx).and_then(|d| d.uuid().ok());
                 // Save dock state for empty local workspaces
                 let docks = build_serialized_docks(self, window, cx);
+                let center_group = build_serialized_pane_group(&self.center.root, window, cx);
+                let workspace = SerializedWorkspace {
+                    id: database_id,
+                    location: SerializedWorkspaceLocation::Local,
+                    paths: Default::default(),
+                    center_group,
+                    window_bounds: None,
+                    display: Default::default(),
+                    docks: docks.clone(),
+                    centered_layout: self.centered_layout,
+                    session_id: None,
+                    breakpoints: Default::default(),
+                    window_id: Some(window.window_handle().window_id().as_u64()),
+                    user_toolchains: Default::default(),
+                };
+
                 window.spawn(cx, async move |_| {
                     persistence::DB
                         .set_window_open_status(
@@ -6095,10 +6111,11 @@ impl Workspace {
                         )
                         .await
                         .log_err();
-                    persistence::DB
-                        .set_session_id(database_id, None)
-                        .await
-                        .log_err();
+
+                    // Clear out any stale pane/item state while also detaching from the session.
+                    // Without this, the last serialized pane group can keep referencing items
+                    // that failed to deserialize.
+                    persistence::DB.save_workspace(workspace).await;
                     persistence::write_default_dock_state(docks).await.log_err();
                 })
             }
