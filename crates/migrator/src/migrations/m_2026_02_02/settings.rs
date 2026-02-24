@@ -4,7 +4,7 @@ use serde_json::Value;
 use crate::migrations::migrate_settings;
 
 pub fn move_edit_prediction_provider_to_edit_predictions(value: &mut Value) -> Result<()> {
-    migrate_settings(value, migrate_one)
+    migrate_settings(value, &mut migrate_one)
 }
 
 fn migrate_one(obj: &mut serde_json::Map<String, Value>) -> Result<()> {

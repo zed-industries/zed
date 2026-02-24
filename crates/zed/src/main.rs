@@ -22,6 +22,7 @@ use futures::{StreamExt, channel::oneshot, future};
 use git::GitHostingProviderRegistry;
 use git_ui::clone::clone_and_open;
 use gpui::{App, AppContext, Application, AsyncApp, Focusable as _, QuitMode, UpdateGlobal as _};
+use gpui_platform;
 
 use gpui_tokio::Tokio;
 use language::LanguageRegistry;
@@ -98,7 +99,7 @@ fn files_not_created_on_launch(errors: HashMap<io::ErrorKind, Vec<&Path>>) {
         .collect::<Vec<_>>().join("\n\n");
 
     eprintln!("{message}: {error_details}");
-    Application::new()
+    Application::with_platform(gpui_platform::current_platform(false))
         .with_quit_mode(QuitMode::Explicit)
         .run(move |cx| {
             if let Ok(window) = cx.open_window(gpui::WindowOptions::default(), |_, cx| {
@@ -193,6 +194,30 @@ fn main() {
     // `zed --crash-handler` Makes zed operate in minidump crash handler mode
     if let Some(socket) = &args.crash_handler {
         crashes::crash_server(socket.as_path());
+        return;
+    }
+
+    #[cfg(target_os = "windows")]
+    if args.record_etw_trace {
+        let zed_pid = args
+            .etw_zed_pid
+            .and_then(|pid| if pid >= 0 { Some(pid as u32) } else { None });
+        let Some(output_path) = args.etw_output else {
+            eprintln!("--etw-output is required for --record-etw-trace");
+            process::exit(1);
+        };
+
+        let Some(etw_socket) = args.etw_socket else {
+            eprintln!("--etw-socket is required for --record-etw-trace");
+            process::exit(1);
+        };
+
+        if let Err(error) =
+            etw_tracing::record_etw_trace(zed_pid, &output_path, etw_socket.as_str())
+        {
+            eprintln!("ETW trace recording failed: {error:#}");
+            process::exit(1);
+        }
         return;
     }
 
@@ -297,7 +322,8 @@ fn main() {
     #[cfg(windows)]
     check_for_conpty_dll();
 
-    let app = Application::new().with_assets(Assets);
+    let app =
+        Application::with_platform(gpui_platform::current_platform(false)).with_assets(Assets);
 
     let system_id = app.background_executor().spawn(system_id());
     let installation_id = app.background_executor().spawn(installation_id());
@@ -306,8 +332,8 @@ fn main() {
         .background_executor()
         .spawn(Session::new(session_id.clone()));
 
-    app.background_executor()
-        .spawn(crashes::init(InitCrashHandler {
+    crashes::init(
+        InitCrashHandler {
             session_id,
             zed_version: app_version.to_string(),
             binary: "zed".to_string(),
@@ -316,8 +342,11 @@ fn main() {
                 .as_ref()
                 .map(|sha| sha.full())
                 .unwrap_or_else(|| "no sha".to_owned()),
-        }))
-        .detach();
+        },
+        |task| {
+            app.background_executor().spawn(task).detach();
+        },
+    );
 
     let (open_listener, mut open_rx) = OpenListener::new();
 
@@ -697,6 +726,8 @@ fn main() {
         json_schema_store::init(cx);
         miniprofiler_ui::init(*STARTUP_TIME.get().unwrap(), cx);
         which_key::init(cx);
+        #[cfg(target_os = "windows")]
+        etw_tracing::init(cx);
 
         cx.observe_global::<SettingsStore>({
             let http = app_state.client.http_client();
@@ -1290,14 +1321,18 @@ pub(crate) async fn restore_or_create_workspace(
         let mut results: Vec<Result<(), Error>> = Vec::new();
         let mut tasks = Vec::new();
 
-        let mut local_results = Vec::new();
         for multi_workspace in multi_workspaces {
-            local_results
-                .push(restore_multiworkspace(multi_workspace, app_state.clone(), cx).await);
-        }
-
-        for result in local_results {
-            results.push(result.map(|_| ()));
+            match restore_multiworkspace(multi_workspace, app_state.clone(), cx).await {
+                Ok(result) => {
+                    for error in result.errors {
+                        log::error!("Failed to restore workspace in group: {error:#}");
+                        results.push(Err(error));
+                    }
+                }
+                Err(e) => {
+                    results.push(Err(e));
+                }
+            }
         }
 
         for session_workspace in remote_workspaces {
@@ -1591,6 +1626,26 @@ struct Args {
     /// Output current environment variables as JSON to stdout
     #[arg(long, hide = true)]
     printenv: bool,
+
+    /// Record an ETW trace. Must be run as administrator.
+    #[cfg(target_os = "windows")]
+    #[arg(long, hide = true)]
+    record_etw_trace: bool,
+
+    /// The PID of the Zed process to trace for heap analysis.
+    #[cfg(target_os = "windows")]
+    #[arg(long, hide = true, allow_hyphen_values = true)]
+    etw_zed_pid: Option<i64>,
+
+    /// Output path for the ETW trace file.
+    #[cfg(target_os = "windows")]
+    #[arg(long, hide = true)]
+    etw_output: Option<PathBuf>,
+
+    /// Unix socket path for IPC with the parent Zed process.
+    #[cfg(target_os = "windows")]
+    #[arg(long, hide = true)]
+    etw_socket: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -1750,23 +1805,40 @@ fn dump_all_gpui_actions() {
     struct ActionDef {
         name: &'static str,
         human_name: String,
+        schema: Option<serde_json::Value>,
         deprecated_aliases: &'static [&'static str],
+        deprecation_message: Option<&'static str>,
         documentation: Option<&'static str>,
     }
+    let mut generator = settings::KeymapFile::action_schema_generator();
     let mut actions = gpui::generate_list_of_all_registered_actions()
-        .map(|action| ActionDef {
-            name: action.name,
-            human_name: command_palette::humanize_action_name(action.name),
-            deprecated_aliases: action.deprecated_aliases,
-            documentation: action.documentation,
+        .map(|action| {
+            let schema = (action.json_schema)(&mut generator)
+                .map(|s| serde_json::to_value(s).expect("Failed to serialize action schema"));
+            ActionDef {
+                name: action.name,
+                human_name: command_palette::humanize_action_name(action.name),
+                schema,
+                deprecated_aliases: action.deprecated_aliases,
+                deprecation_message: action.deprecation_message,
+                documentation: action.documentation,
+            }
         })
         .collect::<Vec<ActionDef>>();
 
     actions.sort_by_key(|a| a.name);
 
+    let schema_definitions = serde_json::to_value(generator.definitions())
+        .expect("Failed to serialize schema definitions");
+
+    let output = serde_json::json!({
+        "actions": actions,
+        "schema_definitions": schema_definitions,
+    });
+
     io::Write::write(
         &mut std::io::stdout(),
-        serde_json::to_string_pretty(&actions).unwrap().as_bytes(),
+        serde_json::to_string_pretty(&output).unwrap().as_bytes(),
     )
     .unwrap();
 }

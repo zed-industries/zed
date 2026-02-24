@@ -1,8 +1,9 @@
 use gpui::{
-    Application, Background, Bounds, ColorSpace, Context, MouseDownEvent, Path, PathBuilder,
-    PathStyle, Pixels, Point, Render, StrokeOptions, Window, WindowOptions, canvas, div,
-    linear_color_stop, linear_gradient, point, prelude::*, px, quad, rgb, size,
+    Background, Bounds, ColorSpace, Context, MouseDownEvent, Path, PathBuilder, PathStyle, Pixels,
+    Point, Render, StrokeOptions, Window, WindowOptions, canvas, div, linear_color_stop,
+    linear_gradient, point, prelude::*, px, quad, rgb, size,
 };
+use gpui_platform::application;
 
 struct PaintingViewer {
     default_lines: Vec<(Path<Pixels>, Background)>,
@@ -445,7 +446,7 @@ impl Render for PaintingViewer {
 }
 
 fn main() {
-    Application::new().run(|cx| {
+    application().run(|cx| {
         cx.open_window(
             WindowOptions {
                 focus: true,

@@ -681,7 +681,7 @@ impl MessageEditor {
                             editor.insert(&mention_text, window, cx);
                             editor.insert(" ", window, cx);
 
-                            (*excerpt_id, text_anchor, mention_text.len())
+                            (excerpt_id, text_anchor, mention_text.len())
                         });
 
                     let Some((crease_id, tx)) = insert_crease_for_mention(
@@ -951,7 +951,7 @@ impl MessageEditor {
             editor.insert(&mention_text, window, cx);
             editor.insert(" ", window, cx);
 
-            (*excerpt_id, text_anchor, mention_text.len())
+            (excerpt_id, text_anchor, mention_text.len())
         });
 
         let Some((crease_id, tx)) = insert_crease_for_mention(
@@ -1334,6 +1334,7 @@ impl Render for MessageEditor {
                     font_fallbacks: settings.buffer_font.fallbacks.clone(),
                     font_features: settings.buffer_font.features.clone(),
                     font_size: settings.agent_buffer_font_size(cx).into(),
+                    font_weight: settings.buffer_font.weight,
                     line_height: relative(settings.buffer_line_height.value()),
                     ..Default::default()
                 };
@@ -1703,7 +1704,7 @@ mod tests {
                     None,
                     prompt_capabilities.clone(),
                     available_commands.clone(),
-                    "Claude Code".into(),
+                    "Claude Agent".into(),
                     "Test",
                     EditorMode::AutoHeight {
                         min_lines: 1,
@@ -1728,7 +1729,7 @@ mod tests {
         // Should fail because available_commands is empty (no commands supported)
         assert!(contents_result.is_err());
         let error_message = contents_result.unwrap_err().to_string();
-        assert!(error_message.contains("not supported by Claude Code"));
+        assert!(error_message.contains("not supported by Claude Agent"));
         assert!(error_message.contains("Available commands: none"));
 
         // Now simulate Claude providing its list of available commands (which doesn't include file)
@@ -1745,7 +1746,7 @@ mod tests {
 
         assert!(contents_result.is_err());
         let error_message = contents_result.unwrap_err().to_string();
-        assert!(error_message.contains("not supported by Claude Code"));
+        assert!(error_message.contains("not supported by Claude Agent"));
         assert!(error_message.contains("/file"));
         assert!(error_message.contains("Available commands: /help"));
 

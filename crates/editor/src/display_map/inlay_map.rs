@@ -296,9 +296,11 @@ impl<'a> Iterator for InlayChunks<'a> {
                 let mask = 1u128.unbounded_shl(split_index as u32).wrapping_sub(1);
                 let chars = chunk.chars & mask;
                 let tabs = chunk.tabs & mask;
+                let newlines = chunk.newlines & mask;
 
                 chunk.chars = chunk.chars.unbounded_shr(split_index as u32);
                 chunk.tabs = chunk.tabs.unbounded_shr(split_index as u32);
+                chunk.newlines = chunk.newlines.unbounded_shr(split_index as u32);
                 chunk.text = suffix;
 
                 InlayChunk {
@@ -306,6 +308,7 @@ impl<'a> Iterator for InlayChunks<'a> {
                         text: prefix,
                         chars,
                         tabs,
+                        newlines,
                         ..chunk.clone()
                     },
                     renderer: None,
@@ -422,6 +425,7 @@ impl<'a> Iterator for InlayChunks<'a> {
                     text: inlay_chunk,
                     chars,
                     tabs,
+                    newlines,
                 } = self
                     .inlay_chunk
                     .get_or_insert_with(|| inlay_chunks.next().unwrap());
@@ -446,9 +450,11 @@ impl<'a> Iterator for InlayChunks<'a> {
                 let mask = 1u128.unbounded_shl(split_index as u32).wrapping_sub(1);
                 let new_chars = *chars & mask;
                 let new_tabs = *tabs & mask;
+                let new_newlines = *newlines & mask;
 
                 *chars = chars.unbounded_shr(split_index as u32);
                 *tabs = tabs.unbounded_shr(split_index as u32);
+                *newlines = newlines.unbounded_shr(split_index as u32);
 
                 if inlay_chunk.is_empty() {
                     self.inlay_chunk = None;
@@ -461,6 +467,7 @@ impl<'a> Iterator for InlayChunks<'a> {
                         text: chunk,
                         chars: new_chars,
                         tabs: new_tabs,
+                        newlines: new_newlines,
                         highlight_style,
                         is_inlay: true,
                         ..Chunk::default()

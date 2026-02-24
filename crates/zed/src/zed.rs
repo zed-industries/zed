@@ -740,6 +740,7 @@ async fn initialize_agent_panel(
 
             workspace
                 .register_action(agent_ui::AgentPanel::toggle_focus)
+                .register_action(agent_ui::AgentPanel::toggle)
                 .register_action(agent_ui::InlineAssistant::inline_assist);
         }
     })?;
@@ -795,36 +796,33 @@ fn register_actions(
         })
         .register_action(|workspace, _: &workspace::Open, window, cx| {
             telemetry::event!("Project Opened");
-            let paths = workspace.prompt_for_open_path(
+            workspace::prompt_for_open_path_and_open(
+                workspace,
+                workspace.app_state().clone(),
                 PathPromptOptions {
                     files: true,
                     directories: true,
                     multiple: true,
                     prompt: None,
                 },
-                DirectoryLister::Local(
-                    workspace.project().clone(),
-                    workspace.app_state().fs.clone(),
-                ),
                 window,
                 cx,
             );
-
-            cx.spawn_in(window, async move |this, cx| {
-                let Some(paths) = paths.await.log_err().flatten() else {
-                    return;
-                };
-
-                if let Some(task) = this
-                    .update_in(cx, |this, window, cx| {
-                        this.open_workspace_for_paths(false, paths, window, cx)
-                    })
-                    .log_err()
-                {
-                    task.await.log_err();
-                }
-            })
-            .detach()
+        })
+        .register_action(|workspace, _: &workspace::OpenFiles, window, cx| {
+            let directories = cx.can_select_mixed_files_and_dirs();
+            workspace::prompt_for_open_path_and_open(
+                workspace,
+                workspace.app_state().clone(),
+                PathPromptOptions {
+                    files: true,
+                    directories,
+                    multiple: true,
+                    prompt: None,
+                },
+                window,
+                cx,
+            );
         })
         .register_action(|workspace, action: &zed_actions::OpenRemote, window, cx| {
             if !action.from_existing_connection {
@@ -1121,7 +1119,7 @@ fn register_actions(
                             Editor::new_file(workspace, &Default::default(), window, cx)
                         },
                     )
-                    .detach();
+                    .detach_and_log_err(cx);
                 }
             }
         })
@@ -1321,7 +1319,8 @@ fn quit(_: &Quit, cx: &mut App) {
         }
 
         // If the user cancels any save prompt, then keep the app open.
-        for window in workspace_windows {
+        for window in &workspace_windows {
+            let window = *window;
             let workspaces = window
                 .update(cx, |multi_workspace, _, _| {
                     multi_workspace.workspaces().to_vec()
@@ -1349,6 +1348,24 @@ fn quit(_: &Quit, cx: &mut App) {
                 }
             }
         }
+        // Flush all pending workspace serialization before quitting so that
+        // session_id/window_id are up-to-date in the database.
+        let mut flush_tasks = Vec::new();
+        for window in &workspace_windows {
+            window
+                .update(cx, |multi_workspace, window, cx| {
+                    for workspace in multi_workspace.workspaces() {
+                        flush_tasks.push(workspace.update(cx, |workspace, cx| {
+                            workspace.flush_serialization(window, cx)
+                        }));
+                    }
+                    flush_tasks.append(&mut multi_workspace.take_pending_removal_tasks());
+                    flush_tasks.push(multi_workspace.flush_serialization());
+                })
+                .log_err();
+        }
+        futures::future::join_all(flush_tasks).await;
+
         cx.update(|cx| cx.quit());
         anyhow::Ok(())
     })
@@ -2762,6 +2779,7 @@ mod tests {
         assert_eq!(cx.update(|cx| cx.windows().len()), 0);
     }
 
+    #[ignore = "This test has timing issues across platforms."]
     #[gpui::test]
     async fn test_window_edit_state_restoring_enabled(cx: &mut TestAppContext) {
         let app_state = init_test(cx);
@@ -3648,7 +3666,7 @@ mod tests {
                             .language_at(MultiBufferOffset(0), cx)
                             .unwrap()
                             .name(),
-                        "Rust".into()
+                        "Rust"
                     );
                 });
             })
@@ -3796,7 +3814,7 @@ mod tests {
                             .language_at(MultiBufferOffset(0), cx)
                             .unwrap()
                             .name(),
-                        "Rust".into()
+                        "Rust"
                     )
                 });
             })

@@ -19,15 +19,6 @@ CREATE INDEX "index_users_on_email_address" ON "users" ("email_address");
 
 CREATE UNIQUE INDEX "index_users_on_github_user_id" ON "users" ("github_user_id");
 
-CREATE TABLE "access_tokens" (
-    "id" INTEGER PRIMARY KEY AUTOINCREMENT,
-    "user_id" INTEGER REFERENCES users (id) ON DELETE CASCADE,
-    "impersonated_user_id" INTEGER REFERENCES users (id),
-    "hash" VARCHAR(128)
-);
-
-CREATE INDEX "index_access_tokens_user_id" ON "access_tokens" ("user_id");
-
 CREATE TABLE "contacts" (
     "id" INTEGER PRIMARY KEY AUTOINCREMENT,
     "user_id_a" INTEGER REFERENCES users (id) NOT NULL,

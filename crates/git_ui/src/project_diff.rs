@@ -5,6 +5,7 @@ use crate::{
     remote_button::{render_publish_button, render_push_button},
     resolve_active_repository,
 };
+use agent_settings::AgentSettings;
 use anyhow::{Context as _, Result, anyhow};
 use buffer_diff::{BufferDiff, DiffHunkSecondaryStatus};
 use collections::{HashMap, HashSet};
@@ -14,6 +15,7 @@ use editor::{
     multibuffer_context_lines,
     scroll::Autoscroll,
 };
+use git::repository::DiffType;
 
 use git::{
     Commit, StageAll, StageAndNext, ToggleStaged, UnstageAll, UnstageAndNext,
@@ -38,7 +40,7 @@ use smol::future::yield_now;
 use std::any::{Any, TypeId};
 use std::sync::Arc;
 use theme::ActiveTheme;
-use ui::{KeyBinding, Tooltip, prelude::*, vertical_divider};
+use ui::{DiffStat, Divider, KeyBinding, Tooltip, prelude::*, vertical_divider};
 use util::{ResultExt as _, rel_path::RelPath};
 use workspace::{
     CloseActiveItem, ItemNavHistory, SerializableItem, ToolbarItemEvent, ToolbarItemLocation,
@@ -47,6 +49,7 @@ use workspace::{
     notifications::NotifyTaskExt,
     searchable::SearchableItemHandle,
 };
+use zed_actions::agent::ReviewBranchDiff;
 use ztracing::instrument;
 
 actions!(
@@ -59,6 +62,8 @@ actions!(
         /// Shows the diff between the working directory and your default
         /// branch (typically main or master).
         BranchDiff,
+        /// Opens a new agent thread with the branch diff for review.
+        ReviewDiff,
         LeaderAndFollower,
     ]
 );
@@ -92,6 +97,7 @@ impl ProjectDiff {
     pub(crate) fn register(workspace: &mut Workspace, cx: &mut Context<Workspace>) {
         workspace.register_action(Self::deploy);
         workspace.register_action(Self::deploy_branch_diff);
+        workspace.register_action(Self::deploy_review_diff);
         workspace.register_action(|workspace, _: &Add, window, cx| {
             Self::deploy(workspace, &Diff, window, cx);
         });
@@ -137,6 +143,59 @@ impl ProjectDiff {
                         workspace.add_item_to_active_pane(Box::new(this), None, true, window, cx);
                     })
                     .ok();
+                anyhow::Ok(())
+            })
+            .detach_and_notify_err(workspace_weak, window, cx);
+    }
+
+    fn deploy_review_diff(
+        workspace: &mut Workspace,
+        _: &ReviewDiff,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) {
+        let Some(project_diff) = workspace
+            .items_of_type::<Self>(cx)
+            .find(|item| matches!(item.read(cx).diff_base(cx), DiffBase::Merge { .. }))
+        else {
+            return;
+        };
+
+        let diff_base = project_diff.read(cx).diff_base(cx).clone();
+        let DiffBase::Merge { base_ref } = diff_base else {
+            return;
+        };
+
+        let Some(repo) = project_diff.read(cx).branch_diff.read(cx).repo().cloned() else {
+            return;
+        };
+
+        let diff_receiver = repo.update(cx, |repo, cx| {
+            repo.diff(
+                DiffType::MergeBase {
+                    base_ref: base_ref.clone(),
+                },
+                cx,
+            )
+        });
+
+        let workspace_handle = cx.entity();
+        let workspace_weak = workspace_handle.downgrade();
+        window
+            .spawn(cx, async move |cx| {
+                let diff_text = diff_receiver.await??;
+
+                workspace_handle.update_in(cx, |_workspace, window, cx| {
+                    window.dispatch_action(
+                        ReviewBranchDiff {
+                            diff_text: diff_text.into(),
+                            base_ref: base_ref.to_string().into(),
+                        }
+                        .boxed_clone(),
+                        cx,
+                    );
+                })?;
+
                 anyhow::Ok(())
             })
             .detach_and_notify_err(workspace_weak, window, cx);
@@ -488,6 +547,41 @@ impl ProjectDiff {
         } else {
             self.pending_scroll = Some(path_key);
         }
+    }
+
+    pub fn calculate_changed_lines(&self, cx: &App) -> (u32, u32) {
+        let snapshot = self.multibuffer.read(cx).snapshot(cx);
+        let mut total_additions = 0u32;
+        let mut total_deletions = 0u32;
+
+        let mut seen_buffers = HashSet::default();
+        for (_, buffer, _) in snapshot.excerpts() {
+            let buffer_id = buffer.remote_id();
+            if !seen_buffers.insert(buffer_id) {
+                continue;
+            }
+
+            let Some(diff) = snapshot.diff_for_buffer_id(buffer_id) else {
+                continue;
+            };
+
+            let base_text = diff.base_text();
+
+            for hunk in diff.hunks_intersecting_range(Anchor::MIN..Anchor::MAX, buffer) {
+                let added_rows = hunk.range.end.row.saturating_sub(hunk.range.start.row);
+                total_additions += added_rows;
+
+                let base_start = base_text
+                    .offset_to_point(hunk.diff_base_byte_range.start)
+                    .row;
+                let base_end = base_text.offset_to_point(hunk.diff_base_byte_range.end).row;
+                let deleted_rows = base_end.saturating_sub(base_start);
+
+                total_deletions += deleted_rows;
+            }
+        }
+
+        (total_additions, total_deletions)
     }
 
     /// Returns the total count of review comments across all hunks/files.
@@ -861,7 +955,7 @@ impl Item for ProjectDiff {
         Some(Icon::new(IconName::GitBranch).color(Color::Muted))
     }
 
-    fn to_item_events(event: &EditorEvent, f: impl FnMut(ItemEvent)) {
+    fn to_item_events(event: &EditorEvent, f: &mut dyn FnMut(ItemEvent)) {
         Editor::to_item_events(event, f)
     }
 
@@ -886,8 +980,11 @@ impl Item for ProjectDiff {
         })
     }
 
-    fn tab_tooltip_text(&self, _: &App) -> Option<SharedString> {
-        Some("Project Diff".into())
+    fn tab_tooltip_text(&self, cx: &App) -> Option<SharedString> {
+        match self.diff_base(cx) {
+            DiffBase::Head => Some("Project Diff".into()),
+            DiffBase::Merge { .. } => Some("Branch Diff".into()),
+        }
     }
 
     fn tab_content(&self, params: TabContentParams, _window: &Window, cx: &App) -> AnyElement {
@@ -1511,7 +1608,7 @@ pub struct BranchDiffToolbar {
 }
 
 impl BranchDiffToolbar {
-    pub fn new(_: &mut Context<Self>) -> Self {
+    pub fn new(_cx: &mut Context<Self>) -> Self {
         Self { project_diff: None }
     }
 
@@ -1566,6 +1663,12 @@ impl Render for BranchDiffToolbar {
         };
         let focus_handle = project_diff.focus_handle(cx);
         let review_count = project_diff.read(cx).total_review_comment_count();
+        let (additions, deletions) = project_diff.read(cx).calculate_changed_lines(cx);
+
+        let is_multibuffer_empty = project_diff.read(cx).multibuffer.read(cx).is_empty();
+        let is_ai_enabled = AgentSettings::get_global(cx).enabled(cx);
+
+        let show_review_button = !is_multibuffer_empty && is_ai_enabled;
 
         h_group_xl()
             .my_neg_1()
@@ -1573,8 +1676,39 @@ impl Render for BranchDiffToolbar {
             .items_center()
             .flex_wrap()
             .justify_end()
-            .when(review_count > 0, |el| {
-                el.child(
+            .gap_2()
+            .when(!is_multibuffer_empty, |this| {
+                this.child(DiffStat::new(
+                    "branch-diff-stat",
+                    additions as usize,
+                    deletions as usize,
+                ))
+            })
+            .when(show_review_button, |this| {
+                let focus_handle = focus_handle.clone();
+                this.child(Divider::vertical()).child(
+                    Button::new("review-diff", "Review Diff")
+                        .icon(IconName::ZedAssistant)
+                        .icon_position(IconPosition::Start)
+                        .icon_size(IconSize::Small)
+                        .icon_color(Color::Muted)
+                        .key_binding(KeyBinding::for_action_in(&ReviewDiff, &focus_handle, cx))
+                        .tooltip(move |_, cx| {
+                            Tooltip::with_meta_in(
+                                "Review Diff",
+                                Some(&ReviewDiff),
+                                "Send this diff for your last agent to review.",
+                                &focus_handle,
+                                cx,
+                            )
+                        })
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.dispatch_action(&ReviewDiff, window, cx);
+                        })),
+                )
+            })
+            .when(review_count > 0, |this| {
+                this.child(vertical_divider()).child(
                     render_send_review_to_agent_button(review_count, &focus_handle).on_click(
                         cx.listener(|this, _, window, cx| {
                             this.dispatch_action(&SendReviewToAgent, window, cx)
@@ -2393,6 +2527,161 @@ mod tests {
         let contents = fs.read_file_sync(path!("/project/foo")).unwrap();
         let contents = String::from_utf8(contents).unwrap();
         assert_eq!(contents, "ours\n");
+    }
+
+    #[gpui::test(iterations = 50)]
+    async fn test_split_diff_conflict_path_transition_with_dirty_buffer_invalid_anchor_panics(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        cx.update(|cx| {
+            cx.update_global::<SettingsStore, _>(|store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.editor.diff_view_style = Some(DiffViewStyle::Split);
+                });
+            });
+        });
+
+        let build_conflict_text: fn(usize) -> String = |tag: usize| {
+            let mut lines = (0..80)
+                .map(|line_index| format!("line {line_index}"))
+                .collect::<Vec<_>>();
+            for offset in [5usize, 20, 37, 61] {
+                lines[offset] = format!("base-{tag}-line-{offset}");
+            }
+            format!("{}\n", lines.join("\n"))
+        };
+        let initial_conflict_text = build_conflict_text(0);
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                ".git": {},
+                "helper.txt": "same\n",
+                "conflict.txt": initial_conflict_text,
+            }),
+        )
+        .await;
+        fs.with_git_state(path!("/project/.git").as_ref(), true, |state| {
+            state
+                .refs
+                .insert("MERGE_HEAD".into(), "conflict-head".into());
+        })
+        .unwrap();
+        fs.set_status_for_repo(
+            path!("/project/.git").as_ref(),
+            &[(
+                "conflict.txt",
+                FileStatus::Unmerged(UnmergedStatus {
+                    first_head: UnmergedStatusCode::Updated,
+                    second_head: UnmergedStatusCode::Updated,
+                }),
+            )],
+        );
+        fs.set_merge_base_content_for_repo(
+            path!("/project/.git").as_ref(),
+            &[
+                ("conflict.txt", build_conflict_text(1)),
+                ("helper.txt", "same\n".to_string()),
+            ],
+        );
+
+        let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+        let _project_diff = cx
+            .update(|window, cx| {
+                ProjectDiff::new_with_default_branch(project.clone(), workspace, window, cx)
+            })
+            .await
+            .unwrap();
+        cx.run_until_parked();
+
+        let buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer(path!("/project/conflict.txt"), cx)
+            })
+            .await
+            .unwrap();
+        buffer.update(cx, |buffer, cx| buffer.edit([(0..0, "dirty\n")], None, cx));
+        assert!(buffer.read_with(cx, |buffer, _| buffer.is_dirty()));
+        cx.run_until_parked();
+
+        cx.update(|window, cx| {
+            let fs = fs.clone();
+            window
+                .spawn(cx, async move |cx| {
+                    cx.background_executor().simulate_random_delay().await;
+                    fs.with_git_state(path!("/project/.git").as_ref(), true, |state| {
+                        state.refs.insert("HEAD".into(), "head-1".into());
+                        state.refs.remove("MERGE_HEAD");
+                    })
+                    .unwrap();
+                    fs.set_status_for_repo(
+                        path!("/project/.git").as_ref(),
+                        &[
+                            (
+                                "conflict.txt",
+                                FileStatus::Tracked(TrackedStatus {
+                                    index_status: git::status::StatusCode::Modified,
+                                    worktree_status: git::status::StatusCode::Modified,
+                                }),
+                            ),
+                            (
+                                "helper.txt",
+                                FileStatus::Tracked(TrackedStatus {
+                                    index_status: git::status::StatusCode::Modified,
+                                    worktree_status: git::status::StatusCode::Modified,
+                                }),
+                            ),
+                        ],
+                    );
+                    // FakeFs assigns deterministic OIDs by entry position; flipping order churns
+                    // conflict diff identity without reaching into ProjectDiff internals.
+                    fs.set_merge_base_content_for_repo(
+                        path!("/project/.git").as_ref(),
+                        &[
+                            ("helper.txt", "helper-base\n".to_string()),
+                            ("conflict.txt", build_conflict_text(2)),
+                        ],
+                    );
+                })
+                .detach();
+        });
+
+        cx.update(|window, cx| {
+            let buffer = buffer.clone();
+            window
+                .spawn(cx, async move |cx| {
+                    cx.background_executor().simulate_random_delay().await;
+                    for edit_index in 0..10 {
+                        if edit_index > 0 {
+                            cx.background_executor().simulate_random_delay().await;
+                        }
+                        buffer.update(cx, |buffer, cx| {
+                            let len = buffer.len();
+                            if edit_index % 2 == 0 {
+                                buffer.edit(
+                                    [(0..0, format!("status-burst-head-{edit_index}\n"))],
+                                    None,
+                                    cx,
+                                );
+                            } else {
+                                buffer.edit(
+                                    [(len..len, format!("status-burst-tail-{edit_index}\n"))],
+                                    None,
+                                    cx,
+                                );
+                            }
+                        });
+                    }
+                })
+                .detach();
+        });
+
+        cx.run_until_parked();
     }
 
     #[gpui::test]

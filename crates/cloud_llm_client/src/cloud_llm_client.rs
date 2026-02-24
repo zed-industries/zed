@@ -222,11 +222,6 @@ pub enum CompletionRequestStatus {
         /// Retry duration in seconds.
         retry_after: Option<f64>,
     },
-    UsageUpdated {
-        amount: usize,
-        limit: UsageLimit,
-    },
-    ToolUseLimitReached,
     /// The cloud sends a StreamEnded message when the stream from the LLM provider finishes.
     StreamEnded,
     #[serde(other)]

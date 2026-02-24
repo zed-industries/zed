@@ -25,7 +25,7 @@ pub use tools::*;
 
 use acp_thread::{
     AcpThread, AgentModelSelector, AgentSessionInfo, AgentSessionList, AgentSessionListRequest,
-    AgentSessionListResponse, UserMessageId,
+    AgentSessionListResponse, TokenUsageRatio, UserMessageId,
 };
 use agent_client_protocol as acp;
 use anyhow::{Context as _, Result, anyhow};
@@ -50,7 +50,6 @@ use std::any::Any;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
-use std::time::Duration;
 use util::ResultExt;
 use util::rel_path::RelPath;
 
@@ -336,13 +335,12 @@ impl NativeAgent {
             )
         });
 
-        self.register_session(thread, None, cx)
+        self.register_session(thread, cx)
     }
 
     fn register_session(
         &mut self,
         thread_handle: Entity<Thread>,
-        allowed_tool_names: Option<Vec<&str>>,
         cx: &mut Context<Self>,
     ) -> Entity<AcpThread> {
         let connection = Rc::new(NativeAgentConnection(cx.entity()));
@@ -374,7 +372,6 @@ impl NativeAgent {
         thread_handle.update(cx, |thread, cx| {
             thread.set_summarization_model(summarization_model, cx);
             thread.add_default_tools(
-                allowed_tool_names,
                 Rc::new(NativeThreadEnvironment {
                     acp_thread: acp_thread.downgrade(),
                     agent: weak,
@@ -804,9 +801,8 @@ impl NativeAgent {
         let task = self.load_thread(id, cx);
         cx.spawn(async move |this, cx| {
             let thread = task.await?;
-            let acp_thread = this.update(cx, |this, cx| {
-                this.register_session(thread.clone(), None, cx)
-            })?;
+            let acp_thread =
+                this.update(cx, |this, cx| this.register_session(thread.clone(), cx))?;
             let events = thread.update(cx, |thread, cx| thread.replay(cx));
             cx.update(|cx| {
                 NativeAgentConnection::handle_thread_events(events, acp_thread.downgrade(), cx)
@@ -1247,7 +1243,7 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
             .update(cx, |agent, cx| agent.new_session(project, cx))))
     }
 
-    fn supports_load_session(&self, _cx: &App) -> bool {
+    fn supports_load_session(&self) -> bool {
         true
     }
 
@@ -1262,7 +1258,7 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
             .update(cx, |agent, cx| agent.open_thread(session.session_id, cx))
     }
 
-    fn supports_close_session(&self, _cx: &App) -> bool {
+    fn supports_close_session(&self) -> bool {
         true
     }
 
@@ -1369,8 +1365,8 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
     fn cancel(&self, session_id: &acp::SessionId, cx: &mut App) {
         log::info!("Cancelling on session: {}", session_id);
         self.0.update(cx, |agent, cx| {
-            if let Some(agent) = agent.sessions.get(session_id) {
-                agent
+            if let Some(session) = agent.sessions.get(session_id) {
+                session
                     .thread
                     .update(cx, |thread, cx| thread.cancel(cx))
                     .detach();
@@ -1589,8 +1585,6 @@ impl NativeThreadEnvironment {
         parent_thread_entity: Entity<Thread>,
         label: String,
         initial_prompt: String,
-        timeout: Option<Duration>,
-        allowed_tools: Option<Vec<String>>,
         cx: &mut App,
     ) -> Result<Rc<dyn SubagentHandle>> {
         let parent_thread = parent_thread_entity.read(cx);
@@ -1603,28 +1597,6 @@ impl NativeThreadEnvironment {
             ));
         }
 
-        let running_count = parent_thread.running_subagent_count();
-        if running_count >= MAX_PARALLEL_SUBAGENTS {
-            return Err(anyhow!(
-                "Maximum parallel subagents ({}) reached. Wait for existing subagents to complete.",
-                MAX_PARALLEL_SUBAGENTS
-            ));
-        }
-
-        let allowed_tools = match allowed_tools {
-            Some(tools) => {
-                let parent_tool_names: std::collections::HashSet<&str> =
-                    parent_thread.tools.keys().map(|s| s.as_str()).collect();
-                Some(
-                    tools
-                        .into_iter()
-                        .filter(|t| parent_tool_names.contains(t.as_str()))
-                        .collect::<Vec<_>>(),
-                )
-            }
-            None => Some(parent_thread.tools.keys().map(|s| s.to_string()).collect()),
-        };
-
         let subagent_thread: Entity<Thread> = cx.new(|cx| {
             let mut thread = Thread::new_subagent(&parent_thread_entity, cx);
             thread.set_title(label.into(), cx);
@@ -1634,60 +1606,60 @@ impl NativeThreadEnvironment {
         let session_id = subagent_thread.read(cx).id().clone();
 
         let acp_thread = agent.update(cx, |agent, cx| {
-            agent.register_session(
-                subagent_thread.clone(),
-                allowed_tools
-                    .as_ref()
-                    .map(|v| v.iter().map(|s| s.as_str()).collect()),
-                cx,
-            )
+            agent.register_session(subagent_thread.clone(), cx)
         })?;
 
-        parent_thread_entity.update(cx, |parent_thread, _cx| {
-            parent_thread.register_running_subagent(subagent_thread.downgrade())
-        });
-
-        let task = acp_thread.update(cx, |agent, cx| agent.send(vec![initial_prompt.into()], cx));
-
-        let timeout_timer = timeout.map(|d| cx.background_executor().timer(d));
-        let wait_for_prompt_to_complete = cx
-            .background_spawn(async move {
-                if let Some(timer) = timeout_timer {
-                    futures::select! {
-                        _ = timer.fuse() => SubagentInitialPromptResult::Timeout,
-                        _ = task.fuse() => SubagentInitialPromptResult::Completed,
-                    }
-                } else {
-                    task.await.log_err();
-                    SubagentInitialPromptResult::Completed
-                }
-            })
-            .shared();
-
-        let mut user_stop_rx: watch::Receiver<bool> =
-            acp_thread.update(cx, |thread, _| thread.user_stop_receiver());
-
-        let user_cancelled = cx
-            .background_spawn(async move {
-                loop {
-                    if *user_stop_rx.borrow() {
-                        return;
-                    }
-                    if user_stop_rx.changed().await.is_err() {
-                        std::future::pending::<()>().await;
-                    }
-                }
-            })
-            .shared();
-
-        Ok(Rc::new(NativeSubagentHandle {
+        Self::prompt_subagent(
             session_id,
             subagent_thread,
-            parent_thread: parent_thread_entity.downgrade(),
             acp_thread,
-            wait_for_prompt_to_complete,
-            user_cancelled,
-        }) as _)
+            parent_thread_entity,
+            initial_prompt,
+            cx,
+        )
+    }
+
+    pub(crate) fn resume_subagent_thread(
+        agent: WeakEntity<NativeAgent>,
+        parent_thread_entity: Entity<Thread>,
+        session_id: acp::SessionId,
+        follow_up_prompt: String,
+        cx: &mut App,
+    ) -> Result<Rc<dyn SubagentHandle>> {
+        let (subagent_thread, acp_thread) = agent.update(cx, |agent, _cx| {
+            let session = agent
+                .sessions
+                .get(&session_id)
+                .ok_or_else(|| anyhow!("No subagent session found with id {session_id}"))?;
+            anyhow::Ok((session.thread.clone(), session.acp_thread.clone()))
+        })??;
+
+        Self::prompt_subagent(
+            session_id,
+            subagent_thread,
+            acp_thread,
+            parent_thread_entity,
+            follow_up_prompt,
+            cx,
+        )
+    }
+
+    fn prompt_subagent(
+        session_id: acp::SessionId,
+        subagent_thread: Entity<Thread>,
+        acp_thread: Entity<acp_thread::AcpThread>,
+        parent_thread_entity: Entity<Thread>,
+        prompt: String,
+        cx: &mut App,
+    ) -> Result<Rc<dyn SubagentHandle>> {
+        Ok(Rc::new(NativeSubagentHandle::new(
+            session_id,
+            subagent_thread,
+            acp_thread,
+            parent_thread_entity,
+            prompt,
+            cx,
+        )) as _)
     }
 }
 
@@ -1730,8 +1702,6 @@ impl ThreadEnvironment for NativeThreadEnvironment {
         parent_thread_entity: Entity<Thread>,
         label: String,
         initial_prompt: String,
-        timeout: Option<Duration>,
-        allowed_tools: Option<Vec<String>>,
         cx: &mut App,
     ) -> Result<Rc<dyn SubagentHandle>> {
         Self::create_subagent_thread(
@@ -1739,26 +1709,116 @@ impl ThreadEnvironment for NativeThreadEnvironment {
             parent_thread_entity,
             label,
             initial_prompt,
-            timeout,
-            allowed_tools,
+            cx,
+        )
+    }
+
+    fn resume_subagent(
+        &self,
+        parent_thread_entity: Entity<Thread>,
+        session_id: acp::SessionId,
+        follow_up_prompt: String,
+        cx: &mut App,
+    ) -> Result<Rc<dyn SubagentHandle>> {
+        Self::resume_subagent_thread(
+            self.agent.clone(),
+            parent_thread_entity,
+            session_id,
+            follow_up_prompt,
             cx,
         )
     }
 }
 
-#[derive(Debug, Clone, Copy)]
-enum SubagentInitialPromptResult {
+#[derive(Debug, Clone)]
+enum SubagentPromptResult {
     Completed,
-    Timeout,
+    Cancelled,
+    ContextWindowWarning,
+    Error(String),
 }
 
 pub struct NativeSubagentHandle {
     session_id: acp::SessionId,
     parent_thread: WeakEntity<Thread>,
     subagent_thread: Entity<Thread>,
-    acp_thread: Entity<AcpThread>,
-    wait_for_prompt_to_complete: Shared<Task<SubagentInitialPromptResult>>,
-    user_cancelled: Shared<Task<()>>,
+    wait_for_prompt_to_complete: Shared<Task<SubagentPromptResult>>,
+    _subscription: Subscription,
+}
+
+impl NativeSubagentHandle {
+    fn new(
+        session_id: acp::SessionId,
+        subagent_thread: Entity<Thread>,
+        acp_thread: Entity<acp_thread::AcpThread>,
+        parent_thread_entity: Entity<Thread>,
+        prompt: String,
+        cx: &mut App,
+    ) -> Self {
+        let ratio_before_prompt = subagent_thread
+            .read(cx)
+            .latest_token_usage()
+            .map(|usage| usage.ratio());
+
+        parent_thread_entity.update(cx, |parent_thread, _cx| {
+            parent_thread.register_running_subagent(subagent_thread.downgrade())
+        });
+
+        let task = acp_thread.update(cx, |acp_thread, cx| {
+            acp_thread.send(vec![prompt.into()], cx)
+        });
+
+        let (token_limit_tx, token_limit_rx) = oneshot::channel::<()>();
+        let mut token_limit_tx = Some(token_limit_tx);
+
+        let subscription = cx.subscribe(
+            &subagent_thread,
+            move |_thread, event: &TokenUsageUpdated, _cx| {
+                if let Some(usage) = &event.0 {
+                    let old_ratio = ratio_before_prompt
+                        .clone()
+                        .unwrap_or(TokenUsageRatio::Normal);
+                    let new_ratio = usage.ratio();
+                    if old_ratio == TokenUsageRatio::Normal && new_ratio == TokenUsageRatio::Warning
+                    {
+                        if let Some(tx) = token_limit_tx.take() {
+                            tx.send(()).ok();
+                        }
+                    }
+                }
+            },
+        );
+
+        let wait_for_prompt_to_complete = cx
+            .background_spawn(async move {
+                futures::select! {
+                    response = task.fuse() => match response {
+                        Ok(Some(response)) =>{
+                            match response.stop_reason {
+                                acp::StopReason::Cancelled => SubagentPromptResult::Cancelled,
+                                acp::StopReason::MaxTokens => SubagentPromptResult::Error("The agent reached the maximum number of tokens.".into()),
+                                acp::StopReason::MaxTurnRequests => SubagentPromptResult::Error("The agent reached the maximum number of allowed requests between user turns. Try prompting again.".into()),
+                                acp::StopReason::Refusal => SubagentPromptResult::Error("The agent refused to process that prompt. Try again.".into()),
+                                acp::StopReason::EndTurn | _ => SubagentPromptResult::Completed,
+                            }
+
+                        }
+                        Ok(None) => SubagentPromptResult::Error("No response from the agent. You can try messaging again.".into()),
+                        Err(error) => SubagentPromptResult::Error(error.to_string()),
+                    },
+                    _ = token_limit_rx.fuse() =>  SubagentPromptResult::ContextWindowWarning,
+                }
+            })
+            .shared();
+
+        NativeSubagentHandle {
+            session_id,
+            subagent_thread,
+            parent_thread: parent_thread_entity.downgrade(),
+            wait_for_prompt_to_complete,
+            _subscription: subscription,
+        }
+    }
 }
 
 impl SubagentHandle for NativeSubagentHandle {
@@ -1766,53 +1826,39 @@ impl SubagentHandle for NativeSubagentHandle {
         self.session_id.clone()
     }
 
-    fn wait_for_summary(&self, summary_prompt: String, cx: &AsyncApp) -> Task<Result<String>> {
+    fn wait_for_output(&self, cx: &AsyncApp) -> Task<Result<String>> {
         let thread = self.subagent_thread.clone();
-        let acp_thread = self.acp_thread.clone();
         let wait_for_prompt = self.wait_for_prompt_to_complete.clone();
 
-        let wait_for_summary_task = cx.spawn(async move |cx| {
-            let timed_out = match wait_for_prompt.await {
-                SubagentInitialPromptResult::Completed => false,
-                SubagentInitialPromptResult::Timeout => true,
-            };
-
-            let summary_prompt = if timed_out {
-                thread.update(cx, |thread, cx| thread.cancel(cx)).await;
-                format!("{}\n{}", "The time to complete the task was exceeded. Stop with the task and follow the directions below:", summary_prompt)
-            } else {
-                summary_prompt
-            };
-
-            acp_thread
-                .update(cx, |thread, cx| thread.send(vec![summary_prompt.into()], cx))
-                .await?;
-
-            thread.read_with(cx, |thread, _cx| {
-                thread
-                    .last_message()
-                    .map(|m| m.to_markdown())
-                    .context("No response from subagent")
-            })
-        });
-
-        let user_cancelled = self.user_cancelled.clone();
-        let thread = self.subagent_thread.clone();
         let subagent_session_id = self.session_id.clone();
         let parent_thread = self.parent_thread.clone();
+
         cx.spawn(async move |cx| {
-            let result = futures::select! {
-                result = wait_for_summary_task.fuse() => result,
-                _ = user_cancelled.fuse() => {
-                    thread.update(cx, |thread, cx| thread.cancel(cx).detach());
-                    Err(anyhow!("User cancelled"))
-                },
+            let result = match wait_for_prompt.await {
+                SubagentPromptResult::Completed => thread.read_with(cx, |thread, _cx| {
+                    thread
+                        .last_message()
+                        .map(|m| m.to_markdown())
+                        .context("No response from subagent")
+                }),
+                SubagentPromptResult::Cancelled => Err(anyhow!("User cancelled")),
+                SubagentPromptResult::Error(message) => Err(anyhow!("{message}")),
+                SubagentPromptResult::ContextWindowWarning => {
+                    thread.update(cx, |thread, cx| thread.cancel(cx)).await;
+                    Err(anyhow!(
+                        "The agent is nearing the end of its context window and has been \
+                         stopped. You can prompt the thread again to have the agent wrap up \
+                         or hand off its work."
+                    ))
+                }
             };
+
             parent_thread
                 .update(cx, |parent_thread, cx| {
                     parent_thread.unregister_running_subagent(&subagent_session_id, cx)
                 })
                 .ok();
+
             result
         })
     }

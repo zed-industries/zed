@@ -28,7 +28,7 @@ fn style() -> NamedJob {
             .name("Check formatting and Clippy lints")
             .with_repository_owner_guard()
             .runs_on(runners::LINUX_XL)
-            .add_step(steps::checkout_repo().add_with(("fetch-depth", 0)))
+            .add_step(steps::checkout_repo().with_full_history())
             .add_step(steps::setup_cargo_config(Platform::Linux))
             .add_step(steps::cache_rust_dependencies_namespace())
             .map(steps::install_linux_dependencies)
@@ -58,7 +58,7 @@ fn tests(deps: &[&NamedJob]) -> NamedJob {
                          --health-retries 10",
                     ),
             )
-            .add_step(steps::checkout_repo().add_with(("fetch-depth", 0)))
+            .add_step(steps::checkout_repo().with_full_history())
             .add_step(steps::setup_cargo_config(Platform::Linux))
             .add_step(steps::cache_rust_dependencies_namespace())
             .map(steps::install_linux_dependencies)

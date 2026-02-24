@@ -31,7 +31,9 @@ fs.workspace = true
 futures.workspace = true
 feature_flags.workspace = true
 gpui = { workspace = true, features = ["screen-capture"] }
+gpui_tokio.workspace = true
 language.workspace = true
+livekit_client.workspace = true
 log.workspace = true
 postage.workspace = true
 project.workspace = true
@@ -39,8 +41,7 @@ serde.workspace = true
 settings.workspace = true
 telemetry.workspace = true
 util.workspace = true
-gpui_tokio.workspace = true
-livekit_client.workspace = true
+workspace.workspace = true
 
 [dev-dependencies]
 client = { workspace = true, features = ["test-support"] }
