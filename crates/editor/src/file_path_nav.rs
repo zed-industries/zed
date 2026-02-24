@@ -7,7 +7,7 @@ use ui::{
     ButtonLike, ButtonStyle, Color, ContextMenu, ContextMenuEntry, PopoverMenu, prelude::*,
 };
 use util::rel_path::RelPath;
-use workspace::Workspace;
+use workspace::{Workspace, notifications::NotifyTaskExt as _};
 
 struct FilePathComponent {
     name: SharedString,
@@ -93,9 +93,17 @@ fn build_directory_menu(
     cx: &mut Context<ContextMenu>,
 ) -> ContextMenu {
     let Some(project_entity) = project.upgrade() else {
+        log::error!(
+            "Breadcrumb directory menu build failed: project no longer available for worktree {}",
+            worktree_id.to_proto()
+        );
         return menu;
     };
     let Some(worktree) = project_entity.read(cx).worktree_for_id(worktree_id, cx) else {
+        log::error!(
+            "Breadcrumb directory menu build failed: missing worktree {}",
+            worktree_id.to_proto()
+        );
         return menu;
     };
 
@@ -139,11 +147,24 @@ fn build_directory_menu(
             let workspace = workspace.clone();
 
             let mut menu_entry = ContextMenuEntry::new(name).handler(move |window, cx| {
-                if let Some(workspace) = workspace.as_ref().and_then(|w| w.upgrade()) {
-                    workspace.update(cx, |ws: &mut Workspace, cx| {
-                        ws.open_path(project_path.clone(), None, true, window, cx)
-                            .detach_and_log_err(cx);
-                    });
+                let Some(workspace) = workspace.as_ref() else {
+                    log::error!(
+                        "Breadcrumb file navigation failed: workspace missing for path {:?}",
+                        project_path.path
+                    );
+                    return;
+                };
+
+                if let Err(error) = workspace.update(cx, |workspace, cx| {
+                    let workspace_handle = workspace.weak_handle();
+                    workspace
+                        .open_path(project_path.clone(), None, true, window, cx)
+                        .detach_and_notify_err(workspace_handle, window, cx);
+                }) {
+                    log::error!(
+                        "Breadcrumb file navigation failed to update workspace for path {:?}: {error:#}",
+                        project_path.path
+                    );
                 }
             });
 
@@ -185,6 +206,21 @@ impl RenderOnce for FilePathNav {
             let segment = PopoverMenu::new(menu_id)
                 .anchor(gpui::Corner::TopLeft)
                 .menu(move |window, cx| {
+                    let Some(project_entity) = project.upgrade() else {
+                        log::error!(
+                            "Breadcrumb menu open failed: project no longer available for worktree {}",
+                            worktree_id.to_proto()
+                        );
+                        return None;
+                    };
+                    if project_entity.read(cx).worktree_for_id(worktree_id, cx).is_none() {
+                        log::error!(
+                            "Breadcrumb menu open failed: missing worktree {}",
+                            worktree_id.to_proto()
+                        );
+                        return None;
+                    }
+
                     let project = project.clone();
                     let workspace = workspace.clone();
                     let parent_dir = parent_dir.clone();
