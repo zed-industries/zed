@@ -3,7 +3,7 @@ use buffer_diff::BufferDiff;
 use collections::HashMap;
 use editor::display_map::{BlockPlacement, BlockProperties, BlockStyle};
 use editor::{Addon, Editor, EditorEvent, ExcerptRange, MultiBuffer, multibuffer_context_lines};
-use feature_flags::{FeatureFlag, FeatureFlagAppExt as _};
+use feature_flags::{FeatureFlagAppExt as _, GitGraphFeatureFlag};
 use git::repository::{CommitDetails, CommitDiff, RepoPath, is_binary_content};
 use git::status::{FileStatus, StatusCode, TrackedStatus};
 use git::{
@@ -28,7 +28,7 @@ use std::{
     sync::Arc,
 };
 use theme::ActiveTheme;
-use ui::{ButtonLike, DiffStat, Divider, Tooltip, prelude::*};
+use ui::{DiffStat, Divider, Tooltip, prelude::*};
 use util::{ResultExt, paths::PathStyle, rel_path::RelPath, truncate_and_trailoff};
 use workspace::item::TabTooltipContent;
 use workspace::{
@@ -42,12 +42,6 @@ use workspace::{
 
 use crate::commit_tooltip::CommitAvatar;
 use crate::git_panel::GitPanel;
-
-struct GitGraphFeatureFlag;
-
-impl FeatureFlag for GitGraphFeatureFlag {
-    const NAME: &'static str = "git-graph";
-}
 
 actions!(git, [ApplyCurrentStash, PopCurrentStash, DropCurrentStash,]);
 
@@ -1049,18 +1043,14 @@ impl Render for CommitViewToolbar {
 
         h_flex()
             .gap_1()
-            .child(
-                h_flex()
-                    .gap_2()
-                    .when(additions > 0 || deletions > 0, |this| {
-                        this.child(DiffStat::new(
-                            "toolbar-diff-stat",
-                            additions as usize,
-                            deletions as usize,
-                        ))
-                    })
-                    .child(Divider::vertical()),
-            )
+            .when(additions > 0 || deletions > 0, |this| {
+                this.child(h_flex().gap_2().child(DiffStat::new(
+                    "toolbar-diff-stat",
+                    additions as usize,
+                    deletions as usize,
+                )))
+                .child(Divider::vertical())
+            })
             .child(
                 IconButton::new("buffer-search", IconName::MagnifyingGlass)
                     .icon_size(IconSize::Small)
