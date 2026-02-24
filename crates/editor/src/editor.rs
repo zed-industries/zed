@@ -11869,8 +11869,10 @@ impl Editor {
             return;
         }
 
-        for (anchor, breakpoint) in self.breakpoints_at_cursors(window, cx) {
-            if breakpoint.is_none() && !self.anchor_supports_breakpoint_placement(anchor, cx) {
+        for (anchor, breakpoint, row) in self.breakpoints_at_cursors(window, cx) {
+            if breakpoint.is_none()
+                && !self.row_supports_breakpoint_placement(MultiBufferRow(row), cx)
+            {
                 continue;
             }
 
@@ -11895,7 +11897,7 @@ impl Editor {
         &self,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Vec<(Anchor, Option<Breakpoint>)> {
+    ) -> Vec<(Anchor, Option<Breakpoint>, u32)> {
         let snapshot = self.snapshot(window, cx);
         let cursors = self
             .selections
@@ -11918,12 +11920,16 @@ impl Editor {
                     .breakpoint_at_anchor(breakpoint_position, &snapshot, cx)
                     .map(|(anchor, breakpoint)| (anchor, Some(breakpoint)));
 
-                breakpoint.unwrap_or_else(|| (breakpoint_position, None))
+                let (anchor, breakpoint) = breakpoint.unwrap_or_else(|| (breakpoint_position, None));
+                (anchor, (breakpoint, cursor_position.row))
             })
             // There might be multiple cursors on the same line; all of them should have the same anchors though as their breakpoints positions, which makes it possible to sort and dedup the list.
             .collect::<HashMap<Anchor, _>>();
 
-        cursors.into_iter().collect()
+        cursors
+            .into_iter()
+            .map(|(anchor, (breakpoint, row))| (anchor, breakpoint, row))
+            .collect()
     }
 
     pub fn enable_breakpoint(
@@ -11936,7 +11942,7 @@ impl Editor {
             return;
         }
 
-        for (anchor, breakpoint) in self.breakpoints_at_cursors(window, cx) {
+        for (anchor, breakpoint, _) in self.breakpoints_at_cursors(window, cx) {
             let Some(breakpoint) = breakpoint.filter(|breakpoint| breakpoint.is_disabled()) else {
                 continue;
             };
@@ -11959,7 +11965,7 @@ impl Editor {
             return;
         }
 
-        for (anchor, breakpoint) in self.breakpoints_at_cursors(window, cx) {
+        for (anchor, breakpoint, _) in self.breakpoints_at_cursors(window, cx) {
             let Some(breakpoint) = breakpoint.filter(|breakpoint| breakpoint.is_enabled()) else {
                 continue;
             };
@@ -11983,8 +11989,10 @@ impl Editor {
         }
 
         let snapshot = self.snapshot(window, cx);
-        for (anchor, breakpoint) in self.breakpoints_at_cursors(window, cx) {
-            if breakpoint.is_none() && !self.anchor_supports_breakpoint_placement(anchor, cx) {
+        for (anchor, breakpoint, row) in self.breakpoints_at_cursors(window, cx) {
+            if breakpoint.is_none()
+                && !self.row_supports_breakpoint_placement(MultiBufferRow(row), cx)
+            {
                 continue;
             }
 
@@ -12067,17 +12075,23 @@ impl Editor {
     }
 
     pub(crate) fn anchor_supports_breakpoint_placement(&self, anchor: Anchor, cx: &App) -> bool {
-        let Some(buffer) = self.buffer.read(cx).buffer_for_anchor(anchor, cx) else {
+        let snapshot = self.buffer.read(cx).snapshot(cx);
+        let summary_row = MultiBufferRow(snapshot.summary_for_anchor::<Point>(&anchor).row);
+        if self.row_supports_breakpoint_placement(summary_row, cx) {
+            return true;
+        }
+
+        let point_row = MultiBufferRow(anchor.to_point(&snapshot).row);
+        point_row != summary_row && self.row_supports_breakpoint_placement(point_row, cx)
+    }
+
+    fn row_supports_breakpoint_placement(&self, row: MultiBufferRow, cx: &App) -> bool {
+        let Some((buffer, _)) = self.buffer.read(cx).point_to_buffer_offset(Point::new(row.0, 0), cx)
+        else {
             return false;
         };
 
-        if !self.buffer_supports_breakpoints(&buffer, cx) {
-            return false;
-        }
-
         let snapshot = self.buffer.read(cx).snapshot(cx);
-        let point = anchor.to_point(&snapshot);
-        let row = MultiBufferRow(point.row);
         if snapshot.is_line_blank(row) {
             return false;
         }
@@ -12085,10 +12099,17 @@ impl Editor {
         let line_len = snapshot.line_len(row);
         let indent = snapshot.indent_size_for_line(row).len.min(line_len);
         let point_at_code_start = Point::new(row.0, indent);
+        let language_scope = snapshot.language_scope_at(point_at_code_start);
+        let has_comment_syntax = language_scope.as_ref().is_some_and(|scope| {
+            !scope.line_comment_prefixes().is_empty()
+                || scope.block_comment().is_some()
+                || scope.documentation_comment().is_some()
+        });
+        if !self.buffer_supports_breakpoints(&buffer, cx) && !has_comment_syntax {
+            return false;
+        }
 
-        !snapshot
-            .language_scope_at(point_at_code_start)
-            .is_some_and(|scope| scope.override_name() == Some("comment"))
+        !language_scope.is_some_and(|scope| scope.override_name() == Some("comment"))
     }
 
     fn buffer_supports_breakpoints(&self, buffer: &Entity<Buffer>, cx: &App) -> bool {
