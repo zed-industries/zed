@@ -8,7 +8,9 @@ use crate::{
 };
 use acp_thread::{MentionUri, UserMessageId};
 use action_log::ActionLog;
-use feature_flags::{FeatureFlagAppExt as _, SubagentsFeatureFlag};
+use feature_flags::{
+    FeatureFlagAppExt as _, StreamingEditFileToolFeatureFlag, SubagentsFeatureFlag,
+};
 
 use agent_client_protocol as acp;
 use agent_settings::{
@@ -2457,7 +2459,7 @@ impl Thread {
             }
         }
 
-        let use_streaming_edit_tool = false;
+        let use_streaming_edit_tool = cx.has_flag::<StreamingEditFileToolFeatureFlag>();
 
         let mut tools = self
             .tools
