@@ -262,7 +262,7 @@ pub fn excerpt_range_for_format(
     }
 }
 
-fn resolve_cursor_region(
+pub fn resolve_cursor_region(
     input: &ZetaPromptInput,
     format: ZetaFormat,
 ) -> (&str, Range<usize>, usize) {
@@ -374,7 +374,10 @@ pub fn get_prefill(input: &ZetaPromptInput, format: ZetaFormat) -> String {
         | ZetaFormat::V0120GitMergeMarkers
         | ZetaFormat::V0131GitMergeMarkersPrefix
         | ZetaFormat::V0211SeedCoder => String::new(),
-        ZetaFormat::V0211Prefill => v0211_prefill::get_prefill(input),
+        ZetaFormat::V0211Prefill => {
+            let (context, editable_range, _) = resolve_cursor_region(input, format);
+            v0211_prefill::get_prefill(context, &editable_range)
+        }
     }
 }
 
@@ -715,9 +718,8 @@ pub mod v0131_git_merge_markers_prefix {
 pub mod v0211_prefill {
     use super::*;
 
-    pub fn get_prefill(input: &ZetaPromptInput) -> String {
-        let editable_region = &input.cursor_excerpt
-            [input.editable_range_in_excerpt.start..input.editable_range_in_excerpt.end];
+    pub fn get_prefill(context: &str, editable_range: &Range<usize>) -> String {
+        let editable_region = &context[editable_range.start..editable_range.end];
 
         let prefill_len = (editable_region.len() as f64 * PREFILL_RATIO) as usize;
         let prefill_len = editable_region.floor_char_boundary(prefill_len);

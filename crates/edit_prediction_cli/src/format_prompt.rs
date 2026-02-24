@@ -11,8 +11,9 @@ use gpui::AsyncApp;
 use similar::DiffableStr;
 use std::sync::Arc;
 use std::{fmt::Write as _, ops::Range};
-use zeta_prompt::format_zeta_prompt;
-use zeta_prompt::{ZetaFormat, excerpt_range_for_format};
+use zeta_prompt::{
+    ZetaFormat, excerpt_range_for_format, format_zeta_prompt, resolve_cursor_region,
+};
 
 pub async fn run_format_prompt(
     example: &mut Example,
@@ -30,16 +31,15 @@ pub async fn run_format_prompt(
         .as_ref()
         .context("prompt_inputs must be set after context retrieval")?;
 
-    let excerpt_ranges = prompt_inputs
-        .excerpt_ranges
-        .as_ref()
-        .context("prompt_inputs must have excerpt_ranges")?;
-
     match args.provider {
         PredictionProvider::Teacher(_) | PredictionProvider::TeacherNonBatching(_) => {
             step_progress.set_substatus("formatting teacher prompt");
 
             let zeta_format = ZetaFormat::default();
+            let excerpt_ranges = prompt_inputs
+                .excerpt_ranges
+                .as_ref()
+                .context("prompt_inputs must have excerpt_ranges")?;
             let (editable_range, context_range) =
                 excerpt_range_for_format(zeta_format, excerpt_ranges);
 
@@ -55,30 +55,8 @@ pub async fn run_format_prompt(
         PredictionProvider::Zeta2(zeta_format) => {
             step_progress.set_substatus("formatting zeta2 prompt");
 
-            let (editable_range, context_range) =
-                excerpt_range_for_format(zeta_format, excerpt_ranges);
-
-            let context_start = context_range.start;
-            let cursor_offset_in_excerpt = prompt_inputs.cursor_offset_in_excerpt - context_start;
-            let editable_range_in_excerpt =
-                (editable_range.start - context_start)..(editable_range.end - context_start);
-            let input = zeta_prompt::ZetaPromptInput {
-                cursor_path: prompt_inputs.cursor_path.clone(),
-                cursor_excerpt: prompt_inputs.cursor_excerpt[context_range]
-                    .to_string()
-                    .into(),
-                editable_range_in_excerpt,
-                cursor_offset_in_excerpt,
-                excerpt_start_row: prompt_inputs.excerpt_start_row,
-                events: prompt_inputs.events.clone(),
-                related_files: prompt_inputs.related_files.clone(),
-                excerpt_ranges: prompt_inputs.excerpt_ranges.clone(),
-                preferred_model: None,
-                in_open_source_repo: prompt_inputs.in_open_source_repo,
-                can_collect_data: false,
-            };
-            let prompt = format_zeta_prompt(&input, zeta_format);
-            let prefill = zeta_prompt::get_prefill(&input, zeta_format);
+            let prompt = format_zeta_prompt(prompt_inputs, zeta_format);
+            let prefill = zeta_prompt::get_prefill(prompt_inputs, zeta_format);
             let (expected_patch, expected_cursor_offset) = example
                 .spec
                 .expected_patches_with_cursor_positions()
@@ -86,15 +64,14 @@ pub async fn run_format_prompt(
                 .next()
                 .context("expected patches is empty")?;
             let expected_output = zeta2_output_for_patch(
-                &input,
+                prompt_inputs,
                 &expected_patch,
                 expected_cursor_offset,
                 zeta_format,
             )?;
-            let rejected_output =
-                example.spec.rejected_patch.as_ref().and_then(|patch| {
-                    zeta2_output_for_patch(&input, patch, None, zeta_format).ok()
-                });
+            let rejected_output = example.spec.rejected_patch.as_ref().and_then(|patch| {
+                zeta2_output_for_patch(prompt_inputs, patch, None, zeta_format).ok()
+            });
 
             example.prompt = Some(ExamplePrompt {
                 input: prompt,
@@ -117,8 +94,8 @@ pub fn zeta2_output_for_patch(
     cursor_offset: Option<usize>,
     version: ZetaFormat,
 ) -> Result<String> {
-    let mut old_editable_region =
-        input.cursor_excerpt[input.editable_range_in_excerpt.clone()].to_string();
+    let (context, editable_range, _) = resolve_cursor_region(input, version);
+    let mut old_editable_region = context[editable_range].to_string();
 
     if !old_editable_region.ends_with_newline() {
         old_editable_region.push('\n');
