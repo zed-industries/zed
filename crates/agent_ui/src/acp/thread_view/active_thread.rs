@@ -7456,7 +7456,96 @@ pub(crate) fn open_link(
             MentionUri::TerminalSelection { .. } => {}
             MentionUri::GitDiff { .. } => {}
         })
+    } else if !url.contains("://") {
+        // No URL scheme — this may be a relative file path from an external ACP agent
+        // (e.g. Codex CLI). Try resolving it against project worktrees. If the file
+        // exists, open it in Zed. If not, silently do nothing (matching VS Code's
+        // behavior) rather than handing a bare path to the OS, which would cause a
+        // Finder error on macOS.
+        let (path_str, line) = parse_path_with_line_number(&url);
+
+        workspace.update(cx, |workspace, cx| {
+            let project = workspace.project();
+            let project_path =
+                project.update(cx, |project, cx| project.find_project_path(path_str, cx))?;
+
+            // Verify the file actually exists — `find_project_path` can return a
+            // ProjectPath for non-existent files when the path starts with the
+            // worktree root name. Opening such a path would create an empty buffer.
+            if project.read(cx).entry_for_path(&project_path, cx).is_none() {
+                return None;
+            }
+
+            let open_task = workspace.open_path(project_path, None, true, window, cx);
+            if let Some(line) = line {
+                window
+                    .spawn(cx, async move |cx| {
+                        let Some(editor) = open_task.await?.downcast::<Editor>() else {
+                            return anyhow::Ok(());
+                        };
+                        let point = Point::new(line.saturating_sub(1), 0);
+                        editor
+                            .update_in(cx, |editor, window, cx| {
+                                editor.change_selections(
+                                    SelectionEffects::scroll(Autoscroll::center()),
+                                    window,
+                                    cx,
+                                    |s| s.select_ranges(vec![point..point]),
+                                );
+                            })
+                            .ok();
+                        anyhow::Ok(())
+                    })
+                    .detach_and_log_err(cx);
+            } else {
+                open_task.detach_and_log_err(cx);
+            }
+            Some(())
+        });
     } else {
         cx.open_url(&url);
+    }
+}
+
+/// Splits a URL-like string into a file path and an optional 1-based line number.
+///
+/// Handles formats commonly produced by LLMs:
+/// - `src/main.rs:42`      → `("src/main.rs", Some(42))`
+/// - `src/main.rs:42:10`   → `("src/main.rs", Some(42))`
+/// - `src/main.rs#L42`     → `("src/main.rs", Some(42))`
+/// - `src/main.rs#L42-50`  → `("src/main.rs", Some(42))`
+/// - `src/main.rs`         → `("src/main.rs", None)`
+fn parse_path_with_line_number(input: &str) -> (&str, Option<u32>) {
+    // Try `path#Lline` or `path#Lline-end` fragment format.
+    if let Some((path, fragment)) = input.split_once('#') {
+        if let Some(line_part) = fragment.strip_prefix('L') {
+            if let Some(line_str) = line_part.split(['-', ':']).next() {
+                if let Ok(line) = line_str.parse::<u32>() {
+                    return (path, Some(line));
+                }
+            }
+        }
+    }
+
+    // Try `path:line` or `path:line:col` format.
+    // Strip trailing `:<digits>` suffixes right-to-left; the leftmost numeric
+    // segment ends up as the line number.
+    let mut path = input;
+    let mut line = None;
+    while let Some((before, after)) = path.rsplit_once(':') {
+        if !after.is_empty() && after.bytes().all(|b| b.is_ascii_digit()) {
+            if let Ok(number) = after.parse::<u32>() {
+                line = Some(number);
+                path = before;
+                continue;
+            }
+        }
+        break;
+    }
+
+    if line.is_some() {
+        (path, line)
+    } else {
+        (input, None)
     }
 }
