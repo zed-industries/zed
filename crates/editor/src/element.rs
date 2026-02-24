@@ -4060,10 +4060,13 @@ impl EditorElement {
         Some((element, final_size, row, x_offset))
     }
 
-    /// The checkerboard pattern height must be an even factor of the line
-    /// height, so that two consecutive spacer blocks can render contiguously
-    /// without an obvious break in the pattern.
-    fn checkerboard_size(line_height: f32, target_height: f32) -> f32 {
+    /// The spacer pattern period must be an even factor of the line height, so
+    /// that two consecutive spacer blocks can render contiguously without an
+    /// obvious break in the pattern.
+    ///
+    /// Two consecutive spacers can appear when the other side has a diff hunk
+    /// and a custom block next to each other (e.g. merge conflict buttons).
+    fn spacer_pattern_period(line_height: f32, target_height: f32) -> f32 {
         let k_approx = line_height / (2.0 * target_height);
         let k_floor = (k_approx.floor() as u32).max(1);
         let k_ceil = (k_approx.ceil() as u32).max(1);
@@ -4085,25 +4088,43 @@ impl EditorElement {
         window: &mut Window,
         cx: &App,
     ) -> AnyElement {
+        let target_size = 16.0;
+        let scale = window.scale_factor();
+        let pattern_size = Self::spacer_pattern_period(
+            f32::from(line_height) * scale,
+            target_size * scale,
+        );
+        let color = cx.theme().colors().panel_background;
+        let background = pattern_slash(color, 2.0, pattern_size - 2.0);
+
         div()
             .id(block_id)
             .w_full()
             .h((block_height as f32) * line_height)
-            // the checkerboard pattern is semi-transparent, so we render a
-            // solid background to prevent indent guides peeking through
-            // .bg(cx.theme().colors().editor_background)
-            .child(div().size_full().bg({
-                let target_size = 16.0;
-                let scale = window.scale_factor();
-                let pattern_size =
-                    Self::checkerboard_size(f32::from(line_height) * scale, target_size * scale);
-                let color = cx.theme().colors().panel_background;
-
-                pattern_slash(color, 2.0, pattern_size - 2.0)
-            }))
-            // todo! cameron - only padding when 
-            // .when(Settings::try_read_global(cx, f), then)
-            .pl_1()
+            .flex()
+            .flex_row()
+            .child(
+                div()
+                    .flex_shrink_0()
+                    .w(indent_guide_padding)
+                    .h_full(),
+            )
+            .child(
+                div()
+                    .flex_1()
+                    .h_full()
+                    .relative()
+                    .overflow_x_hidden()
+                    .child(
+                        div()
+                            .absolute()
+                            .top_0()
+                            .bottom_0()
+                            .right_0()
+                            .left(-indent_guide_padding)
+                            .bg(background),
+                    ),
+            )
             .into_any()
     }
 
@@ -13369,24 +13390,24 @@ mod tests {
     #[test]
     fn test_checkerboard_size() {
         // line height is smaller than target height, so we just return half the line height
-        assert_eq!(EditorElement::checkerboard_size(10.0, 20.0), 5.0);
+        assert_eq!(EditorElement::spacer_pattern_period(10.0, 20.0), 5.0);
 
         // line height is exactly half the target height, perfect match
-        assert_eq!(EditorElement::checkerboard_size(20.0, 10.0), 10.0);
+        assert_eq!(EditorElement::spacer_pattern_period(20.0, 10.0), 10.0);
 
         // line height is close to half the target height
-        assert_eq!(EditorElement::checkerboard_size(20.0, 9.0), 10.0);
+        assert_eq!(EditorElement::spacer_pattern_period(20.0, 9.0), 10.0);
 
         // line height is close to 1/4 the target height
-        assert_eq!(EditorElement::checkerboard_size(20.0, 4.8), 5.0);
+        assert_eq!(EditorElement::spacer_pattern_period(20.0, 4.8), 5.0);
     }
 
     #[gpui::test(iterations = 100)]
-    fn test_random_checkerboard_size(mut rng: StdRng) {
+    fn test_random_spacer_pattern_period(mut rng: StdRng) {
         let line_height = rng.next_u32() as f32;
         let target_height = rng.next_u32() as f32;
 
-        let result = EditorElement::checkerboard_size(line_height, target_height);
+        let result = EditorElement::spacer_pattern_period(line_height, target_height);
 
         let k = line_height / result;
         assert!(k - k.round() < 0.0000001); // approximately integer
