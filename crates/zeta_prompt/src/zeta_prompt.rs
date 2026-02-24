@@ -833,6 +833,265 @@ pub mod hashline {
         return h;
     }
 
+    /// A parsed line reference like `3:c3` (line index 3 with hash 0xc3).
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    struct LineRef {
+        index: usize,
+        hash: u8,
+    }
+
+    /// A single edit command parsed from the model output.
+    #[derive(Debug)]
+    enum EditCommand {
+        /// Replace a single line.
+        SetLine { target: LineRef, content: String },
+        /// Replace a range of lines (inclusive on both ends).
+        SetRange {
+            start: LineRef,
+            end: LineRef,
+            content: String,
+        },
+        /// Insert new lines after the given line, or before the first line if
+        /// `after` is `None`.
+        Insert {
+            after: Option<LineRef>,
+            content: String,
+        },
+    }
+
+    /// Parse a line reference like `3:c3` into a `LineRef`.
+    fn parse_line_ref(s: &str) -> Option<LineRef> {
+        let (idx_str, hash_str) = s.split_once(':')?;
+        let index = idx_str.parse::<usize>().ok()?;
+        let hash = u8::from_str_radix(hash_str, 16).ok()?;
+        Some(LineRef { index, hash })
+    }
+
+    /// Parse the model output into a list of `EditCommand`s.
+    fn parse_edit_commands(model_output: &str) -> Vec<EditCommand> {
+        let mut commands = Vec::new();
+        let mut lines = model_output.lines().peekable();
+
+        while let Some(line) = lines.next() {
+            let trimmed = line.trim();
+            if trimmed.starts_with("<|set|>") {
+                let specifier = trimmed.strip_prefix("<|set|>").unwrap_or("");
+                let mut content_lines: Vec<&str> = Vec::new();
+                while let Some(&next) = lines.peek() {
+                    if next.trim().starts_with("<|set|>") || next.trim().starts_with("<|insert|>") {
+                        break;
+                    }
+                    content_lines.push(lines.next().unwrap());
+                }
+                let content = content_lines.join("\n");
+
+                if let Some((start_str, end_str)) = specifier.split_once('-') {
+                    if let (Some(start), Some(end)) =
+                        (parse_line_ref(start_str), parse_line_ref(end_str))
+                    {
+                        commands.push(EditCommand::SetRange {
+                            start,
+                            end,
+                            content,
+                        });
+                    }
+                } else if let Some(target) = parse_line_ref(specifier) {
+                    commands.push(EditCommand::SetLine { target, content });
+                }
+            } else if trimmed.starts_with("<|insert|>") {
+                let specifier = trimmed.strip_prefix("<|insert|>").unwrap_or("");
+                let mut content_lines: Vec<&str> = Vec::new();
+                while let Some(&next) = lines.peek() {
+                    if next.trim().starts_with("<|set|>") || next.trim().starts_with("<|insert|>") {
+                        break;
+                    }
+                    content_lines.push(lines.next().unwrap());
+                }
+                let content = content_lines.join("\n");
+                let after = parse_line_ref(specifier);
+                commands.push(EditCommand::Insert { after, content });
+            }
+        }
+
+        commands
+    }
+
+    /// Returns `true` if the model output contains `<|set|>` or `<|insert|>` commands
+    /// (as opposed to being a plain full-replacement output).
+    /// Strip the `{line_num}:{hash}|` prefixes from each line of a hashline-encoded
+    /// editable region, returning the plain text content.
+    pub fn strip_hashline_prefixes(region: &str) -> String {
+        let mut decoded: String = region
+            .lines()
+            .map(|line| line.find('|').map_or(line, |pos| &line[pos + 1..]))
+            .collect::<Vec<_>>()
+            .join("\n");
+        if region.ends_with('\n') {
+            decoded.push('\n');
+        }
+        decoded
+    }
+
+    pub fn output_has_edit_commands(model_output: &str) -> bool {
+        model_output.contains("<|set|>") || model_output.contains("<|insert|>")
+    }
+
+    /// Apply `<|set|>` and `<|insert|>` edit commands from the model output to the
+    /// original editable region text.
+    ///
+    /// `editable_region` is the original text of the editable region (without hash
+    /// prefixes). `model_output` is the raw model response containing edit commands.
+    ///
+    /// Returns the full replacement text for the editable region.
+    pub fn apply_edit_commands(editable_region: &str, model_output: &str) -> String {
+        let original_lines: Vec<&str> = editable_region.lines().collect();
+
+        // Build a lookup of (index, hash) for each original line so we can
+        // validate the hash references from the model.
+        let indexed_lines: Vec<(usize, u8, &str)> = original_lines
+            .iter()
+            .enumerate()
+            .map(|(i, line)| (i, hash_line(line.as_bytes()), *line))
+            .collect();
+
+        let commands = parse_edit_commands(model_output);
+
+        // We process commands by walking the original lines and applying
+        // set/insert operations. First, build maps for quick lookup.
+        //
+        // For set operations: map from start line index → (end line index, content)
+        // For insert operations: map from line index → vec of content to insert after
+        //   (None key means insert before line 0)
+
+        use std::collections::BTreeMap;
+
+        let mut set_ops: BTreeMap<usize, (usize, String)> = BTreeMap::new();
+        let mut insert_before_first: Vec<String> = Vec::new();
+        let mut insert_after: BTreeMap<usize, Vec<String>> = BTreeMap::new();
+
+        for command in &commands {
+            match command {
+                EditCommand::SetLine { target, content } => {
+                    // Validate the hash matches if the line index is in range
+                    if target.index < indexed_lines.len()
+                        && indexed_lines[target.index].1 == target.hash
+                    {
+                        set_ops.insert(target.index, (target.index, content.clone()));
+                    }
+                }
+                EditCommand::SetRange {
+                    start,
+                    end,
+                    content,
+                } => {
+                    if start.index < indexed_lines.len()
+                        && end.index < indexed_lines.len()
+                        && start.index <= end.index
+                        && indexed_lines[start.index].1 == start.hash
+                        && indexed_lines[end.index].1 == end.hash
+                    {
+                        set_ops.insert(start.index, (end.index, content.clone()));
+                    }
+                }
+                EditCommand::Insert { after, content } => match after {
+                    None => {
+                        insert_before_first.push(content.clone());
+                    }
+                    Some(line_ref) => {
+                        if line_ref.index < indexed_lines.len()
+                            && indexed_lines[line_ref.index].1 == line_ref.hash
+                        {
+                            insert_after
+                                .entry(line_ref.index)
+                                .or_default()
+                                .push(content.clone());
+                        }
+                    }
+                },
+            }
+        }
+
+        let mut result = String::new();
+
+        // Emit any insertions before the first line
+        for content in &insert_before_first {
+            result.push_str(content);
+            result.push('\n');
+        }
+
+        let mut i = 0;
+        while i < original_lines.len() {
+            if let Some((end_index, replacement)) = set_ops.get(&i) {
+                // Replace lines i..=end_index with the replacement content
+                result.push_str(replacement);
+                if !replacement.is_empty() {
+                    result.push('\n');
+                }
+                // Emit any insertions after the end of this set range
+                if let Some(inserts) = insert_after.get(end_index) {
+                    for content in inserts {
+                        result.push_str(content);
+                        result.push('\n');
+                    }
+                }
+                i = end_index + 1;
+            } else {
+                // Keep the original line
+                result.push_str(original_lines[i]);
+                result.push('\n');
+                // Emit any insertions after this line
+                if let Some(inserts) = insert_after.get(&i) {
+                    for content in inserts {
+                        result.push_str(content);
+                        result.push('\n');
+                    }
+                }
+                i += 1;
+            }
+        }
+
+        // Preserve trailing newline behavior: if the original ended with a
+        // newline the result already has one; if it didn't, trim the extra one
+        // we added.
+        if !editable_region.ends_with('\n') && result.ends_with('\n') {
+            result.pop();
+        }
+
+        result
+    }
+
+    /// Write the hashline-encoded editable region into `out`. Each line of
+    /// `editable_text` is prefixed with `{line_index}:{hash}|` and the cursor
+    /// marker is inserted at `cursor_offset_in_editable` (byte offset relative
+    /// to the start of `editable_text`).
+    pub fn write_hashline_editable_region(
+        out: &mut String,
+        editable_text: &str,
+        cursor_offset_in_editable: usize,
+    ) {
+        let mut offset = 0;
+        for (i, line) in editable_text.lines().enumerate() {
+            let (head, cursor, tail) = if cursor_offset_in_editable > offset
+                && cursor_offset_in_editable < offset + line.len()
+            {
+                (
+                    &line[..cursor_offset_in_editable - offset],
+                    CURSOR_MARKER,
+                    &line[cursor_offset_in_editable - offset..],
+                )
+            } else {
+                (line, "", "")
+            };
+            write!(
+                out,
+                "\n{i}:{:02x}|{head}{cursor}{tail}",
+                hash_line(line.as_bytes())
+            )
+            .unwrap();
+            offset += line.len() + 1;
+        }
+    }
+
     pub fn write_cursor_excerpt_section(
         prompt: &mut String,
         path: &Path,
@@ -843,36 +1102,19 @@ pub mod hashline {
         let path_str = path.to_string_lossy();
         write!(prompt, "<|file_sep|>{}\n", path_str).ok();
 
-        prompt.push_str("<|fim_prefix|>");
+        prompt.push_str("<|fim_prefix|>\n");
         prompt.push_str(&context[..editable_range.start]);
         prompt.push_str("<|fim_middle|>");
-        let mut offset = 0;
-        let cursor_offset = cursor_offset.saturating_sub(editable_range.start);
+
+        let cursor_offset_in_editable = cursor_offset.saturating_sub(editable_range.start);
         let editable_region = &context[editable_range.clone()];
-        for (i, line) in editable_region.lines().enumerate() {
-            let (head, cursor, tail) =
-                if cursor_offset > offset && cursor_offset < offset + line.len() {
-                    (
-                        &line[..cursor_offset - offset],
-                        CURSOR_MARKER,
-                        &line[cursor_offset - offset..],
-                    )
-                } else {
-                    (line, "", "")
-                };
-            write!(
-                prompt,
-                "\n{i}:{:02x}|{head}{cursor}{tail}",
-                hash_line(line.as_bytes())
-            )
-            .unwrap();
-            offset += line.len() + 1;
-        }
+        write_hashline_editable_region(prompt, editable_region, cursor_offset_in_editable);
+
         if !prompt.ends_with('\n') {
             prompt.push('\n');
         }
 
-        prompt.push_str("<|fim_suffix|>");
+        prompt.push_str("<|fim_suffix|>\n");
         prompt.push_str(&context[editable_range.end..]);
         if !prompt.ends_with('\n') {
             prompt.push('\n');
@@ -2045,7 +2287,8 @@ mod tests {
                 cursor_offset: 5,
                 expected: indoc! {"
                     <|file_sep|>test.rs
-                    <|fim_prefix|><|fim_middle|>
+                    <|fim_prefix|>
+                    <|fim_middle|>
                     0:5c|hello<|user_cursor|> world
                     <|fim_suffix|>
                     <|fim_middle|>"},
@@ -2057,7 +2300,8 @@ mod tests {
                 cursor_offset: 5, // byte 5 → 1 byte into "bbb"
                 expected: indoc! {"
                     <|file_sep|>test.rs
-                    <|fim_prefix|><|fim_middle|>
+                    <|fim_prefix|>
+                    <|fim_middle|>
                     0:23|aaa
                     1:26|b<|user_cursor|>bb
                     2:29|ccc
@@ -2071,7 +2315,8 @@ mod tests {
                 cursor_offset: 3,
                 expected: indoc! {"
                     <|file_sep|>test.rs
-                    <|fim_prefix|><|fim_middle|>
+                    <|fim_prefix|>
+                    <|fim_middle|>
                     0:d9|lin<|user_cursor|>e1
                     1:da|line2
                     <|fim_suffix|>
@@ -2084,7 +2329,8 @@ mod tests {
                 cursor_offset: 2, // byte 2 = 'a' in "abc" (after leading \n)
                 expected: indoc! {"
                     <|file_sep|>test.rs
-                    <|fim_prefix|><|fim_middle|>
+                    <|fim_prefix|>
+                    <|fim_middle|>
                     0:00|
                     1:26|a<|user_cursor|>bc
                     <|fim_suffix|>
@@ -2097,9 +2343,11 @@ mod tests {
                 cursor_offset: 2,
                 expected: indoc! {"
                     <|file_sep|>test.rs
-                    <|fim_prefix|><|fim_middle|>
+                    <|fim_prefix|>
+                    <|fim_middle|>
                     0:26|ab<|user_cursor|>c
-                    <|fim_suffix|>def
+                    <|fim_suffix|>
+                    def
                     <|fim_middle|>"},
             },
             Case {
@@ -2109,7 +2357,8 @@ mod tests {
                 cursor_offset: 3, // byte 3 = after "hé" (h=1 byte, é=2 bytes), before "llo"
                 expected: indoc! {"
                     <|file_sep|>test.rs
-                    <|fim_prefix|><|fim_middle|>
+                    <|fim_prefix|>
+                    <|fim_middle|>
                     0:1b|hé<|user_cursor|>llo
                     <|fim_suffix|>
                     <|fim_middle|>"},
@@ -2121,7 +2370,8 @@ mod tests {
                 cursor_offset: 6, // byte 6 = after "日本" (3+3 bytes), before "語"
                 expected: indoc! {"
                     <|file_sep|>test.rs
-                    <|fim_prefix|><|fim_middle|>
+                    <|fim_prefix|>
+                    <|fim_middle|>
                     0:80|日本<|user_cursor|>語
                     <|fim_suffix|>
                     <|fim_middle|>"},
@@ -2133,7 +2383,8 @@ mod tests {
                 cursor_offset: 5, // byte 5 = after "a🌍" (1+4 bytes), before "b"
                 expected: indoc! {"
                     <|file_sep|>test.rs
-                    <|fim_prefix|><|fim_middle|>
+                    <|fim_prefix|>
+                    <|fim_middle|>
                     0:6b|a🌍<|user_cursor|>b
                     <|fim_suffix|>
                     <|fim_middle|>"},
@@ -2145,7 +2396,8 @@ mod tests {
                 cursor_offset: 0, // cursor_offset(0) > offset(0) is false → cursor not placed
                 expected: indoc! {"
                     <|file_sep|>test.rs
-                    <|fim_prefix|><|fim_middle|>
+                    <|fim_prefix|>
+                    <|fim_middle|>
                     0:26|abc
                     <|fim_suffix|>
                     <|fim_middle|>"},
@@ -2157,7 +2409,8 @@ mod tests {
                 cursor_offset: 3, // byte 3 = the \n after "abc" → falls between lines, not placed
                 expected: indoc! {"
                     <|file_sep|>test.rs
-                    <|fim_prefix|><|fim_middle|>
+                    <|fim_prefix|>
+                    <|fim_middle|>
                     0:26|abc
                     1:2f|def
                     <|fim_suffix|>
@@ -2173,11 +2426,13 @@ mod tests {
                 cursor_offset: 9,      // byte 9 in context = second 'b' in "bbb"
                 expected: indoc! {"
                     <|file_sep|>test.rs
-                    <|fim_prefix|>pre
+                    <|fim_prefix|>
+                    pre
                     <|fim_middle|>
                     0:23|aaa
                     1:26|b<|user_cursor|>bb
-                    <|fim_suffix|>suf
+                    <|fim_suffix|>
+                    suf
                     <|fim_middle|>"},
             },
         ];
@@ -2193,5 +2448,133 @@ mod tests {
             );
             assert_eq!(prompt, case.expected, "failed case: {}", case.name);
         }
+    }
+
+    // ---- hashline::apply_edit_commands tests ----
+
+    #[test]
+    fn test_hashline_apply_set_single_line() {
+        let original = "    let mut total = 0;\n    for product in products {\n        total += ;\n    }\n    total\n";
+        // Line 2 is "        total += ;" with hash computed by hash_line
+        let hash = hashline::hash_line(b"        total += ;");
+        let model_output = format!("<|set|>2:{hash:02x}\n        total += product.price;");
+        let result = hashline::apply_edit_commands(original, &model_output);
+        assert_eq!(
+            result,
+            "    let mut total = 0;\n    for product in products {\n        total += product.price;\n    }\n    total\n"
+        );
+    }
+
+    #[test]
+    fn test_hashline_apply_set_range() {
+        let original = "fn foo() {\n    let x = 1;\n    let y = 2;\n    let z = 3;\n}\n";
+        let hash1 = hashline::hash_line(b"    let x = 1;");
+        let hash3 = hashline::hash_line(b"    let z = 3;");
+        let model_output = format!("<|set|>1:{hash1:02x}-3:{hash3:02x}\n    let sum = 6;");
+        let result = hashline::apply_edit_commands(original, &model_output);
+        assert_eq!(result, "fn foo() {\n    let sum = 6;\n}\n");
+    }
+
+    #[test]
+    fn test_hashline_apply_insert_after_line() {
+        let original = "fn main() {\n    let x = 1;\n}\n";
+        let hash1 = hashline::hash_line(b"    let x = 1;");
+        let model_output = format!("<|insert|>1:{hash1:02x}\n    let y = 2;");
+        let result = hashline::apply_edit_commands(original, &model_output);
+        assert_eq!(result, "fn main() {\n    let x = 1;\n    let y = 2;\n}\n");
+    }
+
+    #[test]
+    fn test_hashline_apply_insert_before_first() {
+        let original = "    let x = 1;\n    let y = 2;\n";
+        let model_output = "<|insert|>\nuse std::io;";
+        let result = hashline::apply_edit_commands(original, model_output);
+        assert_eq!(result, "use std::io;\n    let x = 1;\n    let y = 2;\n");
+    }
+
+    #[test]
+    fn test_hashline_apply_set_with_cursor_marker() {
+        let original = "fn main() {\n    println!();\n}\n";
+        let hash1 = hashline::hash_line(b"    println!();");
+        let model_output = format!("<|set|>1:{hash1:02x}\n    eprintln!(\"<|user_cursor|>\");");
+        let result = hashline::apply_edit_commands(original, &model_output);
+        assert_eq!(
+            result,
+            "fn main() {\n    eprintln!(\"<|user_cursor|>\");\n}\n"
+        );
+    }
+
+    #[test]
+    fn test_hashline_apply_multiple_commands() {
+        let original = "aaa\nbbb\nccc\nddd\n";
+        let hash0 = hashline::hash_line(b"aaa");
+        let hash2 = hashline::hash_line(b"ccc");
+        let model_output = format!("<|set|>0:{hash0:02x}\nAAA\n<|set|>2:{hash2:02x}\nCCC");
+        let result = hashline::apply_edit_commands(original, &model_output);
+        assert_eq!(result, "AAA\nbbb\nCCC\nddd\n");
+    }
+
+    #[test]
+    fn test_hashline_apply_set_range_with_multiline_replacement() {
+        let original = "fn handle_submit() {\n}\n\nfn handle_keystroke() {\n";
+        let hash0 = hashline::hash_line(b"fn handle_submit() {");
+        let hash1 = hashline::hash_line(b"}");
+        let model_output = format!(
+            "<|set|>0:{hash0:02x}-1:{hash1:02x}\nfn handle_submit(modal_state: &mut ModalState) {{\n    <|user_cursor|>\n}}"
+        );
+        let result = hashline::apply_edit_commands(original, &model_output);
+        assert_eq!(
+            result,
+            "fn handle_submit(modal_state: &mut ModalState) {\n    <|user_cursor|>\n}\n\nfn handle_keystroke() {\n"
+        );
+    }
+
+    #[test]
+    fn test_hashline_apply_no_edit_commands_returns_original() {
+        let original = "hello\nworld\n";
+        let model_output = "some random text with no commands";
+        let result = hashline::apply_edit_commands(original, model_output);
+        assert_eq!(result, original);
+    }
+
+    #[test]
+    fn test_hashline_apply_wrong_hash_ignored() {
+        let original = "aaa\nbbb\n";
+        // Use a wrong hash (ff) so the command should be skipped
+        let model_output = "<|set|>0:ff\nZZZ";
+        let result = hashline::apply_edit_commands(original, model_output);
+        assert_eq!(result, "aaa\nbbb\n");
+    }
+
+    #[test]
+    fn test_hashline_apply_insert_and_set_combined() {
+        let original = "alpha\nbeta\ngamma\n";
+        let hash0 = hashline::hash_line(b"alpha");
+        let hash1 = hashline::hash_line(b"beta");
+        let model_output =
+            format!("<|set|>0:{hash0:02x}\nALPHA\n<|insert|>1:{hash1:02x}\nbeta_extra");
+        let result = hashline::apply_edit_commands(original, &model_output);
+        assert_eq!(result, "ALPHA\nbeta\nbeta_extra\ngamma\n");
+    }
+
+    #[test]
+    fn test_hashline_apply_no_trailing_newline_preserved() {
+        let original = "hello\nworld";
+        let hash0 = hashline::hash_line(b"hello");
+        let model_output = format!("<|set|>0:{hash0:02x}\nHELLO");
+        let result = hashline::apply_edit_commands(original, &model_output);
+        // Original has no trailing newline, so result shouldn't either
+        assert_eq!(result, "HELLO\nworld");
+    }
+
+    #[test]
+    fn test_hashline_output_has_edit_commands() {
+        assert!(hashline::output_has_edit_commands("<|set|>0:ab\nnew"));
+        assert!(hashline::output_has_edit_commands("<|insert|>0:ab\nnew"));
+        assert!(hashline::output_has_edit_commands(
+            "some text\n<|set|>1:cd\nstuff"
+        ));
+        assert!(!hashline::output_has_edit_commands("just plain text"));
+        assert!(!hashline::output_has_edit_commands("NO_EDITS"));
     }
 }

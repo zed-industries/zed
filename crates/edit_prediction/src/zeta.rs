@@ -20,7 +20,7 @@ use std::ops::Range;
 use std::{path::Path, sync::Arc, time::Instant};
 use zeta_prompt::{
     CURSOR_MARKER, EditPredictionModelKind, ZetaFormat, clean_zeta2_model_output,
-    format_zeta_prompt, get_prefill, prompt_input_contains_special_tokens,
+    format_zeta_prompt, get_prefill, hashline, prompt_input_contains_special_tokens,
     zeta1::{self, EDITABLE_REGION_END_MARKER},
 };
 
@@ -257,6 +257,25 @@ pub fn request_prediction_with_zeta(
                 return Ok((Some((request_id, None, model_version)), usage));
             };
 
+            let editable_range_in_buffer = editable_range_in_excerpt.start
+                + full_context_offset_range.start
+                ..editable_range_in_excerpt.end + full_context_offset_range.start;
+
+            let mut old_text = snapshot
+                .text_for_range(editable_range_in_buffer.clone())
+                .collect::<String>();
+
+            // For the hashline format, the model may return <|set|>/<|insert|>
+            // edit commands instead of a full replacement. Apply them against
+            // the original editable region to produce the full replacement text.
+            // This must happen before cursor marker stripping because the cursor
+            // marker is embedded inside edit command content.
+            if matches!(zeta_version, ZetaFormat::v0224Hashline)
+                && hashline::output_has_edit_commands(&output_text)
+            {
+                output_text = hashline::apply_edit_commands(&old_text, &output_text);
+            }
+
             // Client-side cursor marker processing (applies to both raw and v3 responses)
             let cursor_offset_in_output = output_text.find(CURSOR_MARKER);
             if let Some(offset) = cursor_offset_in_output {
@@ -275,14 +294,6 @@ pub fn request_prediction_with_zeta(
                     ))
                     .ok();
             }
-
-            let editable_range_in_buffer = editable_range_in_excerpt.start
-                + full_context_offset_range.start
-                ..editable_range_in_excerpt.end + full_context_offset_range.start;
-
-            let mut old_text = snapshot
-                .text_for_range(editable_range_in_buffer.clone())
-                .collect::<String>();
 
             if !output_text.is_empty() && !output_text.ends_with('\n') {
                 output_text.push('\n');
