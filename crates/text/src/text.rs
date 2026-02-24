@@ -23,6 +23,7 @@ use postage::{oneshot, prelude::*};
 use regex::Regex;
 pub use rope::*;
 pub use selection::*;
+use smallvec::SmallVec;
 use std::{
     borrow::Cow,
     cmp::{self, Ordering, Reverse},
@@ -541,7 +542,7 @@ pub struct Fragment {
     pub insertion_offset: usize,
     pub len: usize,
     pub visible: bool,
-    pub deletions: HashSet<clock::Lamport>,
+    pub deletions: SmallVec<[clock::Lamport; 2]>,
     pub max_undos: clock::Global,
 }
 
@@ -948,7 +949,7 @@ impl Buffer {
                     intersection.insertion_offset += fragment_start - old_fragments.start().visible;
                     intersection.id =
                         Locator::between(&new_fragments.summary().max_id, &intersection.id);
-                    intersection.deletions.insert(timestamp);
+                    intersection.deletions.push(timestamp);
                     intersection.visible = false;
                 }
                 if intersection.len > 0 {
@@ -1197,7 +1198,7 @@ impl Buffer {
                         fragment_start - old_fragments.start().0.full_offset();
                     intersection.id =
                         Locator::between(&new_fragments.summary().max_id, &intersection.id);
-                    intersection.deletions.insert(timestamp);
+                    intersection.deletions.push(timestamp);
                     intersection.visible = false;
                     insertion_slices.push(InsertionSlice::from_fragment(timestamp, &intersection));
                 }
@@ -1657,10 +1658,10 @@ impl Buffer {
     ) -> impl 'static + Future<Output = Result<()>> + use<It> {
         let mut futures = Vec::new();
         for anchor in anchors {
-            if !self.version.observed(anchor.timestamp) && !anchor.is_max() && !anchor.is_min() {
+            if !self.version.observed(anchor.timestamp()) && !anchor.is_max() && !anchor.is_min() {
                 let (tx, rx) = oneshot::channel();
                 self.edit_id_resolvers
-                    .entry(anchor.timestamp)
+                    .entry(anchor.timestamp())
                     .or_default()
                     .push(tx);
                 futures.push(rx);
@@ -2275,7 +2276,7 @@ impl BufferSnapshot {
             };
             assert_eq!(
                 insertion.timestamp,
-                anchor.timestamp,
+                anchor.timestamp(),
                 "invalid insertion for buffer {}@{:?} and anchor {:?}",
                 self.remote_id(),
                 self.version,
@@ -2309,13 +2310,14 @@ impl BufferSnapshot {
         } else {
             debug_assert_eq!(anchor.buffer_id, Some(self.remote_id));
             debug_assert!(
-                self.version.observed(anchor.timestamp),
+                self.version.observed(anchor.timestamp()),
                 "Anchor timestamp {:?} not observed by buffer {:?}",
-                anchor.timestamp,
+                anchor.timestamp(),
                 self.version
             );
             let item = self.try_find_fragment(anchor);
-            let Some(insertion) = item.filter(|insertion| insertion.timestamp == anchor.timestamp)
+            let Some(insertion) =
+                item.filter(|insertion| insertion.timestamp == anchor.timestamp())
             else {
                 self.panic_bad_anchor(anchor);
             };
@@ -2343,7 +2345,7 @@ impl BufferSnapshot {
                 "invalid anchor - buffer id does not match: anchor {anchor:?}; buffer id: {}, version: {:?}",
                 self.remote_id, self.version
             );
-        } else if !self.version.observed(anchor.timestamp) {
+        } else if !self.version.observed(anchor.timestamp()) {
             panic!(
                 "invalid anchor - snapshot has not observed lamport: {:?}; version: {:?}",
                 anchor, self.version
@@ -2369,7 +2371,7 @@ impl BufferSnapshot {
         } else {
             let item = self.try_find_fragment(anchor);
             item.filter(|insertion| {
-                !cfg!(debug_assertions) || insertion.timestamp == anchor.timestamp
+                !cfg!(debug_assertions) || insertion.timestamp == anchor.timestamp()
             })
             .map(|insertion| &insertion.fragment_id)
         }
@@ -2377,7 +2379,7 @@ impl BufferSnapshot {
 
     fn try_find_fragment(&self, anchor: &Anchor) -> Option<&InsertionFragment> {
         let anchor_key = InsertionFragmentKey {
-            timestamp: anchor.timestamp,
+            timestamp: anchor.timestamp(),
             split_offset: anchor.offset,
         };
         match self.insertions.find_with_prev::<InsertionFragmentKey, _>(
@@ -2401,10 +2403,22 @@ impl BufferSnapshot {
         }
     }
 
+    /// Returns an anchor range for the given input position range that is anchored to the text inbetween.
+    pub fn anchor_range_around<T: ToOffset>(&self, position: Range<T>) -> Range<Anchor> {
+        self.anchor_before(position.start)..self.anchor_after(position.end)
+    }
+
+    /// Returns an anchor range for the given input position range that is anchored to the text before the start position and after the end position.
+    pub fn anchor_range_between<T: ToOffset>(&self, position: Range<T>) -> Range<Anchor> {
+        self.anchor_before(position.start)..self.anchor_after(position.end)
+    }
+
+    /// Returns an anchor for the given input position that is anchored to the text before the position.
     pub fn anchor_before<T: ToOffset>(&self, position: T) -> Anchor {
         self.anchor_at(position, Bias::Left)
     }
 
+    /// Returns an anchor for the given input position that is anchored to the text after the position.
     pub fn anchor_after<T: ToOffset>(&self, position: T) -> Anchor {
         self.anchor_at(position, Bias::Right)
     }
@@ -2441,19 +2455,20 @@ impl BufferSnapshot {
                 return Anchor::max_for_buffer(self.remote_id);
             };
             let overshoot = offset - start;
-            Anchor {
-                timestamp: fragment.timestamp,
-                offset: fragment.insertion_offset + overshoot,
+            Anchor::new(
+                fragment.timestamp,
+                fragment.insertion_offset + overshoot,
                 bias,
-                buffer_id: Some(self.remote_id),
-            }
+                Some(self.remote_id),
+            )
         }
     }
 
     pub fn can_resolve(&self, anchor: &Anchor) -> bool {
         anchor.is_min()
             || anchor.is_max()
-            || (Some(self.remote_id) == anchor.buffer_id && self.version.observed(anchor.timestamp))
+            || (Some(self.remote_id) == anchor.buffer_id
+                && self.version.observed(anchor.timestamp()))
     }
 
     pub fn clip_offset(&self, offset: usize, bias: Bias) -> usize {
@@ -2748,18 +2763,18 @@ impl<D: TextDimension + Ord, F: FnMut(&FragmentSummary) -> bool> Iterator for Ed
                 break;
             }
 
-            let start_anchor = Anchor {
-                timestamp: fragment.timestamp,
-                offset: fragment.insertion_offset,
-                bias: Bias::Right,
-                buffer_id: Some(self.buffer_id),
-            };
-            let end_anchor = Anchor {
-                timestamp: fragment.timestamp,
-                offset: fragment.insertion_offset + fragment.len,
-                bias: Bias::Left,
-                buffer_id: Some(self.buffer_id),
-            };
+            let start_anchor = Anchor::new(
+                fragment.timestamp,
+                fragment.insertion_offset,
+                Bias::Right,
+                Some(self.buffer_id),
+            );
+            let end_anchor = Anchor::new(
+                fragment.timestamp,
+                fragment.insertion_offset + fragment.len,
+                Bias::Left,
+                Some(self.buffer_id),
+            );
 
             if !fragment.was_visible(self.since, self.undos) && fragment.visible {
                 let mut visible_end = cursor.end().visible;

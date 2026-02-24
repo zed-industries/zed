@@ -20,10 +20,7 @@ use editor::scroll::Autoscroll;
 use editor::{
     Editor, EditorEvent, EditorMode, MultiBuffer, PathKey, SelectionEffects, SizingBehavior,
 };
-use feature_flags::{
-    AgentSharingFeatureFlag, AgentV2FeatureFlag, CloudThinkingEffortFeatureFlag,
-    FeatureFlagAppExt as _,
-};
+use feature_flags::{AgentSharingFeatureFlag, AgentV2FeatureFlag, FeatureFlagAppExt as _};
 use file_icons::FileIcons;
 use fs::Fs;
 use futures::FutureExt as _;
@@ -74,12 +71,12 @@ use crate::agent_diff::AgentDiff;
 use crate::profile_selector::{ProfileProvider, ProfileSelector};
 use crate::ui::{AgentNotification, AgentNotificationEvent};
 use crate::{
-    AgentDiffPane, AgentPanel, AllowAlways, AllowOnce, AuthorizeToolCall, ClearMessageQueue,
-    CycleFavoriteModels, CycleModeSelector, CycleThinkingEffort, EditFirstQueuedMessage,
-    ExpandMessageEditor, ExternalAgentInitialContent, Follow, KeepAll, NewThread,
-    OpenAddContextMenu, OpenAgentDiff, OpenHistory, RejectAll, RejectOnce,
-    RemoveFirstQueuedMessage, SelectPermissionGranularity, SendImmediately, SendNextQueuedMessage,
-    ToggleProfileSelector, ToggleThinkingEffortMenu, ToggleThinkingMode,
+    AgentDiffPane, AgentInitialContent, AgentPanel, AllowAlways, AllowOnce, AuthorizeToolCall,
+    ClearMessageQueue, CycleFavoriteModels, CycleModeSelector, CycleThinkingEffort,
+    EditFirstQueuedMessage, ExpandMessageEditor, Follow, KeepAll, NewThread, OpenAddContextMenu,
+    OpenAgentDiff, OpenHistory, RejectAll, RejectOnce, RemoveFirstQueuedMessage,
+    SelectPermissionGranularity, SendImmediately, SendNextQueuedMessage, ToggleProfileSelector,
+    ToggleThinkingEffortMenu, ToggleThinkingMode, UndoLastReject,
 };
 
 const STOPWATCH_THRESHOLD: Duration = Duration::from_secs(30);
@@ -310,7 +307,7 @@ impl AcpServerView {
     pub fn new(
         agent: Rc<dyn AgentServer>,
         resume_thread: Option<AgentSessionInfo>,
-        initial_content: Option<ExternalAgentInitialContent>,
+        initial_content: Option<AgentInitialContent>,
         workspace: WeakEntity<Workspace>,
         project: Entity<Project>,
         thread_store: Option<Entity<ThreadStore>>,
@@ -411,7 +408,7 @@ impl AcpServerView {
         agent: Rc<dyn AgentServer>,
         resume_thread: Option<AgentSessionInfo>,
         project: Entity<Project>,
-        initial_content: Option<ExternalAgentInitialContent>,
+        initial_content: Option<AgentInitialContent>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> ServerState {
@@ -494,11 +491,11 @@ impl AcpServerView {
             let mut resumed_without_history = false;
             let result = if let Some(resume) = resume_thread.clone() {
                 cx.update(|_, cx| {
-                    if connection.supports_load_session(cx) {
+                    if connection.supports_load_session() {
                         connection
                             .clone()
                             .load_session(resume, project.clone(), &session_cwd, cx)
-                    } else if connection.supports_resume_session(cx) {
+                    } else if connection.supports_resume_session() {
                         resumed_without_history = true;
                         connection
                             .clone()
@@ -628,7 +625,7 @@ impl AcpServerView {
         thread: Entity<AcpThread>,
         resumed_without_history: bool,
         resume_thread: Option<AgentSessionInfo>,
-        initial_content: Option<ExternalAgentInitialContent>,
+        initial_content: Option<AgentInitialContent>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Entity<AcpThreadView> {
@@ -669,7 +666,7 @@ impl AcpServerView {
 
         let connection = thread.read(cx).connection().clone();
         let session_id = thread.read(cx).session_id().clone();
-        let session_list = if connection.supports_session_history(cx) {
+        let session_list = if connection.supports_session_history() {
             connection.session_list(cx)
         } else {
             None
@@ -1106,8 +1103,6 @@ impl AcpServerView {
                 if should_send_queued {
                     self.send_queued_message_at_index(0, false, window, cx);
                 }
-
-                self.history.update(cx, |history, cx| history.refresh(cx));
             }
             AcpThreadEvent::Refusal => {
                 let error = ThreadError::Refusal;
@@ -1162,7 +1157,6 @@ impl AcpServerView {
                         }
                     });
                 }
-                self.history.update(cx, |history, cx| history.refresh(cx));
             }
             AcpThreadEvent::PromptCapabilitiesUpdated => {
                 if let Some(active) = self.thread_view(&thread_id) {
@@ -1491,7 +1485,7 @@ impl AcpServerView {
             return;
         };
         if connected.threads.contains_key(&subagent_id)
-            || !connected.connection.supports_load_session(cx)
+            || !connected.connection.supports_load_session()
         {
             return;
         }
@@ -2388,7 +2382,7 @@ impl AcpServerView {
 
     fn current_model_name(&self, cx: &App) -> SharedString {
         // For native agent (Zed Agent), use the specific model name (e.g., "Claude 3.5 Sonnet")
-        // For ACP agents, use the agent name (e.g., "Claude Code", "Gemini CLI")
+        // For ACP agents, use the agent name (e.g., "Claude Agent", "Gemini CLI")
         // This provides better clarity about what refused the request
         if self.as_native_connection(cx).is_some() {
             self.active_thread()
@@ -2397,7 +2391,7 @@ impl AcpServerView {
                 .map(|model| model.name.clone())
                 .unwrap_or_else(|| SharedString::from("The model"))
         } else {
-            // ACP agent - use the agent name (e.g., "Claude Code", "Gemini CLI")
+            // ACP agent - use the agent name (e.g., "Claude Agent", "Gemini CLI")
             self.agent.name()
         }
     }
@@ -3525,7 +3519,7 @@ pub(crate) mod tests {
             Task::ready(Ok(thread))
         }
 
-        fn supports_resume_session(&self, _cx: &App) -> bool {
+        fn supports_resume_session(&self) -> bool {
             true
         }
 
@@ -3853,7 +3847,7 @@ pub(crate) mod tests {
             Task::ready(Ok(thread))
         }
 
-        fn supports_load_session(&self, _cx: &App) -> bool {
+        fn supports_load_session(&self) -> bool {
             true
         }
 
@@ -5013,7 +5007,7 @@ pub(crate) mod tests {
                     "Missing 'Always for terminal' option"
                 );
                 assert!(
-                    labels.contains(&"Always for `cargo` commands"),
+                    labels.contains(&"Always for `cargo build` commands"),
                     "Missing pattern option"
                 );
                 assert!(

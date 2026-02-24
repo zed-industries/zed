@@ -924,7 +924,7 @@ impl Render for RatePredictionsModal {
                     .flex_shrink_0()
                     .overflow_hidden()
                     .child({
-                        let icons = self.ep_store.read(cx).icons();
+                        let icons = self.ep_store.read(cx).icons(cx);
                         h_flex()
                             .h_8()
                             .px_2()

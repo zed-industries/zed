@@ -15,7 +15,7 @@ If you already have an API key for a provider like Anthropic or OpenAI, you can 
 
 To add an existing API key to a given provider, go to the Agent Panel settings (`agent: open settings`), look for the desired provider, paste the key into the input, and hit enter.
 
-> Note: API keys are _not_ stored as plain text in your `settings.json`, but rather in your OS's secure credential storage.
+> Note: API keys are _not_ stored as plain text in your settings file, but rather in your OS's secure credential storage.
 
 ## Supported Providers
 
@@ -48,7 +48,7 @@ Ensure your credentials have the following permissions set up:
 
 Your IAM policy should look similar to:
 
-```json [settings]
+```json
 {
   "Version": "2012-10-17",
   "Statement": [
@@ -69,7 +69,7 @@ With that done, choose one of the three authentication methods:
 #### Authentication via Named Profile (Recommended)
 
 1. Ensure you have the AWS CLI installed and configured with a named profile
-2. Open your `settings.json` (`zed: open settings file`) and include the `bedrock` key under `language_models` with the following settings:
+2. Open your settings file (`zed: open settings file`) and include the `bedrock` key under `language_models` with the following settings:
    ```json [settings]
    {
      "language_models": {
@@ -185,7 +185,7 @@ Zed will also use the `ANTHROPIC_API_KEY` environment variable if it's defined.
 
 #### Custom Models {#anthropic-custom-models}
 
-You can add custom models to the Anthropic provider by adding the following to your Zed `settings.json`:
+You can add custom models to the Anthropic provider by adding the following to your Zed settings file ([how to edit](../configuring-zed.md#settings-files)):
 
 ```json [settings]
 {
@@ -214,7 +214,7 @@ Custom models will be listed in the model dropdown in the Agent Panel.
 
 You can configure a model to use [extended thinking](https://docs.anthropic.com/en/docs/about-claude/models/extended-thinking-models) (if it supports it) by changing the mode in your model's configuration to `thinking`, for example:
 
-```json [settings]
+```json
 {
   "name": "claude-sonnet-4-latest",
   "display_name": "claude-sonnet-4-thinking",
@@ -239,7 +239,7 @@ Zed will also use the `DEEPSEEK_API_KEY` environment variable if it's defined.
 #### Custom Models {#deepseek-custom-models}
 
 The Zed agent comes pre-configured to use the latest version for common models (DeepSeek Chat, DeepSeek Reasoner).
-If you wish to use alternate models or customize the API endpoint, you can do so by adding the following to your Zed `settings.json`:
+If you wish to use alternate models or customize the API endpoint, you can do so by adding the following to your Zed settings file ([how to edit](../configuring-zed.md#settings-files)):
 
 ```json [settings]
 {
@@ -296,7 +296,7 @@ Zed will also use the `GEMINI_API_KEY` environment variable if it's defined. See
 
 By default, Zed will use `stable` versions of models, but you can use specific versions of models, including [experimental models](https://ai.google.dev/gemini-api/docs/models/experimental-models). You can configure a model to use [thinking mode](https://ai.google.dev/gemini-api/docs/thinking) (if it supports it) by adding a `mode` configuration to your model. This is useful for controlling reasoning token usage and response speed. If not specified, Gemini will automatically choose the thinking budget.
 
-Here is an example of a custom Google AI model you could add to your Zed `settings.json`:
+Here is an example of a custom Google AI model you could add to your Zed settings file ([how to edit](../configuring-zed.md#settings-files)):
 
 ```json [settings]
 {
@@ -304,8 +304,8 @@ Here is an example of a custom Google AI model you could add to your Zed `settin
     "google": {
       "available_models": [
         {
-          "name": "gemini-2.5-flash-preview-05-20",
-          "display_name": "Gemini 2.5 Flash (Thinking)",
+          "name": "gemini-3-flash-preview",
+          "display_name": "Gemini 3 Flash (Thinking)",
           "max_tokens": 1000000,
           "mode": {
             "type": "thinking",
@@ -351,7 +351,7 @@ Zed will also use the `MISTRAL_API_KEY` environment variable if it's defined.
 
 The Zed agent comes pre-configured with several Mistral models (codestral-latest, mistral-large-latest, mistral-medium-latest, mistral-small-latest, open-mistral-nemo, and open-codestral-mamba).
 All the default models support tool use.
-If you wish to use alternate models or customize their parameters, you can do so by adding the following to your Zed `settings.json`:
+If you wish to use alternate models or customize their parameters, you can do so by adding the following to your Zed settings file ([how to edit](../configuring-zed.md#settings-files)):
 
 ```json [settings]
 {
@@ -508,8 +508,8 @@ Zed will also use the `OPENAI_API_KEY` environment variable if it's defined.
 
 #### Custom Models {#openai-custom-models}
 
-The Zed agent comes pre-configured to use the latest version for common models (GPT-5, GPT-5 mini, o4-mini, GPT-4.1, and others).
-To use alternate models, perhaps a preview release, or if you wish to control the request parameters, you can do so by adding the following to your Zed `settings.json`:
+The Zed agent comes pre-configured to use the latest version for common OpenAI models (GPT-5.2, GPT-5 mini, GPT-5.2 Codex, and others).
+To use alternate models, perhaps a preview release, or if you wish to control the request parameters, you can do so by adding the following to your Zed settings file ([how to edit](../configuring-zed.md#settings-files)):
 
 ```json [settings]
 {
@@ -517,20 +517,20 @@ To use alternate models, perhaps a preview release, or if you wish to control th
     "openai": {
       "available_models": [
         {
-          "name": "gpt-5",
-          "display_name": "gpt-5 high",
+          "name": "gpt-5.2",
+          "display_name": "gpt-5.2 high",
           "reasoning_effort": "high",
           "max_tokens": 272000,
           "max_completion_tokens": 20000
         },
         {
-          "name": "gpt-4o-2024-08-06",
-          "display_name": "GPT 4o Summer 2024",
-          "max_tokens": 128000
+          "name": "gpt-5-nano",
+          "display_name": "GPT-5 Nano",
+          "max_tokens": 400000
         },
         {
-          "name": "gpt-5-codex",
-          "display_name": "GPT-5 Codex",
+          "name": "gpt-5.2-codex",
+          "display_name": "GPT-5.2 Codex",
           "max_tokens": 128000,
           "capabilities": {
             "chat_completions": false
@@ -544,9 +544,9 @@ To use alternate models, perhaps a preview release, or if you wish to control th
 
 You must provide the model's context window in the `max_tokens` parameter; this can be found in the [OpenAI model documentation](https://platform.openai.com/docs/models).
 
-OpenAI `o1` and `o`-class models should set `max_completion_tokens` as well to avoid incurring high reasoning token costs.
+For reasoning-focused models, set `max_completion_tokens` as well to avoid incurring high reasoning token costs.
 
-If a model does not support the `/chat/completions` endpoint (for example `gpt-5-codex`), disable it by setting `capabilities.chat_completions` to `false`. Zed will use the Responses endpoint instead.
+If a model does not support the `/chat/completions` endpoint (for example `gpt-5.2-codex`), disable it by setting `capabilities.chat_completions` to `false`. Zed will use the Responses endpoint instead.
 
 Custom models will be listed in the model dropdown in the Agent Panel.
 
@@ -555,12 +555,12 @@ Custom models will be listed in the model dropdown in the Agent Panel.
 Zed supports using [OpenAI compatible APIs](https://platform.openai.com/docs/api-reference/chat) by specifying a custom `api_url` and `available_models` for the OpenAI provider.
 This is useful for connecting to other hosted services (like Together AI, Anyscale, etc.) or local models.
 
-You can add a custom, OpenAI-compatible model either via the UI or by editing your `settings.json`.
+You can add a custom, OpenAI-compatible model either via the UI or by editing your settings file.
 
 To do it via the UI, go to the Agent Panel settings (`agent: open settings`) and look for the "Add Provider" button to the right of the "LLM Providers" section title.
 Then, fill up the input fields available in the modal.
 
-To do it via your `settings.json`, add the following snippet under `language_models`:
+To do it via your settings file ([how to edit](../configuring-zed.md#settings-files)), add the following snippet under `language_models`:
 
 ```json [settings]
 {
@@ -616,7 +616,7 @@ Zed will also use the `OPENROUTER_API_KEY` environment variable if it's defined.
 
 #### Custom Models {#openrouter-custom-models}
 
-You can add custom models to the OpenRouter provider by adding the following to your Zed `settings.json`:
+You can add custom models to the OpenRouter provider by adding the following to your Zed settings file ([how to edit](../configuring-zed.md#settings-files)):
 
 ```json [settings]
 {
@@ -706,10 +706,10 @@ These routing controls let you fine‑tune cost, capability, and reliability tra
 
 ### Vercel v0 {#vercel-v0}
 
-[Vercel v0](https://v0.app/docs/api/model) is an expert model for generating full-stack apps, with framework-aware completions optimized for modern stacks like Next.js and Vercel.
+[Vercel v0](https://v0.app/docs/api/model) is a model for generating full-stack apps, with framework-aware completions for stacks like Next.js and Vercel.
 It supports text and image inputs and provides fast streaming responses.
 
-The v0 models are [OpenAI-compatible models](/#openai-api-compatible), but Vercel is listed as first-class provider in the panel's settings view.
+The v0 models are [OpenAI-compatible models](/#openai-api-compatible), and Vercel appears as a dedicated provider in the panel's settings view.
 
 To start using it with Zed, ensure you have first created a [v0 API key](https://v0.dev/chat/settings/keys).
 Once you have it, paste it directly into the Vercel provider section in the panel's settings view.
@@ -718,7 +718,7 @@ You should then find it as `v0-1.5-md` in the model dropdown in the Agent Panel.
 
 ### xAI {#xai}
 
-Zed has first-class support for [xAI](https://x.ai/) models. You can use your own API key to access Grok models.
+Zed includes a dedicated [xAI](https://x.ai/) provider. You can use your own API key to access Grok models.
 
 1. [Create an API key in the xAI Console](https://console.x.ai/team/default/api-keys)
 2. Open the settings view (`agent: open settings`) and go to the **xAI** section
@@ -726,11 +726,11 @@ Zed has first-class support for [xAI](https://x.ai/) models. You can use your ow
 
 The xAI API key will be saved in your keychain. Zed will also use the `XAI_API_KEY` environment variable if it's defined.
 
-> **Note:** While the xAI API is OpenAI-compatible, Zed has first-class support for it as a dedicated provider. For the best experience, we recommend using the dedicated `x_ai` provider configuration instead of the [OpenAI API Compatible](#openai-api-compatible) method.
+> **Note:** The xAI API is OpenAI-compatible, and Zed also includes a dedicated xAI provider. We recommend using the dedicated `x_ai` provider configuration instead of the [OpenAI API Compatible](#openai-api-compatible) method.
 
 #### Custom Models {#xai-custom-models}
 
-The Zed agent comes pre-configured with common Grok models. If you wish to use alternate models or customize their parameters, you can do so by adding the following to your Zed `settings.json`:
+The Zed agent comes pre-configured with common Grok models. If you wish to use alternate models or customize their parameters, you can do so by adding the following to your Zed settings file ([how to edit](../configuring-zed.md#settings-files)):
 
 ```json [settings]
 {
@@ -760,9 +760,9 @@ The Zed agent comes pre-configured with common Grok models. If you wish to use a
 ## Custom Provider Endpoints {#custom-provider-endpoint}
 
 You can use a custom API endpoint for different providers, as long as it's compatible with the provider's API structure.
-To do so, add the following to your `settings.json`:
+To do so, add the following to your settings file ([how to edit](../configuring-zed.md#settings-files)):
 
-```json [settings]
+```json
 {
   "language_models": {
     "some-provider": {

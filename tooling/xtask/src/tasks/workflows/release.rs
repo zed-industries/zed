@@ -254,9 +254,8 @@ fn create_draft_release() -> NamedJob {
             // 25 was chosen arbitrarily.
             .add_step(
                 steps::checkout_repo()
-                    .add_with(("fetch-depth", 25))
-                    .add_with(("clean", false))
-                    .add_with(("ref", "${{ github.ref }}")),
+                    .with_custom_fetch_depth(25)
+                    .with_ref("${{ github.ref }}"),
             )
             .add_step(steps::script("script/determine-release-channel"))
             .add_step(steps::script("mkdir -p target/"))

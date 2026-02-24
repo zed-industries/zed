@@ -172,6 +172,10 @@ pub struct ExampleScore {
     pub wrong_editable_region: Option<bool>,
     #[serde(default)]
     pub has_isolated_whitespace_changes: bool,
+    #[serde(default)]
+    pub inserted_tokens: usize,
+    #[serde(default)]
+    pub deleted_tokens: usize,
 }
 
 impl Example {

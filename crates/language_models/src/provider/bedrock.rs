@@ -600,18 +600,19 @@ impl BedrockModel {
         cx: &AsyncApp,
     ) -> BoxFuture<
         'static,
-        Result<BoxStream<'static, Result<BedrockStreamingResponse, BedrockError>>>,
+        Result<BoxStream<'static, Result<BedrockStreamingResponse, anyhow::Error>>, BedrockError>,
     > {
         let Ok(runtime_client) = self
             .get_or_init_client(cx)
             .cloned()
             .context("Bedrock client not initialized")
         else {
-            return futures::future::ready(Err(anyhow!("App state dropped"))).boxed();
+            return futures::future::ready(Err(BedrockError::Other(anyhow!("App state dropped"))))
+                .boxed();
         };
 
         let task = Tokio::spawn(cx, bedrock::stream_completion(runtime_client, request));
-        async move { task.await.map_err(|err| anyhow!(err))? }.boxed()
+        async move { task.await.map_err(|e| BedrockError::Other(e.into()))? }.boxed()
     }
 }
 
@@ -715,6 +716,7 @@ impl LanguageModel for BedrockModel {
             self.model.max_output_tokens(),
             self.model.mode(),
             self.model.supports_caching(),
+            self.model.supports_tool_use(),
             use_extended_context,
         ) {
             Ok(request) => request,
@@ -722,8 +724,44 @@ impl LanguageModel for BedrockModel {
         };
 
         let request = self.stream_completion(request, cx);
+        let display_name = self.model.display_name().to_string();
         let future = self.request_limiter.stream(async move {
-            let response = request.await.map_err(|err| anyhow!(err))?;
+            let response = request.await.map_err(|err| match err {
+                BedrockError::Validation(ref msg) => {
+                    if msg.contains("model identifier is invalid") {
+                        LanguageModelCompletionError::Other(anyhow!(
+                            "{display_name} is not available in {region}. \
+                                 Try switching to a region where this model is supported."
+                        ))
+                    } else {
+                        LanguageModelCompletionError::BadRequestFormat {
+                            provider: PROVIDER_NAME,
+                            message: msg.clone(),
+                        }
+                    }
+                }
+                BedrockError::RateLimited => LanguageModelCompletionError::RateLimitExceeded {
+                    provider: PROVIDER_NAME,
+                    retry_after: None,
+                },
+                BedrockError::ServiceUnavailable => {
+                    LanguageModelCompletionError::ServerOverloaded {
+                        provider: PROVIDER_NAME,
+                        retry_after: None,
+                    }
+                }
+                BedrockError::AccessDenied(msg) => LanguageModelCompletionError::PermissionError {
+                    provider: PROVIDER_NAME,
+                    message: msg,
+                },
+                BedrockError::InternalServer(msg) => {
+                    LanguageModelCompletionError::ApiInternalServerError {
+                        provider: PROVIDER_NAME,
+                        message: msg,
+                    }
+                }
+                other => LanguageModelCompletionError::Other(anyhow!(other)),
+            })?;
             let events = map_to_language_model_completion_events(response);
 
             if deny_tool_calls {
@@ -771,10 +809,15 @@ pub fn into_bedrock(
     max_output_tokens: u64,
     mode: BedrockModelMode,
     supports_caching: bool,
+    supports_tool_use: bool,
     allow_extended_context: bool,
 ) -> Result<bedrock::Request> {
     let mut new_messages: Vec<BedrockMessage> = Vec::new();
     let mut system_message = String::new();
+
+    // Track whether messages contain tool content - Bedrock requires toolConfig
+    // when tool blocks are present, so we may need to add a dummy tool
+    let mut messages_contain_tool_content = false;
 
     for message in request.messages {
         if message.contents_empty() {
@@ -829,6 +872,7 @@ pub fn into_bedrock(
                             Some(BedrockInnerContent::ReasoningContent(redacted))
                         }
                         MessageContent::ToolUse(tool_use) => {
+                            messages_contain_tool_content = true;
                             let input = if tool_use.input.is_null() {
                                 // Bedrock API requires valid JsonValue, not null, for tool use input
                                 value_to_aws_document(&serde_json::json!({}))
@@ -845,6 +889,7 @@ pub fn into_bedrock(
                                 .map(BedrockInnerContent::ToolUse)
                         }
                         MessageContent::ToolResult(tool_result) => {
+                            messages_contain_tool_content = true;
                             BedrockToolResultBlock::builder()
                                 .tool_use_id(tool_result.tool_use_id.to_string())
                                 .content(match tool_result.content {
@@ -959,22 +1004,43 @@ pub fn into_bedrock(
         }
     }
 
-    let mut tool_spec: Vec<BedrockTool> = request
-        .tools
-        .iter()
-        .filter_map(|tool| {
-            Some(BedrockTool::ToolSpec(
-                BedrockToolSpec::builder()
-                    .name(tool.name.clone())
-                    .description(tool.description.clone())
-                    .input_schema(BedrockToolInputSchema::Json(value_to_aws_document(
-                        &tool.input_schema,
-                    )))
-                    .build()
-                    .log_err()?,
-            ))
-        })
-        .collect();
+    let mut tool_spec: Vec<BedrockTool> = if supports_tool_use {
+        request
+            .tools
+            .iter()
+            .filter_map(|tool| {
+                Some(BedrockTool::ToolSpec(
+                    BedrockToolSpec::builder()
+                        .name(tool.name.clone())
+                        .description(tool.description.clone())
+                        .input_schema(BedrockToolInputSchema::Json(value_to_aws_document(
+                            &tool.input_schema,
+                        )))
+                        .build()
+                        .log_err()?,
+                ))
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
+
+    // Bedrock requires toolConfig when messages contain tool use/result blocks.
+    // If no tools are defined but messages contain tool content (e.g., when
+    // summarising a conversation that used tools), add a dummy tool to satisfy
+    // the API requirement.
+    if supports_tool_use && tool_spec.is_empty() && messages_contain_tool_content {
+        tool_spec.push(BedrockTool::ToolSpec(
+            BedrockToolSpec::builder()
+                .name("_placeholder")
+                .description("Placeholder tool to satisfy Bedrock API requirements when conversation history contains tool usage")
+                .input_schema(BedrockToolInputSchema::Json(value_to_aws_document(
+                    &serde_json::json!({"type": "object", "properties": {}}),
+                )))
+                .build()
+                .context("failed to build placeholder tool spec")?,
+        ));
+    }
 
     if !tool_spec.is_empty() && supports_caching {
         tool_spec.push(BedrockTool::CachePoint(
@@ -997,17 +1063,23 @@ pub fn into_bedrock(
             BedrockToolChoice::Auto(BedrockAutoToolChoice::builder().build())
         }
     };
-    let tool_config: BedrockToolConfig = BedrockToolConfig::builder()
-        .set_tools(Some(tool_spec))
-        .tool_choice(tool_choice)
-        .build()?;
+    let tool_config = if tool_spec.is_empty() {
+        None
+    } else {
+        Some(
+            BedrockToolConfig::builder()
+                .set_tools(Some(tool_spec))
+                .tool_choice(tool_choice)
+                .build()?,
+        )
+    };
 
     Ok(bedrock::Request {
         model,
         messages: new_messages,
         max_tokens: max_output_tokens,
         system: Some(system_message),
-        tools: Some(tool_config),
+        tools: tool_config,
         thinking: if request.thinking_allowed {
             match mode {
                 BedrockModelMode::Thinking { budget_tokens } => {
@@ -1093,7 +1165,7 @@ pub fn get_bedrock_tokens(
 }
 
 pub fn map_to_language_model_completion_events(
-    events: Pin<Box<dyn Send + Stream<Item = Result<BedrockStreamingResponse, BedrockError>>>>,
+    events: Pin<Box<dyn Send + Stream<Item = Result<BedrockStreamingResponse, anyhow::Error>>>>,
 ) -> impl Stream<Item = Result<LanguageModelCompletionEvent, LanguageModelCompletionError>> {
     struct RawToolUse {
         id: String,
@@ -1102,13 +1174,15 @@ pub fn map_to_language_model_completion_events(
     }
 
     struct State {
-        events: Pin<Box<dyn Send + Stream<Item = Result<BedrockStreamingResponse, BedrockError>>>>,
+        events: Pin<Box<dyn Send + Stream<Item = Result<BedrockStreamingResponse, anyhow::Error>>>>,
         tool_uses_by_index: HashMap<i32, RawToolUse>,
+        emitted_tool_use: bool,
     }
 
     let initial_state = State {
         events,
         tool_uses_by_index: HashMap::default(),
+        emitted_tool_use: false,
     };
 
     futures::stream::unfold(initial_state, |mut state| async move {
@@ -1167,10 +1241,13 @@ pub fn map_to_language_model_completion_events(
                             }
                             None
                         }
+                        ConverseStreamOutput::MessageStart(_) => None,
                         ConverseStreamOutput::ContentBlockStop(cb_stop) => state
                             .tool_uses_by_index
                             .remove(&cb_stop.content_block_index)
                             .map(|tool_use| {
+                                state.emitted_tool_use = true;
+
                                 let input = parse_tool_arguments(&tool_use.input_json)
                                     .unwrap_or_else(|_| Value::Object(Default::default()));
 
@@ -1200,9 +1277,16 @@ pub fn map_to_language_model_completion_events(
                             }))
                         }),
                         ConverseStreamOutput::MessageStop(message_stop) => {
-                            let stop_reason = match message_stop.stop_reason {
-                                StopReason::ToolUse => language_model::StopReason::ToolUse,
-                                _ => language_model::StopReason::EndTurn,
+                            let stop_reason = if state.emitted_tool_use {
+                                // Some models (e.g. Kimi) send EndTurn even when
+                                // they've made tool calls. Trust the content over
+                                // the stop reason.
+                                language_model::StopReason::ToolUse
+                            } else {
+                                match message_stop.stop_reason {
+                                    StopReason::ToolUse => language_model::StopReason::ToolUse,
+                                    _ => language_model::StopReason::EndTurn,
+                                }
                             };
                             Some(Ok(LanguageModelCompletionEvent::Stop(stop_reason)))
                         }

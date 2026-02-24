@@ -5,6 +5,7 @@ use crate::{
     repair,
 };
 use anyhow::{Context as _, Result};
+use edit_prediction::example_spec::encode_cursor_in_patch;
 use zeta_prompt::{CURSOR_MARKER, ZetaFormat};
 
 pub fn run_parse_output(example: &mut Example) -> Result<()> {
@@ -161,6 +162,8 @@ fn parse_zeta2_output(
         "--- a/{path}\n+++ b/{path}\n{diff}",
         path = example.spec.cursor_path.to_string_lossy(),
     );
+
+    let formatted_diff = encode_cursor_in_patch(&formatted_diff, cursor_offset);
 
     let actual_cursor = cursor_offset.map(|editable_region_cursor_offset| {
         ActualCursor::from_editable_region(

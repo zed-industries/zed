@@ -473,7 +473,6 @@ impl DisplayMap {
         }
     }
 
-    // TODO(split-diff) figure out how to free the LHS from having to build a block map before this is called
     pub(crate) fn set_companion(
         &mut self,
         companion: Option<(Entity<DisplayMap>, Entity<Companion>)>,
@@ -486,26 +485,31 @@ impl DisplayMap {
             let Some((_, companion)) = self.companion.take() else {
                 return;
             };
-            let (snapshot, edits) = self.sync_through_wrap(cx);
-            let edits = edits.compose([text::Edit {
-                old: WrapRow(0)..snapshot.max_point().row(),
-                new: WrapRow(0)..snapshot.max_point().row(),
+            assert_eq!(self.entity_id, companion.read(cx).rhs_display_map_id);
+            let (snapshot, _edits) = self.sync_through_wrap(cx);
+            let edits = Patch::new(vec![text::Edit {
+                old: WrapRow(0)
+                    ..self.block_map.wrap_snapshot.borrow().max_point().row() + WrapRow(1),
+                new: WrapRow(0)..snapshot.max_point().row() + WrapRow(1),
             }]);
-            self.block_map.write(snapshot, edits, None).remove(
-                companion
+            self.block_map.deferred_edits.set(edits);
+            self.block_map.retain_blocks_raw(&mut |block| {
+                if companion
                     .read(cx)
                     .lhs_custom_block_to_balancing_block
                     .borrow()
                     .values()
-                    .copied()
-                    .collect(),
-            );
+                    .any(|id| *id == block.id)
+                {
+                    return false;
+                }
+                true
+            });
             return;
         };
         assert_eq!(self.entity_id, companion.read(cx).rhs_display_map_id);
 
-        // Note, throwing away the wrap edits because we're going to recompute the maximal range for the block map regardless
-        let old_max_row = self.block_map.wrap_snapshot.borrow().max_point().row();
+        // Note, throwing away the wrap edits because we defer spacer computation to the first render.
         let snapshot = {
             let edits = self.buffer_subscription.consume();
             let snapshot = self.buffer.read(cx).snapshot(cx);
@@ -524,47 +528,47 @@ impl DisplayMap {
                 .wrap_map
                 .update(cx, |wrap_map, cx| wrap_map.sync(snapshot, edits, cx));
 
-            self.block_map
-                .retain_blocks_raw(|block| !matches!(block.placement, BlockPlacement::Replace(_)));
+            self.block_map.retain_blocks_raw(&mut |block| {
+                !matches!(block.placement, BlockPlacement::Replace(_))
+            });
             snapshot
         };
 
-        let (companion_wrap_snapshot, companion_wrap_edits) =
+        let (companion_wrap_snapshot, _companion_wrap_edits) =
             companion_display_map.update(cx, |dm, cx| dm.sync_through_wrap(cx));
 
-        let edits = Patch::new(
-            [text::Edit {
-                old: WrapRow(0)..old_max_row,
-                new: WrapRow(0)..snapshot.max_point().row(),
-            }]
-            .into_iter()
-            .collect(),
-        );
+        let edits = Patch::new(vec![text::Edit {
+            old: WrapRow(0)..self.block_map.wrap_snapshot.borrow().max_point().row() + WrapRow(1),
+            new: WrapRow(0)..snapshot.max_point().row() + WrapRow(1),
+        }]);
+        self.block_map.deferred_edits.set(edits);
 
-        let reader = self.block_map.read(
-            snapshot.clone(),
-            edits.clone(),
-            Some(CompanionView::new(
-                self.entity_id,
-                &companion_wrap_snapshot,
-                &companion_wrap_edits,
-                companion.read(cx),
-            )),
-        );
+        let all_blocks: Vec<_> = self.block_map.blocks_raw().map(Clone::clone).collect();
 
         companion_display_map.update(cx, |companion_display_map, cx| {
+            // Sync folded buffers from RHS to LHS. Also clean up stale
+            // entries: the block map doesn't remove buffers from
+            // `folded_buffers` when they leave the multibuffer, so we
+            // unfold any RHS buffers whose companion mapping is missing.
+            let mut buffers_to_unfold = Vec::new();
             for my_buffer in self.folded_buffers() {
-                let their_buffer = companion
-                    .read(cx)
-                    .rhs_buffer_to_lhs_buffer
-                    .get(my_buffer)
-                    .unwrap();
+                let their_buffer = companion.read(cx).rhs_buffer_to_lhs_buffer.get(my_buffer);
+
+                let Some(their_buffer) = their_buffer else {
+                    buffers_to_unfold.push(*my_buffer);
+                    continue;
+                };
+
                 companion_display_map
                     .block_map
                     .folded_buffers
                     .insert(*their_buffer);
             }
-            for block in reader.blocks {
+            for buffer_id in buffers_to_unfold {
+                self.block_map.folded_buffers.remove(&buffer_id);
+            }
+
+            for block in all_blocks {
                 let Some(their_block) = block_map::balancing_block(
                     &block.properties(),
                     snapshot.buffer(),
@@ -584,16 +588,21 @@ impl DisplayMap {
                         .insert(block.id, their_id);
                 });
             }
-            companion_display_map.block_map.read(
-                companion_wrap_snapshot,
-                companion_wrap_edits,
-                Some(CompanionView::new(
-                    companion_display_map.entity_id,
-                    &snapshot,
-                    &edits,
-                    companion.read(cx),
-                )),
-            );
+            let companion_edits = Patch::new(vec![text::Edit {
+                old: WrapRow(0)
+                    ..companion_display_map
+                        .block_map
+                        .wrap_snapshot
+                        .borrow()
+                        .max_point()
+                        .row()
+                        + WrapRow(1),
+                new: WrapRow(0)..companion_wrap_snapshot.max_point().row() + WrapRow(1),
+            }]);
+            companion_display_map
+                .block_map
+                .deferred_edits
+                .set(companion_edits);
             companion_display_map.companion = Some((this, companion.clone()));
         });
 
@@ -1198,26 +1207,26 @@ impl DisplayMap {
     pub fn highlight_text(
         &mut self,
         key: HighlightKey,
-        ranges: Vec<Range<Anchor>>,
+        mut ranges: Vec<Range<Anchor>>,
         style: HighlightStyle,
         merge: bool,
         cx: &App,
     ) {
         let multi_buffer_snapshot = self.buffer.read(cx).snapshot(cx);
-        let to_insert = match self.text_highlights.remove(&key).filter(|_| merge) {
-            Some(previous) => {
-                let mut merged_ranges = previous.1.clone();
-                for new_range in ranges {
-                    let i = merged_ranges
-                        .binary_search_by(|probe| {
-                            probe.start.cmp(&new_range.start, &multi_buffer_snapshot)
-                        })
-                        .unwrap_or_else(|i| i);
-                    merged_ranges.insert(i, new_range);
+        let to_insert = match self.text_highlights.remove(&key) {
+            Some(mut previous) if merge => match Arc::get_mut(&mut previous) {
+                Some((_, previous_ranges)) => {
+                    previous_ranges.extend(ranges);
+                    previous_ranges.sort_by(|a, b| a.start.cmp(&b.start, &multi_buffer_snapshot));
+                    previous
                 }
-                Arc::new((style, merged_ranges))
-            }
-            None => Arc::new((style, ranges)),
+                None => Arc::new((style, {
+                    ranges.extend(previous.1.iter().cloned());
+                    ranges.sort_by(|a, b| a.start.cmp(&b.start, &multi_buffer_snapshot));
+                    ranges
+                })),
+            },
+            _ => Arc::new((style, ranges)),
         };
         self.text_highlights.insert(key, to_insert);
     }
@@ -1271,7 +1280,7 @@ impl DisplayMap {
         cleared
     }
 
-    pub fn clear_highlights_with(&mut self, mut f: impl FnMut(&HighlightKey) -> bool) -> bool {
+    pub fn clear_highlights_with(&mut self, f: &mut dyn FnMut(&HighlightKey) -> bool) -> bool {
         let mut cleared = false;
         self.text_highlights.retain(|k, _| {
             let b = !f(k);
@@ -2379,7 +2388,7 @@ impl DisplaySnapshot {
     #[instrument(skip_all)]
     pub fn all_text_highlight_ranges(
         &self,
-        f: impl Fn(&HighlightKey) -> bool,
+        f: &dyn Fn(&HighlightKey) -> bool,
     ) -> Vec<(gpui::Hsla, Range<Point>)> {
         use itertools::Itertools;
 
@@ -2638,7 +2647,7 @@ pub mod tests {
         log::info!("wrap width: {:?}", wrap_width);
 
         cx.update(|cx| {
-            init_test(cx, |s| {
+            init_test(cx, &|s| {
                 s.project.all_languages.defaults.tab_size = NonZeroU32::new(tab_size)
             });
         });
@@ -2893,7 +2902,7 @@ pub mod tests {
         cx.background_executor
             .set_block_on_ticks(usize::MAX..=usize::MAX);
         cx.update(|cx| {
-            init_test(cx, |_| {});
+            init_test(cx, &|_| {});
         });
 
         let mut cx = crate::test::editor_test_context::EditorTestContext::new(cx).await;
@@ -3013,7 +3022,7 @@ pub mod tests {
 
     #[gpui::test]
     fn test_text_chunks(cx: &mut gpui::App) {
-        init_test(cx, |_| {});
+        init_test(cx, &|_| {});
 
         let text = sample_text(6, 6, 'a');
         let buffer = MultiBuffer::build_simple(&text, cx);
@@ -3074,7 +3083,7 @@ pub mod tests {
 
     #[gpui::test]
     fn test_inlays_with_newlines_after_blocks(cx: &mut gpui::TestAppContext) {
-        cx.update(|cx| init_test(cx, |_| {}));
+        cx.update(|cx| init_test(cx, &|_| {}));
 
         let buffer = cx.new(|cx| Buffer::local("a", cx));
         let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
@@ -3171,7 +3180,7 @@ pub mod tests {
         language.set_theme(&theme);
 
         cx.update(|cx| {
-            init_test(cx, |s| {
+            init_test(cx, &|s| {
                 s.project.all_languages.defaults.tab_size = Some(2.try_into().unwrap())
             })
         });
@@ -3276,7 +3285,7 @@ pub mod tests {
         );
         language.set_theme(&theme);
 
-        cx.update(|cx| init_test(cx, |_| {}));
+        cx.update(|cx| init_test(cx, &|_| {}));
 
         let buffer = cx.new(|cx| Buffer::local(text, cx).with_language(language, cx));
         cx.condition(&buffer, |buf, _| !buf.is_parsing()).await;
@@ -3361,7 +3370,7 @@ pub mod tests {
         "#
         .unindent();
 
-        cx.update(|cx| init_test(cx, |_| {}));
+        cx.update(|cx| init_test(cx, &|_| {}));
 
         let buffer = cx.new(|cx| Buffer::local(text, cx));
 
@@ -3474,7 +3483,7 @@ pub mod tests {
         cx.background_executor
             .set_block_on_ticks(usize::MAX..=usize::MAX);
 
-        cx.update(|cx| init_test(cx, |_| {}));
+        cx.update(|cx| init_test(cx, &|_| {}));
 
         let buffer = cx.update(|cx| MultiBuffer::build_simple("abcde\nfghij\nklmno\npqrst", cx));
         let buffer_snapshot = buffer.read_with(cx, |buffer, cx| buffer.snapshot(cx));
@@ -3611,7 +3620,7 @@ pub mod tests {
         );
         language.set_theme(&theme);
 
-        cx.update(|cx| init_test(cx, |_| {}));
+        cx.update(|cx| init_test(cx, &|_| {}));
 
         let buffer = cx.new(|cx| Buffer::local(text, cx).with_language(language, cx));
         cx.condition(&buffer, |buf, _| !buf.is_parsing()).await;
@@ -3672,7 +3681,7 @@ pub mod tests {
 
     #[gpui::test]
     async fn test_chunks_with_text_highlights(cx: &mut gpui::TestAppContext) {
-        cx.update(|cx| init_test(cx, |_| {}));
+        cx.update(|cx| init_test(cx, &|_| {}));
 
         let theme =
             SyntaxTheme::new_test(vec![("operator", Hsla::red()), ("string", Hsla::green())]);
@@ -3759,7 +3768,7 @@ pub mod tests {
 
     #[gpui::test]
     fn test_clip_point(cx: &mut gpui::App) {
-        init_test(cx, |_| {});
+        init_test(cx, &|_| {});
 
         fn assert(text: &str, shift_right: bool, bias: Bias, cx: &mut gpui::App) {
             let (unmarked_snapshot, mut markers) = marked_display_snapshot(text, cx);
@@ -3809,7 +3818,7 @@ pub mod tests {
 
     #[gpui::test]
     fn test_clip_at_line_ends(cx: &mut gpui::App) {
-        init_test(cx, |_| {});
+        init_test(cx, &|_| {});
 
         fn assert(text: &str, cx: &mut gpui::App) {
             let (mut unmarked_snapshot, markers) = marked_display_snapshot(text, cx);
@@ -3828,7 +3837,7 @@ pub mod tests {
 
     #[gpui::test]
     fn test_creases(cx: &mut gpui::App) {
-        init_test(cx, |_| {});
+        init_test(cx, &|_| {});
 
         let text = "aaa\nbbb\nccc\nddd\neee\nfff\nggg\nhhh\niii\njjj\nkkk\nlll";
         let buffer = MultiBuffer::build_simple(text, cx);
@@ -3865,7 +3874,7 @@ pub mod tests {
 
     #[gpui::test]
     fn test_tabs_with_multibyte_chars(cx: &mut gpui::App) {
-        init_test(cx, |_| {});
+        init_test(cx, &|_| {});
 
         let text = "✅\t\tα\nβ\t\n🏀β\t\tγ";
         let buffer = MultiBuffer::build_simple(text, cx);
@@ -3943,7 +3952,7 @@ pub mod tests {
 
     #[gpui::test]
     fn test_max_point(cx: &mut gpui::App) {
-        init_test(cx, |_| {});
+        init_test(cx, &|_| {});
 
         let buffer = MultiBuffer::build_simple("aaa\n\t\tbbb", cx);
         let font_size = px(14.0);
@@ -4003,7 +4012,7 @@ pub mod tests {
         chunks
     }
 
-    fn init_test(cx: &mut App, f: impl Fn(&mut SettingsContent)) {
+    fn init_test(cx: &mut App, f: &dyn Fn(&mut SettingsContent)) {
         let settings = SettingsStore::test(cx);
         cx.set_global(settings);
         crate::init(cx);
@@ -4015,7 +4024,7 @@ pub mod tests {
 
     #[gpui::test]
     fn test_isomorphic_display_point_ranges_for_buffer_range(cx: &mut gpui::TestAppContext) {
-        cx.update(|cx| init_test(cx, |_| {}));
+        cx.update(|cx| init_test(cx, &|_| {}));
 
         let buffer = cx.new(|cx| Buffer::local("let x = 5;\n", cx));
         let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
