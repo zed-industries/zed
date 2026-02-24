@@ -3,7 +3,7 @@ use crate::{
     types::TableLikeContent,
     types::{LineNumber, TableCell},
 };
-use editor::{Editor, EditorEvent};
+use editor::Editor;
 use gpui::{AppContext, Context, Entity, Subscription, Task};
 use std::time::{Duration, Instant};
 use text::BufferSnapshot;
@@ -17,45 +17,13 @@ pub(crate) struct EditorState {
 }
 
 impl CsvPreviewView {
-    pub(crate) fn set_editor(&mut self, editor: Entity<Editor>, cx: &mut Context<Self>) {
-        if let Some(active) = &self.active_editor_state
-            && active.editor == editor
-        {
-            return;
-        }
-
-        let subscription = cx.subscribe(&editor, |this, _editor, event: &EditorEvent, cx| {
-            match event {
-                EditorEvent::Edited { .. }
-                | EditorEvent::DirtyChanged
-                | EditorEvent::ExcerptsEdited { .. } => {
-                    println!("Event which triggered reparsing: {event:?}");
-                    this.parse_csv_from_active_editor(true, cx);
-                }
-                _ => {
-                    println!("Other event: {event:?}");
-                }
-            };
-        });
-
-        self.active_editor_state = Some(EditorState {
-            editor,
-            _subscription: subscription,
-        });
-
-        self.parse_csv_from_active_editor(false, cx);
-    }
-
     pub(crate) fn parse_csv_from_active_editor(
         &mut self,
         wait_for_debounce: bool,
         cx: &mut Context<Self>,
     ) {
-        self.parsing_task = Some(self.parse_csv_in_background(
-            wait_for_debounce,
-            self.editor_state().editor.clone(),
-            cx,
-        ));
+        let editor = self.active_editor_state.editor.clone();
+        self.parsing_task = Some(self.parse_csv_in_background(wait_for_debounce, editor, cx));
     }
 
     fn parse_csv_in_background(
@@ -126,7 +94,6 @@ impl CsvPreviewView {
     }
 }
 
-///// CSV parsing /////
 pub fn from_buffer(buffer_snapshot: &BufferSnapshot) -> TableLikeContent {
     let text = buffer_snapshot.text();
 
@@ -258,8 +225,8 @@ fn parse_csv_with_positions(
             }
             '\r' => {
                 if chars.peek() == Some(&'\n') {
-                    // Handle Windows line endings (\r\n) - skip the \r, let \n be handled above
-                    // Don't increment current_offset yet, \n will handle it
+                    // Handle Windows line endings (\r\n): account for \r byte, let \n be handled next
+                    current_offset += char_byte_len;
                     continue;
                 } else {
                     // Standalone \r

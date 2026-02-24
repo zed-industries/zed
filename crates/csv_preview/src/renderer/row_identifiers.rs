@@ -45,7 +45,6 @@ impl LineNumber {
     }
 }
 
-///// Row identifier related view operations /////
 impl CsvPreviewView {
     /// Calculate the optimal width for the row identifier column (line numbers or row numbers).
     ///
@@ -108,7 +107,7 @@ impl CsvPreviewView {
         (base_width + padding).max(min_width)
     }
 
-    pub(crate) fn create_row_identitifier_header(
+    pub(crate) fn create_row_identifier_header(
         &self,
         cx: &mut Context<'_, CsvPreviewView>,
     ) -> AnyElement {

@@ -38,7 +38,6 @@ impl TableDataEngine {
     pub(crate) fn calculate_d2d_mapping(&mut self) {
         self.d2d_mapping
             .apply_sorting(self.applied_sorting, &self.contents.rows);
-        // self.calculate_filters_with_availability();
         self.d2d_mapping.merge_mappings();
     }
 }
@@ -62,7 +61,6 @@ impl DisplayToDataMapping {
 
     /// Get the number of filtered rows
     pub fn visible_row_count(&self) -> usize {
-        log::debug!("Visible row count: {}", self.mapping.len());
         self.mapping.len()
     }
 

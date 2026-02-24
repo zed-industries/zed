@@ -8,12 +8,12 @@ impl Render for CsvPreviewView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
 
+        self.performance_metrics.rendered_indices.clear();
         let render_prep_start = Instant::now();
         let table_with_settings = v_flex()
             .size_full()
             .p_4()
             .bg(theme.colors().editor_background)
-            // Apparently, this should make newly created CSV preview to get focus automatically
             .track_focus(&self.focus_handle)
             .child({
                 if self.engine.contents.number_of_cols == 0 {

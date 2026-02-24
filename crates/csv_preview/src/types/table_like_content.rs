@@ -17,8 +17,8 @@ pub struct TableLikeContent {
 impl Default for TableLikeContent {
     fn default() -> Self {
         Self {
-            number_of_cols: Default::default(),
-            headers: TableRow::<TableCell>::from_element(TableCell::Virtual, 1),
+            number_of_cols: 0,
+            headers: TableRow::<TableCell>::from_vec(vec![], 0),
             rows: vec![],
             line_numbers: vec![],
         }

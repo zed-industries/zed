@@ -1,4 +1,4 @@
-use editor::Editor;
+use editor::{Editor, EditorEvent};
 use gpui::{
     AppContext, Entity, EventEmitter, FocusHandle, Focusable, ListAlignment, Task, actions,
 };
@@ -25,7 +25,7 @@ pub struct CsvPreviewView {
     pub(crate) engine: TableDataEngine,
 
     pub(crate) focus_handle: FocusHandle,
-    active_editor_state: Option<EditorState>,
+    active_editor_state: EditorState,
     pub(crate) table_interaction_state: Entity<TableInteractionState>,
     pub(crate) column_widths: ColumnWidths,
     pub(crate) parsing_task: Option<Task<anyhow::Result<()>>>,
@@ -59,18 +59,72 @@ impl CsvPreviewView {
                 .and_then(|item| item.act_as::<Editor>(cx))
                 .filter(|editor| Self::is_csv_file(editor, cx))
             {
-                let csv_preview = Self::new(&editor, cx);
-                workspace.add_item_to_active_pane(Box::new(csv_preview), None, true, window, cx);
+                let existing = workspace
+                    .items_of_type::<CsvPreviewView>(cx)
+                    .find(|view| view.read(cx).active_editor_state.editor == editor);
+                if let Some(existing) = existing {
+                    workspace.activate_item(&existing, true, true, window, cx);
+                } else {
+                    let csv_preview = Self::new(&editor, cx);
+                    workspace.add_item_to_active_pane(
+                        Box::new(csv_preview),
+                        None,
+                        true,
+                        window,
+                        cx,
+                    );
+                }
             }
         });
     }
-}
 
-impl CsvPreviewView {
+    fn new(editor: &Entity<Editor>, cx: &mut Context<Workspace>) -> Entity<Self> {
+        let contents = TableLikeContent::default();
+        let table_interaction_state = cx.new(|cx| {
+            TableInteractionState::new(cx)
+                .with_custom_scrollbar(ui::Scrollbars::for_settings::<editor::EditorSettings>())
+        });
+
+        cx.new(|cx| {
+            let subscription =
+                cx.subscribe(editor, |this: &mut CsvPreviewView, _editor, event: &EditorEvent, cx| {
+                    match event {
+                        EditorEvent::Edited { .. }
+                        | EditorEvent::DirtyChanged
+                        | EditorEvent::ExcerptsEdited { .. } => {
+                            this.parse_csv_from_active_editor(true, cx);
+                        }
+                        _ => {}
+                    };
+                });
+
+            let mut view = CsvPreviewView {
+                focus_handle: cx.focus_handle(),
+                active_editor_state: EditorState {
+                    editor: editor.clone(),
+                    _subscription: subscription,
+                },
+                table_interaction_state,
+                column_widths: ColumnWidths::new(cx, 1),
+                parsing_task: None,
+                performance_metrics: PerformanceMetrics::default(),
+                list_state: gpui::ListState::new(
+                    contents.rows.len(),
+                    ListAlignment::Top,
+                    px(1.),
+                ),
+                settings: CsvPreviewSettings::default(),
+                last_parse_end_time: None,
+                engine: TableDataEngine::default(),
+            };
+
+            view.parse_csv_from_active_editor(false, cx);
+            view
+        })
+    }
+
     pub(crate) fn editor_state(&self) -> &EditorState {
-        self.active_editor_state
-            .as_ref()
-            .expect("Expected main editor to be initialized")
+        &self.active_editor_state
     }
     pub(crate) fn apply_sort(&mut self) {
         self.performance_metrics.record("Sort", || {
@@ -105,33 +159,6 @@ impl CsvPreviewView {
             .unwrap_or(false)
     }
 
-    fn new(editor: &Entity<Editor>, cx: &mut Context<Workspace>) -> Entity<Self> {
-        let contents = TableLikeContent::default();
-        let table_interaction_state = cx.new(|cx| {
-            TableInteractionState::new(cx)
-                .with_custom_scrollbar(ui::Scrollbars::for_settings::<editor::EditorSettings>())
-        });
-
-        cx.new(|cx| {
-            let mut view = CsvPreviewView {
-                focus_handle: cx.focus_handle(),
-                active_editor_state: None,
-                table_interaction_state,
-                column_widths: ColumnWidths::new(cx, 1),
-                parsing_task: None,
-                performance_metrics: PerformanceMetrics::default(),
-                list_state: gpui::ListState::new(contents.rows.len(), ListAlignment::Top, px(1.)),
-                settings: CsvPreviewSettings::default(),
-                last_parse_end_time: None,
-                engine: TableDataEngine::default(),
-            };
-
-            // No need to trigger any filtering / sorting here, as it's retrigered on parsing
-
-            view.set_editor(editor.clone(), cx);
-            view
-        })
-    }
 }
 
 impl Focusable for CsvPreviewView {

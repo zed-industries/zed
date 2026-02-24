@@ -56,7 +56,7 @@ impl CsvPreviewView {
         // Create headers array with interactive elements
         let mut headers = Vec::with_capacity(cols);
 
-        headers.push(self.create_row_identitifier_header(cx));
+        headers.push(self.create_row_identifier_header(cx));
 
         // Add the actual CSV headers with sort buttons
         for i in 0..(cols - 1) {
@@ -88,7 +88,6 @@ impl CsvPreviewView {
                     RowRenderMechanism::VariableList => {
                         table.variable_row_height_list(row_count, self.list_state.clone(), {
                             cx.processor(move |this, display_row: usize, _window, cx| {
-                                // Record this display index for performance metrics
                                 this.performance_metrics.rendered_indices.push(display_row);
 
                                 let display_row = DisplayRow(display_row);
