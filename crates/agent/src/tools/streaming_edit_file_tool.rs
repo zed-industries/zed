@@ -1670,7 +1670,7 @@ mod tests {
             )
         });
 
-        let (sender, input) = ToolInput::<StreamingEditFileToolInput>::channel_for_test();
+        let (sender, input) = ToolInput::<StreamingEditFileToolInput>::test();
         let (event_stream, _receiver) = ToolCallEventStream::test();
 
         let tool = Arc::new(StreamingEditFileTool::new(
@@ -1742,7 +1742,7 @@ mod tests {
             )
         });
 
-        let (sender, input) = ToolInput::<StreamingEditFileToolInput>::channel_for_test();
+        let (sender, input) = ToolInput::<StreamingEditFileToolInput>::test();
         let (event_stream, _receiver) = ToolCallEventStream::test();
 
         let tool = Arc::new(StreamingEditFileTool::new(
@@ -1811,7 +1811,7 @@ mod tests {
             )
         });
 
-        let (sender, input) = ToolInput::<StreamingEditFileToolInput>::channel_for_test();
+        let (sender, input) = ToolInput::<StreamingEditFileToolInput>::test();
         let (event_stream, _receiver, mut cancellation_tx) =
             ToolCallEventStream::test_with_cancellation();
 
@@ -1873,7 +1873,7 @@ mod tests {
             )
         });
 
-        let (sender, input) = ToolInput::<StreamingEditFileToolInput>::channel_for_test();
+        let (sender, input) = ToolInput::<StreamingEditFileToolInput>::test();
         let (event_stream, _receiver) = ToolCallEventStream::test();
 
         let tool = Arc::new(StreamingEditFileTool::new(
@@ -1963,7 +1963,7 @@ mod tests {
             )
         });
 
-        let (sender, input) = ToolInput::<StreamingEditFileToolInput>::channel_for_test();
+        let (sender, input) = ToolInput::<StreamingEditFileToolInput>::test();
         let (event_stream, _receiver) = ToolCallEventStream::test();
 
         let tool = Arc::new(StreamingEditFileTool::new(
@@ -2036,7 +2036,7 @@ mod tests {
             )
         });
 
-        let (sender, input) = ToolInput::<StreamingEditFileToolInput>::channel_for_test();
+        let (sender, input) = ToolInput::<StreamingEditFileToolInput>::test();
         let (event_stream, _receiver) = ToolCallEventStream::test();
 
         let tool = Arc::new(StreamingEditFileTool::new(
@@ -2090,7 +2090,7 @@ mod tests {
             )
         });
 
-        let (sender, input) = ToolInput::<StreamingEditFileToolInput>::channel_for_test();
+        let (sender, input) = ToolInput::<StreamingEditFileToolInput>::test();
         let (event_stream, _receiver) = ToolCallEventStream::test();
 
         let tool = Arc::new(StreamingEditFileTool::new(
@@ -2219,7 +2219,7 @@ mod tests {
             )
         });
 
-        let (sender, input) = ToolInput::<StreamingEditFileToolInput>::channel_for_test();
+        let (sender, input) = ToolInput::<StreamingEditFileToolInput>::test();
         let (event_stream, _receiver) = ToolCallEventStream::test();
 
         let tool = Arc::new(StreamingEditFileTool::new(
@@ -2337,7 +2337,7 @@ mod tests {
             )
         });
 
-        let (sender, input) = ToolInput::<StreamingEditFileToolInput>::channel_for_test();
+        let (sender, input) = ToolInput::<StreamingEditFileToolInput>::test();
         let (event_stream, _receiver) = ToolCallEventStream::test();
 
         let tool = Arc::new(StreamingEditFileTool::new(
@@ -2449,7 +2449,7 @@ mod tests {
             )
         });
 
-        let (sender, input) = ToolInput::<StreamingEditFileToolInput>::channel_for_test();
+        let (sender, input) = ToolInput::<StreamingEditFileToolInput>::test();
         let (event_stream, _receiver) = ToolCallEventStream::test();
 
         let tool = Arc::new(StreamingEditFileTool::new(
@@ -2525,7 +2525,7 @@ mod tests {
             )
         });
 
-        let (sender, input) = ToolInput::<StreamingEditFileToolInput>::channel_for_test();
+        let (sender, input) = ToolInput::<StreamingEditFileToolInput>::test();
         let (event_stream, _receiver) = ToolCallEventStream::test();
 
         let tool = Arc::new(StreamingEditFileTool::new(
@@ -2602,7 +2602,7 @@ mod tests {
         });
 
         let (sender, input): (ToolInputSender, ToolInput<StreamingEditFileToolInput>) =
-            ToolInput::channel_for_test();
+            ToolInput::test();
 
         let (event_stream, _event_rx) = ToolCallEventStream::test();
         let task = cx.update(|cx| {
@@ -2679,7 +2679,7 @@ mod tests {
         });
 
         let (sender, input): (ToolInputSender, ToolInput<StreamingEditFileToolInput>) =
-            ToolInput::channel_for_test();
+            ToolInput::test();
 
         let (event_stream, _event_rx) = ToolCallEventStream::test();
         let task = cx.update(|cx| {
@@ -2732,7 +2732,7 @@ mod tests {
         // ToolInput::resolved-style immediate delivery to confirm recv() works
         // when partials are already buffered.
         let (sender, input): (ToolInputSender, ToolInput<StreamingEditFileToolInput>) =
-            ToolInput::channel_for_test();
+            ToolInput::test();
 
         let (event_stream, _event_rx) = ToolCallEventStream::test();
         let task = cx.update(|cx| {
@@ -2944,7 +2944,7 @@ mod tests {
         });
 
         // Use streaming pattern so executor can pump the LSP request/response
-        let (sender, input) = ToolInput::<StreamingEditFileToolInput>::channel_for_test();
+        let (sender, input) = ToolInput::<StreamingEditFileToolInput>::test();
         let (event_stream, _receiver) = ToolCallEventStream::test();
 
         let tool = Arc::new(StreamingEditFileTool::new(
@@ -3001,7 +3001,7 @@ mod tests {
             });
         });
 
-        let (sender, input) = ToolInput::<StreamingEditFileToolInput>::channel_for_test();
+        let (sender, input) = ToolInput::<StreamingEditFileToolInput>::test();
         let (event_stream, _receiver) = ToolCallEventStream::test();
 
         let tool = Arc::new(StreamingEditFileTool::new(

@@ -2878,15 +2878,12 @@ pub struct ToolInput<T> {
 }
 
 impl<T: DeserializeOwned> ToolInput<T> {
-    /// Create a ToolInput that is already resolved from a typed value.
-    /// Useful in tests where you have the input directly rather than as JSON.
     #[cfg(any(test, feature = "test-support"))]
     pub fn resolved(input: impl Serialize) -> Self {
         let value = serde_json::to_value(input).expect("failed to serialize tool input");
         Self::ready(value)
     }
 
-    /// Create a ToolInput that is already resolved (for non-streaming tools).
     pub fn ready(value: serde_json::Value) -> Self {
         let (partial_tx, partial_rx) = mpsc::unbounded();
         drop(partial_tx);
@@ -2902,7 +2899,7 @@ impl<T: DeserializeOwned> ToolInput<T> {
     /// Create a paired (sender, input) for streaming tool input in tests.
     /// The sender can push partial JSON snapshots followed by a final input.
     #[cfg(any(test, feature = "test-support"))]
-    pub fn channel_for_test() -> (ToolInputSender, Self) {
+    pub fn test() -> (ToolInputSender, Self) {
         let (sender, input) = ToolInputSender::channel();
         (sender, input.cast())
     }
