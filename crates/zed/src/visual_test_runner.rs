@@ -551,7 +551,7 @@ fn run_visual_tests(project_path: PathBuf, update_baseline: bool) -> Result<()> 
     // Run Test 11: Thread target selector visual tests
     #[cfg(feature = "visual-tests")]
     {
-        println!("\n--- Test 11: thread_target_selector (4 variants) ---");
+        println!("\n--- Test 11: thread_target_selector (6 variants) ---");
         match run_thread_target_selector_visual_tests(app_state.clone(), &mut cx, update_baseline) {
             Ok(TestResult::Passed) => {
                 println!("✓ thread_target_selector: PASSED");
@@ -3093,7 +3093,7 @@ fn run_thread_target_selector_visual_tests(
     cx: &mut VisualTestAppContext,
     update_baseline: bool,
 ) -> Result<TestResult> {
-    use agent_ui::{AgentPanel, ThreadTarget, WorktreeCreationStatus};
+    use agent_ui::{AgentPanel, SetThreadTarget, ThreadTarget, WorktreeCreationStatus};
 
     // Enable feature flags so the thread target selector renders
     cx.update(|cx| {
@@ -3473,6 +3473,74 @@ edition = "2021"
         update_baseline,
     );
 
+    // ---- Screenshot 6: Worktree creation succeeded ----
+    // Clear the error status and re-select New Worktree to ensure a clean state.
+    cx.update_window(workspace_window.into(), |_, _window, cx| {
+        panel.update(cx, |panel, cx| {
+            panel.set_worktree_creation_status_for_tests(None, cx);
+        });
+    })?;
+    cx.run_until_parked();
+
+    cx.update_window(workspace_window.into(), |_, window, cx| {
+        window.dispatch_action(Box::new(SetThreadTarget::new_worktree()), cx);
+    })?;
+    cx.run_until_parked();
+
+    // Insert a message into the active thread's message editor and submit.
+    let thread_view = cx
+        .read(|cx| panel.read(cx).as_active_thread_view(cx).cloned())
+        .ok_or_else(|| anyhow::anyhow!("No active thread view"))?;
+
+    cx.update_window(workspace_window.into(), |_, window, cx| {
+        thread_view.update(cx, |thread_view, cx| {
+            let message_editor = thread_view.active_editor(cx);
+            message_editor.update(cx, |message_editor, cx| {
+                message_editor.set_message(
+                    vec![acp::ContentBlock::Text(acp::TextContent::new(
+                        "Create a worktree".to_string(),
+                    ))],
+                    window,
+                    cx,
+                );
+                message_editor.send(cx);
+            });
+        });
+    })?;
+    cx.run_until_parked();
+
+    // Wait for the worktree creation flow to complete.
+    cx.background_executor.allow_parking();
+    let mut creation_complete = false;
+    for _ in 0..120 {
+        cx.run_until_parked();
+        let workspace_count = workspace_window.update(cx, |multi_workspace, _window, _cx| {
+            multi_workspace.workspaces().len()
+        })?;
+        if workspace_count == 2 {
+            creation_complete = true;
+            break;
+        }
+        cx.advance_clock(Duration::from_millis(100));
+    }
+    cx.background_executor.forbid_parking();
+
+    if !creation_complete {
+        return Err(anyhow::anyhow!("Worktree creation did not complete"));
+    }
+
+    cx.update_window(workspace_window.into(), |_, window, _cx| {
+        window.refresh();
+    })?;
+    cx.run_until_parked();
+
+    let result_succeeded = run_visual_test(
+        "worktree_creation_succeeded",
+        workspace_window.into(),
+        cx,
+        update_baseline,
+    );
+
     // Clean up
     workspace_window
         .update(cx, |multi_workspace, _window, cx| {
@@ -3513,6 +3581,7 @@ edition = "2021"
         ("new_worktree", result_new_worktree),
         ("creating", result_creating),
         ("error", result_error),
+        ("succeeded", result_succeeded),
     ];
 
     let mut has_baseline_update = None;
