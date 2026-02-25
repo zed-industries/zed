@@ -2,7 +2,7 @@ use super::edit_file_tool::EditFileTool;
 use super::restore_file_from_disk_tool::RestoreFileFromDiskTool;
 use super::save_file_tool::SaveFileTool;
 use crate::{
-    AgentTool, Templates, Thread, ToolCallEventStream, ToolInput,
+    AgentTool, Thread, ToolCallEventStream, ToolInput,
     edit_agent::streaming_fuzzy_matcher::StreamingFuzzyMatcher,
 };
 use acp_thread::Diff;
@@ -713,8 +713,6 @@ pub struct StreamingEditFileTool {
     thread: WeakEntity<Thread>,
     language_registry: Arc<LanguageRegistry>,
     project: Entity<Project>,
-    #[allow(dead_code)]
-    templates: Arc<Templates>,
 }
 
 impl StreamingEditFileTool {
@@ -722,13 +720,11 @@ impl StreamingEditFileTool {
         project: Entity<Project>,
         thread: WeakEntity<Thread>,
         language_registry: Arc<LanguageRegistry>,
-        templates: Arc<Templates>,
     ) -> Self {
         Self {
             project,
             thread,
             language_registry,
-            templates,
         }
     }
 
@@ -1135,7 +1131,6 @@ mod tests {
                     project.clone(),
                     thread.downgrade(),
                     language_registry,
-                    Templates::new(),
                 ))
                 .run(
                     ToolInput::resolved(input),
@@ -1188,7 +1183,6 @@ mod tests {
                     project.clone(),
                     thread.downgrade(),
                     language_registry,
-                    Templates::new(),
                 ))
                 .run(
                     ToolInput::resolved(input),
@@ -1252,7 +1246,6 @@ mod tests {
                     project.clone(),
                     thread.downgrade(),
                     language_registry,
-                    Templates::new(),
                 ))
                 .run(
                     ToolInput::resolved(input),
@@ -1318,7 +1311,6 @@ mod tests {
                     project.clone(),
                     thread.downgrade(),
                     language_registry,
-                    Templates::new(),
                 ))
                 .run(
                     ToolInput::resolved(input),
@@ -1387,7 +1379,6 @@ mod tests {
                     project.clone(),
                     thread.downgrade(),
                     language_registry,
-                    Templates::new(),
                 ))
                 .run(
                     ToolInput::resolved(input),
@@ -1456,7 +1447,6 @@ mod tests {
                     project.clone(),
                     thread.downgrade(),
                     language_registry,
-                    Templates::new(),
                 ))
                 .run(
                     ToolInput::resolved(input),
@@ -1513,7 +1503,6 @@ mod tests {
                     project,
                     thread.downgrade(),
                     language_registry,
-                    Templates::new(),
                 ))
                 .run(
                     ToolInput::resolved(input),
@@ -1568,7 +1557,6 @@ mod tests {
                     project,
                     thread.downgrade(),
                     language_registry,
-                    Templates::new(),
                 ))
                 .run(
                     ToolInput::resolved(input),
@@ -1642,7 +1630,6 @@ mod tests {
                     project,
                     thread.downgrade(),
                     language_registry,
-                    Templates::new(),
                 ))
                 .run(
                     ToolInput::resolved(input),
@@ -1696,7 +1683,6 @@ mod tests {
             project.clone(),
             thread.downgrade(),
             language_registry,
-            Templates::new(),
         ));
 
         let task = cx.update(|cx| tool.run(input, event_stream, cx));
@@ -1769,7 +1755,6 @@ mod tests {
             project.clone(),
             thread.downgrade(),
             language_registry,
-            Templates::new(),
         ));
 
         let task = cx.update(|cx| tool.run(input, event_stream, cx));
@@ -1840,7 +1825,6 @@ mod tests {
             project.clone(),
             thread.downgrade(),
             language_registry,
-            Templates::new(),
         ));
 
         let task = cx.update(|cx| tool.run(input, event_stream, cx));
@@ -1902,7 +1886,6 @@ mod tests {
             project.clone(),
             thread.downgrade(),
             language_registry,
-            Templates::new(),
         ));
 
         let task = cx.update(|cx| tool.run(input, event_stream, cx));
@@ -1993,7 +1976,6 @@ mod tests {
             project.clone(),
             thread.downgrade(),
             language_registry,
-            Templates::new(),
         ));
 
         let task = cx.update(|cx| tool.run(input, event_stream, cx));
@@ -2067,7 +2049,6 @@ mod tests {
             project.clone(),
             thread.downgrade(),
             language_registry,
-            Templates::new(),
         ));
 
         let task = cx.update(|cx| tool.run(input, event_stream, cx));
@@ -2122,7 +2103,6 @@ mod tests {
             project.clone(),
             thread.downgrade(),
             language_registry,
-            Templates::new(),
         ));
 
         let task = cx.update(|cx| tool.run(input, event_stream, cx));
@@ -2252,7 +2232,6 @@ mod tests {
             project.clone(),
             thread.downgrade(),
             language_registry,
-            Templates::new(),
         ));
 
         let task = cx.update(|cx| tool.run(input, event_stream, cx));
@@ -2371,7 +2350,6 @@ mod tests {
             project.clone(),
             thread.downgrade(),
             language_registry,
-            Templates::new(),
         ));
 
         let task = cx.update(|cx| tool.run(input, event_stream, cx));
@@ -2484,7 +2462,6 @@ mod tests {
             project.clone(),
             thread.downgrade(),
             language_registry,
-            Templates::new(),
         ));
 
         let task = cx.update(|cx| tool.run(input, event_stream, cx));
@@ -2561,7 +2538,6 @@ mod tests {
             project.clone(),
             thread.downgrade(),
             language_registry,
-            Templates::new(),
         ));
 
         let task = cx.update(|cx| tool.run(input, event_stream, cx));
@@ -2640,7 +2616,6 @@ mod tests {
                 project.clone(),
                 thread.downgrade(),
                 language_registry,
-                Templates::new(),
             ))
             .run(input, event_stream, cx)
         });
@@ -2718,7 +2693,6 @@ mod tests {
                 project.clone(),
                 thread.downgrade(),
                 language_registry,
-                Templates::new(),
             ))
             .run(input, event_stream, cx)
         });
@@ -2772,7 +2746,6 @@ mod tests {
                 project.clone(),
                 thread.downgrade(),
                 language_registry,
-                Templates::new(),
             ))
             .run(input, event_stream, cx)
         });

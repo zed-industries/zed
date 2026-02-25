@@ -1362,7 +1362,6 @@ impl Thread {
             self.project.clone(),
             cx.weak_entity(),
             language_registry,
-            Templates::new(),
         ));
         self.add_tool(FetchTool::new(self.project.read(cx).client().http_client()));
         self.add_tool(FindPathTool::new(self.project.clone()));
