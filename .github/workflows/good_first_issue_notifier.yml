@@ -6,7 +6,8 @@ on:
 
 jobs:
   handle-good-first-issue:
-    if: github.event.label.name == '.contrib/good first issue'
+    # Disabled on fork: needs zed-industries infrastructure (Discord webhook). Set up your own and re-enable.
+    if: false
     runs-on: namespace-profile-2x4-ubuntu-2404
 
     steps:

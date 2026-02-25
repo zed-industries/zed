@@ -55,11 +55,8 @@ jobs:
   batch-suggestions:
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    if: |
-      (github.event_name == 'pull_request' && 
-       github.event.pull_request.merged == true &&
-       github.event.pull_request.base.ref == 'main') ||
-      (github.event_name == 'workflow_dispatch' && inputs.mode == 'batch')
+    # Disabled on fork: needs zed-industries infrastructure (Factory API, Droid CLI). Set up your own and re-enable.
+    if: false
     
     steps:
       - name: Checkout repository
@@ -265,10 +262,8 @@ jobs:
   cherry-pick-suggestions:
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    if: |
-      (github.event_name == 'pull_request_target' && 
-       startsWith(github.event.pull_request.base.ref, 'v0.')) ||
-      (github.event_name == 'workflow_dispatch' && inputs.mode == 'immediate')
+    # Disabled on fork: needs zed-industries infrastructure (Factory API, Droid CLI). Set up your own and re-enable.
+    if: false
     
     steps:
       - name: Checkout repository

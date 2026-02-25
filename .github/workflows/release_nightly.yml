@@ -12,7 +12,7 @@ on:
   - cron: 0 7 * * *
 jobs:
   check_style:
-    runs-on: namespace-profile-mac-large
+    runs-on: macos-latest
     steps:
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -25,7 +25,7 @@ jobs:
       run: ./script/clippy
     timeout-minutes: 60
   run_tests_windows:
-    runs-on: self-32vcpu-windows-2022
+    runs-on: windows-latest
     steps:
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -43,19 +43,8 @@ jobs:
     - name: steps::clear_target_dir_if_large
       run: ./script/clear-target-dir-if-larger-than.ps1 250
       shell: pwsh
-    - name: steps::setup_sccache
-      run: ./script/setup-sccache.ps1
-      shell: pwsh
-      env:
-        R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
-        R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
-        R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
-        SCCACHE_BUCKET: sccache-zed
     - name: steps::cargo_nextest
       run: cargo nextest run --workspace --no-fail-fast --no-tests=warn
-      shell: pwsh
-    - name: steps::show_sccache_stats
-      run: if ($env:RUSTC_WRAPPER) { & $env:RUSTC_WRAPPER --show-stats }; exit 0
       shell: pwsh
     - name: steps::cleanup_cargo_config
       if: always()
@@ -64,7 +53,7 @@ jobs:
       shell: pwsh
     timeout-minutes: 60
   clippy_windows:
-    runs-on: self-32vcpu-windows-2022
+    runs-on: windows-latest
     steps:
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -75,19 +64,8 @@ jobs:
         New-Item -ItemType Directory -Path "./../.cargo" -Force
         Copy-Item -Path "./.cargo/ci-config.toml" -Destination "./../.cargo/config.toml"
       shell: pwsh
-    - name: steps::setup_sccache
-      run: ./script/setup-sccache.ps1
-      shell: pwsh
-      env:
-        R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
-        R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
-        R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
-        SCCACHE_BUCKET: sccache-zed
     - name: steps::clippy
       run: ./script/clippy.ps1
-      shell: pwsh
-    - name: steps::show_sccache_stats
-      run: if ($env:RUSTC_WRAPPER) { & $env:RUSTC_WRAPPER --show-stats }; exit 0
       shell: pwsh
     timeout-minutes: 60
   bundle_linux_aarch64:
@@ -95,11 +73,11 @@ jobs:
     - check_style
     - run_tests_windows
     - clippy_windows
-    runs-on: namespace-profile-8x32-ubuntu-2004-arm-m4
+    runs-on: ubuntu-20.04
     env:
       CARGO_INCREMENTAL: 0
-      ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
-      ZED_MINIDUMP_ENDPOINT: ${{ secrets.ZED_SENTRY_MINIDUMP_ENDPOINT }}
+#       ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }} # Fork: no secret configured
+#       ZED_MINIDUMP_ENDPOINT: ${{ secrets.ZED_SENTRY_MINIDUMP_ENDPOINT }} # Fork: no Sentry
     steps:
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -111,10 +89,6 @@ jobs:
         version=$(git rev-parse --short HEAD)
         echo "Publishing version: ${version} on release channel nightly"
         echo "nightly" > crates/zed/RELEASE_CHANNEL
-    - name: steps::setup_sentry
-      uses: matbour/setup-sentry-cli@3e938c54b3018bdd019973689ef984e033b0454b
-      with:
-        token: ${{ secrets.SENTRY_AUTH_TOKEN }}
     - name: steps::setup_linux
       run: ./script/linux
     - name: steps::install_mold
@@ -141,11 +115,11 @@ jobs:
     - check_style
     - run_tests_windows
     - clippy_windows
-    runs-on: namespace-profile-32x64-ubuntu-2004
+    runs-on: ubuntu-20.04
     env:
       CARGO_INCREMENTAL: 0
-      ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
-      ZED_MINIDUMP_ENDPOINT: ${{ secrets.ZED_SENTRY_MINIDUMP_ENDPOINT }}
+#       ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }} # Fork: no secret configured
+#       ZED_MINIDUMP_ENDPOINT: ${{ secrets.ZED_SENTRY_MINIDUMP_ENDPOINT }} # Fork: no Sentry
     steps:
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -157,10 +131,6 @@ jobs:
         version=$(git rev-parse --short HEAD)
         echo "Publishing version: ${version} on release channel nightly"
         echo "nightly" > crates/zed/RELEASE_CHANNEL
-    - name: steps::setup_sentry
-      uses: matbour/setup-sentry-cli@3e938c54b3018bdd019973689ef984e033b0454b
-      with:
-        token: ${{ secrets.SENTRY_AUTH_TOKEN }}
     - name: steps::setup_linux
       run: ./script/linux
     - name: steps::install_mold
@@ -187,16 +157,16 @@ jobs:
     - check_style
     - run_tests_windows
     - clippy_windows
-    runs-on: namespace-profile-mac-large
+    runs-on: macos-latest
     env:
       CARGO_INCREMENTAL: 0
-      ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
-      ZED_MINIDUMP_ENDPOINT: ${{ secrets.ZED_SENTRY_MINIDUMP_ENDPOINT }}
-      MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
-      MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
-      APPLE_NOTARIZATION_KEY: ${{ secrets.APPLE_NOTARIZATION_KEY }}
-      APPLE_NOTARIZATION_KEY_ID: ${{ secrets.APPLE_NOTARIZATION_KEY_ID }}
-      APPLE_NOTARIZATION_ISSUER_ID: ${{ secrets.APPLE_NOTARIZATION_ISSUER_ID }}
+#       ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }} # Fork: no secret configured
+#       ZED_MINIDUMP_ENDPOINT: ${{ secrets.ZED_SENTRY_MINIDUMP_ENDPOINT }} # Fork: no Sentry
+#       MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }} # Fork: no signing cert
+#       MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }} # Fork: no signing cert
+#       APPLE_NOTARIZATION_KEY: ${{ secrets.APPLE_NOTARIZATION_KEY }} # Fork: no Apple notarization
+#       APPLE_NOTARIZATION_KEY_ID: ${{ secrets.APPLE_NOTARIZATION_KEY_ID }} # Fork: no Apple notarization
+#       APPLE_NOTARIZATION_ISSUER_ID: ${{ secrets.APPLE_NOTARIZATION_ISSUER_ID }} # Fork: no Apple notarization
     steps:
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -212,10 +182,6 @@ jobs:
       uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
       with:
         node-version: '20'
-    - name: steps::setup_sentry
-      uses: matbour/setup-sentry-cli@3e938c54b3018bdd019973689ef984e033b0454b
-      with:
-        token: ${{ secrets.SENTRY_AUTH_TOKEN }}
     - name: steps::clear_target_dir_if_large
       run: ./script/clear-target-dir-if-larger-than 300
     - name: run_bundling::bundle_mac::bundle_mac
@@ -238,16 +204,16 @@ jobs:
     - check_style
     - run_tests_windows
     - clippy_windows
-    runs-on: namespace-profile-mac-large
+    runs-on: macos-latest
     env:
       CARGO_INCREMENTAL: 0
-      ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
-      ZED_MINIDUMP_ENDPOINT: ${{ secrets.ZED_SENTRY_MINIDUMP_ENDPOINT }}
-      MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
-      MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
-      APPLE_NOTARIZATION_KEY: ${{ secrets.APPLE_NOTARIZATION_KEY }}
-      APPLE_NOTARIZATION_KEY_ID: ${{ secrets.APPLE_NOTARIZATION_KEY_ID }}
-      APPLE_NOTARIZATION_ISSUER_ID: ${{ secrets.APPLE_NOTARIZATION_ISSUER_ID }}
+#       ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }} # Fork: no secret configured
+#       ZED_MINIDUMP_ENDPOINT: ${{ secrets.ZED_SENTRY_MINIDUMP_ENDPOINT }} # Fork: no Sentry
+#       MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }} # Fork: no signing cert
+#       MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }} # Fork: no signing cert
+#       APPLE_NOTARIZATION_KEY: ${{ secrets.APPLE_NOTARIZATION_KEY }} # Fork: no Apple notarization
+#       APPLE_NOTARIZATION_KEY_ID: ${{ secrets.APPLE_NOTARIZATION_KEY_ID }} # Fork: no Apple notarization
+#       APPLE_NOTARIZATION_ISSUER_ID: ${{ secrets.APPLE_NOTARIZATION_ISSUER_ID }} # Fork: no Apple notarization
     steps:
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -263,10 +229,6 @@ jobs:
       uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
       with:
         node-version: '20'
-    - name: steps::setup_sentry
-      uses: matbour/setup-sentry-cli@3e938c54b3018bdd019973689ef984e033b0454b
-      with:
-        token: ${{ secrets.SENTRY_AUTH_TOKEN }}
     - name: steps::clear_target_dir_if_large
       run: ./script/clear-target-dir-if-larger-than 300
     - name: run_bundling::bundle_mac::bundle_mac
@@ -289,17 +251,17 @@ jobs:
     - check_style
     - run_tests_windows
     - clippy_windows
-    runs-on: self-32vcpu-windows-2022
+    runs-on: windows-latest
     env:
       CARGO_INCREMENTAL: 0
-      ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
-      ZED_MINIDUMP_ENDPOINT: ${{ secrets.ZED_SENTRY_MINIDUMP_ENDPOINT }}
-      AZURE_TENANT_ID: ${{ secrets.AZURE_SIGNING_TENANT_ID }}
-      AZURE_CLIENT_ID: ${{ secrets.AZURE_SIGNING_CLIENT_ID }}
-      AZURE_CLIENT_SECRET: ${{ secrets.AZURE_SIGNING_CLIENT_SECRET }}
-      ACCOUNT_NAME: ${{ vars.AZURE_SIGNING_ACCOUNT_NAME }}
-      CERT_PROFILE_NAME: ${{ vars.AZURE_SIGNING_CERT_PROFILE_NAME }}
-      ENDPOINT: ${{ vars.AZURE_SIGNING_ENDPOINT }}
+#       ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }} # Fork: no secret configured
+#       ZED_MINIDUMP_ENDPOINT: ${{ secrets.ZED_SENTRY_MINIDUMP_ENDPOINT }} # Fork: no Sentry
+#       AZURE_TENANT_ID: ${{ secrets.AZURE_SIGNING_TENANT_ID }} # Fork: no Azure signing
+#       AZURE_CLIENT_ID: ${{ secrets.AZURE_SIGNING_CLIENT_ID }} # Fork: no Azure signing
+#       AZURE_CLIENT_SECRET: ${{ secrets.AZURE_SIGNING_CLIENT_SECRET }} # Fork: no Azure signing
+#       ACCOUNT_NAME: ${{ vars.AZURE_SIGNING_ACCOUNT_NAME }} # Fork: no Azure signing
+#       CERT_PROFILE_NAME: ${{ vars.AZURE_SIGNING_CERT_PROFILE_NAME }} # Fork: no Azure signing
+#       ENDPOINT: ${{ vars.AZURE_SIGNING_ENDPOINT }} # Fork: no Azure signing
       FILE_DIGEST: SHA256
       TIMESTAMP_DIGEST: SHA256
       TIMESTAMP_SERVER: http://timestamp.acs.microsoft.com
@@ -316,10 +278,6 @@ jobs:
         "nightly" | Set-Content -Path "crates/zed/RELEASE_CHANNEL"
       shell: pwsh
       working-directory: ${{ env.ZED_WORKSPACE }}
-    - name: steps::setup_sentry
-      uses: matbour/setup-sentry-cli@3e938c54b3018bdd019973689ef984e033b0454b
-      with:
-        token: ${{ secrets.SENTRY_AUTH_TOKEN }}
     - name: run_bundling::bundle_windows::bundle_windows
       run: script/bundle-windows.ps1 -Architecture aarch64
       shell: pwsh
@@ -342,17 +300,17 @@ jobs:
     - check_style
     - run_tests_windows
     - clippy_windows
-    runs-on: self-32vcpu-windows-2022
+    runs-on: windows-latest
     env:
       CARGO_INCREMENTAL: 0
-      ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
-      ZED_MINIDUMP_ENDPOINT: ${{ secrets.ZED_SENTRY_MINIDUMP_ENDPOINT }}
-      AZURE_TENANT_ID: ${{ secrets.AZURE_SIGNING_TENANT_ID }}
-      AZURE_CLIENT_ID: ${{ secrets.AZURE_SIGNING_CLIENT_ID }}
-      AZURE_CLIENT_SECRET: ${{ secrets.AZURE_SIGNING_CLIENT_SECRET }}
-      ACCOUNT_NAME: ${{ vars.AZURE_SIGNING_ACCOUNT_NAME }}
-      CERT_PROFILE_NAME: ${{ vars.AZURE_SIGNING_CERT_PROFILE_NAME }}
-      ENDPOINT: ${{ vars.AZURE_SIGNING_ENDPOINT }}
+#       ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }} # Fork: no secret configured
+#       ZED_MINIDUMP_ENDPOINT: ${{ secrets.ZED_SENTRY_MINIDUMP_ENDPOINT }} # Fork: no Sentry
+#       AZURE_TENANT_ID: ${{ secrets.AZURE_SIGNING_TENANT_ID }} # Fork: no Azure signing
+#       AZURE_CLIENT_ID: ${{ secrets.AZURE_SIGNING_CLIENT_ID }} # Fork: no Azure signing
+#       AZURE_CLIENT_SECRET: ${{ secrets.AZURE_SIGNING_CLIENT_SECRET }} # Fork: no Azure signing
+#       ACCOUNT_NAME: ${{ vars.AZURE_SIGNING_ACCOUNT_NAME }} # Fork: no Azure signing
+#       CERT_PROFILE_NAME: ${{ vars.AZURE_SIGNING_CERT_PROFILE_NAME }} # Fork: no Azure signing
+#       ENDPOINT: ${{ vars.AZURE_SIGNING_ENDPOINT }} # Fork: no Azure signing
       FILE_DIGEST: SHA256
       TIMESTAMP_DIGEST: SHA256
       TIMESTAMP_SERVER: http://timestamp.acs.microsoft.com
@@ -369,10 +327,6 @@ jobs:
         "nightly" | Set-Content -Path "crates/zed/RELEASE_CHANNEL"
       shell: pwsh
       working-directory: ${{ env.ZED_WORKSPACE }}
-    - name: steps::setup_sentry
-      uses: matbour/setup-sentry-cli@3e938c54b3018bdd019973689ef984e033b0454b
-      with:
-        token: ${{ secrets.SENTRY_AUTH_TOKEN }}
     - name: run_bundling::bundle_windows::bundle_windows
       run: script/bundle-windows.ps1 -Architecture x86_64
       shell: pwsh
@@ -394,10 +348,10 @@ jobs:
     needs:
     - check_style
     - run_tests_windows
-    runs-on: namespace-profile-32x64-ubuntu-2004
+    runs-on: ubuntu-20.04
     env:
-      ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
-      ZED_MINIDUMP_ENDPOINT: ${{ secrets.ZED_SENTRY_MINIDUMP_ENDPOINT }}
+#       ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }} # Fork: no secret configured
+#       ZED_MINIDUMP_ENDPOINT: ${{ secrets.ZED_SENTRY_MINIDUMP_ENDPOINT }} # Fork: no Sentry
       ZED_CLOUD_PROVIDER_ADDITIONAL_MODELS_JSON: ${{ secrets.ZED_CLOUD_PROVIDER_ADDITIONAL_MODELS_JSON }}
       GIT_LFS_SKIP_SMUDGE: '1'
     steps:
@@ -427,10 +381,10 @@ jobs:
     needs:
     - check_style
     - run_tests_windows
-    runs-on: namespace-profile-mac-large
+    runs-on: macos-latest
     env:
-      ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
-      ZED_MINIDUMP_ENDPOINT: ${{ secrets.ZED_SENTRY_MINIDUMP_ENDPOINT }}
+#       ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }} # Fork: no secret configured
+#       ZED_MINIDUMP_ENDPOINT: ${{ secrets.ZED_SENTRY_MINIDUMP_ENDPOINT }} # Fork: no Sentry
       ZED_CLOUD_PROVIDER_ADDITIONAL_MODELS_JSON: ${{ secrets.ZED_CLOUD_PROVIDER_ADDITIONAL_MODELS_JSON }}
       GIT_LFS_SKIP_SMUDGE: '1'
     steps:
@@ -479,7 +433,7 @@ jobs:
     - bundle_mac_x86_64
     - bundle_windows_aarch64
     - bundle_windows_x86_64
-    runs-on: namespace-profile-4x8-ubuntu-2204
+    runs-on: ubuntu-22.04
     steps:
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -541,7 +495,7 @@ jobs:
     - bundle_windows_aarch64
     - bundle_windows_x86_64
     if: failure()
-    runs-on: namespace-profile-2x4-ubuntu-2404
+    runs-on: ubuntu-24.04
     steps:
     - name: release::send_slack_message
       run: |

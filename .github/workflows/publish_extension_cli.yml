@@ -10,6 +10,8 @@ on:
     - extension-cli
 jobs:
   publish_job:
+    # Disabled on fork: needs zed-industries infrastructure (DigitalOcean, ZED_ZIPPY). Set up your own and re-enable.
+    if: false
     runs-on: namespace-profile-2x4-ubuntu-2404
     steps:
     - name: steps::checkout_repo

@@ -18,6 +18,8 @@ on:
         default: ''
 jobs:
   run_perf:
+    # Disabled on fork: needs zed-industries infrastructure (namespace runners). Set up your own and re-enable.
+    if: false
     runs-on: namespace-profile-16x32-ubuntu-2204
     steps:
     - name: steps::checkout_repo

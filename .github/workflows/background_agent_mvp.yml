@@ -30,6 +30,8 @@ env:
 
 jobs:
   run-mvp:
+    # Disabled on fork: needs zed-industries infrastructure (Sentry, Factory API). Set up your own and re-enable.
+    if: false
     runs-on: ubuntu-latest
     timeout-minutes: 180
 

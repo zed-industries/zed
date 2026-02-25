@@ -21,6 +21,8 @@ on:
         default: ''
 jobs:
   rebuild_releases_page:
+    # Disabled on fork: needs zed-industries infrastructure (cloud.zed.dev, Vercel). Set up your own and re-enable.
+    if: false
     runs-on: namespace-profile-2x4-ubuntu-2404
     steps:
     - name: after_release::rebuild_releases_page::refresh_cloud_releases
@@ -64,6 +66,8 @@ jobs:
         webhook-url: ${{ secrets.DISCORD_WEBHOOK_RELEASE_NOTES }}
         content: ${{ steps.get-content.outputs.string }}
   publish_winget:
+    # Disabled on fork: needs zed-industries infrastructure (winget-pkgs fork). Set up your own and re-enable.
+    if: false
     runs-on: self-32vcpu-windows-2022
     steps:
     - name: after_release::publish_winget::sync_winget_pkgs_fork
@@ -104,6 +108,8 @@ jobs:
         max-versions-to-keep: 5
         token: ${{ secrets.WINGET_TOKEN }}
   create_sentry_release:
+    # Disabled on fork: needs zed-industries infrastructure (Sentry). Set up your own and re-enable.
+    if: false
     runs-on: namespace-profile-2x4-ubuntu-2404
     steps:
     - name: steps::checkout_repo

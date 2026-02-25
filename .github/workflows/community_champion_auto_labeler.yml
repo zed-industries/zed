@@ -8,6 +8,8 @@ on:
 
 jobs:
   label_community_champion:
+    # Disabled on fork: zed-industries community management workflow. Set up your own and re-enable.
+    if: false
     runs-on: namespace-profile-2x4-ubuntu-2404
     steps:
       - name: Check if author is a community champion and apply label

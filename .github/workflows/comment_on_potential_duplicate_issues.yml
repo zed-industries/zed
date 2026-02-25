@@ -16,6 +16,8 @@ concurrency:
 
 jobs:
   identify-duplicates:
+    # Disabled on fork: needs zed-industries infrastructure (Anthropic API key, ZED_COMMUNITY_BOT). Set up your own and re-enable.
+    if: false
     runs-on: ubuntu-latest
     timeout-minutes: 5
 

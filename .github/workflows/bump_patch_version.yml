@@ -10,6 +10,8 @@ on:
         type: string
 jobs:
   run_bump_patch_version:
+    # Disabled on fork: needs zed-industries infrastructure (ZED_ZIPPY). Set up your own and re-enable.
+    if: false
     runs-on: namespace-profile-16x32-ubuntu-2204
     steps:
     - id: get-app-token

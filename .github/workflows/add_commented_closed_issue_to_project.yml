@@ -10,12 +10,8 @@ permissions:
 
 jobs:
   add-to-project:
-    if: >
-      github.event.issue.state == 'closed' &&
-      github.event.issue.pull_request == null &&
-      github.event.issue.type != null &&
-      github.event.issue.type.name == 'Bug' &&
-      github.event.comment.user.type != 'Bot'
+    # Disabled on fork: needs zed-industries infrastructure (ZED_COMMUNITY_BOT, org project). Set up your own and re-enable.
+    if: false
     runs-on: namespace-profile-2x4-ubuntu-2404
     timeout-minutes: 5
     steps:

@@ -15,7 +15,7 @@ on:
     - v[0-9]+.[0-9]+.x
 jobs:
   orchestrate:
-    runs-on: namespace-profile-2x4-ubuntu-2404
+    runs-on: ubuntu-24.04
     steps:
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -110,17 +110,12 @@ jobs:
       run_licenses: ${{ steps.filter.outputs.run_licenses }}
       run_tests: ${{ steps.filter.outputs.run_tests }}
   check_style:
-    runs-on: namespace-profile-4x8-ubuntu-2204
+    runs-on: ubuntu-22.04
     steps:
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       with:
         clean: false
-    - name: steps::cache_rust_dependencies_namespace
-      uses: namespacelabs/nscloud-cache-action@v1
-      with:
-        cache: rust
-        path: ~/.rustup
     - name: steps::setup_pnpm
       uses: pnpm/action-setup@fe02b34f77f8bc703788d5817da081398fad5dd2
       with:
@@ -142,7 +137,7 @@ jobs:
     needs:
     - orchestrate
     if: needs.orchestrate.outputs.run_tests == 'true'
-    runs-on: self-32vcpu-windows-2022
+    runs-on: windows-latest
     steps:
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -153,26 +148,15 @@ jobs:
         New-Item -ItemType Directory -Path "./../.cargo" -Force
         Copy-Item -Path "./.cargo/ci-config.toml" -Destination "./../.cargo/config.toml"
       shell: pwsh
-    - name: steps::setup_sccache
-      run: ./script/setup-sccache.ps1
-      shell: pwsh
-      env:
-        R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
-        R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
-        R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
-        SCCACHE_BUCKET: sccache-zed
     - name: steps::clippy
       run: ./script/clippy.ps1
-      shell: pwsh
-    - name: steps::show_sccache_stats
-      run: if ($env:RUSTC_WRAPPER) { & $env:RUSTC_WRAPPER --show-stats }; exit 0
       shell: pwsh
     timeout-minutes: 60
   clippy_linux:
     needs:
     - orchestrate
     if: needs.orchestrate.outputs.run_tests == 'true'
-    runs-on: namespace-profile-16x32-ubuntu-2204
+    runs-on: ubuntu-22.04
     steps:
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -193,23 +177,14 @@ jobs:
       run: ./script/install-mold
     - name: steps::download_wasi_sdk
       run: ./script/download-wasi-sdk
-    - name: steps::setup_sccache
-      run: ./script/setup-sccache
-      env:
-        R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
-        R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
-        R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
-        SCCACHE_BUCKET: sccache-zed
     - name: steps::clippy
       run: ./script/clippy
-    - name: steps::show_sccache_stats
-      run: sccache --show-stats || true
     timeout-minutes: 60
   clippy_mac:
     needs:
     - orchestrate
     if: needs.orchestrate.outputs.run_tests == 'true'
-    runs-on: namespace-profile-mac-large
+    runs-on: macos-latest
     steps:
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -224,23 +199,14 @@ jobs:
       with:
         cache: rust
         path: ~/.rustup
-    - name: steps::setup_sccache
-      run: ./script/setup-sccache
-      env:
-        R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
-        R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
-        R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
-        SCCACHE_BUCKET: sccache-zed
     - name: steps::clippy
       run: ./script/clippy
-    - name: steps::show_sccache_stats
-      run: sccache --show-stats || true
     timeout-minutes: 60
   run_tests_windows:
     needs:
     - orchestrate
     if: needs.orchestrate.outputs.run_tests == 'true'
-    runs-on: self-32vcpu-windows-2022
+    runs-on: windows-latest
     steps:
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -258,19 +224,8 @@ jobs:
     - name: steps::clear_target_dir_if_large
       run: ./script/clear-target-dir-if-larger-than.ps1 250
       shell: pwsh
-    - name: steps::setup_sccache
-      run: ./script/setup-sccache.ps1
-      shell: pwsh
-      env:
-        R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
-        R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
-        R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
-        SCCACHE_BUCKET: sccache-zed
     - name: steps::cargo_nextest
       run: cargo nextest run --workspace --no-fail-fast --no-tests=warn${{ needs.orchestrate.outputs.changed_packages && format(' -E "{0}"', needs.orchestrate.outputs.changed_packages) || '' }}
-      shell: pwsh
-    - name: steps::show_sccache_stats
-      run: if ($env:RUSTC_WRAPPER) { & $env:RUSTC_WRAPPER --show-stats }; exit 0
       shell: pwsh
     - name: steps::cleanup_cargo_config
       if: always()
@@ -282,7 +237,7 @@ jobs:
     needs:
     - orchestrate
     if: needs.orchestrate.outputs.run_tests == 'true'
-    runs-on: namespace-profile-16x32-ubuntu-2204
+    runs-on: ubuntu-22.04
     steps:
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -311,17 +266,8 @@ jobs:
       uses: taiki-e/install-action@nextest
     - name: steps::clear_target_dir_if_large
       run: ./script/clear-target-dir-if-larger-than 250
-    - name: steps::setup_sccache
-      run: ./script/setup-sccache
-      env:
-        R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
-        R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
-        R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
-        SCCACHE_BUCKET: sccache-zed
     - name: steps::cargo_nextest
       run: cargo nextest run --workspace --no-fail-fast --no-tests=warn${{ needs.orchestrate.outputs.changed_packages && format(' -E "{0}"', needs.orchestrate.outputs.changed_packages) || '' }}
-    - name: steps::show_sccache_stats
-      run: sccache --show-stats || true
     - name: steps::cleanup_cargo_config
       if: always()
       run: |
@@ -339,7 +285,7 @@ jobs:
     needs:
     - orchestrate
     if: needs.orchestrate.outputs.run_tests == 'true'
-    runs-on: namespace-profile-mac-large
+    runs-on: macos-latest
     steps:
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -362,17 +308,8 @@ jobs:
       uses: taiki-e/install-action@nextest
     - name: steps::clear_target_dir_if_large
       run: ./script/clear-target-dir-if-larger-than 300
-    - name: steps::setup_sccache
-      run: ./script/setup-sccache
-      env:
-        R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
-        R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
-        R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
-        SCCACHE_BUCKET: sccache-zed
     - name: steps::cargo_nextest
       run: cargo nextest run --workspace --no-fail-fast --no-tests=warn${{ needs.orchestrate.outputs.changed_packages && format(' -E "{0}"', needs.orchestrate.outputs.changed_packages) || '' }}
-    - name: steps::show_sccache_stats
-      run: sccache --show-stats || true
     - name: steps::cleanup_cargo_config
       if: always()
       run: |
@@ -382,7 +319,7 @@ jobs:
     needs:
     - orchestrate
     if: needs.orchestrate.outputs.run_tests == 'true'
-    runs-on: namespace-profile-16x32-ubuntu-2204
+    runs-on: ubuntu-22.04
     steps:
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -403,19 +340,10 @@ jobs:
       run: |
         mkdir -p ./../.cargo
         cp ./.cargo/ci-config.toml ./../.cargo/config.toml
-    - name: steps::setup_sccache
-      run: ./script/setup-sccache
-      env:
-        R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
-        R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
-        R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
-        SCCACHE_BUCKET: sccache-zed
     - id: run_doctests
       name: run_tests::doctests::run_doctests
       run: |
         cargo test --workspace --doc --no-fail-fast
-    - name: steps::show_sccache_stats
-      run: sccache --show-stats || true
     - name: steps::cleanup_cargo_config
       if: always()
       run: |
@@ -425,7 +353,7 @@ jobs:
     needs:
     - orchestrate
     if: needs.orchestrate.outputs.run_tests == 'true'
-    runs-on: namespace-profile-8x16-ubuntu-2204
+    runs-on: ubuntu-22.04
     steps:
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -446,19 +374,10 @@ jobs:
       run: ./script/install-mold
     - name: steps::download_wasi_sdk
       run: ./script/download-wasi-sdk
-    - name: steps::setup_sccache
-      run: ./script/setup-sccache
-      env:
-        R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
-        R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
-        R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
-        SCCACHE_BUCKET: sccache-zed
     - name: cargo build -p collab
       run: cargo build -p collab
     - name: cargo build --workspace --bins --examples
       run: cargo build --workspace --bins --examples
-    - name: steps::show_sccache_stats
-      run: sccache --show-stats || true
     - name: steps::cleanup_cargo_config
       if: always()
       run: |
@@ -468,7 +387,7 @@ jobs:
     needs:
     - orchestrate
     if: needs.orchestrate.outputs.run_tests == 'true'
-    runs-on: namespace-profile-2x4-ubuntu-2404
+    runs-on: ubuntu-24.04
     steps:
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -500,7 +419,7 @@ jobs:
     needs:
     - orchestrate
     if: needs.orchestrate.outputs.run_docs == 'true'
-    runs-on: namespace-profile-8x16-ubuntu-2204
+    runs-on: ubuntu-22.04
     steps:
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -548,7 +467,7 @@ jobs:
     needs:
     - orchestrate
     if: needs.orchestrate.outputs.run_licenses == 'true'
-    runs-on: namespace-profile-2x4-ubuntu-2404
+    runs-on: ubuntu-24.04
     steps:
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -567,7 +486,7 @@ jobs:
     needs:
     - orchestrate
     if: needs.orchestrate.outputs.run_action_checks == 'true'
-    runs-on: namespace-profile-2x4-ubuntu-2404
+    runs-on: ubuntu-24.04
     steps:
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -594,7 +513,7 @@ jobs:
     needs:
     - orchestrate
     if: needs.orchestrate.outputs.run_tests == 'true'
-    runs-on: namespace-profile-16x32-ubuntu-2204
+    runs-on: ubuntu-22.04
     env:
       GIT_AUTHOR_NAME: Protobuf Action
       GIT_AUTHOR_EMAIL: ci@zed.dev
@@ -644,7 +563,7 @@ jobs:
     - check_licenses
     - check_scripts
     if: always()
-    runs-on: namespace-profile-2x4-ubuntu-2404
+    runs-on: ubuntu-24.04
     steps:
     - name: run_tests::tests_pass
       run: |

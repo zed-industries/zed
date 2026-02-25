@@ -26,6 +26,8 @@ on:
         required: true
 jobs:
   check_version_changed:
+    # Disabled on fork: needs zed-industries infrastructure (zed-extensions org, ZED_ZIPPY). Set up your own and re-enable.
+    if: false
     runs-on: namespace-profile-2x4-ubuntu-2404
     steps:
     - name: steps::checkout_repo

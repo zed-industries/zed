@@ -9,7 +9,8 @@ env:
 
 jobs:
   notify-slack:
-    if: github.event.issue.state == 'open'
+    # Disabled on fork: needs zed-industries infrastructure (Slack webhook). Set up your own and re-enable.
+    if: false
     runs-on: namespace-profile-2x4-ubuntu-2404
 
     steps:

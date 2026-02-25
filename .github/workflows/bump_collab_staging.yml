@@ -7,6 +7,8 @@ on:
 
 jobs:
   update-collab-staging-tag:
+    # Disabled on fork: needs zed-industries infrastructure (collab staging). Set up your own and re-enable.
+    if: false
     runs-on: namespace-profile-2x4-ubuntu-2404
     steps:
       - name: Checkout repository
