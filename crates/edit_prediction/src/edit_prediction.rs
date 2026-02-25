@@ -105,13 +105,14 @@ const ZED_PREDICT_DATA_COLLECTION_CHOICE: &str = "zed_predict_data_collection_ch
 const REJECT_REQUEST_DEBOUNCE: Duration = Duration::from_secs(15);
 
 pub struct Zeta2FeatureFlag;
+pub struct EditPredictionJumpsFeatureFlag;
 
 impl FeatureFlag for Zeta2FeatureFlag {
     const NAME: &'static str = "zeta2";
+}
 
-    fn enabled_for_staff() -> bool {
-        true
-    }
+impl FeatureFlag for EditPredictionJumpsFeatureFlag {
+    const NAME: &'static str = "edit_prediction_jumps";
 }
 
 #[derive(Clone)]
@@ -1035,7 +1036,7 @@ impl EditPredictionStore {
                 }
             }
             project::Event::DiagnosticsUpdated { .. } => {
-                if cx.has_flag::<Zeta2FeatureFlag>() {
+                if cx.has_flag::<EditPredictionJumpsFeatureFlag>() {
                     self.refresh_prediction_from_diagnostics(
                         project,
                         DiagnosticSearchScope::Global,
