@@ -1,7 +1,7 @@
 mod application_menu;
 pub mod collab;
 mod onboarding_banner;
-mod project_dropdown;
+mod plan_chip;
 mod title_bar_settings;
 mod update_version;
 
@@ -9,6 +9,7 @@ mod update_version;
 mod stories;
 
 use crate::application_menu::{ApplicationMenu, show_menus};
+use crate::plan_chip::PlanChip;
 pub use platform_title_bar::{
     self, DraggedWindowTab, MergeAllWindows, MoveTabToNewWindow, PlatformTitleBar,
     ShowNextWindowTab, ShowPreviousWindowTab,
@@ -25,13 +26,12 @@ use client::{Client, UserStore, zed_urls};
 use cloud_api_types::Plan;
 use feature_flags::{AgentV2FeatureFlag, FeatureFlagAppExt};
 use gpui::{
-    Action, AnyElement, App, Context, Corner, Element, Entity, FocusHandle, Focusable,
+    Action, AnyElement, App, Context, Corner, Element, Empty, Entity, Focusable,
     InteractiveElement, IntoElement, MouseButton, ParentElement, Render,
     StatefulInteractiveElement, Styled, Subscription, WeakEntity, Window, actions, div,
 };
 use onboarding_banner::OnboardingBanner;
 use project::{Project, git_store::GitStoreEvent, trusted_worktrees::TrustedWorktrees};
-use project_dropdown::ProjectDropdown;
 use remote::RemoteConnectionOptions;
 use settings::Settings;
 use settings::WorktreeId;
@@ -39,13 +39,13 @@ use std::sync::Arc;
 use theme::ActiveTheme;
 use title_bar_settings::TitleBarSettings;
 use ui::{
-    Avatar, ButtonLike, Chip, ContextMenu, IconWithIndicator, Indicator, PopoverMenu,
-    PopoverMenuHandle, TintColor, Tooltip, prelude::*, utils::platform_title_bar_height,
+    Avatar, ButtonLike, ContextMenu, IconWithIndicator, Indicator, PopoverMenu, PopoverMenuHandle,
+    TintColor, Tooltip, prelude::*, utils::platform_title_bar_height,
 };
 use update_version::UpdateVersion;
 use util::ResultExt;
 use workspace::{
-    MultiWorkspace, SwitchProject, ToggleWorkspaceSidebar, ToggleWorktreeSecurity, Workspace,
+    MultiWorkspace, ToggleWorkspaceSidebar, ToggleWorktreeSecurity, Workspace,
     notifications::NotifyResultExt,
 };
 use zed_actions::OpenRemote;
@@ -90,19 +90,6 @@ pub fn init(cx: &mut App) {
             {
                 titlebar.update(cx, |titlebar, cx| {
                     titlebar.toggle_update_simulation(cx);
-                });
-            }
-        });
-
-        workspace.register_action(|workspace, _: &SwitchProject, window, cx| {
-            if let Some(titlebar) = workspace
-                .titlebar_item()
-                .and_then(|item| item.downcast::<TitleBar>().ok())
-            {
-                window.defer(cx, move |window, cx| {
-                    titlebar.update(cx, |titlebar, cx| {
-                        titlebar.show_project_dropdown(window, cx);
-                    })
                 });
             }
         });
@@ -167,7 +154,6 @@ pub struct TitleBar {
     banner: Entity<OnboardingBanner>,
     update_version: Entity<UpdateVersion>,
     screen_share_popover_handle: PopoverMenuHandle<ContextMenu>,
-    project_dropdown_handle: PopoverMenuHandle<ProjectDropdown>,
 }
 
 impl Render for TitleBar {
@@ -241,6 +227,7 @@ impl Render for TitleBar {
                     user.is_none() && TitleBarSettings::get_global(cx).show_sign_in,
                     |this| this.child(self.render_sign_in_button(cx)),
                 )
+                .child(self.render_organization_menu_button(cx))
                 .when(TitleBarSettings::get_global(cx).show_user_menu, |this| {
                     this.child(self.render_user_menu_button(cx))
                 })
@@ -353,9 +340,9 @@ impl TitleBar {
             OnboardingBanner::new(
                 "ACP Claude Code Onboarding",
                 IconName::AiClaude,
-                "Claude Code",
+                "Claude Agent",
                 Some("Introducing:".into()),
-                zed_actions::agent::OpenClaudeCodeOnboardingModal.boxed_clone(),
+                zed_actions::agent::OpenClaudeAgentOnboardingModal.boxed_clone(),
                 cx,
             )
             // When updating this to a non-AI feature release, remove this line.
@@ -418,7 +405,6 @@ impl TitleBar {
             banner,
             update_version,
             screen_share_popover_handle: PopoverMenuHandle::default(),
-            project_dropdown_handle: PopoverMenuHandle::default(),
         }
     }
 
@@ -430,12 +416,6 @@ impl TitleBar {
         self.update_version
             .update(cx, |banner, cx| banner.update_simulation(cx));
         cx.notify();
-    }
-
-    pub fn show_project_dropdown(&self, window: &mut Window, cx: &mut App) {
-        if self.worktree_count(cx) > 1 {
-            self.project_dropdown_handle.show(window, cx);
-        }
     }
 
     /// Returns the worktree to display in the title bar.
@@ -757,24 +737,6 @@ impl TitleBar {
             .map(|w| w.read(cx).focus_handle(cx))
             .unwrap_or_else(|| cx.focus_handle());
 
-        if self.worktree_count(cx) > 1 {
-            self.render_multi_project_menu(display_name, is_project_selected, cx)
-                .into_any_element()
-        } else {
-            self.render_single_project_menu(display_name, is_project_selected, focus_handle, cx)
-                .into_any_element()
-        }
-    }
-
-    fn render_single_project_menu(
-        &self,
-        name: String,
-        is_project_selected: bool,
-        focus_handle: FocusHandle,
-        _cx: &mut Context<Self>,
-    ) -> impl IntoElement {
-        let workspace = self.workspace.clone();
-
         PopoverMenu::new("recent-projects-menu")
             .menu(move |window, cx| {
                 Some(recent_projects::RecentProjects::popover(
@@ -786,8 +748,13 @@ impl TitleBar {
                 ))
             })
             .trigger_with_tooltip(
-                Button::new("project_name_trigger", name)
+                Button::new("project_name_trigger", display_name)
                     .label_size(LabelSize::Small)
+                    .when(self.worktree_count(cx) > 1, |this| {
+                        this.icon(IconName::ChevronDown)
+                            .icon_color(Color::Muted)
+                            .icon_size(IconSize::XSmall)
+                    })
                     .selected_style(ButtonStyle::Tinted(TintColor::Accent))
                     .when(!is_project_selected, |s| s.color(Color::Muted)),
                 move |_window, cx| {
@@ -801,55 +768,7 @@ impl TitleBar {
                 },
             )
             .anchor(gpui::Corner::TopLeft)
-    }
-
-    fn render_multi_project_menu(
-        &self,
-        name: String,
-        is_project_selected: bool,
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement {
-        let project = self.project.clone();
-        let workspace = self.workspace.clone();
-        let initial_active_worktree_id = self
-            .effective_active_worktree(cx)
-            .map(|wt| wt.read(cx).id());
-
-        let focus_handle = workspace
-            .upgrade()
-            .map(|w| w.read(cx).focus_handle(cx))
-            .unwrap_or_else(|| cx.focus_handle());
-
-        PopoverMenu::new("project-dropdown-menu")
-            .with_handle(self.project_dropdown_handle.clone())
-            .menu(move |window, cx| {
-                let project = project.clone();
-                let workspace = workspace.clone();
-
-                Some(cx.new(|cx| {
-                    ProjectDropdown::new(
-                        project.clone(),
-                        workspace.clone(),
-                        initial_active_worktree_id,
-                        window,
-                        cx,
-                    )
-                }))
-            })
-            .trigger_with_tooltip(
-                Button::new("project_name_trigger", name)
-                    .label_size(LabelSize::Small)
-                    .selected_style(ButtonStyle::Tinted(TintColor::Accent))
-                    .icon(IconName::ChevronDown)
-                    .icon_position(IconPosition::End)
-                    .icon_size(IconSize::XSmall)
-                    .icon_color(Color::Muted)
-                    .when(!is_project_selected, |s| s.color(Color::Muted)),
-                move |_, cx| {
-                    Tooltip::for_action_in("Switch Project", &SwitchProject, &focus_handle, cx)
-                },
-            )
-            .anchor(gpui::Corner::TopLeft)
+            .into_any_element()
     }
 
     pub fn render_project_branch(&self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
@@ -1037,6 +956,86 @@ impl TitleBar {
             })
     }
 
+    pub fn render_organization_menu_button(&mut self, cx: &mut Context<Self>) -> AnyElement {
+        let Some(organization) = self.user_store.read(cx).current_organization() else {
+            return Empty.into_any_element();
+        };
+
+        PopoverMenu::new("organization-menu")
+            .anchor(Corner::TopRight)
+            .menu({
+                let user_store = self.user_store.clone();
+                move |window, cx| {
+                    ContextMenu::build(window, cx, |mut menu, _window, cx| {
+                        menu = menu.header("Organizations").separator();
+
+                        let current_organization = user_store.read(cx).current_organization();
+
+                        for organization in user_store.read(cx).organizations() {
+                            let organization = organization.clone();
+                            let plan = user_store.read(cx).plan_for_organization(&organization.id);
+
+                            let is_current =
+                                current_organization
+                                    .as_ref()
+                                    .is_some_and(|current_organization| {
+                                        current_organization.id == organization.id
+                                    });
+
+                            menu = menu.custom_entry(
+                                {
+                                    let organization = organization.clone();
+                                    move |_window, _cx| {
+                                        h_flex()
+                                            .w_full()
+                                            .gap_1()
+                                            .child(
+                                                div()
+                                                    .flex_none()
+                                                    .when(!is_current, |parent| parent.invisible())
+                                                    .child(Icon::new(IconName::Check)),
+                                            )
+                                            .child(
+                                                h_flex()
+                                                    .w_full()
+                                                    .gap_3()
+                                                    .justify_between()
+                                                    .child(Label::new(&organization.name))
+                                                    .child(PlanChip::new(
+                                                        plan.unwrap_or(Plan::ZedFree),
+                                                    )),
+                                            )
+                                            .into_any_element()
+                                    }
+                                },
+                                {
+                                    let user_store = user_store.clone();
+                                    let organization = organization.clone();
+                                    move |_window, cx| {
+                                        user_store.update(cx, |user_store, _cx| {
+                                            user_store
+                                                .set_current_organization(organization.clone());
+                                        });
+                                    }
+                                },
+                            );
+                        }
+
+                        menu
+                    })
+                    .into()
+                }
+            })
+            .trigger_with_tooltip(
+                Button::new("organization-menu", &organization.name)
+                    .selected_style(ButtonStyle::Tinted(TintColor::Accent))
+                    .label_size(LabelSize::Small),
+                Tooltip::text("Toggle Organization Menu"),
+            )
+            .anchor(gpui::Corner::TopRight)
+            .into_any_element()
+    }
+
     pub fn render_user_menu_button(&mut self, cx: &mut Context<Self>) -> impl Element {
         let show_update_badge = self.update_version.read(cx).show_update_in_menu_bar();
 
@@ -1054,32 +1053,11 @@ impl TitleBar {
             has_subscription_period
         });
 
-        let free_chip_bg = cx
-            .theme()
-            .colors()
-            .editor_background
-            .opacity(0.5)
-            .blend(cx.theme().colors().text_accent.opacity(0.05));
-
-        let pro_chip_bg = cx
-            .theme()
-            .colors()
-            .editor_background
-            .opacity(0.5)
-            .blend(cx.theme().colors().text_accent.opacity(0.2));
-
         PopoverMenu::new("user-menu")
             .anchor(Corner::TopRight)
             .menu(move |window, cx| {
                 ContextMenu::build(window, cx, |menu, _, _cx| {
                     let user_login = user_login.clone();
-
-                    let (plan_name, label_color, bg_color) = match plan {
-                        None | Some(Plan::ZedFree) => ("Free", Color::Default, free_chip_bg),
-                        Some(Plan::ZedProTrial) => ("Pro Trial", Color::Accent, pro_chip_bg),
-                        Some(Plan::ZedPro) => ("Pro", Color::Accent, pro_chip_bg),
-                        Some(Plan::ZedStudent) => ("Student", Color::Accent, pro_chip_bg),
-                    };
 
                     menu.when(is_signed_in, |this| {
                         this.custom_entry(
@@ -1090,11 +1068,7 @@ impl TitleBar {
                                     .w_full()
                                     .justify_between()
                                     .child(Label::new(user_login))
-                                    .child(
-                                        Chip::new(plan_name.to_string())
-                                            .bg_color(bg_color)
-                                            .label_color(label_color),
-                                    )
+                                    .child(PlanChip::new(plan.unwrap_or(Plan::ZedFree)))
                                     .into_any_element()
                             },
                             move |_, cx| {

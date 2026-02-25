@@ -117,7 +117,7 @@ impl ModelInput {
 
         let model_name = single_line_input(
             "Model Name",
-            "e.g. gpt-4o, claude-opus-4, gemini-2.5-pro",
+            "e.g. gpt-5, claude-opus-4, gemini-2.5-pro",
             None,
             base_tab_index + 1,
             window,
@@ -540,6 +540,7 @@ impl Render for AddLlmProviderModal {
                                     .max_h(modal_max_height)
                                     .pl_3()
                                     .pr_4()
+                                    .pb_2()
                                     .gap_2()
                                     .overflow_y_scroll()
                                     .track_scroll(&self.scroll_handle)

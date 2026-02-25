@@ -1035,10 +1035,9 @@ impl Copilot {
         };
         let buffer_entity = buffer.clone();
         let lsp = server.lsp.clone();
-        let registered_buffer = server
-            .registered_buffers
-            .get_mut(&buffer.entity_id())
-            .unwrap();
+        let Some(registered_buffer) = server.registered_buffers.get_mut(&buffer.entity_id()) else {
+            return Task::ready(Err(anyhow::anyhow!("buffer not registered")));
+        };
         let pending_snapshot = registered_buffer.report_changes(buffer, cx);
         let buffer = buffer.read(cx);
         let uri = registered_buffer.uri.clone();
@@ -1402,7 +1401,7 @@ async fn ensure_node_version_for_copilot(node_path: &Path) -> anyhow::Result<()>
 
     log::info!("Checking Node.js version for Copilot at: {:?}", node_path);
 
-    let output = util::command::new_smol_command(node_path)
+    let output = util::command::new_command(node_path)
         .arg("--version")
         .output()
         .await

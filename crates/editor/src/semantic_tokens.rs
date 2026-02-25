@@ -5,7 +5,7 @@ use futures::future::join_all;
 use gpui::{
     App, Context, FontStyle, FontWeight, HighlightStyle, StrikethroughStyle, Task, UnderlineStyle,
 };
-use itertools::Itertools as _;
+use itertools::Itertools;
 use language::language_settings::language_settings;
 use project::{
     lsp_store::{
@@ -83,7 +83,7 @@ impl Editor {
 
         let mut supports = false;
         self.buffer().update(cx, |this, cx| {
-            this.for_each_buffer(|buffer| {
+            this.for_each_buffer(&mut |buffer| {
                 supports |= provider.supports_semantic_tokens(buffer, cx);
             });
         });
@@ -122,7 +122,10 @@ impl Editor {
         if !self.mode().is_full() || !self.semantic_token_state.enabled() {
             self.invalidate_semantic_tokens(None);
             self.display_map.update(cx, |display_map, _| {
-                display_map.semantic_token_highlights.clear();
+                match Arc::get_mut(&mut display_map.semantic_token_highlights) {
+                    Some(highlights) => highlights.clear(),
+                    None => display_map.semantic_token_highlights = Arc::new(Default::default()),
+                };
             });
             self.semantic_token_state.update_task = Task::ready(());
             cx.notify();
@@ -165,8 +168,35 @@ impl Editor {
                     None
                 }
             })
-            .unique_by(|(buffer_id, _)| *buffer_id)
-            .collect::<Vec<_>>();
+            .collect::<HashMap<_, _>>();
+
+        for buffer_with_disabled_tokens in self
+            .display_map
+            .read(cx)
+            .semantic_token_highlights
+            .keys()
+            .copied()
+            .filter(|buffer_id| !buffers_to_query.contains_key(buffer_id))
+            .filter(|buffer_id| {
+                !self
+                    .buffer
+                    .read(cx)
+                    .buffer(*buffer_id)
+                    .is_some_and(|buffer| {
+                        let buffer = buffer.read(cx);
+                        language_settings(buffer.language().map(|l| l.name()), buffer.file(), cx)
+                            .semantic_tokens
+                            .enabled()
+                    })
+            })
+            .collect::<Vec<_>>()
+        {
+            self.semantic_token_state
+                .invalidate_buffer(&buffer_with_disabled_tokens);
+            self.display_map.update(cx, |display_map, _| {
+                display_map.invalidate_semantic_highlights(buffer_with_disabled_tokens);
+            });
+        }
 
         self.semantic_token_state.update_task = cx.spawn(async move |editor, cx| {
             cx.background_executor()
@@ -177,8 +207,10 @@ impl Editor {
                     buffers_to_query
                         .into_iter()
                         .filter_map(|(buffer_id, buffer)| {
-                            let known_version =
-                                editor.semantic_token_state.fetched_for_buffers.get(&buffer_id);
+                            let known_version = editor
+                                .semantic_token_state
+                                .fetched_for_buffers
+                                .get(&buffer_id);
                             let query_version = buffer.read(cx).version();
                             if known_version.is_some_and(|known_version| {
                                 !query_version.changed_since(known_version)
@@ -197,92 +229,99 @@ impl Editor {
             };
 
             let all_semantic_tokens = join_all(all_semantic_tokens_task).await;
-            editor.update(cx, |editor, cx| {
-                editor.display_map.update(cx, |display_map, _| {
-                    for buffer_id in invalidate_semantic_highlights_for_buffers {
-                        display_map.invalidate_semantic_highlights(buffer_id);
-                        editor.semantic_token_state.invalidate_buffer(&buffer_id);
+            editor
+                .update(cx, |editor, cx| {
+                    editor.display_map.update(cx, |display_map, _| {
+                        for buffer_id in invalidate_semantic_highlights_for_buffers {
+                            display_map.invalidate_semantic_highlights(buffer_id);
+                            editor.semantic_token_state.invalidate_buffer(&buffer_id);
+                        }
+                    });
+
+                    if all_semantic_tokens.is_empty() {
+                        return;
                     }
-                });
+                    let multi_buffer_snapshot = editor.buffer().read(cx).snapshot(cx);
 
-
-                if all_semantic_tokens.is_empty() {
-                    return;
-                }
-                let multi_buffer_snapshot = editor.buffer().read(cx).snapshot(cx);
-                let all_excerpts = editor.buffer().read(cx).excerpt_ids();
-
-                for (buffer_id, query_version, tokens) in all_semantic_tokens {
-                    let tokens = match tokens {
-                        Ok(BufferSemanticTokens { tokens: Some(tokens) }) => {
-                            tokens
-                        },
-                        Ok(BufferSemanticTokens { tokens: None }) => {
-                            editor.display_map.update(cx, |display_map, _| {
-                                display_map.invalidate_semantic_highlights(buffer_id);
-                            });
-                            continue;
-                        },
-                        Err(e) => {
-                            log::error!("Failed to fetch semantic tokens for buffer {buffer_id:?}: {e:#}");
-                            continue;
-                        },
-                    };
-
-                    match editor.semantic_token_state.fetched_for_buffers.entry(buffer_id) {
-                        hash_map::Entry::Occupied(mut o) => {
-                            if query_version.changed_since(o.get()) {
-                                o.insert(query_version);
-                            } else {
+                    for (buffer_id, query_version, tokens) in all_semantic_tokens {
+                        let tokens = match tokens {
+                            Ok(BufferSemanticTokens {
+                                tokens: Some(tokens),
+                            }) => tokens,
+                            Ok(BufferSemanticTokens { tokens: None }) => {
+                                editor.display_map.update(cx, |display_map, _| {
+                                    display_map.invalidate_semantic_highlights(buffer_id);
+                                });
                                 continue;
                             }
-                        },
-                        hash_map::Entry::Vacant(v) => {
-                            v.insert(query_version);
-                        },
+                            Err(e) => {
+                                log::error!(
+                                    "Failed to fetch semantic tokens for buffer \
+                                    {buffer_id:?}: {e:#}"
+                                );
+                                continue;
+                            }
+                        };
+
+                        match editor
+                            .semantic_token_state
+                            .fetched_for_buffers
+                            .entry(buffer_id)
+                        {
+                            hash_map::Entry::Occupied(mut o) => {
+                                if query_version.changed_since(o.get()) {
+                                    o.insert(query_version);
+                                } else {
+                                    continue;
+                                }
+                            }
+                            hash_map::Entry::Vacant(v) => {
+                                v.insert(query_version);
+                            }
+                        }
+
+                        let language_name = editor
+                            .buffer()
+                            .read(cx)
+                            .buffer(buffer_id)
+                            .and_then(|buf| buf.read(cx).language().map(|l| l.name()));
+
+                        editor.display_map.update(cx, |display_map, cx| {
+                            project.read(cx).lsp_store().update(cx, |lsp_store, cx| {
+                                let mut token_highlights = Vec::new();
+                                let mut interner = HighlightStyleInterner::default();
+                                for (server_id, server_tokens) in tokens {
+                                    let Some(stylizer) = lsp_store.get_or_create_token_stylizer(
+                                        server_id,
+                                        language_name.as_ref(),
+                                        cx,
+                                    ) else {
+                                        continue;
+                                    };
+                                    token_highlights.reserve(2 * server_tokens.len());
+                                    token_highlights.extend(buffer_into_editor_highlights(
+                                        &server_tokens,
+                                        stylizer,
+                                        &multi_buffer_snapshot,
+                                        &mut interner,
+                                        cx,
+                                    ));
+                                }
+
+                                token_highlights.sort_by(|a, b| {
+                                    a.range.start.cmp(&b.range.start, &multi_buffer_snapshot)
+                                });
+                                Arc::make_mut(&mut display_map.semantic_token_highlights).insert(
+                                    buffer_id,
+                                    (Arc::from(token_highlights), Arc::new(interner)),
+                                );
+                            });
+                        });
                     }
 
-                    let language_name = editor
-                        .buffer()
-                        .read(cx)
-                        .buffer(buffer_id)
-                        .and_then(|buf| buf.read(cx).language().map(|l| l.name()));
-
-                    editor.display_map.update(cx, |display_map, cx| {
-                        project.read(cx).lsp_store().update(cx, |lsp_store, cx| {
-                            let mut token_highlights = Vec::new();
-                            let mut interner = HighlightStyleInterner::default();
-                            for (server_id, server_tokens) in tokens {
-                                let Some(stylizer) = lsp_store.get_or_create_token_stylizer(
-                                    server_id,
-                                    language_name.as_ref(),
-                                    cx,
-                                )
-                                else {
-                                    continue;
-                                };
-                                token_highlights.extend(buffer_into_editor_highlights(
-                                    &server_tokens,
-                                    stylizer,
-                                    &all_excerpts,
-                                    &multi_buffer_snapshot,
-                                    &mut interner,
-                                    cx,
-                                ));
-                            }
-
-                            token_highlights.sort_by(|a, b| {
-                                a.range.start.cmp(&b.range.start, &multi_buffer_snapshot)
-                            });
-                            display_map
-                                .semantic_token_highlights
-                                .insert(buffer_id, (Arc::from(token_highlights), Arc::new(interner)));
-                        });
-                    });
-                }
-
-                cx.notify();
-            }).ok();
+                    cx.notify();
+                })
+                .ok();
         });
     }
 }
@@ -290,34 +329,36 @@ impl Editor {
 fn buffer_into_editor_highlights<'a, 'b>(
     buffer_tokens: &'a [BufferSemanticToken],
     stylizer: &'a SemanticTokenStylizer,
-    all_excerpts: &'a [multi_buffer::ExcerptId],
     multi_buffer_snapshot: &'a multi_buffer::MultiBufferSnapshot,
     interner: &'b mut HighlightStyleInterner,
     cx: &'a App,
 ) -> impl Iterator<Item = SemanticTokenHighlight> + use<'a, 'b> {
-    buffer_tokens.iter().filter_map(|token| {
-        let multi_buffer_start = all_excerpts.iter().find_map(|&excerpt_id| {
-            multi_buffer_snapshot.anchor_in_excerpt(excerpt_id, token.range.start)
-        })?;
-        let multi_buffer_end = all_excerpts.iter().find_map(|&excerpt_id| {
-            multi_buffer_snapshot.anchor_in_excerpt(excerpt_id, token.range.end)
-        })?;
-
-        let style = convert_token(
-            stylizer,
-            cx.theme().syntax(),
-            token.token_type,
-            token.token_modifiers,
-        )?;
-        let style = interner.intern(style);
-        Some(SemanticTokenHighlight {
-            range: multi_buffer_start..multi_buffer_end,
-            style,
-            token_type: token.token_type,
-            token_modifiers: token.token_modifiers,
-            server_id: stylizer.server_id(),
+    multi_buffer_snapshot
+        .text_anchors_to_visible_anchors(
+            buffer_tokens
+                .iter()
+                .flat_map(|token| [token.range.start, token.range.end]),
+        )
+        .into_iter()
+        .tuples::<(_, _)>()
+        .zip(buffer_tokens)
+        .filter_map(|((multi_buffer_start, multi_buffer_end), token)| {
+            let range = multi_buffer_start?..multi_buffer_end?;
+            let style = convert_token(
+                stylizer,
+                cx.theme().syntax(),
+                token.token_type,
+                token.token_modifiers,
+            )?;
+            let style = interner.intern(style);
+            Some(SemanticTokenHighlight {
+                range,
+                style,
+                token_type: token.token_type,
+                token_modifiers: token.token_modifiers,
+                server_id: stylizer.server_id(),
+            })
         })
-    })
 }
 
 fn convert_token(
@@ -393,7 +434,7 @@ fn convert_token(
                     SemanticTokenColorOverride::InheritForeground(false) => None,
                     SemanticTokenColorOverride::Replace(c) => Some(c.into()),
                 },
-                ..Default::default()
+                ..UnderlineStyle::default()
             }
         });
 
@@ -446,12 +487,12 @@ mod tests {
     async fn lsp_semantic_tokens_full_capability(cx: &mut TestAppContext) {
         init_test(cx, |_| {});
 
-        update_test_language_settings(cx, |language_settings| {
+        update_test_language_settings(cx, &|language_settings| {
             language_settings.languages.0.insert(
                 "Rust".into(),
                 LanguageSettingsContent {
                     semantic_tokens: Some(SemanticTokens::Full),
-                    ..Default::default()
+                    ..LanguageSettingsContent::default()
                 },
             );
         });
@@ -524,12 +565,12 @@ mod tests {
     async fn lsp_semantic_tokens_full_none_result_id(cx: &mut TestAppContext) {
         init_test(cx, |_| {});
 
-        update_test_language_settings(cx, |language_settings| {
+        update_test_language_settings(cx, &|language_settings| {
             language_settings.languages.0.insert(
                 "Rust".into(),
                 LanguageSettingsContent {
                     semantic_tokens: Some(SemanticTokens::Full),
-                    ..Default::default()
+                    ..LanguageSettingsContent::default()
                 },
             );
         });
@@ -600,12 +641,12 @@ mod tests {
     async fn lsp_semantic_tokens_delta(cx: &mut TestAppContext) {
         init_test(cx, |_| {});
 
-        update_test_language_settings(cx, |language_settings| {
+        update_test_language_settings(cx, &|language_settings| {
             language_settings.languages.0.insert(
                 "Rust".into(),
                 LanguageSettingsContent {
                     semantic_tokens: Some(SemanticTokens::Full),
-                    ..Default::default()
+                    ..LanguageSettingsContent::default()
                 },
             );
         });
@@ -696,12 +737,12 @@ mod tests {
     async fn lsp_semantic_tokens_multiserver_full(cx: &mut TestAppContext) {
         init_test(cx, |_| {});
 
-        update_test_language_settings(cx, |language_settings| {
+        update_test_language_settings(cx, &|language_settings| {
             language_settings.languages.0.insert(
                 "TOML".into(),
                 LanguageSettingsContent {
                     semantic_tokens: Some(SemanticTokens::Full),
-                    ..Default::default()
+                    ..LanguageSettingsContent::default()
                 },
             );
         });
@@ -711,9 +752,9 @@ mod tests {
                 name: "TOML".into(),
                 matcher: LanguageMatcher {
                     path_suffixes: vec!["toml".into()],
-                    ..Default::default()
+                    ..LanguageMatcher::default()
                 },
-                ..Default::default()
+                ..LanguageConfig::default()
             },
             None,
         ));
@@ -916,19 +957,19 @@ mod tests {
     async fn lsp_semantic_tokens_multibuffer_part(cx: &mut TestAppContext) {
         init_test(cx, |_| {});
 
-        update_test_language_settings(cx, |language_settings| {
+        update_test_language_settings(cx, &|language_settings| {
             language_settings.languages.0.insert(
                 "TOML".into(),
                 LanguageSettingsContent {
                     semantic_tokens: Some(SemanticTokens::Full),
-                    ..Default::default()
+                    ..LanguageSettingsContent::default()
                 },
             );
             language_settings.languages.0.insert(
                 "Rust".into(),
                 LanguageSettingsContent {
                     semantic_tokens: Some(SemanticTokens::Full),
-                    ..Default::default()
+                    ..LanguageSettingsContent::default()
                 },
             );
         });
@@ -938,9 +979,9 @@ mod tests {
                 name: "TOML".into(),
                 matcher: LanguageMatcher {
                     path_suffixes: vec!["toml".into()],
-                    ..Default::default()
+                    ..LanguageMatcher::default()
                 },
-                ..Default::default()
+                ..LanguageConfig::default()
             },
             None,
         ));
@@ -949,9 +990,9 @@ mod tests {
                 name: "Rust".into(),
                 matcher: LanguageMatcher {
                     path_suffixes: vec!["rs".into()],
-                    ..Default::default()
+                    ..LanguageMatcher::default()
                 },
-                ..Default::default()
+                ..LanguageConfig::default()
             },
             None,
         ));
@@ -1200,12 +1241,12 @@ mod tests {
     async fn lsp_semantic_tokens_multibuffer_shared(cx: &mut TestAppContext) {
         init_test(cx, |_| {});
 
-        update_test_language_settings(cx, |language_settings| {
+        update_test_language_settings(cx, &|language_settings| {
             language_settings.languages.0.insert(
                 "TOML".into(),
                 LanguageSettingsContent {
                     semantic_tokens: Some(SemanticTokens::Full),
-                    ..Default::default()
+                    ..LanguageSettingsContent::default()
                 },
             );
         });
@@ -1215,9 +1256,9 @@ mod tests {
                 name: "TOML".into(),
                 matcher: LanguageMatcher {
                     path_suffixes: vec!["toml".into()],
-                    ..Default::default()
+                    ..LanguageMatcher::default()
                 },
-                ..Default::default()
+                ..LanguageConfig::default()
             },
             None,
         ));
@@ -1416,7 +1457,7 @@ mod tests {
 
         init_test(cx, |_| {});
 
-        update_test_language_settings(cx, |language_settings| {
+        update_test_language_settings(cx, &|language_settings| {
             language_settings.languages.0.insert(
                 "Rust".into(),
                 LanguageSettingsContent {
@@ -1538,7 +1579,7 @@ mod tests {
 
         init_test(cx, |_| {});
 
-        update_test_language_settings(cx, |language_settings| {
+        update_test_language_settings(cx, &|language_settings| {
             language_settings.languages.0.insert(
                 "Rust".into(),
                 LanguageSettingsContent {
@@ -1704,7 +1745,7 @@ mod tests {
 
         init_test(cx, |_| {});
 
-        update_test_language_settings(cx, |language_settings| {
+        update_test_language_settings(cx, &|language_settings| {
             language_settings.languages.0.insert(
                 "Rust".into(),
                 LanguageSettingsContent {
@@ -1812,7 +1853,7 @@ mod tests {
     async fn test_stopping_language_server_clears_semantic_tokens(cx: &mut TestAppContext) {
         init_test(cx, |_| {});
 
-        update_test_language_settings(cx, |language_settings| {
+        update_test_language_settings(cx, &|language_settings| {
             language_settings.languages.0.insert(
                 "Rust".into(),
                 LanguageSettingsContent {
@@ -1883,6 +1924,87 @@ mod tests {
             extract_semantic_highlights(&cx.editor, &cx),
             Vec::new(),
             "Semantic tokens should be cleared after stopping the server"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_disabling_semantic_tokens_setting_clears_highlights(cx: &mut TestAppContext) {
+        init_test(cx, |_| {});
+
+        update_test_language_settings(cx, &|language_settings| {
+            language_settings.languages.0.insert(
+                "Rust".into(),
+                LanguageSettingsContent {
+                    semantic_tokens: Some(SemanticTokens::Full),
+                    ..LanguageSettingsContent::default()
+                },
+            );
+        });
+
+        let mut cx = EditorLspTestContext::new_rust(
+            lsp::ServerCapabilities {
+                semantic_tokens_provider: Some(
+                    lsp::SemanticTokensServerCapabilities::SemanticTokensOptions(
+                        lsp::SemanticTokensOptions {
+                            legend: lsp::SemanticTokensLegend {
+                                token_types: vec!["function".into()],
+                                token_modifiers: Vec::new(),
+                            },
+                            full: Some(lsp::SemanticTokensFullOptions::Delta { delta: None }),
+                            ..lsp::SemanticTokensOptions::default()
+                        },
+                    ),
+                ),
+                ..lsp::ServerCapabilities::default()
+            },
+            cx,
+        )
+        .await;
+
+        let mut full_request = cx
+            .set_request_handler::<lsp::request::SemanticTokensFullRequest, _, _>(
+                move |_, _, _| async move {
+                    Ok(Some(lsp::SemanticTokensResult::Tokens(
+                        lsp::SemanticTokens {
+                            data: vec![
+                                0, // delta_line
+                                3, // delta_start
+                                4, // length
+                                0, // token_type
+                                0, // token_modifiers_bitset
+                            ],
+                            result_id: None,
+                        },
+                    )))
+                },
+            );
+
+        cx.set_state("ˇfn main() {}");
+        assert!(full_request.next().await.is_some());
+        cx.run_until_parked();
+
+        assert_eq!(
+            extract_semantic_highlights(&cx.editor, &cx),
+            vec![MultiBufferOffset(3)..MultiBufferOffset(7)],
+            "Semantic tokens should be present before disabling the setting"
+        );
+
+        update_test_language_settings(&mut cx, &|language_settings| {
+            language_settings.languages.0.insert(
+                "Rust".into(),
+                LanguageSettingsContent {
+                    semantic_tokens: Some(SemanticTokens::Off),
+                    ..LanguageSettingsContent::default()
+                },
+            );
+        });
+        cx.executor().advance_clock(Duration::from_millis(200));
+        cx.run_until_parked();
+
+        assert_eq!(
+            extract_semantic_highlights(&cx.editor, &cx),
+            Vec::new(),
+            "Semantic tokens should be cleared after disabling the setting"
         );
     }
 

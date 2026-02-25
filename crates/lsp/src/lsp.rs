@@ -22,9 +22,10 @@ use serde_json::{Value, json, value::RawValue};
 use smol::{
     channel,
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
-    process::Child,
 };
+use util::command::{Child, Stdio};
 
+use std::path::Path;
 use std::{
     any::TypeId,
     collections::BTreeSet,
@@ -41,7 +42,6 @@ use std::{
     task::Poll,
     time::{Duration, Instant},
 };
-use std::{path::Path, process::Stdio};
 use util::{ConnectionResult, ResultExt, TryFutureExt, redact};
 
 const JSON_RPC_VERSION: &str = "2.0";
@@ -418,7 +418,7 @@ impl LanguageServer {
             working_dir,
             &binary.arguments
         );
-        let mut command = util::command::new_smol_command(&binary.path);
+        let mut command = util::command::new_command(&binary.path);
         command
             .current_dir(working_dir)
             .args(&binary.arguments)

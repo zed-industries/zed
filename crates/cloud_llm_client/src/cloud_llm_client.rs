@@ -43,6 +43,10 @@ pub const MINIMUM_REQUIRED_VERSION_HEADER_NAME: &str = "x-zed-minimum-required-v
 pub const CLIENT_SUPPORTS_STATUS_MESSAGES_HEADER_NAME: &str =
     "x-zed-client-supports-status-messages";
 
+/// The name of the header used by the client to indicate to the server that it supports receiving a "stream_ended" request completion status.
+pub const CLIENT_SUPPORTS_STATUS_STREAM_ENDED_HEADER_NAME: &str =
+    "x-zed-client-supports-stream-ended-request-completion-status";
+
 /// The name of the header used by the server to indicate to the client that it supports sending status messages.
 pub const SERVER_SUPPORTS_STATUS_MESSAGES_HEADER_NAME: &str =
     "x-zed-server-supports-status-messages";
@@ -218,11 +222,10 @@ pub enum CompletionRequestStatus {
         /// Retry duration in seconds.
         retry_after: Option<f64>,
     },
-    UsageUpdated {
-        amount: usize,
-        limit: UsageLimit,
-    },
-    ToolUseLimitReached,
+    /// The cloud sends a StreamEnded message when the stream from the LLM provider finishes.
+    StreamEnded,
+    #[serde(other)]
+    Unknown,
 }
 
 #[derive(Serialize, Deserialize)]

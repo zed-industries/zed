@@ -4469,7 +4469,7 @@ impl BackgroundScanner {
                 Ok(Some(metadata)) => metadata,
                 Ok(None) => continue,
                 Err(err) => {
-                    log::error!("error processing {child_abs_path:?}: {err:#}");
+                    log::error!("error processing {:?}: {err:#}", child_abs_path.display());
                     continue;
                 }
             };

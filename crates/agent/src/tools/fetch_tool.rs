@@ -144,7 +144,7 @@ impl AgentTool for FetchTool {
         input: Self::Input,
         event_stream: ToolCallEventStream,
         cx: &mut App,
-    ) -> Task<Result<Self::Output>> {
+    ) -> Task<Result<Self::Output, Self::Output>> {
         let settings = AgentSettings::get_global(cx);
         let decision =
             decide_permission_from_settings(Self::NAME, std::slice::from_ref(&input.url), settings);
@@ -152,13 +152,11 @@ impl AgentTool for FetchTool {
         let authorize = match decision {
             ToolPermissionDecision::Allow => None,
             ToolPermissionDecision::Deny(reason) => {
-                return Task::ready(Err(anyhow::anyhow!("{}", reason)));
+                return Task::ready(Err(reason));
             }
             ToolPermissionDecision::Confirm => {
-                let context = crate::ToolPermissionContext {
-                    tool_name: Self::NAME.to_string(),
-                    input_values: vec![input.url.clone()],
-                };
+                let context =
+                    crate::ToolPermissionContext::new(Self::NAME, vec![input.url.clone()]);
                 Some(event_stream.authorize(
                     format!("Fetch {}", MarkdownInlineCode(&input.url)),
                     context,
@@ -179,13 +177,13 @@ impl AgentTool for FetchTool {
 
         cx.foreground_executor().spawn(async move {
             let text = futures::select! {
-                result = fetch_task.fuse() => result?,
+                result = fetch_task.fuse() => result.map_err(|e| e.to_string())?,
                 _ = event_stream.cancelled_by_user().fuse() => {
-                    anyhow::bail!("Fetch cancelled by user");
+                    return Err("Fetch cancelled by user".to_string());
                 }
             };
             if text.trim().is_empty() {
-                bail!("no textual content found");
+                return Err("no textual content found".to_string());
             }
             Ok(text)
         })

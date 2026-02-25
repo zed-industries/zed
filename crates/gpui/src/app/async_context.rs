@@ -104,6 +104,7 @@ impl AppContext for AsyncApp {
         lock.read_window(window, read)
     }
 
+    #[track_caller]
     fn background_spawn<R>(&self, future: impl Future<Output = R> + Send + 'static) -> Task<R>
     where
         R: Send + 'static,
@@ -407,6 +408,7 @@ impl AppContext for AsyncWindowContext {
         self.app.read_window(window, read)
     }
 
+    #[track_caller]
     fn background_spawn<R>(&self, future: impl Future<Output = R> + Send + 'static) -> Task<R>
     where
         R: Send + 'static,

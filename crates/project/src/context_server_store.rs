@@ -18,7 +18,7 @@ use settings::{Settings as _, SettingsStore};
 use util::{ResultExt as _, rel_path::RelPath};
 
 use crate::{
-    Project,
+    DisableAiSettings, Project,
     project_settings::{ContextServerSettings, ProjectSettings},
     worktree_store::WorktreeStore,
 };
@@ -867,6 +867,19 @@ impl ContextServerStore {
     }
 
     async fn maintain_servers(this: WeakEntity<Self>, cx: &mut AsyncApp) -> Result<()> {
+        // Don't start context servers if AI is disabled
+        let ai_disabled = this.update(cx, |_, cx| DisableAiSettings::get_global(cx).disable_ai)?;
+        if ai_disabled {
+            // Stop all running servers when AI is disabled
+            this.update(cx, |this, cx| {
+                let server_ids: Vec<_> = this.servers.keys().cloned().collect();
+                for id in server_ids {
+                    let _ = this.stop_server(&id, cx);
+                }
+            })?;
+            return Ok(());
+        }
+
         let (mut configured_servers, registry, worktree_store) = this.update(cx, |this, _| {
             (
                 this.context_server_settings.clone(),

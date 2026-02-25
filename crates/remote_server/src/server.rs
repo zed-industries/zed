@@ -54,9 +54,10 @@ use std::{
     path::{Path, PathBuf},
     str::FromStr,
     sync::{Arc, LazyLock},
+    time::Instant,
 };
 use thiserror::Error;
-use util::{ResultExt, command::new_smol_command};
+use util::{ResultExt, command::new_command};
 
 #[derive(Subcommand)]
 pub enum Commands {
@@ -447,18 +448,22 @@ pub fn execute_run(
 ) -> Result<()> {
     init_paths()?;
 
-    let app = gpui::Application::headless();
+    let startup_time = Instant::now();
+    let app = gpui_platform::headless();
     let pid = std::process::id();
     let id = pid.to_string();
-    app.background_executor()
-        .spawn(crashes::init(crashes::InitCrashHandler {
+    crashes::init(
+        crashes::InitCrashHandler {
             session_id: id,
             zed_version: VERSION.to_owned(),
             binary: "zed-remote-server".to_string(),
             release_channel: release_channel::RELEASE_CHANNEL_NAME.clone(),
             commit_sha: option_env!("ZED_COMMIT_SHA").unwrap_or("no_sha").to_owned(),
-        }))
-        .detach();
+        },
+        |task| {
+            app.background_executor().spawn(task).detach();
+        },
+    );
     let log_rx = init_logging_server(&log_file)?;
     log::info!(
         "starting up with PID {}:\npid_file: {:?}, log_file: {:?}, stdin_socket: {:?}, stdout_socket: {:?}, stderr_socket: {:?}",
@@ -512,7 +517,7 @@ pub fn execute_run(
 
         let is_wsl_interop = if cfg!(target_os = "linux") {
             // See: https://learn.microsoft.com/en-us/windows/wsl/filesystems#disable-interoperability
-            matches!(std::fs::read_to_string("/proc/sys/fs/binfmt_misc/WSLInterop"), Ok(s) if s.contains("enabled"))
+            matches!(std::fs::read_to_string("/proc/sys/fs/binfmt_misc/WSLInterop").or_else(|_| std::fs::read_to_string("/proc/sys/fs/binfmt_misc/WSLInterop-late")), Ok(s) if s.contains("enabled"))
         } else {
             false
         };
@@ -567,6 +572,7 @@ pub fn execute_run(
                     node_runtime,
                     languages,
                     extension_host_proxy,
+                    startup_time,
                 },
                 true,
                 cx,
@@ -701,14 +707,18 @@ pub(crate) fn execute_proxy(
     let server_paths = ServerPaths::new(&identifier)?;
 
     let id = std::process::id().to_string();
-    smol::spawn(crashes::init(crashes::InitCrashHandler {
-        session_id: id,
-        zed_version: VERSION.to_owned(),
-        binary: "zed-remote-server".to_string(),
-        release_channel: release_channel::RELEASE_CHANNEL_NAME.clone(),
-        commit_sha: option_env!("ZED_COMMIT_SHA").unwrap_or("no_sha").to_owned(),
-    }))
-    .detach();
+    crashes::init(
+        crashes::InitCrashHandler {
+            session_id: id,
+            zed_version: VERSION.to_owned(),
+            binary: "zed-remote-server".to_string(),
+            release_channel: release_channel::RELEASE_CHANNEL_NAME.clone(),
+            commit_sha: option_env!("ZED_COMMIT_SHA").unwrap_or("no_sha").to_owned(),
+        },
+        |task| {
+            smol::spawn(task).detach();
+        },
+    );
 
     log::info!("starting proxy process. PID: {}", std::process::id());
     let server_pid = {
@@ -945,11 +955,11 @@ fn spawn_server_windows(binary_name: &Path, paths: &ServerPaths) -> Result<(), S
 
 #[cfg(not(windows))]
 fn spawn_server_normal(binary_name: &Path, paths: &ServerPaths) -> Result<(), SpawnServerError> {
-    let mut server_process = new_smol_command(binary_name);
+    let mut server_process = new_command(binary_name);
     server_process
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
+        .stdin(util::command::Stdio::null())
+        .stdout(util::command::Stdio::null())
+        .stderr(util::command::Stdio::null())
         .arg("run")
         .arg("--log-file")
         .arg(&paths.log_file)
@@ -977,7 +987,7 @@ pub struct CheckPidError {
     pid: u32,
 }
 async fn check_server_running(pid: u32) -> std::io::Result<bool> {
-    new_smol_command("kill")
+    new_command("kill")
         .arg("-0")
         .arg(pid.to_string())
         .output()

@@ -2,7 +2,7 @@ use anyhow::{Context as _, anyhow};
 use gpui::{App, DivInspectorState, Inspector, InspectorElementId, IntoElement, Window};
 use std::{cell::OnceCell, path::Path, sync::Arc};
 use ui::{Label, Tooltip, prelude::*, utils::platform_title_bar_height};
-use util::{ResultExt as _, command::new_smol_command};
+use util::{ResultExt as _, command::new_command};
 use workspace::AppState;
 
 use crate::div_inspector::DivInspector;
@@ -169,7 +169,7 @@ async fn open_zed_source_location(
         location.column()
     );
 
-    let output = new_smol_command("zed")
+    let output = new_command("zed")
         .arg(&path_arg)
         .output()
         .await

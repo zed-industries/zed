@@ -5,7 +5,8 @@
 #![allow(unused_mut)] // False positives in platform specific code
 
 extern crate self as gpui;
-
+#[doc(hidden)]
+pub static GPUI_MANIFEST_DIR: &'static str = env!("CARGO_MANIFEST_DIR");
 #[macro_use]
 mod action;
 mod app;
@@ -32,9 +33,11 @@ mod keymap;
 mod path_builder;
 mod platform;
 pub mod prelude;
-mod profiler;
+/// Profiling utilities for task timing and thread performance tracking.
+pub mod profiler;
 #[cfg(any(target_os = "windows", target_os = "linux"))]
-mod queue;
+#[expect(missing_docs)]
+pub mod queue;
 mod scene;
 mod shared_string;
 mod shared_uri;
@@ -94,7 +97,7 @@ pub use path_builder::*;
 pub use platform::*;
 pub use profiler::*;
 #[cfg(any(target_os = "windows", target_os = "linux"))]
-pub(crate) use queue::{PriorityQueueReceiver, PriorityQueueSender};
+pub use queue::{PriorityQueueReceiver, PriorityQueueSender};
 pub use refineable::*;
 pub use scene::*;
 pub use shared_string::*;

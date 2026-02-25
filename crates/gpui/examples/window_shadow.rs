@@ -1,9 +1,10 @@
 use gpui::{
-    App, Application, Bounds, Context, CursorStyle, Decorations, HitboxBehavior, Hsla, MouseButton,
-    Pixels, Point, ResizeEdge, Size, Window, WindowBackgroundAppearance, WindowBounds,
-    WindowDecorations, WindowOptions, black, canvas, div, green, point, prelude::*, px, rgb, size,
-    transparent_black, white,
+    App, Bounds, Context, CursorStyle, Decorations, HitboxBehavior, Hsla, MouseButton, Pixels,
+    Point, ResizeEdge, Size, Window, WindowBackgroundAppearance, WindowBounds, WindowDecorations,
+    WindowOptions, black, canvas, div, green, point, prelude::*, px, rgb, size, transparent_black,
+    white,
 };
+use gpui_platform::application;
 
 struct WindowShadow {}
 
@@ -203,7 +204,7 @@ fn resize_edge(pos: Point<Pixels>, shadow_size: Pixels, size: Size<Pixels>) -> O
 }
 
 fn main() {
-    Application::new().run(|cx: &mut App| {
+    application().run(|cx: &mut App| {
         let bounds = Bounds::centered(None, size(px(600.0), px(600.0)), cx);
         cx.open_window(
             WindowOptions {

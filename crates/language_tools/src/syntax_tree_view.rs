@@ -341,7 +341,7 @@ impl SyntaxTreeView {
         descendant_ix: usize,
         window: &mut Window,
         cx: &mut Context<Self>,
-        mut f: impl FnMut(&mut Editor, Range<Anchor>, usize, &mut Window, &mut Context<Editor>),
+        f: &mut dyn FnMut(&mut Editor, Range<Anchor>, usize, &mut Window, &mut Context<Editor>),
     ) -> Option<()> {
         let editor_state = self.editor.as_ref()?;
         let buffer_state = editor_state.active_buffer.as_ref()?;
@@ -434,7 +434,7 @@ impl SyntaxTreeView {
                                 descendant_ix,
                                 window,
                                 cx,
-                                |editor, mut range, _, window, cx| {
+                                &mut |editor, mut range, _, window, cx| {
                                     // Put the cursor at the beginning of the node.
                                     mem::swap(&mut range.start, &mut range.end);
 
@@ -458,7 +458,7 @@ impl SyntaxTreeView {
                                     descendant_ix,
                                     window,
                                     cx,
-                                    |editor, range, key, _, cx| {
+                                    &mut |editor, range, key, _, cx| {
                                         Self::set_editor_highlights(editor, key, &[range], cx);
                                     },
                                 );
@@ -484,7 +484,7 @@ impl SyntaxTreeView {
         ranges: &[Range<Anchor>],
         cx: &mut Context<Editor>,
     ) {
-        editor.highlight_background_key(
+        editor.highlight_background(
             HighlightKey::SyntaxTreeView(key),
             ranges,
             |_, theme| theme.colors().editor_document_highlight_write_background,
@@ -573,7 +573,7 @@ impl Focusable for SyntaxTreeView {
 impl Item for SyntaxTreeView {
     type Event = ();
 
-    fn to_item_events(_: &Self::Event, _: impl FnMut(workspace::item::ItemEvent)) {}
+    fn to_item_events(_: &Self::Event, _: &mut dyn FnMut(workspace::item::ItemEvent)) {}
 
     fn tab_content_text(&self, _detail: usize, _cx: &App) -> SharedString {
         "Syntax Tree".into()

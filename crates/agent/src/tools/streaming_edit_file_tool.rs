@@ -28,7 +28,7 @@ use util::rel_path::RelPath;
 
 const DEFAULT_UI_TEXT: &str = "Editing file";
 
-/// This is a tool for creating a new file or editing an existing file. For moving or renaming files, you should generally use the `terminal` tool with the 'mv' command instead.
+/// This is a tool for creating a new file or editing an existing file. For moving or renaming files, you should generally use the `move_path` tool instead.
 ///
 /// Before using this tool:
 ///
@@ -118,27 +118,45 @@ struct StreamingEditFileToolPartialInput {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct StreamingEditFileToolOutput {
-    #[serde(alias = "original_path")]
-    input_path: PathBuf,
-    new_text: String,
-    old_text: Arc<String>,
-    #[serde(default)]
-    diff: String,
+#[serde(untagged)]
+pub enum StreamingEditFileToolOutput {
+    Success {
+        #[serde(alias = "original_path")]
+        input_path: PathBuf,
+        new_text: String,
+        old_text: Arc<String>,
+        #[serde(default)]
+        diff: String,
+    },
+    Error {
+        error: String,
+    },
+}
+
+impl std::fmt::Display for StreamingEditFileToolOutput {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            StreamingEditFileToolOutput::Success {
+                diff, input_path, ..
+            } => {
+                if diff.is_empty() {
+                    write!(f, "No edits were made.")
+                } else {
+                    write!(
+                        f,
+                        "Edited {}:\n\n```diff\n{diff}\n```",
+                        input_path.display()
+                    )
+                }
+            }
+            StreamingEditFileToolOutput::Error { error } => write!(f, "{error}"),
+        }
+    }
 }
 
 impl From<StreamingEditFileToolOutput> for LanguageModelToolResultContent {
     fn from(output: StreamingEditFileToolOutput) -> Self {
-        if output.diff.is_empty() {
-            "No edits were made.".into()
-        } else {
-            format!(
-                "Edited {}:\n\n```diff\n{}\n```",
-                output.input_path.display(),
-                output.diff
-            )
-            .into()
-        }
+        output.to_string().into()
     }
 }
 
@@ -180,7 +198,7 @@ impl StreamingEditFileTool {
         event_stream: &ToolCallEventStream,
         cx: &mut App,
     ) -> Task<Result<()>> {
-        super::edit_file_tool::authorize_file_edit(
+        super::tool_permissions::authorize_file_edit(
             EditFileTool::NAME,
             &input.path,
             &input.display_description,
@@ -253,17 +271,23 @@ impl AgentTool for StreamingEditFileTool {
         input: Self::Input,
         event_stream: ToolCallEventStream,
         cx: &mut App,
-    ) -> Task<Result<Self::Output>> {
+    ) -> Task<Result<Self::Output, Self::Output>> {
         let Ok(project) = self
             .thread
             .read_with(cx, |thread, _cx| thread.project().clone())
         else {
-            return Task::ready(Err(anyhow!("thread was dropped")));
+            return Task::ready(Err(StreamingEditFileToolOutput::Error {
+                error: "thread was dropped".to_string(),
+            }));
         };
 
         let project_path = match resolve_path(&input, project.clone(), cx) {
             Ok(path) => path,
-            Err(err) => return Task::ready(Err(anyhow!(err))),
+            Err(err) => {
+                return Task::ready(Err(StreamingEditFileToolOutput::Error {
+                    error: err.to_string(),
+                }));
+            }
         };
 
         let abs_path = project.read(cx).absolute_path(&project_path, cx);
@@ -276,191 +300,195 @@ impl AgentTool for StreamingEditFileTool {
         let authorize = self.authorize(&input, &event_stream, cx);
 
         cx.spawn(async move |cx: &mut AsyncApp| {
-            authorize.await?;
+            let result: anyhow::Result<StreamingEditFileToolOutput> = async {
+                authorize.await?;
 
-            let buffer = project
-                .update(cx, |project, cx| {
-                    project.open_buffer(project_path.clone(), cx)
-                })
-                .await?;
+                let buffer = project
+                    .update(cx, |project, cx| {
+                        project.open_buffer(project_path.clone(), cx)
+                    })
+                    .await?;
 
-            if let Some(abs_path) = abs_path.as_ref() {
-                let (last_read_mtime, current_mtime, is_dirty, has_save_tool, has_restore_tool) =
-                    self.thread.update(cx, |thread, cx| {
-                        let last_read = thread.file_read_times.get(abs_path).copied();
-                        let current = buffer
-                            .read(cx)
-                            .file()
-                            .and_then(|file| file.disk_state().mtime());
-                        let dirty = buffer.read(cx).is_dirty();
-                        let has_save = thread.has_tool(SaveFileTool::NAME);
-                        let has_restore = thread.has_tool(RestoreFileFromDiskTool::NAME);
-                        (last_read, current, dirty, has_save, has_restore)
-                    })?;
+                if let Some(abs_path) = abs_path.as_ref() {
+                    let (last_read_mtime, current_mtime, is_dirty, has_save_tool, has_restore_tool) =
+                        self.thread.update(cx, |thread, cx| {
+                            let last_read = thread.file_read_times.get(abs_path).copied();
+                            let current = buffer
+                                .read(cx)
+                                .file()
+                                .and_then(|file| file.disk_state().mtime());
+                            let dirty = buffer.read(cx).is_dirty();
+                            let has_save = thread.has_tool(SaveFileTool::NAME);
+                            let has_restore = thread.has_tool(RestoreFileFromDiskTool::NAME);
+                            (last_read, current, dirty, has_save, has_restore)
+                        })?;
 
-                if is_dirty {
-                    let message = match (has_save_tool, has_restore_tool) {
-                        (true, true) => {
-                            "This file has unsaved changes. Ask the user whether they want to keep or discard those changes. \
-                             If they want to keep them, ask for confirmation then use the save_file tool to save the file, then retry this edit. \
-                             If they want to discard them, ask for confirmation then use the restore_file_from_disk tool to restore the on-disk contents, then retry this edit."
-                        }
-                        (true, false) => {
-                            "This file has unsaved changes. Ask the user whether they want to keep or discard those changes. \
-                             If they want to keep them, ask for confirmation then use the save_file tool to save the file, then retry this edit. \
-                             If they want to discard them, ask the user to manually revert the file, then inform you when it's ok to proceed."
-                        }
-                        (false, true) => {
-                            "This file has unsaved changes. Ask the user whether they want to keep or discard those changes. \
-                             If they want to keep them, ask the user to manually save the file, then inform you when it's ok to proceed. \
-                             If they want to discard them, ask for confirmation then use the restore_file_from_disk tool to restore the on-disk contents, then retry this edit."
-                        }
-                        (false, false) => {
-                            "This file has unsaved changes. Ask the user whether they want to keep or discard those changes, \
-                             then ask them to save or revert the file manually and inform you when it's ok to proceed."
-                        }
-                    };
-                    anyhow::bail!("{}", message);
-                }
+                    if is_dirty {
+                        let message = match (has_save_tool, has_restore_tool) {
+                            (true, true) => {
+                                "This file has unsaved changes. Ask the user whether they want to keep or discard those changes. \
+                                 If they want to keep them, ask for confirmation then use the save_file tool to save the file, then retry this edit. \
+                                 If they want to discard them, ask for confirmation then use the restore_file_from_disk tool to restore the on-disk contents, then retry this edit."
+                            }
+                            (true, false) => {
+                                "This file has unsaved changes. Ask the user whether they want to keep or discard those changes. \
+                                 If they want to keep them, ask for confirmation then use the save_file tool to save the file, then retry this edit. \
+                                 If they want to discard them, ask the user to manually revert the file, then inform you when it's ok to proceed."
+                            }
+                            (false, true) => {
+                                "This file has unsaved changes. Ask the user whether they want to keep or discard those changes. \
+                                 If they want to keep them, ask the user to manually save the file, then inform you when it's ok to proceed. \
+                                 If they want to discard them, ask for confirmation then use the restore_file_from_disk tool to restore the on-disk contents, then retry this edit."
+                            }
+                            (false, false) => {
+                                "This file has unsaved changes. Ask the user whether they want to keep or discard those changes, \
+                                 then ask them to save or revert the file manually and inform you when it's ok to proceed."
+                            }
+                        };
+                        anyhow::bail!("{}", message);
+                    }
 
-                if let (Some(last_read), Some(current)) = (last_read_mtime, current_mtime) {
-                    if current != last_read {
-                        anyhow::bail!(
-                            "The file {} has been modified since you last read it. \
-                             Please read the file again to get the current state before editing it.",
-                            input.path.display()
-                        );
+                    if let (Some(last_read), Some(current)) = (last_read_mtime, current_mtime) {
+                        if current != last_read {
+                            anyhow::bail!(
+                                "The file {} has been modified since you last read it. \
+                                 Please read the file again to get the current state before editing it.",
+                                input.path.display()
+                            );
+                        }
                     }
                 }
-            }
 
-            let diff = cx.new(|cx| Diff::new(buffer.clone(), cx));
-            event_stream.update_diff(diff.clone());
-            let _finalize_diff = util::defer({
-                let diff = diff.downgrade();
-                let mut cx = cx.clone();
-                move || {
-                    diff.update(&mut cx, |diff, cx| diff.finalize(cx)).ok();
-                }
-            });
+                let diff = cx.new(|cx| Diff::new(buffer.clone(), cx));
+                event_stream.update_diff(diff.clone());
+                let _finalize_diff = util::defer({
+                    let diff = diff.downgrade();
+                    let mut cx = cx.clone();
+                    move || {
+                        diff.update(&mut cx, |diff, cx| diff.finalize(cx)).ok();
+                    }
+                });
 
-            let old_snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot());
-            let old_text = cx
-                .background_spawn({
-                    let old_snapshot = old_snapshot.clone();
-                    async move { Arc::new(old_snapshot.text()) }
-                })
-                .await;
+                let old_snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot());
+                let old_text = cx
+                    .background_spawn({
+                        let old_snapshot = old_snapshot.clone();
+                        async move { Arc::new(old_snapshot.text()) }
+                    })
+                    .await;
 
-            let action_log = self.thread.read_with(cx, |thread, _cx| thread.action_log().clone())?;
+                let action_log = self.thread.read_with(cx, |thread, _cx| thread.action_log().clone())?;
 
-            // Edit the buffer and report edits to the action log as part of the
-            // same effect cycle, otherwise the edit will be reported as if the
-            // user made it (due to the buffer subscription in action_log).
-            match input.mode {
-                StreamingEditFileMode::Create | StreamingEditFileMode::Overwrite => {
-                    action_log.update(cx, |log, cx| {
-                        log.buffer_created(buffer.clone(), cx);
-                    });
-                    let content = input.content.ok_or_else(|| {
-                        anyhow!("'content' field is required for create and overwrite modes")
-                    })?;
-                    cx.update(|cx| {
-                        buffer.update(cx, |buffer, cx| {
-                            buffer.edit([(0..buffer.len(), content.as_str())], None, cx);
-                        });
+                // Edit the buffer and report edits to the action log as part of the
+                // same effect cycle, otherwise the edit will be reported as if the
+                // user made it (due to the buffer subscription in action_log).
+                match input.mode {
+                    StreamingEditFileMode::Create | StreamingEditFileMode::Overwrite => {
                         action_log.update(cx, |log, cx| {
-                            log.buffer_edited(buffer.clone(), cx);
+                            log.buffer_created(buffer.clone(), cx);
                         });
-                    });
+                        let content = input.content.ok_or_else(|| {
+                            anyhow!("'content' field is required for create and overwrite modes")
+                        })?;
+                        cx.update(|cx| {
+                            buffer.update(cx, |buffer, cx| {
+                                buffer.edit([(0..buffer.len(), content.as_str())], None, cx);
+                            });
+                            action_log.update(cx, |log, cx| {
+                                log.buffer_edited(buffer.clone(), cx);
+                            });
+                        });
+                    }
+                    StreamingEditFileMode::Edit => {
+                        action_log.update(cx, |log, cx| {
+                            log.buffer_read(buffer.clone(), cx);
+                        });
+                        let edits = input.edits.ok_or_else(|| {
+                            anyhow!("'edits' field is required for edit mode")
+                        })?;
+                        // apply_edits now handles buffer_edited internally in the same effect cycle
+                        apply_edits(&buffer, &action_log, &edits, &diff, &event_stream, &abs_path, cx)?;
+                    }
                 }
-                StreamingEditFileMode::Edit => {
-                    action_log.update(cx, |log, cx| {
-                        log.buffer_read(buffer.clone(), cx);
-                    });
-                    let edits = input.edits.ok_or_else(|| {
-                        anyhow!("'edits' field is required for edit mode")
-                    })?;
-                    // apply_edits now handles buffer_edited internally in the same effect cycle
-                    apply_edits(&buffer, &action_log, &edits, &diff, &event_stream, &abs_path, cx)?;
-                }
-            }
 
-            let format_on_save_enabled = buffer.read_with(cx, |buffer, cx| {
-                let settings = language_settings::language_settings(
-                    buffer.language().map(|l| l.name()),
-                    buffer.file(),
-                    cx,
-                );
-                settings.format_on_save != FormatOnSave::Off
-            });
-
-            if format_on_save_enabled {
-                action_log.update(cx, |log, cx| {
-                    log.buffer_edited(buffer.clone(), cx);
-                });
-
-                let format_task = project.update(cx, |project, cx| {
-                    project.format(
-                        HashSet::from_iter([buffer.clone()]),
-                        LspFormatTarget::Buffers,
-                        false,
-                        FormatTrigger::Save,
+                let format_on_save_enabled = buffer.read_with(cx, |buffer, cx| {
+                    let settings = language_settings::language_settings(
+                        buffer.language().map(|l| l.name()),
+                        buffer.file(),
                         cx,
-                    )
+                    );
+                    settings.format_on_save != FormatOnSave::Off
                 });
+
+                if format_on_save_enabled {
+                    action_log.update(cx, |log, cx| {
+                        log.buffer_edited(buffer.clone(), cx);
+                    });
+
+                    let format_task = project.update(cx, |project, cx| {
+                        project.format(
+                            HashSet::from_iter([buffer.clone()]),
+                            LspFormatTarget::Buffers,
+                            false,
+                            FormatTrigger::Save,
+                            cx,
+                        )
+                    });
+                    futures::select! {
+                        result = format_task.fuse() => { result.log_err(); },
+                        _ = event_stream.cancelled_by_user().fuse() => {
+                            anyhow::bail!("Edit cancelled by user");
+                        }
+                    };
+                }
+
+                let save_task = project
+                    .update(cx, |project, cx| project.save_buffer(buffer.clone(), cx));
                 futures::select! {
-                    result = format_task.fuse() => { result.log_err(); },
+                    result = save_task.fuse() => { result?; },
                     _ = event_stream.cancelled_by_user().fuse() => {
                         anyhow::bail!("Edit cancelled by user");
                     }
                 };
-            }
 
-            let save_task = project
-                .update(cx, |project, cx| project.save_buffer(buffer.clone(), cx));
-            futures::select! {
-                result = save_task.fuse() => { result?; },
-                _ = event_stream.cancelled_by_user().fuse() => {
-                    anyhow::bail!("Edit cancelled by user");
-                }
-            };
+                action_log.update(cx, |log, cx| {
+                    log.buffer_edited(buffer.clone(), cx);
+                });
 
-            action_log.update(cx, |log, cx| {
-                log.buffer_edited(buffer.clone(), cx);
-            });
-
-            if let Some(abs_path) = abs_path.as_ref() {
-                if let Some(new_mtime) = buffer.read_with(cx, |buffer, _| {
-                    buffer.file().and_then(|file| file.disk_state().mtime())
-                }) {
-                    self.thread.update(cx, |thread, _| {
-                        thread.file_read_times.insert(abs_path.to_path_buf(), new_mtime);
-                    })?;
-                }
-            }
-
-            let new_snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot());
-            let (new_text, unified_diff) = cx
-                .background_spawn({
-                    let new_snapshot = new_snapshot.clone();
-                    let old_text = old_text.clone();
-                    async move {
-                        let new_text = new_snapshot.text();
-                        let diff = language::unified_diff(&old_text, &new_text);
-                        (new_text, diff)
+                if let Some(abs_path) = abs_path.as_ref() {
+                    if let Some(new_mtime) = buffer.read_with(cx, |buffer, _| {
+                        buffer.file().and_then(|file| file.disk_state().mtime())
+                    }) {
+                        self.thread.update(cx, |thread, _| {
+                            thread.file_read_times.insert(abs_path.to_path_buf(), new_mtime);
+                        })?;
                     }
-                })
-                .await;
+                }
 
-            let output = StreamingEditFileToolOutput {
-                input_path: input.path,
-                new_text,
-                old_text,
-                diff: unified_diff,
-            };
+                let new_snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot());
+                let (new_text, unified_diff) = cx
+                    .background_spawn({
+                        let new_snapshot = new_snapshot.clone();
+                        let old_text = old_text.clone();
+                        async move {
+                            let new_text = new_snapshot.text();
+                            let diff = language::unified_diff(&old_text, &new_text);
+                            (new_text, diff)
+                        }
+                    })
+                    .await;
 
-            Ok(output)
+                let output = StreamingEditFileToolOutput::Success {
+                    input_path: input.path,
+                    new_text,
+                    old_text,
+                    diff: unified_diff,
+                };
+
+                Ok(output)
+            }.await;
+            result
+                .map_err(|e| StreamingEditFileToolOutput::Error { error: e.to_string() })
         })
     }
 
@@ -471,16 +499,26 @@ impl AgentTool for StreamingEditFileTool {
         event_stream: ToolCallEventStream,
         cx: &mut App,
     ) -> Result<()> {
-        event_stream.update_diff(cx.new(|cx| {
-            Diff::finalized(
-                output.input_path.to_string_lossy().into_owned(),
-                Some(output.old_text.to_string()),
-                output.new_text,
-                self.language_registry.clone(),
-                cx,
-            )
-        }));
-        Ok(())
+        match output {
+            StreamingEditFileToolOutput::Success {
+                input_path,
+                old_text,
+                new_text,
+                ..
+            } => {
+                event_stream.update_diff(cx.new(|cx| {
+                    Diff::finalized(
+                        input_path.to_string_lossy().into_owned(),
+                        Some(old_text.to_string()),
+                        new_text,
+                        self.language_registry.clone(),
+                        cx,
+                    )
+                }));
+                Ok(())
+            }
+            StreamingEditFileToolOutput::Error { .. } => Ok(()),
+        }
     }
 }
 
@@ -755,10 +793,11 @@ mod tests {
             })
             .await;
 
-        assert!(result.is_ok());
-        let output = result.unwrap();
-        assert_eq!(output.new_text, "Hello, World!");
-        assert!(!output.diff.is_empty());
+        let StreamingEditFileToolOutput::Success { new_text, diff, .. } = result.unwrap() else {
+            panic!("expected success");
+        };
+        assert_eq!(new_text, "Hello, World!");
+        assert!(!diff.is_empty());
     }
 
     #[gpui::test]
@@ -803,10 +842,14 @@ mod tests {
             })
             .await;
 
-        assert!(result.is_ok());
-        let output = result.unwrap();
-        assert_eq!(output.new_text, "new content");
-        assert_eq!(*output.old_text, "old content");
+        let StreamingEditFileToolOutput::Success {
+            new_text, old_text, ..
+        } = result.unwrap()
+        else {
+            panic!("expected success");
+        };
+        assert_eq!(new_text, "new content");
+        assert_eq!(*old_text, "old content");
     }
 
     #[gpui::test]
@@ -859,9 +902,10 @@ mod tests {
             })
             .await;
 
-        assert!(result.is_ok());
-        let output = result.unwrap();
-        assert_eq!(output.new_text, "line 1\nmodified line 2\nline 3\n");
+        let StreamingEditFileToolOutput::Success { new_text, .. } = result.unwrap() else {
+            panic!("expected success");
+        };
+        assert_eq!(new_text, "line 1\nmodified line 2\nline 3\n");
     }
 
     #[gpui::test]
@@ -920,10 +964,11 @@ mod tests {
             })
             .await;
 
-        assert!(result.is_ok());
-        let output = result.unwrap();
+        let StreamingEditFileToolOutput::Success { new_text, .. } = result.unwrap() else {
+            panic!("expected success");
+        };
         assert_eq!(
-            output.new_text,
+            new_text,
             "modified line 1\nline 2\nline 3\nline 4\nmodified line 5\n"
         );
     }
@@ -984,10 +1029,11 @@ mod tests {
             })
             .await;
 
-        assert!(result.is_ok());
-        let output = result.unwrap();
+        let StreamingEditFileToolOutput::Success { new_text, .. } = result.unwrap() else {
+            panic!("expected success");
+        };
         assert_eq!(
-            output.new_text,
+            new_text,
             "line 1\nmodified line 2\nmodified line 3\nline 4\nline 5\n"
         );
     }
@@ -1048,10 +1094,11 @@ mod tests {
             })
             .await;
 
-        assert!(result.is_ok());
-        let output = result.unwrap();
+        let StreamingEditFileToolOutput::Success { new_text, .. } = result.unwrap() else {
+            panic!("expected success");
+        };
         assert_eq!(
-            output.new_text,
+            new_text,
             "modified line 1\nline 2\nline 3\nline 4\nmodified line 5\n"
         );
     }
@@ -1100,10 +1147,10 @@ mod tests {
             })
             .await;
 
-        assert_eq!(
-            result.unwrap_err().to_string(),
-            "Can't edit file: path not found"
-        );
+        let StreamingEditFileToolOutput::Error { error } = result.unwrap_err() else {
+            panic!("expected error");
+        };
+        assert_eq!(error, "Can't edit file: path not found");
     }
 
     #[gpui::test]
@@ -1151,12 +1198,12 @@ mod tests {
             })
             .await;
 
-        assert!(result.is_err());
+        let StreamingEditFileToolOutput::Error { error } = result.unwrap_err() else {
+            panic!("expected error");
+        };
         assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("Could not find matching text")
+            error.contains("Could not find matching text"),
+            "Expected error containing 'Could not find matching text' but got: {error}"
         );
     }
 
@@ -1221,11 +1268,12 @@ mod tests {
             })
             .await;
 
-        let error = result.unwrap_err();
-        let error_message = error.to_string();
+        let StreamingEditFileToolOutput::Error { error } = result.unwrap_err() else {
+            panic!("expected error");
+        };
         assert!(
-            error_message.contains("Conflicting edit ranges detected"),
-            "Expected 'Conflicting edit ranges detected' but got: {error_message}"
+            error.contains("Conflicting edit ranges detected"),
+            "Expected 'Conflicting edit ranges detected' but got: {error}"
         );
     }
 

@@ -95,6 +95,7 @@ impl Scheduler for PlatformScheduler {
         self.dispatcher.spawn_realtime(f);
     }
 
+    #[track_caller]
     fn timer(&self, duration: Duration) -> Timer {
         use std::sync::{Arc, atomic::AtomicBool};
 
