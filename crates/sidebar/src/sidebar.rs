@@ -30,6 +30,20 @@ use workspace::{
     Sidebar as WorkspaceSidebar, SidebarEvent, ToggleWorkspaceSidebar, Workspace,
 };
 
+// 2 datasets:
+// - The list of threads (We want to derive from and watch this data)
+//  - Threads contain worktree and project data in them.
+// - The list of active projects (App-global, cross-window), a super set, of the collection of projects open in windows
+//  - If you have 3 windows, with zed, zed+cloud, zed.dev open in each, your active projects _inherently has all 3 of those_
+//  - + Every project you've opened before and started a thread in
+//  - Interesting digression: You can have projects open with no threads, we need to render that,
+//    but we also want to automatically remove those from the active projects list.
+//  - If you click "x" on a project in this set, what happens?
+//    - It's removed from active projects.
+//    - It's threads stay in the database but aren't rendered
+//    - It's window (if any) is closed.
+// - This sidebar is the RIGHT JOIN of these two sets
+
 #[derive(Clone, Debug)]
 struct AgentThreadInfo {
     title: SharedString,
@@ -41,60 +55,6 @@ const DEFAULT_WIDTH: Pixels = px(320.0);
 const MIN_WIDTH: Pixels = px(200.0);
 const MAX_WIDTH: Pixels = px(800.0);
 const MAX_MATCHES: usize = 100;
-
-#[derive(Clone)]
-struct WorkspaceThreadEntry {
-    index: usize,
-    worktree_label: SharedString,
-    full_path: SharedString,
-    thread_info: Option<AgentThreadInfo>,
-}
-
-impl WorkspaceThreadEntry {
-    fn new(index: usize, workspace: &Entity<Workspace>, cx: &App) -> Self {
-        let workspace_ref = workspace.read(cx);
-
-        let worktrees: Vec<_> = workspace_ref
-            .worktrees(cx)
-            .filter(|worktree| worktree.read(cx).is_visible())
-            .map(|worktree| worktree.read(cx).abs_path())
-            .collect();
-
-        let worktree_names: Vec<String> = worktrees
-            .iter()
-            .filter_map(|path| {
-                path.file_name()
-                    .map(|name| name.to_string_lossy().to_string())
-            })
-            .collect();
-
-        let worktree_label: SharedString = if worktree_names.is_empty() {
-            format!("Workspace {}", index + 1).into()
-        } else {
-            worktree_names.join(", ").into()
-        };
-
-        let full_path: SharedString = worktrees
-            .iter()
-            .map(|path| path.to_string_lossy().to_string())
-            .collect::<Vec<_>>()
-            .join("\n")
-            .into();
-
-        let thread_info = Self::thread_info(workspace, cx);
-
-        Self {
-            index,
-            worktree_label,
-            full_path,
-            thread_info,
-        }
-    }
-
-    fn thread_info(workspace: &Entity<Workspace>, cx: &App) -> Option<AgentThreadInfo> {
-        workspace_thread_info(workspace, cx)
-    }
-}
 
 fn workspace_thread_info(workspace: &Entity<Workspace>, cx: &App) -> Option<AgentThreadInfo> {
     let agent_panel = workspace.read(cx).panel::<AgentPanel>(cx)?;
@@ -123,20 +83,70 @@ fn workspace_thread_info(workspace: &Entity<Workspace>, cx: &App) -> Option<Agen
     })
 }
 
+// We're going to have a pile of active projects
+// Those are going to have workspaces, and worktrees, and all this stuff,
+//  - Key point: They're all going to be live representations.
+
 /// A single workspace entry within a project group, with snapshotted thread info.
+///
 struct ProjectEntry {
-    workspace: Entity<Workspace>,
-    thread_info: Option<AgentThreadInfo>,
+    workspace: Entity<Workspace>, // <- A "live" datastructure, not a serialized one
+    thread_info: Option<AgentThreadInfo>, // FIXME: Let's use agent::DbThreadMetadata instead
 }
 
 /// A ProjectGroup is a group of workspaces, each one associated with a specific
 /// git worktree or the main worktree.
+///
+///
+/// This maintains the invariant, that every ProjectEntry, is for the same
+/// "Project Group", same means "main path list"
 #[derive(Default)]
 struct ProjectGroup {
+    path_list: PathList, // FIXME: let's pull this out of ProjectEntry in case the user changes the path name, etc.
     entries: Vec<ProjectEntry>,
 }
 
 impl ProjectGroup {
+    fn from_workspace(workspace: Entity<Workspace>, cx: &App) -> Self {
+        let paths = workspace.read(cx).root_paths(cx);
+        let path_list = PathList::new(&paths);
+        let thread_info = workspace_thread_info(&workspace, cx);
+
+        Self {
+            path_list,
+            entries: vec![ProjectEntry {
+                workspace,
+                thread_info,
+            }],
+        }
+    }
+
+    fn add_project(&mut self, workspace: Entity<Workspace>, cx: &App) {
+        assert_eq!(
+            PathList::new(&workspace.read(cx).root_paths(cx)),
+            self.path_list,
+            "project must share root path"
+        );
+
+        if self
+            .entries
+            .iter()
+            .find(
+                |ProjectEntry {
+                     workspace: project_workspace,
+                     ..
+                 }| &workspace == project_workspace,
+            )
+            .is_none()
+        {
+            let thread_info = workspace_thread_info(&workspace, cx);
+            self.entries.push(ProjectEntry {
+                workspace,
+                thread_info,
+            });
+        }
+    }
+
     const fn len(&self) -> usize {
         self.entries.len()
     }
@@ -156,7 +166,7 @@ struct ActiveProjects {
     /// small enough that iterating a vec is likely to be faster than a more
     /// complex structure like a BTreeMap. It also let's us sort the groups by
     /// sorting the vec in different ways.
-    groups: Vec<(PathList, ProjectGroup)>,
+    groups: Vec<ProjectGroup>,
 }
 
 impl ActiveProjects {
@@ -169,40 +179,30 @@ impl ActiveProjects {
         let mut active_projects = Self::empty();
 
         for workspace in workspaces {
-            active_projects.add_workspace(workspace.clone(), cx);
+            active_projects.add_project(workspace.clone(), cx);
         }
 
         active_projects
     }
 
-    fn add_workspace(&mut self, workspace: Entity<Workspace>, cx: &App) {
+    fn add_project(&mut self, workspace: Entity<Workspace>, cx: &App) {
         let paths = workspace.read(cx).root_paths(cx);
         let key = PathList::new(&paths);
-        let thread_info = workspace_thread_info(&workspace, cx);
 
-        let entry = ProjectEntry {
-            workspace,
-            thread_info,
-        };
-
-        match self.groups.iter_mut().find(|(k, _)| *k == key) {
-            Some((_key, group)) => {
-                group.entries.push(entry);
+        match self.groups.iter_mut().find(|g| g.path_list == key) {
+            Some(group) => {
+                group.add_project(workspace, cx);
             }
             None => {
-                self.groups.push((
-                    key,
-                    ProjectGroup {
-                        entries: vec![entry],
-                    },
-                ));
+                self.groups
+                    .push(ProjectGroup::from_workspace(workspace, cx));
             }
         }
     }
 
     /// Returns the total number of projects across all groups.
     fn num_projects(&self) -> usize {
-        self.groups.iter().map(|(_, group)| group.len()).sum()
+        self.groups.iter().map(|group| group.len()).sum()
     }
 
     /// Returns the project, its path list, and whether this is the first item
@@ -212,9 +212,9 @@ impl ActiveProjects {
     /// probably want [`ActiveProjects`] to look up only by key and then have
     /// [`ActiveProjectDelegate`] handle the mapping of those to indices.
     fn project_by_ix(&self, mut ix: usize) -> Option<(&ProjectEntry, Option<&PathList>)> {
-        for (path_list, group) in self.groups.iter() {
+        for group in &self.groups {
             if ix < group.len() {
-                return Some((&group.entries[ix], (ix == 0).then_some(path_list)));
+                return Some((&group.entries[ix], (ix == 0).then_some(&group.path_list)));
             }
             ix -= group.len();
         }
@@ -224,7 +224,7 @@ impl ActiveProjects {
     /// Returns the flat index of a given workspace entity, if present.
     fn index_of_workspace(&self, workspace: &Entity<Workspace>) -> Option<usize> {
         let mut offset = 0;
-        for (_key, group) in &self.groups {
+        for group in &self.groups {
             for entry in &group.entries {
                 if entry.workspace == *workspace {
                     return Some(offset);
@@ -238,14 +238,14 @@ impl ActiveProjects {
     /// Preserve thread info from a previous snapshot for workspaces that
     /// temporarily have no active thread (e.g. mid-switch).
     fn preserve_thread_info_from(&mut self, old: &ActiveProjects) {
-        for (_key, group) in &mut self.groups {
+        for group in &mut self.groups {
             for entry in &mut group.entries {
                 if entry.thread_info.is_none() {
                     // Find the same workspace in the old data and carry forward its info.
                     entry.thread_info = old
                         .groups
                         .iter()
-                        .flat_map(|(_, g)| &g.entries)
+                        .flat_map(|g| &g.entries)
                         .find(|old_entry| old_entry.workspace == entry.workspace)
                         .and_then(|old_entry| old_entry.thread_info.clone());
                 }
