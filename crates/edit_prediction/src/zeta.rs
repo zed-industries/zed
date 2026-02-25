@@ -308,6 +308,7 @@ pub fn request_prediction_with_zeta(
                         edits,
                         cursor_position,
                         received_response_at,
+                        full_context_offset_range,
                     )),
                 )),
                 usage,
@@ -329,6 +330,7 @@ pub fn request_prediction_with_zeta(
             edits,
             cursor_position,
             received_response_at,
+            full_context_offset_range,
         )) = prediction
         else {
             return Ok(Some(EditPredictionResult {
@@ -336,6 +338,31 @@ pub fn request_prediction_with_zeta(
                 prediction: Err(EditPredictionRejectReason::Empty),
             }));
         };
+
+        if can_collect_data {
+            cx.spawn({
+                let weak_buffer = edited_buffer.downgrade();
+                let context_anchor_range =
+                    edited_buffer_snapshot.anchor_range_around(full_context_offset_range);
+                let request_id = id.0.clone();
+                async move |cx| {
+                    cx.background_executor()
+                        .timer(std::time::Duration::from_secs(30))
+                        .await;
+
+                    let Some(buffer) = weak_buffer.upgrade() else {
+                        return;
+                    };
+                    let new_cursor_region = buffer.read_with(cx, |buffer, _| {
+                        buffer
+                            .text_for_range(context_anchor_range)
+                            .collect::<String>()
+                    });
+                    telemetry::event!("Edit Prediction Snapshot", request_id, new_cursor_region);
+                }
+            })
+            .detach();
+        }
 
         Ok(Some(
             EditPredictionResult::new(
