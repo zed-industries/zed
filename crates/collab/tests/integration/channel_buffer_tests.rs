@@ -782,11 +782,11 @@ async fn test_channel_buffer_operations_lost_on_reconnect(
     //    because the inflated version's timestamp covers "b"'s timestamp
 
     // Get the buffer handle for spawning
-    let buffer_for_edit = channel_buffer_a.read_with(cx_a, |buffer, _| buffer.buffer().clone());
+    let buffer_for_edit = channel_buffer_a.read_with(cx_a, |buffer, _| buffer.buffer());
 
     // Spawn the edit task - it will wait for executor to run it
     let edit_task = cx_a.spawn({
-        let buffer = buffer_for_edit.clone();
+        let buffer = buffer_for_edit;
         async move |mut cx| {
             let _ = buffer.update(&mut cx, |buffer, cx| {
                 buffer.edit([(2..2, "c")], None, cx);
