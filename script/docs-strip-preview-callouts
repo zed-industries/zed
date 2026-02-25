@@ -213,7 +213,11 @@ And:
 > **Changed in Preview (v0.XXX).** See [release notes](/releases#0.XXX).
 \`\`\`
 
-These features are now in Stable, so the callouts are no longer needed."
+These features are now in Stable, so the callouts are no longer needed.
+
+Release Notes:
+
+- N/A"
 
 PR_URL=$(gh pr view --json url --jq '.url')
 
