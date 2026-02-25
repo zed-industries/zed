@@ -7,7 +7,9 @@ use credentials_provider::CredentialsProvider;
 use fs::Fs;
 use gpui::{App, AppContext as _, SharedString, Task};
 use language_model::{ApiKey, EnvVar};
-use project::agent_server_store::{AllAgentServersSettings, ExternalAgentServerName};
+use project::agent_server_store::{
+    AllAgentServersSettings, CLAUDE_AGENT_NAME, CODEX_NAME, ExternalAgentServerName, GEMINI_NAME,
+};
 use settings::{SettingsStore, update_settings_file};
 use std::{rc::Rc, sync::Arc};
 use ui::IconName;
@@ -330,6 +332,8 @@ impl AgentServer for CustomAgentServer {
             .unwrap_or_else(|| name.clone());
         let default_mode = self.default_mode(cx);
         let default_model = self.default_model(cx);
+        let is_previous_built_in =
+            matches!(name.as_ref(), CLAUDE_AGENT_NAME | CODEX_NAME | GEMINI_NAME);
         let (default_config_options, is_registry_agent) =
             cx.read_global(|settings: &SettingsStore, _| {
                 let agent_settings = settings
@@ -365,6 +369,8 @@ impl AgentServer for CustomAgentServer {
                 (config_options, is_registry)
             });
 
+        let is_registry_agent = is_registry_agent || is_previous_built_in;
+
         if is_registry_agent {
             if let Some(registry_store) = project::AgentRegistryStore::try_global(cx) {
                 registry_store.update(cx, |store, cx| store.refresh_if_stale(cx));
@@ -372,15 +378,15 @@ impl AgentServer for CustomAgentServer {
         }
 
         let mut extra_env = load_proxy_env(cx);
-        if delegate.store.read(cx).no_browser() {
-            extra_env.insert("NO_BROWSER".to_owned(), "1".to_owned());
-        }
         if is_registry_agent {
             match name.as_ref() {
-                "claude-acp" => {
+                CLAUDE_AGENT_NAME => {
                     extra_env.insert("ANTHROPIC_API_KEY".into(), "".into());
                 }
-                "codex-acp" => {
+                CODEX_NAME => {
+                    if delegate.store.read(cx).no_browser() {
+                        extra_env.insert("NO_BROWSER".to_owned(), "1".to_owned());
+                    }
                     if let Ok(api_key) = std::env::var("CODEX_API_KEY") {
                         extra_env.insert("CODEX_API_KEY".into(), api_key);
                     }
@@ -388,7 +394,7 @@ impl AgentServer for CustomAgentServer {
                         extra_env.insert("OPEN_AI_API_KEY".into(), api_key);
                     }
                 }
-                "gemini" => {
+                GEMINI_NAME => {
                     extra_env.insert("SURFACE".to_owned(), "zed".to_owned());
                 }
                 _ => {}
@@ -396,7 +402,7 @@ impl AgentServer for CustomAgentServer {
         }
         let store = delegate.store.downgrade();
         cx.spawn(async move |cx| {
-            if is_registry_agent && name.as_ref() == "gemini" {
+            if is_registry_agent && name.as_ref() == GEMINI_NAME {
                 if let Some(api_key) = cx.update(api_key_for_gemini_cli).await.ok() {
                     extra_env.insert("GEMINI_API_KEY".into(), api_key);
                 }

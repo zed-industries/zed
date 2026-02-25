@@ -74,8 +74,12 @@ fn migrate_builtin_entry(
         return;
     }
 
-    let old_entry = servers_map.remove(mapping.old_key).unwrap();
-    let old_obj = old_entry.as_object().unwrap();
+    let Some(old_entry) = servers_map.remove(mapping.old_key) else {
+        return;
+    };
+    let Some(old_obj) = old_entry.as_object() else {
+        return;
+    };
 
     let has_command = old_obj.contains_key("command");
     let ignore_system_version = old_obj

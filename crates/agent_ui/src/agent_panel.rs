@@ -2478,7 +2478,6 @@ impl AgentPanel {
                             .header("External Agents")
                             .map(|mut menu| {
                                 let agent_server_store = agent_server_store.read(cx);
-
                                 let registry_store =
                                     project::AgentRegistryStore::try_global(cx);
                                 let registry_store_ref =
@@ -2519,7 +2518,7 @@ impl AgentPanel {
                                             display_name,
                                         }
                                     })
-                                    .sorted_unstable_by(|a, b| a.display_name.to_lowercase().cmp(&b.display_name.to_lowercase()))
+                                    .sorted_unstable_by_key(|e| e.display_name.to_lowercase())
                                     .collect::<Vec<_>>();
 
                                 for item in &agent_items {

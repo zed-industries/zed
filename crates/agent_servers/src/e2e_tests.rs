@@ -4,7 +4,6 @@ use agent_client_protocol as acp;
 use futures::{FutureExt, StreamExt, channel::mpsc, select};
 use gpui::{Entity, TestAppContext};
 use indoc::indoc;
-
 use project::{FakeFs, Project};
 #[cfg(test)]
 use settings::Settings;
