@@ -833,7 +833,7 @@ impl AcpThreadView {
         cx.spawn(async move |this, cx| {
             if let Err(err) = task.await {
                 this.update(cx, |this, cx| {
-                    this.handle_any_thread_error(err, cx);
+                    this.handle_thread_error(err, cx);
                 })
                 .ok();
             } else {
@@ -891,12 +891,12 @@ impl AcpThreadView {
         .detach();
     }
 
-    pub(crate) fn handle_any_thread_error(&mut self, error: anyhow::Error, cx: &mut Context<Self>) {
-        let error = ThreadError::from_err(error, &self.agent_name);
-        self.handle_thread_error(error, cx);
-    }
-
-    pub(crate) fn handle_thread_error(&mut self, error: ThreadError, cx: &mut Context<Self>) {
+    pub(crate) fn handle_thread_error(
+        &mut self,
+        error: impl Into<ThreadError>,
+        cx: &mut Context<Self>,
+    ) {
+        let error = error.into();
         self.emit_thread_error_telemetry(&error, cx);
         self.thread_error = Some(error);
         cx.notify();
@@ -964,7 +964,7 @@ impl AcpThreadView {
 
             this.update(cx, |this, cx| {
                 if let Err(err) = result {
-                    this.handle_any_thread_error(err, cx);
+                    this.handle_thread_error(err, cx);
                 }
             })
         })

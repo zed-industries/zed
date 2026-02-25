@@ -34,7 +34,10 @@ use gpui::{
 use language::Buffer;
 use language_model::LanguageModelRegistry;
 use markdown::{Markdown, MarkdownElement, MarkdownFont, MarkdownStyle};
-use project::{AgentServerStore, ExternalAgentServerName, Project, ProjectEntryId};
+use project::{
+    AgentServerStore, ExternalAgentServerName, Project, ProjectEntryId,
+    agent_server_store::GEMINI_NAME,
+};
 use prompt_store::{PromptId, PromptStore};
 use rope::Point;
 use settings::{NotifyWhenAgentWaiting, Settings as _, SettingsStore};
@@ -107,8 +110,8 @@ pub(crate) enum ThreadError {
     },
 }
 
-impl ThreadError {
-    fn from_err(error: anyhow::Error, agent_name: &str) -> Self {
+impl From<anyhow::Error> for ThreadError {
+    fn from(error: anyhow::Error) -> Self {
         if error.is::<language_model::PaymentRequiredError>() {
             Self::PaymentRequired
         } else if let Some(acp_error) = error.downcast_ref::<acp::Error>()
@@ -123,18 +126,9 @@ impl ThreadError {
                 .downcast_ref::<acp::Error>()
                 .map(|acp_error| SharedString::from(acp_error.code.to_string()));
 
-            // todo!(): we should have Gemini return better errors here.
-            if agent_name == "Gemini CLI"
-                && message.contains("Could not load the default credentials")
-                || message.contains("API key not valid")
-                || message.contains("Request had invalid authentication credentials")
-            {
-                Self::AuthenticationRequired(message)
-            } else {
-                Self::Other {
-                    message,
-                    acp_error_code,
-                }
+            Self::Other {
+                message,
+                acp_error_code,
             }
         }
     }
@@ -613,7 +607,7 @@ impl AcpServerView {
                         if err.downcast_ref::<LoadError>().is_some() {
                             this.handle_load_error(err, window, cx);
                         } else if let Some(active) = this.active_thread() {
-                            active.update(cx, |active, cx| active.handle_any_thread_error(err, cx));
+                            active.update(cx, |active, cx| active.handle_thread_error(err, cx));
                         } else {
                             this.handle_load_error(err, window, cx);
                         }
@@ -1376,6 +1370,7 @@ impl AcpServerView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let agent_name = self.agent.name();
         let Some(connected) = self.as_connected_mut() else {
             return;
         };
@@ -1486,7 +1481,7 @@ impl AcpServerView {
                                     }
                                     if let Some(active) = this.active_thread() {
                                         active.update(cx, |active, cx| {
-                                            active.handle_any_thread_error(err, cx);
+                                            active.handle_thread_error(err, cx);
                                         })
                                     }
                                 } else {
@@ -1502,42 +1497,42 @@ impl AcpServerView {
             }
         }
 
-        // todo!()
-        if method.0.as_ref() == "gemini-api-key" {
-            let registry = LanguageModelRegistry::global(cx);
-            let provider = registry
-                .read(cx)
-                .provider(&language_model::GOOGLE_PROVIDER_ID)
-                .unwrap();
-            if !provider.is_authenticated(cx) {
+        if agent_name == GEMINI_NAME {
+            if method.0.as_ref() == "gemini-api-key" {
+                let registry = LanguageModelRegistry::global(cx);
+                let provider = registry
+                    .read(cx)
+                    .provider(&language_model::GOOGLE_PROVIDER_ID)
+                    .unwrap();
+                if !provider.is_authenticated(cx) {
+                    let this = cx.weak_entity();
+                    let agent_name = self.agent.name();
+                    let connection = connection.clone();
+                    window.defer(cx, |window, cx| {
+                        Self::handle_auth_required(
+                            this,
+                            AuthRequired {
+                                description: Some("GEMINI_API_KEY must be set".to_owned()),
+                                provider_id: Some(language_model::GOOGLE_PROVIDER_ID),
+                            },
+                            agent_name,
+                            connection,
+                            window,
+                            cx,
+                        );
+                    });
+                    return;
+                }
+            } else if method.0.as_ref() == "vertex-ai"
+                && std::env::var("GOOGLE_API_KEY").is_err()
+                && (std::env::var("GOOGLE_CLOUD_PROJECT").is_err()
+                    || (std::env::var("GOOGLE_CLOUD_PROJECT").is_err()))
+            {
                 let this = cx.weak_entity();
                 let agent_name = self.agent.name();
                 let connection = connection.clone();
-                window.defer(cx, |window, cx| {
-                    Self::handle_auth_required(
-                        this,
-                        AuthRequired {
-                            description: Some("GEMINI_API_KEY must be set".to_owned()),
-                            provider_id: Some(language_model::GOOGLE_PROVIDER_ID),
-                        },
-                        agent_name,
-                        connection,
-                        window,
-                        cx,
-                    );
-                });
-                return;
-            }
-        } else if method.0.as_ref() == "vertex-ai"
-            && std::env::var("GOOGLE_API_KEY").is_err()
-            && (std::env::var("GOOGLE_CLOUD_PROJECT").is_err()
-                || (std::env::var("GOOGLE_CLOUD_PROJECT").is_err()))
-        {
-            let this = cx.weak_entity();
-            let agent_name = self.agent.name();
-            let connection = connection.clone();
 
-            window.defer(cx, |window, cx| {
+                window.defer(cx, |window, cx| {
                     Self::handle_auth_required(
                         this,
                         AuthRequired {
@@ -1553,7 +1548,8 @@ impl AcpServerView {
                         cx,
                     )
                 });
-            return;
+                return;
+            }
         }
 
         configuration_view.take();
@@ -1605,7 +1601,7 @@ impl AcpServerView {
                             pending_auth_method.take();
                         }
                         if let Some(active) = this.active_thread() {
-                            active.update(cx, |active, cx| active.handle_any_thread_error(err, cx));
+                            active.update(cx, |active, cx| active.handle_thread_error(err, cx));
                         }
                     } else {
                         this.reset(window, cx);
@@ -1739,7 +1735,6 @@ impl AcpServerView {
                 })?
                 .await?;
 
-            // todo!()
             let success_patterns = match method.0.as_ref() {
                 "claude-login" | "spawn-gemini-cli" => vec![
                     "Login successful".to_string(),
@@ -1792,7 +1787,6 @@ impl AcpServerView {
                         }
                     }
                     _ = exit_status => {
-                        // todo!()
                         if !previous_attempt && project.read_with(cx, |project, _| project.is_via_remote_server()) && login.label.contains("gemini") {
                             return cx.update(|window, cx| Self::spawn_external_agent_login(login, workspace, project.clone(), method, true, window, cx))?.await
                         }
