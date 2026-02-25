@@ -675,11 +675,11 @@ impl Render for MultiWorkspace {
         };
 
         let workspace = self.workspace().clone();
+        let workspace_key_context = workspace.update(cx, |workspace, cx| workspace.key_context(cx));
         let root = workspace.update(cx, |workspace, cx| workspace.actions(h_flex(), window, cx));
 
-        // todo!(Add workspace key context status information here)
         client_side_decorations(
-            root.key_context("MultiWorkspace")
+            root.key_context(workspace_key_context)
                 .relative()
                 .size_full()
                 .on_action(
