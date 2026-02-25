@@ -3095,10 +3095,81 @@ fn run_thread_target_selector_visual_tests(
 ) -> Result<TestResult> {
     use agent_ui::{AgentPanel, ThreadTarget, WorktreeCreationStatus};
 
-    // Enable the agent-v2 feature flag so the thread target selector renders
+    // Enable feature flags so the thread target selector renders
     cx.update(|cx| {
-        cx.update_flags(true, vec!["agent-v2".to_string()]);
+        cx.update_flags(
+            true,
+            vec!["agent-v2".to_string(), "agent-git-worktrees".to_string()],
+        );
     });
+
+    // Create a temp directory with a real git repo so "New Worktree" is enabled
+    let temp_dir = tempfile::tempdir()?;
+    let temp_path = temp_dir.keep();
+    let canonical_temp = temp_path.canonicalize()?;
+    let project_path = canonical_temp.join("project");
+    std::fs::create_dir_all(&project_path)?;
+
+    // Initialize git repo
+    std::process::Command::new("git")
+        .args(["init"])
+        .current_dir(&project_path)
+        .output()?;
+    std::process::Command::new("git")
+        .args(["config", "user.email", "test@test.com"])
+        .current_dir(&project_path)
+        .output()?;
+    std::process::Command::new("git")
+        .args(["config", "user.name", "Test User"])
+        .current_dir(&project_path)
+        .output()?;
+
+    // Create source files
+    let src_dir = project_path.join("src");
+    std::fs::create_dir_all(&src_dir)?;
+    std::fs::write(
+        src_dir.join("main.rs"),
+        r#"fn main() {
+    println!("Hello, world!");
+
+    let x = 42;
+    let y = x * 2;
+
+    if y > 50 {
+        println!("y is greater than 50");
+    } else {
+        println!("y is not greater than 50");
+    }
+
+    for i in 0..10 {
+        println!("i = {}", i);
+    }
+}
+
+fn helper_function(a: i32, b: i32) -> i32 {
+    a + b
+}
+"#,
+    )?;
+
+    std::fs::write(
+        project_path.join("Cargo.toml"),
+        r#"[package]
+name = "test_project"
+version = "0.1.0"
+edition = "2021"
+"#,
+    )?;
+
+    // Commit so git status is clean
+    std::process::Command::new("git")
+        .args(["add", "."])
+        .current_dir(&project_path)
+        .output()?;
+    std::process::Command::new("git")
+        .args(["commit", "-m", "Initial commit"])
+        .current_dir(&project_path)
+        .output()?;
 
     let project = cx.update(|cx| {
         project::Project::local(
@@ -3116,14 +3187,14 @@ fn run_thread_target_selector_visual_tests(
         )
     });
 
-    // Create a window sized for the agent panel
-    let window_size = size(px(500.0), px(900.0));
+    // Use a wide window so we see project panel + editor + agent panel
+    let window_size = size(px(1280.0), px(800.0));
     let bounds = Bounds {
         origin: point(px(0.0), px(0.0)),
         size: window_size,
     };
 
-    let workspace_window: WindowHandle<Workspace> = cx
+    let workspace_window: WindowHandle<MultiWorkspace> = cx
         .update(|cx| {
             cx.open_window(
                 WindowOptions {
@@ -3133,9 +3204,10 @@ fn run_thread_target_selector_visual_tests(
                     ..Default::default()
                 },
                 |window, cx| {
-                    cx.new(|cx| {
+                    let workspace = cx.new(|cx| {
                         Workspace::new(None, project.clone(), app_state.clone(), window, cx)
-                    })
+                    });
+                    cx.new(|cx| MultiWorkspace::new(workspace, window, cx))
                 },
             )
         })
@@ -3143,12 +3215,119 @@ fn run_thread_target_selector_visual_tests(
 
     cx.run_until_parked();
 
-    // Load the AgentPanel
+    // Create and register the workspace sidebar
+    let sidebar = workspace_window
+        .update(cx, |_multi_workspace, window, cx| {
+            let multi_workspace_handle = cx.entity();
+            cx.new(|cx| sidebar::Sidebar::new(multi_workspace_handle, window, cx))
+        })
+        .context("Failed to create sidebar")?;
+
+    workspace_window
+        .update(cx, |multi_workspace, window, cx| {
+            multi_workspace.register_sidebar(sidebar.clone(), window, cx);
+        })
+        .context("Failed to register sidebar")?;
+
+    // Open the sidebar
+    workspace_window
+        .update(cx, |multi_workspace, window, cx| {
+            multi_workspace.toggle_sidebar(window, cx);
+        })
+        .context("Failed to toggle sidebar")?;
+
+    cx.run_until_parked();
+
+    // Add the git project as a worktree
+    let add_worktree_task = workspace_window
+        .update(cx, |multi_workspace, _window, cx| {
+            let workspace = &multi_workspace.workspaces()[0];
+            let project = workspace.read(cx).project().clone();
+            project.update(cx, |project, cx| {
+                project.find_or_create_worktree(&project_path, true, cx)
+            })
+        })
+        .context("Failed to start adding worktree")?;
+
+    cx.background_executor.allow_parking();
+    cx.foreground_executor
+        .block_test(add_worktree_task)
+        .context("Failed to add worktree")?;
+    cx.background_executor.forbid_parking();
+
+    cx.run_until_parked();
+
+    // Wait for worktree scan and git status
+    for _ in 0..5 {
+        cx.advance_clock(Duration::from_millis(100));
+        cx.run_until_parked();
+    }
+
+    // Open the project panel
     let (weak_workspace, async_window_cx) = workspace_window
-        .update(cx, |workspace, window, cx| {
-            (workspace.weak_handle(), window.to_async(cx))
+        .update(cx, |multi_workspace, window, cx| {
+            let workspace = &multi_workspace.workspaces()[0];
+            (workspace.read(cx).weak_handle(), window.to_async(cx))
         })
         .context("Failed to get workspace handle")?;
+
+    cx.background_executor.allow_parking();
+    let project_panel = cx
+        .foreground_executor
+        .block_test(ProjectPanel::load(
+            weak_workspace.clone(),
+            async_window_cx.clone(),
+        ))
+        .context("Failed to load project panel")?;
+    cx.background_executor.forbid_parking();
+
+    workspace_window
+        .update(cx, |multi_workspace, window, cx| {
+            let workspace = &multi_workspace.workspaces()[0];
+            workspace.update(cx, |workspace, cx| {
+                workspace.add_panel(project_panel, window, cx);
+                workspace.open_panel::<ProjectPanel>(window, cx);
+            });
+        })
+        .context("Failed to add project panel")?;
+
+    cx.run_until_parked();
+
+    // Open main.rs in the editor
+    let open_file_task = workspace_window
+        .update(cx, |multi_workspace, window, cx| {
+            let workspace = &multi_workspace.workspaces()[0];
+            workspace.update(cx, |workspace, cx| {
+                let worktree = workspace.project().read(cx).worktrees(cx).next();
+                if let Some(worktree) = worktree {
+                    let worktree_id = worktree.read(cx).id();
+                    let rel_path: std::sync::Arc<util::rel_path::RelPath> =
+                        util::rel_path::rel_path("src/main.rs").into();
+                    let project_path: project::ProjectPath = (worktree_id, rel_path).into();
+                    Some(workspace.open_path(project_path, None, true, window, cx))
+                } else {
+                    None
+                }
+            })
+        })
+        .log_err()
+        .flatten();
+
+    if let Some(task) = open_file_task {
+        cx.background_executor.allow_parking();
+        cx.foreground_executor.block_test(task).log_err();
+        cx.background_executor.forbid_parking();
+    }
+
+    cx.run_until_parked();
+
+    // Load the AgentPanel
+    let (weak_workspace, async_window_cx) = workspace_window
+        .update(cx, |multi_workspace, window, cx| {
+            let workspace = &multi_workspace.workspaces()[0];
+            (workspace.read(cx).weak_handle(), window.to_async(cx))
+        })
+        .context("Failed to get workspace handle for agent panel")?;
 
     let prompt_builder =
         cx.update(|cx| prompt_store::PromptBuilder::load(app_state.fs.clone(), false, cx));
@@ -3164,9 +3343,12 @@ fn run_thread_target_selector_visual_tests(
     cx.background_executor.forbid_parking();
 
     workspace_window
-        .update(cx, |workspace, window, cx| {
-            workspace.add_panel(panel.clone(), window, cx);
-            workspace.open_panel::<AgentPanel>(window, cx);
+        .update(cx, |multi_workspace, window, cx| {
+            let workspace = &multi_workspace.workspaces()[0];
+            workspace.update(cx, |workspace, cx| {
+                workspace.add_panel(panel.clone(), window, cx);
+                workspace.open_panel::<AgentPanel>(window, cx);
+            });
         })
         .context("Failed to add and open AgentPanel")?;
 
@@ -3184,7 +3366,7 @@ fn run_thread_target_selector_visual_tests(
 
     cx.run_until_parked();
 
-    // ---- Screenshot 1: Default "Local Project" selector ----
+    // ---- Screenshot 1: Default "Local Project" selector (dropdown closed) ----
     cx.update_window(workspace_window.into(), |_, window, _cx| {
         window.refresh();
     })?;
@@ -3197,7 +3379,7 @@ fn run_thread_target_selector_visual_tests(
         update_baseline,
     );
 
-    // ---- Screenshot 1b: Dropdown open showing entries ----
+    // ---- Screenshot 2: Dropdown open showing menu entries ----
     cx.update_window(workspace_window.into(), |_, window, cx| {
         panel.update(cx, |panel, cx| {
             panel.open_thread_target_menu_for_tests(window, cx);
@@ -3217,7 +3399,15 @@ fn run_thread_target_selector_visual_tests(
         update_baseline,
     );
 
-    // ---- Screenshot 2: "New Worktree" selected ----
+    // ---- Screenshot 3: "New Worktree" selected (dropdown closed, label changed) ----
+    // First dismiss the dropdown, then change the target so the toolbar label is visible
+    cx.update_window(workspace_window.into(), |_, _window, cx| {
+        panel.update(cx, |panel, cx| {
+            panel.close_thread_target_menu_for_tests(cx);
+        });
+    })?;
+    cx.run_until_parked();
+
     cx.update_window(workspace_window.into(), |_, _window, cx| {
         panel.update(cx, |panel, cx| {
             panel.set_thread_target_for_tests(ThreadTarget::NewWorktree, cx);
@@ -3237,7 +3427,7 @@ fn run_thread_target_selector_visual_tests(
         update_baseline,
     );
 
-    // ---- Screenshot 3: "Creating worktree…" status banner ----
+    // ---- Screenshot 4: "Creating worktree…" status banner ----
     cx.update_window(workspace_window.into(), |_, _window, cx| {
         panel.update(cx, |panel, cx| {
             panel
@@ -3258,7 +3448,7 @@ fn run_thread_target_selector_visual_tests(
         update_baseline,
     );
 
-    // ---- Screenshot 4: Error status banner ----
+    // ---- Screenshot 5: Error status banner ----
     cx.update_window(workspace_window.into(), |_, _window, cx| {
         panel.update(cx, |panel, cx| {
             panel.set_worktree_creation_status_for_tests(
@@ -3285,8 +3475,9 @@ fn run_thread_target_selector_visual_tests(
 
     // Clean up
     workspace_window
-        .update(cx, |workspace, _window, cx| {
-            let project = workspace.project().clone();
+        .update(cx, |multi_workspace, _window, cx| {
+            let workspace = &multi_workspace.workspaces()[0];
+            let project = workspace.read(cx).project().clone();
             project.update(cx, |project, cx| {
                 let worktree_ids: Vec<_> =
                     project.worktrees(cx).map(|wt| wt.read(cx).id()).collect();

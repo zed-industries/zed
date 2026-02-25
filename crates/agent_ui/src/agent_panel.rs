@@ -4213,6 +4213,13 @@ impl AgentPanel {
     ) {
         self.thread_target_menu_handle.show(window, cx);
     }
+
+    /// Dismisses the thread target dropdown menu.
+    ///
+    /// This is a test-only helper for visual tests.
+    pub fn close_thread_target_menu_for_tests(&mut self, cx: &mut Context<Self>) {
+        self.thread_target_menu_handle.hide(cx);
+    }
 }
 
 #[cfg(test)]
