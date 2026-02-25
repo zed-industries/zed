@@ -2,13 +2,15 @@ use super::tool_permissions::{
     ResolvedProjectPath, authorize_symlink_access, canonicalize_worktree_roots,
     resolve_project_path,
 };
-use crate::{AgentTool, ToolInput};
+use crate::{AgentTool, ToolInput, ToolPermissionDecision, decide_permission_for_path};
 use agent_client_protocol::ToolKind;
+use agent_settings::AgentSettings;
 use futures::FutureExt as _;
 use gpui::{App, AppContext as _, Entity, SharedString, Task};
 use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use settings::Settings;
 use std::{path::PathBuf, sync::Arc};
 use util::markdown::MarkdownEscaped;
 
@@ -101,7 +103,7 @@ impl AgentTool for OpenTool {
             });
 
             let authorize = if let Some(canonical_target) = symlink_escape {
-                cx.update(|cx| {
+                Some(cx.update(|cx| {
                     authorize_symlink_access(
                         Self::NAME,
                         &input.path_or_url,
@@ -109,21 +111,36 @@ impl AgentTool for OpenTool {
                         &event_stream,
                         cx,
                     )
-                })
+                }))
             } else {
-                cx.update(|cx| {
-                    let context = crate::ToolPermissionContext::new(
+                let decision = cx.update(|cx| {
+                    decide_permission_for_path(
                         Self::NAME,
-                        vec![input.path_or_url.clone()],
-                    );
-                    event_stream.authorize(initial_title, context, cx)
-                })
+                        &input.path_or_url,
+                        &AgentSettings::get_global(cx),
+                    )
+                });
+                match decision {
+                    ToolPermissionDecision::Allow => None,
+                    ToolPermissionDecision::Deny(reason) => {
+                        return Err(reason);
+                    }
+                    ToolPermissionDecision::Confirm => Some(cx.update(|cx| {
+                        let context = crate::ToolPermissionContext::new(
+                            Self::NAME,
+                            vec![input.path_or_url.clone()],
+                        );
+                        event_stream.authorize(initial_title, context, cx)
+                    })),
+                }
             };
 
-            futures::select! {
-                result = authorize.fuse() => result.map_err(|e| e.to_string())?,
-                _ = event_stream.cancelled_by_user().fuse() => {
-                    return Err("Open cancelled by user".to_string());
+            if let Some(authorize) = authorize {
+                futures::select! {
+                    result = authorize.fuse() => result.map_err(|e| e.to_string())?,
+                    _ = event_stream.cancelled_by_user().fuse() => {
+                        return Err("Open cancelled by user".to_string());
+                    }
                 }
             }
 
