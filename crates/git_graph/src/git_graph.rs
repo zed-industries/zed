@@ -18,7 +18,10 @@ use language::line_diff;
 use menu::{Cancel, SelectNext, SelectPrevious};
 use project::{
     Project,
-    git_store::{CommitDataState, GitStoreEvent, Repository, RepositoryEvent, RepositoryId},
+    git_store::{
+        CommitDataState, GitGraphEvent, GitStoreEvent, GraphDataResponse, Repository,
+        RepositoryEvent, RepositoryId,
+    },
 };
 use settings::Settings;
 use smallvec::{SmallVec, smallvec};
@@ -964,37 +967,62 @@ impl GitGraph {
         cx: &mut Context<Self>,
     ) {
         match event {
-            RepositoryEvent::GitGraphCountUpdated((source, order), commit_count) => {
-                if order != &self.log_order || source != &self.log_source {
-                    return;
-                }
-
-                let old_count = self.graph_data.commits.len();
-
-                if let Some(pending_selection_index) = repository.update(cx, |repository, cx| {
-                    let (commits, is_loading) =
-                        repository.graph_data(source.clone(), *order, old_count..*commit_count, cx);
-                    self.graph_data.add_commits(commits);
-
-                    let pending_sha_index = self.pending_select_sha.and_then(|oid| {
-                        repository
-                            .get_graph_data(source.clone(), *order)
-                            .and_then(|data| data.commit_oid_to_index.get(&oid).copied())
-                    });
-
-                    // todo(git_graph): There is a slight race condition here with is_loading
-                    // because the task that we check is completed could need to be polled still
-                    if !is_loading && pending_sha_index.is_none() {
-                        self.pending_select_sha.take();
+            RepositoryEvent::GraphEvent((source, order), event)
+                if source == &self.log_source && order == &self.log_order =>
+            {
+                match event {
+                    GitGraphEvent::FullyLoaded => {
+                        if let Some(pending_sha_index) =
+                            self.pending_select_sha.take().and_then(|oid| {
+                                repository
+                                    .read(cx)
+                                    .get_graph_data(source.clone(), *order)
+                                    .and_then(|data| data.commit_oid_to_index.get(&oid).copied())
+                            })
+                        {
+                            self.select_entry(pending_sha_index, cx);
+                        }
                     }
+                    GitGraphEvent::LoadingError => {
+                        // todo(git_graph): Wire this up with the UI
+                    }
+                    GitGraphEvent::CountUpdated(commit_count) => {
+                        let old_count = self.graph_data.commits.len();
 
-                    pending_sha_index
-                }) {
-                    self.select_entry(pending_selection_index, cx);
-                    self.pending_select_sha.take();
+                        if let Some(pending_selection_index) =
+                            repository.update(cx, |repository, cx| {
+                                let GraphDataResponse {
+                                    commits,
+                                    is_loading,
+                                    error: _,
+                                } = repository.graph_data(
+                                    source.clone(),
+                                    *order,
+                                    old_count..*commit_count,
+                                    cx,
+                                );
+                                self.graph_data.add_commits(commits);
+
+                                let pending_sha_index = self.pending_select_sha.and_then(|oid| {
+                                    repository.get_graph_data(source.clone(), *order).and_then(
+                                        |data| data.commit_oid_to_index.get(&oid).copied(),
+                                    )
+                                });
+
+                                if !is_loading && pending_sha_index.is_none() {
+                                    self.pending_select_sha.take();
+                                }
+
+                                pending_sha_index
+                            })
+                        {
+                            self.select_entry(pending_selection_index, cx);
+                            self.pending_select_sha.take();
+                        }
+
+                        cx.notify();
+                    }
                 }
-
-                cx.notify();
             }
             RepositoryEvent::BranchChanged | RepositoryEvent::MergeHeadsChanged => {
                 self.pending_select_sha = None;
@@ -1006,6 +1034,7 @@ impl GitGraph {
                     cx.notify();
                 }
             }
+            RepositoryEvent::GraphEvent(_, _) => {}
             _ => {}
         }
     }
@@ -1013,12 +1042,9 @@ impl GitGraph {
     fn fetch_initial_graph_data(&mut self, cx: &mut App) {
         if let Some(repository) = self.get_selected_repository(cx) {
             repository.update(cx, |repository, cx| {
-                let (commits, _) = repository.graph_data(
-                    self.log_source.clone(),
-                    self.log_order,
-                    0..usize::MAX,
-                    cx,
-                );
+                let commits = repository
+                    .graph_data(self.log_source.clone(), self.log_order, 0..usize::MAX, cx)
+                    .commits;
                 self.graph_data.add_commits(commits);
             });
         }
@@ -2043,7 +2069,11 @@ impl Render for GitGraph {
                     if let Some(repository) = self.get_selected_repository(cx) {
                         repository.update(cx, |repository, cx| {
                             // Start loading the graph data if we haven't started already
-                            let (commits, is_loading) = repository.graph_data(
+                            let GraphDataResponse {
+                                commits,
+                                is_loading,
+                                error: _,
+                            } = repository.graph_data(
                                 self.log_source.clone(),
                                 self.log_order,
                                 0..usize::MAX,
@@ -3067,7 +3097,7 @@ mod tests {
                 0..usize::MAX,
                 cx,
             )
-            .0
+            .commits
             .to_vec()
         });
 

@@ -303,6 +303,12 @@ pub struct InitialGitGraphData {
     pub commit_oid_to_index: HashMap<Oid, usize>,
 }
 
+pub struct GraphDataResponse<'a> {
+    pub commits: &'a [Arc<InitialGraphCommitData>],
+    pub is_loading: bool,
+    pub error: Option<SharedString>,
+}
+
 pub struct Repository {
     this: WeakEntity<Self>,
     snapshot: RepositorySnapshot,
@@ -392,13 +398,20 @@ pub enum RepositoryState {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub enum GitGraphEvent {
+    CountUpdated(usize),
+    FullyLoaded,
+    LoadingError,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RepositoryEvent {
     StatusesChanged,
     MergeHeadsChanged,
     BranchChanged,
     StashEntriesChanged,
     PendingOpsChanged { pending_ops: SumTree<PendingOps> },
-    GitGraphCountUpdated((LogSource, LogOrder), usize),
+    GraphEvent((LogSource, LogOrder), GitGraphEvent),
 }
 
 #[derive(Clone, Debug)]
@@ -4379,7 +4392,7 @@ impl Repository {
         log_order: LogOrder,
         range: Range<usize>,
         cx: &mut Context<Self>,
-    ) -> (&[Arc<InitialGraphCommitData>], bool) {
+    ) -> GraphDataResponse<'_> {
         let initial_commit_data = self
             .initial_graph_data
             .entry((log_source.clone(), log_order))
@@ -4434,10 +4447,13 @@ impl Repository {
 
         let max_start = initial_commit_data.commit_data.len().saturating_sub(1);
         let max_end = initial_commit_data.commit_data.len();
-        (
-            &initial_commit_data.commit_data[range.start.min(max_start)..range.end.min(max_end)],
-            !initial_commit_data.fetch_task.is_ready(),
-        )
+
+        GraphDataResponse {
+            commits: &initial_commit_data.commit_data
+                [range.start.min(max_start)..range.end.min(max_end)],
+            is_loading: !initial_commit_data.fetch_task.is_ready(),
+            error: initial_commit_data.error.clone(),
+        }
     }
 
     async fn local_git_graph_data(
@@ -4474,9 +4490,9 @@ impl Repository {
                                 .insert(commit_data.sha, graph_data.commit_data.len());
                             graph_data.commit_data.push(commit_data);
 
-                            cx.emit(RepositoryEvent::GitGraphCountUpdated(
+                            cx.emit(RepositoryEvent::GraphEvent(
                                 graph_data_key.clone(),
-                                graph_data.commit_data.len(),
+                                GitGraphEvent::CountUpdated(graph_data.commit_data.len()),
                             ));
                         }
                     });
