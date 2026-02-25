@@ -1,10 +1,27 @@
 # E2E test environment for Zed WebSocket sync
-# Provides: Zed (built from source with cache), xvfb, software Vulkan
+# Provides: Zed (built from source with cache), Go test server, xvfb, software Vulkan
+#
+# The Go test server (helix-ws-test-server) imports the wsprotocol package from
+# the Helix repo, so the same message parsing, routing, and accumulation code
+# runs in both tests and production. No more Python mock divergence.
 #
 # Usage:
-#   cd /path/to/zed-upstream
-#   docker build -t zed-ws-e2e -f crates/external_websocket_sync/e2e-test/Dockerfile .
-#   docker run --rm zed-ws-e2e
+#   # 1. Build Go test server (from helix repo)
+#   cd /path/to/helix
+#   CGO_ENABLED=0 go build -o /tmp/helix-ws-test-server \
+#     ./crates/external_websocket_sync/e2e-test/helix-ws-test-server  # if in zed repo
+#   # OR: use the go module in the e2e-test dir:
+#   cd /path/to/zed/crates/external_websocket_sync/e2e-test/helix-ws-test-server
+#   CGO_ENABLED=0 go build -o /tmp/helix-ws-test-server .
+#
+#   # 2. Build E2E Docker image (from zed repo root)
+#   cd /path/to/zed
+#   docker build -t zed-ws-e2e \
+#     --build-arg HELIX_WS_TEST_SERVER=/tmp/helix-ws-test-server \
+#     -f crates/external_websocket_sync/e2e-test/Dockerfile .
+#
+#   # 3. Run
+#   docker run --rm -e ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY zed-ws-e2e
 #
 # BuildKit cache mounts persist cargo registry, git deps, rustup, and build
 # artifacts across builds (same pattern as Helix's Dockerfile.zed-build).
@@ -54,12 +71,12 @@ RUN --mount=type=cache,target=/root/.cargo/registry \
     cargo build --release -p zed --features external_websocket_sync && \
     cp target-e2e/release/zed /zed-binary
 
-# Runtime stage — no Rust toolchain, just Zed + test deps
+# Runtime stage — no Rust toolchain, just Zed + Go test server + test deps
 FROM ubuntu:25.10
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Runtime shared libraries + headless display + Python for mock server
+# Runtime shared libraries + headless display (no more Python!)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     # Zed runtime libs
     libxkbcommon0 libxkbcommon-x11-0 libwayland-client0 libvulkan1 \
@@ -75,12 +92,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     xvfb x11-utils \
     # Software Vulkan (lavapipe)
     mesa-vulkan-drivers \
-    # Python for mock WebSocket server
-    python3 python3-websockets \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy Zed binary from builder
 COPY --from=builder /zed-binary /usr/local/bin/zed
+
+# Copy pre-built Go test server binary (statically linked, no runtime deps)
+# To rebuild: cd crates/external_websocket_sync/e2e-test/helix-ws-test-server && CGO_ENABLED=0 go build -o helix-ws-test-server .
+COPY crates/external_websocket_sync/e2e-test/helix-ws-test-server/helix-ws-test-server /usr/local/bin/helix-ws-test-server
+RUN chmod +x /usr/local/bin/helix-ws-test-server
 
 # Copy test script
 COPY crates/external_websocket_sync/e2e-test/run_e2e.sh /test/run_e2e.sh
