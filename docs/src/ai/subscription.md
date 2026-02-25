@@ -1,3 +1,8 @@
+---
+title: Zed AI Subscription
+description: Learn about Zed Pro and Business plans for hosted AI models with higher rate limits and premium features.
+---
+
 # Subscription
 
 Zed's hosted models are offered via subscription to Zed Pro or Zed Business.

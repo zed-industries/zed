@@ -11,6 +11,10 @@ impl<T> Patch<T>
 where
     T: 'static + Clone + Copy + Ord + Default,
 {
+    pub const fn empty() -> Self {
+        Self(Vec::new())
+    }
+
     pub fn new(edits: Vec<Edit<T>>) -> Self {
         #[cfg(debug_assertions)]
         {

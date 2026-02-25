@@ -208,7 +208,7 @@ impl ChannelView {
             editor.set_custom_context_menu(move |_, position, window, cx| {
                 let this = this.clone();
                 Some(ui::ContextMenu::build(window, cx, move |menu, _, _| {
-                    menu.entry("Copy link to section", None, move |window, cx| {
+                    menu.entry("Copy Link to Section", None, move |window, cx| {
                         this.update(cx, |this, cx| {
                             this.copy_link_for_position(position, window, cx)
                         })
@@ -553,7 +553,7 @@ impl Item for ChannelView {
         self.editor.read(cx).pixel_position_of_cursor(cx)
     }
 
-    fn to_item_events(event: &EditorEvent, f: impl FnMut(ItemEvent)) {
+    fn to_item_events(event: &EditorEvent, f: &mut dyn FnMut(ItemEvent)) {
         Editor::to_item_events(event, f)
     }
 }

@@ -47,6 +47,8 @@ impl StackTraceView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        telemetry::event!("Stack Trace View Deployed");
+
         let multibuffer = cx.new(|_| MultiBuffer::new(Capability::ReadWrite));
         let editor = cx.new(|cx| {
             let mut editor =
@@ -325,7 +327,7 @@ impl Focusable for StackTraceView {
 impl Item for StackTraceView {
     type Event = EditorEvent;
 
-    fn to_item_events(event: &EditorEvent, f: impl FnMut(ItemEvent)) {
+    fn to_item_events(event: &EditorEvent, f: &mut dyn FnMut(ItemEvent)) {
         Editor::to_item_events(event, f)
     }
 

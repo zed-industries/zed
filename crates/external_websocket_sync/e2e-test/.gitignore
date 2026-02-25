@@ -1,0 +1,6 @@
+# Pre-built binaries (copied from build output)
+zed-binary
+helix-ws-test-server/helix-ws-test-server
+
+# Test artifacts
+screenshots/

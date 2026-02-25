@@ -316,7 +316,7 @@ impl BreakpointStore {
             for (path, breakpoint_set) in &self.breakpoints {
                 let _ = client.send(proto::BreakpointsForFile {
                     project_id: *project_id,
-                    path: path.to_str().map(ToOwned::to_owned).unwrap(),
+                    path: path.to_string_lossy().into_owned(),
                     breakpoints: breakpoint_set
                         .breakpoints
                         .iter()
@@ -553,7 +553,7 @@ impl BreakpointStore {
             {
                 cx.background_spawn(remote.upstream_client.request(proto::ToggleBreakpoint {
                     project_id: remote.upstream_project_id,
-                    path: abs_path.to_str().map(ToOwned::to_owned).unwrap(),
+                    path: abs_path.to_string_lossy().into_owned(),
                     breakpoint: Some(breakpoint),
                 }))
                 .detach();
@@ -577,7 +577,7 @@ impl BreakpointStore {
 
             let _ = client.send(proto::BreakpointsForFile {
                 project_id: *project_id,
-                path: abs_path.to_str().map(ToOwned::to_owned).unwrap(),
+                path: abs_path.to_string_lossy().into_owned(),
                 breakpoints,
             });
         }
@@ -628,6 +628,10 @@ impl BreakpointStore {
                 file_breakpoints.breakpoints.iter().filter_map({
                     let range = range.clone();
                     move |bp| {
+                        if !buffer_snapshot.can_resolve(bp.position()) {
+                            return None;
+                        }
+
                         if let Some(range) = &range
                             && (bp.position().cmp(&range.start, buffer_snapshot).is_lt()
                                 || bp.position().cmp(&range.end, buffer_snapshot).is_gt())

@@ -5,8 +5,8 @@ use cpal::traits::{DeviceTrait, StreamTrait as _};
 use futures::channel::mpsc::UnboundedSender;
 use futures::{Stream, StreamExt as _};
 use gpui::{
-    AsyncApp, BackgroundExecutor, ScreenCaptureFrame, ScreenCaptureSource, ScreenCaptureStream,
-    Task,
+    AsyncApp, BackgroundExecutor, Priority, ScreenCaptureFrame, ScreenCaptureSource,
+    ScreenCaptureStream, Task,
 };
 use libwebrtc::native::{apm, audio_mixer, audio_resampler};
 use livekit::track;
@@ -211,21 +211,13 @@ impl AudioStack {
             let voip_parts = audio::VoipParts::new(cx)?;
             // Audio needs to run real-time and should never be paused. That is
             // why we are using a normal std::thread and not a background task
-            thread::Builder::new()
-                .name("MicrophoneToLivekit".to_string())
-                .spawn(move || {
+            self.executor
+                .spawn_with_priority(Priority::RealtimeAudio, async move {
                     // microphone is non send on mac
-                    let microphone = match audio::Audio::open_microphone(voip_parts) {
-                        Ok(m) => m,
-                        Err(e) => {
-                            log::error!("Could not open microphone: {e}");
-                            return;
-                        }
-                    };
+                    let microphone = audio::Audio::open_microphone(voip_parts)?;
                     send_to_livekit(frame_tx, microphone);
+                    Ok(())
                 })
-                .expect("should be able to spawn threads");
-            Task::ready(Ok(()))
         } else {
             self.executor.spawn(async move {
                 Self::capture_input(
@@ -298,13 +290,13 @@ impl AudioStack {
                                         num_channels,
                                         sample_rate,
                                         output_config.channels() as u32,
-                                        output_config.sample_rate().0,
+                                        output_config.sample_rate(),
                                     );
                                     buf = sampled.to_vec();
                                     apm.lock()
                                         .process_reverse_stream(
                                             &mut buf,
-                                            output_config.sample_rate().0 as i32,
+                                            output_config.sample_rate() as i32,
                                             output_config.channels() as i32,
                                         )
                                         .ok();
@@ -348,14 +340,14 @@ impl AudioStack {
                 .name("AudioCapture".to_owned())
                 .spawn(move || {
                     maybe!({
-                        if let Some(name) = device.name().ok() {
-                            log::info!("Using microphone: {}", name)
+                        if let Some(desc) = device.description().ok() {
+                            log::info!("Using microphone: {}", desc.name())
                         } else {
                             log::info!("Using microphone: <unknown>");
                         }
 
                         let ten_ms_buffer_size =
-                            (config.channels() as u32 * config.sample_rate().0 / 100) as usize;
+                            (config.channels() as u32 * config.sample_rate() / 100) as usize;
                         let mut buf: Vec<i16> = Vec::with_capacity(ten_ms_buffer_size);
 
                         let stream = device
@@ -380,9 +372,9 @@ impl AudioStack {
                                             let mut sampled = resampler
                                                 .remix_and_resample(
                                                     buf.as_slice(),
-                                                    config.sample_rate().0 / 100,
+                                                    config.sample_rate() / 100,
                                                     config.channels() as u32,
-                                                    config.sample_rate().0,
+                                                    config.sample_rate(),
                                                     num_channels,
                                                     sample_rate,
                                                 )

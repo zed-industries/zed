@@ -416,7 +416,7 @@ pub async fn init_test(cx: &mut TestAppContext) -> Arc<FakeFs> {
         project::agent_server_store::AllAgentServersSettings::override_global(
             project::agent_server_store::AllAgentServersSettings {
                 claude: Some(BuiltinAgentServerSettings {
-                    path: Some("claude-code-acp".into()),
+                    path: Some("claude-agent-acp".into()),
                     ..Default::default()
                 }),
                 gemini: Some(crate::gemini::tests::local_command().into()),
@@ -449,7 +449,7 @@ pub async fn new_test_thread(
         .await
         .unwrap();
 
-    cx.update(|cx| connection.new_thread(project.clone(), current_dir.as_ref(), cx))
+    cx.update(|cx| connection.new_session(project.clone(), current_dir.as_ref(), cx))
         .await
         .unwrap()
 }

@@ -1,3 +1,8 @@
+---
+title: Code Completions - Zed
+description: Zed's code completions from language servers and edit predictions. Configure autocomplete behavior, snippets, and documentation display.
+---
+
 # Completions
 
 Zed supports two sources for completions:

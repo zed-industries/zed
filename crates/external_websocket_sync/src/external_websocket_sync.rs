@@ -671,6 +671,9 @@ impl ExternalWebSocketSync {
     /// Notify WebSocket of message completion
     pub fn notify_message_completed(&self, context_id: &ContextId, message_id: &MessageId) {
         if let Some(websocket_sync) = &self.websocket_sync {
+            // Flush any pending throttled messages before completion
+            flush_streaming_throttle(&context_id.to_proto());
+
             let event = SyncEvent::MessageCompleted {
                 acp_thread_id: context_id.to_proto(),
                 message_id: message_id.as_u64().to_string(),

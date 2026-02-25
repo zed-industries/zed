@@ -1,3 +1,8 @@
+---
+title: AI Improvement and Data Collection - Zed
+description: Zed's opt-in approach to AI data collection for improving the agent panel and edit predictions.
+---
+
 # Zed AI Improvement
 
 ## Agent Panel
@@ -77,7 +82,7 @@ You can inspect this exclusion list by opening `zed: open default settings` from
 }
 ```
 
-Users may explicitly exclude additional paths and/or file extensions by adding them to [`edit_predictions.disabled_globs`](https://zed.dev/docs/reference/all-settings#edit-predictions) in their Zed settings.json:
+Users may explicitly exclude additional paths and/or file extensions by adding them to [`edit_predictions.disabled_globs`](https://zed.dev/docs/reference/all-settings#edit-predictions) in their Zed settings file ([how to edit](../configuring-zed.md#settings-files)):
 
 ```json [settings]
 {

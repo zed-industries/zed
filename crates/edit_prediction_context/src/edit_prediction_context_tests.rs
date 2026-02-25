@@ -75,6 +75,13 @@ async fn test_edit_prediction_context(cx: &mut TestAppContext) {
                     "root/src/person.rs",
                     &[
                         indoc! {"
+                        pub struct Person {
+                            first_name: String,
+                            last_name: String,
+                            email: String,
+                            age: u32,
+                        }
+
                         impl Person {
                             pub fn get_first_name(&self) -> &str {
                                 &self.first_name
@@ -89,7 +96,6 @@ async fn test_edit_prediction_context(cx: &mut TestAppContext) {
     let company_buffer = related_excerpt_store.update(cx, |store, cx| {
         store
             .related_files_with_buffers(cx)
-            .into_iter()
             .find(|(file, _)| file.path.to_str() == Some("root/src/company.rs"))
             .map(|(_, buffer)| buffer)
             .expect("company.rs buffer not found")
@@ -134,6 +140,13 @@ async fn test_edit_prediction_context(cx: &mut TestAppContext) {
                     "root/src/person.rs",
                     &[
                         indoc! {"
+                        pub struct Person {
+                            first_name: String,
+                            last_name: String,
+                            email: String,
+                            age: u32,
+                        }
+
                         impl Person {
                             pub fn get_first_name(&self) -> &str {
                                 &self.first_name
@@ -352,6 +365,272 @@ async fn test_fake_definition_lsp(cx: &mut TestAppContext) {
         .unwrap()
         .unwrap();
     assert_definitions(&definitions, &["pub fn to_string(&self) -> String {"], cx);
+}
+
+#[gpui::test]
+async fn test_fake_type_definition_lsp(cx: &mut TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/root"), test_project_1()).await;
+
+    let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+    let mut servers = setup_fake_lsp(&project, cx);
+
+    let (buffer, _handle) = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/root/src/main.rs"), cx)
+        })
+        .await
+        .unwrap();
+
+    let _server = servers.next().await.unwrap();
+    cx.run_until_parked();
+
+    let buffer_text = buffer.read_with(cx, |buffer, _| buffer.text());
+
+    // Type definition on a type name returns its own definition
+    // (same as regular definition)
+    let type_defs = project
+        .update(cx, |project, cx| {
+            let offset = buffer_text.find("Address {").expect("Address { not found");
+            project.type_definitions(&buffer, offset, cx)
+        })
+        .await
+        .unwrap()
+        .unwrap();
+    assert_definitions(&type_defs, &["pub struct Address {"], cx);
+
+    // Type definition on a field resolves through the type annotation.
+    // company.rs has `owner: Arc<Person>`, so type-def of `owner` → Person.
+    let (company_buffer, _handle) = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/root/src/company.rs"), cx)
+        })
+        .await
+        .unwrap();
+    cx.run_until_parked();
+
+    let company_text = company_buffer.read_with(cx, |buffer, _| buffer.text());
+    let type_defs = project
+        .update(cx, |project, cx| {
+            let offset = company_text.find("owner").expect("owner not found");
+            project.type_definitions(&company_buffer, offset, cx)
+        })
+        .await
+        .unwrap()
+        .unwrap();
+    assert_definitions(&type_defs, &["pub struct Person {"], cx);
+
+    // Type definition on another field: `address: Address` → Address.
+    let type_defs = project
+        .update(cx, |project, cx| {
+            let offset = company_text.find("address").expect("address not found");
+            project.type_definitions(&company_buffer, offset, cx)
+        })
+        .await
+        .unwrap()
+        .unwrap();
+    assert_definitions(&type_defs, &["pub struct Address {"], cx);
+
+    // Type definition on a lowercase name with no type annotation returns empty.
+    let type_defs = project
+        .update(cx, |project, cx| {
+            let offset = buffer_text.find("main").expect("main not found");
+            project.type_definitions(&buffer, offset, cx)
+        })
+        .await;
+    let is_empty = match &type_defs {
+        Ok(Some(defs)) => defs.is_empty(),
+        Ok(None) => true,
+        Err(_) => false,
+    };
+    assert!(is_empty, "expected no type definitions for `main`");
+}
+
+#[gpui::test]
+async fn test_type_definitions_in_related_files(cx: &mut TestAppContext) {
+    init_test(cx);
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            "src": {
+                "config.rs": indoc! {r#"
+                    pub struct Config {
+                        debug: bool,
+                        verbose: bool,
+                    }
+                "#},
+                "widget.rs": indoc! {r#"
+                    use super::config::Config;
+
+                    pub struct Widget {
+                        config: Config,
+                        name: String,
+                    }
+
+                    impl Widget {
+                        pub fn render(&self) {
+                            if self.config.debug {
+                                println!("debug mode");
+                            }
+                        }
+                    }
+                "#},
+            },
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+    let mut servers = setup_fake_lsp(&project, cx);
+
+    let (buffer, _handle) = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/root/src/widget.rs"), cx)
+        })
+        .await
+        .unwrap();
+
+    let _server = servers.next().await.unwrap();
+    cx.run_until_parked();
+
+    let related_excerpt_store = cx.new(|cx| RelatedExcerptStore::new(&project, cx));
+    related_excerpt_store.update(cx, |store, cx| {
+        let position = {
+            let buffer = buffer.read(cx);
+            let offset = buffer
+                .text()
+                .find("self.config.debug")
+                .expect("self.config.debug not found");
+            buffer.anchor_before(offset)
+        };
+
+        store.set_identifier_line_count(0);
+        store.refresh(buffer.clone(), position, cx);
+    });
+
+    cx.executor().advance_clock(DEBOUNCE_DURATION);
+    // config.rs appears ONLY because the fake LSP resolves the type annotation
+    // `config: Config` to `pub struct Config` via GotoTypeDefinition.
+    // widget.rs appears from regular definitions of Widget / render.
+    related_excerpt_store.update(cx, |store, cx| {
+        let excerpts = store.related_files(cx);
+        assert_related_files(
+            &excerpts,
+            &[
+                (
+                    "root/src/config.rs",
+                    &[indoc! {"
+                        pub struct Config {
+                            debug: bool,
+                            verbose: bool,
+                        }"}],
+                ),
+                (
+                    "root/src/widget.rs",
+                    &[
+                        indoc! {"
+                        pub struct Widget {
+                            config: Config,
+                            name: String,
+                        }
+
+                        impl Widget {
+                            pub fn render(&self) {"},
+                        indoc! {"
+                            }
+                        }"},
+                    ],
+                ),
+            ],
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_type_definition_deduplication(cx: &mut TestAppContext) {
+    init_test(cx);
+    let fs = FakeFs::new(cx.executor());
+
+    // In this project the only identifier near the cursor whose type definition
+    // resolves is `TypeA`, and its GotoTypeDefinition returns the exact same
+    // location as GotoDefinition. After deduplication the CacheEntry for `TypeA`
+    // should have an empty `type_definitions` vec, meaning the type-definition
+    // path contributes nothing extra to the related-file output.
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            "src": {
+                "types.rs": indoc! {r#"
+                    pub struct TypeA {
+                        value: i32,
+                    }
+
+                    pub struct TypeB {
+                        label: String,
+                    }
+                "#},
+                "main.rs": indoc! {r#"
+                    use super::types::TypeA;
+
+                    fn work() {
+                        let item: TypeA = unimplemented!();
+                        println!("{}", item.value);
+                    }
+                "#},
+            },
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+    let mut servers = setup_fake_lsp(&project, cx);
+
+    let (buffer, _handle) = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/root/src/main.rs"), cx)
+        })
+        .await
+        .unwrap();
+
+    let _server = servers.next().await.unwrap();
+    cx.run_until_parked();
+
+    let related_excerpt_store = cx.new(|cx| RelatedExcerptStore::new(&project, cx));
+    related_excerpt_store.update(cx, |store, cx| {
+        let position = {
+            let buffer = buffer.read(cx);
+            let offset = buffer.text().find("let item").expect("let item not found");
+            buffer.anchor_before(offset)
+        };
+
+        store.set_identifier_line_count(0);
+        store.refresh(buffer.clone(), position, cx);
+    });
+
+    cx.executor().advance_clock(DEBOUNCE_DURATION);
+    // types.rs appears because `TypeA` has a regular definition there.
+    // `item`'s type definition also resolves to TypeA in types.rs, but
+    // deduplication removes it since it points to the same location.
+    // TypeB should NOT appear because nothing references it.
+    related_excerpt_store.update(cx, |store, cx| {
+        let excerpts = store.related_files(cx);
+        assert_related_files(
+            &excerpts,
+            &[
+                ("root/src/main.rs", &["fn work() {", "}"]),
+                (
+                    "root/src/types.rs",
+                    &[indoc! {"
+                        pub struct TypeA {
+                            value: i32,
+                        }"}],
+                ),
+            ],
+        );
+    });
 }
 
 fn init_test(cx: &mut TestAppContext) {

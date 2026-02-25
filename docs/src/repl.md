@@ -1,8 +1,13 @@
+---
+title: REPL - Jupyter Kernels in Zed
+description: Run code interactively in Zed with built-in Jupyter kernel support. Execute Python, TypeScript, R, and more inline.
+---
+
 # REPL
 
 ## Getting started
 
-Bring the power of [Jupyter kernels](https://docs.jupyter.org/en/latest/projects/kernels.html) to your editor! The built-in REPL for Zed allows you to run code interactively in your editor similarly to a notebook with your own text files.
+Zed's built-in REPL uses [Jupyter kernels](https://docs.jupyter.org/en/latest/projects/kernels.html) so you can run code interactively in regular editor files.
 
 <figure style="width: 100%; margin: 0; overflow: hidden; border-top-left-radius: 2px; border-top-right-radius: 2px;">
     <video loop controls playsinline>
@@ -146,8 +151,32 @@ TBD: Improve Julia REPL instructions
 
 ## Changing which kernel is used per language {#changing-kernels}
 
-Zed automatically detects the available kernels on your system. If you need to configure a different default kernel for a
-language, you can assign a kernel for any supported language in your `settings.json`.
+> **Preview:** This feature is available in Zed Preview. It will be included in the next Stable release.
+
+Zed automatically detects available kernels and organizes them in the kernel picker:
+
+- **Recommended**: The Python environment matching your active toolchain (if detected)
+- **Python Environments**: Virtual environments (venv, virtualenv, Poetry, Pipenv, Conda, uv, etc.)
+- **Jupyter Kernels**: Installed Jupyter kernelspecs
+- **Remote Servers**: Connected remote Jupyter servers
+
+### Installing ipykernel
+
+Python environments appear in the picker even if ipykernel is not installed. Environments missing ipykernel are dimmed and labeled "ipykernel not installed." When you select one, Zed automatically runs `pip install ipykernel` in that environment and activates it once installation completes.
+
+### How Zed Recommends Kernels
+
+When you run code, Zed selects a kernel automatically:
+
+1. **Active toolchain match**: If a Python environment matches your active toolchain and has ipykernel, Zed uses it
+2. **First available Python env**: Otherwise, the first Python environment with ipykernel
+3. **Language-based fallback**: If no Python envs are ready, Zed picks a Jupyter kernel matching the code block's language
+
+You can override this by explicitly selecting a kernel from the picker.
+
+### Setting Default Kernels
+
+To configure a different default kernel for a language, you can assign a kernel for any supported language in your `settings.json`:
 
 ```json [settings]
 {
@@ -161,6 +190,18 @@ language, you can assign a kernel for any supported language in your `settings.j
   }
 }
 ```
+
+## Interactive Input
+
+> **Preview:** This feature is available in Zed Preview. It will be included in the next Stable release.
+
+When code execution requires user input (such as Python's `input()` function), the REPL displays an input prompt below the cell output.
+
+Type your response in the text field and press `Enter` to submit. The kernel receives your input and continues execution.
+
+For password inputs, characters appear masked with asterisks for security.
+
+If execution is interrupted while an input prompt is active, the prompt automatically clears when the kernel returns to idle state.
 
 ## Debugging Kernelspecs
 

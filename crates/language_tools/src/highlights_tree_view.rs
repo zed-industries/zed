@@ -189,8 +189,9 @@ impl HighlightsTreeView {
     ) {
         let Some(editor) = active_item
             .filter(|item| item.item_id() != cx.entity_id())
-            .and_then(|item| item.act_as::<Editor>(cx))
+            .and_then(|item| item.downcast::<Editor>())
         else {
+            self.clear(cx);
             return;
         };
 
@@ -214,11 +215,19 @@ impl HighlightsTreeView {
             .as_ref()
             .is_some_and(|state| state.editor.entity_id() == *item_id)
         {
-            self.editor = None;
-            self.cached_entries.clear();
-            self.display_items.clear();
-            cx.notify();
+            self.clear(cx);
         }
+    }
+
+    fn clear(&mut self, cx: &mut Context<Self>) {
+        self.cached_entries.clear();
+        self.display_items.clear();
+        self.selected_item_ix = None;
+        self.hovered_item_ix = None;
+        if let Some(state) = self.editor.take() {
+            Self::clear_editor_highlights(&state.editor, cx);
+        }
+        cx.notify();
     }
 
     fn set_editor(&mut self, editor: Entity<Editor>, window: &mut Window, cx: &mut Context<Self>) {
@@ -226,8 +235,7 @@ impl HighlightsTreeView {
             if state.editor == editor {
                 return;
             }
-            let key = HighlightKey::HighlightsTreeView(editor.entity_id().as_u64() as usize);
-            editor.update(cx, |editor, cx| editor.clear_background_highlights(key, cx));
+            Self::clear_editor_highlights(&state.editor, cx);
         }
 
         let subscription =
@@ -248,9 +256,7 @@ impl HighlightsTreeView {
 
     fn refresh_highlights(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
         let Some(editor_state) = self.editor.as_ref() else {
-            self.cached_entries.clear();
-            self.display_items.clear();
-            cx.notify();
+            self.clear(cx);
             return;
         };
 
@@ -428,7 +434,7 @@ impl HighlightsTreeView {
         entry_ix: usize,
         window: &mut Window,
         cx: &mut Context<Self>,
-        mut f: impl FnMut(&mut Editor, Range<Anchor>, usize, &mut Window, &mut Context<Editor>),
+        f: &mut dyn FnMut(&mut Editor, Range<Anchor>, usize, &mut Window, &mut Context<Editor>),
     ) -> Option<()> {
         let editor_state = self.editor.as_ref()?;
         let entry = self.cached_entries.get(entry_ix)?;
@@ -510,7 +516,7 @@ impl HighlightsTreeView {
                                     entry_ix,
                                     window,
                                     cx,
-                                    |editor, mut range, _, window, cx| {
+                                    &mut |editor, mut range, _, window, cx| {
                                         mem::swap(&mut range.start, &mut range.end);
                                         editor.change_selections(
                                             SelectionEffects::scroll(Autoscroll::newest()),
@@ -533,7 +539,7 @@ impl HighlightsTreeView {
                                         entry_ix,
                                         window,
                                         cx,
-                                        |editor, range, key, _, cx| {
+                                        &mut |editor, range, key, _, cx| {
                                             Self::set_editor_highlights(editor, key, &[range], cx);
                                         },
                                     );
@@ -556,7 +562,7 @@ impl HighlightsTreeView {
         ranges: &[Range<Anchor>],
         cx: &mut Context<Editor>,
     ) {
-        editor.highlight_background_key(
+        editor.highlight_background(
             HighlightKey::HighlightsTreeView(key),
             ranges,
             |_, theme| theme.colors().editor_document_highlight_write_background,
@@ -623,7 +629,7 @@ impl HighlightsTreeView {
                 entry_ix,
                 window,
                 cx,
-                |editor, mut range, _, window, cx| {
+                &mut |editor, mut range, _, window, cx| {
                     mem::swap(&mut range.start, &mut range.end);
                     editor.change_selections(
                         SelectionEffects::scroll(Autoscroll::newest()),
@@ -730,7 +736,7 @@ impl Focusable for HighlightsTreeView {
 impl Item for HighlightsTreeView {
     type Event = ();
 
-    fn to_item_events(_: &Self::Event, _: impl FnMut(workspace::item::ItemEvent)) {}
+    fn to_item_events(_: &Self::Event, _: &mut dyn FnMut(workspace::item::ItemEvent)) {}
 
     fn tab_content_text(&self, _detail: usize, _cx: &App) -> SharedString {
         "Highlights".into()

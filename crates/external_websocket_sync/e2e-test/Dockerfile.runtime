@@ -1,0 +1,58 @@
+# Runtime-only E2E test image — uses pre-built Zed and Go test server binaries.
+# Build Zed with: ./stack build-zed release (in helix repo)
+# Build test server with: go build -o helix-ws-test-server . (in helix-ws-test-server dir)
+#
+# Usage:
+#   cp /path/to/helix/zed-build/zed crates/external_websocket_sync/e2e-test/zed-binary
+#   cd crates/external_websocket_sync/e2e-test
+#   docker build -t zed-ws-e2e -f Dockerfile.runtime .
+#   docker run --rm -e ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY zed-ws-e2e
+
+FROM ubuntu:25.10
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Runtime shared libraries + headless display
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    # Zed runtime libs
+    libxkbcommon0 libxkbcommon-x11-0 libwayland-client0 libvulkan1 \
+    libx11-xcb1 libxcb-shape0 libxcb-xfixes0 \
+    libxcb-randr0 libxcb-render0 \
+    libxcb-shm0 libxcb-glx0 libxcb-xkb1 \
+    libxcb1 libx11-6 \
+    libfontconfig1 libfreetype6 \
+    libssl3t64 libsqlite3-0 libzstd1 ca-certificates \
+    libasound2t64 \
+    libatk1.0-0t64 libgtk-3-0t64 \
+    # Headless display
+    xvfb x11-utils \
+    # Software Vulkan (lavapipe)
+    mesa-vulkan-drivers \
+    # D-Bus (required by Zed)
+    dbus \
+    # Screenshot capture (import command for X11 screenshots)
+    imagemagick \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy pre-built binaries
+COPY zed-binary /usr/local/bin/zed
+COPY helix-ws-test-server/helix-ws-test-server /usr/local/bin/helix-ws-test-server
+RUN chmod +x /usr/local/bin/zed /usr/local/bin/helix-ws-test-server
+
+# Copy test script
+COPY run_e2e.sh /test/run_e2e.sh
+RUN chmod +x /test/run_e2e.sh
+
+# Headless display environment
+ENV DISPLAY=:99
+ENV VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.json
+ENV LIBGL_ALWAYS_SOFTWARE=1
+ENV ZED_ALLOW_EMULATED_GPU=1
+ENV ZED_ALLOW_ROOT=true
+
+WORKDIR /test
+
+# Create a minimal project directory for Zed to open
+RUN mkdir -p /test/project && echo "# Test Project" > /test/project/README.md
+
+ENTRYPOINT ["/test/run_e2e.sh"]

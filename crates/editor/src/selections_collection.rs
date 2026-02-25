@@ -966,7 +966,7 @@ impl<'snap, 'a> MutableSelectionsCollection<'snap, 'a> {
 
     pub fn move_with(
         &mut self,
-        mut move_selection: impl FnMut(&DisplaySnapshot, &mut Selection<DisplayPoint>),
+        move_selection: &mut dyn FnMut(&DisplaySnapshot, &mut Selection<DisplayPoint>),
     ) {
         let mut changed = false;
         let display_map = self.display_snapshot();
@@ -990,7 +990,7 @@ impl<'snap, 'a> MutableSelectionsCollection<'snap, 'a> {
 
     pub fn move_offsets_with(
         &mut self,
-        mut move_selection: impl FnMut(&MultiBufferSnapshot, &mut Selection<MultiBufferOffset>),
+        move_selection: &mut dyn FnMut(&MultiBufferSnapshot, &mut Selection<MultiBufferOffset>),
     ) {
         let mut changed = false;
         let display_map = self.display_snapshot();
@@ -1015,13 +1015,13 @@ impl<'snap, 'a> MutableSelectionsCollection<'snap, 'a> {
 
     pub fn move_heads_with(
         &mut self,
-        mut update_head: impl FnMut(
+        update_head: &mut dyn FnMut(
             &DisplaySnapshot,
             DisplayPoint,
             SelectionGoal,
         ) -> (DisplayPoint, SelectionGoal),
     ) {
-        self.move_with(|map, selection| {
+        self.move_with(&mut |map, selection| {
             let (new_head, new_goal) = update_head(map, selection.head(), selection.goal);
             selection.set_head(new_head, new_goal);
         });
@@ -1029,13 +1029,13 @@ impl<'snap, 'a> MutableSelectionsCollection<'snap, 'a> {
 
     pub fn move_cursors_with(
         &mut self,
-        mut update_cursor_position: impl FnMut(
+        update_cursor_position: &mut dyn FnMut(
             &DisplaySnapshot,
             DisplayPoint,
             SelectionGoal,
         ) -> (DisplayPoint, SelectionGoal),
     ) {
-        self.move_with(|map, selection| {
+        self.move_with(&mut |map, selection| {
             let (cursor, new_goal) = update_cursor_position(map, selection.head(), selection.goal);
             selection.collapse_to(cursor, new_goal)
         });
@@ -1043,13 +1043,13 @@ impl<'snap, 'a> MutableSelectionsCollection<'snap, 'a> {
 
     pub fn maybe_move_cursors_with(
         &mut self,
-        mut update_cursor_position: impl FnMut(
+        update_cursor_position: &mut dyn FnMut(
             &DisplaySnapshot,
             DisplayPoint,
             SelectionGoal,
         ) -> Option<(DisplayPoint, SelectionGoal)>,
     ) {
-        self.move_cursors_with(|map, point, goal| {
+        self.move_cursors_with(&mut |map, point, goal| {
             update_cursor_position(map, point, goal).unwrap_or((point, goal))
         })
     }
@@ -1197,7 +1197,14 @@ fn resolve_selections_point<'a>(
     selections.map(move |s| {
         let start = summaries.next().unwrap();
         let end = summaries.next().unwrap();
-        assert!(start <= end, "start: {:?}, end: {:?}", start, end);
+        assert!(
+            start <= end,
+            "anchors: start: {:?}, end: {:?}; resolved to: start: {:?}, end: {:?}",
+            s.start,
+            s.end,
+            start,
+            end
+        );
         Selection {
             id: s.id,
             start,
