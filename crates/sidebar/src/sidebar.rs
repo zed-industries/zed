@@ -171,32 +171,6 @@ impl ProjectEntry {
             .map(|m| m.title.clone())
             .unwrap_or_else(|| "New Thread".into())
     }
-
-    /// Returns the agent icon from the live thread view, if available.
-    fn agent_icon(&self, cx: &App) -> Option<IconName> {
-        let agent_panel = self.workspace.read(cx).panel::<AgentPanel>(cx)?;
-        let thread_view = agent_panel.read(cx).as_active_thread_view(cx)?;
-        Some(thread_view.read(cx).agent_icon)
-    }
-
-    /// Derives the thread status from live agent thread state.
-    fn agent_thread_status(&self, cx: &App) -> Option<AgentThreadStatus> {
-        let agent_panel = self.workspace.read(cx).panel::<AgentPanel>(cx)?;
-        let thread = agent_panel.read(cx).active_agent_thread(cx)?;
-        let thread_ref = thread.read(cx);
-
-        let status = if thread_ref.is_waiting_for_confirmation() {
-            AgentThreadStatus::WaitingForConfirmation
-        } else if thread_ref.had_error() {
-            AgentThreadStatus::Error
-        } else {
-            match thread_ref.status() {
-                ThreadStatus::Generating => AgentThreadStatus::Running,
-                ThreadStatus::Idle => AgentThreadStatus::Completed,
-            }
-        };
-        Some(status)
-    }
 }
 
 /// A ProjectGroup is a group of workspaces, each one associated with a specific
