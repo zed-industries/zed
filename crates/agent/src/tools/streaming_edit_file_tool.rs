@@ -473,88 +473,41 @@ impl StreamingEditState {
             };
             let new_text = partial_edit.new_text.clone().unwrap_or_default();
 
-            // Reset in-progress matcher since this edit is now complete
             edit_tracker.in_progress_matcher = None;
             edit_tracker.last_old_text_len = 0;
 
-            // Take a fresh snapshot (reflects all previously-applied edits)
-            let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot());
-
-            // Resolve the edit using StreamingFuzzyMatcher
             let edit_op = EditOperation {
                 old_text: old_text.clone(),
                 new_text: new_text.clone(),
             };
-            let resolve_result = resolve_edit(&snapshot, &edit_op);
 
-            match resolve_result {
-                Ok(Some((range, new_text))) => {
-                    // Reveal the range in the diff view
-                    let (start_anchor, end_anchor) = buffer.read_with(cx, |buffer, _cx| {
-                        (
-                            buffer.anchor_before(range.start),
-                            buffer.anchor_after(range.end),
-                        )
-                    });
-                    diff.update(cx, |card, cx| {
-                        card.reveal_range(start_anchor..end_anchor, cx)
-                    });
+            let action_log = tool
+                .thread
+                .read_with(cx, |thread, _cx| thread.action_log().clone())
+                .ok();
 
-                    // Emit location for this edit
-                    let line = snapshot.offset_to_point(range.start).row;
-                    event_stream.update_fields(
-                        ToolCallUpdateFields::new()
-                            .locations(vec![ToolCallLocation::new(abs_path).line(Some(line))]),
-                    );
-
-                    // Apply the edit and report to action_log in the same effect cycle
-                    let action_log_result = tool
-                        .thread
-                        .read_with(cx, |thread, _cx| thread.action_log().clone());
-                    if let Ok(action_log) = action_log_result {
-                        // On the first edit, mark the buffer as read
-                        if edit_tracker.applied_count == 0 {
-                            action_log.update(cx, |log, cx| {
-                                log.buffer_read(buffer.clone(), cx);
-                            });
-                        }
-
-                        cx.update(|cx| {
-                            buffer.update(cx, |buffer, cx| {
-                                buffer.edit([(range, new_text.as_str())], None, cx);
-                            });
-                            action_log.update(cx, |log, cx| {
-                                log.buffer_edited(buffer.clone(), cx);
-                            });
-                        });
-                    }
-                }
-                Ok(None) => {
-                    return Err(StreamingEditFileToolOutput::Error {
-                        error: format!(
-                            "Could not find matching text for edit at index {}. \
-                                 The old_text did not match any content in the file. \
-                                 Please read the file again to get the current content.",
-                            edit_index
-                        ),
-                    });
-                }
-                Err(ranges) => {
-                    let snapshot_ref = &snapshot;
-                    let lines = ranges
-                        .iter()
-                        .map(|r| (snapshot_ref.offset_to_point(r.start).row + 1).to_string())
-                        .collect::<Vec<_>>()
-                        .join(", ");
-                    return Err(StreamingEditFileToolOutput::Error {
-                        error: format!(
-                            "Edit {} matched multiple locations in the file at lines: {}. \
-                                 Please provide more context in old_text to uniquely identify the location.",
-                            edit_index, lines
-                        ),
+            // On the first edit, mark the buffer as read
+            if edit_tracker.applied_count == 0 {
+                if let Some(action_log) = &action_log {
+                    action_log.update(cx, |log, cx| {
+                        log.buffer_read(buffer.clone(), cx);
                     });
                 }
             }
+
+            resolve_reveal_and_apply_edit(
+                buffer,
+                diff,
+                &edit_op,
+                edit_index,
+                abs_path,
+                action_log.as_ref(),
+                event_stream,
+                cx,
+            )
+            .map_err(|e| StreamingEditFileToolOutput::Error {
+                error: e.to_string(),
+            })?;
 
             edit_tracker.applied_count += 1;
         }
@@ -876,35 +829,21 @@ fn apply_edits(
     let mut ambiguous_edits = Vec::new();
     let mut resolved_edits: Vec<(Range<usize>, String)> = Vec::new();
 
-    // First pass: resolve all edits without applying them
     let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot());
     for (index, edit) in edits.iter().enumerate() {
-        let result = resolve_edit(&snapshot, edit);
-
-        match result {
-            Ok(Some((range, new_text))) => {
-                // Reveal the range in the diff view
-                let (start_anchor, end_anchor) = buffer.read_with(cx, |buffer, _cx| {
-                    (
-                        buffer.anchor_before(range.start),
-                        buffer.anchor_after(range.end),
-                    )
-                });
-                diff.update(cx, |card, cx| {
-                    card.reveal_range(start_anchor..end_anchor, cx)
-                });
+        match resolve_and_reveal_edit(buffer, diff, &snapshot, edit, cx) {
+            Ok((range, new_text)) => {
                 resolved_edits.push((range, new_text));
             }
-            Ok(None) => {
+            Err(EditResolveError::NotFound) => {
                 failed_edits.push(index);
             }
-            Err(ranges) => {
+            Err(EditResolveError::Ambiguous(ranges)) => {
                 ambiguous_edits.push((index, ranges));
             }
         }
     }
 
-    // Check for errors before applying any edits
     if !failed_edits.is_empty() {
         let indices = failed_edits
             .iter()
@@ -938,11 +877,9 @@ fn apply_edits(
         );
     }
 
-    // Sort edits by position so buffer.edit() can handle offset translation
     let mut edits_sorted = resolved_edits;
     edits_sorted.sort_by(|a, b| a.0.start.cmp(&b.0.start));
 
-    // Emit location for the earliest edit in the file
     if let Some((first_range, _)) = edits_sorted.first() {
         let line = snapshot.offset_to_point(first_range.start).row;
         event_stream.update_fields(
@@ -951,7 +888,6 @@ fn apply_edits(
         );
     }
 
-    // Validate no overlaps (sorted ascending by start)
     for window in edits_sorted.windows(2) {
         if let [(earlier_range, _), (later_range, _)] = window
             && (earlier_range.end > later_range.start || earlier_range.start == later_range.start)
@@ -971,9 +907,6 @@ fn apply_edits(
         }
     }
 
-    // Apply all edits in a single batch and report to action_log in the same
-    // effect cycle. This prevents the buffer subscription from treating these
-    // as user edits.
     if !edits_sorted.is_empty() {
         cx.update(|cx| {
             buffer.update(cx, |buffer, cx| {
@@ -994,27 +927,103 @@ fn apply_edits(
     Ok(())
 }
 
-/// Resolves an edit operation by finding the matching text in the buffer.
-/// Returns Ok(Some((range, new_text))) if a unique match is found,
-/// Ok(None) if no match is found, or Err(ranges) if multiple matches are found.
-fn resolve_edit(
+/// Resolves, reveals, and applies a single edit to the buffer. Emits
+/// a location update and reports the change to the action log.
+fn resolve_reveal_and_apply_edit(
+    buffer: &Entity<Buffer>,
+    diff: &Entity<Diff>,
+    edit: &EditOperation,
+    edit_index: usize,
+    abs_path: &PathBuf,
+    action_log: Option<&Entity<action_log::ActionLog>>,
+    event_stream: &ToolCallEventStream,
+    cx: &mut AsyncApp,
+) -> Result<()> {
+    let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot());
+
+    match resolve_and_reveal_edit(buffer, diff, &snapshot, edit, cx) {
+        Ok((range, new_text)) => {
+            let line = snapshot.offset_to_point(range.start).row;
+            event_stream.update_fields(
+                ToolCallUpdateFields::new()
+                    .locations(vec![ToolCallLocation::new(abs_path).line(Some(line))]),
+            );
+
+            if let Some(action_log) = action_log {
+                cx.update(|cx| {
+                    buffer.update(cx, |buffer, cx| {
+                        buffer.edit([(range, new_text.as_str())], None, cx);
+                    });
+                    action_log.update(cx, |log, cx| {
+                        log.buffer_edited(buffer.clone(), cx);
+                    });
+                });
+            }
+
+            Ok(())
+        }
+        Err(EditResolveError::NotFound) => {
+            anyhow::bail!(
+                "Could not find matching text for edit at index {}. \
+                 The old_text did not match any content in the file. \
+                 Please read the file again to get the current content.",
+                edit_index
+            );
+        }
+        Err(EditResolveError::Ambiguous(ranges)) => {
+            let lines = ranges
+                .iter()
+                .map(|r| (snapshot.offset_to_point(r.start).row + 1).to_string())
+                .collect::<Vec<_>>()
+                .join(", ");
+            anyhow::bail!(
+                "Edit {} matched multiple locations in the file at lines: {}. \
+                 Please provide more context in old_text to uniquely identify the location.",
+                edit_index,
+                lines
+            );
+        }
+    }
+}
+
+enum EditResolveError {
+    NotFound,
+    Ambiguous(Vec<Range<usize>>),
+}
+
+/// Resolves an edit operation by finding matching text in the buffer,
+/// reveals the matched range in the diff view, and returns the resolved
+/// range and replacement text.
+fn resolve_and_reveal_edit(
+    buffer: &Entity<Buffer>,
+    diff: &Entity<Diff>,
     snapshot: &BufferSnapshot,
     edit: &EditOperation,
-) -> std::result::Result<Option<(Range<usize>, String)>, Vec<Range<usize>>> {
+    cx: &mut AsyncApp,
+) -> std::result::Result<(Range<usize>, String), EditResolveError> {
     let mut matcher = StreamingFuzzyMatcher::new(snapshot.clone());
     matcher.push(&edit.old_text, None);
     let matches = matcher.finish();
-
     if matches.is_empty() {
-        return Ok(None);
+        return Err(EditResolveError::NotFound);
     }
-
     if matches.len() > 1 {
-        return Err(matches);
+        return Err(EditResolveError::Ambiguous(matches));
     }
 
-    let match_range = matches.into_iter().next().expect("checked len above");
-    Ok(Some((match_range, edit.new_text.clone())))
+    let range = matches.into_iter().next().expect("checked len above");
+
+    let (start_anchor, end_anchor) = buffer.read_with(cx, |buffer, _cx| {
+        (
+            buffer.anchor_before(range.start),
+            buffer.anchor_after(range.end),
+        )
+    });
+    diff.update(cx, |card, cx| {
+        card.reveal_range(start_anchor..end_anchor, cx)
+    });
+
+    Ok((range, edit.new_text.clone()))
 }
 
 fn resolve_path(
