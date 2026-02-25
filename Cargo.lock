@@ -13359,6 +13359,7 @@ dependencies = [
  "pretty_assertions",
  "project",
  "rayon",
+ "regex",
  "remote_connection",
  "schemars",
  "search",

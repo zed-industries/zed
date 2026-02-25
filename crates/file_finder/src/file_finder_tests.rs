@@ -1827,7 +1827,7 @@ async fn test_history_labels_do_not_include_worktree_root_name(cx: &mut gpui::Te
     let app_state = init_test(cx);
 
     cx.update(|cx| {
-        let settings = *ProjectPanelSettings::get_global(cx);
+        let settings = ProjectPanelSettings::get_global(cx).clone();
         ProjectPanelSettings::override_global(
             ProjectPanelSettings {
                 hide_root: true,
@@ -1927,7 +1927,7 @@ async fn test_history_labels_include_worktree_root_name_when_hide_root_false(
     let app_state = init_test(cx);
 
     cx.update(|cx| {
-        let settings = *ProjectPanelSettings::get_global(cx);
+        let settings = ProjectPanelSettings::get_global(cx).clone();
         ProjectPanelSettings::override_global(
             ProjectPanelSettings {
                 hide_root: false,
@@ -1980,7 +1980,7 @@ async fn test_history_labels_include_worktree_root_name_when_hide_root_true_and_
     let app_state = init_test(cx);
 
     cx.update(|cx| {
-        let settings = *ProjectPanelSettings::get_global(cx);
+        let settings = ProjectPanelSettings::get_global(cx).clone();
         ProjectPanelSettings::override_global(
             ProjectPanelSettings {
                 hide_root: true,

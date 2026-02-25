@@ -48,6 +48,7 @@ zed_actions.workspace = true
 telemetry.workspace = true
 notifications.workspace = true
 feature_flags.workspace = true
+regex.workspace = true
 
 [dev-dependencies]
 client = { workspace = true, features = ["test-support"] }
