@@ -396,20 +396,11 @@ impl StreamingEditState {
             ToolCallUpdateFields::new().locations(vec![ToolCallLocation::new(abs_path.clone())]),
         );
 
-        cx.update(|cx| {
-            super::tool_permissions::authorize_file_edit(
-                EditFileTool::NAME,
-                &path,
-                &display_description,
-                &tool.thread,
-                event_stream,
-                cx,
-            )
-        })
-        .await
-        .map_err(|e| StreamingEditFileToolOutput::Error {
-            error: e.to_string(),
-        })?;
+        cx.update(|cx| tool.authorize(&path, &display_description, event_stream, cx))
+            .await
+            .map_err(|e| StreamingEditFileToolOutput::Error {
+                error: e.to_string(),
+            })?;
 
         let buffer = tool
             .project
@@ -730,14 +721,15 @@ impl StreamingEditFileTool {
 
     fn authorize(
         &self,
-        input: &StreamingEditFileToolInput,
+        path: &PathBuf,
+        description: &str,
         event_stream: &ToolCallEventStream,
         cx: &mut App,
     ) -> Task<Result<()>> {
         super::tool_permissions::authorize_file_edit(
             EditFileTool::NAME,
-            &PathBuf::from(input.path.clone()),
-            &input.display_description,
+            path,
+            description,
             &self.thread,
             event_stream,
             cx,
