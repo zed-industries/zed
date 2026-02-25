@@ -30,7 +30,7 @@ KEEP_QUEUE=false
 VERBOSE=false
 SKIP_VALIDATION=false
 BATCH_SIZE=10
-MODEL="${DROID_MODEL:-claude-sonnet-4-5-20250929}"
+MODEL="${DROID_MODEL:-claude-sonnet-4-5-latest}"
 
 SUGGESTIONS_BRANCH="docs/suggestions-pending"
 
@@ -514,7 +514,7 @@ Release Notes:
 EOF
 
 git add docs/
-git commit -m "docs: auto-apply preview release suggestions
+git commit -m "docs: Auto-apply preview release suggestions
 
 Auto-applied queued documentation suggestions from:
 $(echo "$MANIFEST" | jq -r '.suggestions[] | "- PR #\(.pr)"')
@@ -528,7 +528,7 @@ git push -u origin "$DOCS_BRANCH"
 log "Creating PR..."
 PR_URL=$(gh pr create \
     --draft \
-    --title "docs: auto-apply preview release suggestions" \
+    --title "docs: Apply preview release suggestions" \
     --body-file "$PR_BODY_FILE")
 
 echo ""
@@ -570,6 +570,7 @@ EOF
 
 Previous suggestions published in: $PR_URL"
     
+    # Force push required: replacing the orphan suggestions branch with a clean slate
     git push -f origin "${SUGGESTIONS_BRANCH}-reset:$SUGGESTIONS_BRANCH"
     git checkout "$ORIGINAL_BRANCH"
     git branch -D "${SUGGESTIONS_BRANCH}-reset"
@@ -580,9 +581,6 @@ else
     echo ""
     echo "Suggestions queue kept (--keep-queue). Remember to reset manually after PR is merged."
 fi
-
-# Cleanup
-
 
 echo ""
 echo -e "${GREEN}Done!${NC}"

@@ -117,8 +117,8 @@ if [[ "$DRY_RUN" == "true" ]]; then
     exit 0
 fi
 
-# Check for clean working state
-if [[ -n "$(git status --porcelain docs/)" ]]; then
+# Check for clean working state (ignore untracked files)
+if [[ -n "$(git status --porcelain docs/ | grep -v '^??' || true)" ]]; then
     error "docs/ directory has uncommitted changes. Please commit or stash first."
 fi
 
