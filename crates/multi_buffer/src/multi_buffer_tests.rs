@@ -122,9 +122,11 @@ fn test_excerpt_boundaries_and_clipping(cx: &mut App) {
 
     let subscription = multibuffer.update(cx, |multibuffer, cx| {
         let subscription = multibuffer.subscribe();
-        multibuffer.push_excerpts(
+        multibuffer.set_excerpts_for_path(
+            PathKey::sorted(0),
             buffer_1.clone(),
-            [ExcerptRange::new(Point::new(1, 2)..Point::new(2, 5))],
+            [Point::new(1, 2)..Point::new(2, 5)],
+            0,
             cx,
         );
         assert_eq!(
@@ -135,14 +137,18 @@ fn test_excerpt_boundaries_and_clipping(cx: &mut App) {
             }]
         );
 
-        multibuffer.push_excerpts(
+        multibuffer.set_excerpts_for_path(
+            PathKey::sorted(1),
             buffer_1.clone(),
-            [ExcerptRange::new(Point::new(3, 3)..Point::new(4, 4))],
+            [Point::new(3, 3)..Point::new(4, 4)],
+            0,
             cx,
         );
-        multibuffer.push_excerpts(
+        multibuffer.set_excerpts_for_path(
+            PathKey::sorted(2),
             buffer_2.clone(),
-            [ExcerptRange::new(Point::new(3, 1)..Point::new(3, 3))],
+            [Point::new(3, 1)..Point::new(3, 3)],
+            0,
             cx,
         );
         assert_eq!(
@@ -1013,7 +1019,13 @@ async fn test_empty_diff_excerpt(cx: &mut TestAppContext) {
     let diff = cx
         .new(|cx| BufferDiff::new_with_base_text(base_text, &buffer.read(cx).text_snapshot(), cx));
     multibuffer.update(cx, |multibuffer, cx| {
-        multibuffer.push_excerpts(buffer.clone(), [ExcerptRange::new(0..0)], cx);
+        multibuffer.set_ranges_for_path(
+            PathKey::sorted(0),
+            buffer.clone(),
+            [Point::zero()..Point::zero()],
+            0,
+            cx,
+        );
         multibuffer.set_all_diff_hunks_expanded(cx);
         multibuffer.add_diff(diff.clone(), cx);
     });
@@ -4996,15 +5008,19 @@ fn test_range_to_buffer_ranges_with_range_bounds(cx: &mut App) {
 
     let multibuffer = cx.new(|_| MultiBuffer::new(Capability::ReadWrite));
     let (excerpt_1_id, excerpt_2_id) = multibuffer.update(cx, |multibuffer, cx| {
-        let excerpt_1_id = multibuffer.push_excerpts(
+        let excerpt_1_id = multibuffer.set_excerpts_for_path(
+            PathKey::sorted(0),
             buffer_1.clone(),
-            [ExcerptRange::new(Point::new(0, 0)..Point::new(1, 3))],
+            [Point::new(0, 0)..Point::new(1, 3)],
+            0,
             cx,
         )[0];
 
-        let excerpt_2_id = multibuffer.push_excerpts(
+        let excerpt_2_id = multibuffer.set_excerpts_for_path(
+            PathKey::sorted(1),
             buffer_2.clone(),
-            [ExcerptRange::new(Point::new(0, 0)..Point::new(0, 3))],
+            [Point::new(0, 0)..Point::new(0, 3)],
+            0,
             cx,
         )[0];
 
