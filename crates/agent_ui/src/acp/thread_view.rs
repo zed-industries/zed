@@ -123,7 +123,7 @@ impl ThreadError {
                 .downcast_ref::<acp::Error>()
                 .map(|acp_error| SharedString::from(acp_error.code.to_string()));
 
-            // TODO: we should have Gemini return better errors here.
+            // todo!(): we should have Gemini return better errors here.
             if agent_name == "Gemini CLI"
                 && message.contains("Could not load the default credentials")
                 || message.contains("API key not valid")
@@ -1496,6 +1496,7 @@ impl AcpServerView {
             }
         }
 
+        // todo!()
         if method.0.as_ref() == "gemini-api-key" {
             let registry = LanguageModelRegistry::global(cx);
             let provider = registry
@@ -1732,6 +1733,7 @@ impl AcpServerView {
                 })?
                 .await?;
 
+            // todo!()
             let success_patterns = match method.0.as_ref() {
                 "claude-login" | "spawn-gemini-cli" => vec![
                     "Login successful".to_string(),
@@ -1784,6 +1786,7 @@ impl AcpServerView {
                         }
                     }
                     _ = exit_status => {
+                        // todo!()
                         if !previous_attempt && project.read_with(cx, |project, _| project.is_via_remote_server()) && login.label.contains("gemini") {
                             return cx.update(|window, cx| Self::spawn_external_agent_login(login, workspace, project.clone(), method, true, window, cx))?.await
                         }
@@ -1843,6 +1846,7 @@ impl AcpServerView {
                     .enumerate()
                     .rev()
                     .map(|(ix, method)| {
+                        // todo!()
                         let (method_id, name) = if self.project.read(cx).is_via_remote_server()
                             && method.id.0.as_ref() == "oauth-personal"
                             && method.name == "Log in with Google"

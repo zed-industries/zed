@@ -409,39 +409,93 @@ impl AgentServerStore {
 
         // If we don't have agents from the registry loaded yet, trigger a
         // refresh, which will cause this function to be called again
+        let registry_store = AgentRegistryStore::try_global(cx);
         if new_settings.has_registry_agents()
-            && let Some(registry) = AgentRegistryStore::try_global(cx)
+            && let Some(registry) = registry_store.as_ref()
         {
             registry.update(cx, |registry, cx| registry.refresh_if_stale(cx));
         }
 
+        let registry_agents_by_id = registry_store
+            .as_ref()
+            .map(|store| {
+                store
+                    .read(cx)
+                    .agents()
+                    .iter()
+                    .cloned()
+                    .map(|agent| (agent.id().to_string(), agent))
+                    .collect::<HashMap<_, _>>()
+            })
+            .unwrap_or_default();
+
         self.external_agents.clear();
-        self.external_agents.insert(
-            GEMINI_NAME.into(),
-            ExternalAgentEntry::new(
-                Box::new(LocalGemini {
-                    fs: fs.clone(),
-                    node_runtime: node_runtime.clone(),
-                    project_environment: project_environment.clone(),
-                    custom_command: new_settings
-                        .gemini
-                        .clone()
-                        .and_then(|settings| settings.custom_command()),
-                    settings_env: new_settings
-                        .gemini
-                        .as_ref()
-                        .and_then(|settings| settings.env.clone()),
-                    ignore_system_version: new_settings
-                        .gemini
-                        .as_ref()
-                        .and_then(|settings| settings.ignore_system_version)
-                        .unwrap_or(true),
-                }),
-                ExternalAgentSource::Builtin,
-                None,
-                None,
-            ),
-        );
+        for name in ["gemini"] {
+            let Some(agent) = registry_agents_by_id.get(name) else {
+                if registry_store.is_some() {
+                    log::debug!("Registry agent '{}' not found in ACP registry", name);
+                }
+                continue;
+            };
+
+            let agent_name = ExternalAgentServerName(name.into());
+            let env = match name {
+                // todo!() -> migration for any other settings
+                "gemini" => new_settings
+                    .gemini
+                    .as_ref()
+                    .and_then(|settings| settings.env.clone()),
+                _ => None,
+            };
+            match agent {
+                RegistryAgent::Binary(agent) => {
+                    if !agent.supports_current_platform {
+                        log::warn!(
+                            "Registry agent '{}' has no compatible binary for this platform",
+                            name
+                        );
+                        continue;
+                    }
+
+                    self.external_agents.insert(
+                        agent_name.clone(),
+                        ExternalAgentEntry::new(
+                            Box::new(LocalRegistryArchiveAgent {
+                                fs: fs.clone(),
+                                http_client: http_client.clone(),
+                                node_runtime: node_runtime.clone(),
+                                project_environment: project_environment.clone(),
+                                registry_id: Arc::from(name),
+                                targets: agent.targets.clone(),
+                                env: env.unwrap_or_default(),
+                            }) as Box<dyn ExternalAgentServer>,
+                            ExternalAgentSource::Builtin, // Currently still built-in option
+                            agent.metadata.icon_path.clone(),
+                            Some(agent.metadata.name.clone()),
+                        ),
+                    );
+                }
+                RegistryAgent::Npx(agent) => {
+                    self.external_agents.insert(
+                        agent_name.clone(),
+                        ExternalAgentEntry::new(
+                            Box::new(LocalRegistryNpxAgent {
+                                node_runtime: node_runtime.clone(),
+                                project_environment: project_environment.clone(),
+                                package: agent.package.clone(),
+                                args: agent.args.clone(),
+                                distribution_env: agent.env.clone(),
+                                settings_env: env.unwrap_or_default(),
+                            }) as Box<dyn ExternalAgentServer>,
+                            ExternalAgentSource::Builtin, // Currently still built-in option
+                            agent.metadata.icon_path.clone(),
+                            Some(agent.metadata.name.clone()),
+                        ),
+                    );
+                }
+            };
+        }
+
         self.external_agents.insert(
             CODEX_NAME.into(),
             ExternalAgentEntry::new(
@@ -487,20 +541,6 @@ impl AgentServerStore {
                 None,
             ),
         );
-
-        let registry_store = AgentRegistryStore::try_global(cx);
-        let registry_agents_by_id = registry_store
-            .as_ref()
-            .map(|store| {
-                store
-                    .read(cx)
-                    .agents()
-                    .iter()
-                    .cloned()
-                    .map(|agent| (agent.id().to_string(), agent))
-                    .collect::<HashMap<_, _>>()
-            })
-            .unwrap_or_default();
 
         // Insert extension agents before custom/registry so registry entries override extensions.
         for (agent_name, ext_id, targets, env, icon_path, display_name) in extension_agents.iter() {
@@ -1187,28 +1227,6 @@ fn get_or_npm_install_builtin_agent(
     })
 }
 
-fn find_bin_in_path(
-    bin_name: SharedString,
-    root_dir: PathBuf,
-    env: HashMap<String, String>,
-    cx: &mut AsyncApp,
-) -> Task<Option<PathBuf>> {
-    cx.background_executor().spawn(async move {
-        let which_result = if cfg!(windows) {
-            which::which(bin_name.as_str())
-        } else {
-            let shell_path = env.get("PATH").cloned();
-            which::which_in(bin_name.as_str(), shell_path.as_ref(), &root_dir)
-        };
-
-        if let Err(which::Error::CannotFindBinaryPath) = which_result {
-            return None;
-        }
-
-        which_result.log_err()
-    })
-}
-
 async fn download_latest_version(
     fs: Arc<dyn Fs>,
     dir: PathBuf,
@@ -1295,99 +1313,6 @@ impl ExternalAgentServer for RemoteExternalAgentServer {
                 },
                 response.login.map(SpawnInTerminal::from_proto),
             ))
-        })
-    }
-
-    fn as_any_mut(&mut self) -> &mut dyn Any {
-        self
-    }
-}
-
-struct LocalGemini {
-    fs: Arc<dyn Fs>,
-    node_runtime: NodeRuntime,
-    project_environment: Entity<ProjectEnvironment>,
-    custom_command: Option<AgentServerCommand>,
-    settings_env: Option<HashMap<String, String>>,
-    ignore_system_version: bool,
-}
-
-impl ExternalAgentServer for LocalGemini {
-    fn get_command(
-        &mut self,
-        extra_env: HashMap<String, String>,
-        status_tx: Option<watch::Sender<SharedString>>,
-        new_version_available_tx: Option<watch::Sender<Option<String>>>,
-        cx: &mut AsyncApp,
-    ) -> Task<Result<(AgentServerCommand, Option<task::SpawnInTerminal>)>> {
-        let fs = self.fs.clone();
-        let node_runtime = self.node_runtime.clone();
-        let project_environment = self.project_environment.downgrade();
-        let custom_command = self.custom_command.clone();
-        let settings_env = self.settings_env.clone();
-        let ignore_system_version = self.ignore_system_version;
-        let home_dir = paths::home_dir();
-
-        cx.spawn(async move |cx| {
-            let mut env = project_environment
-                .update(cx, |project_environment, cx| {
-                    project_environment.local_directory_environment(
-                        &Shell::System,
-                        home_dir.as_path().into(),
-                        cx,
-                    )
-                })?
-                .await
-                .unwrap_or_default();
-
-            env.extend(settings_env.unwrap_or_default());
-
-            let mut command = if let Some(mut custom_command) = custom_command {
-                custom_command.env = Some(env);
-                custom_command
-            } else if !ignore_system_version
-                && let Some(bin) =
-                    find_bin_in_path("gemini".into(), home_dir.to_path_buf(), env.clone(), cx).await
-            {
-                AgentServerCommand {
-                    path: bin,
-                    args: Vec::new(),
-                    env: Some(env),
-                }
-            } else {
-                let mut command = get_or_npm_install_builtin_agent(
-                    GEMINI_NAME.into(),
-                    "@google/gemini-cli".into(),
-                    "node_modules/@google/gemini-cli/dist/index.js".into(),
-                    if cfg!(windows) {
-                        // v0.8.x on Windows has a bug that causes the initialize request to hang forever
-                        Some("0.9.0".parse().unwrap())
-                    } else {
-                        Some("0.2.1".parse().unwrap())
-                    },
-                    status_tx,
-                    new_version_available_tx,
-                    fs,
-                    node_runtime,
-                    cx,
-                )
-                .await?;
-                command.env = Some(env);
-                command
-            };
-
-            // Gemini CLI doesn't seem to have a dedicated invocation for logging in--we just run it normally without any arguments.
-            let login = task::SpawnInTerminal {
-                command: Some(command.path.to_string_lossy().into_owned()),
-                args: command.args.clone(),
-                env: command.env.clone().unwrap_or_default(),
-                label: "gemini /auth".into(),
-                ..Default::default()
-            };
-
-            command.env.get_or_insert_default().extend(extra_env);
-            command.args.push("--experimental-acp".into());
-            Ok((command, Some(login)))
         })
     }
 
@@ -2131,6 +2056,15 @@ impl ExternalAgentServer for LocalRegistryNpxAgent {
                 args: npm_command.args,
                 env: Some(env),
             };
+            // todo!() -> move this to auth code somewhere
+            //        // Gemini CLI doesn't seem to have a dedicated invocation for logging in--we just run it normally without any arguments.
+            // let login = task::SpawnInTerminal {
+            //     command: Some(command.path.to_string_lossy().into_owned()),
+            //     args: command.args.clone(),
+            //     env: command.env.clone().unwrap_or_default(),
+            //     label: "gemini /auth".into(),
+            //     ..Default::default()
+            // };
 
             Ok((command, None))
         })
