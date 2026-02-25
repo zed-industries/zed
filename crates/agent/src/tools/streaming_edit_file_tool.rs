@@ -109,16 +109,8 @@ pub struct EditOperation {
     pub new_text: String,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
-struct StreamingEditFileToolPartialInput {
-    #[serde(default)]
-    path: String,
-    #[serde(default)]
-    display_description: String,
-}
-
 #[derive(Default, Debug, Deserialize)]
-struct StreamingPartialInput {
+struct StreamingEditFileToolPartialInput {
     #[serde(default)]
     display_description: Option<String>,
     #[serde(default)]
@@ -180,10 +172,7 @@ impl StreamingEditState {
                 .await?;
                 0
             }
-            StreamingEditState::BufferResolved {
-                edit_state: edit_tracker,
-                ..
-            } => edit_tracker.applied_count,
+            StreamingEditState::BufferResolved { edit_state, .. } => edit_state.applied_count,
         };
 
         let StreamingEditState::BufferResolved {
@@ -324,7 +313,7 @@ impl StreamingEditState {
 
     async fn process(
         &mut self,
-        partial: StreamingPartialInput,
+        partial: StreamingEditFileToolPartialInput,
         tool: &StreamingEditFileTool,
         event_stream: &ToolCallEventStream,
         cx: &mut AsyncApp,
@@ -349,7 +338,7 @@ impl StreamingEditState {
             Self::BufferResolved {
                 abs_path,
                 buffer,
-                edit_state: edit_tracker,
+                edit_state,
                 diff,
                 ..
             } => {
@@ -357,7 +346,7 @@ impl StreamingEditState {
                     Self::process_streaming_edits(
                         buffer,
                         diff,
-                        edit_tracker,
+                        edit_state,
                         &edits,
                         abs_path,
                         tool,
@@ -443,7 +432,7 @@ impl StreamingEditState {
     fn process_streaming_edits(
         buffer: &Entity<Buffer>,
         diff: &Entity<Diff>,
-        edit_tracker: &mut IncrementalEditState,
+        edit_state: &mut IncrementalEditState,
         edits: &[PartialEditOperation],
         abs_path: &PathBuf,
         tool: &StreamingEditFileTool,
@@ -460,21 +449,21 @@ impl StreamingEditState {
         let completed_count = edits.len().saturating_sub(1);
 
         // Apply newly-complete edits
-        while edit_tracker.applied_count < completed_count {
-            let edit_index = edit_tracker.applied_count;
+        while edit_state.applied_count < completed_count {
+            let edit_index = edit_state.applied_count;
             let partial_edit = &edits[edit_index];
 
             let old_text = match &partial_edit.old_text {
                 Some(t) => t.clone(),
                 None => {
-                    edit_tracker.applied_count += 1;
+                    edit_state.applied_count += 1;
                     continue;
                 }
             };
             let new_text = partial_edit.new_text.clone().unwrap_or_default();
 
-            edit_tracker.in_progress_matcher = None;
-            edit_tracker.last_old_text_len = 0;
+            edit_state.in_progress_matcher = None;
+            edit_state.last_old_text_len = 0;
 
             let edit_op = EditOperation {
                 old_text: old_text.clone(),
@@ -487,7 +476,7 @@ impl StreamingEditState {
                 .ok();
 
             // On the first edit, mark the buffer as read
-            if edit_tracker.applied_count == 0 {
+            if edit_state.applied_count == 0 {
                 if let Some(action_log) = &action_log {
                     action_log.update(cx, |log, cx| {
                         log.buffer_read(buffer.clone(), cx);
@@ -509,30 +498,29 @@ impl StreamingEditState {
                 error: e.to_string(),
             })?;
 
-            edit_tracker.applied_count += 1;
+            edit_state.applied_count += 1;
         }
 
         // Feed the in-progress last edit's old_text to the matcher for live preview
         if let Some(partial_edit) = edits.last() {
             if let Some(old_text) = &partial_edit.old_text {
                 let old_text_len = old_text.len();
-                if old_text_len > edit_tracker.last_old_text_len {
-                    let new_chunk = &old_text[edit_tracker.last_old_text_len..];
+                if old_text_len > edit_state.last_old_text_len {
+                    let new_chunk = &old_text[edit_state.last_old_text_len..];
 
-                    let matcher = edit_tracker.in_progress_matcher.get_or_insert_with(|| {
+                    let matcher = edit_state.in_progress_matcher.get_or_insert_with(|| {
                         let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.text_snapshot());
                         StreamingFuzzyMatcher::new(snapshot)
                     });
 
                     if let Some(match_range) = matcher.push(new_chunk, None) {
-                        // Show live match preview in diff view
                         let anchor_range = buffer.read_with(cx, |buffer, _cx| {
                             buffer.anchor_range_between(match_range.clone())
                         });
                         diff.update(cx, |card, cx| card.reveal_range(anchor_range, cx));
                     }
 
-                    edit_tracker.last_old_text_len = old_text_len;
+                    edit_state.last_old_text_len = old_text_len;
                 }
             }
         }
@@ -720,22 +708,24 @@ impl AgentTool for StreamingEditFileTool {
                 if let Some(input) =
                     serde_json::from_value::<StreamingEditFileToolPartialInput>(raw_input).ok()
                 {
-                    let path = input.path.trim();
+                    let path = input.path.unwrap_or_default();
+                    let path = path.trim();
                     if !path.is_empty() {
                         return self
                             .project
                             .read(cx)
-                            .find_project_path(&input.path, cx)
+                            .find_project_path(&path, cx)
                             .and_then(|project_path| {
                                 self.project
                                     .read(cx)
                                     .short_full_path_for_project_path(&project_path, cx)
                             })
-                            .unwrap_or(input.path)
+                            .unwrap_or_else(|| path.to_string())
                             .into();
                     }
 
-                    let description = input.display_description.trim();
+                    let description = input.display_description.unwrap_or_default();
+                    let description = description.trim();
                     if !description.is_empty() {
                         return description.to_string().into();
                     }
@@ -758,7 +748,7 @@ impl AgentTool for StreamingEditFileTool {
                 futures::select! {
                     partial = input.recv_partial().fuse() => {
                         let Some(partial_value) = partial else { break };
-                        if let Ok(parsed) = serde_json::from_value::<StreamingPartialInput>(partial_value) {
+                        if let Ok(parsed) = serde_json::from_value::<StreamingEditFileToolPartialInput>(partial_value) {
                             state.process(parsed, &self, &event_stream, cx).await?;
                         }
                     }
@@ -769,7 +759,7 @@ impl AgentTool for StreamingEditFileTool {
                     }
                 }
             }
-            let final_input =
+            let full_input =
                 input
                     .recv()
                     .await
@@ -777,7 +767,7 @@ impl AgentTool for StreamingEditFileTool {
                         error: format!("Failed to receive tool input: {e}"),
                     })?;
 
-            state.finalize(final_input, &self, &event_stream, cx).await
+            state.finalize(full_input, &self, &event_stream, cx).await
         })
     }
 
