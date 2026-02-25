@@ -5,19 +5,73 @@ on:
   push:
     branches:
     - main
-    - staged-docs-releases
+    - preview
+    - stable
+  workflow_dispatch:
+    inputs:
+      channel:
+        description: 'Docs channel to deploy: nightly, preview, or stable'
+        type: string
+        default: nightly
 jobs:
-  deploy_docs_job:
+  deploy_docs:
     if: github.repository_owner == 'zed-industries'
     name: Build and Deploy Docs
     runs-on: namespace-profile-16x32-ubuntu-2204
     env:
       DOCS_AMPLITUDE_API_KEY: ${{ secrets.DOCS_AMPLITUDE_API_KEY }}
+      MDBOOK_BOOK__SITE_URL: ${{ steps.resolve-channel.outputs.site_url }}
+      DOCS_CHANNEL: ${{ steps.resolve-channel.outputs.channel }}
     steps:
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       with:
         clean: false
+    - id: resolve-channel
+      name: deploy_docs::resolve_channel_step
+      run: |
+        if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            CHANNEL="${{ inputs.channel }}"
+        else
+            case "${{ github.ref }}" in
+                "refs/heads/main")
+                    CHANNEL="nightly"
+                    ;;
+                "refs/heads/preview")
+                    CHANNEL="preview"
+                    ;;
+                "refs/heads/stable")
+                    CHANNEL="stable"
+                    ;;
+                *)
+                    echo "::error::Unsupported ref for docs deploy: ${{ github.ref }}"
+                    exit 1
+                    ;;
+            esac
+        fi
+
+        case "$CHANNEL" in
+            "nightly")
+                SITE_URL="/docs/nightly/"
+                PROJECT_NAME="docs-nightly"
+                ;;
+            "preview")
+                SITE_URL="/docs/preview/"
+                PROJECT_NAME="docs-preview"
+                ;;
+            "stable")
+                SITE_URL="/docs/"
+                PROJECT_NAME="docs"
+                ;;
+            *)
+                echo "::error::Invalid docs channel '$CHANNEL'. Expected one of: nightly, preview, stable."
+                exit 1
+                ;;
+        esac
+
+        echo "channel=$CHANNEL" >> "$GITHUB_OUTPUT"
+        echo "site_url=$SITE_URL" >> "$GITHUB_OUTPUT"
+        echo "project_name=$PROJECT_NAME" >> "$GITHUB_OUTPUT"
     - name: steps::setup_cargo_config
       run: |
         mkdir -p ./../.cargo
@@ -55,12 +109,12 @@ jobs:
         args: --no-progress --exclude '^http' 'target/deploy/docs'
         fail: true
         jobSummary: false
-    - name: deploy_docs::deploy_docs_to_pages
+    - name: deploy_docs::pages_deploy_step
       uses: cloudflare/wrangler-action@da0e0dfe58b7a431659754fdf3f186c529afbe65
       with:
         apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-        command: pages deploy target/deploy --project-name=docs
+        command: pages deploy target/deploy --project-name=${{ steps.resolve-channel.outputs.project_name }}
     - name: deploy_docs::deploy_install_script
       uses: cloudflare/wrangler-action@da0e0dfe58b7a431659754fdf3f186c529afbe65
       with:

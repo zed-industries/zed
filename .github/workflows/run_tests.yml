@@ -505,11 +505,19 @@ jobs:
     runs-on: namespace-profile-16x32-ubuntu-2204
     env:
       DOCS_AMPLITUDE_API_KEY: ${{ secrets.DOCS_AMPLITUDE_API_KEY }}
+      MDBOOK_BOOK__SITE_URL: ${{ steps.resolve-channel.outputs.site_url }}
+      DOCS_CHANNEL: ${{ steps.resolve-channel.outputs.channel }}
     steps:
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       with:
         clean: false
+    - id: resolve-channel
+      name: deploy_docs::static_channel_resolution_step
+      run: |
+        echo "channel=stable" >> "$GITHUB_OUTPUT"
+        echo "site_url=/docs/" >> "$GITHUB_OUTPUT"
+        echo "project_name=docs" >> "$GITHUB_OUTPUT"
     - name: steps::setup_cargo_config
       run: |
         mkdir -p ./../.cargo
