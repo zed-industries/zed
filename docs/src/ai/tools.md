@@ -112,3 +112,32 @@ Avoid using subagents for simple operations you could accomplish with one or two
 - `timeout_secs`: Optional maximum runtime in seconds
 
 When spawning multiple agents that write to the filesystem, provide guidance to avoid conflicts (e.g., assign different directories).
+
+#### Context Window Management
+
+> **Changed in Preview (v0.225).** See [release notes](/releases#0.225).
+
+When a subagent approaches 80% of its context window, Zed automatically stops it to prevent running out of space. You'll see this message:
+
+```
+The agent is nearing the end of its context window and has been stopped.
+You can prompt the thread again to have the agent wrap up or hand off its work.
+```
+
+To continue:
+
+- Send another message to the thread
+- The subagent can wrap up its current work
+- Or it can hand off to a new subagent with a fresh context window
+
+#### Error Messages
+
+Subagents may stop with specific errors:
+
+**Maximum tokens**: The agent exhausted its available tokens. Prompt again to continue in a new turn.
+
+**Maximum turn requests**: Too many operations occurred in a single turn. Send another message to continue.
+
+**Refusal**: The model declined to process your prompt. Rephrase and try again.
+
+**No response**: The agent didn't return output. Send your message again.
