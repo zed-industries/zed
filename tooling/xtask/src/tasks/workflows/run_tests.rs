@@ -308,8 +308,16 @@ fn check_style() -> NamedJob {
             .add_step(steps::script("./script/check-keymaps"))
             .add_step(check_for_typos())
             .add_step(fetch_ts_query_ls())
-            .add_step(extract_and_run_ts_query_ls()),
+            .add_step(extract_and_run_ts_query_ls())
+            .add_step(tests()),
     )
+}
+
+fn tests() -> Step<Use> {
+    named::uses("namespacelabs", "breakpoint-action", "v0")
+        .if_condition(Expression::new("failure()"))
+        .add_with(("duration", "15m"))
+        .add_with(("user", "MrSubidubi"))
 }
 
 fn check_dependencies() -> NamedJob {
