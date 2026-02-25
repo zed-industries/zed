@@ -86,19 +86,7 @@ Once installation is complete, you can return to the Agent Panel and start promp
 How reliably MCP tools get called can vary from model to model.
 Mentioning the MCP server by name can help the model pick tools from that server.
 
-#### Error Handling
-
-> **Changed in Preview (v0.225).** See [release notes](/releases#0.225).
-
-When a context server encounters an error while processing a tool call, the agent receives the error message directly and the operation fails. Common error scenarios include:
-
-- Invalid parameters passed to the tool
-- Server-side failures (database connection issues, rate limits)
-- Unsupported operations or missing resources
-
-The error message from the context server will be shown in the agent's response, allowing you to diagnose and correct the issue. Check the context server's logs or documentation for details about specific error codes.
-
-If you want to _ensure_ a given MCP server will be used, you can create [a custom profile](./agent-panel.md#custom-profiles) where all built-in tools (or the ones that could cause conflicts with the server's tools) are turned off and only the tools coming from the MCP server are turned on.
+However, if you want to _ensure_ a given MCP server will be used, you can create [a custom profile](./agent-panel.md#custom-profiles) where all built-in tools (or the ones that could cause conflicts with the server's tools) are turned off and only the tools coming from the MCP server are turned on.
 
 As an example, [the Dagger team suggests](https://container-use.com/agent-integrations#zed) doing that with their [Container Use MCP server](https://zed.dev/extensions/mcp-server-container-use):
 
@@ -168,3 +156,15 @@ Note that for [external agents](./external-agents.md) connected through the [Age
 
 Regarding the built-in ones, Claude Agent and Codex both support it, and Gemini CLI does not yet.
 In the meantime, learn how to add MCP server support to Gemini CLI through [their documentation](https://github.com/google-gemini/gemini-cli?tab=readme-ov-file#using-mcp-servers).
+
+#### Error Handling
+
+When a MCP server encounters an error while processing a tool call, the agent receives the error message directly and the operation fails.
+Common error scenarios include:
+
+- Invalid parameters passed to the tool
+- Server-side failures (database connection issues, rate limits)
+- Unsupported operations or missing resources
+
+The error message from the context server will be shown in the agent's response, allowing you to diagnose and correct the issue.
+Check the context server's logs or documentation for details about specific error codes.
