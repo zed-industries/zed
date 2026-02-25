@@ -4558,7 +4558,7 @@ fn panels_page() -> SettingsPage {
             }),
             SettingsPageItem::SettingItem(SettingItem {
                 title: "Diagnostic Badges",
-                description: "Show error and warning count badges next to file names in the project panel. When enabled, diagnostic severity takes priority over git status for entry text color.",
+                description: "Show error and warning count badges next to file names in the project panel.",
                 field: Box::new(SettingField {
                     json_path: Some("project_panel.diagnostic_badges"),
                     pick: |settings_content| {

@@ -1006,13 +1006,11 @@ impl ProjectPanel {
         let diagnostic_badges = ProjectPanelSettings::get_global(cx).diagnostic_badges;
         let mut diagnostic_counts: HashMap<(WorktreeId, Arc<RelPath>), (usize, usize)> =
             Default::default();
-
         if show_diagnostics_setting != ShowDiagnostics::Off {
             // First pass: aggregate per-file counts across all language servers for the same path,
             // so that counts are not inflated when multiple LSPs report diagnostics for one file.
             let mut file_counts: HashMap<(WorktreeId, Arc<RelPath>), (usize, usize)> =
                 Default::default();
-
             self.project
                 .read(cx)
                 .diagnostic_summaries(false, cx)
@@ -1023,7 +1021,6 @@ impl ProjectPanel {
                     entry.0 += diagnostic_summary.error_count;
                     entry.1 += diagnostic_summary.warning_count;
                 });
-
             for ((worktree_id, path), (error_count, warning_count)) in &file_counts {
                 let severity = if *error_count > 0 {
                     Some(DiagnosticSeverity::ERROR)
@@ -1032,7 +1029,6 @@ impl ProjectPanel {
                 } else {
                     None
                 };
-
                 if let Some(severity) = severity {
                     let project_path = ProjectPath {
                         worktree_id: *worktree_id,
@@ -1048,16 +1044,9 @@ impl ProjectPanel {
                         );
                     }
                 }
-
+                // Store diagnostic counts only for files, not directories
                 if diagnostic_badges && (*error_count > 0 || *warning_count > 0) {
-                    let ancestors = path.ancestors().collect::<Vec<_>>();
-                    for ancestor_path in ancestors.iter() {
-                        let counts = diagnostic_counts
-                            .entry((*worktree_id, (*ancestor_path).into()))
-                            .or_insert((0, 0));
-                        counts.0 += error_count;
-                        counts.1 += warning_count;
-                    }
+                    diagnostic_counts.insert((*worktree_id, path.clone()), (*error_count, *warning_count));
                 }
             }
         }
@@ -5544,8 +5533,13 @@ impl ProjectPanel {
                                     .pr_3()
                                     .when_some(diagnostic_counts, |this, (errors, warnings)| {
                                         this.when(errors > 0, |this| {
+                                            let error_txt = if errors > 99 {
+                                                "99+".to_string()
+                                            } else {
+                                                errors.to_string()
+                                            };
                                             this.child(
-                                                Label::new(errors.to_string())
+                                                Label::new(error_txt)
                                                     .size(LabelSize::Small)
                                                     .color(Color::Error),
                                             )
@@ -5553,8 +5547,13 @@ impl ProjectPanel {
                                         .when(
                                             warnings > 0,
                                             |this| {
+                                                let warning_txt = if warnings > 99 {
+                                                    "99+".to_string()
+                                                } else {
+                                                    warnings.to_string()
+                                                };
                                                 this.child(
-                                                    Label::new(warnings.to_string())
+                                                    Label::new(warning_txt)
                                                         .size(LabelSize::Small)
                                                         .color(Color::Warning),
                                                 )
@@ -5980,16 +5979,7 @@ impl ProjectPanel {
             .get(&(worktree_id, entry.path.clone()))
             .copied();
 
-        let settings = ProjectPanelSettings::get_global(cx);
-        let filename_text_color = if settings.diagnostic_badges {
-            match diagnostic_severity {
-                Some(DiagnosticSeverity::ERROR) => Color::Error,
-                Some(DiagnosticSeverity::WARNING) => Color::Warning,
-                _ => entry_git_aware_label_color(git_status, entry.is_ignored, is_marked),
-            }
-        } else {
-            entry_git_aware_label_color(git_status, entry.is_ignored, is_marked)
-        };
+        let filename_text_color = entry_git_aware_label_color(git_status, entry.is_ignored, is_marked);
 
         let is_cut = self
             .clipboard
