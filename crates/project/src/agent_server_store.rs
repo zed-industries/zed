@@ -61,7 +61,7 @@ impl std::fmt::Debug for AgentServerCommand {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct ExternalAgentServerName(pub SharedString);
 
 impl std::fmt::Display for ExternalAgentServerName {

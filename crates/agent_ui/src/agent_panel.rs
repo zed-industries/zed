@@ -14,6 +14,7 @@ use agent::{ContextServerRegistry, SharedThread, ThreadStore};
 use agent_client_protocol as acp;
 use agent_servers::AgentServer;
 use db::kvp::{Dismissable, KEY_VALUE_STORE};
+use itertools::Itertools;
 use project::{
     ExternalAgentServerName,
     agent_server_store::{CLAUDE_AGENT_NAME, CODEX_NAME, GEMINI_NAME},
@@ -2489,8 +2490,71 @@ impl AgentPanel {
                                 let agent_names = agent_server_store
                                     .external_agents()
                                     .cloned()
+                                    .map(|name| {
+                                        let display_name = agent_server_store
+                                            .agent_display_name(&name)
+                                            .unwrap_or_else(|| name.0.clone());
+                                        (name, display_name)
+                                    })
+                                    .sorted_unstable_by(|(_, a), (_, b)| a.cmp(b))
                                     .collect::<Vec<_>>();
 
+                                for (agent_name, display_name) in &agent_names {
+                                    let icon_path = agent_server_store.agent_icon(agent_name);
+
+                                    let mut entry = ContextMenuEntry::new(display_name.clone());
+
+                                    if let Some(icon_path) = icon_path {
+                                        entry = entry.custom_icon_svg(icon_path);
+                                    } else {
+                                        entry = entry.icon(IconName::Sparkle);
+                                    }
+                                    entry = entry
+                                        .when(
+                                            is_agent_selected(AgentType::Custom {
+                                                name: agent_name.0.clone(),
+                                            }),
+                                            |this| {
+                                                this.action(Box::new(NewExternalAgentThread {
+                                                    agent: None,
+                                                }))
+                                            },
+                                        )
+                                        .icon_color(Color::Muted)
+                                        .disabled(is_via_collab)
+                                        .handler({
+                                            let workspace = workspace.clone();
+                                            let agent_name = agent_name.clone();
+                                            move |window, cx| {
+                                                if let Some(workspace) = workspace.upgrade() {
+                                                    workspace.update(cx, |workspace, cx| {
+                                                        if let Some(panel) =
+                                                            workspace.panel::<AgentPanel>(cx)
+                                                        {
+                                                            panel.update(cx, |panel, cx| {
+                                                                panel.new_agent_thread(
+                                                                    AgentType::Custom {
+                                                                        name: agent_name
+                                                                            .clone()
+                                                                            .into(),
+                                                                    },
+                                                                    window,
+                                                                    cx,
+                                                                );
+                                                            });
+                                                        }
+                                                    });
+                                                }
+                                            }
+                                        });
+
+                                    menu = menu.item(entry);
+                                }
+
+
+                                // These are here for a few weeks post migration.
+                                // We can remove once people have enough time to click these to
+                                // put the agents in their settings.
                                 let previous_built_in = [
                                     PreviousBuiltIn {
                                         id: CLAUDE_AGENT_NAME,
@@ -2510,7 +2574,7 @@ impl AgentPanel {
                                 ]
                                     .iter()
                                     .filter(|agent| {
-                                        !agent_names.iter().any(|n| n.0.as_ref() == agent.id)
+                                        !agent_names.iter().any(|(n, _)| n.0.as_ref() == agent.id)
                                     });
 
                                 for agent in previous_built_in {
@@ -2563,61 +2627,6 @@ impl AgentPanel {
                                                 }
                                             }),
                                     );
-                                }
-
-                                for agent_name in &agent_names {
-                                    let icon_path = agent_server_store.agent_icon(agent_name);
-                                    let display_name = agent_server_store
-                                        .agent_display_name(agent_name)
-                                        .unwrap_or_else(|| agent_name.0.clone());
-
-                                    let mut entry = ContextMenuEntry::new(display_name);
-
-                                    if let Some(icon_path) = icon_path {
-                                        entry = entry.custom_icon_svg(icon_path);
-                                    } else {
-                                        entry = entry.icon(IconName::Sparkle);
-                                    }
-                                    entry = entry
-                                        .when(
-                                            is_agent_selected(AgentType::Custom {
-                                                name: agent_name.0.clone(),
-                                            }),
-                                            |this| {
-                                                this.action(Box::new(NewExternalAgentThread {
-                                                    agent: None,
-                                                }))
-                                            },
-                                        )
-                                        .icon_color(Color::Muted)
-                                        .disabled(is_via_collab)
-                                        .handler({
-                                            let workspace = workspace.clone();
-                                            let agent_name = agent_name.clone();
-                                            move |window, cx| {
-                                                if let Some(workspace) = workspace.upgrade() {
-                                                    workspace.update(cx, |workspace, cx| {
-                                                        if let Some(panel) =
-                                                            workspace.panel::<AgentPanel>(cx)
-                                                        {
-                                                            panel.update(cx, |panel, cx| {
-                                                                panel.new_agent_thread(
-                                                                    AgentType::Custom {
-                                                                        name: agent_name
-                                                                            .clone()
-                                                                            .into(),
-                                                                    },
-                                                                    window,
-                                                                    cx,
-                                                                );
-                                                            });
-                                                        }
-                                                    });
-                                                }
-                                            }
-                                        });
-
-                                    menu = menu.item(entry);
                                 }
 
                                 menu
