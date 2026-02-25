@@ -1167,7 +1167,7 @@ impl AgentPanel {
 
             let server = ext_agent.server(fs, thread_store);
             this.update_in(cx, |agent_panel, window, cx| {
-                agent_panel._external_thread(
+                agent_panel.create_external_thread(
                     server,
                     resume_thread,
                     initial_content,
@@ -2062,7 +2062,7 @@ impl AgentPanel {
         self.external_thread(Some(agent), Some(thread), None, window, cx);
     }
 
-    pub(crate) fn _external_thread(
+    pub(crate) fn create_external_thread(
         &mut self,
         server: Rc<dyn AgentServer>,
         resume_thread: Option<AgentSessionInfo>,
@@ -4160,7 +4160,7 @@ impl AgentPanel {
             name: server.name(),
         };
 
-        self._external_thread(
+        self.create_external_thread(
             server, None, None, workspace, project, ext_agent, window, cx,
         );
     }
