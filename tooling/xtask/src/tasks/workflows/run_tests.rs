@@ -29,6 +29,7 @@ pub(crate) fn run_tests() -> Workflow {
         "run_action_checks",
         r"^\.github/(workflows/|actions/|actionlint.yml)|tooling/xtask|script/",
     );
+    let should_check_queries = PathCondition::new("run_query_lint", r".*\.scm");
     let should_check_licences =
         PathCondition::new("run_licenses", r"^(Cargo.lock|script/.*licenses)");
 
@@ -36,6 +37,7 @@ pub(crate) fn run_tests() -> Workflow {
         &should_check_scripts,
         &should_check_docs,
         &should_check_licences,
+        &should_check_queries,
         &should_run_tests,
     ]);
 
@@ -54,6 +56,7 @@ pub(crate) fn run_tests() -> Workflow {
         should_run_tests.guard(check_dependencies()), // could be more specific here?
         should_check_docs.guard(check_docs()),
         should_check_licences.guard(check_licenses()),
+        should_check_queries.guard(check_query_style()),
         should_check_scripts.guard(check_scripts()),
     ];
     let tests_pass = tests_pass(&jobs);
@@ -277,6 +280,21 @@ fn check_style() -> NamedJob {
         .with(("config", "./typos.toml"))
     }
 
+    named::job(
+        release_job(&[])
+            .runs_on(runners::LINUX_MEDIUM)
+            .add_step(steps::checkout_repo())
+            .add_step(steps::cache_rust_dependencies_namespace())
+            .add_step(steps::setup_pnpm())
+            .add_step(steps::prettier())
+            .add_step(steps::cargo_fmt())
+            .add_step(steps::script("./script/check-todos"))
+            .add_step(steps::script("./script/check-keymaps"))
+            .add_step(check_for_typos()),
+    )
+}
+
+fn check_query_style() -> NamedJob {
     fn install_ts_query_ls() -> Step<Run> {
         named::bash("cargo install ts_query_ls")
     }
@@ -291,12 +309,6 @@ fn check_style() -> NamedJob {
             .add_step(steps::checkout_repo())
             .add_step(steps::cache_rust_dependencies_namespace())
             .add_step(install_ts_query_ls())
-            .add_step(steps::setup_pnpm())
-            .add_step(steps::prettier())
-            .add_step(steps::cargo_fmt())
-            .add_step(steps::script("./script/check-todos"))
-            .add_step(steps::script("./script/check-keymaps"))
-            .add_step(check_for_typos())
             .add_step(ts_query_ls_format()),
     )
 }

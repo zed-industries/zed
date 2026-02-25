@@ -103,12 +103,14 @@ jobs:
         check_pattern "run_action_checks" '^\.github/(workflows/|actions/|actionlint.yml)|tooling/xtask|script/' -qP
         check_pattern "run_docs" '^(docs/|crates/.*\.rs)' -qP
         check_pattern "run_licenses" '^(Cargo.lock|script/.*licenses)' -qP
+        check_pattern "run_query_lint" '.*\.scm' -qP
         check_pattern "run_tests" '^(docs/|script/update_top_ranking_issues/|\.github/(ISSUE_TEMPLATE|workflows/(?!run_tests)))' -qvP
     outputs:
       changed_packages: ${{ steps.filter.outputs.changed_packages }}
       run_action_checks: ${{ steps.filter.outputs.run_action_checks }}
       run_docs: ${{ steps.filter.outputs.run_docs }}
       run_licenses: ${{ steps.filter.outputs.run_licenses }}
+      run_query_lint: ${{ steps.filter.outputs.run_query_lint }}
       run_tests: ${{ steps.filter.outputs.run_tests }}
   check_style:
     if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
@@ -123,8 +125,6 @@ jobs:
       with:
         cache: rust
         path: ~/.rustup
-    - name: run_tests::check_style::install_ts_query_ls
-      run: cargo install ts_query_ls
     - name: steps::setup_pnpm
       uses: pnpm/action-setup@fe02b34f77f8bc703788d5817da081398fad5dd2
       with:
@@ -141,8 +141,6 @@ jobs:
       uses: crate-ci/typos@2d0ce569feab1f8752f1dde43cc2f2aa53236e06
       with:
         config: ./typos.toml
-    - name: run_tests::check_style::ts_query_ls_format
-      run: ts_query_ls format --check .
     timeout-minutes: 60
   clippy_windows:
     needs:
@@ -608,6 +606,26 @@ jobs:
       run: ./script/check-licenses
     - name: ./script/generate-licenses
       run: ./script/generate-licenses
+  check_query_style:
+    needs:
+    - orchestrate
+    if: needs.orchestrate.outputs.run_query_lint == 'true'
+    runs-on: namespace-profile-4x8-ubuntu-2204
+    steps:
+    - name: steps::checkout_repo
+      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      with:
+        clean: false
+    - name: steps::cache_rust_dependencies_namespace
+      uses: namespacelabs/nscloud-cache-action@v1
+      with:
+        cache: rust
+        path: ~/.rustup
+    - name: run_tests::check_query_style::install_ts_query_ls
+      run: cargo install ts_query_ls
+    - name: run_tests::check_query_style::ts_query_ls_format
+      run: ts_query_ls format --check .
+    timeout-minutes: 60
   check_scripts:
     needs:
     - orchestrate
@@ -688,6 +706,7 @@ jobs:
     - check_dependencies
     - check_docs
     - check_licenses
+    - check_query_style
     - check_scripts
     if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions') && always()
     runs-on: namespace-profile-2x4-ubuntu-2404
@@ -716,6 +735,7 @@ jobs:
         check_result "check_dependencies" "${{ needs.check_dependencies.result }}"
         check_result "check_docs" "${{ needs.check_docs.result }}"
         check_result "check_licenses" "${{ needs.check_licenses.result }}"
+        check_result "check_query_style" "${{ needs.check_query_style.result }}"
         check_result "check_scripts" "${{ needs.check_scripts.result }}"
 
         exit $EXIT_CODE
