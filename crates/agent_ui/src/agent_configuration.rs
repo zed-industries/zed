@@ -28,10 +28,7 @@ use language_model::{
 use language_models::AllLanguageModelSettings;
 use notifications::status_toast::{StatusToast, ToastIcon};
 use project::{
-    agent_server_store::{
-        AgentServerStore, CLAUDE_AGENT_NAME, CODEX_NAME, ExternalAgentServerName,
-        ExternalAgentSource, GEMINI_NAME,
-    },
+    agent_server_store::{AgentServerStore, ExternalAgentServerName, ExternalAgentSource},
     context_server_store::{ContextServerConfiguration, ContextServerStatus, ContextServerStore},
 };
 use settings::{Settings, SettingsStore, update_settings_file};
@@ -941,9 +938,6 @@ impl AgentConfiguration {
 
         let user_defined_agents = agent_server_store
             .external_agents()
-            .filter(|name| {
-                name.0 != GEMINI_NAME && name.0 != CLAUDE_AGENT_NAME && name.0 != CODEX_NAME
-            })
             .cloned()
             .collect::<Vec<_>>();
 
@@ -1049,51 +1043,24 @@ impl AgentConfiguration {
                         "All agents connected through the Agent Client Protocol.",
                         add_agent_popover.into_any_element(),
                     ))
-                    .child(
-                        v_flex()
-                            .p_4()
-                            .pt_0()
-                            .gap_2()
-                            .child(self.render_agent_server(
-                                AgentIcon::Name(IconName::AiClaude),
-                                "Claude Agent",
-                                "Claude Agent",
-                                ExternalAgentSource::Builtin,
+                    .child(v_flex().p_4().pt_0().gap_2().map(|mut parent| {
+                        let mut first = true;
+                        for (name, icon, display_name, source) in user_defined_agents {
+                            if !first {
+                                parent = parent
+                                    .child(Divider::horizontal().color(DividerColor::BorderFaded));
+                            }
+                            first = false;
+                            parent = parent.child(self.render_agent_server(
+                                icon,
+                                name,
+                                display_name,
+                                source,
                                 cx,
-                            ))
-                            .child(Divider::horizontal().color(DividerColor::BorderFaded))
-                            .child(self.render_agent_server(
-                                AgentIcon::Name(IconName::AiOpenAi),
-                                "Codex CLI",
-                                "Codex CLI",
-                                ExternalAgentSource::Builtin,
-                                cx,
-                            ))
-                            .child(Divider::horizontal().color(DividerColor::BorderFaded))
-                            .child(self.render_agent_server(
-                                AgentIcon::Name(IconName::AiGemini),
-                                "Gemini CLI",
-                                "Gemini CLI",
-                                ExternalAgentSource::Builtin,
-                                cx,
-                            ))
-                            .map(|mut parent| {
-                                for (name, icon, display_name, source) in user_defined_agents {
-                                    parent = parent
-                                        .child(
-                                            Divider::horizontal().color(DividerColor::BorderFaded),
-                                        )
-                                        .child(self.render_agent_server(
-                                            icon,
-                                            name,
-                                            display_name,
-                                            source,
-                                            cx,
-                                        ));
-                                }
-                                parent
-                            }),
-                    ),
+                            ));
+                        }
+                        parent
+                    })),
             )
     }
 

@@ -741,7 +741,7 @@ impl AgentServerStore {
                     })
                     .unzip();
                 let mut extra_env = HashMap::default();
-                if no_browser {
+                if no_browser && envelope.payload.name == CODEX_NAME {
                     extra_env.insert("NO_BROWSER".to_owned(), "1".to_owned());
                 }
                 anyhow::Ok(agent.get_command(
