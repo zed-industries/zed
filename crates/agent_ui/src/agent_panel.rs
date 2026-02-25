@@ -1925,6 +1925,12 @@ impl AgentPanel {
                 ThreadTarget::NewWorktree
             }
             ThreadTargetKind::ExistingWorktree => {
+                if !has_git_repo {
+                    log::error!(
+                        "set_thread_target: cannot use ExistingWorktree without a git repository"
+                    );
+                    return;
+                }
                 if is_via_collab {
                     log::error!(
                         "set_thread_target: cannot use ExistingWorktree in a collab project"
