@@ -208,6 +208,47 @@ else
     log "No stable release tag found, treating all suggestions as preview-only"
 fi
 
+# Determine which PRs touch code gated behind feature flags.
+# Features behind flags aren't generally available and shouldn't be documented yet.
+FLAGGED_PRS=()
+FLAGS_FILE="$REPO_ROOT/crates/feature_flags/src/flags.rs"
+if [[ -f "$FLAGS_FILE" ]]; then
+    # Extract feature flag struct names (e.g. SubagentsFeatureFlag, GitGraphFeatureFlag)
+    FLAG_NAMES=$(grep -oE 'pub struct \w+FeatureFlag' "$FLAGS_FILE" | awk '{print $3}')
+    if [[ -n "$FLAG_NAMES" ]]; then
+        FLAG_PATTERN=$(echo "$FLAG_NAMES" | tr '\n' '|' | sed 's/|$//')
+        log "Feature flags found: $(echo "$FLAG_NAMES" | tr '\n' ' ')"
+        for file in "${SUGGESTION_FILES[@]}"; do
+            pr_num=$(echo "$MANIFEST" | jq -r --arg f "$file" '.suggestions[] | select(.file == $f) | .pr')
+            # Skip PRs already marked as stable (no need to double-check)
+            is_already_stable=false
+            for stable_pr in "${STABLE_PRS[@]+"${STABLE_PRS[@]}"}"; do
+                if [[ "$stable_pr" == "$pr_num" ]]; then
+                    is_already_stable=true
+                    break
+                fi
+            done
+            if [[ "$is_already_stable" == "true" ]]; then
+                continue
+            fi
+            # Check if the PR diff references any feature flag
+            pr_diff=$(gh pr diff "$pr_num" 2>/dev/null || true)
+            if [[ -n "$pr_diff" ]] && echo "$pr_diff" | grep -qE "$FLAG_PATTERN"; then
+                matched_flags=$(echo "$pr_diff" | grep -oE "$FLAG_PATTERN" | sort -u | tr '\n' ', ' | sed 's/,$//')
+                FLAGGED_PRS+=("$pr_num")
+                log "PR #$pr_num is behind feature flag(s): $matched_flags"
+            fi
+        done
+        if [[ ${#FLAGGED_PRS[@]} -gt 0 ]]; then
+            echo -e "${YELLOW}Note:${NC} ${#FLAGGED_PRS[@]} suggestion(s) are for features behind feature flags."
+            echo "  These will be skipped: ${FLAGGED_PRS[*]}"
+            echo ""
+        fi
+    fi
+else
+    log "Feature flags file not found, skipping flag detection"
+fi
+
 # Split into batches
 TOTAL=${#SUGGESTION_FILES[@]}
 BATCH_COUNT=$(( (TOTAL + BATCH_SIZE - 1) / BATCH_SIZE ))
@@ -233,10 +274,34 @@ for (( batch=0; batch<BATCH_COUNT; batch++ )); do
 
     echo -e "${BLUE}Batch $BATCH_NUM/$BATCH_COUNT${NC} (suggestions $(( START + 1 ))-$END of $TOTAL)"
 
-    # Combine suggestion files for this batch, annotating stable PRs
+    # Combine suggestion files for this batch, skipping flagged PRs and annotating stable PRs
+    BATCH_HAS_SUGGESTIONS=false
     for (( i=START; i<END; i++ )); do
         file="${SUGGESTION_FILES[$i]}"
         pr_num=$(echo "$MANIFEST" | jq -r --arg f "$file" '.suggestions[] | select(.file == $f) | .pr')
+
+        # Skip PRs behind feature flags entirely
+        is_flagged=false
+        for flagged_pr in "${FLAGGED_PRS[@]+"${FLAGGED_PRS[@]}"}"; do
+            if [[ "$flagged_pr" == "$pr_num" ]]; then
+                is_flagged=true
+                break
+            fi
+        done
+        if [[ "$is_flagged" == "true" ]]; then
+            log "Skipping PR #$pr_num (behind feature flag)"
+            {
+                echo "### Skipped: PR #$pr_num"
+                echo ""
+                echo "This PR is behind a feature flag and was not applied."
+                echo ""
+            } >> "$APPLY_SUMMARY_FILE"
+            continue
+        fi
+
+        BATCH_HAS_SUGGESTIONS=true
+
+        # Check if PR is already in stable
         is_stable=false
         for stable_pr in "${STABLE_PRS[@]+"${STABLE_PRS[@]}"}"; do
             if [[ "$stable_pr" == "$pr_num" ]]; then
@@ -259,6 +324,12 @@ for (( batch=0; batch<BATCH_COUNT; batch++ )); do
             echo ""
         } >> "$BATCH_SUGGESTIONS_FILE"
     done
+
+    # Skip this batch if all its suggestions were flagged
+    if [[ "$BATCH_HAS_SUGGESTIONS" == "false" ]]; then
+        echo -e "  ${YELLOW}Batch $BATCH_NUM skipped (all suggestions behind feature flags)${NC}"
+        continue
+    fi
 
     # Build auto-apply prompt for this batch
     cat > "$BATCH_PROMPT_FILE" << 'EOF'
@@ -290,6 +361,8 @@ Before making edits, read and follow these rule files:
    - Behavior modifications: `> **Changed in Preview (vX.XXX).** ...`
    - **Exception**: Suggestions marked "ALREADY IN STABLE" must NOT get any preview callouts.
      These features already shipped in a stable release. Apply the content changes only.
+   - Suggestions for features behind feature flags have been pre-filtered and excluded.
+     If you encounter references to feature-flagged functionality, do not document it.
 7. If a suggestion is too ambiguous to apply safely, skip it and explain why in the summary.
 8. **Do not invent `{#kb}` or `{#action}` references.** Only use action names that already
    appear in the existing docs files you are editing. If unsure whether an action name is
