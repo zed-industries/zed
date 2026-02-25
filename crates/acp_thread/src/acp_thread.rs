@@ -34,10 +34,10 @@ pub fn meta_with_tool_name(tool_name: &str) -> acp::Meta {
 use collections::HashSet;
 pub use connection::*;
 pub use diff::*;
-pub use provider_ui::*;
 use language::language_settings::FormatOnSave;
 pub use mention::*;
 use project::lsp_store::{FormatTrigger, LspFormatTarget};
+pub use provider_ui::*;
 use serde::{Deserialize, Serialize};
 use serde_json::to_string_pretty;
 

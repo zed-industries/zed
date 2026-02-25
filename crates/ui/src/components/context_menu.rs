@@ -2085,17 +2085,18 @@ impl Render for ContextMenu {
         };
 
         let aside = self.documentation_aside.clone();
-        let render_aside = |aside: DocumentationAside, window: &mut Window, cx: &mut Context<Self>| {
-            WithRemSize::new(ui_font_size)
-                .occlude()
-                .elevation_2(cx)
-                .w_full()
-                .p_2()
-                .overflow_hidden()
-                .when(is_wide_window, |this| this.max_w_96())
-                .when(!is_wide_window, |this| this.max_w_48())
-                .child((aside.render)(window, cx))
-        };
+        let render_aside =
+            |aside: DocumentationAside, window: &mut Window, cx: &mut Context<Self>| {
+                WithRemSize::new(ui_font_size)
+                    .occlude()
+                    .elevation_2(cx)
+                    .w_full()
+                    .p_2()
+                    .overflow_hidden()
+                    .when(is_wide_window, |this| this.max_w_96())
+                    .when(!is_wide_window, |this| this.max_w_48())
+                    .child((aside.render)(window, cx))
+            };
 
         let render_menu = |cx: &mut Context<Self>, window: &mut Window| {
             let bounds_cell = self.main_menu_observed_bounds.clone();

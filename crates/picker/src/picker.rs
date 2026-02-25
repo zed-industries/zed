@@ -997,17 +997,18 @@ impl<D: PickerDelegate> Render for Picker<D> {
             return menu;
         };
 
-        let render_aside = |aside: DocumentationAside, window: &mut Window, cx: &mut Context<Self>| {
-            WithRemSize::new(ui_font_size)
-                .occlude()
-                .elevation_2(cx)
-                .w_full()
-                .p_2()
-                .overflow_hidden()
-                .when(is_wide_window, |this| this.max_w_96())
-                .when(!is_wide_window, |this| this.max_w_48())
-                .child((aside.render)(window, cx))
-        };
+        let render_aside =
+            |aside: DocumentationAside, window: &mut Window, cx: &mut Context<Self>| {
+                WithRemSize::new(ui_font_size)
+                    .occlude()
+                    .elevation_2(cx)
+                    .w_full()
+                    .p_2()
+                    .overflow_hidden()
+                    .when(is_wide_window, |this| this.max_w_96())
+                    .when(!is_wide_window, |this| this.max_w_48())
+                    .child((aside.render)(window, cx))
+            };
 
         if is_wide_window {
             let aside_index = self.delegate.documentation_aside_index();
