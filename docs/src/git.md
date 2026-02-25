@@ -109,7 +109,7 @@ Or add this to your `settings.json`:
 }
 ```
 
-To switch between modes while viewing diffs, use the view toggle buttons in the buffer search bar, or use the {#action editor::ToggleSplitDiff} action. To set your default view preference, hold {#kb gpui::Modifiers::secondary_key} while clicking either button. This updates your `diff_view_style` setting.
+To switch between modes while viewing diffs, use the view toggle buttons in the buffer search bar, or use the {#action editor::ToggleSplitDiff} action. To set your default view preference, hold `Cmd` (macOS) or `Ctrl` (Linux/Windows) while clicking either button. This updates your `diff_view_style` setting.
 
 See [Configuring Zed](./configuring-zed.md) for more about the Settings Editor.
 

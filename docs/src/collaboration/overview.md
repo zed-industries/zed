@@ -28,7 +28,7 @@ See the [Data and Privacy FAQs](https://zed.dev/faq#data-and-privacy) for more d
 
 You can select specific input and output audio devices instead of using system defaults. To configure audio devices:
 
-1. Open {#kb settings::OpenSettings}
+1. Open {#kb zed::OpenSettings}
 2. Navigate to **Collaboration** > **Experimental**
 3. Use the **Output Audio Device** and **Input Audio Device** dropdowns to select your preferred devices
 
