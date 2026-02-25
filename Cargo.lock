@@ -12475,6 +12475,7 @@ version = "0.1.0"
 dependencies = [
  "feature_flags",
  "gpui",
+ "project",
  "settings",
  "smallvec",
  "theme",
