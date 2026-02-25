@@ -64,7 +64,7 @@ jobs:
     - check_version_changed
     if: |-
       (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions') &&
-      (inputs.force-bump == 'true' || needs.check_version_changed.outputs.version_changed == 'false')
+      (inputs.force-bump == true || needs.check_version_changed.outputs.version_changed == 'false')
     runs-on: namespace-profile-2x4-ubuntu-2404
     steps:
     - id: generate-token
