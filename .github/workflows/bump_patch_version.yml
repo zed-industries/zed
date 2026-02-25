@@ -10,7 +10,6 @@ on:
         type: string
 jobs:
   run_bump_patch_version:
-    if: github.repository_owner == 'zed-industries'
     runs-on: namespace-profile-16x32-ubuntu-2204
     steps:
     - id: get-app-token

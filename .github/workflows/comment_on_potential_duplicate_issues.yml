@@ -16,8 +16,6 @@ concurrency:
 
 jobs:
   identify-duplicates:
-    # For manual testing, allow running on any branch; for automatic runs, only on main repo
-    if: github.event_name == 'workflow_dispatch' || github.repository == 'zed-industries/zed'
     runs-on: ubuntu-latest
     timeout-minutes: 5
 

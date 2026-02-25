@@ -18,7 +18,6 @@ env:
 jobs:
   tests:
     name: Run randomized tests
-    if: github.repository_owner == 'zed-industries'
     runs-on:
       - namespace-profile-16x32-ubuntu-2204
     steps:

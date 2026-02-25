@@ -11,7 +11,6 @@ permissions:
 jobs:
   add-to-project:
     if: >
-      github.repository == 'zed-industries/zed' &&
       github.event.issue.state == 'closed' &&
       github.event.issue.pull_request == null &&
       github.event.issue.type != null &&
