@@ -70,6 +70,10 @@ impl AgentServer for Gemini {
             }
             let (command, login) = store
                 .update(cx, |store, cx| {
+                    let mut extra_env = extra_env;
+                    if store.no_browser() {
+                        extra_env.insert("NO_BROWSER".to_owned(), "1".to_owned());
+                    }
                     let agent = store
                         .get_external_agent(&GEMINI_NAME.into())
                         .context("Gemini CLI is not registered")?;

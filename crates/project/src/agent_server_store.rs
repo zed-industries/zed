@@ -430,71 +430,6 @@ impl AgentServerStore {
             .unwrap_or_default();
 
         self.external_agents.clear();
-        for name in ["gemini"] {
-            let Some(agent) = registry_agents_by_id.get(name) else {
-                if registry_store.is_some() {
-                    log::debug!("Registry agent '{}' not found in ACP registry", name);
-                }
-                continue;
-            };
-
-            let agent_name = ExternalAgentServerName(name.into());
-            let env = match name {
-                // todo!() -> migration for any other settings
-                "gemini" => new_settings
-                    .gemini
-                    .as_ref()
-                    .and_then(|settings| settings.env.clone()),
-                _ => None,
-            };
-            match agent {
-                RegistryAgent::Binary(agent) => {
-                    if !agent.supports_current_platform {
-                        log::warn!(
-                            "Registry agent '{}' has no compatible binary for this platform",
-                            name
-                        );
-                        continue;
-                    }
-
-                    self.external_agents.insert(
-                        agent_name.clone(),
-                        ExternalAgentEntry::new(
-                            Box::new(LocalRegistryArchiveAgent {
-                                fs: fs.clone(),
-                                http_client: http_client.clone(),
-                                node_runtime: node_runtime.clone(),
-                                project_environment: project_environment.clone(),
-                                registry_id: Arc::from(name),
-                                targets: agent.targets.clone(),
-                                env: env.unwrap_or_default(),
-                            }) as Box<dyn ExternalAgentServer>,
-                            ExternalAgentSource::Builtin, // Currently still built-in option
-                            agent.metadata.icon_path.clone(),
-                            Some(agent.metadata.name.clone()),
-                        ),
-                    );
-                }
-                RegistryAgent::Npx(agent) => {
-                    self.external_agents.insert(
-                        agent_name.clone(),
-                        ExternalAgentEntry::new(
-                            Box::new(LocalRegistryNpxAgent {
-                                node_runtime: node_runtime.clone(),
-                                project_environment: project_environment.clone(),
-                                package: agent.package.clone(),
-                                args: agent.args.clone(),
-                                distribution_env: agent.env.clone(),
-                                settings_env: env.unwrap_or_default(),
-                            }) as Box<dyn ExternalAgentServer>,
-                            ExternalAgentSource::Builtin, // Currently still built-in option
-                            agent.metadata.icon_path.clone(),
-                            Some(agent.metadata.name.clone()),
-                        ),
-                    );
-                }
-            };
-        }
 
         self.external_agents.insert(
             CODEX_NAME.into(),
@@ -511,9 +446,6 @@ impl AgentServerStore {
                         .as_ref()
                         .and_then(|settings| settings.env.clone()),
                     http_client: http_client.clone(),
-                    no_browser: downstream_client
-                        .as_ref()
-                        .is_some_and(|(_, client)| !client.has_wsl_interop()),
                 }),
                 ExternalAgentSource::Builtin,
                 None,
@@ -829,6 +761,17 @@ impl AgentServerStore {
             .map(|entry| entry.server.as_mut())
     }
 
+    pub fn no_browser(&self) -> bool {
+        match &self.state {
+            AgentServerStoreState::Local {
+                downstream_client, ..
+            } => downstream_client
+                .as_ref()
+                .is_some_and(|(_, client)| !client.has_wsl_interop()),
+            _ => false,
+        }
+    }
+
     pub fn external_agents(&self) -> impl Iterator<Item = &ExternalAgentServerName> {
         self.external_agents.keys()
     }
@@ -847,6 +790,7 @@ impl AgentServerStore {
                     debug_panic!("should not receive GetAgentServerCommand in a non-local project");
                     bail!("unexpected GetAgentServerCommand request in a non-local project");
                 };
+                let no_browser = this.no_browser();
                 let agent = this
                     .external_agents
                     .get_mut(&*envelope.payload.name)
@@ -896,8 +840,12 @@ impl AgentServerStore {
                         (status_tx, new_version_available_tx)
                     })
                     .unzip();
+                let mut extra_env = HashMap::default();
+                if no_browser {
+                    extra_env.insert("NO_BROWSER".to_owned(), "1".to_owned());
+                }
                 anyhow::Ok(agent.get_command(
-                    HashMap::default(),
+                    extra_env,
                     status_tx,
                     new_version_available_tx,
                     &mut cx.to_async(),
@@ -1395,7 +1343,6 @@ struct LocalCodex {
     http_client: Arc<dyn HttpClient>,
     custom_command: Option<AgentServerCommand>,
     settings_env: Option<HashMap<String, String>>,
-    no_browser: bool,
 }
 
 impl ExternalAgentServer for LocalCodex {
@@ -1411,8 +1358,6 @@ impl ExternalAgentServer for LocalCodex {
         let http = self.http_client.clone();
         let custom_command = self.custom_command.clone();
         let settings_env = self.settings_env.clone();
-        let no_browser = self.no_browser;
-
         cx.spawn(async move |cx| {
             let mut env = project_environment
                 .update(cx, |project_environment, cx| {
@@ -1424,10 +1369,6 @@ impl ExternalAgentServer for LocalCodex {
                 })?
                 .await
                 .unwrap_or_default();
-            if no_browser {
-                env.insert("NO_BROWSER".to_owned(), "1".to_owned());
-            }
-
             env.extend(settings_env.unwrap_or_default());
 
             let mut command = if let Some(mut custom_command) = custom_command {

@@ -227,6 +227,10 @@ impl AgentServer for ClaudeCode {
         cx.spawn(async move |cx| {
             let (command, login) = store
                 .update(cx, |store, cx| {
+                    let mut extra_env = extra_env;
+                    if store.no_browser() {
+                        extra_env.insert("NO_BROWSER".to_owned(), "1".to_owned());
+                    }
                     let agent = store
                         .get_external_agent(&CLAUDE_AGENT_NAME.into())
                         .context("Claude Agent is not registered")?;

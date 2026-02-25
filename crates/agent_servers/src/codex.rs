@@ -231,6 +231,10 @@ impl AgentServer for Codex {
         cx.spawn(async move |cx| {
             let (command, login) = store
                 .update(cx, |store, cx| {
+                    let mut extra_env = extra_env;
+                    if store.no_browser() {
+                        extra_env.insert("NO_BROWSER".to_owned(), "1".to_owned());
+                    }
                     let agent = store
                         .get_external_agent(&CODEX_NAME.into())
                         .context("Codex is not registered")?;

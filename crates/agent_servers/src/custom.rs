@@ -380,8 +380,11 @@ impl AgentServer for CustomAgentServer {
             }
         }
 
+        let mut extra_env = load_proxy_env(cx);
+        if delegate.store.read(cx).no_browser() {
+            extra_env.insert("NO_BROWSER".to_owned(), "1".to_owned());
+        }
         let store = delegate.store.downgrade();
-        let extra_env = load_proxy_env(cx);
         cx.spawn(async move |cx| {
             let (command, login) = store
                 .update(cx, |store, cx| {
