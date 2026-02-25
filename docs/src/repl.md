@@ -151,8 +151,6 @@ TBD: Improve Julia REPL instructions
 
 ## Changing which kernel is used per language {#changing-kernels}
 
-> **Preview:** This feature is available in Zed Preview. It will be included in the next Stable release.
-
 Zed automatically detects available kernels and organizes them in the kernel picker:
 
 - **Recommended**: The Python environment matching your active toolchain (if detected)
@@ -192,8 +190,6 @@ To configure a different default kernel for a language, you can assign a kernel 
 ```
 
 ## Interactive Input
-
-> **Preview:** This feature is available in Zed Preview. It will be included in the next Stable release.
 
 When code execution requires user input (such as Python's `input()` function), the REPL displays an input prompt below the cell output.
 
