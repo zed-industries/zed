@@ -292,7 +292,7 @@ fn check_style() -> NamedJob {
 
     fn extract_and_run_ts_query_ls() -> Step<Run> {
         named::bash(format!(
-            "tar -xzf {TS_QUERY_LS_FILE} && ./ts_query_ls format --check ."
+            "tar -xf {TS_QUERY_LS_FILE} && ./ts_query_ls format --check ."
         ))
     }
 

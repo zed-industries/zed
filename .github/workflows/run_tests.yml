@@ -144,7 +144,7 @@ jobs:
       with:
         file: ts_query_ls-x86_64-unknown-linux-gnu.tar.gz
     - name: run_tests::check_style::extract_and_run_ts_query_ls
-      run: tar -xzf ts_query_ls-x86_64-unknown-linux-gnu.tar.gz && ./ts_query_ls format --check .
+      run: tar -xf ts_query_ls-x86_64-unknown-linux-gnu.tar.gz && ./ts_query_ls format --check .
     timeout-minutes: 60
   clippy_windows:
     needs:
