@@ -1,3 +1,6 @@
+after next main merge, test this:
+https://github.com/zed-industries/zed/pull/49802 (project_panel: Add diagnostic count badges and color priority)
+
 try out Sweep AI edit predictions since they have 1k free each month
 once Mercury free 1 month runs out!
 
