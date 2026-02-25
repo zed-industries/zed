@@ -6005,7 +6005,6 @@ impl ProjectPanel {
             worktree_id,
             entry_id,
         });
-        self.autoscroll(cx);
         cx.notify();
         Ok(())
     }
