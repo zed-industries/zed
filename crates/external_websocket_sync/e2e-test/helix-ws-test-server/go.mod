@@ -314,6 +314,6 @@ require (
 	k8s.io/klog/v2 v2.130.1 // indirect
 )
 
-// During development, use local helix source.
-// For CI, remove this replace and point to a tagged version or commit.
-replace github.com/helixml/helix => /prod/home/luke/pm/helix
+// During development, use local helix source (assumes zed and helix are sibling directories).
+// CI rewrites this path via sed — see .drone.yml zed-e2e-test step.
+replace github.com/helixml/helix => ../../../../../helix
