@@ -332,6 +332,11 @@ impl AgentServer for CustomAgentServer {
         cx: &mut App,
     ) -> Task<Result<(Rc<dyn AgentConnection>, Option<task::SpawnInTerminal>)>> {
         let name = self.name();
+        let display_name = delegate
+            .store
+            .read(cx)
+            .agent_display_name(&ExternalAgentServerName(name.clone()))
+            .unwrap_or_else(|| name.clone());
         let root_dir = root_dir.map(|root_dir| root_dir.to_string_lossy().into_owned());
         let is_remote = delegate.project.read(cx).is_via_remote_server();
         let default_mode = self.default_mode(cx);
@@ -399,6 +404,7 @@ impl AgentServer for CustomAgentServer {
                 .await?;
             let connection = crate::acp::connect(
                 name,
+                display_name,
                 command,
                 root_dir.as_ref(),
                 default_mode,

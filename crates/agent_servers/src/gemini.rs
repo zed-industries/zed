@@ -87,6 +87,7 @@ impl AgentServer for Gemini {
                 .await?;
 
             let connection = crate::acp::connect(
+                name.clone(),
                 name,
                 command,
                 root_dir.as_ref(),

@@ -36,6 +36,7 @@ pub struct UnsupportedVersion;
 
 pub struct AcpConnection {
     server_name: SharedString,
+    display_name: SharedString,
     telemetry_id: SharedString,
     connection: Rc<acp::ClientSideConnection>,
     sessions: Rc<RefCell<HashMap<acp::SessionId, AcpSession>>>,
@@ -158,6 +159,7 @@ impl AgentSessionList for AcpSessionList {
 
 pub async fn connect(
     server_name: SharedString,
+    display_name: SharedString,
     command: AgentServerCommand,
     root_dir: &Path,
     default_mode: Option<acp::SessionModeId>,
@@ -168,6 +170,7 @@ pub async fn connect(
 ) -> Result<Rc<dyn AgentConnection>> {
     let conn = AcpConnection::stdio(
         server_name,
+        display_name,
         command.clone(),
         root_dir,
         default_mode,
@@ -185,6 +188,7 @@ const MINIMUM_SUPPORTED_VERSION: acp::ProtocolVersion = acp::ProtocolVersion::V1
 impl AcpConnection {
     pub async fn stdio(
         server_name: SharedString,
+        display_name: SharedString,
         command: AgentServerCommand,
         root_dir: &Path,
         default_mode: Option<acp::SessionModeId>,
@@ -330,6 +334,7 @@ impl AcpConnection {
             root_dir: root_dir.to_owned(),
             connection,
             server_name,
+            display_name,
             telemetry_id,
             sessions,
             agent_capabilities: response.agent_capabilities,
@@ -550,7 +555,7 @@ impl AgentConnection for AcpConnection {
             let thread: Entity<AcpThread> = cx.new(|cx| {
                 AcpThread::new(
                     None,
-                    self.server_name.clone(),
+                    self.display_name.clone(),
                     self.clone(),
                     project,
                     action_log,
@@ -603,10 +608,14 @@ impl AgentConnection for AcpConnection {
         let cwd = cwd.to_path_buf();
         let mcp_servers = mcp_servers_for_project(&project, cx);
         let action_log = cx.new(|_| ActionLog::new(project.clone()));
+        let title = session
+            .title
+            .clone()
+            .unwrap_or_else(|| self.display_name.clone());
         let thread: Entity<AcpThread> = cx.new(|cx| {
             AcpThread::new(
                 None,
-                self.server_name.clone(),
+                title,
                 self.clone(),
                 project,
                 action_log,
@@ -676,10 +685,14 @@ impl AgentConnection for AcpConnection {
         let cwd = cwd.to_path_buf();
         let mcp_servers = mcp_servers_for_project(&project, cx);
         let action_log = cx.new(|_| ActionLog::new(project.clone()));
+        let title = session
+            .title
+            .clone()
+            .unwrap_or_else(|| self.display_name.clone());
         let thread: Entity<AcpThread> = cx.new(|cx| {
             AcpThread::new(
                 None,
-                self.server_name.clone(),
+                title,
                 self.clone(),
                 project,
                 action_log,
