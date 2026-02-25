@@ -958,7 +958,7 @@ pub struct Window {
     inspector: Option<Entity<Inspector>>,
 }
 
-pub(crate) use a11y::{A11yNodes, FinalizedA11yNodes};
+pub(crate) use a11y::A11yNodes;
 mod a11y {
     use super::*;
 
@@ -968,19 +968,12 @@ mod a11y {
     /// A stack of accesskit nodes that remembers all nodes its seen
     pub(crate) struct A11yNodes {
         // `ids` and `nodes` are kept in sync - always have the same number of
-        // elements. 
+        // elements.
         ids_stack: SmallVec<[accesskit::NodeId; 32]>,
         nodes_stack: SmallVec<[accesskit::Node; 32]>,
         // no smallvec because we pass this directly to accesskit
         all_nodes: Vec<(accesskit::NodeId, accesskit::Node)>,
         focused: Option<accesskit::NodeId>,
-    }
-
-    /// A11y information expected to be present after a full prepaint phase.
-    /// Passed directly to accesskit.
-    pub(crate) struct FinalizedA11yNodes {
-        pub nodes: Vec<(accesskit::NodeId, accesskit::Node)>,
-        pub focused: accesskit::NodeId,
     }
 
     impl A11yNodes {
@@ -1021,19 +1014,18 @@ mod a11y {
         }
 
         pub fn push_root(&mut self) {
+            dbg!(&self.all_nodes);
             debug_assert!(self.ids_stack.is_empty());
             debug_assert!(self.nodes_stack.is_empty());
             debug_assert!(self.all_nodes.is_empty());
-            
+
             let (id, node) = self.root_node();
             self.push(id, node);
         }
 
         pub fn pop(&mut self) -> Option<accesskit::NodeId> {
             match (self.ids_stack.pop(), self.nodes_stack.pop()) {
-                (None, None) => {
-                    None
-                },
+                (None, None) => None,
                 (Some(id), Some(node)) => {
                     // node has all children now, safe to add to final list
                     self.all_nodes.push((id, node));
@@ -1041,11 +1033,6 @@ mod a11y {
                 }
                 _ => unreachable!("ids and nodes have different lengths"),
             }
-        }
-
-        pub fn pop_root(&mut self) {
-            let popped = self.pop();
-            debug_assert_eq!(popped, Some(ROOT_ID));
         }
 
         pub fn peek_mut(&mut self) -> Option<(accesskit::NodeId, &mut accesskit::Node)> {
@@ -1056,8 +1043,11 @@ mod a11y {
             }
         }
 
-        /// When a frame has been painted, call this method to:
-        pub fn finalize(&mut self) -> FinalizedA11yNodes {
+        /// Pops the root node, and returns the full node list and current focused node.
+        pub fn finalize(&mut self) -> accesskit::TreeUpdate {
+            let root_id = self.pop();
+            debug_assert_eq!(root_id, Some(ROOT_ID));
+
             // The stacks should be empty, otherwise we are pushing nodes that we
             // are forgetting to pop.
             debug_assert!(self.ids_stack.is_empty());
@@ -1068,8 +1058,13 @@ mod a11y {
 
             let nodes = std::mem::take(&mut self.all_nodes);
             let focused = self.focused.take().unwrap_or(ROOT_ID);
-
-            FinalizedA11yNodes { nodes, focused }
+            
+            accesskit::TreeUpdate {
+                nodes,
+                tree_id: accesskit::TreeId::ROOT,
+                focus: focused,
+                tree: None,
+            }
         }
     }
 }
@@ -2404,15 +2399,6 @@ impl Window {
         self.platform_window.draw(&self.rendered_frame.scene);
         self.needs_present.set(false);
 
-        let FinalizedA11yNodes { nodes, focused, .. } = self.a11y_nodes.finalize();
-        let update = accesskit::TreeUpdate {
-            nodes,
-            tree_id: accesskit::TreeId::ROOT, // todo! fix
-            focus: focused,
-            tree: None,
-        };
-        self.platform_window.a11y_tree_update(update);
-
         profiling::finish_frame!();
     }
 
@@ -2491,7 +2477,8 @@ impl Window {
         #[cfg(any(feature = "inspector", debug_assertions))]
         self.paint_inspector_hitbox(cx);
 
-        self.a11y_nodes.pop_root();
+        let tree_update = self.a11y_nodes.finalize();
+        self.platform_window.a11y_tree_update(tree_update);
     }
 
     fn prepaint_tooltip(&mut self, cx: &mut App) -> Option<AnyElement> {
