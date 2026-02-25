@@ -444,10 +444,7 @@ pub async fn new_test_thread(
     let store = project.read_with(cx, |project, _| project.agent_server_store().clone());
     let delegate = AgentServerDelegate::new(store, project.clone(), None, None);
 
-    let (connection, _) = cx
-        .update(|cx| server.connect(Some(current_dir.as_ref()), delegate, cx))
-        .await
-        .unwrap();
+    let (connection, _) = cx.update(|cx| server.connect(delegate, cx)).await.unwrap();
 
     cx.update(|cx| connection.new_session(project.clone(), current_dir.as_ref(), cx))
         .await

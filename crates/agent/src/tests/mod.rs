@@ -310,11 +310,11 @@ async fn test_terminal_tool_timeout_kills_handle(cx: &mut TestAppContext) {
 
     let task = cx.update(|cx| {
         tool.run(
-            crate::TerminalToolInput {
+            ToolInput::resolved(crate::TerminalToolInput {
                 command: "sleep 1000".to_string(),
                 cd: ".".to_string(),
                 timeout_ms: Some(5),
-            },
+            }),
             event_stream,
             cx,
         )
@@ -377,11 +377,11 @@ async fn test_terminal_tool_without_timeout_does_not_kill_handle(cx: &mut TestAp
 
     let _task = cx.update(|cx| {
         tool.run(
-            crate::TerminalToolInput {
+            ToolInput::resolved(crate::TerminalToolInput {
                 command: "sleep 1000".to_string(),
                 cd: ".".to_string(),
                 timeout_ms: None,
-            },
+            }),
             event_stream,
             cx,
         )
@@ -3991,11 +3991,11 @@ async fn test_terminal_tool_permission_rules(cx: &mut TestAppContext) {
 
         let task = cx.update(|cx| {
             tool.run(
-                crate::TerminalToolInput {
+                ToolInput::resolved(crate::TerminalToolInput {
                     command: "rm -rf /".to_string(),
                     cd: ".".to_string(),
                     timeout_ms: None,
-                },
+                }),
                 event_stream,
                 cx,
             )
@@ -4043,11 +4043,11 @@ async fn test_terminal_tool_permission_rules(cx: &mut TestAppContext) {
 
         let task = cx.update(|cx| {
             tool.run(
-                crate::TerminalToolInput {
+                ToolInput::resolved(crate::TerminalToolInput {
                     command: "echo hello".to_string(),
                     cd: ".".to_string(),
                     timeout_ms: None,
-                },
+                }),
                 event_stream,
                 cx,
             )
@@ -4101,11 +4101,11 @@ async fn test_terminal_tool_permission_rules(cx: &mut TestAppContext) {
 
         let _task = cx.update(|cx| {
             tool.run(
-                crate::TerminalToolInput {
+                ToolInput::resolved(crate::TerminalToolInput {
                     command: "sudo rm file".to_string(),
                     cd: ".".to_string(),
                     timeout_ms: None,
-                },
+                }),
                 event_stream,
                 cx,
             )
@@ -4148,11 +4148,11 @@ async fn test_terminal_tool_permission_rules(cx: &mut TestAppContext) {
 
         let task = cx.update(|cx| {
             tool.run(
-                crate::TerminalToolInput {
+                ToolInput::resolved(crate::TerminalToolInput {
                     command: "echo hello".to_string(),
                     cd: ".".to_string(),
                     timeout_ms: None,
-                },
+                }),
                 event_stream,
                 cx,
             )
@@ -5309,11 +5309,11 @@ async fn test_edit_file_tool_deny_rule_blocks_edit(cx: &mut TestAppContext) {
 
     let task = cx.update(|cx| {
         tool.run(
-            crate::EditFileToolInput {
+            ToolInput::resolved(crate::EditFileToolInput {
                 display_description: "Edit sensitive file".to_string(),
                 path: "root/sensitive_config.txt".into(),
                 mode: crate::EditFileMode::Edit,
-            },
+            }),
             event_stream,
             cx,
         )
@@ -5359,9 +5359,9 @@ async fn test_delete_path_tool_deny_rule_blocks_deletion(cx: &mut TestAppContext
 
     let task = cx.update(|cx| {
         tool.run(
-            crate::DeletePathToolInput {
+            ToolInput::resolved(crate::DeletePathToolInput {
                 path: "root/important_data.txt".to_string(),
-            },
+            }),
             event_stream,
             cx,
         )
@@ -5411,10 +5411,10 @@ async fn test_move_path_tool_denies_if_destination_denied(cx: &mut TestAppContex
 
     let task = cx.update(|cx| {
         tool.run(
-            crate::MovePathToolInput {
+            ToolInput::resolved(crate::MovePathToolInput {
                 source_path: "root/safe.txt".to_string(),
                 destination_path: "root/protected/safe.txt".to_string(),
-            },
+            }),
             event_stream,
             cx,
         )
@@ -5467,10 +5467,10 @@ async fn test_move_path_tool_denies_if_source_denied(cx: &mut TestAppContext) {
 
     let task = cx.update(|cx| {
         tool.run(
-            crate::MovePathToolInput {
+            ToolInput::resolved(crate::MovePathToolInput {
                 source_path: "root/secret.txt".to_string(),
                 destination_path: "root/public/not_secret.txt".to_string(),
-            },
+            }),
             event_stream,
             cx,
         )
@@ -5525,10 +5525,10 @@ async fn test_copy_path_tool_deny_rule_blocks_copy(cx: &mut TestAppContext) {
 
     let task = cx.update(|cx| {
         tool.run(
-            crate::CopyPathToolInput {
+            ToolInput::resolved(crate::CopyPathToolInput {
                 source_path: "root/confidential.txt".to_string(),
                 destination_path: "root/dest/copy.txt".to_string(),
-            },
+            }),
             event_stream,
             cx,
         )
@@ -5580,12 +5580,12 @@ async fn test_save_file_tool_denies_if_any_path_denied(cx: &mut TestAppContext) 
 
     let task = cx.update(|cx| {
         tool.run(
-            crate::SaveFileToolInput {
+            ToolInput::resolved(crate::SaveFileToolInput {
                 paths: vec![
                     std::path::PathBuf::from("root/normal.txt"),
                     std::path::PathBuf::from("root/readonly/config.txt"),
                 ],
-            },
+            }),
             event_stream,
             cx,
         )
@@ -5632,9 +5632,9 @@ async fn test_save_file_tool_respects_deny_rules(cx: &mut TestAppContext) {
 
     let task = cx.update(|cx| {
         tool.run(
-            crate::SaveFileToolInput {
+            ToolInput::resolved(crate::SaveFileToolInput {
                 paths: vec![std::path::PathBuf::from("root/config.secret")],
-            },
+            }),
             event_stream,
             cx,
         )
@@ -5676,7 +5676,7 @@ async fn test_web_search_tool_deny_rule_blocks_search(cx: &mut TestAppContext) {
     let input: crate::WebSearchToolInput =
         serde_json::from_value(json!({"query": "internal.company.com secrets"})).unwrap();
 
-    let task = cx.update(|cx| tool.run(input, event_stream, cx));
+    let task = cx.update(|cx| tool.run(ToolInput::resolved(input), event_stream, cx));
 
     let result = task.await;
     assert!(result.is_err(), "expected search to be blocked");
@@ -5741,11 +5741,11 @@ async fn test_edit_file_tool_allow_rule_skips_confirmation(cx: &mut TestAppConte
 
     let _task = cx.update(|cx| {
         tool.run(
-            crate::EditFileToolInput {
+            ToolInput::resolved(crate::EditFileToolInput {
                 display_description: "Edit README".to_string(),
                 path: "root/README.md".into(),
                 mode: crate::EditFileMode::Edit,
-            },
+            }),
             event_stream,
             cx,
         )
@@ -5811,11 +5811,11 @@ async fn test_edit_file_tool_allow_still_prompts_for_local_settings(cx: &mut Tes
     let (event_stream, mut rx) = crate::ToolCallEventStream::test();
     let _task = cx.update(|cx| {
         tool.run(
-            crate::EditFileToolInput {
+            ToolInput::resolved(crate::EditFileToolInput {
                 display_description: "Edit local settings".to_string(),
                 path: "root/.zed/settings.json".into(),
                 mode: crate::EditFileMode::Edit,
-            },
+            }),
             event_stream,
             cx,
         )
@@ -5855,7 +5855,7 @@ async fn test_fetch_tool_deny_rule_blocks_url(cx: &mut TestAppContext) {
     let input: crate::FetchToolInput =
         serde_json::from_value(json!({"url": "https://internal.company.com/api"})).unwrap();
 
-    let task = cx.update(|cx| tool.run(input, event_stream, cx));
+    let task = cx.update(|cx| tool.run(ToolInput::resolved(input), event_stream, cx));
 
     let result = task.await;
     assert!(result.is_err(), "expected fetch to be blocked");
@@ -5893,7 +5893,7 @@ async fn test_fetch_tool_allow_rule_skips_confirmation(cx: &mut TestAppContext) 
     let input: crate::FetchToolInput =
         serde_json::from_value(json!({"url": "https://docs.rs/some-crate"})).unwrap();
 
-    let _task = cx.update(|cx| tool.run(input, event_stream, cx));
+    let _task = cx.update(|cx| tool.run(ToolInput::resolved(input), event_stream, cx));
 
     cx.run_until_parked();
 

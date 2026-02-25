@@ -569,7 +569,6 @@ impl AcpServerView {
                 }
             })
             .collect();
-        let root_dir = worktree_roots.first().cloned();
         let session_cwd = resume_thread
             .as_ref()
             .and_then(|resume| {
@@ -584,7 +583,7 @@ impl AcpServerView {
                     })
                     .map(|path| path.into())
             })
-            .or_else(|| root_dir.clone())
+            .or_else(|| worktree_roots.first().cloned())
             .unwrap_or_else(|| paths::home_dir().as_path().into());
 
         let (status_tx, mut status_rx) = watch::channel("Loading…".into());
@@ -596,7 +595,7 @@ impl AcpServerView {
             Some(new_version_available_tx),
         );
 
-        let connect_task = agent.connect(root_dir.as_deref(), delegate, cx);
+        let connect_task = agent.connect(delegate, cx);
         let load_task = cx.spawn_in(window, async move |this, cx| {
             let connection = match connect_task.await {
                 Ok((connection, login)) => {
@@ -609,6 +608,8 @@ impl AcpServerView {
                             this.handle_load_error(err, window, cx);
                         } else if let Some(active) = this.active_thread() {
                             active.update(cx, |active, cx| active.handle_any_thread_error(err, cx));
+                        } else {
+                            this.handle_load_error(err, window, cx);
                         }
                         cx.notify();
                     })
@@ -1417,13 +1418,6 @@ impl AcpServerView {
                     })
                     .unwrap_or_default();
 
-                // Run SpawnInTerminal in the same dir as the ACP server
-                let cwd = connected
-                    .connection
-                    .clone()
-                    .downcast::<agent_servers::AcpConnection>()
-                    .map(|acp_conn| acp_conn.root_dir().to_path_buf());
-
                 // Build SpawnInTerminal from _meta
                 let login = task::SpawnInTerminal {
                     id: task::TaskId(format!("external-agent-{}-login", label)),
@@ -1432,7 +1426,6 @@ impl AcpServerView {
                     command: Some(command.to_string()),
                     args,
                     command_label: label.to_string(),
-                    cwd,
                     env,
                     use_new_terminal: true,
                     allow_concurrent_runs: true,
@@ -3093,6 +3086,38 @@ pub(crate) mod tests {
     }
 
     #[gpui::test]
+    async fn test_connect_failure_transitions_to_load_error(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let (thread_view, cx) = setup_thread_view(FailingAgentServer, cx).await;
+
+        thread_view.read_with(cx, |view, cx| {
+            let title = view.title(cx);
+            assert_eq!(
+                title.as_ref(),
+                "Error Loading Codex CLI",
+                "Tab title should show the agent name with an error prefix"
+            );
+            match &view.server_state {
+                ServerState::LoadError(LoadError::Other(msg)) => {
+                    assert!(
+                        msg.contains("Invalid gzip header"),
+                        "Error callout should contain the underlying extraction error, got: {msg}"
+                    );
+                }
+                other => panic!(
+                    "Expected LoadError::Other, got: {}",
+                    match other {
+                        ServerState::Loading(_) => "Loading (stuck!)",
+                        ServerState::LoadError(_) => "LoadError (wrong variant)",
+                        ServerState::Connected(_) => "Connected",
+                    }
+                ),
+            }
+        });
+    }
+
+    #[gpui::test]
     async fn test_auth_required_on_initial_connect(cx: &mut TestAppContext) {
         init_test(cx);
 
@@ -3590,11 +3615,39 @@ pub(crate) mod tests {
 
         fn connect(
             &self,
-            _root_dir: Option<&Path>,
             _delegate: AgentServerDelegate,
             _cx: &mut App,
         ) -> Task<gpui::Result<(Rc<dyn AgentConnection>, Option<task::SpawnInTerminal>)>> {
             Task::ready(Ok((Rc::new(self.connection.clone()), None)))
+        }
+
+        fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
+            self
+        }
+    }
+
+    struct FailingAgentServer;
+
+    impl AgentServer for FailingAgentServer {
+        fn logo(&self) -> ui::IconName {
+            ui::IconName::AiOpenAi
+        }
+
+        fn name(&self) -> SharedString {
+            "Codex CLI".into()
+        }
+
+        fn connect(
+            &self,
+            _delegate: AgentServerDelegate,
+            _cx: &mut App,
+        ) -> Task<gpui::Result<(Rc<dyn AgentConnection>, Option<task::SpawnInTerminal>)>> {
+            Task::ready(Err(anyhow!(
+                "extracting downloaded asset for \
+                 https://github.com/zed-industries/codex-acp/releases/download/v0.9.4/\
+                 codex-acp-0.9.4-aarch64-pc-windows-msvc.zip: \
+                 failed to iterate over archive: Invalid gzip header"
+            )))
         }
 
         fn into_any(self: Rc<Self>) -> Rc<dyn Any> {

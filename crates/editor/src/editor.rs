@@ -13664,94 +13664,94 @@ impl Editor {
         let selections = self.selections.all::<Point>(&self.display_snapshot(cx));
         let buffer = self.buffer.read(cx).read(cx);
         let mut text = String::new();
-
         let mut clipboard_selections = Vec::with_capacity(selections.len());
-        {
-            let max_point = buffer.max_point();
-            let mut is_first = true;
-            let mut prev_selection_was_entire_line = false;
-            for selection in &selections {
-                let mut start = selection.start;
-                let mut end = selection.end;
-                let is_entire_line = selection.is_empty() || self.selections.line_mode();
-                let mut add_trailing_newline = false;
-                if is_entire_line {
-                    start = Point::new(start.row, 0);
-                    let next_line_start = Point::new(end.row + 1, 0);
-                    if next_line_start <= max_point {
-                        end = next_line_start;
-                    } else {
-                        // We're on the last line without a trailing newline.
-                        // Copy to the end of the line and add a newline afterwards.
-                        end = Point::new(end.row, buffer.line_len(MultiBufferRow(end.row)));
-                        add_trailing_newline = true;
-                    }
-                }
 
-                let mut trimmed_selections = Vec::new();
-                if strip_leading_indents && end.row.saturating_sub(start.row) > 0 {
-                    let row = MultiBufferRow(start.row);
-                    let first_indent = buffer.indent_size_for_line(row);
-                    if first_indent.len == 0 || start.column > first_indent.len {
-                        trimmed_selections.push(start..end);
-                    } else {
-                        trimmed_selections.push(
-                            Point::new(row.0, first_indent.len)
-                                ..Point::new(row.0, buffer.line_len(row)),
-                        );
-                        for row in start.row + 1..=end.row {
-                            let mut line_len = buffer.line_len(MultiBufferRow(row));
-                            if row == end.row {
-                                line_len = end.column;
-                            }
-                            if line_len == 0 {
-                                trimmed_selections
-                                    .push(Point::new(row, 0)..Point::new(row, line_len));
-                                continue;
-                            }
-                            let row_indent_size = buffer.indent_size_for_line(MultiBufferRow(row));
-                            if row_indent_size.len >= first_indent.len {
-                                trimmed_selections.push(
-                                    Point::new(row, first_indent.len)..Point::new(row, line_len),
-                                );
-                            } else {
-                                trimmed_selections.clear();
-                                trimmed_selections.push(start..end);
-                                break;
-                            }
-                        }
-                    }
+        let max_point = buffer.max_point();
+        let mut is_first = true;
+        for selection in &selections {
+            let mut start = selection.start;
+            let mut end = selection.end;
+            let is_entire_line = selection.is_empty() || self.selections.line_mode();
+            let mut add_trailing_newline = false;
+            if is_entire_line {
+                start = Point::new(start.row, 0);
+                let next_line_start = Point::new(end.row + 1, 0);
+                if next_line_start <= max_point {
+                    end = next_line_start;
                 } else {
-                    trimmed_selections.push(start..end);
-                }
-
-                let is_multiline_trim = trimmed_selections.len() > 1;
-                for trimmed_range in trimmed_selections {
-                    if is_first {
-                        is_first = false;
-                    } else if is_multiline_trim || !prev_selection_was_entire_line {
-                        text += "\n";
-                    }
-                    prev_selection_was_entire_line = is_entire_line && !is_multiline_trim;
-                    let mut len = 0;
-                    for chunk in buffer.text_for_range(trimmed_range.start..trimmed_range.end) {
-                        text.push_str(chunk);
-                        len += chunk.len();
-                    }
-                    if add_trailing_newline {
-                        text.push('\n');
-                        len += 1;
-                    }
-                    clipboard_selections.push(ClipboardSelection::for_buffer(
-                        len,
-                        is_entire_line,
-                        trimmed_range,
-                        &buffer,
-                        self.project.as_ref(),
-                        cx,
-                    ));
+                    // We're on the last line without a trailing newline.
+                    // Copy to the end of the line and add a newline afterwards.
+                    end = Point::new(end.row, buffer.line_len(MultiBufferRow(end.row)));
+                    add_trailing_newline = true;
                 }
             }
+
+            let mut trimmed_selections = Vec::new();
+            if strip_leading_indents && end.row.saturating_sub(start.row) > 0 {
+                let row = MultiBufferRow(start.row);
+                let first_indent = buffer.indent_size_for_line(row);
+                if first_indent.len == 0 || start.column > first_indent.len {
+                    trimmed_selections.push(start..end);
+                } else {
+                    trimmed_selections.push(
+                        Point::new(row.0, first_indent.len)
+                            ..Point::new(row.0, buffer.line_len(row)),
+                    );
+                    for row in start.row + 1..=end.row {
+                        let mut line_len = buffer.line_len(MultiBufferRow(row));
+                        if row == end.row {
+                            line_len = end.column;
+                        }
+                        if line_len == 0 {
+                            trimmed_selections.push(Point::new(row, 0)..Point::new(row, line_len));
+                            continue;
+                        }
+                        let row_indent_size = buffer.indent_size_for_line(MultiBufferRow(row));
+                        if row_indent_size.len >= first_indent.len {
+                            trimmed_selections
+                                .push(Point::new(row, first_indent.len)..Point::new(row, line_len));
+                        } else {
+                            trimmed_selections.clear();
+                            trimmed_selections.push(start..end);
+                            break;
+                        }
+                    }
+                }
+            } else {
+                trimmed_selections.push(start..end);
+            }
+
+            let is_multiline_trim = trimmed_selections.len() > 1;
+            let mut selection_len: usize = 0;
+            let prev_selection_was_entire_line = is_entire_line && !is_multiline_trim;
+
+            for trimmed_range in trimmed_selections {
+                if is_first {
+                    is_first = false;
+                } else if is_multiline_trim || !prev_selection_was_entire_line {
+                    text.push('\n');
+                    if is_multiline_trim {
+                        selection_len += 1;
+                    }
+                }
+                for chunk in buffer.text_for_range(trimmed_range.start..trimmed_range.end) {
+                    text.push_str(chunk);
+                    selection_len += chunk.len();
+                }
+                if add_trailing_newline {
+                    text.push('\n');
+                    selection_len += 1;
+                }
+            }
+
+            clipboard_selections.push(ClipboardSelection::for_buffer(
+                selection_len,
+                is_entire_line,
+                start..end,
+                &buffer,
+                self.project.as_ref(),
+                cx,
+            ));
         }
 
         cx.write_to_clipboard(ClipboardItem::new_string_with_json_metadata(

@@ -476,7 +476,9 @@ message Envelope {
         
         SpawnKernel spawn_kernel = 426;
         SpawnKernelResponse spawn_kernel_response = 427;
-        KillKernel kill_kernel = 428; // current max
+        KillKernel kill_kernel = 428;
+        GitDiffStat git_diff_stat = 429;
+        GitDiffStatResponse git_diff_stat_response = 430; // current max
     }
 
     reserved 87 to 88;

@@ -210,6 +210,8 @@ actions!(
         ActivateNextPane,
         /// Activates the previous pane in the workspace.
         ActivatePreviousPane,
+        /// Activates the last pane in the workspace.
+        ActivateLastPane,
         /// Switches to the next window.
         ActivateNextWindow,
         /// Switches to the previous window.
@@ -1180,6 +1182,7 @@ pub enum Event {
     },
     ZoomChanged,
     ModalOpened,
+    Activate,
 }
 
 #[derive(Debug, Clone)]
@@ -1599,36 +1602,7 @@ impl Workspace {
                         .timer(Duration::from_millis(100))
                         .await;
                     this.update_in(cx, |this, window, cx| {
-                        if let Some(display) = window.display(cx)
-                            && let Ok(display_uuid) = display.uuid()
-                        {
-                            let window_bounds = window.inner_window_bounds();
-                            let has_paths = !this.root_paths(cx).is_empty();
-                            if !has_paths {
-                                cx.background_executor()
-                                    .spawn(persistence::write_default_window_bounds(
-                                        window_bounds,
-                                        display_uuid,
-                                    ))
-                                    .detach_and_log_err(cx);
-                            }
-                            if let Some(database_id) = workspace_id {
-                                cx.background_executor()
-                                    .spawn(DB.set_window_open_status(
-                                        database_id,
-                                        SerializedWindowBounds(window_bounds),
-                                        display_uuid,
-                                    ))
-                                    .detach_and_log_err(cx);
-                            } else {
-                                cx.background_executor()
-                                    .spawn(persistence::write_default_window_bounds(
-                                        window_bounds,
-                                        display_uuid,
-                                    ))
-                                    .detach_and_log_err(cx);
-                            }
-                        }
+                        this.save_window_bounds(window, cx).detach();
                         this.bounds_save_task_queued.take();
                     })
                     .ok();
@@ -2656,17 +2630,6 @@ impl Workspace {
         });
     }
 
-    pub fn close_window(&mut self, _: &CloseWindow, window: &mut Window, cx: &mut Context<Self>) {
-        let prepare = self.prepare_to_close(CloseIntent::CloseWindow, window, cx);
-        cx.spawn_in(window, async move |_, cx| {
-            if prepare.await? {
-                cx.update(|window, _cx| window.remove_window())?;
-            }
-            anyhow::Ok(())
-        })
-        .detach_and_log_err(cx)
-    }
-
     pub fn move_focused_panel_to_next_position(
         &mut self,
         _: &MoveFocusedPanelToNextPosition,
@@ -2744,6 +2707,7 @@ impl Workspace {
                     .unwrap_or(false)
             {
                 if close_intent == CloseIntent::CloseWindow {
+                    this.update(cx, |_, cx| cx.emit(Event::Activate))?;
                     let answer = cx.update(|window, cx| {
                         window.prompt(
                             PromptLevel::Warning,
@@ -2931,6 +2895,10 @@ impl Workspace {
                     })?;
 
                 futures::future::try_join_all(serialize_tasks).await?;
+
+                if !remaining_dirty_items.is_empty() {
+                    workspace.update(cx, |_, cx| cx.emit(Event::Activate))?;
+                }
 
                 if remaining_dirty_items.len() > 1 {
                     let answer = workspace.update_in(cx, |_, window, cx| {
@@ -4273,14 +4241,7 @@ impl Workspace {
                     .find_pane_in_direction(direction, cx)
                     .unwrap_or_else(|| self.active_pane.clone());
                 let new_pane = self.add_pane(window, cx);
-                if self
-                    .center
-                    .split(&split_off_pane, &new_pane, direction, cx)
-                    .log_err()
-                    .is_none()
-                {
-                    return;
-                };
+                self.center.split(&split_off_pane, &new_pane, direction, cx);
                 new_pane
             }
         };
@@ -4329,6 +4290,11 @@ impl Workspace {
             let prev_pane = panes[prev_ix].clone();
             window.focus(&prev_pane.focus_handle(cx), cx);
         }
+    }
+
+    pub fn activate_last_pane(&mut self, window: &mut Window, cx: &mut App) {
+        let last_pane = self.center.last_pane();
+        window.focus(&last_pane.focus_handle(cx), cx);
     }
 
     pub fn activate_pane_in_direction(
@@ -4458,14 +4424,8 @@ impl Workspace {
                     return;
                 }
                 let new_pane = self.add_pane(window, cx);
-                if self
-                    .center
-                    .split(&self.active_pane, &new_pane, action.direction, cx)
-                    .log_err()
-                    .is_none()
-                {
-                    return;
-                };
+                self.center
+                    .split(&self.active_pane, &new_pane, action.direction, cx);
                 new_pane
             }
         };
@@ -4763,8 +4723,7 @@ impl Workspace {
     ) -> Entity<Pane> {
         let new_pane = self.add_pane(window, cx);
         self.center
-            .split(&pane_to_split, &new_pane, split_direction, cx)
-            .unwrap();
+            .split(&pane_to_split, &new_pane, split_direction, cx);
         cx.notify();
         new_pane
     }
@@ -4783,7 +4742,7 @@ impl Workspace {
         new_pane.update(cx, |pane, cx| {
             pane.add_item(item, true, true, None, window, cx)
         });
-        self.center.split(&pane, &new_pane, direction, cx).unwrap();
+        self.center.split(&pane, &new_pane, direction, cx);
         cx.notify();
     }
 
@@ -4810,7 +4769,7 @@ impl Workspace {
                         pane.set_nav_history(nav_history, cx);
                         pane.add_item(clone, true, true, None, window, cx)
                     });
-                    this.center.split(&pane, &new_pane, direction, cx).unwrap();
+                    this.center.split(&pane, &new_pane, direction, cx);
                     cx.notify();
                     new_pane
                 })
@@ -5864,6 +5823,40 @@ impl Workspace {
         self.session_id.clone()
     }
 
+    fn save_window_bounds(&self, window: &mut Window, cx: &mut App) -> Task<()> {
+        let Some(display) = window.display(cx) else {
+            return Task::ready(());
+        };
+        let Ok(display_uuid) = display.uuid() else {
+            return Task::ready(());
+        };
+
+        let window_bounds = window.inner_window_bounds();
+        let database_id = self.database_id;
+        let has_paths = !self.root_paths(cx).is_empty();
+
+        cx.background_executor().spawn(async move {
+            if !has_paths {
+                persistence::write_default_window_bounds(window_bounds, display_uuid)
+                    .await
+                    .log_err();
+            }
+            if let Some(database_id) = database_id {
+                DB.set_window_open_status(
+                    database_id,
+                    SerializedWindowBounds(window_bounds),
+                    display_uuid,
+                )
+                .await
+                .log_err();
+            } else {
+                persistence::write_default_window_bounds(window_bounds, display_uuid)
+                    .await
+                    .log_err();
+            }
+        })
+    }
+
     /// Bypass the 200ms serialization throttle and write workspace state to
     /// the DB immediately. Returns a task the caller can await to ensure the
     /// write completes. Used by the quit handler so the most recent state
@@ -5871,7 +5864,14 @@ impl Workspace {
     pub fn flush_serialization(&mut self, window: &mut Window, cx: &mut App) -> Task<()> {
         self._schedule_serialize_workspace.take();
         self._serialize_workspace_task.take();
-        self.serialize_workspace_internal(window, cx)
+        self.bounds_save_task_queued.take();
+
+        let bounds_task = self.save_window_bounds(window, cx);
+        let serialize_task = self.serialize_workspace_internal(window, cx);
+        cx.spawn(async move |_| {
+            bounds_task.await;
+            serialize_task.await;
+        })
     }
 
     pub fn root_paths(&self, cx: &App) -> Vec<Arc<Path>> {
@@ -6389,7 +6389,6 @@ impl Workspace {
             .on_action(cx.listener(Self::send_keystrokes))
             .on_action(cx.listener(Self::add_folder_to_project))
             .on_action(cx.listener(Self::follow_next_collaborator))
-            .on_action(cx.listener(Self::close_window))
             .on_action(cx.listener(Self::activate_pane_at_index))
             .on_action(cx.listener(Self::move_item_to_pane_at_index))
             .on_action(cx.listener(Self::move_focused_panel_to_next_position))
@@ -6421,6 +6420,9 @@ impl Workspace {
             .on_action(cx.listener(|workspace, _: &ActivateNextPane, window, cx| {
                 workspace.activate_next_pane(window, cx)
             }))
+            .on_action(cx.listener(|workspace, _: &ActivateLastPane, window, cx| {
+                workspace.activate_last_pane(window, cx)
+            }))
             .on_action(
                 cx.listener(|workspace, _: &ActivateNextWindow, _window, cx| {
                     workspace.activate_next_window(cx)
@@ -6442,9 +6444,6 @@ impl Workspace {
             }))
             .on_action(cx.listener(|workspace, _: &ActivatePaneDown, window, cx| {
                 workspace.activate_pane_in_direction(SplitDirection::Down, window, cx)
-            }))
-            .on_action(cx.listener(|workspace, _: &ActivateNextPane, window, cx| {
-                workspace.activate_next_pane(window, cx)
             }))
             .on_action(cx.listener(
                 |workspace, action: &MoveItemToPaneInDirection, window, cx| {
@@ -10052,6 +10051,86 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_multi_workspace_close_window_multiple_workspaces_cancel(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree("/root", json!({ "one": "" })).await;
+
+        let project_a = Project::test(fs.clone(), ["root".as_ref()], cx).await;
+        let project_b = Project::test(fs, ["root".as_ref()], cx).await;
+        let multi_workspace_handle =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project_a.clone(), window, cx));
+
+        let workspace_a = multi_workspace_handle
+            .read_with(cx, |mw, _| mw.workspace().clone())
+            .unwrap();
+
+        let workspace_b = multi_workspace_handle
+            .update(cx, |mw, window, cx| {
+                mw.test_add_workspace(project_b, window, cx)
+            })
+            .unwrap();
+
+        // Activate workspace A
+        multi_workspace_handle
+            .update(cx, |mw, window, cx| {
+                mw.activate_index(0, window, cx);
+            })
+            .unwrap();
+
+        let cx = &mut VisualTestContext::from_window(multi_workspace_handle.into(), cx);
+
+        // Workspace A has a clean item
+        let item_a = cx.new(TestItem::new);
+        workspace_a.update_in(cx, |w, window, cx| {
+            w.add_item_to_active_pane(Box::new(item_a.clone()), None, true, window, cx)
+        });
+
+        // Workspace B has a dirty item
+        let item_b = cx.new(|cx| TestItem::new(cx).with_dirty(true));
+        workspace_b.update_in(cx, |w, window, cx| {
+            w.add_item_to_active_pane(Box::new(item_b.clone()), None, true, window, cx)
+        });
+
+        // Verify workspace A is active
+        multi_workspace_handle
+            .read_with(cx, |mw, _| {
+                assert_eq!(mw.active_workspace_index(), 0);
+            })
+            .unwrap();
+
+        // Dispatch CloseWindow — workspace A will pass, workspace B will prompt
+        multi_workspace_handle
+            .update(cx, |mw, window, cx| {
+                mw.close_window(&CloseWindow, window, cx);
+            })
+            .unwrap();
+        cx.run_until_parked();
+
+        // Workspace B should now be active since it has dirty items that need attention
+        multi_workspace_handle
+            .read_with(cx, |mw, _| {
+                assert_eq!(
+                    mw.active_workspace_index(),
+                    1,
+                    "workspace B should be activated when it prompts"
+                );
+            })
+            .unwrap();
+
+        // User cancels the save prompt from workspace B
+        cx.simulate_prompt_answer("Cancel");
+        cx.run_until_parked();
+
+        // Window should still exist because workspace B's close was cancelled
+        assert!(
+            multi_workspace_handle.update(cx, |_, _, _| ()).is_ok(),
+            "window should still exist after cancelling one workspace's close"
+        );
+    }
+
+    #[gpui::test]
     async fn test_close_window_with_serializable_items(cx: &mut TestAppContext) {
         init_test(cx);
 
@@ -10553,6 +10632,57 @@ mod tests {
         pane.read_with(cx, |pane, _| {
             assert!(!pane.can_navigate_backward());
             assert!(pane.can_navigate_forward());
+        });
+    }
+
+    #[gpui::test]
+    async fn test_activate_last_pane(cx: &mut gpui::TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            let first_item = cx.new(|cx| {
+                TestItem::new(cx).with_project_items(&[TestProjectItem::new(1, "1.txt", cx)])
+            });
+            workspace.add_item_to_active_pane(Box::new(first_item), None, true, window, cx);
+            workspace.split_pane(
+                workspace.active_pane().clone(),
+                SplitDirection::Right,
+                window,
+                cx,
+            );
+            workspace.split_pane(
+                workspace.active_pane().clone(),
+                SplitDirection::Right,
+                window,
+                cx,
+            );
+        });
+
+        let (first_pane_id, target_last_pane_id) = workspace.update(cx, |workspace, _cx| {
+            let panes = workspace.center.panes();
+            assert!(panes.len() >= 2);
+            (
+                panes.first().expect("at least one pane").entity_id(),
+                panes.last().expect("at least one pane").entity_id(),
+            )
+        });
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.activate_pane_at_index(&ActivatePane(0), window, cx);
+        });
+        workspace.update(cx, |workspace, _| {
+            assert_eq!(workspace.active_pane().entity_id(), first_pane_id);
+            assert_ne!(workspace.active_pane().entity_id(), target_last_pane_id);
+        });
+
+        cx.dispatch_action(ActivateLastPane);
+
+        workspace.update(cx, |workspace, _| {
+            assert_eq!(workspace.active_pane().entity_id(), target_last_pane_id);
         });
     }
 
