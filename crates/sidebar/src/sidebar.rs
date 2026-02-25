@@ -88,10 +88,32 @@ fn workspace_thread_info(workspace: &Entity<Workspace>, cx: &App) -> Option<Agen
 //  - Key point: They're all going to be live representations.
 
 /// A single workspace entry within a project group, with snapshotted thread info.
-///
 struct ProjectEntry {
     workspace: Entity<Workspace>, // <- A "live" datastructure, not a serialized one
     thread_info: Option<AgentThreadInfo>, // FIXME: Let's use agent::DbThreadMetadata instead
+}
+
+impl ProjectEntry {
+    /// Derives the group name from the workspace's root paths.
+    fn group_name(&self, cx: &App) -> SharedString {
+        let paths = self.workspace.read(cx).root_paths(cx);
+        if paths.is_empty() {
+            return "Untitled Project".into();
+        }
+        paths
+            .iter()
+            .filter_map(|p| p.file_name().map(|n| n.to_string_lossy().to_string()))
+            .collect::<Vec<_>>()
+            .join(", ")
+            .into()
+    }
+
+    fn thread_title(&self) -> SharedString {
+        self.thread_info
+            .as_ref()
+            .map(|info| info.title.clone())
+            .unwrap_or_else(|| "New Thread".into())
+    }
 }
 
 /// A ProjectGroup is a group of workspaces, each one associated with a specific
@@ -103,48 +125,47 @@ struct ProjectEntry {
 #[derive(Default)]
 struct ProjectGroup {
     path_list: PathList, // FIXME: let's pull this out of ProjectEntry in case the user changes the path name, etc.
-    entries: Vec<ProjectEntry>,
+    entries: Vec<Entity<ProjectEntry>>,
 }
 
 impl ProjectGroup {
-    fn from_workspace(workspace: Entity<Workspace>, cx: &App) -> Self {
+    fn from_workspace(workspace: Entity<Workspace>, cx: &mut App) -> Self {
         let paths = workspace.read(cx).root_paths(cx);
         let path_list = PathList::new(&paths);
         let thread_info = workspace_thread_info(&workspace, cx);
 
+        let entry = cx.new(|_| ProjectEntry {
+            workspace,
+            thread_info,
+        });
+
         Self {
             path_list,
-            entries: vec![ProjectEntry {
-                workspace,
-                thread_info,
-            }],
+            entries: vec![entry],
         }
     }
 
-    fn add_project(&mut self, workspace: Entity<Workspace>, cx: &App) {
+    fn add_project(&mut self, workspace: Entity<Workspace>, cx: &mut App) {
         assert_eq!(
             PathList::new(&workspace.read(cx).root_paths(cx)),
             self.path_list,
             "project must share root path"
         );
 
-        if self
-            .entries
-            .iter()
-            .find(
-                |ProjectEntry {
-                     workspace: project_workspace,
-                     ..
-                 }| &workspace == project_workspace,
-            )
-            .is_none()
-        {
+        if !self.contains(&workspace, cx) {
             let thread_info = workspace_thread_info(&workspace, cx);
-            self.entries.push(ProjectEntry {
+            let entry = cx.new(|_| ProjectEntry {
                 workspace,
                 thread_info,
             });
+            self.entries.push(entry);
         }
+    }
+
+    fn contains(&self, workspace: &Entity<Workspace>, cx: &App) -> bool {
+        self.entries
+            .iter()
+            .any(|entry| entry.read(cx).workspace == *workspace)
     }
 
     const fn len(&self) -> usize {
@@ -175,7 +196,7 @@ impl ActiveProjects {
     }
 
     /// Create a new [`ActiveProjects`] populated from a slice of workspaces.
-    fn from_workspaces(workspaces: &[Entity<Workspace>], cx: &App) -> Self {
+    fn from_workspaces(workspaces: &[Entity<Workspace>], cx: &mut App) -> Self {
         let mut active_projects = Self::empty();
 
         for workspace in workspaces {
@@ -185,7 +206,7 @@ impl ActiveProjects {
         active_projects
     }
 
-    fn add_project(&mut self, workspace: Entity<Workspace>, cx: &App) {
+    fn add_project(&mut self, workspace: Entity<Workspace>, cx: &mut App) {
         let paths = workspace.read(cx).root_paths(cx);
         let key = PathList::new(&paths);
 
@@ -205,49 +226,26 @@ impl ActiveProjects {
         self.groups.iter().map(|group| group.len()).sum()
     }
 
-    /// Returns the project, its path list, and whether this is the first item
-    /// in the group (so we can draw a header).
-    ///
-    /// FIXME: This violates the principle of not wanting to leak indices. We
-    /// probably want [`ActiveProjects`] to look up only by key and then have
-    /// [`ActiveProjectDelegate`] handle the mapping of those to indices.
-    fn project_by_ix(&self, mut ix: usize) -> Option<(&ProjectEntry, Option<&PathList>)> {
-        for group in &self.groups {
-            if ix < group.len() {
-                return Some((&group.entries[ix], (ix == 0).then_some(&group.path_list)));
-            }
-            ix -= group.len();
-        }
-        None
-    }
-
-    /// Returns the flat index of a given workspace entity, if present.
-    fn index_of_workspace(&self, workspace: &Entity<Workspace>) -> Option<usize> {
-        let mut offset = 0;
-        for group in &self.groups {
-            for entry in &group.entries {
-                if entry.workspace == *workspace {
-                    return Some(offset);
-                }
-                offset += 1;
-            }
-        }
-        None
+    /// Iterate over all project entries across all groups, in group order.
+    fn iter(&self) -> impl Iterator<Item = &Entity<ProjectEntry>> {
+        self.groups.iter().flat_map(|group| group.entries.iter())
     }
 
     /// Preserve thread info from a previous snapshot for workspaces that
     /// temporarily have no active thread (e.g. mid-switch).
-    fn preserve_thread_info_from(&mut self, old: &ActiveProjects) {
+    fn preserve_thread_info_from(&mut self, old: &ActiveProjects, cx: &mut App) {
         for group in &mut self.groups {
             for entry in &mut group.entries {
-                if entry.thread_info.is_none() {
+                let entry_ref = entry.read(cx);
+                if entry_ref.thread_info.is_none() {
                     // Find the same workspace in the old data and carry forward its info.
-                    entry.thread_info = old
-                        .groups
+                    let old_info = old
                         .iter()
-                        .flat_map(|g| &g.entries)
-                        .find(|old_entry| old_entry.workspace == entry.workspace)
-                        .and_then(|old_entry| old_entry.thread_info.clone());
+                        .find(|old| old.read(cx).workspace == entry_ref.workspace)
+                        .and_then(|old| old.read(cx).thread_info.clone());
+                    if let Some(info) = old_info {
+                        entry.update(cx, |e, _| e.thread_info = Some(info));
+                    }
                 }
             }
         }
@@ -258,6 +256,11 @@ struct ActiveProjectsDelegate {
     multi_workspace: Entity<MultiWorkspace>,
     /// The primary list of things shown in the sidebar.
     active_projects: ActiveProjects,
+    /// Flat view of all project entries in group order, for Picker indexing.
+    ///
+    /// Note that `active_projects` is the source of truth and this is simply
+    /// built on top of that for displaying in a list.
+    flat_entries: Vec<Entity<ProjectEntry>>,
     selected_index: usize,
 }
 
@@ -266,16 +269,19 @@ impl ActiveProjectsDelegate {
         multi_workspace: Entity<MultiWorkspace>,
         workspaces: &[Entity<Workspace>],
         active_workspace: &Entity<Workspace>,
-        cx: &App,
+        cx: &mut App,
     ) -> Self {
         let active_projects = ActiveProjects::from_workspaces(workspaces, cx);
-        let selected_index = active_projects
-            .index_of_workspace(active_workspace)
+        let flat_entries: Vec<_> = active_projects.iter().cloned().collect();
+        let selected_index = flat_entries
+            .iter()
+            .position(|e| e.read(cx).workspace == *active_workspace)
             .unwrap_or(0);
 
         Self {
             multi_workspace,
             active_projects,
+            flat_entries,
             selected_index,
         }
     }
@@ -285,7 +291,7 @@ impl PickerDelegate for ActiveProjectsDelegate {
     type ListItem = AnyElement;
 
     fn match_count(&self) -> usize {
-        self.active_projects.num_projects()
+        self.flat_entries.len()
     }
 
     fn selected_index(&self) -> usize {
@@ -328,10 +334,10 @@ impl PickerDelegate for ActiveProjectsDelegate {
     }
 
     fn confirm(&mut self, _secondary: bool, window: &mut Window, cx: &mut Context<Picker<Self>>) {
-        let Some((entry, _)) = self.active_projects.project_by_ix(self.selected_index) else {
+        let Some(entry) = self.flat_entries.get(self.selected_index) else {
             return;
         };
-        let workspace = entry.workspace.clone();
+        let workspace = entry.read(cx).workspace.clone();
         self.multi_workspace.update(cx, |multi_workspace, cx| {
             multi_workspace.activate(workspace, cx);
         });
@@ -346,24 +352,20 @@ impl PickerDelegate for ActiveProjectsDelegate {
         _window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
-        let (project_entry, paths_if_first) = self.active_projects.project_by_ix(index)?;
+        let entry = self.flat_entries.get(index)?;
+        let entry_ref = entry.read(cx);
 
-        let thread_title = project_entry
-            .thread_info
-            .as_ref()
-            .map(|info| info.title.clone())
-            .unwrap_or_else(|| "New Thread".into());
+        let show_header = index == 0 || {
+            let prev = self.flat_entries[index - 1].read(cx);
+            prev.group_name(cx) != entry_ref.group_name(cx)
+        };
+
+        let thread_title = entry_ref.thread_title();
 
         Some(
             v_flex()
-                .when_some(paths_if_first, |el, path_list| {
-                    let header_label: SharedString = path_list
-                        .ordered_paths()
-                        .filter_map(|p| p.file_name().map(|n| n.to_string_lossy().to_string()))
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                        .into();
-                    el.child(ListSubHeader::new(header_label).inset(true))
+                .when(show_header, |el| {
+                    el.child(ListSubHeader::new(entry_ref.group_name(cx)).inset(true))
                 })
                 .child(Label::new(thread_title).color(Color::Muted))
                 .into_any_element(),
@@ -418,9 +420,10 @@ impl Sidebar {
     ) -> Self {
         let active_workspace = workspaces
             .first()
-            .expect("must have at least one workspace");
+            .expect("must have at least one workspace")
+            .clone();
         let delegate =
-            ActiveProjectsDelegate::new(multi_workspace.clone(), workspaces, active_workspace, cx);
+            ActiveProjectsDelegate::new(multi_workspace.clone(), workspaces, &active_workspace, cx);
         let picker = cx.new(|cx| {
             Picker::list(delegate, window, cx)
                 .max_height(None)
@@ -501,13 +504,15 @@ impl Sidebar {
             // for workspaces that temporarily have no active thread.
             let mut active_projects = ActiveProjects::from_workspaces(&workspaces, cx);
             this.picker.update(cx, |picker, cx| {
-                active_projects.preserve_thread_info_from(&picker.delegate.active_projects);
-                picker.delegate.active_projects = active_projects;
-                picker.delegate.selected_index = picker
-                    .delegate
-                    .active_projects
-                    .index_of_workspace(&active_workspace)
+                active_projects.preserve_thread_info_from(&picker.delegate.active_projects, cx);
+                let flat_entries: Vec<_> = active_projects.iter().cloned().collect();
+                let selected_index = flat_entries
+                    .iter()
+                    .position(|e| e.read(cx).workspace == active_workspace)
                     .unwrap_or(0);
+                picker.delegate.active_projects = active_projects;
+                picker.delegate.flat_entries = flat_entries;
+                picker.delegate.selected_index = selected_index;
                 let query = picker.query(cx);
                 picker.update_matches(query, window, cx);
             });
