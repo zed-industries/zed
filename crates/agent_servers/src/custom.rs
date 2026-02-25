@@ -3,8 +3,10 @@ use acp_thread::AgentConnection;
 use agent_client_protocol as acp;
 use anyhow::{Context as _, Result};
 use collections::HashSet;
+use credentials_provider::CredentialsProvider;
 use fs::Fs;
 use gpui::{App, AppContext as _, SharedString, Task};
+use language_model::{ApiKey, EnvVar};
 use project::agent_server_store::{AllAgentServersSettings, ExternalAgentServerName};
 use settings::{SettingsStore, update_settings_file};
 use std::{rc::Rc, sync::Arc};
@@ -384,8 +386,32 @@ impl AgentServer for CustomAgentServer {
         if delegate.store.read(cx).no_browser() {
             extra_env.insert("NO_BROWSER".to_owned(), "1".to_owned());
         }
+        if is_registry_agent {
+            match name.as_ref() {
+                "claude-acp" => {
+                    extra_env.insert("ANTHROPIC_API_KEY".into(), "".into());
+                }
+                "codex-acp" => {
+                    if let Ok(api_key) = std::env::var("CODEX_API_KEY") {
+                        extra_env.insert("CODEX_API_KEY".into(), api_key);
+                    }
+                    if let Ok(api_key) = std::env::var("OPEN_AI_API_KEY") {
+                        extra_env.insert("OPEN_AI_API_KEY".into(), api_key);
+                    }
+                }
+                "gemini" => {
+                    extra_env.insert("SURFACE".to_owned(), "zed".to_owned());
+                }
+                _ => {}
+            }
+        }
         let store = delegate.store.downgrade();
         cx.spawn(async move |cx| {
+            if is_registry_agent && name.as_ref() == "gemini" {
+                if let Some(api_key) = cx.update(api_key_for_gemini_cli).await.ok() {
+                    extra_env.insert("GEMINI_API_KEY".into(), api_key);
+                }
+            }
             let (command, login) = store
                 .update(cx, |store, cx| {
                     let agent = store
@@ -418,4 +444,21 @@ impl AgentServer for CustomAgentServer {
     fn into_any(self: Rc<Self>) -> Rc<dyn std::any::Any> {
         self
     }
+}
+
+fn api_key_for_gemini_cli(cx: &mut App) -> Task<Result<String>> {
+    let env_var = EnvVar::new("GEMINI_API_KEY".into()).or(EnvVar::new("GOOGLE_AI_API_KEY".into()));
+    if let Some(key) = env_var.value {
+        return Task::ready(Ok(key));
+    }
+    let credentials_provider = <dyn CredentialsProvider>::global(cx);
+    let api_url = google_ai::API_URL.to_string();
+    cx.spawn(async move |cx| {
+        Ok(
+            ApiKey::load_from_system_keychain(&api_url, credentials_provider.as_ref(), cx)
+                .await?
+                .key()
+                .to_string(),
+        )
+    })
 }

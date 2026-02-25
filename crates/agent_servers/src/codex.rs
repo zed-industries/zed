@@ -16,9 +16,6 @@ use crate::{AgentServer, AgentServerDelegate, load_proxy_env};
 #[derive(Clone)]
 pub struct Codex;
 
-const CODEX_API_KEY_VAR_NAME: &str = "CODEX_API_KEY";
-const OPEN_AI_API_KEY_VAR_NAME: &str = "OPEN_AI_API_KEY";
-
 impl AgentServer for Codex {
     fn name(&self) -> SharedString {
         "Codex".into()
@@ -221,12 +218,6 @@ impl AgentServer for Codex {
                 .map(|s| s.default_config_options.clone())
                 .unwrap_or_default()
         });
-        if let Ok(api_key) = std::env::var(CODEX_API_KEY_VAR_NAME) {
-            extra_env.insert(CODEX_API_KEY_VAR_NAME.into(), api_key);
-        }
-        if let Ok(api_key) = std::env::var(OPEN_AI_API_KEY_VAR_NAME) {
-            extra_env.insert(OPEN_AI_API_KEY_VAR_NAME.into(), api_key);
-        }
 
         cx.spawn(async move |cx| {
             let (command, login) = store

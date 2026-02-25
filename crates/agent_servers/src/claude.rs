@@ -230,7 +230,6 @@ impl AgentServer for ClaudeCode {
                     if store.no_browser() {
                         extra_env.insert("NO_BROWSER".to_owned(), "1".to_owned());
                     }
-                    extra_env.insert("ANTHROPIC_API_KEY".into(), "".into());
                     let agent = store
                         .get_external_agent(&CLAUDE_AGENT_NAME.into())
                         .context("Claude Agent is not registered")?;
