@@ -1,5 +1,5 @@
 ---
-description: Zed is a text editor that supports Git features for version control
+description: Zed is a text editor that supports lots of Git features
 title: Zed Editor Git integration documentation
 ---
 
@@ -15,7 +15,7 @@ The Git Panel shows the state of your working tree and Git's staging area.
 
 You can open the Git Panel using {#action git_panel::ToggleFocus}, or by clicking the Git icon in the status bar.
 
-The panel shows which repository and branch are active, what files have changed, and the current staging state of each file.
+In the panel you can see the state of your project at a glance: which repository and branch are active, what files have changed and the current staging state of each file.
 
 Zed monitors your repository so that changes you make on the command line are instantly reflected.
 
@@ -54,30 +54,9 @@ All of the changes displayed in the Project Diff behave exactly the same as any 
 
 You can stage or unstage each hunk as well as a whole file by hitting the buttons on the tab bar or their corresponding keybindings.
 
-### AI Review
-
-> **Changed in Preview (v0.225).** See [release notes](/releases#0.225).
-
-When viewing uncommitted changes in the project diff panel, you can request an AI-powered review by clicking the "Review Diff" button. This button appears in the toolbar when:
-
-- Your diff contains file changes
-- The AI assistant is enabled in your settings
-
-If your diff is empty, the review button is hidden since there are no changes to analyze.
-
-To enable AI features, open the Settings Editor ({#kb zed::OpenSettings}) and turn on the **AI Assistant** option, or add to your settings:
-
-```json [settings]
-{
-  "agent": {
-    "enabled": true
-  }
-}
-```
-
 ### Word Diff Highlighting
 
-By default, Zed highlights changed words within modified lines to show which words changed. To disable this globally, open the Settings Editor and go to **Languages & Tools > Miscellaneous**, then turn off **Word Diff Enabled**.
+By default, Zed highlights changed words within modified lines to make it easier to spot exactly what changed. To disable this globally, open the Settings Editor and go to **Languages & Tools > Miscellaneous**, then turn off **Word Diff Enabled**.
 
 To disable word diff for specific languages only, add this to your settings.json:
 
@@ -93,23 +72,19 @@ To disable word diff for specific languages only, add this to your settings.json
 
 ### Diff View Styles
 
-> **Changed in Preview (v0.225).** Terminology updated from "stacked"/"side by side" to "unified"/"split". See [release notes](/releases#0.225).
-
 Zed displays diffs in two modes: **split** (side-by-side comparison) or **unified** (inline changes). Split view is the default.
 
 #### Changing the diff view
 
 Open the Settings Editor ({#kb zed::OpenSettings}) and search for "diff view style". Select either **Split** or **Unified**.
 
-Or add this to your `settings.json`:
+To change the default, add this to your `settings.json`:
 
 ```json
 {
   "diff_view_style": "unified"
 }
 ```
-
-To switch between modes while viewing diffs, use the view toggle buttons in the buffer search bar, or use the {#action editor::ToggleSplitDiff} action. To set your default view preference, hold `Cmd` (macOS) or `Ctrl` (Linux/Windows) while clicking either button. This updates your `diff_view_style` setting.
 
 See [Configuring Zed](./configuring-zed.md) for more about the Settings Editor.
 
@@ -130,39 +105,6 @@ To open File History:
 - Right-click on a file in the Git Panel and select "Open File History"
 - Right-click on an editor tab and select "Open File History"
 - Use the Command Palette and search for "file history"
-
-## Git Graph {#git-graph}
-
-> **Preview:** This feature is available in Zed Preview. It will be included in the next Stable release.
-
-Git Graph displays your repository's commit history as a visual graph, showing branch relationships and commit connections. Each commit displays its hash, author, date, and message in a table format.
-
-### Opening Git Graph
-
-Open Git Graph from the Git Panel using the graph icon in the panel's header, or search for "git graph" in the [Command Palette](./getting-started.md#command-palette).
-
-### Viewing Commit Details
-
-Select any commit in the graph to view its changed files and diff statistics in the side panel. Click the "View Commit" button to open a full commit view that shows the complete diff for that commit. This view functions as a [multibuffer](./multibuffers.md), similar to [Project Diff](#project-diff) and [File History](#file-history).
-
-You can also double-click any commit row to open the commit view directly.
-
-## Commit View {#commit-view}
-
-When you select a commit from [File History](#file-history) or [Git Graph](#git-graph), Zed opens a commit view showing the full diff for that commit. The view displays commit metadata (author, date, SHA) and all changed files with their diffs.
-
-The commit view works like other [multibuffers](./multibuffers.md)—you can edit excerpts, search within the diff, and navigate between files.
-
-### Commit View Toolbar {#commit-view-toolbar}
-
-The commit view includes a toolbar with:
-
-- **Diff stats**: Summary of additions and deletions across all files
-- **Search** (`Cmd+F`): Find text within the commit diff using {#action buffer_search::Deploy}
-- **Show in Git Graph**: Jump to this commit in the [Git Graph](#git-graph) view
-- **View on GitHub** (or other provider): Open the commit on your remote hosting provider
-
-To copy the commit SHA, click the "Commit SHA" button in the header.
 
 ## Fetch, Push, and Pull
 
@@ -403,8 +345,6 @@ When viewing files with changes, Zed displays diff hunks that can be expanded or
 | {#action editor::ToggleGitBlameInline}    | {#kb editor::ToggleGitBlameInline}    |
 | {#action editor::ExpandAllDiffHunks}      | {#kb editor::ExpandAllDiffHunks}      |
 | {#action editor::ToggleSelectedDiffHunks} | {#kb editor::ToggleSelectedDiffHunks} |
-| {#action menu::SelectPrevious}            | {#kb menu::SelectPrevious}            |
-| {#action menu::SelectNext}                | {#kb menu::SelectNext}                |
 
 > Not all actions have default keybindings, but can be bound by [customizing your keymap](./key-bindings.md#user-keymaps).
 
