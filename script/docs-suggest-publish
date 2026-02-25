@@ -183,6 +183,31 @@ while IFS= read -r file; do
     SUGGESTION_FILES+=("$file")
 done < <(echo "$MANIFEST" | jq -r '.suggestions[].file')
 
+# Determine which PRs are already in the latest stable release.
+# Suggestions queued with --preview may reference features that shipped in stable
+# by the time this script runs, so their Preview callouts should be stripped.
+STABLE_PRS=()
+STABLE_TAG=$(git tag -l 'v*' --sort=-v:refname | grep -v 'pre' | head -1 || true)
+if [[ -n "$STABLE_TAG" ]]; then
+    log "Latest stable release tag: $STABLE_TAG"
+    for file in "${SUGGESTION_FILES[@]}"; do
+        pr_num=$(echo "$MANIFEST" | jq -r --arg f "$file" '.suggestions[] | select(.file == $f) | .pr')
+        # Find the merge commit for this PR
+        merge_sha=$(gh pr view "$pr_num" --json mergeCommit --jq '.mergeCommit.oid' 2>/dev/null || true)
+        if [[ -n "$merge_sha" ]] && git merge-base --is-ancestor "$merge_sha" "$STABLE_TAG" 2>/dev/null; then
+            STABLE_PRS+=("$pr_num")
+            log "PR #$pr_num is in stable ($STABLE_TAG)"
+        fi
+    done
+    if [[ ${#STABLE_PRS[@]} -gt 0 ]]; then
+        echo -e "${YELLOW}Note:${NC} ${#STABLE_PRS[@]} suggestion(s) are for PRs already in stable ($STABLE_TAG)."
+        echo "  Preview callouts will be stripped for: ${STABLE_PRS[*]}"
+        echo ""
+    fi
+else
+    log "No stable release tag found, treating all suggestions as preview-only"
+fi
+
 # Split into batches
 TOTAL=${#SUGGESTION_FILES[@]}
 BATCH_COUNT=$(( (TOTAL + BATCH_SIZE - 1) / BATCH_SIZE ))
@@ -208,11 +233,25 @@ for (( batch=0; batch<BATCH_COUNT; batch++ )); do
 
     echo -e "${BLUE}Batch $BATCH_NUM/$BATCH_COUNT${NC} (suggestions $(( START + 1 ))-$END of $TOTAL)"
 
-    # Combine suggestion files for this batch
+    # Combine suggestion files for this batch, annotating stable PRs
     for (( i=START; i<END; i++ )); do
         file="${SUGGESTION_FILES[$i]}"
+        pr_num=$(echo "$MANIFEST" | jq -r --arg f "$file" '.suggestions[] | select(.file == $f) | .pr')
+        is_stable=false
+        for stable_pr in "${STABLE_PRS[@]+"${STABLE_PRS[@]}"}"; do
+            if [[ "$stable_pr" == "$pr_num" ]]; then
+                is_stable=true
+                break
+            fi
+        done
         {
             echo "## Source: $file"
+            if [[ "$is_stable" == "true" ]]; then
+                echo ""
+                echo "> **ALREADY IN STABLE**: PR #$pr_num shipped in $STABLE_TAG."
+                echo "> Do NOT add Preview or Changed-in-Preview callouts for this suggestion."
+                echo "> Apply the documentation content only, without any preview-related callouts."
+            fi
             echo ""
             git show "origin/$SUGGESTIONS_BRANCH:$file" 2>/dev/null || error "Suggestion file missing: $file"
             echo ""
@@ -249,6 +288,8 @@ Before making edits, read and follow these rule files:
 6. Keep preview callout semantics correct:
    - Additive features: `> **Preview:** ...`
    - Behavior modifications: `> **Changed in Preview (vX.XXX).** ...`
+   - **Exception**: Suggestions marked "ALREADY IN STABLE" must NOT get any preview callouts.
+     These features already shipped in a stable release. Apply the content changes only.
 7. If a suggestion is too ambiguous to apply safely, skip it and explain why in the summary.
 8. **Do not invent `{#kb}` or `{#action}` references.** Only use action names that already
    appear in the existing docs files you are editing. If unsure whether an action name is
