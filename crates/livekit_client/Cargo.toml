@@ -28,6 +28,7 @@ cpal.workspace = true
 futures.workspace = true
 gpui = { workspace = true, features = ["screen-capture", "x11", "wayland"] }
 gpui_tokio.workspace = true
+http_client_tls.workspace = true
 image.workspace = true
 livekit_api.workspace = true
 log.workspace = true

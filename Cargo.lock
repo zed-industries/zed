@@ -9613,8 +9613,7 @@ dependencies = [
 [[package]]
 name = "libwebrtc"
 version = "0.3.26"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "24c68cb670823a24fc58a4640585acab53a1e9c224ed995733e650f395564d6f"
+source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=79cae9507d88318220995c5aa27ecc3368449461#79cae9507d88318220995c5aa27ecc3368449461"
 dependencies = [
  "cxx",
  "glib",
@@ -9712,8 +9711,7 @@ checksum = "11d3d7f243d5c5a8b9bb5d6dd2b1602c0cb0b9db1621bafc7ed66e35ff9fe092"
 [[package]]
 name = "livekit"
 version = "0.7.32"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "13f049dbbdfe8bd9a2217b03e4f14eb67e3ba12c807d97a9ffaf34359baa53c0"
+source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=79cae9507d88318220995c5aa27ecc3368449461#79cae9507d88318220995c5aa27ecc3368449461"
 dependencies = [
  "base64 0.22.1",
  "bmrng",
@@ -9739,8 +9737,7 @@ dependencies = [
 [[package]]
 name = "livekit-api"
 version = "0.4.14"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fa90c56d727f9e51b6ab5ce6b14262d4817900c72a8a346a4f7208bde98207e6"
+source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=79cae9507d88318220995c5aa27ecc3368449461#79cae9507d88318220995c5aa27ecc3368449461"
 dependencies = [
  "base64 0.21.7",
  "futures-util",
@@ -9761,16 +9758,15 @@ dependencies = [
  "sha2",
  "thiserror 1.0.69",
  "tokio",
- "tokio-rustls 0.24.1",
- "tokio-tungstenite 0.20.1",
+ "tokio-rustls 0.26.2",
+ "tokio-tungstenite 0.28.0",
  "url",
 ]
 
 [[package]]
 name = "livekit-protocol"
 version = "0.7.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "01875112fb961da484dedf0c2d5705d8875c5e99da6d5aa1d567be1b7d03532a"
+source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=79cae9507d88318220995c5aa27ecc3368449461#79cae9507d88318220995c5aa27ecc3368449461"
 dependencies = [
  "futures-util",
  "livekit-runtime",
@@ -9786,8 +9782,7 @@ dependencies = [
 [[package]]
 name = "livekit-runtime"
 version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "532e84c6cdc5fe774f2b5d9912597b5f3bea561927a48296d03e24549d21c3f6"
+source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=79cae9507d88318220995c5aa27ecc3368449461#79cae9507d88318220995c5aa27ecc3368449461"
 dependencies = [
  "tokio",
  "tokio-stream",
@@ -9825,6 +9820,7 @@ dependencies = [
  "gpui",
  "gpui_platform",
  "gpui_tokio",
+ "http_client_tls",
  "image",
  "libwebrtc",
  "livekit",
@@ -10600,12 +10596,6 @@ name = "multimap"
 version = "0.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e5ce46fe64a9d73be07dcbe690a38ce1b293be448fd8ce1e6c1b8062c9f72c6a"
-
-[[package]]
-name = "multimap"
-version = "0.10.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1d87ecb2933e8aeadb3e3a02b828fed80a7528047e68b4f424523a0981a3a084"
 
 [[package]]
 name = "naga"
@@ -13158,7 +13148,7 @@ dependencies = [
  "itertools 0.10.5",
  "lazy_static",
  "log",
- "multimap 0.8.3",
+ "multimap",
  "petgraph",
  "prost 0.9.0",
  "prost-types 0.9.0",
@@ -13177,7 +13167,7 @@ dependencies = [
  "heck 0.5.0",
  "itertools 0.12.1",
  "log",
- "multimap 0.10.1",
+ "multimap",
  "once_cell",
  "petgraph",
  "prettyplease",
@@ -17646,10 +17636,7 @@ checksum = "212d5dcb2a1ce06d81107c3d0ffa3121fe974b73f068c8282cb1c32328113b6c"
 dependencies = [
  "futures-util",
  "log",
- "rustls 0.21.12",
- "rustls-native-certs 0.6.3",
  "tokio",
- "tokio-rustls 0.24.1",
  "tungstenite 0.20.1",
 ]
 
@@ -17663,6 +17650,22 @@ dependencies = [
  "log",
  "tokio",
  "tungstenite 0.21.0",
+]
+
+[[package]]
+name = "tokio-tungstenite"
+version = "0.28.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d25a406cddcc431a75d3d9afc6a7c0f7428d4891dd973e4d54c56b46127bf857"
+dependencies = [
+ "futures-util",
+ "log",
+ "rustls 0.23.33",
+ "rustls-native-certs 0.8.2",
+ "rustls-pki-types",
+ "tokio",
+ "tokio-rustls 0.26.2",
+ "tungstenite 0.28.0",
 ]
 
 [[package]]
@@ -18291,7 +18294,6 @@ dependencies = [
  "httparse",
  "log",
  "rand 0.8.5",
- "rustls 0.21.12",
  "sha1",
  "thiserror 1.0.69",
  "url",
@@ -18322,6 +18324,25 @@ name = "tungstenite"
 version = "0.27.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "eadc29d668c91fcc564941132e17b28a7ceb2f3ebf0b9dae3e03fd7a6748eb0d"
+dependencies = [
+ "bytes 1.11.1",
+ "data-encoding",
+ "http 1.3.1",
+ "httparse",
+ "log",
+ "rand 0.9.2",
+ "rustls 0.23.33",
+ "rustls-pki-types",
+ "sha1",
+ "thiserror 2.0.17",
+ "utf-8",
+]
+
+[[package]]
+name = "tungstenite"
+version = "0.28.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8628dcc84e5a09eb3d8423d6cb682965dea9133204e8fb3efee74c2a0c259442"
 dependencies = [
  "bytes 1.11.1",
  "data-encoding",
@@ -19700,8 +19721,7 @@ dependencies = [
 [[package]]
 name = "webrtc-sys"
 version = "0.3.23"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9d612cde159dea4736ca54e567b0867881d7c181b3a62d239231ea797fa00857"
+source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=79cae9507d88318220995c5aa27ecc3368449461#79cae9507d88318220995c5aa27ecc3368449461"
 dependencies = [
  "cc",
  "cxx",
@@ -19715,8 +19735,7 @@ dependencies = [
 [[package]]
 name = "webrtc-sys-build"
 version = "0.3.13"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ded4070a382b4d8ca4530f6557f75431756a6ac8f5552b59827ad9afe32a0e2f"
+source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=79cae9507d88318220995c5aa27ecc3368449461#79cae9507d88318220995c5aa27ecc3368449461"
 dependencies = [
  "anyhow",
  "fs2",
