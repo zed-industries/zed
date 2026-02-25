@@ -2338,12 +2338,14 @@ impl DisplaySnapshot {
             let end = if let Some(row) = closing_row {
                 let mut col = 0u32;
                 let mut found_closing_delimiter = false;
-                for ch in self.buffer_snapshot().chars_at(Point::new(row, 0)) {
+                let mut chars = self.buffer_snapshot().chars_at(Point::new(row, 0));
+                while let Some(ch) = chars.next() {
                     if ch == '\n' {
                         break;
                     }
                     if !ch.is_whitespace() {
-                        found_closing_delimiter = matches!(ch, '}' | ')' | ']');
+                        found_closing_delimiter = matches!(ch, '}' | ')' | ']')
+                            || (ch == '<' && chars.next() == Some('/'));
                         break;
                     }
                     col += ch.len_utf8() as u32;
