@@ -446,7 +446,11 @@ mod test {
                     start_line: None,
                     end_line: None,
                 };
-                tool.run(ToolInput::resolved(input), ToolCallEventStream::test().0, cx)
+                tool.run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
             })
             .await;
         assert_eq!(result.unwrap(), "This is a small file content".into());
@@ -489,7 +493,11 @@ mod test {
                     start_line: None,
                     end_line: None,
                 };
-                tool.clone().run(ToolInput::resolved(input), ToolCallEventStream::test().0, cx)
+                tool.clone().run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
             })
             .await
             .unwrap();
@@ -514,7 +522,11 @@ mod test {
                     start_line: None,
                     end_line: None,
                 };
-                tool.run(ToolInput::resolved(input), ToolCallEventStream::test().0, cx)
+                tool.run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
             })
             .await
             .unwrap();
@@ -574,7 +586,11 @@ mod test {
                     start_line: Some(2),
                     end_line: Some(4),
                 };
-                tool.run(ToolInput::resolved(input), ToolCallEventStream::test().0, cx)
+                tool.run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
             })
             .await;
         assert_eq!(result.unwrap(), "Line 2\nLine 3\nLine 4\n".into());
@@ -617,7 +633,11 @@ mod test {
                     start_line: Some(0),
                     end_line: Some(2),
                 };
-                tool.clone().run(ToolInput::resolved(input), ToolCallEventStream::test().0, cx)
+                tool.clone().run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
             })
             .await;
         assert_eq!(result.unwrap(), "Line 1\nLine 2\n".into());
@@ -630,7 +650,11 @@ mod test {
                     start_line: Some(1),
                     end_line: Some(0),
                 };
-                tool.clone().run(ToolInput::resolved(input), ToolCallEventStream::test().0, cx)
+                tool.clone().run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
             })
             .await;
         assert_eq!(result.unwrap(), "Line 1\n".into());
@@ -643,7 +667,11 @@ mod test {
                     start_line: Some(3),
                     end_line: Some(2),
                 };
-                tool.clone().run(ToolInput::resolved(input), ToolCallEventStream::test().0, cx)
+                tool.clone().run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
             })
             .await;
         assert_eq!(result.unwrap(), "Line 3\n".into());
@@ -748,7 +776,11 @@ mod test {
                     start_line: None,
                     end_line: None,
                 };
-                tool.clone().run(ToolInput::resolved(input), ToolCallEventStream::test().0, cx)
+                tool.clone().run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
             })
             .await;
         assert!(
@@ -764,7 +796,11 @@ mod test {
                     start_line: None,
                     end_line: None,
                 };
-                tool.clone().run(ToolInput::resolved(input), ToolCallEventStream::test().0, cx)
+                tool.clone().run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
             })
             .await;
         assert!(
@@ -780,7 +816,11 @@ mod test {
                     start_line: None,
                     end_line: None,
                 };
-                tool.clone().run(ToolInput::resolved(input), ToolCallEventStream::test().0, cx)
+                tool.clone().run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
             })
             .await;
         assert!(
@@ -795,7 +835,11 @@ mod test {
                     start_line: None,
                     end_line: None,
                 };
-                tool.clone().run(ToolInput::resolved(input), ToolCallEventStream::test().0, cx)
+                tool.clone().run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
             })
             .await;
         assert!(
@@ -811,7 +855,11 @@ mod test {
                     start_line: None,
                     end_line: None,
                 };
-                tool.clone().run(ToolInput::resolved(input), ToolCallEventStream::test().0, cx)
+                tool.clone().run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
             })
             .await;
         assert!(
@@ -826,7 +874,11 @@ mod test {
                     start_line: None,
                     end_line: None,
                 };
-                tool.clone().run(ToolInput::resolved(input), ToolCallEventStream::test().0, cx)
+                tool.clone().run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
             })
             .await;
         assert!(
@@ -841,7 +893,11 @@ mod test {
                     start_line: None,
                     end_line: None,
                 };
-                tool.clone().run(ToolInput::resolved(input), ToolCallEventStream::test().0, cx)
+                tool.clone().run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
             })
             .await;
         assert!(
@@ -857,7 +913,11 @@ mod test {
                     start_line: None,
                     end_line: None,
                 };
-                tool.clone().run(ToolInput::resolved(input), ToolCallEventStream::test().0, cx)
+                tool.clone().run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
             })
             .await;
         assert!(result.is_ok(), "Should be able to read normal files");
@@ -871,7 +931,11 @@ mod test {
                     start_line: None,
                     end_line: None,
                 };
-                tool.run(ToolInput::resolved(input), ToolCallEventStream::test().0, cx)
+                tool.run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
             })
             .await;
         assert!(
@@ -1043,7 +1107,11 @@ mod test {
                     start_line: None,
                     end_line: None,
                 };
-                tool.clone().run(ToolInput::resolved(input), ToolCallEventStream::test().0, cx)
+                tool.clone().run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
             })
             .await
             .unwrap();
@@ -1061,7 +1129,11 @@ mod test {
                     start_line: None,
                     end_line: None,
                 };
-                tool.clone().run(ToolInput::resolved(input), ToolCallEventStream::test().0, cx)
+                tool.clone().run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
             })
             .await;
 
@@ -1079,7 +1151,11 @@ mod test {
                     start_line: None,
                     end_line: None,
                 };
-                tool.clone().run(ToolInput::resolved(input), ToolCallEventStream::test().0, cx)
+                tool.clone().run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
             })
             .await;
 
@@ -1097,7 +1173,11 @@ mod test {
                     start_line: None,
                     end_line: None,
                 };
-                tool.clone().run(ToolInput::resolved(input), ToolCallEventStream::test().0, cx)
+                tool.clone().run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
             })
             .await
             .unwrap();
@@ -1115,7 +1195,11 @@ mod test {
                     start_line: None,
                     end_line: None,
                 };
-                tool.clone().run(ToolInput::resolved(input), ToolCallEventStream::test().0, cx)
+                tool.clone().run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
             })
             .await;
 
@@ -1133,7 +1217,11 @@ mod test {
                     start_line: None,
                     end_line: None,
                 };
-                tool.clone().run(ToolInput::resolved(input), ToolCallEventStream::test().0, cx)
+                tool.clone().run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
             })
             .await;
 
@@ -1152,7 +1240,11 @@ mod test {
                     start_line: None,
                     end_line: None,
                 };
-                tool.clone().run(ToolInput::resolved(input), ToolCallEventStream::test().0, cx)
+                tool.clone().run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
             })
             .await;
 

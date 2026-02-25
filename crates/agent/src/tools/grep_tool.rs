@@ -785,7 +785,13 @@ mod tests {
         cx: &mut TestAppContext,
     ) -> String {
         let tool = Arc::new(GrepTool { project });
-        let task = cx.update(|cx| tool.run(ToolInput::resolved(input), ToolCallEventStream::test().0, cx));
+        let task = cx.update(|cx| {
+            tool.run(
+                ToolInput::resolved(input),
+                ToolCallEventStream::test().0,
+                cx,
+            )
+        });
 
         match task.await {
             Ok(result) => {

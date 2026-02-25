@@ -677,7 +677,11 @@ mod tests {
                     language_registry,
                     Templates::new(),
                 ))
-                .run(ToolInput::resolved(input), ToolCallEventStream::test().0, cx)
+                .run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
             })
             .await;
         assert_eq!(
@@ -886,7 +890,11 @@ mod tests {
                     language_registry.clone(),
                     Templates::new(),
                 ))
-                .run(ToolInput::resolved(input), ToolCallEventStream::test().0, cx)
+                .run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
             });
 
             // Stream the unformatted content
@@ -945,7 +953,11 @@ mod tests {
                     language_registry,
                     Templates::new(),
                 ))
-                .run(ToolInput::resolved(input), ToolCallEventStream::test().0, cx)
+                .run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
             });
 
             // Stream the unformatted content
@@ -1032,7 +1044,11 @@ mod tests {
                     language_registry.clone(),
                     Templates::new(),
                 ))
-                .run(ToolInput::resolved(input), ToolCallEventStream::test().0, cx)
+                .run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
             });
 
             // Stream the content with trailing whitespace
@@ -1087,7 +1103,11 @@ mod tests {
                     language_registry,
                     Templates::new(),
                 ))
-                .run(ToolInput::resolved(input), ToolCallEventStream::test().0, cx)
+                .run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
             });
 
             // Stream the content with trailing whitespace

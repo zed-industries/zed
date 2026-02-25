@@ -328,7 +328,13 @@ mod tests {
             path: "project".into(),
         };
         let output = cx
-            .update(|cx| tool.clone().run(ToolInput::resolved(input), ToolCallEventStream::test().0, cx))
+            .update(|cx| {
+                tool.clone().run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
+            })
             .await
             .unwrap();
         assert_eq!(
@@ -349,7 +355,13 @@ mod tests {
             path: "project/src".into(),
         };
         let output = cx
-            .update(|cx| tool.clone().run(ToolInput::resolved(input), ToolCallEventStream::test().0, cx))
+            .update(|cx| {
+                tool.clone().run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
+            })
             .await
             .unwrap();
         assert_eq!(
@@ -370,7 +382,13 @@ mod tests {
             path: "project/tests".into(),
         };
         let output = cx
-            .update(|cx| tool.clone().run(ToolInput::resolved(input), ToolCallEventStream::test().0, cx))
+            .update(|cx| {
+                tool.clone().run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
+            })
             .await
             .unwrap();
         assert!(!output.contains("# Folders:"));
@@ -398,7 +416,13 @@ mod tests {
             path: "project/empty_dir".into(),
         };
         let output = cx
-            .update(|cx| tool.clone().run(ToolInput::resolved(input), ToolCallEventStream::test().0, cx))
+            .update(|cx| {
+                tool.clone().run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
+            })
             .await
             .unwrap();
         assert_eq!(output, "project/empty_dir is empty.\n");
@@ -425,7 +449,13 @@ mod tests {
             path: "project/nonexistent".into(),
         };
         let output = cx
-            .update(|cx| tool.clone().run(ToolInput::resolved(input), ToolCallEventStream::test().0, cx))
+            .update(|cx| {
+                tool.clone().run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
+            })
             .await;
         assert!(output.unwrap_err().contains("Path not found"));
 
@@ -434,7 +464,13 @@ mod tests {
             path: "project/file.txt".into(),
         };
         let output = cx
-            .update(|cx| tool.run(ToolInput::resolved(input), ToolCallEventStream::test().0, cx))
+            .update(|cx| {
+                tool.run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
+            })
             .await;
         assert!(output.unwrap_err().contains("is not a directory"));
     }
@@ -498,7 +534,13 @@ mod tests {
             path: "project".into(),
         };
         let output = cx
-            .update(|cx| tool.clone().run(ToolInput::resolved(input), ToolCallEventStream::test().0, cx))
+            .update(|cx| {
+                tool.clone().run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
+            })
             .await
             .unwrap();
 
@@ -525,7 +567,13 @@ mod tests {
             path: "project/.secretdir".into(),
         };
         let output = cx
-            .update(|cx| tool.clone().run(ToolInput::resolved(input), ToolCallEventStream::test().0, cx))
+            .update(|cx| {
+                tool.clone().run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
+            })
             .await;
         assert!(
             output.unwrap_err().contains("file_scan_exclusions"),
@@ -537,7 +585,13 @@ mod tests {
             path: "project/visible_dir".into(),
         };
         let output = cx
-            .update(|cx| tool.clone().run(ToolInput::resolved(input), ToolCallEventStream::test().0, cx))
+            .update(|cx| {
+                tool.clone().run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
+            })
             .await
             .unwrap();
 
@@ -642,7 +696,13 @@ mod tests {
             path: "worktree1/src".into(),
         };
         let output = cx
-            .update(|cx| tool.clone().run(ToolInput::resolved(input), ToolCallEventStream::test().0, cx))
+            .update(|cx| {
+                tool.clone().run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
+            })
             .await
             .unwrap();
         assert!(output.contains("main.rs"), "Should list main.rs");
@@ -660,7 +720,13 @@ mod tests {
             path: "worktree1/tests".into(),
         };
         let output = cx
-            .update(|cx| tool.clone().run(ToolInput::resolved(input), ToolCallEventStream::test().0, cx))
+            .update(|cx| {
+                tool.clone().run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
+            })
             .await
             .unwrap();
         assert!(output.contains("test.rs"), "Should list test.rs");
@@ -674,7 +740,13 @@ mod tests {
             path: "worktree2/lib".into(),
         };
         let output = cx
-            .update(|cx| tool.clone().run(ToolInput::resolved(input), ToolCallEventStream::test().0, cx))
+            .update(|cx| {
+                tool.clone().run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
+            })
             .await
             .unwrap();
         assert!(output.contains("public.js"), "Should list public.js");
@@ -692,7 +764,13 @@ mod tests {
             path: "worktree2/docs".into(),
         };
         let output = cx
-            .update(|cx| tool.clone().run(ToolInput::resolved(input), ToolCallEventStream::test().0, cx))
+            .update(|cx| {
+                tool.clone().run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
+            })
             .await
             .unwrap();
         assert!(output.contains("README.md"), "Should list README.md");
@@ -706,7 +784,13 @@ mod tests {
             path: "worktree1/src/secret.rs".into(),
         };
         let output = cx
-            .update(|cx| tool.clone().run(ToolInput::resolved(input), ToolCallEventStream::test().0, cx))
+            .update(|cx| {
+                tool.clone().run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
+            })
             .await;
         assert!(output.unwrap_err().contains("Cannot list directory"),);
     }
