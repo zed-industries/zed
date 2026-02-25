@@ -1099,11 +1099,9 @@ fn test_fold_action(cx: &mut TestAppContext) {
                         1
                     }
 
-                    fn b() {⋯
-                    }
+                    fn b() {⋯}
 
-                    fn c() {⋯
-                    }
+                    fn c() {⋯}
                 }
             "
             .unindent(),
@@ -1113,8 +1111,7 @@ fn test_fold_action(cx: &mut TestAppContext) {
         assert_eq!(
             editor.display_text(cx),
             "
-                impl Foo {⋯
-                }
+                impl Foo {⋯}
             "
             .unindent(),
         );
@@ -1130,11 +1127,9 @@ fn test_fold_action(cx: &mut TestAppContext) {
                         1
                     }
 
-                    fn b() {⋯
-                    }
+                    fn b() {⋯}
 
-                    fn c() {⋯
-                    }
+                    fn c() {⋯}
                 }
             "
             .unindent(),
@@ -22116,8 +22111,7 @@ async fn test_indent_guide_with_folds(cx: &mut TestAppContext) {
             "
             fn main() {
                 if a {
-                    b(⋯
-                    )
+                    b(⋯)
                 } else {
                     e(
                         f
