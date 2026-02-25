@@ -290,20 +290,21 @@ See the [Tool Permissions](./tool-permissions.md) documentation for more example
 
 > **Note:** Before Zed v0.224.0, tool approval was controlled by the `agent.always_allow_tool_actions` boolean (default `false`). Set it to `true` to auto-approve tool actions, or leave it `false` to require confirmation for edits and tool calls.
 
-### Single-file Review
+### Edit Display Mode
 
-Control whether to display review actions (accept & reject) in single buffers after the agent is done performing edits.
-The default value is `true`.
+> **Changed in Preview (v0.225).** See [release notes](/releases#0.225).
+
+By default, agent edits open in multi-file review mode. To display agent edits in single-file editors instead, enable `single_file_review`:
 
 ```json [settings]
 {
   "agent": {
-    "single_file_review": false
+    "single_file_review": true
   }
 }
 ```
 
-When set to `false`, these controls are only available in the multibuffer review tab.
+When enabled, each file modified by an agent opens in its own editor tab for review. When disabled (default), all changes appear in a unified review interface.
 
 ### Sound Notification
 
