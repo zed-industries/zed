@@ -88,6 +88,8 @@ Mentioning the MCP server by name can help the model pick tools from that server
 
 #### Error Handling
 
+> **Changed in Preview (v0.225).** See [release notes](/releases#0.225).
+
 When a context server encounters an error while processing a tool call, the agent receives the error message directly and the operation fails. Common error scenarios include:
 
 - Invalid parameters passed to the tool

@@ -114,6 +114,8 @@ The agent can search your codebase to find relevant context, but providing it ex
 Add context by typing `@` in the message editor.
 You can mention files, directories, symbols, previous threads, rules files, and diagnostics.
 
+> **Changed in Preview (v0.225).** See [release notes](/releases#0.225).
+
 ### Images
 
 You can add images to agent messages on providers that support vision models. OpenAI GPT-4o and later, Anthropic Claude 3 and later, Google Gemini 1.5 and 2.0, and Bedrock vision models (Claude 3+, Amazon Nova Pro and Lite, Meta Llama 3.2 Vision, Mistral Pixtral) all support image inputs.
