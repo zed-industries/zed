@@ -1511,9 +1511,9 @@ impl ExternalAgentServer for LocalCustomAgent {
     }
 }
 
-pub const GEMINI_NAME: &'static str = "gemini";
-pub const CLAUDE_AGENT_NAME: &'static str = "claude";
-pub const CODEX_NAME: &'static str = "codex";
+pub const GEMINI_NAME: &str = "gemini";
+pub const CLAUDE_AGENT_NAME: &str = "claude-acp";
+pub const CODEX_NAME: &str = "codex-acp";
 
 #[derive(Default, Clone, JsonSchema, Debug, PartialEq, RegisterSetting)]
 pub struct AllAgentServersSettings {
@@ -1542,17 +1542,6 @@ pub struct BuiltinAgentServerSettings {
     pub favorite_models: Vec<String>,
     pub default_config_options: HashMap<String, String>,
     pub favorite_config_option_values: HashMap<String, Vec<String>>,
-}
-
-impl BuiltinAgentServerSettings {
-    fn custom_command(self) -> Option<AgentServerCommand> {
-        self.path.map(|path| AgentServerCommand {
-            path,
-            args: self.args.unwrap_or_default(),
-            // Settings env are always applied, so we don't need to supply them here as well
-            env: None,
-        })
-    }
 }
 
 impl From<settings::BuiltinAgentServerSettings> for BuiltinAgentServerSettings {

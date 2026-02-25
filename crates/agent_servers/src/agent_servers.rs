@@ -1,19 +1,13 @@
 mod acp;
-mod claude;
-mod codex;
 mod custom;
-mod gemini;
 
 #[cfg(any(test, feature = "test-support"))]
 pub mod e2e_tests;
 
-pub use claude::*;
 use client::ProxySettings;
-pub use codex::*;
 use collections::{HashMap, HashSet};
 pub use custom::*;
 use fs::Fs;
-pub use gemini::*;
 use http_client::read_no_proxy_from_env;
 use project::agent_server_store::AgentServerStore;
 

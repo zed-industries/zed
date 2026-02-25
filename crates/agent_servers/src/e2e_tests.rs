@@ -419,7 +419,10 @@ pub async fn init_test(cx: &mut TestAppContext) -> Arc<FakeFs> {
                     path: Some("claude-agent-acp".into()),
                     ..Default::default()
                 }),
-                gemini: Some(crate::gemini::tests::local_command().into()),
+                gemini: Some(BuiltinAgentServerSettings {
+                    path: Some("gemini".into()),
+                    ..Default::default()
+                }),
                 codex: Some(BuiltinAgentServerSettings {
                     path: Some("codex-acp".into()),
                     ..Default::default()

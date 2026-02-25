@@ -296,6 +296,12 @@ pub struct AcpServerView {
 }
 
 impl AcpServerView {
+    pub fn has_auth_methods(&self) -> bool {
+        self.as_connected().map_or(false, |connected| {
+            !connected.connection.auth_methods().is_empty()
+        })
+    }
+
     pub fn active_thread(&self) -> Option<&Entity<AcpThreadView>> {
         match &self.server_state {
             ServerState::Connected(connected) => connected.active_view(),

@@ -37,7 +37,13 @@ impl AcpOnboardingModal {
 
             if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
                 panel.update(cx, |panel, cx| {
-                    panel.new_agent_thread(AgentType::Gemini, window, cx);
+                    panel.new_agent_thread(
+                        AgentType::Custom {
+                            name: "gemini".into(),
+                        },
+                        window,
+                        cx,
+                    );
                 });
             }
         });
