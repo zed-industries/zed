@@ -406,7 +406,7 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
             snippet_deduplication_key: None,
             insert_text_mode: None,
             confirm: Some(confirm_completion_callback(
-                file_name,
+                uri.name().into(),
                 source_range.start,
                 new_text_len - 1,
                 uri,

@@ -226,11 +226,17 @@ impl MentionUri {
 
     pub fn name(&self) -> String {
         match self {
-            MentionUri::File { abs_path, .. } | MentionUri::Directory { abs_path, .. } => abs_path
-                .file_name()
-                .unwrap_or_default()
-                .to_string_lossy()
-                .into_owned(),
+            MentionUri::File { abs_path, .. } | MentionUri::Directory { abs_path, .. } => {
+                let file_name = abs_path
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy();
+                if let Some(parent) = abs_path.parent().and_then(|p| p.file_name()) {
+                    format!("{}/{}", parent.to_string_lossy(), file_name)
+                } else {
+                    file_name.into_owned()
+                }
+            }
             MentionUri::PastedImage => "Image".to_string(),
             MentionUri::Symbol { name, .. } => name.clone(),
             MentionUri::Thread { name, .. } => name.clone(),
@@ -406,11 +412,17 @@ fn single_query_param(url: &Url, name: &'static str) -> Result<Option<String>> {
 }
 
 pub fn selection_name(path: Option<&Path>, line_range: &RangeInclusive<u32>) -> String {
+    let display = path.map(|path| {
+        let file_name = path.file_name().unwrap_or("Untitled".as_ref());
+        if let Some(parent) = path.parent().and_then(|p| p.file_name()) {
+            format!("{}/{}", parent.display(), file_name.display())
+        } else {
+            file_name.display().to_string()
+        }
+    });
     format!(
         "{} ({}:{})",
-        path.and_then(|path| path.file_name())
-            .unwrap_or("Untitled".as_ref())
-            .display(),
+        display.as_deref().unwrap_or("Untitled"),
         *line_range.start() + 1,
         *line_range.end() + 1
     )
