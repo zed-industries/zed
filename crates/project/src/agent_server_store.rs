@@ -432,7 +432,6 @@ impl AgentServerStore {
             let mut env = env.clone();
             if let Some(settings_env) =
                 new_settings
-                    .custom
                     .get(agent_name.as_ref())
                     .and_then(|settings| match settings {
                         CustomAgentServerSettings::Extension { env, .. } => Some(env.clone()),
@@ -465,7 +464,7 @@ impl AgentServerStore {
             );
         }
 
-        for (name, settings) in &new_settings.custom {
+        for (name, settings) in new_settings.iter() {
             match settings {
                 CustomAgentServerSettings::Custom { command, .. } => {
                     let agent_name = ExternalAgentServerName(name.clone().into());
@@ -1516,60 +1515,26 @@ pub const CLAUDE_AGENT_NAME: &str = "claude-acp";
 pub const CODEX_NAME: &str = "codex-acp";
 
 #[derive(Default, Clone, JsonSchema, Debug, PartialEq, RegisterSetting)]
-pub struct AllAgentServersSettings {
-    pub gemini: Option<BuiltinAgentServerSettings>,
-    pub claude: Option<BuiltinAgentServerSettings>,
-    pub codex: Option<BuiltinAgentServerSettings>,
-    pub custom: HashMap<String, CustomAgentServerSettings>,
+pub struct AllAgentServersSettings(pub HashMap<String, CustomAgentServerSettings>);
+
+impl std::ops::Deref for AllAgentServersSettings {
+    type Target = HashMap<String, CustomAgentServerSettings>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl std::ops::DerefMut for AllAgentServersSettings {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
 }
 
 impl AllAgentServersSettings {
     pub fn has_registry_agents(&self) -> bool {
-        self.custom
-            .values()
+        self.values()
             .any(|s| matches!(s, CustomAgentServerSettings::Registry { .. }))
-    }
-}
-
-#[derive(Default, Clone, JsonSchema, Debug, PartialEq)]
-pub struct BuiltinAgentServerSettings {
-    pub path: Option<PathBuf>,
-    pub args: Option<Vec<String>>,
-    pub env: Option<HashMap<String, String>>,
-    pub ignore_system_version: Option<bool>,
-    pub default_mode: Option<String>,
-    pub default_model: Option<String>,
-    pub favorite_models: Vec<String>,
-    pub default_config_options: HashMap<String, String>,
-    pub favorite_config_option_values: HashMap<String, Vec<String>>,
-}
-
-impl From<settings::BuiltinAgentServerSettings> for BuiltinAgentServerSettings {
-    fn from(value: settings::BuiltinAgentServerSettings) -> Self {
-        BuiltinAgentServerSettings {
-            path: value
-                .path
-                .map(|p| PathBuf::from(shellexpand::tilde(&p.to_string_lossy()).as_ref())),
-            args: value.args,
-            env: value.env,
-            ignore_system_version: value.ignore_system_version,
-            default_mode: value.default_mode,
-            default_model: value.default_model,
-            favorite_models: value.favorite_models,
-            default_config_options: value.default_config_options,
-            favorite_config_option_values: value.favorite_config_option_values,
-        }
-    }
-}
-
-impl From<AgentServerCommand> for BuiltinAgentServerSettings {
-    fn from(value: AgentServerCommand) -> Self {
-        BuiltinAgentServerSettings {
-            path: Some(value.path),
-            args: Some(value.args),
-            env: value.env,
-            ..Default::default()
-        }
     }
 }
 
@@ -1813,15 +1778,12 @@ impl From<settings::CustomAgentServerSettings> for CustomAgentServerSettings {
 impl settings::Settings for AllAgentServersSettings {
     fn from_settings(content: &settings::SettingsContent) -> Self {
         let agent_settings = content.agent_servers.clone().unwrap();
-        Self {
-            gemini: agent_settings.gemini.map(Into::into),
-            claude: agent_settings.claude.map(Into::into),
-            codex: agent_settings.codex.map(Into::into),
-            custom: agent_settings
-                .custom
+        Self(
+            agent_settings
+                .0
                 .into_iter()
                 .map(|(k, v)| (k, v.into()))
                 .collect(),
-        }
+        )
     }
 }

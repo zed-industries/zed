@@ -2573,7 +2573,7 @@ impl AgentPanel {
                                                             let agent_servers = settings
                                                                 .agent_servers
                                                                 .get_or_insert_default();
-                                                            agent_servers.custom.entry(agent_id_string).or_insert_with(|| {
+                                                            agent_servers.entry(agent_id_string).or_insert_with(|| {
                                                                 settings::CustomAgentServerSettings::Registry {
                                                                     default_mode: None,
                                                                     default_model: None,

@@ -36,7 +36,6 @@ impl AgentServer for CustomAgentServer {
         let settings = cx.read_global(|settings: &SettingsStore, _| {
             settings
                 .get::<AllAgentServersSettings>(None)
-                .custom
                 .get(self.name().as_ref())
                 .cloned()
         });
@@ -54,7 +53,6 @@ impl AgentServer for CustomAgentServer {
         let settings = cx.read_global(|settings: &SettingsStore, _| {
             settings
                 .get::<AllAgentServersSettings>(None)
-                .custom
                 .get(self.name().as_ref())
                 .cloned()
         });
@@ -88,7 +86,6 @@ impl AgentServer for CustomAgentServer {
             let settings = settings
                 .agent_servers
                 .get_or_insert_default()
-                .custom
                 .entry(name.to_string())
                 .or_insert_with(|| settings::CustomAgentServerSettings::Extension {
                     default_model: None,
@@ -137,7 +134,6 @@ impl AgentServer for CustomAgentServer {
             let settings = settings
                 .agent_servers
                 .get_or_insert_default()
-                .custom
                 .entry(name.to_string())
                 .or_insert_with(|| settings::CustomAgentServerSettings::Extension {
                     default_model: None,
@@ -162,7 +158,6 @@ impl AgentServer for CustomAgentServer {
         let settings = cx.read_global(|settings: &SettingsStore, _| {
             settings
                 .get::<AllAgentServersSettings>(None)
-                .custom
                 .get(self.name().as_ref())
                 .cloned()
         });
@@ -178,7 +173,6 @@ impl AgentServer for CustomAgentServer {
             let settings = settings
                 .agent_servers
                 .get_or_insert_default()
-                .custom
                 .entry(name.to_string())
                 .or_insert_with(|| settings::CustomAgentServerSettings::Extension {
                     default_model: None,
@@ -203,7 +197,6 @@ impl AgentServer for CustomAgentServer {
         let settings = cx.read_global(|settings: &SettingsStore, _| {
             settings
                 .get::<AllAgentServersSettings>(None)
-                .custom
                 .get(self.name().as_ref())
                 .cloned()
         });
@@ -231,7 +224,6 @@ impl AgentServer for CustomAgentServer {
             let settings = settings
                 .agent_servers
                 .get_or_insert_default()
-                .custom
                 .entry(name.to_string())
                 .or_insert_with(|| settings::CustomAgentServerSettings::Extension {
                     default_model: None,
@@ -269,7 +261,6 @@ impl AgentServer for CustomAgentServer {
         let settings = cx.read_global(|settings: &SettingsStore, _| {
             settings
                 .get::<AllAgentServersSettings>(None)
-                .custom
                 .get(self.name().as_ref())
                 .cloned()
         });
@@ -293,7 +284,6 @@ impl AgentServer for CustomAgentServer {
             let settings = settings
                 .agent_servers
                 .get_or_insert_default()
-                .custom
                 .entry(name.to_string())
                 .or_insert_with(|| settings::CustomAgentServerSettings::Extension {
                     default_model: None,
@@ -344,7 +334,6 @@ impl AgentServer for CustomAgentServer {
             cx.read_global(|settings: &SettingsStore, _| {
                 let agent_settings = settings
                     .get::<AllAgentServersSettings>(None)
-                    .custom
                     .get(self.name().as_ref());
 
                 let is_registry = agent_settings

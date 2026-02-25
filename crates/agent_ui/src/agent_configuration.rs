@@ -1176,13 +1176,13 @@ impl AgentConfiguration {
                             let Some(agent_servers) = settings.agent_servers.as_mut() else {
                                 return;
                             };
-                            if let Some(entry) = agent_servers.custom.get(agent_name.0.as_ref())
+                            if let Some(entry) = agent_servers.get(agent_name.0.as_ref())
                                 && matches!(
                                     entry,
                                     settings::CustomAgentServerSettings::Registry { .. }
                                 )
                             {
-                                agent_servers.custom.remove(agent_name.0.as_ref());
+                                agent_servers.remove(agent_name.0.as_ref());
                             }
                         });
                     })),
@@ -1367,29 +1367,23 @@ async fn open_new_agent_servers_entry_in_settings_editor(
                         !settings
                             .agent_servers
                             .as_ref()
-                            .is_some_and(|agent_servers| {
-                                agent_servers.custom.contains_key(name.as_str())
-                            })
+                            .is_some_and(|agent_servers| agent_servers.contains_key(name.as_str()))
                     });
                 if let Some(server_name) = server_name {
                     unique_server_name = Some(SharedString::from(server_name.clone()));
-                    settings
-                        .agent_servers
-                        .get_or_insert_default()
-                        .custom
-                        .insert(
-                            server_name,
-                            settings::CustomAgentServerSettings::Custom {
-                                path: "path_to_executable".into(),
-                                args: vec![],
-                                env: HashMap::default(),
-                                default_mode: None,
-                                default_model: None,
-                                favorite_models: vec![],
-                                default_config_options: Default::default(),
-                                favorite_config_option_values: Default::default(),
-                            },
-                        );
+                    settings.agent_servers.get_or_insert_default().insert(
+                        server_name,
+                        settings::CustomAgentServerSettings::Custom {
+                            path: "path_to_executable".into(),
+                            args: vec![],
+                            env: HashMap::default(),
+                            default_mode: None,
+                            default_model: None,
+                            favorite_models: vec![],
+                            default_config_options: Default::default(),
+                            favorite_config_option_values: Default::default(),
+                        },
+                    );
                 }
             });
 

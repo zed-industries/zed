@@ -4,8 +4,7 @@ use agent_client_protocol as acp;
 use futures::{FutureExt, StreamExt, channel::mpsc, select};
 use gpui::{Entity, TestAppContext};
 use indoc::indoc;
-#[cfg(test)]
-use project::agent_server_store::BuiltinAgentServerSettings;
+
 use project::{FakeFs, Project};
 #[cfg(test)]
 use settings::Settings;
@@ -414,21 +413,7 @@ pub async fn init_test(cx: &mut TestAppContext) -> Arc<FakeFs> {
 
         #[cfg(test)]
         project::agent_server_store::AllAgentServersSettings::override_global(
-            project::agent_server_store::AllAgentServersSettings {
-                claude: Some(BuiltinAgentServerSettings {
-                    path: Some("claude-agent-acp".into()),
-                    ..Default::default()
-                }),
-                gemini: Some(BuiltinAgentServerSettings {
-                    path: Some("gemini".into()),
-                    ..Default::default()
-                }),
-                codex: Some(BuiltinAgentServerSettings {
-                    path: Some("codex-acp".into()),
-                    ..Default::default()
-                }),
-                custom: collections::HashMap::default(),
-            },
+            project::agent_server_store::AllAgentServersSettings(collections::HashMap::default()),
             cx,
         );
     });
