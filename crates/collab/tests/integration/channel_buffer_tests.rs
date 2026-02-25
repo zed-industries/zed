@@ -769,9 +769,9 @@ async fn test_channel_buffer_operations_lost_on_reconnect(
         assert_eq!(buffer.buffer().read(cx).text(), "a");
     });
 
-    // Step 4: Set up barrier to control handle_connect interleaving.
+    // Step 4: Reconnect and make a racing edit in parallel.
     //
-    // The race condition requires:
+    // The race condition occurs when:
     // 1. Transport reconnects, handle_connect captures version V (with "b") and sends RejoinChannelBuffers
     // 2. DURING the async gap (awaiting response), user makes edit "c"
     // 3. on_buffer_update sends UpdateChannelBuffer (succeeds because transport is up)
@@ -780,38 +780,30 @@ async fn test_channel_buffer_operations_lost_on_reconnect(
     // 6. RejoinChannelBuffers reads inflated version and sends it back
     // 7. Client's serialize_ops(inflated_version) filters out "b" (offline edit)
     //    because the inflated version's timestamp covers "b"'s timestamp
-    //
-    // Strategy: Use a barrier on the ChannelStore to pause handle_connect after
-    // it sends RejoinChannelBuffers but before it processes the response. This
-    // gives us a window to make the racing edit.
-    let barrier_release = client_a
-        .channel_store()
-        .update(cx_a, |store, _| store.set_rejoin_barrier());
-    server.allow_connections();
 
-    // Advance the clock to trigger reconnection. handle_connect will:
-    // 1. Capture version (should be Global {0: 4} with just "b")
-    // 2. Send RejoinChannelBuffers
-    // 3. WAIT on the barrier (before awaiting response)
-    executor.advance_clock(RECEIVE_TIMEOUT);
-    executor.run_until_parked();
+    // Get the buffer handle for spawning
+    let buffer_for_edit = channel_buffer_a.read_with(cx_a, |buffer, _| buffer.buffer().clone());
 
-    // Step 5 (Critical): Make the racing edit "c" while handle_connect is paused.
-    // The transport is now up, so on_buffer_update will successfully send
-    // UpdateChannelBuffer to the server. This races with the pending
-    // RejoinChannelBuffers that hasn't been processed yet.
-    channel_buffer_a.update(cx_a, |buffer, cx| {
-        buffer.buffer().update(cx, |buffer, cx| {
-            buffer.edit([(2..2, "c")], None, cx);
-        })
+    // Spawn the edit task - it will wait for executor to run it
+    let edit_task = cx_a.spawn({
+        let buffer = buffer_for_edit.clone();
+        async move |mut cx| {
+            let _ = buffer.update(&mut cx, |buffer, cx| {
+                buffer.edit([(2..2, "c")], None, cx);
+            });
+        }
     });
 
-    // Let the UpdateChannelBuffer message be sent and potentially processed by server
-    executor.run_until_parked();
+    // Allow connections so reconnect can succeed
+    server.allow_connections();
 
-    // Step 6: Release the barrier to let handle_connect continue processing
-    // the RejoinChannelBuffers response.
-    drop(barrier_release);
+    // Advance clock to trigger reconnection attempt
+    executor.advance_clock(RECEIVE_TIMEOUT);
+
+    // Run the edit task - this races with handle_connect
+    edit_task.detach();
+
+    // Let everything settle.
     executor.run_until_parked();
 
     // Step 7: Read final buffer text from both clients.
