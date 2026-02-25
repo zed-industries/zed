@@ -1945,7 +1945,6 @@ impl AgentServer for StubAgentServer {
 
     fn connect(
         &self,
-        _root_dir: Option<&Path>,
         _delegate: AgentServerDelegate,
         _cx: &mut App,
     ) -> gpui::Task<gpui::Result<(Rc<dyn AgentConnection>, Option<task::SpawnInTerminal>)>> {

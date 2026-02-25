@@ -2,39 +2,10 @@ use crate::{DbThread, DbThreadMetadata, ThreadsDatabase};
 use agent_client_protocol as acp;
 use anyhow::{Result, anyhow};
 use gpui::{App, Context, Entity, Global, Task, prelude::*};
-use project::Project;
-use std::rc::Rc;
 
 struct GlobalThreadStore(Entity<ThreadStore>);
 
 impl Global for GlobalThreadStore {}
-
-// TODO: Remove once ACP thread loading is fully handled elsewhere.
-pub fn load_agent_thread(
-    session_id: acp::SessionId,
-    thread_store: Entity<ThreadStore>,
-    project: Entity<Project>,
-    cx: &mut App,
-) -> Task<Result<Entity<crate::Thread>>> {
-    use agent_servers::{AgentServer, AgentServerDelegate};
-
-    let server = Rc::new(crate::NativeAgentServer::new(
-        project.read(cx).fs().clone(),
-        thread_store,
-    ));
-    let delegate = AgentServerDelegate::new(
-        project.read(cx).agent_server_store().clone(),
-        project.clone(),
-        None,
-        None,
-    );
-    let connection = server.connect(None, delegate, cx);
-    cx.spawn(async move |cx| {
-        let (agent, _) = connection.await?;
-        let agent = agent.downcast::<crate::NativeAgentConnection>().unwrap();
-        cx.update(|cx| agent.load_thread(session_id, cx)).await
-    })
-}
 
 pub struct ThreadStore {
     threads: Vec<DbThreadMetadata>,

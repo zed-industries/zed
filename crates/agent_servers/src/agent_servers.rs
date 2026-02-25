@@ -22,7 +22,7 @@ use anyhow::Result;
 use gpui::{App, AppContext, Entity, SharedString, Task};
 use project::Project;
 use settings::SettingsStore;
-use std::{any::Any, path::Path, rc::Rc, sync::Arc};
+use std::{any::Any, rc::Rc, sync::Arc};
 
 pub use acp::AcpConnection;
 
@@ -58,7 +58,6 @@ pub trait AgentServer: Send {
     fn name(&self) -> SharedString;
     fn connect(
         &self,
-        root_dir: Option<&Path>,
         delegate: AgentServerDelegate,
         cx: &mut App,
     ) -> Task<Result<(Rc<dyn AgentConnection>, Option<task::SpawnInTerminal>)>>;

@@ -151,7 +151,7 @@ pub(crate) fn compare_versions() -> (Step<Run>, StepOutput, StepOutput) {
         CURRENT_VERSION="$({VERSION_CHECK})"
 
         if [[ "${{{{ github.event_name }}}}" == "pull_request" ]]; then
-            PR_FORK_POINT="$(git merge-base --fork-point main)"
+            PR_FORK_POINT="$(git merge-base origin/main HEAD)"
             git checkout "$PR_FORK_POINT"
         elif BRANCH_PARENT_SHA="$(git merge-base origin/main origin/zed-zippy-autobump)"; then
             git checkout "$BRANCH_PARENT_SHA"
@@ -191,7 +191,7 @@ fn bump_extension_version(
 
     let job = steps::dependant_job(dependencies)
         .cond(Expression::new(format!(
-            "{DEFAULT_REPOSITORY_OWNER_GUARD} &&\n({force_bump} == 'true' || {version_changed} == 'false')",
+            "{DEFAULT_REPOSITORY_OWNER_GUARD} &&\n({force_bump} == true || {version_changed} == 'false')",
             force_bump = force_bump_output.expr(),
             version_changed = version_changed_output.expr(),
         )))
