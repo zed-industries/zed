@@ -157,7 +157,7 @@ Note that for [external agents](./external-agents.md) connected through the [Age
 Regarding the built-in ones, Claude Agent and Codex both support it, and Gemini CLI does not yet.
 In the meantime, learn how to add MCP server support to Gemini CLI through [their documentation](https://github.com/google-gemini/gemini-cli?tab=readme-ov-file#using-mcp-servers).
 
-#### Error Handling
+### Error Handling
 
 When a MCP server encounters an error while processing a tool call, the agent receives the error message directly and the operation fails.
 Common error scenarios include:
