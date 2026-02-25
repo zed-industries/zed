@@ -65,6 +65,10 @@ pub struct AmazonBedrockSettingsContent {
     pub allow_global: Option<bool>,
     /// Enable the 1M token extended context window beta for supported Anthropic models.
     pub allow_extended_context: Option<bool>,
+    /// The guardrail identifier (ARN or ID) to apply to Bedrock API requests.
+    pub guardrail_identifier: Option<String>,
+    /// The guardrail version to use. Defaults to "DRAFT" if not specified.
+    pub guardrail_version: Option<String>,
 }
 
 #[with_fallible_options]

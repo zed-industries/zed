@@ -60,6 +60,8 @@ impl settings::Settings for AllLanguageModelSettings {
                 authentication_method: bedrock.authentication_method.map(Into::into),
                 allow_global: bedrock.allow_global,
                 allow_extended_context: bedrock.allow_extended_context,
+                guardrail_identifier: bedrock.guardrail_identifier,
+                guardrail_version: bedrock.guardrail_version,
             },
             deepseek: DeepSeekSettings {
                 api_url: deepseek.api_url.unwrap(),
