@@ -126,8 +126,8 @@ Additionally, you can also select text in a buffer or terminal and add it as con
 It's also possible to attach images in your prompt for providers that support vision models.
 OpenAI GPT-4o and later, Anthropic Claude 3 and later, Google Gemini 1.5 and 2.0, and Bedrock vision models (Claude 3+, Amazon Nova Pro and Lite, Meta Llama 3.2 Vision, Mistral Pixtral) all support image inputs.
 
-To add an image, you can either search in your project's directory through @-mentioning it, or dragging it from your file system directly into the agent panel message editor.
-You can also copy an image and paste it into the message editor.
+To add an image, you can either search in your project's directory by @-mentioning it, or drag it from your file system directly into the agent panel message editor.
+Copying an image and pasting it is also supported.
 
 ## Token Usage {#token-usage}
 
