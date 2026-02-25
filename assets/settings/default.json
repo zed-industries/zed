@@ -799,6 +799,18 @@
     // 3. Show files first, then directories:
     //    "files_first"
     "sort_mode": "directories_first",
+    // File nesting configuration.
+    "file_nesting": {
+      // Whether to enable file nesting in the project panel.
+      // When enabled, files will be nested under parent entries according to the specified patterns.
+      // If disabled, the patterns will be ignored and no nesting will occur.
+      "enabled": false,
+      // The map of file patterns to nest.
+      // The key is the parent pattern, and the value is the child pattern.
+      //
+      // Example: `{"*.ts": "$(capture).js"}`
+      "patterns": {}
+    },
     // Whether to show error and warning count badges next to file names in the project panel.
     "diagnostic_badges": true,
     // Whether to enable drag-and-drop operations in the project panel.

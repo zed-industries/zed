@@ -802,6 +802,18 @@ impl VsCodeSettings {
             sticky_scroll: None,
             auto_open: None,
             diagnostic_badges: None,
+            file_nesting: {
+                let enabled = self.read_bool("explorer.fileNesting.enabled");
+                let patterns = self
+                    .read_value("explorer.fileNesting.patterns")
+                    .and_then(|v| serde_json::from_value(v.clone()).ok());
+
+                if enabled.is_some_and(|e| e) || patterns.is_some() {
+                    Some(FileNestingSettings { enabled, patterns })
+                } else {
+                    None
+                }
+            },
         };
 
         if let (Some(false), Some(false)) = (

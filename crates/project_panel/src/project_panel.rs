@@ -34,6 +34,7 @@ use notifications::status_toast::{StatusToast, ToastIcon};
 use project::{
     Entry, EntryKind, Fs, GitEntry, GitEntryRef, GitTraversal, Project, ProjectEntryId,
     ProjectPath, Worktree, WorktreeId,
+    file_nesting::FileNestingPattern,
     git_store::{GitStoreEvent, RepositoryEvent, git_traversal::ChildEntriesGitIter},
     project_settings::GoToDiagnosticSeverityFilter,
 };
@@ -42,8 +43,8 @@ use rayon::slice::ParallelSliceMut;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{
-    DockSide, ProjectPanelEntrySpacing, Settings, SettingsStore, ShowDiagnostics, ShowIndentGuides,
-    update_settings_file,
+    DockSide, FileNestingSettings, ProjectPanelEntrySpacing, Settings, SettingsStore,
+    ShowDiagnostics, ShowIndentGuides, update_settings_file,
 };
 use smallvec::SmallVec;
 use std::{any::TypeId, time::Instant};
@@ -83,9 +84,24 @@ use zed_actions::{
 const PROJECT_PANEL_KEY: &str = "ProjectPanel";
 const NEW_ENTRY_ID: ProjectEntryId = ProjectEntryId::MAX;
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PanelEntry {
+    pub git_entry: GitEntry,
+    pub sub_depth: usize,
+    pub is_nested_parent: bool,
+}
+
+impl std::ops::Deref for PanelEntry {
+    type Target = GitEntry;
+
+    fn deref(&self) -> &Self::Target {
+        &self.git_entry
+    }
+}
+
 struct VisibleEntriesForWorktree {
     worktree_id: WorktreeId,
-    entries: Vec<GitEntry>,
+    entries: Vec<PanelEntry>,
     index: OnceCell<HashSet<Arc<RelPath>>>,
 }
 
@@ -279,6 +295,7 @@ struct EntryDetails {
     is_private: bool,
     worktree_id: WorktreeId,
     canonical_path: Option<Arc<Path>>,
+    is_nested_parent: bool,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
@@ -828,9 +845,9 @@ impl ProjectPanel {
             })
             .detach();
 
-            let mut project_panel_settings = *ProjectPanelSettings::get_global(cx);
+            let mut project_panel_settings = ProjectPanelSettings::get_global(cx).clone();
             cx.observe_global_in::<SettingsStore>(window, move |this, window, cx| {
-                let new_settings = *ProjectPanelSettings::get_global(cx);
+                let new_settings = ProjectPanelSettings::get_global(cx).clone();
                 if project_panel_settings != new_settings {
                     if project_panel_settings.hide_gitignore != new_settings.hide_gitignore {
                         this.update_visible_entries(None, false, false, window, cx);
@@ -3793,6 +3810,186 @@ impl ProjectPanel {
         Some(())
     }
 
+    fn apply_file_nesting(
+        entries: Vec<GitEntry>,
+        settings: &FileNestingSettings,
+        expanded_entry_ids: &[ProjectEntryId],
+    ) -> Vec<PanelEntry> {
+        let as_non_nested_entries = |entries: Vec<GitEntry>| {
+            entries
+                .into_iter()
+                .map(|entry| PanelEntry {
+                    git_entry: entry,
+                    sub_depth: 0,
+                    is_nested_parent: false,
+                })
+                .collect::<Vec<_>>()
+        };
+
+        let Some(patterns) = &settings.patterns else {
+            return as_non_nested_entries(entries);
+        };
+
+        let nesting_patterns: Vec<Arc<FileNestingPattern>> = patterns
+            .iter()
+            .filter_map(|(k, v)| FileNestingPattern::new(k, v).map(Arc::new))
+            .collect();
+
+        if nesting_patterns.is_empty() {
+            return as_non_nested_entries(entries);
+        }
+
+        let mut result = Vec::with_capacity(entries.len());
+        let mut file_buffer = Vec::new();
+        let mut current_dir: Option<Arc<RelPath>> = None;
+
+        let process_directory_batch = |batch: &mut Vec<GitEntry>, result: &mut Vec<PanelEntry>| {
+            if batch.is_empty() {
+                return;
+            }
+
+            let mut name_to_index: HashMap<String, usize> = HashMap::default();
+            for (index, entry) in batch.iter().enumerate() {
+                if let Some(name) = entry.path.file_name() {
+                    name_to_index.insert(name.to_string(), index);
+                }
+            }
+
+            let mut parent_to_children: HashMap<usize, Vec<usize>> = HashMap::default();
+            let mut child_to_parent: HashMap<usize, usize> = HashMap::default();
+
+            let mut link_child = |parent_index: usize, child_index: usize| {
+                if parent_index == child_index {
+                    return;
+                }
+                if child_to_parent.contains_key(&child_index) {
+                    return;
+                }
+                if child_to_parent.get(&parent_index) == Some(&child_index) {
+                    return;
+                }
+
+                parent_to_children
+                    .entry(parent_index)
+                    .or_default()
+                    .push(child_index);
+                child_to_parent.insert(child_index, parent_index);
+            };
+
+            let mut parent_indices: Vec<usize> = (0..batch.len()).collect();
+            parent_indices.sort_by(|left_index, right_index| {
+                let left_name_length = batch[*left_index]
+                    .path
+                    .file_name()
+                    .map(str::len)
+                    .unwrap_or_default();
+                let right_name_length = batch[*right_index]
+                    .path
+                    .file_name()
+                    .map(str::len)
+                    .unwrap_or_default();
+                right_name_length
+                    .cmp(&left_name_length)
+                    .then_with(|| left_index.cmp(right_index))
+            });
+
+            for parent_index in parent_indices {
+                let entry = &batch[parent_index];
+                let Some(parent_name) = entry.path.file_name() else {
+                    continue;
+                };
+
+                for pattern in &nesting_patterns {
+                    let Some(expected_child_names) = pattern.match_and_replace(parent_name) else {
+                        continue;
+                    };
+
+                    for expected_child_name in expected_child_names {
+                        if expected_child_name.contains('*') {
+                            let Some(child_regex) =
+                                FileNestingPattern::compile_glob(&expected_child_name)
+                            else {
+                                continue;
+                            };
+
+                            for (child_index, child_entry) in batch.iter().enumerate() {
+                                let Some(child_name) = child_entry.path.file_name() else {
+                                    continue;
+                                };
+                                if child_regex.is_match(child_name) {
+                                    link_child(parent_index, child_index);
+                                }
+                            }
+                            continue;
+                        }
+
+                        if let Some(&child_index) = name_to_index.get(&expected_child_name) {
+                            link_child(parent_index, child_index);
+                        }
+                    }
+                }
+            }
+
+            let mut processed = HashSet::new();
+            for root_index in 0..batch.len() {
+                if child_to_parent.contains_key(&root_index) {
+                    continue;
+                }
+
+                let mut stack = vec![(root_index, 0)];
+                while let Some((entry_index, depth)) = stack.pop() {
+                    if !processed.insert(entry_index) {
+                        continue;
+                    }
+
+                    let entry = &batch[entry_index];
+                    let children = parent_to_children.get(&entry_index);
+                    let is_nested_parent = children.is_some_and(|children| !children.is_empty());
+
+                    result.push(PanelEntry {
+                        git_entry: entry.clone(),
+                        sub_depth: depth,
+                        is_nested_parent,
+                    });
+
+                    if expanded_entry_ids.binary_search(&entry.id).is_err() {
+                        continue;
+                    }
+
+                    if let Some(children) = children {
+                        for &child_index in children.iter().rev() {
+                            stack.push((child_index, depth + 1));
+                        }
+                    }
+                }
+            }
+
+            batch.clear();
+        };
+
+        for entry in entries {
+            if entry.is_dir() {
+                process_directory_batch(&mut file_buffer, &mut result);
+                current_dir = None;
+                result.push(PanelEntry {
+                    git_entry: entry,
+                    sub_depth: 0,
+                    is_nested_parent: false,
+                });
+            } else {
+                let parent = entry.path.parent().map(|p| p.into());
+                if parent != current_dir {
+                    process_directory_batch(&mut file_buffer, &mut result);
+                    current_dir = parent;
+                }
+                file_buffer.push(entry);
+            }
+        }
+        process_directory_batch(&mut file_buffer, &mut result);
+
+        result
+    }
+
     fn create_new_git_entry(
         parent_entry: &Entry,
         git_summary: GitSummary,
@@ -3851,6 +4048,7 @@ impl ProjectPanel {
             .collect();
         let hide_root = settings.hide_root && visible_worktrees.len() == 1;
         let hide_hidden = settings.hide_hidden;
+        let file_nesting_settings = settings.file_nesting.clone();
 
         let visible_entries_task = cx.spawn_in(window, async move |this, cx| {
             let new_state = cx
@@ -4067,11 +4265,40 @@ impl ProjectPanel {
                             &mut visible_worktree_entries,
                             sort_mode,
                         );
-                        new_state.visible_entries.push(VisibleEntriesForWorktree {
-                            worktree_id,
-                            entries: visible_worktree_entries,
-                            index: OnceCell::new(),
-                        })
+
+                        // Apply file nesting
+                        if file_nesting_settings.enabled.unwrap_or_default() {
+                            let expanded_entry_ids = new_state
+                                .expanded_dir_ids
+                                .get(&worktree_id)
+                                .map(|v| v.as_slice())
+                                .unwrap_or(&[]);
+
+                            let nested_entries = Self::apply_file_nesting(
+                                visible_worktree_entries,
+                                &file_nesting_settings,
+                                expanded_entry_ids,
+                            );
+
+                            new_state.visible_entries.push(VisibleEntriesForWorktree {
+                                worktree_id,
+                                entries: nested_entries,
+                                index: OnceCell::new(),
+                            })
+                        } else {
+                            new_state.visible_entries.push(VisibleEntriesForWorktree {
+                                worktree_id,
+                                entries: visible_worktree_entries
+                                    .into_iter()
+                                    .map(|entry| PanelEntry {
+                                        git_entry: entry,
+                                        sub_depth: 0,
+                                        is_nested_parent: false,
+                                    })
+                                    .collect(),
+                                index: OnceCell::new(),
+                            })
+                        }
                     }
                     if let Some((project_entry_id, worktree_id, _)) = max_width_item {
                         let mut visited_worktrees_length = 0;
@@ -4506,7 +4733,7 @@ impl ProjectPanel {
         None
     }
 
-    fn entry_at_index(&self, index: usize) -> Option<(WorktreeId, GitEntryRef<'_>)> {
+    fn entry_at_index(&self, index: usize) -> Option<(WorktreeId, &PanelEntry)> {
         let mut offset = 0;
         for worktree in &self.state.visible_entries {
             let current_len = worktree.entries.len();
@@ -4514,7 +4741,7 @@ impl ProjectPanel {
                 return worktree
                     .entries
                     .get(index - offset)
-                    .map(|entry| (worktree.worktree_id, entry.to_ref()));
+                    .map(|entry| (worktree.worktree_id, entry));
             }
             offset += current_len;
         }
@@ -4526,8 +4753,8 @@ impl ProjectPanel {
         range: Range<usize>,
         window: &mut Window,
         cx: &mut Context<ProjectPanel>,
-        callback: &mut dyn FnMut(
-            &Entry,
+        mut callback: impl FnMut(
+            &PanelEntry,
             usize,
             &HashSet<Arc<RelPath>>,
             &mut Window,
@@ -4703,7 +4930,7 @@ impl ProjectPanel {
 
             return utils::ReversibleIterable::new(entries.iter(), reverse_search)
                 .find(|ele| predicate(ele.to_ref(), worktree_id))
-                .cloned();
+                .map(|e| e.git_entry.clone());
         }
 
         let repo_snapshots = self
@@ -5530,104 +5757,95 @@ impl ProjectPanel {
                         ProjectPanelEntrySpacing::Standard => ListItemSpacing::ExtraDense,
                     })
                     .selectable(false)
-                    .when(
-                        canonical_path.is_some() || diagnostic_count.is_some(),
-                        |this| {
-                            let symlink_element = canonical_path.map(|path| {
-                                div()
-                                    .id("symlink_icon")
-                                    .tooltip(move |_window, cx| {
-                                        Tooltip::with_meta(
-                                            path.to_string(),
-                                            None,
-                                            "Symbolic Link",
-                                            cx,
-                                        )
-                                    })
-                                    .child(
-                                        Icon::new(IconName::ArrowUpRight)
-                                            .size(IconSize::Indicator)
-                                            .color(filename_text_color),
-                                    )
-                            });
-                            this.end_slot::<AnyElement>(
-                                h_flex()
-                                    .gap_1()
-                                    .flex_none()
-                                    .pr_3()
-                                    .when_some(diagnostic_count, |this, count| {
-                                        this.when(count.error_count > 0, |this| {
-                                            this.child(
-                                                Label::new(count.capped_error_count())
-                                                    .size(LabelSize::Small)
-                                                    .color(Color::Error),
-                                            )
-                                        })
-                                        .when(
-                                            count.warning_count > 0,
-                                            |this| {
-                                                this.child(
-                                                    Label::new(count.capped_warning_count())
-                                                        .size(LabelSize::Small)
-                                                        .color(Color::Warning),
-                                                )
-                                            },
-                                        )
-                                    })
-                                    .when_some(symlink_element, |this, el| this.child(el))
-                                    .into_any_element(),
-                            )
-                        },
-                    )
-                    .child(if let Some(icon) = &icon {
-                        if let Some((_, decoration_color)) =
-                            entry_diagnostic_aware_icon_decoration_and_color(diagnostic_severity)
-                        {
-                            let is_warning = diagnostic_severity
-                                .map(|severity| matches!(severity, DiagnosticSeverity::WARNING))
-                                .unwrap_or(false);
-                            div().child(
-                                DecoratedIcon::new(
-                                    Icon::from_path(icon.clone()).color(Color::Muted),
-                                    Some(
-                                        IconDecoration::new(
-                                            if kind.is_file() {
-                                                if is_warning {
-                                                    IconDecorationKind::Triangle
-                                                } else {
-                                                    IconDecorationKind::X
-                                                }
-                                            } else {
-                                                IconDecorationKind::Dot
-                                            },
-                                            bg_color,
-                                            cx,
-                                        )
-                                        .group_name(Some(GROUP_NAME.into()))
-                                        .knockout_hover_color(bg_hover_color)
-                                        .color(decoration_color.color(cx))
-                                        .position(Point {
-                                            x: px(-2.),
-                                            y: px(-2.),
-                                        }),
-                                    ),
+                    .when_some(canonical_path, |this, path| {
+                        this.end_slot::<AnyElement>(
+                            div()
+                                .id("symlink_icon")
+                                .pr_3()
+                                .tooltip(move |_window, cx| {
+                                    Tooltip::with_meta(path.to_string(), None, "Symbolic Link", cx)
+                                })
+                                .child(
+                                    Icon::new(IconName::ArrowUpRight)
+                                        .size(IconSize::Indicator)
+                                        .color(filename_text_color),
                                 )
                                 .into_any_element(),
-                            )
+                        )
+                    })
+                    .child({
+                        let icon_element = if let Some(icon) = &icon {
+                            if let Some((_, decoration_color)) =
+                                entry_diagnostic_aware_icon_decoration_and_color(
+                                    diagnostic_severity,
+                                )
+                            {
+                                let is_warning = diagnostic_severity
+                                    .map(|severity| matches!(severity, DiagnosticSeverity::WARNING))
+                                    .unwrap_or(false);
+                                div()
+                                    .child(
+                                        DecoratedIcon::new(
+                                            Icon::from_path(icon.clone()).color(Color::Muted),
+                                            Some(
+                                                IconDecoration::new(
+                                                    if kind.is_file() {
+                                                        if is_warning {
+                                                            IconDecorationKind::Triangle
+                                                        } else {
+                                                            IconDecorationKind::X
+                                                        }
+                                                    } else {
+                                                        IconDecorationKind::Dot
+                                                    },
+                                                    bg_color,
+                                                    cx,
+                                                )
+                                                .group_name(Some(GROUP_NAME.into()))
+                                                .knockout_hover_color(bg_hover_color)
+                                                .color(decoration_color.color(cx))
+                                                .position(Point {
+                                                    x: px(-2.),
+                                                    y: px(-2.),
+                                                }),
+                                            ),
+                                        )
+                                        .into_any_element(),
+                                    )
+                                    .into_any_element()
+                            } else {
+                                h_flex()
+                                    .child(Icon::from_path(icon.to_string()).color(Color::Muted))
+                                    .into_any_element()
+                            }
+                        } else if let Some((icon_name, color)) =
+                            entry_diagnostic_aware_icon_name_and_color(diagnostic_severity)
+                        {
+                            h_flex()
+                                .size(IconSize::default().rems())
+                                .child(Icon::new(icon_name).color(color).size(IconSize::Small))
+                                .into_any_element()
                         } else {
-                            h_flex().child(Icon::from_path(icon.to_string()).color(Color::Muted))
+                            h_flex()
+                                .size(IconSize::default().rems())
+                                .invisible()
+                                .flex_none()
+                                .into_any_element()
+                        };
+
+                        if kind.is_dir() || details.is_nested_parent {
+                            div()
+                                .id("chevron-toggle")
+                                .child(icon_element)
+                                .cursor_pointer()
+                                .on_click(cx.listener(move |this, _, window, cx| {
+                                    cx.stop_propagation();
+                                    this.toggle_expanded(entry_id, window, cx);
+                                }))
+                                .into_any_element()
+                        } else {
+                            icon_element
                         }
-                    } else if let Some((icon_name, color)) =
-                        entry_diagnostic_aware_icon_name_and_color(diagnostic_severity)
-                    {
-                        h_flex()
-                            .size(IconSize::default().rems())
-                            .child(Icon::new(icon_name).color(color).size(IconSize::Small))
-                    } else {
-                        h_flex()
-                            .size(IconSize::default().rems())
-                            .invisible()
-                            .flex_none()
                     })
                     .child(if show_editor {
                         h_flex().h_6().w_full().child(self.filename_editor.clone())
@@ -5918,7 +6136,7 @@ impl ProjectPanel {
 
     fn details_for_entry(
         &self,
-        entry: &Entry,
+        entry: &PanelEntry,
         worktree_id: WorktreeId,
         root_name: &RelPath,
         entries_paths: &HashSet<Arc<RelPath>>,
@@ -5940,26 +6158,24 @@ impl ProjectPanel {
             .unwrap_or(&[]);
         let is_expanded = expanded_entry_ids.binary_search(&entry.id).is_ok();
 
-        let icon = match entry.kind {
-            EntryKind::File => {
-                if show_file_icons {
-                    FileIcons::get_icon(entry.path.as_std_path(), cx)
-                } else {
-                    None
-                }
+        let icon = if entry.kind.is_file() && !entry.is_nested_parent {
+            if show_file_icons {
+                FileIcons::get_icon(entry.path.as_std_path(), cx)
+            } else {
+                None
             }
-            _ => {
-                if show_folder_icons {
-                    FileIcons::get_folder_icon(is_expanded, entry.path.as_std_path(), cx)
-                } else {
-                    FileIcons::get_chevron_icon(is_expanded, cx)
-                }
+        } else {
+            if show_folder_icons && entry.kind.is_dir() {
+                FileIcons::get_folder_icon(is_expanded, entry.path.as_std_path(), cx)
+            } else {
+                FileIcons::get_chevron_icon(is_expanded, cx)
             }
         };
 
         let path_style = self.project.read(cx).path_style(cx);
-        let (depth, difference) =
-            ProjectPanel::calculate_depth_and_difference(entry, entries_paths);
+        let (mut depth, difference) =
+            ProjectPanel::calculate_depth_and_difference(&entry.entry, entries_paths);
+        depth += entry.sub_depth;
 
         let filename = if difference > 1 {
             entry
@@ -6022,6 +6238,7 @@ impl ProjectPanel {
             is_private: entry.is_private,
             worktree_id,
             canonical_path: entry.canonical_path.clone(),
+            is_nested_parent: entry.is_nested_parent,
         }
     }
 
@@ -6247,8 +6464,16 @@ impl ProjectPanel {
                 let sticky_details = Some(StickyDetails {
                     sticky_index: index,
                 });
+                let panel_entry = PanelEntry {
+                    git_entry: GitEntry {
+                        entry: entry.clone(),
+                        git_summary: git_status,
+                    },
+                    sub_depth: 0,
+                    is_nested_parent: false,
+                };
                 let details = self.details_for_entry(
-                    entry,
+                    &panel_entry,
                     worktree_id,
                     root_name,
                     paths,
@@ -6500,11 +6725,13 @@ impl Render for ProjectPanel {
                                                 range,
                                                 window,
                                                 cx,
-                                                &mut |entry, _, entries, _, _| {
-                                                    let (depth, _) =
+                                                |entry, _, entries, _, _| {
+                                                    let (mut depth, _) =
                                                         Self::calculate_depth_and_difference(
-                                                            entry, entries,
+                                                            &entry.entry,
+                                                            entries,
                                                         );
+                                                    depth += entry.sub_depth;
                                                     items.push(depth);
                                                 },
                                             );
@@ -6613,11 +6840,13 @@ impl Render for ProjectPanel {
                                             range,
                                             window,
                                             cx,
-                                            &mut |entry, index, entries, _, _| {
-                                                let (depth, _) =
+                                            |entry, index, entries, _, _| {
+                                                let (mut depth, _) =
                                                     Self::calculate_depth_and_difference(
-                                                        entry, entries,
+                                                        &entry.entry,
+                                                        entries,
                                                     );
+                                                depth += entry.sub_depth;
                                                 let candidate =
                                                     StickyProjectPanelCandidate { index, depth };
                                                 items.push(candidate);
