@@ -132,8 +132,8 @@ if [[ "$DRY_RUN" == "true" ]]; then
     exit 0
 fi
 
-# Ensure clean working state
-if [[ -n "$(git status --porcelain)" ]]; then
+# Ensure clean working state (ignore untracked files with grep -v '??')
+if [[ -n "$(git status --porcelain | grep -v '^??' || true)" ]]; then
     error "Working directory has uncommitted changes. Please commit or stash first."
 fi
 
@@ -221,9 +221,14 @@ EOF
 cat "$SUGGESTIONS_FILE" >> "$APPLY_PROMPT_FILE"
 
 log "Running Droid auto-apply with model: $MODEL"
-droid exec -m "$MODEL" -f "$APPLY_PROMPT_FILE" > "$APPLY_SUMMARY_FILE"
+if ! droid exec -m "$MODEL" -f "$APPLY_PROMPT_FILE" --auto high > "$APPLY_SUMMARY_FILE" 2>&1; then
+    echo "Droid exec output:"
+    cat "$APPLY_SUMMARY_FILE"
+    error "Droid exec failed. See output above."
+fi
+log "Droid completed, checking results..."
 
-if [[ -n "$(git status --porcelain | grep -vE '^.. docs/' || true)" ]]; then
+if [[ -n "$(git status --porcelain | grep -v '^??' | grep -vE '^.. docs/' || true)" ]]; then
     error "Auto-apply modified non-doc files. Revert and re-run."
 fi
 
@@ -232,7 +237,7 @@ if [[ -z "$(git status --porcelain docs/ | grep '^.. docs/src/' || true)" ]]; th
 fi
 
 log "Running docs formatter"
-./script/prettier
+./script/prettier --write
 
 if [[ -z "$(git status --porcelain docs/ | grep '^.. docs/src/' || true)" ]]; then
     error "No docs/src changes remain after formatting; aborting PR creation."
@@ -324,8 +329,7 @@ log "Creating PR..."
 PR_URL=$(gh pr create \
     --draft \
     --title "docs: auto-apply preview release suggestions" \
-    --body-file "$PR_BODY_FILE" \
-    --label "documentation")
+    --body-file "$PR_BODY_FILE")
 
 echo ""
 echo -e "${GREEN}PR created:${NC} $PR_URL"
