@@ -11,6 +11,7 @@
 ] @string
 
 (comment) @comment
+
 (entity) @string.special
 
 "=" @punctuation.delimiter.html

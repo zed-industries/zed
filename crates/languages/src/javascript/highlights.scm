@@ -387,4 +387,5 @@
   "=" @punctuation.delimiter.jsx)
 
 (jsx_text) @text.jsx
+
 (html_character_reference) @string.special
