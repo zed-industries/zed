@@ -190,7 +190,7 @@ impl ContextMenuEntry {
     pub fn documentation_aside(
         mut self,
         side: DocumentationSide,
-        render: impl Fn(&mut App) -> AnyElement + 'static,
+        render: impl Fn(&mut Window, &mut App) -> AnyElement + 'static,
     ) -> Self {
         self.documentation_aside = Some(DocumentationAside {
             side,
@@ -245,11 +245,14 @@ pub enum DocumentationSide {
 #[derive(Clone)]
 pub struct DocumentationAside {
     pub side: DocumentationSide,
-    pub render: Rc<dyn Fn(&mut App) -> AnyElement>,
+    pub render: Rc<dyn Fn(&mut Window, &mut App) -> AnyElement>,
 }
 
 impl DocumentationAside {
-    pub fn new(side: DocumentationSide, render: Rc<dyn Fn(&mut App) -> AnyElement>) -> Self {
+    pub fn new(
+        side: DocumentationSide,
+        render: Rc<dyn Fn(&mut Window, &mut App) -> AnyElement>,
+    ) -> Self {
         Self { side, render }
     }
 }
@@ -2082,7 +2085,7 @@ impl Render for ContextMenu {
         };
 
         let aside = self.documentation_aside.clone();
-        let render_aside = |aside: DocumentationAside, cx: &mut Context<Self>| {
+        let render_aside = |aside: DocumentationAside, window: &mut Window, cx: &mut Context<Self>| {
             WithRemSize::new(ui_font_size)
                 .occlude()
                 .elevation_2(cx)
@@ -2091,7 +2094,7 @@ impl Render for ContextMenu {
                 .overflow_hidden()
                 .when(is_wide_window, |this| this.max_w_96())
                 .when(!is_wide_window, |this| this.max_w_48())
-                .child((aside.render)(cx))
+                .child((aside.render)(window, cx))
         };
 
         let render_menu = |cx: &mut Context<Self>, window: &mut Window| {
@@ -2239,7 +2242,7 @@ impl Render for ContextMenu {
                             })
                             .top(top)
                             .h(height)
-                            .child(render_aside(aside, cx))
+                            .child(render_aside(aside, window, cx))
                     }))
                 })
                 .when_some(submenu_container, |this, (ix, submenu, offset)| {
@@ -2251,7 +2254,7 @@ impl Render for ContextMenu {
                 .relative()
                 .gap_1()
                 .justify_end()
-                .children(aside.map(|(_, aside)| render_aside(aside, cx)))
+                .children(aside.map(|(_, aside)| render_aside(aside, window, cx)))
                 .child(render_menu(cx, window))
                 .when_some(submenu_container, |this, (ix, submenu, offset)| {
                     this.child(self.render_submenu_container(ix, submenu, offset, cx))

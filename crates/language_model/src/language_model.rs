@@ -597,6 +597,12 @@ pub trait LanguageModel: Send + Sync {
         false
     }
 
+    /// Returns the available endpoints/providers for this model.
+    /// This is used for aggregator providers like OpenRouter that can route to multiple backends.
+    fn available_endpoints(&self, _cx: &App) -> Vec<open_router::Endpoint> {
+        Vec::new()
+    }
+
     fn telemetry_id(&self) -> String;
 
     fn api_key(&self, _cx: &App) -> Option<String> {

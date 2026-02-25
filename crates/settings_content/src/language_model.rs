@@ -417,6 +417,21 @@ pub struct OpenRouterProvider {
     sort: Option<String>,
 }
 
+impl OpenRouterProvider {
+    pub fn with_order(provider_names: Vec<String>) -> Self {
+        Self {
+            order: Some(provider_names),
+            allow_fallbacks: false,
+            require_parameters: false,
+            data_collection: DataCollection::default(),
+            only: None,
+            ignore: None,
+            quantizations: None,
+            sort: None,
+        }
+    }
+}
+
 #[derive(Clone, Default, Debug, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
 #[serde(rename_all = "lowercase")]
 pub enum DataCollection {

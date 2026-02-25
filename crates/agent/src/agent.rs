@@ -100,9 +100,11 @@ impl LanguageModels {
     }
 
     fn refresh_list(&mut self, cx: &App) {
-        let providers = LanguageModelRegistry::global(cx)
+        let all_providers = LanguageModelRegistry::global(cx)
             .read(cx)
-            .visible_providers()
+            .visible_providers();
+
+        let providers = all_providers
             .into_iter()
             .filter(|provider| provider.is_authenticated(cx))
             .collect::<Vec<_>>();
@@ -126,8 +128,9 @@ impl LanguageModels {
 
         let mut models = HashMap::default();
         for provider in providers {
+            let provided = provider.provided_models(cx);
             let mut provider_models = Vec::new();
-            for model in provider.provided_models(cx) {
+            for model in provided {
                 let model_info = Self::map_language_model_to_info(&model, &provider);
                 let model_id = model_info.id.clone();
                 provider_models.push(model_info);
@@ -158,21 +161,37 @@ impl LanguageModels {
         model: &Arc<dyn LanguageModel>,
         provider: &Arc<dyn LanguageModelProvider>,
     ) -> acp_thread::AgentModelInfo {
+        let model_id = Self::model_id(model);
+        let hover_info = Self::create_hover_info(&model_id, provider);
+
         acp_thread::AgentModelInfo {
-            id: Self::model_id(model),
+            id: model_id,
             name: model.name().0,
-            description: None,
             icon: Some(match provider.icon() {
                 IconOrSvg::Svg(path) => acp_thread::AgentModelIcon::Path(path),
                 IconOrSvg::Icon(name) => acp_thread::AgentModelIcon::Named(name),
             }),
             is_latest: model.is_latest(),
+            hover_info,
             cost: model.model_cost_info().map(|cost| cost.to_shared_string()),
         }
     }
 
     fn model_id(model: &Arc<dyn LanguageModel>) -> acp::ModelId {
         acp::ModelId::new(format!("{}/{}", model.provider_id().0, model.id().0))
+    }
+
+    fn create_hover_info(
+        model_id: &acp::ModelId,
+        provider: &Arc<dyn LanguageModelProvider>,
+    ) -> Option<Rc<dyn acp_thread::ModelHoverInfo>> {
+        if provider.id().0 == "openrouter" {
+            Some(Rc::new(language_models::OpenRouterProvidersHoverInfo::new(
+                model_id.0.to_string(),
+            )))
+        } else {
+            None
+        }
     }
 
     fn authenticate_all_language_model_providers(cx: &mut App) -> Task<()> {
@@ -1996,11 +2015,11 @@ mod internal_tests {
                 vec![AgentModelInfo {
                     id: acp::ModelId::new("fake/fake"),
                     name: "Fake".into(),
-                    description: None,
                     icon: Some(acp_thread::AgentModelIcon::Named(
                         ui::IconName::ZedAssistant
                     )),
                     is_latest: false,
+                    hover_info: None,
                     cost: None,
                 }]
             )])

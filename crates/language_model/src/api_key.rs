@@ -50,6 +50,14 @@ impl ApiKeyState {
         matches!(self.load_status, LoadStatus::Loaded { .. })
     }
 
+    pub fn load_status_for_debug(&self) -> String {
+        match &self.load_status {
+            LoadStatus::NotPresent => "NotPresent".to_string(),
+            LoadStatus::Error(e) => format!("Error({})", e),
+            LoadStatus::Loaded(key) => format!("Loaded(source={:?})", key.source),
+        }
+    }
+
     pub fn env_var_name(&self) -> &SharedString {
         &self.env_var.name
     }

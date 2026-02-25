@@ -410,29 +410,90 @@ pub struct Choice {
     pub finish_reason: Option<String>,
 }
 
-#[derive(Default, Debug, Clone, PartialEq, Deserialize)]
-pub struct ListModelsResponse {
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct ModelsResponse {
     pub data: Vec<ModelEntry>,
 }
 
-#[derive(Default, Debug, Clone, PartialEq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct ModelEntry {
     pub id: String,
+    pub canonical_slug: String,
     pub name: String,
-    pub created: usize,
-    pub description: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub context_length: Option<u64>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub context_length: u64,
+    pub architecture: ModelArchitecture,
+    pub top_provider: TopProvider,
     pub supported_parameters: Vec<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub architecture: Option<ModelArchitecture>,
 }
 
-#[derive(Default, Debug, Clone, PartialEq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct ModelArchitecture {
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub modality: String,
     pub input_modalities: Vec<String>,
+    pub output_modalities: Vec<String>,
+    pub tokenizer: String,
+    pub instruct_type: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct TopProvider {
+    pub is_moderated: bool,
+    pub context_length: Option<u64>,
+    pub max_completion_tokens: Option<u64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct ModelEndpointsResponse {
+    pub data: ModelEndpointsData,
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct ModelEndpointsData {
+    pub id: String,
+    pub name: String,
+    pub endpoints: Vec<Endpoint>,
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct Endpoint {
+    pub name: String,
+    pub model_id: String,
+    pub model_name: String,
+    pub context_length: u64,
+    pub pricing: EndpointPricing,
+    pub provider_name: String,
+    pub tag: String,
+    pub quantization: String,
+    pub max_completion_tokens: Option<u64>,
+    pub max_prompt_tokens: Option<u64>,
+    pub supported_parameters: Vec<String>,
+    pub status: i32,
+    pub uptime_last_30m: Option<f64>,
+    pub latency_last_30m: Option<LatencyStats>,
+    pub throughput_last_30m: Option<ThroughputStats>,
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct EndpointPricing {
+    pub prompt: String,
+    pub completion: String,
+    pub discount: f64,
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct LatencyStats {
+    pub p50: f64,
+    pub p75: f64,
+    pub p90: f64,
+    pub p99: f64,
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct ThroughputStats {
+    pub p50: f64,
+    pub p75: f64,
+    pub p90: f64,
+    pub p99: f64,
 }
 
 pub async fn stream_completion(
@@ -529,19 +590,12 @@ pub async fn stream_completion(
     }
 }
 
-pub async fn list_models(
-    client: &dyn HttpClient,
-    api_url: &str,
-    api_key: &str,
-) -> Result<Vec<Model>, OpenRouterError> {
-    let uri = format!("{api_url}/models/user");
+pub async fn fetch_models(client: &dyn HttpClient) -> Result<Vec<Model>, OpenRouterError> {
+    let uri = format!("{}/models", OPEN_ROUTER_API_URL);
     let request_builder = HttpRequest::builder()
         .method(Method::GET)
         .uri(uri)
-        .header("Accept", "application/json")
-        .header("Authorization", format!("Bearer {}", api_key))
-        .header("HTTP-Referer", "https://zed.dev")
-        .header("X-Title", "Zed Editor");
+        .header("Accept", "application/json");
 
     let request = request_builder
         .body(AsyncBody::default())
@@ -559,61 +613,95 @@ pub async fn list_models(
         .map_err(OpenRouterError::ReadResponse)?;
 
     if response.status().is_success() {
-        let response: ListModelsResponse =
+        let response: ModelsResponse =
             serde_json::from_str(&body).map_err(OpenRouterError::DeserializeResponse)?;
 
         let models = response
             .data
             .into_iter()
-            .map(|entry| Model {
-                name: entry.id,
-                // OpenRouter returns display names in the format "provider_name: model_name".
-                // When displayed in the UI, these names can get truncated from the right.
-                // Since users typically already know the provider, we extract just the model name
-                // portion (after the colon) to create a more concise and user-friendly label
-                // for the model dropdown in the agent panel.
-                display_name: Some(
-                    entry
-                        .name
-                        .split(':')
-                        .next_back()
-                        .unwrap_or(&entry.name)
-                        .trim()
-                        .to_string(),
-                ),
-                max_tokens: entry.context_length.unwrap_or(2000000),
-                supports_tools: Some(entry.supported_parameters.contains(&"tools".to_string())),
-                supports_images: Some(
-                    entry
-                        .architecture
-                        .as_ref()
-                        .map(|arch| arch.input_modalities.contains(&"image".to_string()))
-                        .unwrap_or(false),
-                ),
-                mode: if entry
+            .map(|entry| {
+                let supports_images = entry
+                    .architecture
+                    .input_modalities
+                    .contains(&"image".to_string());
+                let supports_tools = entry.supported_parameters.contains(&"tools".to_string());
+                let supports_reasoning = entry
                     .supported_parameters
-                    .contains(&"reasoning".to_string())
-                {
-                    ModelMode::Thinking {
-                        budget_tokens: Some(4_096),
-                    }
-                } else {
-                    ModelMode::Default
-                },
-                provider: None,
+                    .contains(&"reasoning".to_string());
+
+                Model {
+                    name: entry.id,
+                    display_name: Some(entry.name),
+                    max_tokens: entry.context_length,
+                    supports_tools: Some(supports_tools),
+                    supports_images: Some(supports_images),
+                    mode: if supports_reasoning {
+                        ModelMode::Thinking {
+                            budget_tokens: None,
+                        }
+                    } else {
+                        ModelMode::Default
+                    },
+                    provider: None,
+                }
             })
             .collect();
 
         Ok(models)
     } else {
-        let code = ApiErrorCode::from_status(response.status().as_u16());
+        Err(OpenRouterError::ApiError(ApiError {
+            code: ApiErrorCode::ApiError,
+            message: format!("Failed to fetch models: status {}", response.status()),
+        }))
+    }
+}
 
-        let mut body = String::new();
-        response
-            .body_mut()
-            .read_to_string(&mut body)
-            .await
-            .map_err(OpenRouterError::ReadResponse)?;
+pub async fn get_model_endpoints(
+    client: &dyn HttpClient,
+    model_id: &str,
+    api_key: &str,
+) -> Result<Vec<Endpoint>, OpenRouterError> {
+    let Some((author, slug)) = model_id.split_once('/') else {
+        return Err(OpenRouterError::ApiError(ApiError {
+            code: ApiErrorCode::InvalidRequestError,
+            message: format!(
+                "Invalid model id format: '{}'. Expected 'author/slug'.",
+                model_id
+            ),
+        }));
+    };
+
+    let uri = format!(
+        "{}/models/{}/{}/endpoints",
+        OPEN_ROUTER_API_URL, author, slug
+    );
+    let request_builder = HttpRequest::builder()
+        .method(Method::GET)
+        .uri(uri)
+        .header("Accept", "application/json")
+        .header("Authorization", format!("Bearer {}", api_key));
+
+    let request = request_builder
+        .body(AsyncBody::default())
+        .map_err(OpenRouterError::BuildRequestBody)?;
+    let mut response = client
+        .send(request)
+        .await
+        .map_err(OpenRouterError::HttpSend)?;
+
+    let mut body = String::new();
+    response
+        .body_mut()
+        .read_to_string(&mut body)
+        .await
+        .map_err(OpenRouterError::ReadResponse)?;
+
+    if response.status().is_success() {
+        let response: ModelEndpointsResponse =
+            serde_json::from_str(&body).map_err(OpenRouterError::DeserializeResponse)?;
+        Ok(response.data.endpoints)
+    } else {
+        let code = ApiErrorCode::from_status(response.status().as_u16());
 
         let error_response = match serde_json::from_str::<OpenRouterErrorResponse>(&body) {
             Ok(OpenRouterErrorResponse { error }) => error,
@@ -636,7 +724,7 @@ pub async fn list_models(
                 Err(OpenRouterError::ServerOverloaded { retry_after })
             }
             _ => Err(OpenRouterError::ApiError(ApiError {
-                code: code,
+                code,
                 message: error_response.message,
             })),
         }

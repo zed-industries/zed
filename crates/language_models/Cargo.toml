@@ -12,6 +12,7 @@ workspace = true
 path = "src/language_models.rs"
 
 [dependencies]
+acp_thread.workspace = true
 ai_onboarding.workspace = true
 anthropic = { workspace = true, features = ["schemars"] }
 anyhow.workspace = true

@@ -3,12 +3,13 @@ pub mod highlighted_match_with_paths;
 pub mod popover_menu;
 
 use anyhow::Result;
+use log;
 
 use gpui::{
-    Action, AnyElement, App, Bounds, ClickEvent, Context, DismissEvent, EventEmitter, FocusHandle,
-    Focusable, Length, ListSizingBehavior, ListState, MouseButton, MouseUpEvent, Pixels, Render,
-    ScrollStrategy, Task, UniformListScrollHandle, Window, actions, canvas, div, list, prelude::*,
-    uniform_list,
+    Action, AnyElement, App, Bounds, ClickEvent, Context, Corner, DismissEvent, EventEmitter,
+    FocusHandle, Focusable, Length, ListSizingBehavior, ListState, MouseButton, MouseUpEvent,
+    Pixels, Render, ScrollStrategy, Task, UniformListScrollHandle, Window, actions, anchored,
+    canvas, div, list, prelude::*, uniform_list,
 };
 use head::Head;
 use schemars::JsonSchema;
@@ -76,6 +77,10 @@ pub struct Picker<D: PickerDelegate> {
     picker_bounds: Rc<Cell<Option<Bounds<Pixels>>>>,
     /// Bounds tracking for items (for aside positioning) - maps item index to bounds
     item_bounds: Rc<RefCell<HashMap<usize, Bounds<Pixels>>>>,
+    /// Whether the mouse is currently hovering over the documentation aside
+    aside_hovered: bool,
+    /// Bounds tracking for the documentation aside
+    aside_bounds: Rc<Cell<Option<Bounds<Pixels>>>>,
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq)]
@@ -254,6 +259,15 @@ pub trait PickerDelegate: Sized + 'static {
     fn documentation_aside_index(&self) -> Option<usize> {
         None
     }
+
+    /// Called when the documentation aside hover state changes.
+    fn on_aside_hover_changed(
+        &mut self,
+        _hovered: bool,
+        _window: &mut Window,
+        _cx: &mut Context<Picker<Self>>,
+    ) {
+    }
 }
 
 impl<D: PickerDelegate> Focusable for Picker<D> {
@@ -342,6 +356,8 @@ impl<D: PickerDelegate> Picker<D> {
             is_modal: true,
             picker_bounds: Rc::new(Cell::new(None)),
             item_bounds: Rc::new(RefCell::new(HashMap::default())),
+            aside_hovered: false,
+            aside_bounds: Rc::new(Cell::new(None)),
         };
         this.update_matches("".to_string(), window, cx);
         // give the delegate 4ms to render the first set of suggestions.
@@ -398,6 +414,22 @@ impl<D: PickerDelegate> Picker<D> {
 
     pub fn focus(&self, window: &mut Window, cx: &mut App) {
         self.focus_handle(cx).focus(window, cx);
+    }
+
+    pub fn is_aside_hovered(&self) -> bool {
+        self.aside_hovered
+    }
+
+    pub fn set_aside_hovered(&mut self, hovered: bool) {
+        self.aside_hovered = hovered;
+    }
+
+    pub fn is_mouse_over_aside(&self, window: &Window) -> bool {
+        if let Some(bounds) = self.aside_bounds.get() {
+            bounds.contains(&window.mouse_position())
+        } else {
+            false
+        }
     }
 
     /// Handles the selecting an index, and passing the change to the delegate.
@@ -965,7 +997,7 @@ impl<D: PickerDelegate> Render for Picker<D> {
             return menu;
         };
 
-        let render_aside = |aside: DocumentationAside, cx: &mut Context<Self>| {
+        let render_aside = |aside: DocumentationAside, window: &mut Window, cx: &mut Context<Self>| {
             WithRemSize::new(ui_font_size)
                 .occlude()
                 .elevation_2(cx)
@@ -974,7 +1006,7 @@ impl<D: PickerDelegate> Render for Picker<D> {
                 .overflow_hidden()
                 .when(is_wide_window, |this| this.max_w_96())
                 .when(!is_wide_window, |this| this.max_w_48())
-                .child((aside.render)(cx))
+                .child((aside.render)(window, cx))
         };
 
         if is_wide_window {
@@ -986,29 +1018,63 @@ impl<D: PickerDelegate> Render for Picker<D> {
             let item_position = match (picker_bounds, item_bounds) {
                 (Some(picker_bounds), Some(item_bounds)) => {
                     let relative_top = item_bounds.origin.y - picker_bounds.origin.y;
-                    let height = item_bounds.size.height;
-                    Some((relative_top, height))
+                    Some(relative_top)
                 }
                 _ => None,
             };
+
+            let aside_bounds = self.aside_bounds.clone();
+            let bounds_canvas = canvas(
+                {
+                    move |bounds, _window, _cx| {
+                        aside_bounds.set(Some(bounds));
+                    }
+                },
+                |_, _, _, _| {},
+            )
+            .size_full()
+            .absolute()
+            .top_0()
+            .left_0();
 
             div()
                 .relative()
                 .child(menu)
                 // Only render the aside once we have bounds to avoid flicker
-                .when_some(item_position, |this, (top, height)| {
+                .when_some(item_position, |this, top| {
+                    let anchor_corner = match aside.side {
+                        DocumentationSide::Left => Corner::TopRight,
+                        DocumentationSide::Right => Corner::TopLeft,
+                    };
+
                     this.child(
-                        h_flex()
+                        div()
+                            .id("picker-documentation-aside")
                             .absolute()
                             .when(aside.side == DocumentationSide::Left, |el| {
-                                el.right_full().mr_1()
+                                el.right_full().mr(px(-2.))
                             })
                             .when(aside.side == DocumentationSide::Right, |el| {
-                                el.left_full().ml_1()
+                                el.left_full().ml(px(-2.))
                             })
                             .top(top)
-                            .h(height)
-                            .child(render_aside(aside, cx)),
+                            .on_hover(cx.listener(|this, hovered, _, _| {
+                                log::info!("[Picker] aside on_hover: hovered={}", hovered);
+                                if *hovered {
+                                    this.aside_hovered = true;
+                                }
+                            }))
+                            .child(
+                                anchored()
+                                    .anchor(anchor_corner)
+                                    .snap_to_window_with_margin(px(8.0))
+                                    .child(
+                                        div()
+                                            .occlude()
+                                            .child(bounds_canvas)
+                                            .child(render_aside(aside, window, cx)),
+                                    ),
+                            ),
                     )
                 })
         } else {
@@ -1016,7 +1082,7 @@ impl<D: PickerDelegate> Render for Picker<D> {
                 .w_full()
                 .gap_1()
                 .justify_end()
-                .child(render_aside(aside, cx))
+                .child(render_aside(aside, window, cx))
                 .child(menu)
         }
     }

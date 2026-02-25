@@ -105,7 +105,7 @@ impl ModeSelector {
                     entry.documentation_aside(side, {
                         let description = description.clone();
 
-                        move |_| {
+                        move |_, _| {
                             v_flex()
                                 .gap_1()
                                 .child(Label::new(description.clone()))

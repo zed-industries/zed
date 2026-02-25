@@ -784,7 +784,7 @@ impl EditPredictionButton {
                     menu = menu.item(
                         entry
                             .disabled(true)
-                            .documentation_aside(DocumentationSide::Left, move |_cx| {
+                            .documentation_aside(DocumentationSide::Left, move |_, _cx| {
                                 Label::new(format!("Edit predictions cannot be toggled for this buffer because they are disabled for {}", language.name()))
                                     .into_any_element()
                             })
@@ -837,7 +837,7 @@ impl EditPredictionButton {
                 .item(
                     ContextMenuEntry::new("Eager")
                         .toggleable(IconPosition::Start, eager_mode)
-                        .documentation_aside(DocumentationSide::Left, move |_| {
+                        .documentation_aside(DocumentationSide::Left, move |_, _| {
                             Label::new("Display predictions inline when there are no language server completions available.").into_any_element()
                         })
                         .handler({
@@ -855,7 +855,7 @@ impl EditPredictionButton {
                 .item(
                     ContextMenuEntry::new("Subtle")
                         .toggleable(IconPosition::Start, subtle_mode)
-                        .documentation_aside(DocumentationSide::Left, move |_| {
+                        .documentation_aside(DocumentationSide::Left, move |_, _| {
                             Label::new("Display predictions inline only when holding a modifier key (alt by default).").into_any_element()
                         })
                         .handler({
@@ -900,7 +900,7 @@ impl EditPredictionButton {
                             .icon(icon_name)
                             .icon_color(icon_color)
                             .disabled(cx.is_staff())
-                            .documentation_aside(DocumentationSide::Left, move |cx| {
+                            .documentation_aside(DocumentationSide::Left, move |_, cx| {
                                 let (msg, label_color, icon_name, icon_color) = match (is_open_source, is_collecting) {
                                     (true, true) => (
                                         "Project identified as open source, and you're sharing data.",
@@ -984,7 +984,7 @@ impl EditPredictionButton {
             ContextMenuEntry::new("Configure Excluded Files")
                 .icon(IconName::LockOutlined)
                 .icon_color(Color::Muted)
-                .documentation_aside(DocumentationSide::Left, |_| {
+                .documentation_aside(DocumentationSide::Left, |_, _| {
                     Label::new(indoc!{"
                         Open your settings to add sensitive paths for which Zed will never predict edits."}).into_any_element()
                 })

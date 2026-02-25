@@ -23,6 +23,7 @@ pub use crate::provider::mistral::MistralLanguageModelProvider;
 use crate::provider::ollama::OllamaLanguageModelProvider;
 use crate::provider::open_ai::OpenAiLanguageModelProvider;
 use crate::provider::open_ai_compatible::OpenAiCompatibleLanguageModelProvider;
+pub use crate::provider::open_router::OpenRouterProvidersHoverInfo;
 use crate::provider::open_router::OpenRouterLanguageModelProvider;
 use crate::provider::vercel::VercelLanguageModelProvider;
 use crate::provider::x_ai::XAiLanguageModelProvider;

@@ -3,7 +3,7 @@ use agent_client_protocol::{self as acp};
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use collections::IndexMap;
-use gpui::{Entity, SharedString, Task};
+use gpui::{AnyElement, Entity, IntoElement, SharedString, Task, Window};
 use language_model::LanguageModelProviderId;
 use project::Project;
 use serde::{Deserialize, Serialize};
@@ -15,7 +15,7 @@ use std::{
     rc::Rc,
     sync::Arc,
 };
-use ui::{App, IconName};
+use ui::{App, IconName, Label};
 use uuid::Uuid;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Hash)]
@@ -380,30 +380,76 @@ pub trait AgentModelSelector: 'static {
 /// Icon for a model in the model selector.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AgentModelIcon {
-    /// A built-in icon from Zed's icon set.
     Named(IconName),
-    /// Path to a custom SVG icon file.
     Path(SharedString),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+pub trait ModelHoverInfo: 'static {
+    fn render(&self, window: &mut Window, cx: &mut App) -> AnyElement;
+}
+
+pub struct DescriptionHoverInfo(pub SharedString);
+
+impl ModelHoverInfo for DescriptionHoverInfo {
+    fn render(&self, _window: &mut Window, _cx: &mut App) -> AnyElement {
+        Label::new(self.0.clone()).into_any_element()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ModelProviderInfo {
+    pub name: SharedString,
+    pub display_name: SharedString,
+    pub quantization: Option<SharedString>,
+    pub throughput_tps: Option<f64>,
+    pub latency_ms: Option<f64>,
+    pub input_price_per_million: Option<f64>,
+    pub output_price_per_million: Option<f64>,
+}
+
+#[derive(Clone)]
 pub struct AgentModelInfo {
     pub id: acp::ModelId,
     pub name: SharedString,
-    pub description: Option<SharedString>,
     pub icon: Option<AgentModelIcon>,
     pub is_latest: bool,
+    pub hover_info: Option<Rc<dyn ModelHoverInfo>>,
     pub cost: Option<SharedString>,
 }
+
+impl std::fmt::Debug for AgentModelInfo {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AgentModelInfo")
+            .field("id", &self.id)
+            .field("name", &self.name)
+            .field("icon", &self.icon)
+            .field("is_latest", &self.is_latest)
+            .field("hover_info", &self.hover_info.as_ref().map(|_| "<hover>"))
+            .finish()
+    }
+}
+
+impl PartialEq for AgentModelInfo {
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id
+            && self.name == other.name
+            && self.icon == other.icon
+            && self.is_latest == other.is_latest
+    }
+}
+
+impl Eq for AgentModelInfo {}
 
 impl From<acp::ModelInfo> for AgentModelInfo {
     fn from(info: acp::ModelInfo) -> Self {
         Self {
             id: info.model_id,
             name: info.name.into(),
-            description: info.description.map(|desc| desc.into()),
             icon: None,
             is_latest: false,
+            hover_info: info
+                .description
+                .map(|desc| Rc::new(DescriptionHoverInfo(desc.into())) as Rc<dyn ModelHoverInfo>),
             cost: None,
         }
     }
@@ -777,9 +823,9 @@ mod test_support {
                 selected_model: Arc::new(Mutex::new(AgentModelInfo {
                     id: acp::ModelId::new("visual-test-model"),
                     name: "Visual Test Model".into(),
-                    description: Some("A stub model for visual testing".into()),
                     icon: Some(AgentModelIcon::Named(ui::IconName::ZedAssistant)),
                     is_latest: false,
+                    hover_info: None,
                     cost: None,
                 })),
             }
