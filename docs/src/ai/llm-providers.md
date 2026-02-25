@@ -174,7 +174,7 @@ Zed enables extended context for supported models (Claude Sonnet 4.5 and Claude 
 
 > **Preview:** This feature is available in Zed Preview. It will be included in the next Stable release.
 
-Bedrock models that support vision (Claude 3 and later, Amazon Nova Pro and Lite, Meta Llama 3.2 Vision models, Mistral Pixtral) can receive images in conversations and tool results. To send an image, use the slash command `/file` followed by an image path, or drag an image directly into the agent panel.
+Bedrock models that support vision (Claude 3 and later, Amazon Nova Pro and Lite, Meta Llama 3.2 Vision models, Mistral Pixtral) can receive images in conversations and tool results.
 
 ### Anthropic {#anthropic}
 
