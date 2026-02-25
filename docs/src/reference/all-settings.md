@@ -519,6 +519,10 @@ Note: Dirty files (files with unsaved changes) will not be automatically closed 
 - `"unified"`: Show changes inline with added and deleted lines stacked vertically
 - `"split"`: Display old and new versions side by side in separate panes (default)
 
+> **Changed in Preview (v0.225).** Values renamed from `"stacked"`/`"side_by_side"` to `"unified"`/`"split"`.
+
+You can set this preference from the UI by holding `Cmd` (macOS) or `Ctrl` (Linux/Windows) while clicking the diff view toggle buttons in the search toolbar.
+
 See [Git documentation](../git.md#diff-view-styles) for more details.
 
 ## Disable AI

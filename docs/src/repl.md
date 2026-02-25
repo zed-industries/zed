@@ -149,24 +149,30 @@ TBD: Improve Julia REPL instructions
   - `brew install coursier/formulas/coursier && cs setup`
   - `coursier launch --use-bootstrap almond -- --install`
 
-## Changing which kernel is used per language {#changing-kernels}
+## Changing Kernels {#changing-kernels}
 
-Zed automatically detects available kernels and organizes them in the kernel picker:
+> **Preview:** This feature is available in Zed Preview. It will be included in the next Stable release.
+
+The kernel picker shows available execution environments organized by type:
 
 - **Recommended**: The Python environment matching your active toolchain (if detected)
 - **Python Environments**: Virtual environments (venv, virtualenv, Poetry, Pipenv, Conda, uv, etc.)
 - **Jupyter Kernels**: Installed Jupyter kernelspecs
 - **Remote Servers**: Connected remote Jupyter servers
 
+To switch kernels, click the kernel name in the Quick Action Bar or use {#kb repl::Sessions}.
+
 ### Installing ipykernel
 
 Python environments appear in the picker even if ipykernel is not installed. Environments missing ipykernel are dimmed and labeled "ipykernel not installed." When you select one, Zed automatically runs `pip install ipykernel` in that environment and activates it once installation completes.
+
+This allows you to use any Python environment detected by Zed—no manual setup required.
 
 ### How Zed Recommends Kernels
 
 When you run code, Zed selects a kernel automatically:
 
-1. **Active toolchain match**: If a Python environment matches your active toolchain and has ipykernel, Zed uses it
+1. **Active toolchain match**: If a Python environment matches your [active toolchain](./toolchains.md) and has ipykernel, Zed uses it
 2. **First available Python env**: Otherwise, the first Python environment with ipykernel
 3. **Language-based fallback**: If no Python envs are ready, Zed picks a Jupyter kernel matching the code block's language
 

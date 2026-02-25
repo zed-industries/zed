@@ -11,6 +11,14 @@ This guide covers the essential commands, environment setup, and navigation basi
 
 ## Quick Start
 
+### Welcome Page
+
+> **Changed in Preview (v0.225).** See [release notes](/releases#0.225).
+
+When you open Zed without a folder, you see the welcome page in the main editor area. The welcome page offers quick actions to open a folder, clone a repository, or view documentation. Once you open a folder or file, the welcome page disappears. If you split the editor into multiple panes, the welcome page appears only in the center pane when empty—other panes show a standard empty state.
+
+To reopen the welcome page, close all items in the center pane or use the command palette to search for "Welcome".
+
 ### 1. Open a Project
 
 Open a folder from the command line:

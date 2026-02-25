@@ -72,19 +72,23 @@ To disable word diff for specific languages only, add this to your settings.json
 
 ### Diff View Styles
 
+> **Changed in Preview (v0.225).** Terminology updated from "stacked"/"side by side" to "unified"/"split". See [release notes](/releases#0.225).
+
 Zed displays diffs in two modes: **split** (side-by-side comparison) or **unified** (inline changes). Split view is the default.
 
 #### Changing the diff view
 
 Open the Settings Editor ({#kb zed::OpenSettings}) and search for "diff view style". Select either **Split** or **Unified**.
 
-To change the default, add this to your `settings.json`:
+Or add this to your `settings.json`:
 
 ```json
 {
   "diff_view_style": "unified"
 }
 ```
+
+To switch between modes while viewing diffs, use the view toggle buttons in the buffer search bar, or use the {#action editor::ToggleSplitDiff} action. To set your default view preference, hold {#kb gpui::Modifiers::secondary_key} while clicking either button. This updates your `diff_view_style` setting.
 
 See [Configuring Zed](./configuring-zed.md) for more about the Settings Editor.
 
