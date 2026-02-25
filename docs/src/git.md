@@ -106,6 +106,76 @@ To open File History:
 - Right-click on an editor tab and select "Open File History"
 - Use the Command Palette and search for "file history"
 
+## Commit View {#commit-view}
+
+When you select a commit from [File History](#file-history) or the [Git Graph](#git-graph), Zed opens a commit view showing the full diff for that commit. The view displays commit metadata (author, date, SHA) and all changed files with their diffs.
+
+The commit view works like other [multibuffers](./multibuffers.md)—you can edit excerpts, search within the diff, and navigate between files.
+
+### Commit View Toolbar {#commit-view-toolbar}
+
+The commit view includes a toolbar with:
+
+- **Diff stats**: Summary of additions and deletions across all files
+- **Search** (`Cmd+F`): Find text within the commit diff using {#action buffer_search::Deploy}
+- **Show in Git Graph**: Jump to this commit in the [Git Graph](#git-graph) view
+- **View on GitHub** (or other provider): Open the commit on your remote hosting provider
+
+To copy the commit SHA, click the "Commit SHA" button in the header.
+
+## Git Graph {#git-graph}
+
+> **Preview:** This feature is available in Zed Preview. It will be included in the next Stable release.
+
+Git Graph visualizes your repository's commit history as a graph, showing branches, merges, and commit relationships. Each commit displays its SHA, author, message, and timestamp.
+
+To open Git Graph, use {#action git_panel::Open} from the Command Palette, or click the graph icon in the Git Panel toolbar.
+
+### Navigating Commits {#navigating-commits}
+
+Select any commit in the graph to view its details and diff in the lower panel. Use arrow keys to move between commits, or click to select:
+
+- **Select previous commit**: {#action menu::SelectPrevious} ({#kb menu::SelectPrevious})
+- **Select next commit**: {#action menu::SelectNext} ({#kb menu::SelectNext})
+
+From a [Commit View](#commit-view), click **Show in Git Graph** in the toolbar to jump directly to that commit in the graph view.
+
+### Viewing Commit Details
+
+Click any commit in the graph to see its details in the right panel. The detail view shows:
+
+- Author and commit date
+- Branch and tag references
+- Commit message
+- Changed files with status indicators
+
+### Navigating Changed Files
+
+Files in the commit detail panel display status icons that indicate the type of change:
+
+- Green plus icon: added files
+- Yellow dot icon: modified files
+- Red minus icon: deleted files
+
+Click any file to open a diff view showing that file's changes for the selected commit. This diff view works like other diff views in Zed—you can view changes in split or unified mode, and the content is editable. See [Project Diff](#project-diff) for more about working with diffs.
+
+### Opening Commits in Full View
+
+To see a commit's full changes across all files, press {#kb git_graph::OpenCommitView} or use {#action git_graph::OpenCommitView} from the Command Palette while a commit is selected. This opens the commit in a multibuffer view similar to [File History](#file-history).
+
+You can also double-click any commit row to open the commit view directly, or click the "View Commit" button in the commit detail panel.
+
+### Graph View {#graph-view}
+
+The graph displays:
+
+- **Commit nodes**: Connected by lines showing parent-child relationships
+- **Branch indicators**: Labels showing which branches point to which commits
+- **Commit metadata**: SHA (shortened), author, timestamp, and message
+- **Changed files**: Number of files modified in each commit
+
+Use the repository selector at the top to switch between repositories in multi-root projects.
+
 ## Fetch, Push, and Pull
 
 Fetch, push, or pull from your Git repository in Zed via the buttons available on the Git Panel or via the Command Palette by looking at the respective actions: {#action git::Fetch}, {#action git::Push}, and {#action git::Pull}.
@@ -345,6 +415,8 @@ When viewing files with changes, Zed displays diff hunks that can be expanded or
 | {#action editor::ToggleGitBlameInline}    | {#kb editor::ToggleGitBlameInline}    |
 | {#action editor::ExpandAllDiffHunks}      | {#kb editor::ExpandAllDiffHunks}      |
 | {#action editor::ToggleSelectedDiffHunks} | {#kb editor::ToggleSelectedDiffHunks} |
+| {#action menu::SelectPrevious}            | {#kb menu::SelectPrevious}            |
+| {#action menu::SelectNext}                | {#kb menu::SelectNext}                |
 
 > Not all actions have default keybindings, but can be bound by [customizing your keymap](./key-bindings.md#user-keymaps).
 
