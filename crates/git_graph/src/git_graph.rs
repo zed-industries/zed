@@ -3163,13 +3163,12 @@ mod tests {
             let related = graph_data.get_related_commit_rows(&line.full_interval, line.color_idx);
 
             for &row in &related {
-                if let Some(commit) = graph_data.commits.get(row) {
-                    assert_eq!(
-                        commit.color_idx, line.color_idx,
-                        "Related commit at row {} has color {} but line has color {}",
-                        row, commit.color_idx, line.color_idx
-                    );
-                }
+                let commit = graph_data.commits.get(row).unwrap();
+                assert_eq!(
+                    commit.color_idx, line.color_idx,
+                    "Related commit at row {} has color {} but line has color {}",
+                    row, commit.color_idx, line.color_idx
+                );
             }
         }
 
@@ -3237,10 +3236,11 @@ mod tests {
                     .iter()
                     .any(|line| line.full_interval.start <= row && row <= line.full_interval.end);
 
-                if is_connected {
-                    // If there's a path of connected lines, it should be in related
-                    // This is a weaker property since we need to trace connectivity
-                }
+                assert!(
+                    is_connected,
+                    "Row {} is not reachable from the first line through connected segments",
+                    row
+                );
             }
 
             // Property: related should not be empty if we have lines
