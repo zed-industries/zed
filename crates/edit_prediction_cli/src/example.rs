@@ -51,6 +51,9 @@ pub struct Example {
     /// The application state used to process this example.
     #[serde(skip)]
     pub state: Option<ExampleState>,
+
+    /// comment to
+    pub comment: Option<String>,
 }
 
 #[derive(Clone, Debug)]
