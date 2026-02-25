@@ -292,19 +292,16 @@ See the [Tool Permissions](./tool-permissions.md) documentation for more example
 
 ### Edit Display Mode
 
-> **Changed in Preview (v0.225).** See [release notes](/releases#0.225).
-
-By default, agent edits open in multi-file review mode. To display agent edits in single-file editors instead, enable `single_file_review`:
+Control whether to display review actions (accept & reject) in single buffers after the agent is done performing edits.
+The default value is `false`.
 
 ```json [settings]
 {
   "agent": {
-    "single_file_review": true
+    "single_file_review": false
   }
 }
 ```
-
-When enabled, each file modified by an agent opens in its own editor tab for review. When disabled (default), all changes appear in a unified review interface.
 
 ### Sound Notification
 
