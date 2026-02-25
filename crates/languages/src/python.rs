@@ -146,7 +146,6 @@ fn process_pyright_completions(items: &mut [lsp::CompletionItem]) {
             Some(lsp::CompletionItemKind::CLASS) => '7',
             Some(lsp::CompletionItemKind::MODULE) => '8',
 
-            Some(lsp::CompletionItemKind::TEXT) => 'z',
             _ => 'z',
         };
 
