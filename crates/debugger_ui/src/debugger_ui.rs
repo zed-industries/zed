@@ -15,7 +15,6 @@ use util::maybe;
 use workspace::{ItemHandle, ShutdownDebugAdapters, Workspace};
 use zed_actions::debug_panel::{Toggle, ToggleFocus};
 
-
 pub mod attach_modal;
 pub mod debugger_panel;
 mod dropdown_menus;
