@@ -13,8 +13,8 @@
 //!
 //! # Size specifications
 //!
-//! - `80%` - percentage of total (groups if stratified, examples otherwise)
-//! - `100` - absolute count of groups (if stratified) or examples
+//! - `80%` - percentage of total examples (lines)
+//! - `100` - approximate absolute count of examples (lines)
 //! - `rest` - all remaining items (only one split can use this)
 //!
 //! # Stratification
@@ -26,9 +26,9 @@
 //! - `none`: no grouping, split individual examples
 //!
 //! When stratifying, the split ensures each output file contains examples from
-//! non-overlapping groups. Size specifications apply to the number of groups,
-//! not individual examples. Examples missing the stratification field are treated
-//! as individual groups.
+//! non-overlapping groups. Size specifications always apply to the number of
+//! examples (lines), with whole groups assigned greedily to meet the target.
+//! Examples missing the stratification field are treated as individual groups.
 
 use anyhow::{Context as _, Result, bail};
 use clap::Args;
@@ -49,7 +49,8 @@ use std::path::{Path, PathBuf};
   <count>          Absolute number (e.g., 100)
   rest             All remaining items (only one output can use this)
 
-  When stratifying, sizes apply to groups, not individual examples.
+  Sizes always apply to examples (lines). When stratifying, whole groups
+  are assigned greedily to approximate the target count.
 
 EXAMPLES:
   # Split 80% train, 20% validation (default: stratify by cursor_path)
@@ -280,15 +281,29 @@ pub fn run_split(args: &SplitArgs, inputs: &[PathBuf]) -> Result<()> {
 
     grouped_lines.shuffle(&mut rng);
 
-    let group_counts = compute_split_counts(&specs, grouped_lines.len())?;
+    let line_targets = compute_split_counts(&specs, total_lines)?;
+    let rest_index = specs.iter().position(|s| matches!(s.size, SplitSize::Rest));
     let mut split_outputs: Vec<Vec<String>> = vec![Vec::new(); specs.len()];
     let mut group_iter = grouped_lines.into_iter();
 
-    for (split_idx, &count) in group_counts.iter().enumerate() {
-        for _ in 0..count {
+    for (split_idx, &target) in line_targets.iter().enumerate() {
+        if Some(split_idx) == rest_index {
+            continue;
+        }
+        let mut accumulated = 0;
+        while accumulated < target {
             if let Some(group) = group_iter.next() {
+                accumulated += group.len();
                 split_outputs[split_idx].extend(group);
+            } else {
+                break;
             }
+        }
+    }
+
+    if let Some(idx) = rest_index {
+        for group in group_iter {
+            split_outputs[idx].extend(group);
         }
     }
 
@@ -535,5 +550,55 @@ mod tests {
             },
         ];
         assert!(compute_split_counts(&specs, 100).is_err());
+    }
+
+    #[test]
+    fn test_absolute_targets_lines_not_groups() {
+        // 5 repos × 3 lines each = 15 total lines.
+        // `train=6` should target ~6 lines (2 groups), NOT 6 groups (all 15 lines).
+        let input = create_temp_jsonl(&[
+            r#"{"repository_url": "r1", "id": 1}"#,
+            r#"{"repository_url": "r1", "id": 2}"#,
+            r#"{"repository_url": "r1", "id": 3}"#,
+            r#"{"repository_url": "r2", "id": 4}"#,
+            r#"{"repository_url": "r2", "id": 5}"#,
+            r#"{"repository_url": "r2", "id": 6}"#,
+            r#"{"repository_url": "r3", "id": 7}"#,
+            r#"{"repository_url": "r3", "id": 8}"#,
+            r#"{"repository_url": "r3", "id": 9}"#,
+            r#"{"repository_url": "r4", "id": 10}"#,
+            r#"{"repository_url": "r4", "id": 11}"#,
+            r#"{"repository_url": "r4", "id": 12}"#,
+            r#"{"repository_url": "r5", "id": 13}"#,
+            r#"{"repository_url": "r5", "id": 14}"#,
+            r#"{"repository_url": "r5", "id": 15}"#,
+        ]);
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        let train_path = temp_dir.path().join("train.jsonl");
+        let valid_path = temp_dir.path().join("valid.jsonl");
+
+        let args = SplitArgs {
+            seed: Some(42),
+            stratify: Stratify::Repo,
+        };
+        let inputs = vec![
+            input.path().to_path_buf(),
+            PathBuf::from(format!("{}=6", train_path.display())),
+            PathBuf::from(format!("{}=rest", valid_path.display())),
+        ];
+
+        run_split(&args, &inputs).unwrap();
+
+        let train_content = std::fs::read_to_string(&train_path).unwrap();
+        let valid_content = std::fs::read_to_string(&valid_path).unwrap();
+
+        let train_lines: Vec<&str> = train_content.lines().collect();
+        let valid_lines: Vec<&str> = valid_content.lines().collect();
+
+        // With 3-line groups, train should get 2 groups (6 lines) to meet the
+        // target of 6, NOT 6 groups (which don't even exist). Valid gets the rest.
+        assert_eq!(train_lines.len(), 6);
+        assert_eq!(valid_lines.len(), 9);
     }
 }
