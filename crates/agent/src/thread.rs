@@ -2082,17 +2082,13 @@ impl Thread {
         };
 
         if !tool_use.is_input_complete {
-            // For streaming tools, start execution on the first partial and feed
-            // subsequent partials through the channel.
             if tool.supports_input_streaming() {
                 let running_turn = self.running_turn.as_mut()?;
                 if let Some(sender) = running_turn.streaming_tool_inputs.get(&tool_use.id) {
-                    // Tool already started — send the partial update
                     sender.send_partial(tool_use.input);
                     return None;
                 }
 
-                // First partial — create channels, start the tool
                 let (sender, tool_input) = ToolInputSender::channel();
                 sender.send_partial(tool_use.input);
                 running_turn
@@ -2100,7 +2096,7 @@ impl Thread {
                     .insert(tool_use.id.clone(), sender);
 
                 let tool = tool.clone();
-                log::debug!("Running streaming tool {} (first partial)", tool_use.name);
+                log::debug!("Running streaming tool {}", tool_use.name);
                 return Some(self.run_tool(
                     tool,
                     tool_input,
@@ -2115,9 +2111,6 @@ impl Thread {
             }
         }
 
-        // Input is complete. If the tool was already started via streaming,
-        // send the final input through the channel and return None (the Task
-        // is already in FuturesUnordered from the first partial).
         if let Some(sender) = self
             .running_turn
             .as_mut()?
@@ -2845,7 +2838,7 @@ struct RunningTurn {
     /// set to true so all tools can detect user-initiated cancellation.
     cancellation_tx: watch::Sender<bool>,
     /// Senders for tools that support input streaming and have already been
-    /// started but are still receiving partial input from the LLM.
+    /// started but are still receiving input from the LLM.
     streaming_tool_inputs: HashMap<LanguageModelToolUseId, ToolInputSender>,
 }
 
@@ -2896,8 +2889,6 @@ impl<T: DeserializeOwned> ToolInput<T> {
         }
     }
 
-    /// Create a paired (sender, input) for streaming tool input in tests.
-    /// The sender can push partial JSON snapshots followed by a final input.
     #[cfg(any(test, feature = "test-support"))]
     pub fn test() -> (ToolInputSender, Self) {
         let (sender, input) = ToolInputSender::channel();
@@ -2905,8 +2896,7 @@ impl<T: DeserializeOwned> ToolInput<T> {
     }
 
     /// Wait for the final deserialized input, ignoring all partial updates.
-    /// This is what non-streaming tools use. Also used by streaming tools
-    /// after they are done processing partials via `recv_partial()`.
+    /// Non-streaming tools can use this to wait until the whole input is available.
     pub async fn recv(mut self) -> Result<T> {
         // Drain any remaining partials
         while self.partial_rx.next().await.is_some() {}
@@ -2917,13 +2907,12 @@ impl<T: DeserializeOwned> ToolInput<T> {
         serde_json::from_value(value).map_err(Into::into)
     }
 
-    /// Returns the next partial JSON snapshot, or None when input is complete.
+    /// Returns the next partial JSON snapshot, or `None` when input is complete.
+    /// Once this returns `None`, call `recv()` to get the final input.
     pub async fn recv_partial(&mut self) -> Option<serde_json::Value> {
         self.partial_rx.next().await
     }
 
-    /// Reinterpret the phantom type. Since deserialization is lazy (happens in `recv()`),
-    /// this is safe — the internal channels carry `serde_json::Value` regardless of `T`.
     fn cast<U: DeserializeOwned>(self) -> ToolInput<U> {
         ToolInput {
             partial_rx: self.partial_rx,
@@ -2933,14 +2922,12 @@ impl<T: DeserializeOwned> ToolInput<T> {
     }
 }
 
-/// Sender side for streaming tool input into a running tool.
 pub struct ToolInputSender {
     partial_tx: mpsc::UnboundedSender<serde_json::Value>,
     final_tx: Option<oneshot::Sender<serde_json::Value>>,
 }
 
 impl ToolInputSender {
-    /// Create a paired (sender, receiver) for streaming tool input.
     pub(crate) fn channel() -> (Self, ToolInput<serde_json::Value>) {
         let (partial_tx, partial_rx) = mpsc::unbounded();
         let (final_tx, final_rx) = oneshot::channel();
@@ -3003,8 +2990,6 @@ where
     }
 
     /// Returns whether the tool supports streaming of tool use parameters.
-    ///
-    /// See https://platform.claude.com/docs/en/agents-and-tools/tool-use/fine-grained-tool-streaming
     fn supports_input_streaming() -> bool {
         false
     }
