@@ -54,6 +54,27 @@ All of the changes displayed in the Project Diff behave exactly the same as any 
 
 You can stage or unstage each hunk as well as a whole file by hitting the buttons on the tab bar or their corresponding keybindings.
 
+### AI Review
+
+> **Changed in Preview (v0.225).** See [release notes](/releases#0.225).
+
+When viewing uncommitted changes in the project diff panel, you can request an AI-powered review by clicking the "Review Diff" button. This button appears in the toolbar when:
+
+- Your diff contains file changes
+- The AI assistant is enabled in your settings
+
+If your diff is empty, the review button is hidden since there are no changes to analyze.
+
+To enable AI features, open the Settings Editor ({#kb zed::OpenSettings}) and turn on the **AI Assistant** option, or add to your settings:
+
+```json [settings]
+{
+  "agent": {
+    "enabled": true
+  }
+}
+```
+
 ### Word Diff Highlighting
 
 By default, Zed highlights changed words within modified lines to make it easier to spot exactly what changed. To disable this globally, open the Settings Editor and go to **Languages & Tools > Miscellaneous**, then turn off **Word Diff Enabled**.

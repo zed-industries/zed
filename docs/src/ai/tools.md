@@ -93,4 +93,22 @@ Executes shell commands and returns the combined output, creating a new shell pr
 
 ### `subagent`
 
-Spawns a subagent with its own context window to perform a delegated task. Useful for running parallel investigations, completing self-contained tasks, or performing research where only the outcome matters. Each subagent has access to the same tools as the parent agent.
+> **Preview:** This feature is available in Zed Preview. It will be included in the next Stable release.
+
+Spawns an independent agent to handle a delegated task. Use it for:
+
+- Running multiple tasks in parallel that would take significantly longer sequentially
+- Completing self-contained tasks where you need the outcome but not intermediate steps
+- Investigations where you need the conclusion but not the research trail
+
+Avoid using subagents for simple operations you could accomplish with one or two direct tool calls—each agent has startup overhead.
+
+**Context isolation**: Spawned agents cannot see your conversation history or attached context. Include all necessary information (file paths, requirements, constraints) in the task description.
+
+**Parameters**:
+
+- `label`: Short description shown in the UI (e.g., "Researching alternatives")
+- `task`: Complete task description with all context the agent needs
+- `timeout_secs`: Optional maximum runtime in seconds
+
+When spawning multiple agents that write to the filesystem, provide guidance to avoid conflicts (e.g., assign different directories).
