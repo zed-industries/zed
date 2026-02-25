@@ -6938,18 +6938,23 @@ impl MultiBufferSnapshot {
     }
 
     fn excerpt_locator_for_id(&self, id: ExcerptId) -> &Locator {
+        self.try_excerpt_locator_for_id(id)
+            .unwrap_or_else(|| panic!("invalid excerpt id {id:?}"))
+    }
+
+    fn try_excerpt_locator_for_id(&self, id: ExcerptId) -> Option<&Locator> {
         if id == ExcerptId::min() {
-            Locator::min_ref()
+            Some(Locator::min_ref())
         } else if id == ExcerptId::max() {
-            Locator::max_ref()
+            Some(Locator::max_ref())
         } else {
             let (_, _, item) = self.excerpt_ids.find::<ExcerptId, _>((), &id, Bias::Left);
             if let Some(entry) = item
                 && entry.id == id
             {
-                return &entry.locator;
+                return Some(&entry.locator);
             }
-            panic!("invalid excerpt id {id:?}")
+            None
         }
     }
 
@@ -7034,7 +7039,7 @@ impl MultiBufferSnapshot {
     /// afterwards.
     fn excerpt(&self, excerpt_id: ExcerptId) -> Option<&Excerpt> {
         let excerpt_id = self.latest_excerpt_id(excerpt_id);
-        let locator = self.excerpt_locator_for_id(excerpt_id);
+        let locator = self.try_excerpt_locator_for_id(excerpt_id)?;
         let (_, _, item) =
             self.excerpts
                 .find::<Option<&Locator>, _>((), &Some(locator), Bias::Left);
