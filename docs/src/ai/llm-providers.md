@@ -603,6 +603,8 @@ So, ensure you have it set in your environment variables (`<PROVIDER_NAME>_API_K
 
 ### OpenRouter {#openrouter}
 
+> **Changed in Preview (v0.225).** See [release notes](/releases#0.225).
+
 OpenRouter provides access to multiple AI models through a single API. It supports tool use for compatible models.
 
 1. Visit [OpenRouter](https://openrouter.ai) and create an account
@@ -613,6 +615,23 @@ OpenRouter provides access to multiple AI models through a single API. It suppor
 The OpenRouter API key will be saved in your keychain.
 
 Zed will also use the `OPENROUTER_API_KEY` environment variable if it's defined.
+
+When using OpenRouter as your assistant provider, you must explicitly select a model in your settings. OpenRouter no longer provides a default model selection.
+
+Configure your preferred OpenRouter model in `settings.json`:
+
+```json [settings]
+{
+  "agent": {
+    "default_model": {
+      "provider": "openrouter",
+      "model": "openrouter/auto"
+    }
+  }
+}
+```
+
+The `openrouter/auto` model automatically routes your requests to the most appropriate available model. You can also specify any model available through OpenRouter's API.
 
 #### Custom Models {#openrouter-custom-models}
 
