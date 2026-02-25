@@ -146,7 +146,7 @@ pub struct ProjectPanel {
     width: Option<Pixels>,
     pending_serialization: Task<Option<()>>,
     diagnostics: HashMap<(WorktreeId, Arc<RelPath>), DiagnosticSeverity>,
-    diagnostic_counts: HashMap<(WorktreeId, Arc<RelPath>), (usize, usize)>,
+    diagnostic_counts: HashMap<(WorktreeId, Arc<RelPath>), DiagnosticCount>,
     diagnostic_summary_update: Task<()>,
     // We keep track of the mouse down state on entries so we don't flash the UI
     // in case a user clicks to open a file.
@@ -233,6 +233,30 @@ enum ClipboardEntry {
     Cut(BTreeSet<SelectedEntry>),
 }
 
+#[derive(Debug, Default, PartialEq, Eq, Clone, Copy)]
+struct DiagnosticCount {
+    error_count: usize,
+    warning_count: usize,
+}
+
+impl DiagnosticCount {
+    fn capped_error_count(&self) -> String {
+        Self::capped_count(self.error_count)
+    }
+
+    fn capped_warning_count(&self) -> String {
+        Self::capped_count(self.warning_count)
+    }
+
+    fn capped_count(count: usize) -> String {
+        if count > 99 {
+            "99+".to_string()
+        } else {
+            count.to_string()
+        }
+    }
+}
+
 #[derive(Debug, PartialEq, Eq, Clone)]
 struct EntryDetails {
     filename: String,
@@ -250,7 +274,7 @@ struct EntryDetails {
     sticky: Option<StickyDetails>,
     filename_text_color: Color,
     diagnostic_severity: Option<DiagnosticSeverity>,
-    diagnostic_counts: Option<(usize, usize)>,
+    diagnostic_count: Option<DiagnosticCount>,
     git_status: GitSummary,
     is_private: bool,
     worktree_id: WorktreeId,
@@ -1003,55 +1027,55 @@ impl ProjectPanel {
         let mut diagnostics: HashMap<(WorktreeId, Arc<RelPath>), DiagnosticSeverity> =
             Default::default();
         let show_diagnostics_setting = ProjectPanelSettings::get_global(cx).show_diagnostics;
-        let diagnostic_badges = ProjectPanelSettings::get_global(cx).diagnostic_badges;
-        let mut diagnostic_counts: HashMap<(WorktreeId, Arc<RelPath>), (usize, usize)> =
-            Default::default();
+
         if show_diagnostics_setting != ShowDiagnostics::Off {
-            // First pass: aggregate per-file counts across all language servers for the same path,
-            // so that counts are not inflated when multiple LSPs report diagnostics for one file.
-            let mut file_counts: HashMap<(WorktreeId, Arc<RelPath>), (usize, usize)> =
-                Default::default();
             self.project
                 .read(cx)
                 .diagnostic_summaries(false, cx)
-                .for_each(|(project_path, _, diagnostic_summary)| {
-                    let entry = file_counts
-                        .entry((project_path.worktree_id, project_path.path))
-                        .or_insert((0, 0));
-                    entry.0 += diagnostic_summary.error_count;
-                    entry.1 += diagnostic_summary.warning_count;
-                });
-            for ((worktree_id, path), (error_count, warning_count)) in &file_counts {
-                let severity = if *error_count > 0 {
-                    Some(DiagnosticSeverity::ERROR)
-                } else if show_diagnostics_setting == ShowDiagnostics::All && *warning_count > 0 {
-                    Some(DiagnosticSeverity::WARNING)
-                } else {
-                    None
-                };
-                if let Some(severity) = severity {
-                    let project_path = ProjectPath {
-                        worktree_id: *worktree_id,
-                        path: path.clone(),
-                    };
-                    let ancestors = path.ancestors().collect::<Vec<_>>();
-                    for ancestor_path in ancestors.iter().rev() {
+                .filter_map(|(path, _, diagnostic_summary)| {
+                    if diagnostic_summary.error_count > 0 {
+                        Some((path, DiagnosticSeverity::ERROR))
+                    } else if show_diagnostics_setting == ShowDiagnostics::All
+                        && diagnostic_summary.warning_count > 0
+                    {
+                        Some((path, DiagnosticSeverity::WARNING))
+                    } else {
+                        None
+                    }
+                })
+                .for_each(|(project_path, diagnostic_severity)| {
+                    let ancestors = project_path.path.ancestors().collect::<Vec<_>>();
+                    for path in ancestors.into_iter().rev() {
                         Self::update_strongest_diagnostic_severity(
                             &mut diagnostics,
                             &project_path,
-                            (*ancestor_path).into(),
-                            severity,
+                            path.into(),
+                            diagnostic_severity,
                         );
                     }
-                }
-                // Store diagnostic counts only for files, not directories
-                if diagnostic_badges && (*error_count > 0 || *warning_count > 0) {
-                    diagnostic_counts.insert((*worktree_id, path.clone()), (*error_count, *warning_count));
-                }
-            }
+                });
         }
         self.diagnostics = diagnostics;
-        self.diagnostic_counts = diagnostic_counts;
+
+        let diagnostic_badges = ProjectPanelSettings::get_global(cx).diagnostic_badges;
+        self.diagnostic_counts =
+            if diagnostic_badges && show_diagnostics_setting != ShowDiagnostics::Off {
+                self.project.read(cx).diagnostic_summaries(false, cx).fold(
+                    HashMap::default(),
+                    |mut counts, (project_path, _, summary)| {
+                        let entry = counts
+                            .entry((project_path.worktree_id, project_path.path))
+                            .or_default();
+                        entry.error_count += summary.error_count;
+                        if show_diagnostics_setting == ShowDiagnostics::All {
+                            entry.warning_count += summary.warning_count;
+                        }
+                        counts
+                    },
+                )
+            } else {
+                Default::default()
+            };
     }
 
     fn update_strongest_diagnostic_severity(
@@ -5067,7 +5091,7 @@ impl ProjectPanel {
 
         let filename_text_color = details.filename_text_color;
         let diagnostic_severity = details.diagnostic_severity;
-        let diagnostic_counts = details.diagnostic_counts;
+        let diagnostic_count = details.diagnostic_count;
         let item_colors = get_item_color(is_sticky, cx);
 
         let canonical_path = details
@@ -5507,7 +5531,7 @@ impl ProjectPanel {
                     })
                     .selectable(false)
                     .when(
-                        canonical_path.is_some() || diagnostic_counts.is_some(),
+                        canonical_path.is_some() || diagnostic_count.is_some(),
                         |this| {
                             let symlink_element = canonical_path.map(|path| {
                                 div()
@@ -5531,29 +5555,19 @@ impl ProjectPanel {
                                     .gap_1()
                                     .flex_none()
                                     .pr_3()
-                                    .when_some(diagnostic_counts, |this, (errors, warnings)| {
-                                        this.when(errors > 0, |this| {
-                                            let error_txt = if errors > 99 {
-                                                "99+".to_string()
-                                            } else {
-                                                errors.to_string()
-                                            };
+                                    .when_some(diagnostic_count, |this, count| {
+                                        this.when(count.error_count > 0, |this| {
                                             this.child(
-                                                Label::new(error_txt)
+                                                Label::new(count.capped_error_count())
                                                     .size(LabelSize::Small)
                                                     .color(Color::Error),
                                             )
                                         })
                                         .when(
-                                            warnings > 0,
+                                            count.warning_count > 0,
                                             |this| {
-                                                let warning_txt = if warnings > 99 {
-                                                    "99+".to_string()
-                                                } else {
-                                                    warnings.to_string()
-                                                };
                                                 this.child(
-                                                    Label::new(warning_txt)
+                                                    Label::new(count.capped_warning_count())
                                                         .size(LabelSize::Small)
                                                         .color(Color::Warning),
                                                 )
@@ -5974,12 +5988,13 @@ impl ProjectPanel {
             .get(&(worktree_id, entry.path.clone()))
             .cloned();
 
-        let diagnostic_counts = self
+        let diagnostic_count = self
             .diagnostic_counts
             .get(&(worktree_id, entry.path.clone()))
             .copied();
 
-        let filename_text_color = entry_git_aware_label_color(git_status, entry.is_ignored, is_marked);
+        let filename_text_color =
+            entry_git_aware_label_color(git_status, entry.is_ignored, is_marked);
 
         let is_cut = self
             .clipboard
@@ -6002,7 +6017,7 @@ impl ProjectPanel {
             sticky,
             filename_text_color,
             diagnostic_severity,
-            diagnostic_counts,
+            diagnostic_count,
             git_status,
             is_private: entry.is_private,
             worktree_id,

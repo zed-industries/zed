@@ -740,9 +740,8 @@ pub struct ProjectPanelSettingsContent {
     /// Default: directories_first
     pub sort_mode: Option<ProjectPanelSortMode>,
     /// Whether to show error and warning count badges next to file names in the project panel.
-    /// When enabled, diagnostic severity also takes precedence over git status for entry text color.
     ///
-    /// Default: false
+    /// Default: true
     pub diagnostic_badges: Option<bool>,
 }
 

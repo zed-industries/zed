@@ -126,10 +126,8 @@ impl Settings for ProjectPanelSettings {
                     on_drop: auto_open.on_drop.unwrap(),
                 }
             },
-            sort_mode: project_panel
-                .sort_mode
-                .unwrap_or(ProjectPanelSortMode::DirectoriesFirst),
-            diagnostic_badges: project_panel.diagnostic_badges.unwrap_or(false),
+            sort_mode: project_panel.sort_mode.unwrap(),
+            diagnostic_badges: project_panel.diagnostic_badges.unwrap(),
         }
     }
 }
