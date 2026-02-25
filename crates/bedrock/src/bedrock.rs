@@ -3,7 +3,7 @@ mod models;
 use anyhow::{Result, anyhow};
 use aws_sdk_bedrockruntime as bedrock;
 pub use aws_sdk_bedrockruntime as bedrock_client;
-use aws_sdk_bedrockruntime::types::InferenceConfiguration;
+use aws_sdk_bedrockruntime::types::{GuardrailStreamConfiguration, InferenceConfiguration};
 pub use aws_sdk_bedrockruntime::types::{
     AnyToolChoice as BedrockAnyToolChoice, AutoToolChoice as BedrockAutoToolChoice,
     ContentBlock as BedrockInnerContent, Tool as BedrockTool, ToolChoice as BedrockToolChoice,
@@ -88,6 +88,21 @@ pub async fn stream_completion(
         if !system.is_empty() {
             response = response.system(BedrockSystemContentBlock::Text(system));
         }
+    }
+
+    if let Some(guardrail_id) = &request.guardrail_identifier {
+        let version = request
+            .guardrail_version
+            .as_deref()
+            .unwrap_or("DRAFT");
+
+        response = response.guardrail_config(
+            GuardrailStreamConfiguration::builder()
+                .guardrail_identifier(guardrail_id)
+                .guardrail_version(version)
+                .build()
+                .map_err(|e| BedrockError::Other(e.into()))?
+        );
     }
 
     let output = response.send().await.map_err(|err| match err {
@@ -202,6 +217,8 @@ pub struct Request {
     pub temperature: Option<f32>,
     pub top_k: Option<u32>,
     pub top_p: Option<f32>,
+    pub guardrail_identifier: Option<String>,
+    pub guardrail_version: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
