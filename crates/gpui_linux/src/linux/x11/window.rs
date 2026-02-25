@@ -1,3 +1,4 @@
+use accesskit::TreeUpdate;
 use anyhow::{Context as _, anyhow};
 use x11rb::connection::RequestConnection;
 
@@ -1217,6 +1218,12 @@ impl X11WindowStatePtr {
 }
 
 impl PlatformWindow for X11Window {
+    fn a11y_init(&self, _callbacks: gpui::A11yCallbacks) {
+        todo!("later")
+    }
+    fn a11y_tree_update(&mut self, _tree_update: TreeUpdate) {
+        todo!("later")
+    }
     fn bounds(&self) -> Bounds<Pixels> {
         self.0.state.borrow().bounds
     }

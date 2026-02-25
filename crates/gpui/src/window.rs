@@ -1,24 +1,27 @@
 #[cfg(any(feature = "inspector", debug_assertions))]
 use crate::Inspector;
 use crate::{
-    Action, AnyDrag, AnyElement, AnyImageCache, AnyTooltip, AnyView, App, AppContext, Arena, Asset,
-    AsyncWindowContext, AvailableSpace, Background, BorderStyle, Bounds, BoxShadow, Capslock,
-    Context, Corners, CursorStyle, Decorations, DevicePixels, DispatchActionListener,
-    DispatchNodeId, DispatchTree, DisplayId, Edges, Effect, Entity, EntityId, EventEmitter,
-    FileDropEvent, FontId, Global, GlobalElementId, GlyphId, GpuSpecs, Hsla, InputHandler, IsZero,
-    KeyBinding, KeyContext, KeyDownEvent, KeyEvent, Keystroke, KeystrokeEvent, LayoutId,
-    LineLayoutIndex, Modifiers, ModifiersChangedEvent, MonochromeSprite, MouseButton, MouseEvent,
-    MouseMoveEvent, MouseUpEvent, Path, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput,
-    PlatformInputHandler, PlatformWindow, Point, PolychromeSprite, Priority, PromptButton,
-    PromptLevel, Quad, Render, RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams,
-    Replay, ResizeEdge, SMOOTH_SVG_SCALE_FACTOR, SUBPIXEL_VARIANTS_X, SUBPIXEL_VARIANTS_Y,
-    ScaledPixels, Scene, Shadow, SharedString, Size, StrikethroughStyle, Style, SubpixelSprite,
-    SubscriberSet, Subscription, SystemWindowTab, SystemWindowTabController, TabStopMap,
-    TaffyLayoutEngine, Task, TextRenderingMode, TextStyle, TextStyleRefinement, ThermalState,
-    TransformationMatrix, Underline, UnderlineStyle, WindowAppearance, WindowBackgroundAppearance,
-    WindowBounds, WindowControls, WindowDecorations, WindowOptions, WindowParams, WindowTextSystem,
-    point, prelude::*, px, rems, size, transparent_black,
+    A11yCallbacks, Action, AnyDrag, AnyElement, AnyImageCache, AnyTooltip, AnyView, App,
+    AppContext, Arena, Asset, AsyncWindowContext, AvailableSpace, Background, BorderStyle, Bounds,
+    BoxShadow, Capslock, Context, Corners, CursorStyle, Decorations, DevicePixels,
+    DispatchActionListener, DispatchNodeId, DispatchTree, DisplayId, Edges, Effect, Entity,
+    EntityId, EventEmitter, FileDropEvent, FontId, Global, GlobalElementId, GlyphId, GpuSpecs,
+    Hsla, InputHandler, IsZero, KeyBinding, KeyContext, KeyDownEvent, KeyEvent, Keystroke,
+    KeystrokeEvent, LayoutId, LineLayoutIndex, Modifiers, ModifiersChangedEvent, MonochromeSprite,
+    MouseButton, MouseEvent, MouseMoveEvent, MouseUpEvent, Path, Pixels, PlatformAtlas,
+    PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point, PolychromeSprite,
+    Priority, PromptButton, PromptLevel, Quad, Render, RenderGlyphParams, RenderImage,
+    RenderImageParams, RenderSvgParams, Replay, ResizeEdge, SMOOTH_SVG_SCALE_FACTOR,
+    SUBPIXEL_VARIANTS_X, SUBPIXEL_VARIANTS_Y, ScaledPixels, Scene, Shadow, SharedString, Size,
+    StrikethroughStyle, Style, SubpixelSprite, SubscriberSet, Subscription, SystemWindowTab,
+    SystemWindowTabController, TabStopMap, TaffyLayoutEngine, Task, TextRenderingMode, TextStyle,
+    TextStyleRefinement, ThermalState, TransformationMatrix, TrivialActionHandler,
+    TrivialActivationHandler, TrivialDeactivationHandler, Underline, UnderlineStyle,
+    WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControls, WindowDecorations,
+    WindowOptions, WindowParams, WindowTextSystem, point, prelude::*, px, rems, size,
+    transparent_black,
 };
+use accesskit::Role;
 use anyhow::{Context as _, Result, anyhow};
 use collections::{FxHashMap, FxHashSet};
 #[cfg(target_os = "macos")]
@@ -909,6 +912,7 @@ pub struct Window {
     layout_engine: Option<TaffyLayoutEngine>,
     pub(crate) root: Option<AnyView>,
     pub(crate) element_id_stack: SmallVec<[ElementId; 32]>,
+    pub(crate) a11y_nodes: A11yNodes,
     pub(crate) text_style_stack: Vec<TextStyleRefinement>,
     pub(crate) rendered_entity_stack: Vec<EntityId>,
     pub(crate) element_offset_stack: Vec<Point<Pixels>>,
@@ -952,6 +956,122 @@ pub struct Window {
     pub(crate) client_inset: Option<Pixels>,
     #[cfg(any(feature = "inspector", debug_assertions))]
     inspector: Option<Entity<Inspector>>,
+}
+
+pub(crate) use a11y::{A11yNodes, FinalizedA11yNodes};
+mod a11y {
+    use super::*;
+
+    /// Arbitrary constant
+    const ROOT_ID: accesskit::NodeId = accesskit::NodeId(0);
+
+    /// A stack of accesskit nodes that remembers all nodes its seen
+    pub(crate) struct A11yNodes {
+        // `ids` and `nodes` are kept in sync - always have the same number of
+        // elements. 
+        ids_stack: SmallVec<[accesskit::NodeId; 32]>,
+        nodes_stack: SmallVec<[accesskit::Node; 32]>,
+        // no smallvec because we pass this directly to accesskit
+        all_nodes: Vec<(accesskit::NodeId, accesskit::Node)>,
+        focused: Option<accesskit::NodeId>,
+    }
+
+    /// A11y information expected to be present after a full prepaint phase.
+    /// Passed directly to accesskit.
+    pub(crate) struct FinalizedA11yNodes {
+        pub nodes: Vec<(accesskit::NodeId, accesskit::Node)>,
+        pub focused: accesskit::NodeId,
+    }
+
+    impl A11yNodes {
+        pub fn new() -> Self {
+            Self {
+                ids_stack: SmallVec::new(),
+                nodes_stack: SmallVec::new(),
+                all_nodes: Vec::new(),
+                focused: None,
+            }
+        }
+
+        /// Information needed to initialize accesskit
+        pub fn tree(&self) -> accesskit::Tree {
+            accesskit::Tree {
+                root: ROOT_ID,
+                toolkit_name: Some("GPUI".to_string()),
+                toolkit_version: Some("fixme".to_string()), // todo!
+            }
+        }
+
+        pub fn root_node(&self) -> (accesskit::NodeId, accesskit::Node) {
+            (ROOT_ID, accesskit::Node::new(Role::Window))
+        }
+
+        pub fn set_focused(&mut self, node_id: accesskit::NodeId) {
+            debug_assert!(
+                self.focused.is_none(),
+                "cannot set focused node twice in one prepaint phase"
+            );
+
+            self.focused = Some(node_id);
+        }
+
+        pub fn push(&mut self, id: accesskit::NodeId, node: accesskit::Node) {
+            self.ids_stack.push(id);
+            self.nodes_stack.push(node);
+        }
+
+        pub fn push_root(&mut self) {
+            debug_assert!(self.ids_stack.is_empty());
+            debug_assert!(self.nodes_stack.is_empty());
+            debug_assert!(self.all_nodes.is_empty());
+            
+            let (id, node) = self.root_node();
+            self.push(id, node);
+        }
+
+        pub fn pop(&mut self) -> Option<accesskit::NodeId> {
+            match (self.ids_stack.pop(), self.nodes_stack.pop()) {
+                (None, None) => {
+                    None
+                },
+                (Some(id), Some(node)) => {
+                    // node has all children now, safe to add to final list
+                    self.all_nodes.push((id, node));
+                    Some(id)
+                }
+                _ => unreachable!("ids and nodes have different lengths"),
+            }
+        }
+
+        pub fn pop_root(&mut self) {
+            let popped = self.pop();
+            debug_assert_eq!(popped, Some(ROOT_ID));
+        }
+
+        pub fn peek_mut(&mut self) -> Option<(accesskit::NodeId, &mut accesskit::Node)> {
+            match (self.ids_stack.last(), self.nodes_stack.last_mut()) {
+                (None, None) => None,
+                (Some(id), Some(node)) => Some((*id, node)),
+                _ => unreachable!("ids and nodes have different lengths"),
+            }
+        }
+
+        /// When a frame has been painted, call this method to:
+        pub fn finalize(&mut self) -> FinalizedA11yNodes {
+            // The stacks should be empty, otherwise we are pushing nodes that we
+            // are forgetting to pop.
+            debug_assert!(self.ids_stack.is_empty());
+            debug_assert!(self.nodes_stack.is_empty());
+
+            self.ids_stack.clear();
+            self.nodes_stack.clear();
+
+            let nodes = std::mem::take(&mut self.all_nodes);
+            let focused = self.focused.take().unwrap_or(ROOT_ID);
+
+            FinalizedA11yNodes { nodes, focused }
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default)]
@@ -1134,6 +1254,22 @@ impl Window {
                 tabbing_identifier,
             },
         )?;
+
+        let a11y_nodes = A11yNodes::new();
+
+        let initial_tree_update = accesskit::TreeUpdate {
+            focus: 0.into(),
+            nodes: vec![a11y_nodes.root_node()],
+            tree: Some(a11y_nodes.tree()),
+            tree_id: accesskit::TreeId::ROOT,
+        };
+        platform_window.a11y_init(A11yCallbacks {
+            activation: TrivialActivationHandler(Box::new(move || {
+                Some(initial_tree_update.clone())
+            })),
+            action: TrivialActionHandler(Box::new(|action| println!("doing action: {action:?}"))),
+            deactivation: TrivialDeactivationHandler(Box::new(|| println!("deactivating a11y"))),
+        });
 
         let tab_bar_visible = platform_window.tab_bar_visible();
         SystemWindowTabController::init_visible(cx, tab_bar_visible);
@@ -1398,6 +1534,7 @@ impl Window {
             layout_engine: Some(TaffyLayoutEngine::new()),
             root: None,
             element_id_stack: SmallVec::default(),
+            a11y_nodes,
             text_style_stack: Vec::new(),
             rendered_entity_stack: Vec::new(),
             element_offset_stack: Vec::new(),
@@ -2263,9 +2400,19 @@ impl Window {
     }
 
     #[profiling::function]
-    fn present(&self) {
+    fn present(&mut self) {
         self.platform_window.draw(&self.rendered_frame.scene);
         self.needs_present.set(false);
+
+        let FinalizedA11yNodes { nodes, focused, .. } = self.a11y_nodes.finalize();
+        let update = accesskit::TreeUpdate {
+            nodes,
+            tree_id: accesskit::TreeId::ROOT, // todo! fix
+            focus: focused,
+            tree: None,
+        };
+        self.platform_window.a11y_tree_update(update);
+
         profiling::finish_frame!();
     }
 
@@ -2292,6 +2439,7 @@ impl Window {
         };
 
         // Layout all root elements.
+        self.a11y_nodes.push_root();
         let mut root_element = self.root.as_ref().unwrap().clone().into_any();
         root_element.prepaint_as_root(Point::default(), root_size.into(), self, cx);
 
@@ -2342,6 +2490,8 @@ impl Window {
 
         #[cfg(any(feature = "inspector", debug_assertions))]
         self.paint_inspector_hitbox(cx);
+
+        self.a11y_nodes.pop_root();
     }
 
     fn prepaint_tooltip(&mut self, cx: &mut App) -> Option<AnyElement> {

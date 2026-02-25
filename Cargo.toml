@@ -473,6 +473,8 @@ ztracing_macro = { path = "crates/ztracing_macro" }
 # External crates
 #
 
+accesskit = "0.24.0"
+accesskit_unix = "0.20.0"  # todo! feature flag
 agent-client-protocol = { version = "=0.9.4", features = ["unstable"] }
 aho-corasick = "1.1"
 alacritty_terminal = { git = "https://github.com/zed-industries/alacritty", rev = "9d9640d4" }

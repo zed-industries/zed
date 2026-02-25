@@ -1594,6 +1594,14 @@ impl Element for Div {
             )
         });
     }
+    
+    fn role(&self) -> Option<accesskit::Role> {
+        if self.interactivity.element_id.is_some() {
+            Some(accesskit::Role::GenericContainer)
+        } else {
+            None
+        }
+    }
 }
 
 impl IntoElement for Div {
@@ -1781,6 +1789,11 @@ impl Interactivity {
 
         if let Some(focus_handle) = self.tracked_focus_handle.as_ref() {
             window.set_focus_handle(focus_handle, cx);
+            if let Some(global_id) = global_id
+                && focus_handle.is_focused(window)
+            {
+                window.a11y_nodes.set_focused(global_id.accesskit_node_id());
+            }
         }
         window.with_optional_element_state::<InteractiveElementState, _>(
             global_id,
