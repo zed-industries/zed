@@ -1,5 +1,6 @@
 use gpui::*;
 use gpui::prelude::*;
+use gpui_platform::application;
 
 struct Clicked;
 
@@ -143,7 +144,7 @@ impl Render for DraggableRectangles {
 }
 
 fn main() {
-    Application::new().run(|cx: &mut App| {
+    application().run(|cx: &mut App| {
         cx.open_window(
             WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(Bounds::centered(None, size(px(1550.0), px(400.0)), cx))),
