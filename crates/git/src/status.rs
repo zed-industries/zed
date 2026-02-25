@@ -475,7 +475,12 @@ impl FromStr for GitStatus {
                     }
                     .into();
                 }
-                _ => panic!("Unexpected duplicated status entries: {a_status:?} and {b_status:?}"),
+                (x, y) if x == y => {}
+                _ => {
+                    log::warn!(
+                        "Unexpected duplicated status entries: {a_status:?} and {b_status:?}"
+                    );
+                }
             }
             true
         });
@@ -619,7 +624,7 @@ mod tests {
 
     use crate::{
         repository::RepoPath,
-        status::{TreeDiff, TreeDiffStatus},
+        status::{FileStatus, GitStatus, TreeDiff, TreeDiffStatus},
     };
 
     use super::{DiffStat, parse_numstat};
@@ -708,6 +713,16 @@ mod tests {
                 deleted: 0
             })
         );
+    }
+
+    #[test]
+    fn test_duplicate_untracked_entries() {
+        // Regression test for ZED-2XA: git can produce duplicate untracked entries
+        // for the same path. This should deduplicate them instead of panicking.
+        let input = "?? file.txt\0?? file.txt";
+        let status: GitStatus = input.parse().unwrap();
+        assert_eq!(status.entries.len(), 1);
+        assert_eq!(status.entries[0].1, FileStatus::Untracked);
     }
 
     #[test]

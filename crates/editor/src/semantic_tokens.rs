@@ -122,7 +122,10 @@ impl Editor {
         if !self.mode().is_full() || !self.semantic_token_state.enabled() {
             self.invalidate_semantic_tokens(None);
             self.display_map.update(cx, |display_map, _| {
-                display_map.semantic_token_highlights.clear();
+                match Arc::get_mut(&mut display_map.semantic_token_highlights) {
+                    Some(highlights) => highlights.clear(),
+                    None => display_map.semantic_token_highlights = Arc::new(Default::default()),
+                };
             });
             self.semantic_token_state.update_task = Task::ready(());
             cx.notify();
@@ -171,8 +174,8 @@ impl Editor {
             .display_map
             .read(cx)
             .semantic_token_highlights
-            .iter()
-            .map(|(buffer_id, _)| *buffer_id)
+            .keys()
+            .copied()
             .filter(|buffer_id| !buffers_to_query.contains_key(buffer_id))
             .filter(|buffer_id| {
                 !self
@@ -308,7 +311,7 @@ impl Editor {
                                 token_highlights.sort_by(|a, b| {
                                     a.range.start.cmp(&b.range.start, &multi_buffer_snapshot)
                                 });
-                                display_map.semantic_token_highlights.insert(
+                                Arc::make_mut(&mut display_map.semantic_token_highlights).insert(
                                     buffer_id,
                                     (Arc::from(token_highlights), Arc::new(interner)),
                                 );

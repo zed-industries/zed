@@ -1,8 +1,11 @@
 name: background_agent_mvp
 
+# NOTE: Scheduled runs disabled as of 2026-02-24. The workflow can still be
+# triggered manually via workflow_dispatch. See Notion doc "Background Agent
+# for Zed" for current status and contact info to resume this work.
 on:
-  schedule:
-    - cron: "0 16 * * 1-5"
+  # schedule:
+  #   - cron: "0 16 * * 1-5"
   workflow_dispatch:
     inputs:
       crash_ids:

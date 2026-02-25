@@ -246,3 +246,52 @@ In doing so, you can change which task is shown in the runnables indicator.
 ## Keybindings to run tasks bound to runnables
 
 When you have a task definition that is bound to the runnable, you can quickly run it using [Code Actions](https://zed.dev/docs/configuring-languages?#code-actions) that you can trigger either via `editor: Toggle Code Actions` command or by the `cmd-.`/`ctrl-.` shortcut. Your task will be the first in the dropdown. The task will run immediately if there are no additional Code Actions for this line.
+
+## Running Bash Scripts
+
+> **Preview:** This feature is available in Zed Preview. It will be included in the next Stable release.
+
+You can run bash scripts directly from Zed. When you open a `.sh` or `.bash` file, Zed automatically detects the script as runnable and makes it available in the task picker.
+
+To run a bash script:
+
+1. Open the command palette with {#kb command_palette::Toggle}
+2. Search for "task" and select **task: spawn**
+3. Select the script from the list
+
+Bash scripts are tagged with `bash-script`, allowing you to filter or reference them in task configurations.
+
+If you need to pass arguments or customize the execution environment, add a task configuration in your `.zed/tasks.json`:
+
+```json
+[
+  {
+    "label": "run my-script.sh with args",
+    "command": "./my-script.sh",
+    "args": ["--verbose", "--output=results.txt"],
+    "tags": ["bash-script"]
+  }
+]
+```
+
+## Shell Initialization
+
+> **Changed in Preview (v0.225).** See [release notes](/releases#0.225).
+
+When Zed runs a task, it launches the command in a login shell. This ensures your shell's initialization files (`.bash_profile`, `.zshrc`, etc.) are sourced before the task executes.
+
+This behavior gives tasks access to the same environment variables, aliases, and PATH modifications you've configured in your shell profile. If a task fails to find a command that works in your terminal, verify your shell configuration files are properly set up.
+
+To override the shell used for tasks, configure the `terminal.shell` setting:
+
+```json
+{
+  "terminal": {
+    "shell": {
+      "program": "/bin/zsh"
+    }
+  }
+}
+```
+
+See [Terminal configuration](./terminal.md) for complete shell options.

@@ -1,7 +1,6 @@
 use acp_thread::ThreadStatus;
 use agent_ui::{AgentPanel, AgentPanelEvent};
 use chrono::{Datelike, Local, NaiveDate, TimeDelta};
-use db::kvp::KEY_VALUE_STORE;
 
 use fs::Fs;
 use fuzzy::StringMatchCandidate;
@@ -38,8 +37,6 @@ struct AgentThreadInfo {
     icon: IconName,
 }
 
-const LAST_THREAD_TITLES_KEY: &str = "sidebar-last-thread-titles";
-
 const DEFAULT_WIDTH: Pixels = px(320.0);
 const MIN_WIDTH: Pixels = px(200.0);
 const MAX_WIDTH: Pixels = px(800.0);
@@ -54,12 +51,7 @@ struct WorkspaceThreadEntry {
 }
 
 impl WorkspaceThreadEntry {
-    fn new(
-        index: usize,
-        workspace: &Entity<Workspace>,
-        persisted_titles: &HashMap<String, String>,
-        cx: &App,
-    ) -> Self {
+    fn new(index: usize, workspace: &Entity<Workspace>, cx: &App) -> Self {
         let workspace_ref = workspace.read(cx);
 
         let worktrees: Vec<_> = workspace_ref
@@ -89,18 +81,7 @@ impl WorkspaceThreadEntry {
             .join("\n")
             .into();
 
-        let thread_info = Self::thread_info(workspace, cx).or_else(|| {
-            if worktrees.is_empty() {
-                return None;
-            }
-            let path_key = sorted_paths_key(&worktrees);
-            let title = persisted_titles.get(&path_key)?;
-            Some(AgentThreadInfo {
-                title: SharedString::from(title.clone()),
-                status: AgentThreadStatus::Completed,
-                icon: IconName::ZedAgent,
-            })
-        });
+        let thread_info = Self::thread_info(workspace, cx);
 
         Self {
             index,
@@ -243,15 +224,6 @@ impl WorkspacePickerDelegate {
 
     fn set_recent_projects(&mut self, recent_projects: Vec<RecentProjectEntry>, cx: &App) {
         self.recent_project_thread_titles.clear();
-        if let Some(map) = read_thread_title_map() {
-            for entry in &recent_projects {
-                let path_key = sorted_paths_key(&entry.paths);
-                if let Some(title) = map.get(&path_key) {
-                    self.recent_project_thread_titles
-                        .insert(entry.full_path.clone(), title.clone().into());
-                }
-            }
-        }
 
         self.recent_projects = recent_projects;
 
@@ -755,8 +727,8 @@ impl Sidebar {
         let subscription = cx.observe_in(
             &multi_workspace,
             window,
-            |this, multi_workspace, window, cx| {
-                this.queue_refresh(multi_workspace, window, cx);
+            |this, _multi_workspace, window, cx| {
+                this.update_entries(window, cx);
             },
         );
 
@@ -793,7 +765,7 @@ impl Sidebar {
             test_recent_project_thread_titles: HashMap::new(),
             _fetch_recent_projects: fetch_recent_projects,
         };
-        this.queue_refresh(this.multi_workspace.clone(), window, cx);
+        this.update_entries(window, cx);
         this
     }
 
@@ -820,7 +792,7 @@ impl Sidebar {
                         ProjectEvent::WorktreeAdded(_)
                         | ProjectEvent::WorktreeRemoved(_)
                         | ProjectEvent::WorktreeOrderChanged => {
-                            this.queue_refresh(this.multi_workspace.clone(), window, cx);
+                            this.update_entries(window, cx);
                         }
                         _ => {}
                     },
@@ -834,16 +806,12 @@ impl Sidebar {
         multi_workspace: &MultiWorkspace,
         cx: &App,
     ) -> (Vec<WorkspaceThreadEntry>, usize) {
-        let persisted_titles = read_thread_title_map().unwrap_or_default();
-
         #[allow(unused_mut)]
         let mut entries: Vec<WorkspaceThreadEntry> = multi_workspace
             .workspaces()
             .iter()
             .enumerate()
-            .map(|(index, workspace)| {
-                WorkspaceThreadEntry::new(index, workspace, &persisted_titles, cx)
-            })
+            .map(|(index, workspace)| WorkspaceThreadEntry::new(index, workspace, cx))
             .collect();
 
         #[cfg(any(test, feature = "test-support"))]
@@ -916,14 +884,14 @@ impl Sidebar {
                         &agent_panel,
                         window,
                         |this, _, _event: &AgentPanelEvent, window, cx| {
-                            this.queue_refresh(this.multi_workspace.clone(), window, cx);
+                            this.update_entries(window, cx);
                         },
                     )
                 } else {
                     // Panel hasn't loaded yet — observe the workspace so we
                     // re-subscribe once the panel appears on its dock.
                     cx.observe_in(workspace, window, |this, _, window, cx| {
-                        this.queue_refresh(this.multi_workspace.clone(), window, cx);
+                        this.update_entries(window, cx);
                     })
                 }
             })
@@ -943,60 +911,16 @@ impl Sidebar {
                 let agent_panel = workspace.read(cx).panel::<AgentPanel>(cx)?;
                 let thread = agent_panel.read(cx).active_agent_thread(cx)?;
                 Some(cx.observe_in(&thread, window, |this, _, window, cx| {
-                    this.queue_refresh(this.multi_workspace.clone(), window, cx);
+                    this.update_entries(window, cx);
                 }))
             })
             .collect()
     }
 
-    fn persist_thread_titles(
-        &self,
-        entries: &[WorkspaceThreadEntry],
-        multi_workspace: &Entity<MultiWorkspace>,
-        cx: &mut Context<Self>,
-    ) {
-        let mut map = read_thread_title_map().unwrap_or_default();
-        let workspaces = multi_workspace.read(cx).workspaces().to_vec();
-        let mut changed = false;
-
-        for (workspace, entry) in workspaces.iter().zip(entries.iter()) {
-            if let Some(ref info) = entry.thread_info {
-                let paths: Vec<_> = workspace
-                    .read(cx)
-                    .worktrees(cx)
-                    .map(|wt| wt.read(cx).abs_path())
-                    .collect();
-                if paths.is_empty() {
-                    continue;
-                }
-                let path_key = sorted_paths_key(&paths);
-                let title = info.title.to_string();
-                if map.get(&path_key) != Some(&title) {
-                    map.insert(path_key, title);
-                    changed = true;
-                }
-            }
-        }
-
-        if changed {
-            if let Some(json) = serde_json::to_string(&map).log_err() {
-                cx.background_spawn(async move {
-                    KEY_VALUE_STORE
-                        .write_kvp(LAST_THREAD_TITLES_KEY.into(), json)
-                        .await
-                        .log_err();
-                })
-                .detach();
-            }
-        }
-    }
-
-    fn queue_refresh(
-        &mut self,
-        multi_workspace: Entity<MultiWorkspace>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    /// Reconciles the sidebar's displayed entries with the current state of all
+    /// workspaces and their agent threads.
+    fn update_entries(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let multi_workspace = self.multi_workspace.clone();
         cx.defer_in(window, move |this, window, cx| {
             if !this.multi_workspace.read(cx).multi_workspace_enabled(cx) {
                 return;
@@ -1008,8 +932,6 @@ impl Sidebar {
             let (entries, active_index) = multi_workspace.read_with(cx, |multi_workspace, cx| {
                 this.build_workspace_thread_entries(multi_workspace, cx)
             });
-
-            this.persist_thread_titles(&entries, &multi_workspace, cx);
 
             let had_notifications = !this.picker.read(cx).delegate.notified_workspaces.is_empty();
             this.picker.update(cx, |picker, cx| {
@@ -1044,23 +966,6 @@ impl Focusable for Sidebar {
     fn focus_handle(&self, cx: &App) -> FocusHandle {
         self.picker.read(cx).focus_handle(cx)
     }
-}
-
-fn sorted_paths_key<P: AsRef<Path>>(paths: &[P]) -> String {
-    let mut sorted: Vec<String> = paths
-        .iter()
-        .map(|p| p.as_ref().to_string_lossy().to_string())
-        .collect();
-    sorted.sort();
-    sorted.join("\n")
-}
-
-fn read_thread_title_map() -> Option<HashMap<String, String>> {
-    let json = KEY_VALUE_STORE
-        .read_kvp(LAST_THREAD_TITLES_KEY)
-        .log_err()
-        .flatten()?;
-    serde_json::from_str(&json).log_err()
 }
 
 impl Render for Sidebar {

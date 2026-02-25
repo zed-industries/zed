@@ -6,7 +6,7 @@ use anyhow::{Result, anyhow};
 use assistant_slash_command::SlashCommandWorkingSet;
 use assistant_text_thread::TextThreadStore;
 use buffer_diff::{DiffHunkSecondaryStatus, DiffHunkStatus, assert_hunks};
-use call::{ActiveCall, ParticipantLocation, Room, room};
+use call::{ActiveCall, Room, room};
 use client::{RECEIVE_TIMEOUT, User};
 use collab::rpc::{CLEANUP_TIMEOUT, RECONNECT_TIMEOUT};
 use collections::{BTreeMap, HashMap, HashSet};
@@ -51,7 +51,7 @@ use std::{
 };
 use unindent::Unindent as _;
 use util::{path, rel_path::rel_path, uri};
-use workspace::Pane;
+use workspace::{Pane, ParticipantLocation};
 
 #[ctor::ctor]
 fn init_logger() {

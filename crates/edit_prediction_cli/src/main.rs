@@ -27,10 +27,13 @@ mod synthesize;
 mod truncate_expected_patch;
 mod word_diff;
 use clap::{Args, CommandFactory, Parser, Subcommand, ValueEnum};
-use collections::HashSet;
+use collections::{HashMap, HashSet};
 use edit_prediction::EditPredictionStore;
 use futures::channel::mpsc;
 use futures::{SinkExt as _, StreamExt as _};
+use gaoya::minhash::{
+    MinHashIndex, MinHasher, MinHasher32, calculate_minhash_params, compute_minhash_similarity,
+};
 use gpui::{AppContext as _, BackgroundExecutor, Task};
 use zeta_prompt::ZetaFormat;
 
@@ -77,9 +80,13 @@ struct EpArgs {
     /// Filter examples by repository
     #[clap(long, global = true)]
     repo: Option<String>,
+    /// Deduplicate by cursor position and keep at most this many examples per cluster
+    #[clap(long, global = true)]
+    max_duplicates: Option<usize>,
     #[command(subcommand)]
     command: Option<Command>,
-    #[clap(global = true, help = INPUTS_HELP)]
+    /// Input file paths
+    #[clap(global = true)]
     inputs: Vec<PathBuf>,
     #[arg(long, short, global = true)]
     output: Option<PathBuf>,
@@ -171,7 +178,7 @@ Examples:
 #[derive(Subcommand, Debug, Clone)]
 enum Command {
     /// Read examples from files or fetch from Snowflake, output as .jsonl
-    Read,
+    Read(ReadArgs),
     /// Create git worktrees for each example and load file contents
     LoadProject,
     /// Retrieve context for input examples.
@@ -215,7 +222,7 @@ enum Command {
 impl Display for Command {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Command::Read => write!(f, "read"),
+            Command::Read(_) => write!(f, "read"),
             Command::LoadProject => write!(f, "load-project"),
             Command::Context => write!(f, "context"),
             Command::FormatPrompt(args) => {
@@ -258,6 +265,10 @@ impl Display for Command {
         }
     }
 }
+
+#[derive(Debug, Args, Clone)]
+#[command(after_help = INPUTS_HELP)]
+struct ReadArgs {}
 
 #[derive(Debug, Args, Clone)]
 struct FormatPromptArgs {
@@ -481,6 +492,136 @@ const MIN_CAPTURE_VERSION: pull_examples::MinCaptureVersion = pull_examples::Min
     patch: 1,
 };
 
+fn deduplicate_examples(examples: &mut Vec<Example>, max_per_cluster: usize) {
+    let total_before_exact = examples.len();
+    let mut seen_positions = HashSet::default();
+    examples.retain(|example| seen_positions.insert(example.spec.cursor_position.clone()));
+    log::info!(
+        "exact duplicate filter: {total_before_exact} examples → {} examples ({} removed)",
+        examples.len(),
+        total_before_exact - examples.len(),
+    );
+
+    const JACCARD_THRESHOLD: f64 = 0.5;
+    const NUM_HASHES: usize = 128;
+    const TOKEN_NGRAM_SIZE: usize = 5;
+
+    let (num_bands, band_width) = calculate_minhash_params(JACCARD_THRESHOLD, NUM_HASHES);
+    let num_hashes = num_bands * band_width;
+    let minhasher = MinHasher32::new(num_hashes);
+    let mut index: MinHashIndex<u32, usize> =
+        MinHashIndex::new(num_bands, band_width, JACCARD_THRESHOLD);
+
+    let signatures: Vec<Vec<u32>> = examples
+        .iter()
+        .map(|example| {
+            let shingles = code_token_ngrams(&example.spec.cursor_position, TOKEN_NGRAM_SIZE);
+            minhasher.create_signature(shingles.iter())
+        })
+        .collect();
+
+    for (id, signature) in signatures.iter().enumerate() {
+        index.insert(id, signature.clone());
+    }
+
+    // Build clusters via union-find on LSH candidate pairs.
+    let mut parent: Vec<usize> = (0..examples.len()).collect();
+
+    fn find(parent: &mut Vec<usize>, mut x: usize) -> usize {
+        while parent[x] != x {
+            parent[x] = parent[parent[x]];
+            x = parent[x];
+        }
+        x
+    }
+
+    for (id, signature) in signatures.iter().enumerate() {
+        for candidate in index.query_owned(signature) {
+            let (a, b) = (find(&mut parent, id), find(&mut parent, candidate));
+            if a != b {
+                parent[a] = b;
+            }
+        }
+    }
+
+    let mut clusters: HashMap<usize, Vec<usize>> = HashMap::default();
+    for id in 0..examples.len() {
+        clusters.entry(find(&mut parent, id)).or_default().push(id);
+    }
+
+    let mut keep: HashSet<usize> = HashSet::default();
+    for members in clusters.values() {
+        let selected = greedy_max_min_diverse(members, &signatures, max_per_cluster);
+        keep.extend(selected);
+    }
+
+    let total = examples.len();
+    let mut kept_indices: Vec<usize> = keep.into_iter().collect();
+    kept_indices.sort();
+
+    let mut retained = Vec::with_capacity(kept_indices.len());
+    for index in kept_indices.into_iter().rev() {
+        retained.push(examples.swap_remove(index));
+    }
+    retained.reverse();
+
+    *examples = retained;
+    log::info!(
+        "near-duplicate filter: {total} examples → {} examples ({} removed)",
+        examples.len(),
+        total - examples.len(),
+    );
+}
+
+fn greedy_max_min_diverse(members: &[usize], signatures: &[Vec<u32>], k: usize) -> Vec<usize> {
+    if members.len() <= k {
+        return members.to_vec();
+    }
+
+    let mut selected = vec![members[0]];
+    let mut min_dist: HashMap<usize, f64> = HashMap::default();
+    for &member in &members[1..] {
+        let dist = 1.0 - compute_minhash_similarity(&signatures[selected[0]], &signatures[member]);
+        min_dist.insert(member, dist);
+    }
+
+    while selected.len() < k {
+        let &best = min_dist
+            .iter()
+            .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
+            .map(|(id, _)| id)
+            .expect("min_dist should not be empty when selected.len() < k");
+        selected.push(best);
+        min_dist.remove(&best);
+
+        let best_sig = &signatures[best];
+        for (member, current_min) in min_dist.iter_mut() {
+            let dist = 1.0 - compute_minhash_similarity(best_sig, &signatures[*member]);
+            if dist < *current_min {
+                *current_min = dist;
+            }
+        }
+    }
+
+    selected
+}
+
+fn code_token_ngrams(code: &str, ngram_size: usize) -> Vec<String> {
+    let tokens: Vec<&str> = word_diff::tokenize(code)
+        .into_iter()
+        .filter(|t| !t.trim().is_empty())
+        .collect();
+
+    if tokens.len() < ngram_size {
+        return vec![tokens.join("\0")];
+    }
+
+    tokens
+        .windows(ngram_size)
+        .map(|window| window.join("\0"))
+        .collect()
+}
+
 async fn load_examples(
     http_client: Arc<dyn http_client::HttpClient>,
     args: &EpArgs,
@@ -542,21 +683,6 @@ async fn load_examples(
         );
     } else {
         let max_rows_per_timestamp = remaining_limit_for_snowflake.unwrap_or(5000);
-
-        if !captured_after_timestamps.is_empty() {
-            captured_after_timestamps.sort();
-
-            let mut captured_examples = pull_examples::fetch_captured_examples_after(
-                http_client.clone(),
-                &captured_after_timestamps,
-                max_rows_per_timestamp,
-                remaining_offset,
-                background_executor.clone(),
-                Some(MIN_CAPTURE_VERSION),
-            )
-            .await?;
-            examples.append(&mut captured_examples);
-        }
 
         if !rejected_after_timestamps.is_empty() {
             rejected_after_timestamps.sort();
@@ -621,6 +747,10 @@ async fn load_examples(
         {
             resume_from_output(path, &mut examples, command);
         }
+    }
+
+    if let Some(max_duplicates) = args.max_duplicates {
+        deduplicate_examples(&mut examples, max_duplicates);
     }
 
     if let Some(limit) = args.limit {
@@ -922,7 +1052,7 @@ fn main() {
 
                                 let result = async {
                                     match &command {
-                                        Command::Read => {}
+                                        Command::Read(_) => {}
                                         Command::LoadProject => {
                                             run_load_project(
                                                 example,

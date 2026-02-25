@@ -317,7 +317,7 @@ impl WaylandWindowState {
         viewport: Option<wp_viewport::WpViewport>,
         client: WaylandClientStatePtr,
         globals: Globals,
-        gpu_context: &WgpuContext,
+        gpu_context: &mut Option<WgpuContext>,
         options: WindowParams,
         parent: Option<WaylandWindowStatePtr>,
     ) -> anyhow::Result<Self> {
@@ -481,7 +481,7 @@ impl WaylandWindow {
     pub fn new(
         handle: AnyWindowHandle,
         globals: Globals,
-        gpu_context: &WgpuContext,
+        gpu_context: &mut Option<WgpuContext>,
         client: WaylandClientStatePtr,
         params: WindowParams,
         appearance: WindowAppearance,
@@ -1230,7 +1230,10 @@ impl PlatformWindow for WaylandWindow {
     fn is_subpixel_rendering_supported(&self) -> bool {
         let client = self.borrow().client.get_client();
         let state = client.borrow();
-        state.gpu_context.supports_dual_source_blending()
+        state
+            .gpu_context
+            .as_ref()
+            .is_some_and(|ctx| ctx.supports_dual_source_blending())
     }
 
     fn minimize(&self) {

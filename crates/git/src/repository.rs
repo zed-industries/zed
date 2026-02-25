@@ -451,12 +451,29 @@ pub struct CommitDiff {
     pub files: Vec<CommitFile>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum CommitFileStatus {
+    Added,
+    Modified,
+    Deleted,
+}
+
 #[derive(Debug)]
 pub struct CommitFile {
     pub path: RepoPath,
     pub old_text: Option<String>,
     pub new_text: Option<String>,
     pub is_binary: bool,
+}
+
+impl CommitFile {
+    pub fn status(&self) -> CommitFileStatus {
+        match (&self.old_text, &self.new_text) {
+            (None, Some(_)) => CommitFileStatus::Added,
+            (Some(_), None) => CommitFileStatus::Deleted,
+            _ => CommitFileStatus::Modified,
+        }
+    }
 }
 
 impl CommitDetails {
@@ -2003,7 +2020,7 @@ impl GitRepository for RealGitRepository {
                     DiffType::MergeBase { base_ref } => {
                         new_command(&git_binary_path)
                             .current_dir(&working_directory)
-                            .args(["diff", "--merge-base", base_ref.as_ref(), "HEAD"])
+                            .args(["diff", "--merge-base", base_ref.as_ref()])
                             .output()
                             .await?
                     }

@@ -301,6 +301,8 @@ Edit Prediction also works with other providers.
 
 ### GitHub Copilot {#github-copilot}
 
+> **Changed in Preview (v0.225).** See [release notes](/releases#0.225).
+
 To use GitHub Copilot as your provider, set this in your settings file ([how to edit](../configuring-zed.md#settings-files)):
 
 ```json [settings]

@@ -19,7 +19,7 @@ fn estimate_tokens(bytes: usize) -> usize {
 }
 
 /// The client's preferred edit prediction model. The server may override this.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum EditPredictionModelKind {
     Zeta1,
     Zeta2,
@@ -28,7 +28,7 @@ pub enum EditPredictionModelKind {
 /// Pre-computed byte offset ranges within `cursor_excerpt` for different
 /// editable and context token budgets. Allows the server to select the
 /// appropriate ranges for whichever model it uses.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Hash, Serialize, Deserialize)]
 pub struct ExcerptRanges {
     /// Editable region computed with a 150-token budget.
     pub editable_150: Range<usize>,
@@ -44,7 +44,7 @@ pub struct ExcerptRanges {
     pub editable_350_context_150: Range<usize>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Hash, Serialize, Deserialize)]
 pub struct ZetaPromptInput {
     pub cursor_path: Arc<Path>,
     pub cursor_excerpt: Arc<str>,
@@ -86,9 +86,9 @@ pub struct ZetaPromptInput {
 pub enum ZetaFormat {
     V0112MiddleAtEnd,
     V0113Ordered,
-    #[default]
     V0114180EditableRegion,
     V0120GitMergeMarkers,
+    #[default]
     V0131GitMergeMarkersPrefix,
     V0211Prefill,
     V0211SeedCoder,
@@ -149,7 +149,7 @@ impl ZetaFormat {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Hash, Serialize, Deserialize)]
 #[serde(tag = "event")]
 pub enum Event {
     BufferChange {
@@ -200,7 +200,7 @@ pub fn write_event(prompt: &mut String, event: &Event) {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Hash, Serialize, Deserialize)]
 pub struct RelatedFile {
     pub path: Arc<Path>,
     pub max_row: u32,
@@ -209,10 +209,12 @@ pub struct RelatedFile {
     pub in_open_source_repo: bool,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Hash, Serialize, Deserialize)]
 pub struct RelatedExcerpt {
     pub row_range: Range<u32>,
     pub text: Arc<str>,
+    #[serde(default)]
+    pub order: usize,
 }
 
 pub fn prompt_input_contains_special_tokens(input: &ZetaPromptInput, format: ZetaFormat) -> bool {
@@ -242,7 +244,27 @@ pub fn clean_zeta2_model_output(output: &str, format: ZetaFormat) -> &str {
     }
 }
 
-fn resolve_cursor_region(
+pub fn excerpt_range_for_format(
+    format: ZetaFormat,
+    ranges: &ExcerptRanges,
+) -> (Range<usize>, Range<usize>) {
+    match format {
+        ZetaFormat::V0112MiddleAtEnd | ZetaFormat::V0113Ordered => (
+            ranges.editable_150.clone(),
+            ranges.editable_150_context_350.clone(),
+        ),
+        ZetaFormat::V0114180EditableRegion
+        | ZetaFormat::V0120GitMergeMarkers
+        | ZetaFormat::V0131GitMergeMarkersPrefix
+        | ZetaFormat::V0211Prefill
+        | ZetaFormat::V0211SeedCoder => (
+            ranges.editable_350.clone(),
+            ranges.editable_350_context_150.clone(),
+        ),
+    }
+}
+
+pub fn resolve_cursor_region(
     input: &ZetaPromptInput,
     format: ZetaFormat,
 ) -> (&str, Range<usize>, usize) {
@@ -254,21 +276,7 @@ fn resolve_cursor_region(
         );
     };
 
-    let (editable_range, context_range) = match format {
-        ZetaFormat::V0112MiddleAtEnd | ZetaFormat::V0113Ordered => (
-            ranges.editable_150.clone(),
-            ranges.editable_150_context_350.clone(),
-        ),
-        ZetaFormat::V0114180EditableRegion
-        | ZetaFormat::V0120GitMergeMarkers
-        | ZetaFormat::V0131GitMergeMarkersPrefix
-        | ZetaFormat::V0211Prefill
-        | ZetaFormat::V0211SeedCoder => (
-            ranges.editable_180.clone(),
-            ranges.editable_180_context_350.clone(),
-        ),
-    };
-
+    let (editable_range, context_range) = excerpt_range_for_format(format, ranges);
     let context_start = context_range.start;
     let context_text = &input.cursor_excerpt[context_range];
     let adjusted_editable =
@@ -368,7 +376,10 @@ pub fn get_prefill(input: &ZetaPromptInput, format: ZetaFormat) -> String {
         | ZetaFormat::V0120GitMergeMarkers
         | ZetaFormat::V0131GitMergeMarkersPrefix
         | ZetaFormat::V0211SeedCoder => String::new(),
-        ZetaFormat::V0211Prefill => v0211_prefill::get_prefill(input),
+        ZetaFormat::V0211Prefill => {
+            let (context, editable_range, _) = resolve_cursor_region(input, format);
+            v0211_prefill::get_prefill(context, &editable_range)
+        }
     }
 }
 
@@ -410,52 +421,166 @@ fn format_edit_history_within_budget(
     result
 }
 
+fn excerpt_rendered_tokens(excerpt: &RelatedExcerpt, file_max_row: u32) -> usize {
+    let needs_newline = !excerpt.text.ends_with('\n');
+    let needs_ellipsis = excerpt.row_range.end < file_max_row;
+    let len = excerpt.text.len()
+        + if needs_newline { "\n".len() } else { 0 }
+        + if needs_ellipsis { "...\n".len() } else { 0 };
+    estimate_tokens(len)
+}
+
 fn format_related_files_within_budget(
     related_files: &[RelatedFile],
     file_marker: &str,
     max_tokens: usize,
 ) -> String {
-    let mut result = String::new();
+    // Collect the distinct order values across all excerpts, sorted ascending.
+    let mut order_levels: Vec<usize> = related_files
+        .iter()
+        .flat_map(|f| f.excerpts.iter().map(|e| e.order))
+        .collect();
+    order_levels.sort_unstable();
+    order_levels.dedup();
+
+    // Pre-compute file header strings and their token costs.
+    let file_headers: Vec<String> = related_files
+        .iter()
+        .map(|file| {
+            let path_str = file.path.to_string_lossy();
+            format!("{}{}\n", file_marker, path_str)
+        })
+        .collect();
+
+    // Track which excerpts are included per file.
+    let mut included: Vec<Vec<bool>> = related_files
+        .iter()
+        .map(|file| vec![false; file.excerpts.len()])
+        .collect();
+    let mut file_included: Vec<bool> = vec![false; related_files.len()];
     let mut total_tokens = 0;
 
-    for file in related_files {
-        let path_str = file.path.to_string_lossy();
-        let header = format!("{}{}\n", file_marker, path_str);
-        let header_tokens = estimate_tokens(header.len());
-
-        if total_tokens + header_tokens > max_tokens {
-            break;
+    // Process order levels from best (lowest) to worst. At each level, try to
+    // include all not-yet-included excerpts with that order across all files.
+    // If the full level doesn't fit, include a partial prefix (top-to-bottom
+    // within each file) and stop — don't proceed to worse order levels.
+    'outer: for &order in &order_levels {
+        // Gather the work for this order level: for each file that has excerpts
+        // at this order, collect the not-yet-included excerpt indices (in their
+        // original positional order) and the token cost to add them (including
+        // the file header if the file isn't already included).
+        struct FileWork {
+            file_idx: usize,
+            excerpt_indices: Vec<usize>,
+            header_cost: usize,
+            excerpt_costs: Vec<usize>,
         }
 
-        let mut file_tokens = header_tokens;
-        let mut excerpts_to_include = 0;
-
-        for excerpt in &file.excerpts {
-            let needs_newline = !excerpt.text.ends_with('\n');
-            let needs_ellipsis = excerpt.row_range.end < file.max_row;
-            let excerpt_len = excerpt.text.len()
-                + if needs_newline { "\n".len() } else { 0 }
-                + if needs_ellipsis { "...\n".len() } else { 0 };
-
-            let excerpt_tokens = estimate_tokens(excerpt_len);
-            if total_tokens + file_tokens + excerpt_tokens > max_tokens {
-                break;
+        let mut work_items: Vec<FileWork> = Vec::new();
+        for (file_idx, file) in related_files.iter().enumerate() {
+            let mut excerpt_indices = Vec::new();
+            let mut excerpt_costs = Vec::new();
+            for (eidx, excerpt) in file.excerpts.iter().enumerate() {
+                if excerpt.order == order && !included[file_idx][eidx] {
+                    excerpt_indices.push(eidx);
+                    excerpt_costs.push(excerpt_rendered_tokens(excerpt, file.max_row));
+                }
             }
-            file_tokens += excerpt_tokens;
-            excerpts_to_include += 1;
+            if excerpt_indices.is_empty() {
+                continue;
+            }
+            let header_cost = if file_included[file_idx] {
+                0
+            } else {
+                estimate_tokens(file_headers[file_idx].len())
+            };
+            work_items.push(FileWork {
+                file_idx,
+                excerpt_indices,
+                header_cost,
+                excerpt_costs,
+            });
         }
 
-        if excerpts_to_include > 0 {
-            total_tokens += file_tokens;
-            result.push_str(&header);
-            for excerpt in file.excerpts.iter().take(excerpts_to_include) {
-                result.push_str(&excerpt.text);
-                if !result.ends_with('\n') {
-                    result.push('\n');
+        // Compute the total cost for this entire order level.
+        let level_cost: usize = work_items
+            .iter()
+            .map(|w| w.header_cost + w.excerpt_costs.iter().sum::<usize>())
+            .sum();
+
+        if total_tokens + level_cost <= max_tokens {
+            // The whole level fits — include everything.
+            for work in &work_items {
+                total_tokens += work.header_cost;
+                file_included[work.file_idx] = true;
+                for (i, &eidx) in work.excerpt_indices.iter().enumerate() {
+                    included[work.file_idx][eidx] = true;
+                    total_tokens += work.excerpt_costs[i];
                 }
-                if excerpt.row_range.end < file.max_row {
-                    result.push_str("...\n");
+            }
+        } else {
+            // The whole level doesn't fit. Include as many excerpts as possible
+            // from each file (in positional order), then stop entirely.
+            for work in &work_items {
+                let available = max_tokens.saturating_sub(total_tokens);
+                let mut file_cost = work.header_cost;
+
+                let mut count = 0;
+                for i in 0..work.excerpt_indices.len() {
+                    if file_cost + work.excerpt_costs[i] > available {
+                        break;
+                    }
+                    file_cost += work.excerpt_costs[i];
+                    count += 1;
                 }
+
+                if count > 0 {
+                    total_tokens += work.header_cost;
+                    file_included[work.file_idx] = true;
+                    for (i, &eidx) in work.excerpt_indices.iter().take(count).enumerate() {
+                        included[work.file_idx][eidx] = true;
+                        total_tokens += work.excerpt_costs[i];
+                    }
+                }
+            }
+            break 'outer;
+        }
+    }
+
+    // Determine file rendering order: by the best (lowest) order of any
+    // included excerpt, breaking ties by original file index.
+    let mut file_order: Vec<(usize, usize)> = Vec::new();
+    for (file_idx, file) in related_files.iter().enumerate() {
+        if !file_included[file_idx] {
+            continue;
+        }
+        let best_order = file
+            .excerpts
+            .iter()
+            .enumerate()
+            .filter(|(eidx, _)| included[file_idx][*eidx])
+            .map(|(_, e)| e.order)
+            .min()
+            .unwrap_or(usize::MAX);
+        file_order.push((file_idx, best_order));
+    }
+    file_order.sort_by_key(|&(file_idx, best_order)| (best_order, file_idx));
+
+    // Render included files and excerpts in positional order within each file.
+    let mut result = String::new();
+    for &(file_idx, _) in &file_order {
+        let file = &related_files[file_idx];
+        result.push_str(&file_headers[file_idx]);
+        for (eidx, excerpt) in file.excerpts.iter().enumerate() {
+            if !included[file_idx][eidx] {
+                continue;
+            }
+            result.push_str(&excerpt.text);
+            if !result.ends_with('\n') {
+                result.push('\n');
+            }
+            if excerpt.row_range.end < file.max_row {
+                result.push_str("...\n");
             }
         }
     }
@@ -709,9 +834,8 @@ pub mod v0131_git_merge_markers_prefix {
 pub mod v0211_prefill {
     use super::*;
 
-    pub fn get_prefill(input: &ZetaPromptInput) -> String {
-        let editable_region = &input.cursor_excerpt
-            [input.editable_range_in_excerpt.start..input.editable_range_in_excerpt.end];
+    pub fn get_prefill(context: &str, editable_range: &Range<usize>) -> String {
+        let editable_region = &context[editable_range.start..editable_range.end];
 
         let prefill_len = (editable_region.len() as f64 * PREFILL_RATIO) as usize;
         let prefill_len = editable_region.floor_char_boundary(prefill_len);
@@ -1128,6 +1252,7 @@ mod tests {
             excerpts: vec![RelatedExcerpt {
                 row_range: 0..content.lines().count() as u32,
                 text: content.into(),
+                order: 0,
             }],
             in_open_source_repo: false,
         }
@@ -1236,14 +1361,17 @@ mod tests {
                     RelatedExcerpt {
                         row_range: 0..10,
                         text: "first excerpt\n".into(),
+                        order: 0,
                     },
                     RelatedExcerpt {
                         row_range: 10..20,
                         text: "second excerpt\n".into(),
+                        order: 0,
                     },
                     RelatedExcerpt {
                         row_range: 20..30,
                         text: "third excerpt\n".into(),
+                        order: 0,
                     },
                 ],
             }],
@@ -1272,6 +1400,149 @@ mod tests {
             indoc! {r#"
                 <|file_sep|>big.rs
                 first excerpt
+                ...
+                <|file_sep|>test.rs
+                <|fim_prefix|>
+                <|fim_middle|>current
+                <|user_cursor|>x
+                <|fim_suffix|>
+                <|fim_middle|>updated
+            "#}
+        );
+    }
+
+    #[test]
+    fn test_truncation_prioritizes_lower_order_excerpts() {
+        // Two files: file_a has a high-order excerpt, file_b has a low-order one.
+        // With tight budget, only the lower-order excerpt from file_b should be included.
+        let input = make_input(
+            "x",
+            0..1,
+            0,
+            vec![],
+            vec![
+                RelatedFile {
+                    path: Path::new("file_a.rs").into(),
+                    max_row: 10,
+                    in_open_source_repo: false,
+                    excerpts: vec![RelatedExcerpt {
+                        row_range: 0..10,
+                        text: "low priority content\n".into(),
+                        order: 5,
+                    }],
+                },
+                RelatedFile {
+                    path: Path::new("file_b.rs").into(),
+                    max_row: 10,
+                    in_open_source_repo: false,
+                    excerpts: vec![RelatedExcerpt {
+                        row_range: 0..10,
+                        text: "high priority content\n".into(),
+                        order: 1,
+                    }],
+                },
+            ],
+        );
+
+        // With large budget, both files included; file_b (order 1) renders before file_a (order 5).
+        assert_eq!(
+            format_with_budget(&input, 10000),
+            indoc! {r#"
+                <|file_sep|>file_b.rs
+                high priority content
+                <|file_sep|>file_a.rs
+                low priority content
+                <|file_sep|>test.rs
+                <|fim_prefix|>
+                <|fim_middle|>current
+                <|user_cursor|>x
+                <|fim_suffix|>
+                <|fim_middle|>updated
+            "#}
+        );
+
+        // With tight budget, only file_b (lower order) fits.
+        // Cursor section is ~37 tokens, so budget 52 leaves ~15 for related files.
+        // file_b header (7) + excerpt (7) = 14 tokens, which fits.
+        // file_a would need another 14 tokens, which doesn't fit.
+        assert_eq!(
+            format_with_budget(&input, 52),
+            indoc! {r#"
+                <|file_sep|>file_b.rs
+                high priority content
+                <|file_sep|>test.rs
+                <|fim_prefix|>
+                <|fim_middle|>current
+                <|user_cursor|>x
+                <|fim_suffix|>
+                <|fim_middle|>updated
+            "#}
+        );
+    }
+
+    #[test]
+    fn test_truncation_drops_high_order_excerpts_within_file() {
+        // A single file has excerpts at order 1 and order 3. With a tight budget,
+        // only the order-1 excerpts are included while the order-3 excerpt is
+        // dropped — even though they belong to the same file. This also preserves
+        // the parent invariant: parent outline items have order ≤ their best
+        // child, so they're always included when any child is.
+        let input = make_input(
+            "x",
+            0..1,
+            0,
+            vec![],
+            vec![RelatedFile {
+                path: Path::new("mod.rs").into(),
+                max_row: 30,
+                in_open_source_repo: false,
+                excerpts: vec![
+                    RelatedExcerpt {
+                        row_range: 0..5,
+                        text: "mod header\n".into(),
+                        order: 1,
+                    },
+                    RelatedExcerpt {
+                        row_range: 5..15,
+                        text: "important fn\n".into(),
+                        order: 1,
+                    },
+                    RelatedExcerpt {
+                        row_range: 15..30,
+                        text: "less important fn\n".into(),
+                        order: 3,
+                    },
+                ],
+            }],
+        );
+
+        // With large budget, all three excerpts included.
+        assert_eq!(
+            format_with_budget(&input, 10000),
+            indoc! {r#"
+                <|file_sep|>mod.rs
+                mod header
+                ...
+                important fn
+                ...
+                less important fn
+                <|file_sep|>test.rs
+                <|fim_prefix|>
+                <|fim_middle|>current
+                <|user_cursor|>x
+                <|fim_suffix|>
+                <|fim_middle|>updated
+            "#}
+        );
+
+        // With tight budget, only order<=1 excerpts included (header + important fn).
+        assert_eq!(
+            format_with_budget(&input, 55),
+            indoc! {r#"
+                <|file_sep|>mod.rs
+                mod header
+                ...
+                important fn
                 ...
                 <|file_sep|>test.rs
                 <|fim_prefix|>
@@ -1448,6 +1719,72 @@ mod tests {
             indoc! {r#"
                 <[fim-suffix]>
                 <[fim-prefix]><filename>test.rs
+                <<<<<<< CURRENT
+                co<|user_cursor|>de
+                =======
+                <[fim-middle]>"#}
+        );
+    }
+
+    #[test]
+    fn test_seed_coder_truncation_prioritizes_lower_order() {
+        let input = make_input(
+            "code",
+            0..4,
+            2,
+            vec![],
+            vec![
+                RelatedFile {
+                    path: Path::new("low_prio.rs").into(),
+                    max_row: 5,
+                    in_open_source_repo: false,
+                    excerpts: vec![RelatedExcerpt {
+                        row_range: 0..5,
+                        text: "low prio\n".into(),
+                        order: 10,
+                    }],
+                },
+                RelatedFile {
+                    path: Path::new("high_prio.rs").into(),
+                    max_row: 5,
+                    in_open_source_repo: false,
+                    excerpts: vec![RelatedExcerpt {
+                        row_range: 0..5,
+                        text: "high prio\n".into(),
+                        order: 1,
+                    }],
+                },
+            ],
+        );
+
+        // With large budget, both included; high_prio first due to lower order.
+        assert_eq!(
+            format_seed_coder(&input),
+            indoc! {r#"
+                <[fim-suffix]>
+                <[fim-prefix]><filename>high_prio.rs
+                high prio
+                <filename>low_prio.rs
+                low prio
+
+                <filename>test.rs
+                <<<<<<< CURRENT
+                co<|user_cursor|>de
+                =======
+                <[fim-middle]>"#}
+        );
+
+        // With tight budget, only high_prio included.
+        // Cursor sections cost 25 tokens, so budget 44 leaves 19 for related files.
+        // high_prio header (7) + excerpt (3) = 10, fits. low_prio would add 10 more = 20 > 19.
+        assert_eq!(
+            format_seed_coder_with_budget(&input, 44),
+            indoc! {r#"
+                <[fim-suffix]>
+                <[fim-prefix]><filename>high_prio.rs
+                high prio
+
+                <filename>test.rs
                 <<<<<<< CURRENT
                 co<|user_cursor|>de
                 =======

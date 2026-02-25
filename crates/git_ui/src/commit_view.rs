@@ -10,9 +10,9 @@ use git::{
     parse_git_remote_url,
 };
 use gpui::{
-    AnyElement, App, AppContext as _, AsyncApp, AsyncWindowContext, ClipboardItem, Context,
-    Element, Entity, EventEmitter, FocusHandle, Focusable, InteractiveElement, IntoElement,
-    ParentElement, PromptLevel, Render, Styled, Task, WeakEntity, Window, actions,
+    AnyElement, App, AppContext as _, AsyncApp, AsyncWindowContext, ClipboardItem, Context, Entity,
+    EventEmitter, FocusHandle, Focusable, InteractiveElement, IntoElement, ParentElement,
+    PromptLevel, Render, Styled, Task, WeakEntity, Window, actions,
 };
 use language::{
     Anchor, Buffer, Capability, DiskState, File, LanguageRegistry, LineEnding, OffsetRangeExt as _,
@@ -403,33 +403,13 @@ impl CommitView {
         window: &mut Window,
         cx: &mut App,
     ) -> AnyElement {
-        let size = size.into();
-        let avatar = CommitAvatar::new(
+        CommitAvatar::new(
             sha,
             Some(self.commit.author_email.clone()),
             self.remote.as_ref(),
-        );
-
-        v_flex()
-            .w(size)
-            .h(size)
-            .border_1()
-            .border_color(cx.theme().colors().border)
-            .rounded_full()
-            .justify_center()
-            .items_center()
-            .child(
-                avatar
-                    .avatar(window, cx)
-                    .map(|a| a.size(size).into_any_element())
-                    .unwrap_or_else(|| {
-                        Icon::new(IconName::Person)
-                            .color(Color::Muted)
-                            .size(IconSize::Medium)
-                            .into_any_element()
-                    }),
-            )
-            .into_any()
+        )
+        .size(size)
+        .render(window, cx)
     }
 
     fn calculate_changed_lines(&self, cx: &App) -> (u32, u32) {
