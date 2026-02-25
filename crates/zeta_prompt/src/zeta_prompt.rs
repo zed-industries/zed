@@ -213,6 +213,8 @@ pub struct RelatedFile {
 pub struct RelatedExcerpt {
     pub row_range: Range<u32>,
     pub text: Arc<str>,
+    #[serde(default)]
+    pub order: usize,
 }
 
 pub fn prompt_input_contains_special_tokens(input: &ZetaPromptInput, format: ZetaFormat) -> bool {
@@ -1136,6 +1138,7 @@ mod tests {
             excerpts: vec![RelatedExcerpt {
                 row_range: 0..content.lines().count() as u32,
                 text: content.into(),
+                order: 0,
             }],
             in_open_source_repo: false,
         }
@@ -1244,14 +1247,17 @@ mod tests {
                     RelatedExcerpt {
                         row_range: 0..10,
                         text: "first excerpt\n".into(),
+                        order: 0,
                     },
                     RelatedExcerpt {
                         row_range: 10..20,
                         text: "second excerpt\n".into(),
+                        order: 0,
                     },
                     RelatedExcerpt {
                         row_range: 20..30,
                         text: "third excerpt\n".into(),
+                        order: 0,
                     },
                 ],
             }],
