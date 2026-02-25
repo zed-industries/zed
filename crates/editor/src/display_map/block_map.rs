@@ -2845,8 +2845,8 @@ mod tests {
     use buffer_diff::BufferDiff;
     use gpui::{App, AppContext as _, Element, div, font, px};
     use itertools::Itertools;
-    use language::{Buffer, Capability};
-    use multi_buffer::{ExcerptRange, MultiBuffer};
+    use language::{Buffer, Capability, Point};
+    use multi_buffer::{MultiBuffer, PathKey};
     use rand::prelude::*;
     use settings::SettingsStore;
     use std::env;
@@ -3056,27 +3056,32 @@ mod tests {
         let buffer2 = cx.new(|cx| Buffer::local("Buffer 2", cx));
         let buffer3 = cx.new(|cx| Buffer::local("Buffer 3", cx));
 
-        let mut excerpt_ids = Vec::new();
         let multi_buffer = cx.new(|cx| {
             let mut multi_buffer = MultiBuffer::new(Capability::ReadWrite);
-            excerpt_ids.extend(multi_buffer.push_excerpts(
+            multi_buffer.set_excerpts_for_path(
+                PathKey::sorted(0),
                 buffer1.clone(),
-                [ExcerptRange::new(0..buffer1.read(cx).len())],
+                [Point::zero()..buffer1.read(cx).max_point()],
+                0,
                 cx,
-            ));
-            excerpt_ids.extend(multi_buffer.push_excerpts(
+            );
+            multi_buffer.set_excerpts_for_path(
+                PathKey::sorted(1),
                 buffer2.clone(),
-                [ExcerptRange::new(0..buffer2.read(cx).len())],
+                [Point::zero()..buffer2.read(cx).max_point()],
+                0,
                 cx,
-            ));
-            excerpt_ids.extend(multi_buffer.push_excerpts(
+            );
+            multi_buffer.set_excerpts_for_path(
+                PathKey::sorted(2),
                 buffer3.clone(),
-                [ExcerptRange::new(0..buffer3.read(cx).len())],
+                [Point::zero()..buffer3.read(cx).max_point()],
+                0,
                 cx,
-            ));
-
+            );
             multi_buffer
         });
+        let excerpt_ids = multi_buffer.read_with(cx, |mb, _| mb.excerpt_ids());
 
         let font = test_font();
         let font_size = px(14.);
@@ -4590,9 +4595,10 @@ mod tests {
 
         let lhs_multibuffer = cx.new(|cx| {
             let mut mb = MultiBuffer::new(Capability::ReadWrite);
-            mb.push_excerpts(
+            mb.set_excerpts_for_buffer(
                 lhs_buffer.clone(),
-                [ExcerptRange::new(text::Anchor::MIN..text::Anchor::MAX)],
+                [Point::zero()..lhs_buffer.read(cx).max_point()],
+                0,
                 cx,
             );
             mb.add_inverted_diff(diff.clone(), rhs_buffer.clone(), cx);
@@ -4600,9 +4606,10 @@ mod tests {
         });
         let rhs_multibuffer = cx.new(|cx| {
             let mut mb = MultiBuffer::new(Capability::ReadWrite);
-            mb.push_excerpts(
+            mb.set_excerpts_for_buffer(
                 rhs_buffer.clone(),
-                [ExcerptRange::new(text::Anchor::MIN..text::Anchor::MAX)],
+                [Point::zero()..rhs_buffer.read(cx).max_point()],
+                0,
                 cx,
             );
             mb.add_diff(diff.clone(), cx);

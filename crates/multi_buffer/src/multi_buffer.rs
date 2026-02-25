@@ -1734,7 +1734,7 @@ impl MultiBuffer {
         }
     }
 
-    pub fn push_excerpts<O>(
+    fn push_excerpts<O>(
         &mut self,
         buffer: Entity<Buffer>,
         ranges: impl IntoIterator<Item = ExcerptRange<O>>,

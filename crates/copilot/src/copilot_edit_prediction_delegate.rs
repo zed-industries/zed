@@ -233,7 +233,7 @@ mod tests {
     use super::*;
     use edit_prediction_types::EditPredictionGranularity;
     use editor::{
-        Editor, ExcerptRange, MultiBuffer, MultiBufferOffset, SelectionEffects,
+        Editor, MultiBuffer, MultiBufferOffset, PathKey, SelectionEffects,
         test::editor_lsp_test_context::EditorLspTestContext,
     };
     use fs::FakeFs;
@@ -685,14 +685,18 @@ mod tests {
         let buffer_2 = cx.new(|cx| Buffer::local("c = 3\nd = 4\n", cx));
         let multibuffer = cx.new(|cx| {
             let mut multibuffer = MultiBuffer::new(language::Capability::ReadWrite);
-            multibuffer.push_excerpts(
+            multibuffer.set_excerpts_for_path(
+                PathKey::sorted(0),
                 buffer_1.clone(),
-                [ExcerptRange::new(Point::new(0, 0)..Point::new(2, 0))],
+                [Point::new(0, 0)..Point::new(2, 0)],
+                0,
                 cx,
             );
-            multibuffer.push_excerpts(
+            multibuffer.set_excerpts_for_path(
+                PathKey::sorted(0),
                 buffer_2.clone(),
-                [ExcerptRange::new(Point::new(0, 0)..Point::new(2, 0))],
+                [Point::new(0, 0)..Point::new(2, 0)],
+                0,
                 cx,
             );
             multibuffer
@@ -947,14 +951,18 @@ mod tests {
 
         let multibuffer = cx.new(|cx| {
             let mut multibuffer = MultiBuffer::new(language::Capability::ReadWrite);
-            multibuffer.push_excerpts(
+            multibuffer.set_excerpts_for_path(
+                PathKey::sorted(0),
                 private_buffer.clone(),
-                [ExcerptRange::new(Point::new(0, 0)..Point::new(1, 0))],
+                [Point::new(0, 0)..Point::new(1, 0)],
+                0,
                 cx,
             );
-            multibuffer.push_excerpts(
+            multibuffer.set_excerpts_for_path(
+                PathKey::sorted(1),
                 public_buffer.clone(),
-                [ExcerptRange::new(Point::new(0, 0)..Point::new(6, 0))],
+                [Point::new(0, 0)..Point::new(6, 0)],
+                0,
                 cx,
             );
             multibuffer

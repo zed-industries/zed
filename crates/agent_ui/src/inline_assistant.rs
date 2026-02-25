@@ -26,8 +26,8 @@ use editor::RowExt;
 use editor::SelectionEffects;
 use editor::scroll::ScrollOffset;
 use editor::{
-    Anchor, AnchorRangeExt, CodeActionProvider, Editor, EditorEvent, ExcerptId, ExcerptRange,
-    HighlightKey, MultiBuffer, MultiBufferSnapshot, ToOffset as _, ToPoint,
+    Anchor, AnchorRangeExt, CodeActionProvider, Editor, EditorEvent, ExcerptId, HighlightKey,
+    MultiBuffer, MultiBufferSnapshot, ToOffset as _, ToPoint,
     actions::SelectAll,
     display_map::{
         BlockContext, BlockPlacement, BlockProperties, BlockStyle, CustomBlockId, EditorMargins,
@@ -1495,11 +1495,11 @@ impl InlineAssistant {
 
             let mut new_blocks = Vec::new();
             for (new_row, old_row_range) in deleted_row_ranges {
-                let (_, buffer_start) = old_snapshot
-                    .point_to_buffer_offset(Point::new(*old_row_range.start(), 0))
+                let (_, start, _) = old_snapshot
+                    .point_to_buffer_point(Point::new(*old_row_range.start(), 0))
                     .unwrap();
-                let (_, buffer_end) = old_snapshot
-                    .point_to_buffer_offset(Point::new(
+                let (_, end, _) = old_snapshot
+                    .point_to_buffer_point(Point::new(
                         *old_row_range.end(),
                         old_snapshot.line_len(MultiBufferRow(*old_row_range.end())),
                     ))
@@ -1509,10 +1509,11 @@ impl InlineAssistant {
                     let multi_buffer =
                         cx.new(|_| MultiBuffer::without_headers(language::Capability::ReadOnly));
                     multi_buffer.update(cx, |multi_buffer, cx| {
-                        multi_buffer.push_excerpts(
+                        multi_buffer.set_excerpts_for_buffer(
                             old_buffer.clone(),
-                            // todo(lw): buffer_start and buffer_end might come from different snapshots!
-                            Some(ExcerptRange::new(buffer_start..buffer_end)),
+                            // todo(lw): start and end might come from different snapshots!
+                            [start..end],
+                            0,
                             cx,
                         );
                     });
