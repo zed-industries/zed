@@ -2903,7 +2903,7 @@ impl<T: DeserializeOwned> ToolInput<T> {
     /// Create a paired (sender, input) for streaming tool input in tests.
     /// The sender can push partial JSON snapshots followed by a final input.
     #[cfg(any(test, feature = "test-support"))]
-    pub fn channel_for_test() -> (ToolInputSender, Self) {
+    pub(crate) fn channel_for_test() -> (ToolInputSender, Self) {
         let (sender, input) = ToolInputSender::channel();
         (sender, input.cast())
     }
