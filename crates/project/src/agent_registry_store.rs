@@ -9,6 +9,9 @@ use futures::AsyncReadExt;
 use gpui::{App, AppContext as _, Context, Entity, Global, SharedString, Task};
 use http_client::{AsyncBody, HttpClient};
 use serde::Deserialize;
+use settings::Settings as _;
+
+use crate::agent_server_store::AllAgentServersSettings;
 
 const REGISTRY_URL: &str = "https://cdn.agentclientprotocol.com/registry/v1/latest/registry.json";
 const REFRESH_THROTTLE_DURATION: Duration = Duration::from_secs(60 * 60);
@@ -126,14 +129,13 @@ impl AgentRegistryStore {
         let store = cx.new(|cx| Self::new(fs, http_client, cx));
         cx.set_global(GlobalAgentRegistryStore(store.clone()));
 
-        // todo!() - maybe we add back in this check after migrating settings
-        // if AllAgentServersSettings::get_global(cx).has_registry_agents() {
-        store.update(cx, |store, cx| {
-            if store.agents.is_empty() {
-                store.refresh(cx);
-            }
-        });
-        // }
+        if AllAgentServersSettings::get_global(cx).has_registry_agents() {
+            store.update(cx, |store, cx| {
+                if store.agents.is_empty() {
+                    store.refresh(cx);
+                }
+            });
+        }
 
         store
     }
