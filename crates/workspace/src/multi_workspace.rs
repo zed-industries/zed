@@ -14,8 +14,8 @@ use util::ResultExt;
 const SIDEBAR_RESIZE_HANDLE_SIZE: Pixels = px(6.0);
 
 use crate::{
-    DockPosition, Item, ModalView, Panel, Toast, Workspace, WorkspaceId, client_side_decorations,
-    notifications::NotificationId,
+    CloseIntent, CloseWindow, DockPosition, Event as WorkspaceEvent, Item, ModalView, Panel, Toast,
+    Workspace, WorkspaceId, client_side_decorations, notifications::NotificationId,
 };
 
 actions!(
@@ -122,6 +122,7 @@ impl MultiWorkspace {
             }
         });
         let quit_subscription = cx.on_app_quit(Self::app_will_quit);
+        Self::subscribe_to_workspace(&workspace, cx);
         Self {
             window_id: window.window_handle().window_id(),
             workspaces: vec![workspace],
@@ -237,6 +238,41 @@ impl MultiWorkspace {
         cx.notify();
     }
 
+    pub fn close_window(&mut self, _: &CloseWindow, window: &mut Window, cx: &mut Context<Self>) {
+        cx.spawn_in(window, async move |this, cx| {
+            let workspaces = this.update(cx, |multi_workspace, _cx| {
+                multi_workspace.workspaces().to_vec()
+            })?;
+
+            for workspace in workspaces {
+                let should_continue = workspace
+                    .update_in(cx, |workspace, window, cx| {
+                        workspace.prepare_to_close(CloseIntent::CloseWindow, window, cx)
+                    })?
+                    .await?;
+                if !should_continue {
+                    return anyhow::Ok(());
+                }
+            }
+
+            cx.update(|window, _cx| {
+                window.remove_window();
+            })?;
+
+            anyhow::Ok(())
+        })
+        .detach_and_log_err(cx);
+    }
+
+    fn subscribe_to_workspace(workspace: &Entity<Workspace>, cx: &mut Context<Self>) {
+        cx.subscribe(workspace, |this, workspace, event, cx| {
+            if let WorkspaceEvent::Activate = event {
+                this.activate(workspace.clone(), cx);
+            }
+        })
+        .detach();
+    }
+
     pub fn is_sidebar_open(&self) -> bool {
         self.sidebar_open
     }
@@ -290,6 +326,7 @@ impl MultiWorkspace {
                     workspace.set_workspace_sidebar_open(true, cx);
                 });
             }
+            Self::subscribe_to_workspace(&workspace, cx);
             self.workspaces.push(workspace);
             cx.notify();
             self.workspaces.len() - 1
@@ -679,6 +716,7 @@ impl Render for MultiWorkspace {
                 .key_context("Workspace")
                 .relative()
                 .size_full()
+                .on_action(cx.listener(Self::close_window))
                 .on_action(
                     cx.listener(|this: &mut Self, _: &NewWorkspaceInWindow, window, cx| {
                         this.create_workspace(window, cx);
