@@ -5,6 +5,7 @@ use std::time::Duration;
 use anyhow::{Context as _, Result, anyhow};
 use dap::StackFrameId;
 use dap::adapters::DebugAdapterName;
+use editor::{Editor, SelectionEffects};
 use db::kvp::KEY_VALUE_STORE;
 use gpui::{
     Action, AnyElement, Entity, EventEmitter, FocusHandle, Focusable, FontWeight, ListState,
@@ -16,7 +17,7 @@ use util::{
 };
 
 use crate::{StackTraceView, ToggleUserFrames};
-use language::PointUtf16;
+use language::{Capability, PointUtf16};
 use project::debugger::breakpoint_store::ActiveStackFrame;
 use project::debugger::session::{Session, SessionEvent, StackFrame, ThreadStatus};
 use project::{ProjectItem, ProjectPath};
@@ -81,6 +82,7 @@ pub struct StackFrameList {
     filter_entries_indices: Vec<usize>,
     error: Option<SharedString>,
     _refresh_task: Task<()>,
+    source_reference_buffers: std::collections::HashMap<u64, gpui::Entity<language::Buffer>>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -144,6 +146,7 @@ impl StackFrameList {
             list_filter,
             list_state,
             _refresh_task: Task::ready(()),
+            source_reference_buffers: Default::default(),
         };
         this.schedule_refresh(true, window, cx);
         this
@@ -152,6 +155,25 @@ impl StackFrameList {
     #[cfg(test)]
     pub(crate) fn entries(&self) -> &Vec<StackFrameEntry> {
         &self.entries
+    }
+
+    pub(crate) fn session(&self) -> &Entity<Session> {
+        &self.session
+    }
+
+    pub(crate) fn source_reference_buffer(
+        &self,
+        source_reference: u64,
+    ) -> Option<&gpui::Entity<language::Buffer>> {
+        self.source_reference_buffers.get(&source_reference)
+    }
+
+    pub(crate) fn cache_source_reference_buffer(
+        &mut self,
+        source_reference: u64,
+        buffer: gpui::Entity<language::Buffer>,
+    ) {
+        self.source_reference_buffers.insert(source_reference, buffer);
     }
 
     pub(crate) fn flatten_entries(
@@ -393,6 +415,17 @@ impl StackFrameList {
     ) -> Task<Result<()>> {
         let stack_frame_id = stack_frame.id;
         self.opened_stack_frame_id = Some(stack_frame_id);
+
+        let source_reference = stack_frame
+            .source
+            .as_ref()
+            .and_then(|s| s.source_reference)
+            .unwrap_or(0);
+
+        if source_reference > 0 {
+            return self.go_to_source_reference_frame(stack_frame, window, cx);
+        }
+
         let Some(abs_path) = Self::abs_path_from_stack_frame(&stack_frame) else {
             return Task::ready(Err(anyhow!("Project path not found")));
         };
@@ -473,6 +506,167 @@ impl StackFrameList {
                                 thread_id,
                                 stack_frame_id,
                                 path: abs_path,
+                                position,
+                            },
+                            cx,
+                        );
+                    })
+                })
+            })?
+        })
+    }
+
+    fn go_to_source_reference_frame(
+        &mut self,
+        stack_frame: dap::StackFrame,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<()>> {
+        let stack_frame_id = stack_frame.id;
+        let Some(source) = stack_frame.source.clone() else {
+            return Task::ready(Err(anyhow!("Stack frame has no source")));
+        };
+        let source_reference = source.source_reference.unwrap_or(0);
+        let row = stack_frame.line.saturating_sub(1) as u32;
+
+        cx.emit(StackFrameListEvent::SelectedStackFrameChanged(
+            stack_frame_id,
+        ));
+
+        let cached_buffer = self.source_reference_buffers.get(&source_reference).cloned();
+
+        let fetch_task = if cached_buffer.is_none() {
+            Some(
+                self.session
+                    .update(cx, |session, cx| session.fetch_source(source.clone(), cx)),
+            )
+        } else {
+            None
+        };
+
+        let source_name = source.name.or(source.path);
+
+        cx.spawn_in(window, async move |this, cx| {
+            let buffer = if let Some(buffer) = cached_buffer {
+                buffer
+            } else {
+                let content = fetch_task
+                    .context("missing fetch task")?
+                    .await?;
+
+                let language = if let Some(ref name) = source_name {
+                    let languages: Option<Arc<language::LanguageRegistry>> = this
+                        .read_with(cx, |this, cx| {
+                            this.workspace
+                                .read_with(cx, |workspace, cx| {
+                                    workspace.project().read(cx).languages().clone()
+                                })
+                                .ok()
+                        })
+                        .ok()
+                        .flatten();
+
+                    if let Some(languages) = languages {
+                        languages
+                            .load_language_for_file_path(Path::new(name))
+                            .await
+                            .ok()
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
+
+                let buffer = this.update(cx, |this, cx| {
+                    this.workspace.update(cx, |workspace, cx| {
+                        let project = workspace.project().clone();
+                        project.update(cx, |project, cx| {
+                            project.create_local_buffer(&content, language, false, cx)
+                        })
+                    })
+                })??;
+
+                buffer.update(cx, |buffer, cx| {
+                    buffer.set_capability(Capability::ReadOnly, cx);
+                });
+
+                this.update(cx, |this, _cx| {
+                    this.source_reference_buffers
+                        .insert(source_reference, buffer.clone());
+                })?;
+
+                buffer
+            };
+
+            let position = buffer.read_with(cx, |buffer, _| {
+                buffer.snapshot().anchor_after(PointUtf16::new(row, 0))
+            });
+
+            this.update_in(cx, |this, window, cx| {
+                this.workspace.update(cx, |workspace, cx| {
+                    let editor = cx.new(|cx| {
+                        let mut editor = Editor::for_buffer(
+                            buffer.clone(),
+                            Some(workspace.project().clone()),
+                            window,
+                            cx,
+                        );
+                        editor.set_read_only(true);
+                        editor
+                    });
+
+                    if let Some(ref title) = source_name {
+                        editor.update(cx, |editor, _cx| {
+                            editor.buffer().update(_cx, |multi_buffer, cx| {
+                                multi_buffer.set_title(title.clone(), cx);
+                            });
+                        });
+                    }
+
+                    let target = language::Point::new(row, 0);
+                    editor.update(cx, |editor, cx| {
+                        editor.change_selections(
+                            SelectionEffects::default(),
+                            window,
+                            cx,
+                            |selections| {
+                                selections.select_ranges([target..target]);
+                            },
+                        );
+                        editor.request_autoscroll(
+                            editor::scroll::Autoscroll::center(),
+                            cx,
+                        );
+                    });
+
+                    workspace.add_item_to_active_pane(
+                        Box::new(editor),
+                        None,
+                        true,
+                        window,
+                        cx,
+                    );
+
+                    anyhow::Ok(())
+                })
+            })???;
+
+            this.update(cx, |this, cx| {
+                let thread_id = this.state.read_with(cx, |state, _| {
+                    state.thread_id.context("No selected thread ID found")
+                })??;
+
+                this.workspace.update(cx, |workspace, cx| {
+                    let breakpoint_store = workspace.project().read(cx).breakpoint_store();
+
+                    breakpoint_store.update(cx, |store, cx| {
+                        store.set_active_position(
+                            ActiveStackFrame {
+                                session_id: this.session.read(cx).session_id(),
+                                thread_id,
+                                stack_frame_id,
+                                path: Arc::from(Path::new("")),
                                 position,
                             },
                             cx,

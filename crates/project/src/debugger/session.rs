@@ -6,7 +6,7 @@ use super::dap_command::{
     EvaluateCommand, Initialize, Launch, LoadedSourcesCommand, LocalDapCommand, LocationsCommand,
     ModulesCommand, NextCommand, PauseCommand, RestartCommand, RestartStackFrameCommand,
     ScopesCommand, SetDataBreakpointsCommand, SetExceptionBreakpoints, SetVariableValueCommand,
-    StackTraceCommand, StepBackCommand, StepCommand, StepInCommand, StepOutCommand,
+    SourceCommand, StackTraceCommand, StepBackCommand, StepCommand, StepInCommand, StepOutCommand,
     TerminateCommand, TerminateThreadsCommand, ThreadsCommand, VariablesCommand,
 };
 use super::dap_store::DapStore;
@@ -2104,6 +2104,22 @@ impl Session {
             cx,
         );
         &self.session_state().loaded_sources
+    }
+
+    pub fn fetch_source(
+        &self,
+        source: dap::Source,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<String>> {
+        let source_reference = source.source_reference.unwrap_or(0);
+        let request = self.state.request_dap(SourceCommand {
+            source: Some(source),
+            source_reference,
+        });
+        cx.spawn(async move |_this, _cx| {
+            let response = request.await?;
+            Ok(response.content)
+        })
     }
 
     fn fallback_to_manual_restart(

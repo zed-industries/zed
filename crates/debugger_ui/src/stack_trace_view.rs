@@ -157,16 +157,44 @@ impl StackTraceView {
             .stack_frame_list
             .read_with(cx, |list, _| list.flatten_entries(false, false));
 
+        enum FrameSource {
+            Path(Arc<std::path::Path>),
+            Reference {
+                source: dap::Source,
+                source_reference: u64,
+            },
+        }
+
         let frames_to_open: Vec<_> = stack_frames
             .into_iter()
             .filter_map(|frame| {
-                Some((
-                    frame.id,
-                    frame.line as u32 - 1,
-                    StackFrameList::abs_path_from_stack_frame(&frame)?,
-                ))
+                let line = frame.line as u32 - 1;
+                let source_reference = frame
+                    .source
+                    .as_ref()
+                    .and_then(|s| s.source_reference)
+                    .unwrap_or(0);
+
+                if source_reference > 0 {
+                    Some((
+                        frame.id,
+                        line,
+                        FrameSource::Reference {
+                            source: frame.source?,
+                            source_reference,
+                        },
+                    ))
+                } else {
+                    Some((
+                        frame.id,
+                        line,
+                        FrameSource::Path(StackFrameList::abs_path_from_stack_frame(&frame)?),
+                    ))
+                }
             })
             .collect();
+
+        let session = self.stack_frame_list.read(cx).session().clone();
 
         self.multibuffer
             .update(cx, |multi_buffer, cx| multi_buffer.clear(cx));
@@ -174,28 +202,118 @@ impl StackTraceView {
         let task = cx.spawn_in(window, async move |this, cx| {
             let mut to_highlights = Vec::default();
 
-            for (stack_frame_id, line, abs_path) in frames_to_open {
-                let (worktree, relative_path) = this
-                    .update(cx, |this, cx| {
-                        this.workspace.update(cx, |workspace, cx| {
-                            workspace.project().update(cx, |this, cx| {
-                                this.find_or_create_worktree(&abs_path, false, cx)
-                            })
-                        })
-                    })??
-                    .await?;
+            for (stack_frame_id, line, frame_source) in frames_to_open {
+                let buffer = match frame_source {
+                    FrameSource::Path(abs_path) => {
+                        let (worktree, relative_path) = this
+                            .update(cx, |this, cx| {
+                                this.workspace.update(cx, |workspace, cx| {
+                                    workspace.project().update(cx, |this, cx| {
+                                        this.find_or_create_worktree(&abs_path, false, cx)
+                                    })
+                                })
+                            })??
+                            .await?;
 
-                let project_path = ProjectPath {
-                    worktree_id: worktree.read_with(cx, |tree, _| tree.id()),
-                    path: relative_path,
+                        let project_path = ProjectPath {
+                            worktree_id: worktree.read_with(cx, |tree, _| tree.id()),
+                            path: relative_path,
+                        };
+
+                        this.read_with(cx, |this, _| this.project.clone())?
+                            .update(cx, |project, cx| project.open_buffer(project_path, cx))
+                            .await
+                            .log_err()
+                    }
+                    FrameSource::Reference {
+                        source,
+                        source_reference,
+                    } => {
+                        let cached = this
+                            .read_with(cx, |this, cx| {
+                                this.stack_frame_list.read(cx)
+                                    .source_reference_buffer(source_reference)
+                                    .cloned()
+                            })
+                            .ok()
+                            .flatten();
+
+                        if let Some(buffer) = cached {
+                            Some(buffer)
+                        } else {
+                            let content: Option<String> = session
+                                .update(cx, |session, cx| {
+                                    session.fetch_source(source.clone(), cx)
+                                })
+                                .await
+                                .log_err();
+
+                            let source_name = source.name.or(source.path);
+
+                            match content {
+                                Some(ref content) => {
+                                    let language = if let Some(ref name) = source_name {
+                                        let languages: Option<Arc<language::LanguageRegistry>> =
+                                            this.read_with(cx, |this, cx| {
+                                                this.project
+                                                    .read(cx)
+                                                    .languages()
+                                                    .clone()
+                                            })
+                                            .ok();
+
+                                        if let Some(languages) = languages {
+                                            languages
+                                                .load_language_for_file_path(
+                                                    std::path::Path::new(name),
+                                                )
+                                                .await
+                                                .ok()
+                                        } else {
+                                            None
+                                        }
+                                    } else {
+                                        None
+                                    };
+
+                                    let buffer = this
+                                        .update(cx, |this, cx| {
+                                            this.project.update(cx, |project, cx| {
+                                                let buffer = project.create_local_buffer(
+                                                    content, language, false, cx,
+                                                );
+                                                buffer.update(cx, |buffer, cx| {
+                                                    buffer.set_capability(
+                                                        Capability::ReadOnly,
+                                                        cx,
+                                                    );
+                                                });
+                                                buffer
+                                            })
+                                        })
+                                        .ok();
+
+                                    if let Some(ref buffer) = buffer {
+                                        this.update(cx, |this, cx| {
+                                            this.stack_frame_list.update(cx, |list, _cx| {
+                                                list.cache_source_reference_buffer(
+                                                    source_reference,
+                                                    buffer.clone(),
+                                                );
+                                            });
+                                        })
+                                        .ok();
+                                    }
+
+                                    buffer
+                                }
+                                None => continue,
+                            }
+                        }
+                    }
                 };
 
-                if let Some(buffer) = this
-                    .read_with(cx, |this, _| this.project.clone())?
-                    .update(cx, |project, cx| project.open_buffer(project_path, cx))
-                    .await
-                    .log_err()
-                {
+                if let Some(buffer) = buffer {
                     this.update(cx, |this, cx| {
                         this.multibuffer.update(cx, |multi_buffer, cx| {
                             let line_point = Point::new(line, 0);
