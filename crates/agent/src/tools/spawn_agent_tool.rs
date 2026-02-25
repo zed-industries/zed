@@ -12,27 +12,24 @@ use crate::{AgentTool, Thread, ThreadEnvironment, ToolCallEventStream, ToolInput
 
 /// Spawns an agent to perform a delegated task.
 ///
-/// Use this tool when you want to do any of the following:
-/// - Run multiple tasks in parallel that would take significantly longer to run sequentially.
-/// - Complete a self-contained task where you need to know if it succeeded or failed (and how), but none of its intermediate output.
-/// - Perform an investigation where all you need to know is the outcome, not the research that led to that outcome.
-///
-/// You control what the agent does by providing a prompt describing what the agent should do. The agent has access to the same tools you do, but does NOT see your conversation history or any context the user attached. You must include all relevant context (file paths, requirements, constraints) in the prompt.
+/// Use this tool when you want to:
+/// - Run multiple tasks in parallel.
+/// - Delegate a self-contained task where you only need the final outcome.
 ///
 /// You will receive only the agent's final message as output.
 ///
-/// If a response (success or error) includes a session_id, you can send a follow-up message to that session by passing the session_id back. This is useful for multi-turn conversations with an agent, asking clarifying questions about its output, or retrying after timeouts or transient failures.
+/// **New session** (no session_id): Creates a new agent that does NOT see your conversation history. Include all relevant context (file paths, requirements, constraints) in the message.
 ///
-/// Note:
-/// - Agents cannot use tools you don't have access to.
+/// **Follow-up** (with session_id): Sends a follow-up to an existing agent session. The agent already has full context, so send only a short, direct message — do NOT repeat the original task or context. Examples: "Also update the tests", "Fix the compile error in foo.rs", "Retry".
+///
 /// - If spawning multiple agents that might write to the filesystem, provide guidance on how to avoid conflicts (e.g. assign each to different directories).
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct SpawnAgentToolInput {
     /// Short label displayed in the UI while the agent runs (e.g., "Researching alternatives")
     pub label: String,
-    /// Describe the task for the agent to perform. Be specific about what you want accomplished. Include all necessary context (file paths, requirements, constraints) since the agent cannot see your conversation.
+    /// The prompt for the agent. For new sessions, include full context needed for the task. For follow-ups (with session_id), you can rely on the agent already having the previous message.
     pub message: String,
-    /// Optional session ID of an existing agent session to continue a conversation with. When provided, the message is sent as a follow-up to that session instead of creating a new one. Use this to ask clarifying questions, request changes based on previous output, or retry after errors.
+    /// Session ID of an existing agent session to continue instead of creating a new one.
     #[serde(default)]
     pub session_id: Option<acp::SessionId>,
 }
