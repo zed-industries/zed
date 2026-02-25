@@ -855,6 +855,7 @@ impl ContextServerStore {
 
                 this.update(cx, |this, cx| {
                     this.populate_server_ids(cx);
+                    cx.notify();
                     this.update_servers_task.take();
                     if this.needs_server_update {
                         this.available_context_servers_changed(cx);
