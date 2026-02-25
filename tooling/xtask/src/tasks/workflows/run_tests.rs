@@ -276,17 +276,28 @@ fn check_style() -> NamedJob {
         ) // v1.40.0
         .with(("config", "./typos.toml"))
     }
+
+    fn install_ts_query_ls() -> Step<Run> {
+        named::bash("cargo install ts_query_ls")
+    }
+
+    fn ts_query_ls_format() -> Step<Run> {
+        named::bash("ts_query_ls format --check .")
+    }
+
     named::job(
         release_job(&[])
             .runs_on(runners::LINUX_MEDIUM)
             .add_step(steps::checkout_repo())
             .add_step(steps::cache_rust_dependencies_namespace())
+            .add_step(install_ts_query_ls())
             .add_step(steps::setup_pnpm())
             .add_step(steps::prettier())
             .add_step(steps::cargo_fmt())
             .add_step(steps::script("./script/check-todos"))
             .add_step(steps::script("./script/check-keymaps"))
-            .add_step(check_for_typos()),
+            .add_step(check_for_typos())
+            .add_step(ts_query_ls_format()),
     )
 }
 

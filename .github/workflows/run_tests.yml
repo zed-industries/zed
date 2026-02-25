@@ -123,6 +123,8 @@ jobs:
       with:
         cache: rust
         path: ~/.rustup
+    - name: run_tests::check_style::install_ts_query_ls
+      run: cargo install ts_query_ls
     - name: steps::setup_pnpm
       uses: pnpm/action-setup@fe02b34f77f8bc703788d5817da081398fad5dd2
       with:
@@ -139,6 +141,8 @@ jobs:
       uses: crate-ci/typos@2d0ce569feab1f8752f1dde43cc2f2aa53236e06
       with:
         config: ./typos.toml
+    - name: run_tests::check_style::ts_query_ls_format
+      run: ts_query_ls format --check .
     timeout-minutes: 60
   clippy_windows:
     needs:
