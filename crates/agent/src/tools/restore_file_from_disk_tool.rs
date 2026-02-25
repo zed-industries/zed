@@ -17,7 +17,9 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use util::markdown::MarkdownInlineCode;
 
-use crate::{AgentTool, ToolCallEventStream, ToolPermissionDecision, decide_permission_for_path};
+use crate::{
+    AgentTool, ToolCallEventStream, ToolInput, ToolPermissionDecision, decide_permission_for_path,
+};
 
 /// Discards unsaved changes in open buffers by reloading file contents from disk.
 ///
@@ -66,25 +68,31 @@ impl AgentTool for RestoreFileFromDiskTool {
 
     fn run(
         self: Arc<Self>,
-        input: Self::Input,
+        input: ToolInput<Self::Input>,
         event_stream: ToolCallEventStream,
         cx: &mut App,
     ) -> Task<Result<String, String>> {
-        let settings = AgentSettings::get_global(cx).clone();
-
-        // Check for any immediate deny before spawning async work.
-        for path in &input.paths {
-            let path_str = path.to_string_lossy();
-            let decision = decide_permission_for_path(Self::NAME, &path_str, &settings);
-            if let ToolPermissionDecision::Deny(reason) = decision {
-                return Task::ready(Err(reason));
-            }
-        }
-
         let project = self.project.clone();
-        let input_paths = input.paths;
 
         cx.spawn(async move |cx| {
+            let input = input
+                .recv()
+                .await
+                .map_err(|e| format!("Failed to receive tool input: {e}"))?;
+
+            // Check for any immediate deny before doing async work.
+            for path in &input.paths {
+                let path_str = path.to_string_lossy();
+                let decision = cx.update(|cx| {
+                    decide_permission_for_path(Self::NAME, &path_str, AgentSettings::get_global(cx))
+                });
+                if let ToolPermissionDecision::Deny(reason) = decision {
+                    return Err(reason);
+                }
+            }
+
+            let input_paths = input.paths;
+
             let fs = project.read_with(cx, |project, _cx| project.fs().clone());
             let canonical_roots = canonicalize_worktree_roots(&project, &fs, cx).await;
 
@@ -92,7 +100,9 @@ impl AgentTool for RestoreFileFromDiskTool {
 
             for path in &input_paths {
                 let path_str = path.to_string_lossy();
-                let decision = decide_permission_for_path(Self::NAME, &path_str, &settings);
+                let decision = cx.update(|cx| {
+                    decide_permission_for_path(Self::NAME, &path_str, AgentSettings::get_global(cx))
+                });
                 let symlink_escape = project.read_with(cx, |project, cx| {
                     path_has_symlink_escape(project, path, &canonical_roots, cx)
                 });
@@ -378,12 +388,12 @@ mod tests {
         let output = cx
             .update(|cx| {
                 tool.clone().run(
-                    RestoreFileFromDiskToolInput {
+                    ToolInput::resolved(RestoreFileFromDiskToolInput {
                         paths: vec![
                             PathBuf::from("root/dirty.txt"),
                             PathBuf::from("root/clean.txt"),
                         ],
-                    },
+                    }),
                     ToolCallEventStream::test().0,
                     cx,
                 )
@@ -428,7 +438,7 @@ mod tests {
         let output = cx
             .update(|cx| {
                 tool.clone().run(
-                    RestoreFileFromDiskToolInput { paths: vec![] },
+                    ToolInput::resolved(RestoreFileFromDiskToolInput { paths: vec![] }),
                     ToolCallEventStream::test().0,
                     cx,
                 )
@@ -441,9 +451,9 @@ mod tests {
         let output = cx
             .update(|cx| {
                 tool.clone().run(
-                    RestoreFileFromDiskToolInput {
+                    ToolInput::resolved(RestoreFileFromDiskToolInput {
                         paths: vec![PathBuf::from("nonexistent/path.txt")],
-                    },
+                    }),
                     ToolCallEventStream::test().0,
                     cx,
                 )
@@ -495,9 +505,9 @@ mod tests {
         let (event_stream, mut event_rx) = ToolCallEventStream::test();
         let task = cx.update(|cx| {
             tool.clone().run(
-                RestoreFileFromDiskToolInput {
+                ToolInput::resolved(RestoreFileFromDiskToolInput {
                     paths: vec![PathBuf::from("project/link.txt")],
-                },
+                }),
                 event_stream,
                 cx,
             )
@@ -564,9 +574,9 @@ mod tests {
         let result = cx
             .update(|cx| {
                 tool.clone().run(
-                    RestoreFileFromDiskToolInput {
+                    ToolInput::resolved(RestoreFileFromDiskToolInput {
                         paths: vec![PathBuf::from("project/link.txt")],
-                    },
+                    }),
                     event_stream,
                     cx,
                 )
@@ -623,9 +633,9 @@ mod tests {
         let (event_stream, mut event_rx) = ToolCallEventStream::test();
         let task = cx.update(|cx| {
             tool.clone().run(
-                RestoreFileFromDiskToolInput {
+                ToolInput::resolved(RestoreFileFromDiskToolInput {
                     paths: vec![PathBuf::from("project/link.txt")],
-                },
+                }),
                 event_stream,
                 cx,
             )

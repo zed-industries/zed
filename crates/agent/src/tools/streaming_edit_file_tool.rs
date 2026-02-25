@@ -2,7 +2,7 @@ use super::edit_file_tool::EditFileTool;
 use super::restore_file_from_disk_tool::RestoreFileFromDiskTool;
 use super::save_file_tool::SaveFileTool;
 use crate::{
-    AgentTool, Templates, Thread, ToolCallEventStream,
+    AgentTool, Thread, ToolCallEventStream, ToolInput,
     edit_agent::streaming_fuzzy_matcher::StreamingFuzzyMatcher,
 };
 use acp_thread::Diff;
@@ -164,8 +164,6 @@ pub struct StreamingEditFileTool {
     thread: WeakEntity<Thread>,
     language_registry: Arc<LanguageRegistry>,
     project: Entity<Project>,
-    #[allow(dead_code)]
-    templates: Arc<Templates>,
 }
 
 impl StreamingEditFileTool {
@@ -173,13 +171,11 @@ impl StreamingEditFileTool {
         project: Entity<Project>,
         thread: WeakEntity<Thread>,
         language_registry: Arc<LanguageRegistry>,
-        templates: Arc<Templates>,
     ) -> Self {
         Self {
             project,
             thread,
             language_registry,
-            templates,
         }
     }
 
@@ -188,7 +184,6 @@ impl StreamingEditFileTool {
             project: self.project.clone(),
             thread: new_thread,
             language_registry: self.language_registry.clone(),
-            templates: self.templates.clone(),
         }
     }
 
@@ -268,38 +263,41 @@ impl AgentTool for StreamingEditFileTool {
 
     fn run(
         self: Arc<Self>,
-        input: Self::Input,
+        input: ToolInput<Self::Input>,
         event_stream: ToolCallEventStream,
         cx: &mut App,
     ) -> Task<Result<Self::Output, Self::Output>> {
-        let Ok(project) = self
-            .thread
-            .read_with(cx, |thread, _cx| thread.project().clone())
-        else {
-            return Task::ready(Err(StreamingEditFileToolOutput::Error {
-                error: "thread was dropped".to_string(),
-            }));
-        };
-
-        let project_path = match resolve_path(&input, project.clone(), cx) {
-            Ok(path) => path,
-            Err(err) => {
-                return Task::ready(Err(StreamingEditFileToolOutput::Error {
-                    error: err.to_string(),
-                }));
-            }
-        };
-
-        let abs_path = project.read(cx).absolute_path(&project_path, cx);
-        if let Some(abs_path) = abs_path.clone() {
-            event_stream.update_fields(
-                ToolCallUpdateFields::new().locations(vec![acp::ToolCallLocation::new(abs_path)]),
-            );
-        }
-
-        let authorize = self.authorize(&input, &event_stream, cx);
-
         cx.spawn(async move |cx: &mut AsyncApp| {
+            let input = input.recv().await.map_err(|e| {
+                StreamingEditFileToolOutput::Error {
+                    error: format!("Failed to receive tool input: {e}"),
+                }
+            })?;
+
+            let project = self
+                .thread
+                .read_with(cx, |thread, _cx| thread.project().clone())
+                .map_err(|_| StreamingEditFileToolOutput::Error {
+                    error: "thread was dropped".to_string(),
+                })?;
+
+            let (project_path, abs_path, authorize) = cx.update(|cx| {
+                let project_path =
+                    resolve_path(&input, project.clone(), cx).map_err(|err| {
+                        StreamingEditFileToolOutput::Error {
+                            error: err.to_string(),
+                        }
+                    })?;
+                let abs_path = project.read(cx).absolute_path(&project_path, cx);
+                if let Some(abs_path) = abs_path.clone() {
+                    event_stream.update_fields(
+                        ToolCallUpdateFields::new()
+                            .locations(vec![acp::ToolCallLocation::new(abs_path)]),
+                    );
+                }
+                let authorize = self.authorize(&input, &event_stream, cx);
+                Ok::<_, StreamingEditFileToolOutput>((project_path, abs_path, authorize))
+            })?;
             let result: anyhow::Result<StreamingEditFileToolOutput> = async {
                 authorize.await?;
 
@@ -787,9 +785,12 @@ mod tests {
                     project.clone(),
                     thread.downgrade(),
                     language_registry,
-                    Templates::new(),
                 ))
-                .run(input, ToolCallEventStream::test().0, cx)
+                .run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
             })
             .await;
 
@@ -836,9 +837,12 @@ mod tests {
                     project.clone(),
                     thread.downgrade(),
                     language_registry,
-                    Templates::new(),
                 ))
-                .run(input, ToolCallEventStream::test().0, cx)
+                .run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
             })
             .await;
 
@@ -896,9 +900,12 @@ mod tests {
                     project.clone(),
                     thread.downgrade(),
                     language_registry,
-                    Templates::new(),
                 ))
-                .run(input, ToolCallEventStream::test().0, cx)
+                .run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
             })
             .await;
 
@@ -958,9 +965,12 @@ mod tests {
                     project.clone(),
                     thread.downgrade(),
                     language_registry,
-                    Templates::new(),
                 ))
-                .run(input, ToolCallEventStream::test().0, cx)
+                .run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
             })
             .await;
 
@@ -1023,9 +1033,12 @@ mod tests {
                     project.clone(),
                     thread.downgrade(),
                     language_registry,
-                    Templates::new(),
                 ))
-                .run(input, ToolCallEventStream::test().0, cx)
+                .run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
             })
             .await;
 
@@ -1088,9 +1101,12 @@ mod tests {
                     project.clone(),
                     thread.downgrade(),
                     language_registry,
-                    Templates::new(),
                 ))
-                .run(input, ToolCallEventStream::test().0, cx)
+                .run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
             })
             .await;
 
@@ -1141,9 +1157,12 @@ mod tests {
                     project,
                     thread.downgrade(),
                     language_registry,
-                    Templates::new(),
                 ))
-                .run(input, ToolCallEventStream::test().0, cx)
+                .run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
             })
             .await;
 
@@ -1192,9 +1211,12 @@ mod tests {
                     project,
                     thread.downgrade(),
                     language_registry,
-                    Templates::new(),
                 ))
-                .run(input, ToolCallEventStream::test().0, cx)
+                .run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
             })
             .await;
 
@@ -1262,9 +1284,12 @@ mod tests {
                     project,
                     thread.downgrade(),
                     language_registry,
-                    Templates::new(),
                 ))
-                .run(input, ToolCallEventStream::test().0, cx)
+                .run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
             })
             .await;
 

@@ -100,6 +100,7 @@ macro_rules! tools {
                     name: T::NAME.to_string(),
                     description: T::description().to_string(),
                     input_schema: T::input_schema(LanguageModelToolSchemaFormat::JsonSchema).to_value(),
+                    use_input_streaming: T::supports_input_streaming(),
                 }
             }
             [
