@@ -45,7 +45,6 @@ pub struct AcpConnection {
     default_mode: Option<acp::SessionModeId>,
     default_model: Option<acp::ModelId>,
     default_config_options: HashMap<String, String>,
-    root_dir: PathBuf,
     child: Child,
     session_list: Option<Rc<AcpSessionList>>,
     _io_task: Task<Result<(), acp::Error>>,
@@ -161,22 +160,18 @@ pub async fn connect(
     server_name: SharedString,
     display_name: SharedString,
     command: AgentServerCommand,
-    root_dir: &Path,
     default_mode: Option<acp::SessionModeId>,
     default_model: Option<acp::ModelId>,
     default_config_options: HashMap<String, String>,
-    is_remote: bool,
     cx: &mut AsyncApp,
 ) -> Result<Rc<dyn AgentConnection>> {
     let conn = AcpConnection::stdio(
         server_name,
         display_name,
         command.clone(),
-        root_dir,
         default_mode,
         default_model,
         default_config_options,
-        is_remote,
         cx,
     )
     .await?;
@@ -190,11 +185,9 @@ impl AcpConnection {
         server_name: SharedString,
         display_name: SharedString,
         command: AgentServerCommand,
-        root_dir: &Path,
         default_mode: Option<acp::SessionModeId>,
         default_model: Option<acp::ModelId>,
         default_config_options: HashMap<String, String>,
-        is_remote: bool,
         cx: &mut AsyncApp,
     ) -> Result<Self> {
         let shell = cx.update(|cx| TerminalSettings::get(None, cx).shell.clone());
@@ -202,9 +195,6 @@ impl AcpConnection {
         let mut child =
             builder.build_std_command(Some(command.path.display().to_string()), &command.args);
         child.envs(command.env.iter().flatten());
-        if !is_remote {
-            child.current_dir(root_dir);
-        }
         let mut child = Child::spawn(child, Stdio::piped(), Stdio::piped(), Stdio::piped())?;
 
         let stdout = child.stdout.take().context("Failed to take stdout")?;
@@ -331,7 +321,6 @@ impl AcpConnection {
 
         Ok(Self {
             auth_methods: response.auth_methods,
-            root_dir: root_dir.to_owned(),
             connection,
             server_name,
             display_name,
@@ -351,10 +340,6 @@ impl AcpConnection {
 
     pub fn prompt_capabilities(&self) -> &acp::PromptCapabilities {
         &self.agent_capabilities.prompt_capabilities
-    }
-
-    pub fn root_dir(&self) -> &Path {
-        &self.root_dir
     }
 }
 

@@ -1,5 +1,5 @@
+use std::any::Any;
 use std::rc::Rc;
-use std::{any::Any, path::Path};
 
 use crate::{AgentServer, AgentServerDelegate, load_proxy_env};
 use acp_thread::AgentConnection;
@@ -45,13 +45,10 @@ impl AgentServer for Gemini {
 
     fn connect(
         &self,
-        root_dir: Option<&Path>,
         delegate: AgentServerDelegate,
         cx: &mut App,
     ) -> Task<Result<(Rc<dyn AgentConnection>, Option<task::SpawnInTerminal>)>> {
         let name = self.name();
-        let root_dir = root_dir.map(|root_dir| root_dir.to_string_lossy().into_owned());
-        let is_remote = delegate.project.read(cx).is_via_remote_server();
         let store = delegate.store.downgrade();
         let mut extra_env = load_proxy_env(cx);
         let default_mode = self.default_mode(cx);
@@ -71,13 +68,12 @@ impl AgentServer for Gemini {
             if let Some(api_key) = cx.update(api_key_for_gemini_cli).await.ok() {
                 extra_env.insert("GEMINI_API_KEY".into(), api_key);
             }
-            let (command, root_dir, login) = store
+            let (command, login) = store
                 .update(cx, |store, cx| {
                     let agent = store
                         .get_external_agent(&GEMINI_NAME.into())
                         .context("Gemini CLI is not registered")?;
                     anyhow::Ok(agent.get_command(
-                        root_dir.as_deref(),
                         extra_env,
                         delegate.status_tx,
                         delegate.new_version_available,
@@ -90,11 +86,9 @@ impl AgentServer for Gemini {
                 name.clone(),
                 name,
                 command,
-                root_dir.as_ref(),
                 default_mode,
                 default_model,
                 default_config_options,
-                is_remote,
                 cx,
             )
             .await?;

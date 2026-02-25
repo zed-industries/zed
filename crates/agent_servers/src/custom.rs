@@ -7,7 +7,7 @@ use fs::Fs;
 use gpui::{App, AppContext as _, SharedString, Task};
 use project::agent_server_store::{AllAgentServersSettings, ExternalAgentServerName};
 use settings::{SettingsStore, update_settings_file};
-use std::{path::Path, rc::Rc, sync::Arc};
+use std::{rc::Rc, sync::Arc};
 use ui::IconName;
 
 /// A generic agent server implementation for custom user-defined agents
@@ -327,7 +327,6 @@ impl AgentServer for CustomAgentServer {
 
     fn connect(
         &self,
-        root_dir: Option<&Path>,
         delegate: AgentServerDelegate,
         cx: &mut App,
     ) -> Task<Result<(Rc<dyn AgentConnection>, Option<task::SpawnInTerminal>)>> {
@@ -337,8 +336,6 @@ impl AgentServer for CustomAgentServer {
             .read(cx)
             .agent_display_name(&ExternalAgentServerName(name.clone()))
             .unwrap_or_else(|| name.clone());
-        let root_dir = root_dir.map(|root_dir| root_dir.to_string_lossy().into_owned());
-        let is_remote = delegate.project.read(cx).is_via_remote_server();
         let default_mode = self.default_mode(cx);
         let default_model = self.default_model(cx);
         let (default_config_options, is_registry_agent) =
@@ -386,7 +383,7 @@ impl AgentServer for CustomAgentServer {
         let store = delegate.store.downgrade();
         let extra_env = load_proxy_env(cx);
         cx.spawn(async move |cx| {
-            let (command, root_dir, login) = store
+            let (command, login) = store
                 .update(cx, |store, cx| {
                     let agent = store
                         .get_external_agent(&ExternalAgentServerName(name.clone()))
@@ -394,7 +391,6 @@ impl AgentServer for CustomAgentServer {
                             format!("Custom agent server `{}` is not registered", name)
                         })?;
                     anyhow::Ok(agent.get_command(
-                        root_dir.as_deref(),
                         extra_env,
                         delegate.status_tx,
                         delegate.new_version_available,
@@ -406,11 +402,9 @@ impl AgentServer for CustomAgentServer {
                 name,
                 display_name,
                 command,
-                root_dir.as_ref(),
                 default_mode,
                 default_model,
                 default_config_options,
-                is_remote,
                 cx,
             )
             .await?;

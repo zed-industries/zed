@@ -2030,14 +2030,13 @@ async fn test_remote_external_agent_server(
             .collect::<Vec<_>>()
     });
     pretty_assertions::assert_eq!(names, ["gemini", "codex", "claude", "foo"]);
-    let (command, root, login) = project
+    let (command, login) = project
         .update(cx, |project, cx| {
             project.agent_server_store().update(cx, |store, cx| {
                 store
                     .get_external_agent(&"foo".into())
                     .unwrap()
                     .get_command(
-                        None,
                         HashMap::from_iter([("OTHER_VAR".into(), "other-val".into())]),
                         None,
                         None,
@@ -2058,7 +2057,6 @@ async fn test_remote_external_agent_server(
             ]))
         }
     );
-    assert_eq!(&PathBuf::from(root), paths::home_dir());
     assert!(login.is_none());
 }
 
