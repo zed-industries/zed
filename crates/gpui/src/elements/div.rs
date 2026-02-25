@@ -1127,7 +1127,36 @@ pub trait InteractiveElement: Sized {
             "Cannot set an accessibility role on an element with no ID. Provide one with `.id(...)`"
         );
 
-        self.interactivity().override_a11y_role = Some(role);
+        self.interactivity().override_role = Some(role);
+        self
+    }
+    
+    /// Set the accessible label for this element. Equivalent to the web's
+    /// `aria-label` attribute. This is the text that a screen reader will
+    /// announce when the user navigates to this element.
+    fn aria_label(mut self, label: impl Into<SharedString>) -> Self {
+        self.interactivity().aria_label = Some(label.into());
+        self
+    }
+
+    /// Set the accessible selected state for this element. Equivalent to the
+    /// web's `aria-selected`.
+    fn aria_selected(mut self, selected: bool) -> Self {
+        self.interactivity().aria_selected = Some(selected);
+        self
+    }
+
+    /// Set the accessible expanded state for this element. Equivalent to the
+    /// web's `aria-expanded`.
+    fn aria_expanded(mut self, expanded: bool) -> Self {
+        self.interactivity().aria_expanded = Some(expanded);
+        self
+    }
+
+    /// Set the accessible toggled state for this element. Equivalent to the
+    /// web's `aria-checked`/`aria-pressed`.
+    fn aria_toggled(mut self, toggled: accesskit::Toggled) -> Self {
+        self.interactivity().aria_toggled = Some(toggled);
         self
     }
 }
@@ -1613,11 +1642,26 @@ impl Element for Div {
         if self.interactivity.element_id.is_some() {
             let role = self
                 .interactivity
-                .override_a11y_role
+                .override_role
                 .unwrap_or(accesskit::Role::GenericContainer);
             Some(role)
         } else {
             None
+        }
+    }
+    
+    fn write_a11y_info(&self, node: &mut accesskit::Node) {
+        if let Some(label) = &self.interactivity.aria_label {
+            node.set_label(label.as_str());
+        }
+        if let Some(selected) = self.interactivity.aria_selected {
+            node.set_selected(selected);
+        }
+        if let Some(expanded) = self.interactivity.aria_expanded {
+            node.set_expanded(expanded);
+        }
+        if let Some(toggled) = self.interactivity.aria_toggled {
+            node.set_toggled(toggled);
         }
     }
 }
@@ -1686,7 +1730,13 @@ pub struct Interactivity {
     pub(crate) tab_index: Option<isize>,
     pub(crate) tab_group: bool,
     pub(crate) tab_stop: bool,
-    pub(crate) override_a11y_role: Option<accesskit::Role>,
+    
+    // a11y fields
+    pub(crate) override_role: Option<accesskit::Role>,
+    pub(crate) aria_label: Option<SharedString>,
+    pub(crate) aria_selected: Option<bool>,
+    pub(crate) aria_expanded: Option<bool>,
+    pub(crate) aria_toggled: Option<accesskit::Toggled>,
 
     #[cfg(any(feature = "inspector", debug_assertions))]
     pub(crate) source_location: Option<&'static core::panic::Location<'static>>,
@@ -3266,6 +3316,10 @@ where
     
     fn a11y_role(&self) -> Option<accesskit::Role> {
         self.element.a11y_role()
+    }
+
+    fn write_a11y_info(&self, node: &mut accesskit::Node) {
+        self.element.write_a11y_info(node);
     }
 }
 

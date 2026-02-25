@@ -36,6 +36,7 @@ use crate::{
     InspectorElementId, LayoutId, Pixels, Point, SharedString, Size, Style, Window,
     util::FluentBuilder, window::with_element_arena,
 };
+use accesskit::{Node, Role};
 use derive_more::{Deref, DerefMut};
 use std::{
     any::{Any, type_name},
@@ -110,9 +111,12 @@ pub trait Element: 'static + IntoElement {
     }
 
     /// todo! document and maybe hide accesskit types from public API
-    fn a11y_role(&self) -> Option<accesskit::Role> {
+    fn a11y_role(&self) -> Option<Role> {
         None
     }
+    
+    /// todo! document and maybe hide accesskit types from public API
+    fn write_a11y_info(&self, _node: &mut Node) {}
 }
 
 /// Implemented by any type that can be converted into an element.
@@ -436,7 +440,7 @@ impl<E: Element> Drawable<E> {
                 parent_node.push_child(global_id);
             }
 
-            // todo! lots more properties
+            self.element.write_a11y_info(&mut node);
 
             window.a11y_nodes.push(global_id, node);
             true

@@ -73,7 +73,7 @@ mod seal {
     pub trait Sealed {}
 }
 
-pub use accesskit::Role;
+pub use accesskit::{Role, Toggled};
 pub use action::*;
 pub use anyhow::Result;
 pub use app::*;

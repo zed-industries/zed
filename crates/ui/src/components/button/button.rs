@@ -1,5 +1,5 @@
 use crate::component_prelude::*;
-use gpui::{AnyElement, AnyView, DefiniteLength};
+use gpui::{AnyElement, AnyView, DefiniteLength, Role};
 use ui_macros::RegisterComponent;
 
 use crate::{ButtonCommon, ButtonLike, ButtonSize, ButtonStyle, IconName, IconSize, Label};
@@ -419,6 +419,7 @@ impl RenderOnce for Button {
         let is_disabled = self.base.disabled;
         let is_selected = self.base.selected;
 
+        let id = self.id().clone();
         let label = self
             .selected_label
             .filter(|_| is_selected)
@@ -434,6 +435,9 @@ impl RenderOnce for Button {
 
         self.base.child(
             h_flex()
+                .id(id)
+                .role(Role::Button)
+                .aria_label(&label)
                 .when(self.truncate, |this| this.min_w_0().overflow_hidden())
                 .gap(DynamicSpacing::Base04.rems(cx))
                 .when(self.icon_position == Some(IconPosition::Start), |this| {

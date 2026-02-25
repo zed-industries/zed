@@ -1,5 +1,5 @@
 use crate::prelude::*;
-use gpui::{FontWeight, Rems, StyleRefinement, UnderlineStyle};
+use gpui::{FontWeight, Rems, Role, StyleRefinement, UnderlineStyle};
 use settings::Settings;
 use smallvec::SmallVec;
 use theme::ThemeSettings;
@@ -91,6 +91,7 @@ pub struct LabelLike {
     single_line: bool,
     truncate: bool,
     truncate_start: bool,
+    pub(crate) a11y_label: Option<SharedString>,
 }
 
 impl Default for LabelLike {
@@ -117,6 +118,7 @@ impl LabelLike {
             single_line: false,
             truncate: false,
             truncate_start: false,
+            a11y_label: None,
         }
     }
 }
@@ -221,7 +223,7 @@ impl RenderOnce for LabelLike {
             color.fade_out(1.0 - alpha);
         }
 
-        self.base
+        let styled = self.base
             .map(|this| match self.size {
                 LabelSize::Large => this.text_ui_lg(cx),
                 LabelSize::Default => this.text_ui(cx),
@@ -260,7 +262,17 @@ impl RenderOnce for LabelLike {
                 self.weight
                     .unwrap_or(ThemeSettings::get_global(cx).ui_font.weight),
             )
-            .children(self.children)
+            .children(self.children);
+
+        if let Some(label) = self.a11y_label {
+            styled
+                .id(ElementId::Name(label.clone()))
+                .role(Role::Label)
+                .aria_label(label)
+                .into_any_element()
+        } else {
+            styled.into_any_element()
+        }
     }
 }
 

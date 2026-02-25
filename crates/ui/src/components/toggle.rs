@@ -1,6 +1,6 @@
 use gpui::{
     AnyElement, AnyView, ClickEvent, ElementId, Hsla, IntoElement, KeybindingKeystroke, Keystroke,
-    Styled, Window, div, hsla, prelude::*,
+    Role, Styled, Toggled, Window, div, hsla, prelude::*,
 };
 use settings::KeybindSource;
 use std::{rc::Rc, sync::Arc};
@@ -255,6 +255,13 @@ impl RenderOnce for Checkbox {
 
         h_flex()
             .id(self.id)
+            .role(Role::CheckBox)
+            .aria_toggled(match self.toggle_state {
+                ToggleState::Selected => Toggled::True,
+                ToggleState::Unselected => Toggled::False,
+                ToggleState::Indeterminate => Toggled::Mixed,
+            })
+            .when_some(self.label.clone(), |this, label| this.aria_label(label))
             .map(|this| {
                 if self.disabled {
                     this.cursor_not_allowed()
@@ -500,6 +507,13 @@ impl RenderOnce for Switch {
 
         h_flex()
             .id(self.id)
+            .role(Role::Switch)
+            .aria_toggled(match self.toggle_state {
+                ToggleState::Selected => Toggled::True,
+                ToggleState::Unselected => Toggled::False,
+                ToggleState::Indeterminate => Toggled::Mixed,
+            })
+            .when_some(label.clone(), |this, label| this.aria_label(label))
             .cursor_pointer()
             .gap(DynamicSpacing::Base06.rems(cx))
             .when(self.full_width, |this| this.w_full().justify_between())
