@@ -249,8 +249,6 @@ When you have a task definition that is bound to the runnable, you can quickly r
 
 ## Running Bash Scripts
 
-> **Preview:** This feature is available in Zed Preview. It will be included in the next Stable release.
-
 You can run bash scripts directly from Zed. When you open a `.sh` or `.bash` file, Zed automatically detects the script as runnable and makes it available in the task picker.
 
 To run a bash script:
@@ -275,8 +273,6 @@ If you need to pass arguments or customize the execution environment, add a task
 ```
 
 ## Shell Initialization
-
-> **Changed in Preview (v0.225).** See [release notes](/releases#0.225).
 
 When Zed runs a task, it launches the command in a login shell. This ensures your shell's initialization files (`.bash_profile`, `.zshrc`, etc.) are sourced before the task executes.
 
