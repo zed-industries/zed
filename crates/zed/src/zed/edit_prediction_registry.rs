@@ -11,7 +11,7 @@ use language::language_settings::{EditPredictionProvider, all_language_settings}
 use settings::{
     EXPERIMENTAL_ZETA2_EDIT_PREDICTION_PROVIDER_NAME, EditPredictionPromptFormat, SettingsStore,
 };
-use std::{cell::Cell, cell::RefCell, rc::Rc, sync::Arc};
+use std::{cell::RefCell, rc::Rc, sync::Arc};
 use supermaven::{Supermaven, SupermavenEditPredictionDelegate};
 use ui::Window;
 
@@ -60,19 +60,16 @@ pub fn init(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut App) {
 
     cx.on_action(clear_edit_prediction_store_edit_history);
 
-    let provider_config: Rc<Cell<Option<EditPredictionProviderConfig>>> =
-        Rc::new(Cell::new(edit_prediction_provider_config_for_settings(cx)));
-
     cx.subscribe(&user_store, {
         let editors = editors.clone();
         let client = client.clone();
-        let provider_config = provider_config.clone();
 
         move |user_store, event, cx| {
             if let client::user::Event::PrivateUserInfoUpdated = event {
+                let provider_config = edit_prediction_provider_config_for_settings(cx);
                 assign_edit_prediction_providers(
                     &editors,
-                    provider_config.get(),
+                    provider_config,
                     &client,
                     user_store,
                     cx,
@@ -86,18 +83,18 @@ pub fn init(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut App) {
         let editors = editors.clone();
         let client = client.clone();
         let user_store = user_store.clone();
-        let provider_config = provider_config.clone();
+        let mut previous_config = edit_prediction_provider_config_for_settings(cx);
         move |cx| {
             let new_provider_config = edit_prediction_provider_config_for_settings(cx);
 
-            if new_provider_config != provider_config.get() {
+            if new_provider_config != previous_config {
                 telemetry::event!(
                     "Edit Prediction Provider Changed",
-                    from = provider_config.get().map(|config| config.name()),
+                    from = previous_config.map(|config| config.name()),
                     to = new_provider_config.map(|config| config.name())
                 );
 
-                provider_config.set(new_provider_config);
+                previous_config = new_provider_config;
                 assign_edit_prediction_providers(
                     &editors,
                     new_provider_config,
@@ -111,10 +108,11 @@ pub fn init(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut App) {
     .detach();
 
     cx.observe_flag::<Zeta2FeatureFlag, _>({
+        let mut previous_config = edit_prediction_provider_config_for_settings(cx);
         move |_is_enabled, cx| {
             let new_provider_config = edit_prediction_provider_config_for_settings(cx);
-            if new_provider_config != provider_config.get() {
-                provider_config.set(new_provider_config);
+            if new_provider_config != previous_config {
+                previous_config = new_provider_config;
                 assign_edit_prediction_providers(
                     &editors,
                     new_provider_config,
