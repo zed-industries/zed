@@ -1615,7 +1615,7 @@ impl ExternalAgentServer for LocalCodex {
                                 &asset.browser_download_url,
                                 digest,
                                 &version_dir,
-                                if cfg!(target_os = "windows") && cfg!(target_arch = "x86_64") {
+                                if cfg!(target_os = "windows") {
                                     AssetKind::Zip
                                 } else {
                                     AssetKind::TarGz
