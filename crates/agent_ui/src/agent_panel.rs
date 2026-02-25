@@ -30,7 +30,7 @@ use crate::{
     LoadThreadFromClipboard, NewTextThread, NewThread, OpenActiveThreadAsMarkdown, OpenAgentDiff,
     OpenHistory, ResetTrialEndUpsell, ResetTrialUpsell, SetThreadTarget, ThreadTargetKind,
     ToggleNavigationMenu, ToggleNewThreadMenu, ToggleOptionsMenu,
-    acp::AcpServerView,
+    acp::{AcpServerView, AcpServerViewEvent},
     agent_configuration::{AgentConfiguration, AssistantConfigurationEvent},
     slash_command::SlashCommandCompletionProvider,
     text_thread_editor::{AgentPanelDelegate, TextThreadEditor, make_lsp_adapter_delegate},
@@ -729,9 +729,8 @@ impl AgentPanel {
                                         && !project.repositories(cx).is_empty()
                                 }
                                 ThreadTarget::ExistingWorktree { .. } => {
-                                    // Always fall back to LocalProject on cold start to avoid
-                                    // a blocking path.exists() call on the UI thread.
-                                    false
+                                    // Accepted tentatively; validated asynchronously below.
+                                    true
                                 }
                             };
                             if is_valid {
@@ -745,6 +744,32 @@ impl AgentPanel {
                         }
                         cx.notify();
                     });
+                }
+
+                // Validate ExistingWorktree path asynchronously to avoid
+                // blocking the UI thread with a path.exists() call.
+                if let ThreadTarget::ExistingWorktree { ref path, .. } =
+                    panel.read(cx).thread_target
+                {
+                    let path = path.clone();
+                    let panel_weak = panel.downgrade();
+                    let validation_task = cx.background_spawn(async move { path.exists() });
+                    cx.spawn(async move |_window, cx| {
+                        let exists = validation_task.await;
+                        if !exists {
+                            panel_weak
+                                .update(cx, |panel, cx| {
+                                    log::info!(
+                                        "ExistingWorktree path no longer exists, falling back to LocalProject"
+                                    );
+                                    panel.thread_target = ThreadTarget::LocalProject;
+                                    panel.serialize(cx);
+                                    cx.notify();
+                                })
+                                .ok();
+                        }
+                    })
+                    .detach();
                 }
 
                 if let Some(thread_info) = last_active_thread {
@@ -1751,15 +1776,19 @@ impl AgentPanel {
             ActiveView::AgentThread { server_view } => {
                 self._thread_view_subscription =
                     Self::subscribe_to_active_thread_view(&server_view, window, cx);
-                Some(
-                    cx.observe_in(server_view, window, |this, server_view, window, cx| {
-                        this._thread_view_subscription =
-                            Self::subscribe_to_active_thread_view(&server_view, window, cx);
-                        cx.emit(AgentPanelEvent::ActiveViewChanged);
-                        this.serialize(cx);
-                        cx.notify();
-                    }),
-                )
+                Some(cx.subscribe_in(
+                    server_view,
+                    window,
+                    |this, server_view, event: &AcpServerViewEvent, window, cx| match event {
+                        AcpServerViewEvent::ActiveThreadChanged => {
+                            this._thread_view_subscription =
+                                Self::subscribe_to_active_thread_view(&server_view, window, cx);
+                            cx.emit(AgentPanelEvent::ActiveViewChanged);
+                            this.serialize(cx);
+                            cx.notify();
+                        }
+                    },
+                ))
             }
             _ => {
                 self._thread_view_subscription = None;
@@ -2134,39 +2163,25 @@ impl AgentPanel {
         }
     }
 
-    fn handle_worktree_creation_requested(
-        &mut self,
-        text: String,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if matches!(
-            self.worktree_creation_status,
-            Some(WorktreeCreationStatus::Creating)
-        ) {
-            return;
-        }
+    fn generate_agent_branch_name() -> String {
+        let mut rng = rand::rng();
+        let id: String = (0..8)
+            .map(|_| {
+                let idx: u8 = rng.random_range(0..36);
+                if idx < 10 {
+                    (b'0' + idx) as char
+                } else {
+                    (b'a' + idx - 10) as char
+                }
+            })
+            .collect();
+        format!("agent-{id}")
+    }
 
-        self.worktree_creation_status = Some(WorktreeCreationStatus::Creating);
-        cx.notify();
-
-        // Generate "agent-" + 8 random lowercase alphanumeric characters
-        let branch_name = {
-            let mut rng = rand::rng();
-            let id: String = (0..8)
-                .map(|_| {
-                    let idx: u8 = rng.random_range(0..36);
-                    if idx < 10 {
-                        (b'0' + idx) as char
-                    } else {
-                        (b'a' + idx - 10) as char
-                    }
-                })
-                .collect();
-            format!("agent-{id}")
-        };
-
-        // Classify visible worktrees into git-enabled (with their Repository) and non-git
+    fn classify_worktrees(
+        &self,
+        cx: &App,
+    ) -> (Vec<Entity<project::git_store::Repository>>, Vec<PathBuf>) {
         let project = &self.project;
         let repositories = project.read(cx).repositories(cx).clone();
         let mut git_repos: Vec<Entity<project::git_store::Repository>> = Vec::new();
@@ -2189,11 +2204,157 @@ impl AgentPanel {
             }
         }
 
+        (git_repos, non_git_paths)
+    }
+
+    fn start_worktree_creations(
+        git_repos: &[Entity<project::git_store::Repository>],
+        branch_name: &str,
+        worktree_directory_setting: &str,
+        cx: &mut Context<Self>,
+    ) -> Result<(
+        Vec<(
+            Entity<project::git_store::Repository>,
+            PathBuf,
+            futures::channel::oneshot::Receiver<Result<()>>,
+        )>,
+        Vec<(PathBuf, PathBuf)>,
+    )> {
+        let mut creation_infos = Vec::new();
+        let mut path_remapping = Vec::new();
+
+        for repo in git_repos {
+            let (work_dir, new_path, receiver) = repo.update(cx, |repo, _cx| {
+                let original_repo = repo.original_repo_abs_path.clone();
+                let directory =
+                    validate_worktree_directory(&original_repo, worktree_directory_setting)?;
+                let new_path = directory.join(branch_name);
+                let receiver = repo.create_worktree(branch_name.to_string(), directory, None);
+                let work_dir = repo.work_directory_abs_path.clone();
+                anyhow::Ok((work_dir, new_path, receiver))
+            })?;
+            path_remapping.push((work_dir.to_path_buf(), new_path.clone()));
+            creation_infos.push((repo.clone(), new_path, receiver));
+        }
+
+        Ok((creation_infos, path_remapping))
+    }
+
+    async fn await_and_rollback_on_failure(
+        creation_infos: Vec<(
+            Entity<project::git_store::Repository>,
+            PathBuf,
+            futures::channel::oneshot::Receiver<Result<()>>,
+        )>,
+        cx: &mut AsyncWindowContext,
+    ) -> Result<Vec<PathBuf>> {
+        let mut created_paths: Vec<PathBuf> = Vec::new();
+        let mut repos_and_paths: Vec<(Entity<project::git_store::Repository>, PathBuf)> =
+            Vec::new();
+        let mut first_error: Option<anyhow::Error> = None;
+
+        for (repo, new_path, receiver) in creation_infos {
+            match receiver.await {
+                Ok(Ok(())) => {
+                    created_paths.push(new_path.clone());
+                    repos_and_paths.push((repo, new_path));
+                }
+                Ok(Err(err)) => {
+                    if first_error.is_none() {
+                        first_error = Some(err);
+                    }
+                }
+                Err(_canceled) => {
+                    if first_error.is_none() {
+                        first_error = Some(anyhow!("Worktree creation was canceled"));
+                    }
+                }
+            }
+        }
+
+        let Some(err) = first_error else {
+            return Ok(created_paths);
+        };
+
+        // Rollback all successfully created worktrees
+        let mut rollback_receivers = Vec::new();
+        for (rollback_repo, rollback_path) in &repos_and_paths {
+            if let Ok(receiver) = cx.update(|_, cx| {
+                rollback_repo.update(cx, |repo, _cx| {
+                    repo.remove_worktree(rollback_path.clone(), true)
+                })
+            }) {
+                rollback_receivers.push((rollback_path.clone(), receiver));
+            }
+        }
+        let mut rollback_failures: Vec<String> = Vec::new();
+        for (path, receiver) in rollback_receivers {
+            match receiver.await {
+                Ok(Ok(())) => {}
+                Ok(Err(rollback_err)) => {
+                    log::error!(
+                        "failed to rollback worktree at {}: {rollback_err}",
+                        path.display()
+                    );
+                    rollback_failures.push(format!("{}: {rollback_err}", path.display()));
+                }
+                Err(rollback_err) => {
+                    log::error!(
+                        "failed to rollback worktree at {}: {rollback_err}",
+                        path.display()
+                    );
+                    rollback_failures.push(format!("{}: {rollback_err}", path.display()));
+                }
+            }
+        }
+        let mut error_message = format!("Failed to create worktree: {err}");
+        if !rollback_failures.is_empty() {
+            error_message.push_str("\n\nFailed to clean up: ");
+            error_message.push_str(&rollback_failures.join(", "));
+        }
+        Err(anyhow!(error_message))
+    }
+
+    fn set_worktree_creation_error(
+        &mut self,
+        message: SharedString,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.worktree_creation_status = Some(WorktreeCreationStatus::Error(message));
+        if matches!(self.active_view, ActiveView::Uninitialized) {
+            let selected_agent = self.selected_agent.clone();
+            self.new_agent_thread(selected_agent, window, cx);
+        }
+        cx.notify();
+    }
+
+    fn handle_worktree_creation_requested(
+        &mut self,
+        text: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if matches!(
+            self.worktree_creation_status,
+            Some(WorktreeCreationStatus::Creating)
+        ) {
+            return;
+        }
+
+        self.worktree_creation_status = Some(WorktreeCreationStatus::Creating);
+        cx.notify();
+
+        let branch_name = Self::generate_agent_branch_name();
+
+        let (git_repos, non_git_paths) = self.classify_worktrees(cx);
+
         if git_repos.is_empty() {
-            self.worktree_creation_status = Some(WorktreeCreationStatus::Error(
+            self.set_worktree_creation_error(
                 "No git repositories found in the project".into(),
-            ));
-            cx.notify();
+                window,
+                cx,
+            );
             return;
         }
 
@@ -2202,40 +2363,22 @@ impl AgentPanel {
             .worktree_directory
             .clone();
 
-        // Start all worktree creations synchronously (they run in parallel via the git job queue)
-        // and collect their receivers for awaiting in the async task.
-        let mut creation_infos: Vec<(
-            Entity<project::git_store::Repository>,
-            PathBuf,
-            futures::channel::oneshot::Receiver<Result<()>>,
-        )> = Vec::new();
-        let mut path_remapping: Vec<(PathBuf, PathBuf)> = Vec::new();
-
-        for repo in &git_repos {
-            let result = repo.update(cx, |repo, _cx| {
-                let original_repo = repo.original_repo_abs_path.clone();
-                let directory =
-                    validate_worktree_directory(&original_repo, &worktree_directory_setting)?;
-                let new_path = directory.join(&branch_name);
-                let receiver = repo.create_worktree(branch_name.clone(), directory, None);
-                let work_dir = repo.work_directory_abs_path.clone();
-                anyhow::Ok((work_dir, new_path, receiver))
-            });
-
-            match result {
-                Ok((work_dir, new_path, receiver)) => {
-                    path_remapping.push((work_dir.to_path_buf(), new_path.clone()));
-                    creation_infos.push((repo.clone(), new_path, receiver));
-                }
-                Err(err) => {
-                    self.worktree_creation_status = Some(WorktreeCreationStatus::Error(
-                        format!("Failed to validate worktree directory: {err}").into(),
-                    ));
-                    cx.notify();
-                    return;
-                }
+        let (creation_infos, path_remapping) = match Self::start_worktree_creations(
+            &git_repos,
+            &branch_name,
+            &worktree_directory_setting,
+            cx,
+        ) {
+            Ok(result) => result,
+            Err(err) => {
+                self.set_worktree_creation_error(
+                    format!("Failed to validate worktree directory: {err}").into(),
+                    window,
+                    cx,
+                );
+                return;
             }
-        }
+        };
 
         let (dock_structure, open_file_paths) = self
             .workspace
@@ -2253,198 +2396,164 @@ impl AgentPanel {
             .downcast::<workspace::MultiWorkspace>();
 
         let task = cx.spawn_in(window, async move |this, cx| {
-            // Await all worktree creation results
-            let mut results = Vec::new();
-            for (repo, new_path, receiver) in creation_infos {
-                let result = receiver.await;
-                results.push((repo, new_path, result));
-            }
-
-            // Check for failures; collect successfully created paths for potential rollback
-            let mut created_paths: Vec<PathBuf> = Vec::new();
-            let mut repos_and_paths: Vec<(Entity<project::git_store::Repository>, PathBuf)> =
-                Vec::new();
-            let mut first_error: Option<anyhow::Error> = None;
-
-            for (repo, new_path, result) in results {
-                match result {
-                    Ok(Ok(())) => {
-                        created_paths.push(new_path.clone());
-                        repos_and_paths.push((repo, new_path));
-                    }
-                    Ok(Err(err)) => {
-                        if first_error.is_none() {
-                            first_error = Some(err);
-                        }
-                    }
-                    Err(_canceled) => {
-                        if first_error.is_none() {
-                            first_error = Some(anyhow!("Worktree creation was canceled"));
-                        }
-                    }
-                }
-            }
-
-            if let Some(err) = first_error {
-                // Rollback all successfully created worktrees
-                let mut rollback_receivers = Vec::new();
-                for (rollback_repo, rollback_path) in &repos_and_paths {
-                    if let Ok(receiver) = cx.update(|_, cx| {
-                        rollback_repo.update(cx, |repo, _cx| {
-                            repo.remove_worktree(rollback_path.clone(), true)
-                        })
-                    }) {
-                        rollback_receivers.push((rollback_path.clone(), receiver));
-                    }
-                }
-                for (path, receiver) in rollback_receivers {
-                    match receiver.await {
-                        Ok(Ok(())) => {}
-                        Ok(Err(err)) => {
-                            log::error!("failed to rollback worktree at {}: {err}", path.display())
-                        }
-                        Err(err) => {
-                            log::error!("failed to rollback worktree at {}: {err}", path.display())
-                        }
-                    }
-                }
-                this.update_in(cx, |this, _window, cx| {
-                    this.worktree_creation_status = Some(WorktreeCreationStatus::Error(
-                        format!("Failed to create worktree: {err}").into(),
-                    ));
-                    cx.notify();
-                })?;
-                return anyhow::Ok(());
-            }
-
-            // Collect all paths for the new workspace: new worktree paths + non-git paths as-is
-            let mut all_paths = created_paths;
-            let has_non_git = !non_git_paths.is_empty();
-            all_paths.extend(non_git_paths.iter().cloned());
-
-            // Open the new workspace in the current window's sidebar
-            let app_state = match workspace.upgrade() {
-                Some(workspace) => cx.update(|_, cx| workspace.read(cx).app_state().clone())?,
-                None => {
-                    this.update_in(cx, |this, _window, cx| {
-                        this.worktree_creation_status = Some(WorktreeCreationStatus::Error(
-                            "Workspace no longer available".into(),
-                        ));
-                        cx.notify();
+            let created_paths = match Self::await_and_rollback_on_failure(creation_infos, cx).await
+            {
+                Ok(paths) => paths,
+                Err(err) => {
+                    this.update_in(cx, |this, window, cx| {
+                        this.set_worktree_creation_error(format!("{err}").into(), window, cx);
                     })?;
                     return anyhow::Ok(());
                 }
             };
 
-            let init_dock_structure = dock_structure;
-            let init: Option<
-                Box<dyn FnOnce(&mut Workspace, &mut Window, &mut gpui::Context<Workspace>) + Send>,
-            > = Some(Box::new(move |workspace, window, cx| {
-                workspace.set_dock_structure(init_dock_structure, window, cx);
-            }));
+            let mut all_paths = created_paths;
+            let has_non_git = !non_git_paths.is_empty();
+            all_paths.extend(non_git_paths.iter().cloned());
 
-            let (new_window_handle, _) = cx
-                .update(|_window, cx| {
-                    Workspace::new_local(all_paths, app_state, window_handle, None, init, false, cx)
-                })?
-                .await?;
-
-            // The new workspace was added to the MultiWorkspace but NOT activated.
-            // Retrieve the Entity<Workspace> for it.
-            let new_workspace = new_window_handle.update(cx, |multi_workspace, _window, _cx| {
-                let workspaces = multi_workspace.workspaces();
-                workspaces.last().cloned()
-            })?;
-
-            let Some(new_workspace) = new_workspace else {
-                anyhow::bail!("New workspace was not added to MultiWorkspace");
-            };
-
-            // Wait for panels to finish loading before setting anything up.
-            let panels_task = new_window_handle.update(cx, |_, _, cx| {
-                new_workspace.update(cx, |workspace, _cx| workspace.take_panels_task())
-            })?;
-            if let Some(task) = panels_task {
-                task.await.log_err();
-            }
-
-            let initial_content = AgentInitialContent::ContentBlock {
-                blocks: vec![acp::ContentBlock::Text(acp::TextContent::new(text))],
-                auto_submit: true,
-            };
-
-            // Now that panels are ready, set up the workspace: open remapped files,
-            // show toasts, and submit the prompt — all before making it visible.
-            new_window_handle.update(cx, |_multi_workspace, window, cx| {
-                new_workspace.update(cx, |workspace, cx| {
-                    if has_non_git {
-                        let toast_id =
-                            workspace::notifications::NotificationId::unique::<AgentPanel>();
-                        workspace.show_toast(
-                            workspace::Toast::new(
-                                toast_id,
-                                "Some project folders are not git repositories. \
-                                 They were included as-is without creating a worktree.",
-                            ),
+            let app_state = match workspace.upgrade() {
+                Some(workspace) => cx.update(|_, cx| workspace.read(cx).app_state().clone())?,
+                None => {
+                    this.update_in(cx, |this, window, cx| {
+                        this.set_worktree_creation_error(
+                            "Workspace no longer available".into(),
+                            window,
                             cx,
                         );
-                    }
+                    })?;
+                    return anyhow::Ok(());
+                }
+            };
 
-                    let remapped_paths: Vec<PathBuf> = open_file_paths
-                        .iter()
-                        .filter_map(|original_path| {
-                            for (old_root, new_root) in &path_remapping {
-                                if let Ok(relative) = original_path.strip_prefix(old_root) {
-                                    return Some(new_root.join(relative));
-                                }
-                            }
-                            for non_git in &non_git_paths {
-                                if original_path.starts_with(non_git) {
-                                    return Some(original_path.clone());
-                                }
-                            }
-                            None
-                        })
-                        .collect();
-
-                    if !remapped_paths.is_empty() {
-                        workspace
-                            .open_paths(
-                                remapped_paths,
-                                workspace::OpenOptions::default(),
-                                None,
-                                window,
-                                cx,
-                            )
-                            .detach();
-                    }
-
-                    workspace.focus_panel::<AgentPanel>(window, cx);
-                    if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
-                        panel.update(cx, |panel, cx| {
-                            panel.external_thread(None, None, Some(initial_content), window, cx);
-                        });
-                    }
-                });
-            })?;
-
-            // Everything is set up — now activate the workspace to make it visible.
-            new_window_handle.update(cx, |multi_workspace, _window, cx| {
-                multi_workspace.activate(new_workspace.clone(), cx);
-            })?;
-
-            // Clear the creation status on the original panel
-            this.update_in(cx, |this, _window, cx| {
-                this.worktree_creation_status = None;
-                cx.notify();
-            })?;
-
-            anyhow::Ok(())
+            Self::setup_new_workspace(
+                this,
+                all_paths,
+                app_state,
+                window_handle,
+                dock_structure,
+                open_file_paths,
+                path_remapping,
+                non_git_paths,
+                has_non_git,
+                text,
+                cx,
+            )
+            .await
         });
 
         self._worktree_creation_task = Some(cx.foreground_executor().spawn(async move {
             task.await.log_err();
         }));
+    }
+
+    async fn setup_new_workspace(
+        this: WeakEntity<Self>,
+        all_paths: Vec<PathBuf>,
+        app_state: Arc<workspace::AppState>,
+        window_handle: Option<gpui::WindowHandle<workspace::MultiWorkspace>>,
+        dock_structure: workspace::DockStructure,
+        open_file_paths: Vec<PathBuf>,
+        path_remapping: Vec<(PathBuf, PathBuf)>,
+        non_git_paths: Vec<PathBuf>,
+        has_non_git: bool,
+        text: String,
+        cx: &mut AsyncWindowContext,
+    ) -> Result<()> {
+        let init: Option<
+            Box<dyn FnOnce(&mut Workspace, &mut Window, &mut gpui::Context<Workspace>) + Send>,
+        > = Some(Box::new(move |workspace, window, cx| {
+            workspace.set_dock_structure(dock_structure, window, cx);
+        }));
+
+        let (new_window_handle, _) = cx
+            .update(|_window, cx| {
+                Workspace::new_local(all_paths, app_state, window_handle, None, init, false, cx)
+            })?
+            .await?;
+
+        let new_workspace = new_window_handle.update(cx, |multi_workspace, _window, _cx| {
+            let workspaces = multi_workspace.workspaces();
+            workspaces.last().cloned()
+        })?;
+
+        let Some(new_workspace) = new_workspace else {
+            anyhow::bail!("New workspace was not added to MultiWorkspace");
+        };
+
+        let panels_task = new_window_handle.update(cx, |_, _, cx| {
+            new_workspace.update(cx, |workspace, _cx| workspace.take_panels_task())
+        })?;
+        if let Some(task) = panels_task {
+            task.await.log_err();
+        }
+
+        let initial_content = AgentInitialContent::ContentBlock {
+            blocks: vec![acp::ContentBlock::Text(acp::TextContent::new(text))],
+            auto_submit: true,
+        };
+
+        new_window_handle.update(cx, |_multi_workspace, window, cx| {
+            new_workspace.update(cx, |workspace, cx| {
+                if has_non_git {
+                    let toast_id = workspace::notifications::NotificationId::unique::<AgentPanel>();
+                    workspace.show_toast(
+                        workspace::Toast::new(
+                            toast_id,
+                            "Some project folders are not git repositories. \
+                             They were included as-is without creating a worktree.",
+                        ),
+                        cx,
+                    );
+                }
+
+                let remapped_paths: Vec<PathBuf> = open_file_paths
+                    .iter()
+                    .filter_map(|original_path| {
+                        for (old_root, new_root) in &path_remapping {
+                            if let Ok(relative) = original_path.strip_prefix(old_root) {
+                                return Some(new_root.join(relative));
+                            }
+                        }
+                        for non_git in &non_git_paths {
+                            if original_path.starts_with(non_git) {
+                                return Some(original_path.clone());
+                            }
+                        }
+                        None
+                    })
+                    .collect();
+
+                if !remapped_paths.is_empty() {
+                    workspace
+                        .open_paths(
+                            remapped_paths,
+                            workspace::OpenOptions::default(),
+                            None,
+                            window,
+                            cx,
+                        )
+                        .detach();
+                }
+
+                workspace.focus_panel::<AgentPanel>(window, cx);
+                if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
+                    panel.update(cx, |panel, cx| {
+                        panel.external_thread(None, None, Some(initial_content), window, cx);
+                    });
+                }
+            });
+        })?;
+
+        new_window_handle.update(cx, |multi_workspace, _window, cx| {
+            multi_workspace.activate(new_workspace.clone(), cx);
+        })?;
+
+        this.update_in(cx, |this, _window, cx| {
+            this.worktree_creation_status = None;
+            cx.notify();
+        })?;
+
+        anyhow::Ok(())
     }
 }
 
@@ -2530,10 +2639,6 @@ impl Panel for AgentPanel {
     fn set_active(&mut self, active: bool, window: &mut Window, cx: &mut Context<Self>) {
         if active
             && matches!(self.active_view, ActiveView::Uninitialized)
-            // TODO: When worktree creation is fully implemented, the completion
-            // path must either call new_agent_thread directly or re-trigger
-            // set_active, because this guard suppresses thread creation with no
-            // automatic recovery.
             && !matches!(
                 self.worktree_creation_status,
                 Some(WorktreeCreationStatus::Creating)

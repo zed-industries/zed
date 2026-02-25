@@ -278,6 +278,12 @@ impl Conversation {
     }
 }
 
+pub enum AcpServerViewEvent {
+    ActiveThreadChanged,
+}
+
+impl EventEmitter<AcpServerViewEvent> for AcpServerView {}
+
 pub struct AcpServerView {
     agent: Rc<dyn AgentServer>,
     agent_server_store: Entity<AgentServerStore>,
@@ -364,6 +370,7 @@ impl AcpServerView {
         if let Some(view) = self.active_thread() {
             view.focus_handle(cx).focus(window, cx);
         }
+        cx.emit(AcpServerViewEvent::ActiveThreadChanged);
         cx.notify();
     }
 }
@@ -503,6 +510,7 @@ impl AcpServerView {
         }
 
         self.server_state = state;
+        cx.emit(AcpServerViewEvent::ActiveThreadChanged);
         cx.notify();
     }
 
