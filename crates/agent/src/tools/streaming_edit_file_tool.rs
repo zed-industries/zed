@@ -526,15 +526,10 @@ impl StreamingEditState {
 
                     if let Some(match_range) = matcher.push(new_chunk, None) {
                         // Show live match preview in diff view
-                        let (start_anchor, end_anchor) = buffer.read_with(cx, |buffer, _cx| {
-                            (
-                                buffer.anchor_before(match_range.start),
-                                buffer.anchor_after(match_range.end),
-                            )
+                        let anchor_range = buffer.read_with(cx, |buffer, _cx| {
+                            buffer.anchor_range_between(match_range.clone())
                         });
-                        diff.update(cx, |card, cx| {
-                            card.reveal_range(start_anchor..end_anchor, cx)
-                        });
+                        diff.update(cx, |card, cx| card.reveal_range(anchor_range, cx));
                     }
 
                     edit_tracker.last_old_text_len = old_text_len;
@@ -1013,15 +1008,9 @@ fn resolve_and_reveal_edit(
 
     let range = matches.into_iter().next().expect("checked len above");
 
-    let (start_anchor, end_anchor) = buffer.read_with(cx, |buffer, _cx| {
-        (
-            buffer.anchor_before(range.start),
-            buffer.anchor_after(range.end),
-        )
-    });
-    diff.update(cx, |card, cx| {
-        card.reveal_range(start_anchor..end_anchor, cx)
-    });
+    let anchor_range =
+        buffer.read_with(cx, |buffer, _cx| buffer.anchor_range_between(range.clone()));
+    diff.update(cx, |card, cx| card.reveal_range(anchor_range, cx));
 
     Ok((range, edit.new_text.clone()))
 }
