@@ -150,7 +150,7 @@ jobs:
       uses: namespacelabs/breakpoint-action@v0
       with:
         duration: 15m
-        user: MrSubidubi
+        authorized-users: MrSubidubi
     timeout-minutes: 60
   clippy_windows:
     needs:
