@@ -13,6 +13,7 @@ path = "src/gpui_web.rs"
 
 [target.'cfg(target_family = "wasm")'.dependencies]
 gpui.workspace = true
+parking_lot = { workspace = true, features = ["nightly"] }
 gpui_cosmic_text.workspace = true
 gpui_wgpu.workspace = true
 anyhow.workspace = true
@@ -26,6 +27,7 @@ web-time.workspace = true
 console_error_panic_hook = "0.1.7"
 js-sys = "0.3"
 raw-window-handle = "0.6"
+wasm_thread = { version = "0.3", features = ["es_modules"] }
 web-sys = { version = "0.3", features = [
     "console",
     "CssStyleDeclaration",

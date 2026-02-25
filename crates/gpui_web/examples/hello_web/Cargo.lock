@@ -2192,11 +2192,13 @@ dependencies = [
  "gpui_wgpu",
  "js-sys",
  "log",
+ "parking_lot",
  "raw-window-handle",
  "smallvec",
  "uuid",
  "wasm-bindgen",
  "wasm-bindgen-futures",
+ "wasm_thread",
  "web-sys",
  "web-time",
 ]
@@ -2315,6 +2317,8 @@ version = "0.1.0"
 dependencies = [
  "gpui",
  "gpui_platform",
+ "log",
+ "web-time",
 ]
 
 [[package]]
@@ -5544,6 +5548,18 @@ dependencies = [
  "indexmap",
  "wasm-encoder",
  "wasmparser",
+]
+
+[[package]]
+name = "wasm_thread"
+version = "0.3.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b7516db7f32decdadb1c3b8deb1b7d78b9df7606c5cc2f6241737c2ab3a0258e"
+dependencies = [
+ "futures",
+ "js-sys",
+ "wasm-bindgen",
+ "web-sys",
 ]
 
 [[package]]

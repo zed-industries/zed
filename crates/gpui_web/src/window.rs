@@ -70,7 +70,7 @@ pub struct WebWindow {
 impl WebWindow {
     pub fn new(
         handle: AnyWindowHandle,
-        params: WindowParams,
+        _params: WindowParams,
         context: &WgpuContext,
         browser_window: web_sys::Window,
     ) -> anyhow::Result<Self> {
@@ -451,7 +451,7 @@ fn check_device_pixel_support() -> bool {
         return false;
     };
     let descriptor = js_sys::Object::get_own_property_descriptor(
-        &prototype.unchecked_into(),
+        &prototype.unchecked_into::<js_sys::Object>(),
         &"devicePixelContentBoxSize".into(),
     );
     !descriptor.is_undefined()
