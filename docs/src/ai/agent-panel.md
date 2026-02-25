@@ -114,20 +114,20 @@ The agent can search your codebase to find relevant context, but providing it ex
 Add context by typing `@` in the message editor.
 You can mention files, directories, symbols, previous threads, rules files, and diagnostics.
 
-> **Changed in Preview (v0.225).** See [release notes](/releases#0.225).
-
-### Images
-
-You can add images to agent messages on providers that support vision models. OpenAI GPT-4o and later, Anthropic Claude 3 and later, Google Gemini 1.5 and 2.0, and Bedrock vision models (Claude 3+, Amazon Nova Pro and Lite, Meta Llama 3.2 Vision, Mistral Pixtral) all support image inputs.
-
-To add an image, use the `/file` slash command and select an image file, or drag an image from your file system directly into the agent panel message editor. You can also copy an image and paste it into the message editor.
-
 When you paste multi-line code selections copied from a buffer, Zed automatically formats them as @-mentions with the file context.
 To paste content without this automatic formatting, use {#kb agent::PasteRaw} to paste raw text directly.
 
 ### Selection as Context
 
 Additionally, you can also select text in a buffer or terminal and add it as context by using the {#kb agent::AddSelectionToThread} keybinding, running the {#action agent::AddSelectionToThread} action, or choosing the "Selection" item in the `+` menu in the message editor.
+
+### Images as Context
+
+It's also possible to attach images in your prompt for providers that support vision models.
+OpenAI GPT-4o and later, Anthropic Claude 3 and later, Google Gemini 1.5 and 2.0, and Bedrock vision models (Claude 3+, Amazon Nova Pro and Lite, Meta Llama 3.2 Vision, Mistral Pixtral) all support image inputs.
+
+To add an image, you can either search in your project's directory by @-mentioning it, or drag it from your file system directly into the agent panel message editor.
+Copying an image and pasting it is also supported.
 
 ## Token Usage {#token-usage}
 
@@ -173,8 +173,6 @@ Zed offers three built-in profiles and you can create as many custom ones as you
 You can explore the exact tools enabled in each profile by clicking on the profile selector button > `Configure` button > the one you want to check out.
 
 Alternatively, you can also use either the command palette, by running {#action agent::ManageProfiles}, or the keybinding directly, {#kb agent::ManageProfiles}, to have access to the profile management modal.
-
-> **Preview:** This keybinding is available in Zed Preview. It will be included in the next Stable release.
 
 Use {#kb agent::CycleModeSelector} to cycle through available profiles without opening the modal.
 
