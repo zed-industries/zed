@@ -646,6 +646,7 @@ impl RenderOnce for ButtonLike {
         self.base
             .h_flex()
             .id(self.id.clone())
+            .role(gpui::Role::Button)
             .when_some(self.tab_index, |this, tab_index| this.tab_index(tab_index))
             .when_some(self.focus_handle, |this, focus_handle| {
                 this.track_focus(&focus_handle)

@@ -1261,7 +1261,9 @@ impl Window {
             activation: TrivialActivationHandler(Box::new(move || {
                 Some(initial_tree_update.clone())
             })),
-            action: TrivialActionHandler(Box::new(|action| println!("doing action: {action:?}"))),
+            action: TrivialActionHandler(Box::new(|action| {
+                println!("doing action: {action:?}")
+            })),
             deactivation: TrivialDeactivationHandler(Box::new(|| println!("deactivating a11y"))),
         });
 

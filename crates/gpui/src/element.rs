@@ -110,7 +110,7 @@ pub trait Element: 'static + IntoElement {
     }
 
     /// todo! document and maybe hide accesskit types from public API
-    fn role(&self) -> Option<accesskit::Role> {
+    fn a11y_role(&self) -> Option<accesskit::Role> {
         None
     }
 }
@@ -427,7 +427,7 @@ impl<E: Element> Drawable<E> {
     }
 
     fn push_a11y_node(&self, global_id: &GlobalElementId, window: &mut Window) -> bool {
-        if let Some(role) = self.element.role() {
+        if let Some(role) = self.element.a11y_role() {
             let global_id = global_id.accesskit_node_id();
 
             let mut node = accesskit::Node::new(role);

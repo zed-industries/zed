@@ -1116,6 +1116,20 @@ pub trait InteractiveElement: Sized {
         self.interactivity().focus_visible_style = Some(Box::new(f(StyleRefinement::default())));
         self
     }
+    
+    /// Set the accessible role for this div.
+    ///
+    /// Panics if no ID has been set, since elements without a stable ID do not
+    /// produce in nodes in the accessibility tree.
+    fn role(mut self, role: crate::Role) -> Self {
+        assert!(
+            self.interactivity().element_id.is_some(),
+            "Cannot set an accessibility role on an element with no ID. Provide one with `.id(...)`"
+        );
+
+        self.interactivity().override_a11y_role = Some(role);
+        self
+    }
 }
 
 /// A trait for elements that want to use the standard GPUI interactivity features
@@ -1594,10 +1608,14 @@ impl Element for Div {
             )
         });
     }
-    
-    fn role(&self) -> Option<accesskit::Role> {
+
+    fn a11y_role(&self) -> Option<accesskit::Role> {
         if self.interactivity.element_id.is_some() {
-            Some(accesskit::Role::GenericContainer)
+            let role = self
+                .interactivity
+                .override_a11y_role
+                .unwrap_or(accesskit::Role::GenericContainer);
+            Some(role)
         } else {
             None
         }
@@ -1668,6 +1686,7 @@ pub struct Interactivity {
     pub(crate) tab_index: Option<isize>,
     pub(crate) tab_group: bool,
     pub(crate) tab_stop: bool,
+    pub(crate) override_a11y_role: Option<accesskit::Role>,
 
     #[cfg(any(feature = "inspector", debug_assertions))]
     pub(crate) source_location: Option<&'static core::panic::Location<'static>>,
@@ -3243,6 +3262,10 @@ where
             window,
             cx,
         );
+    }
+    
+    fn a11y_role(&self) -> Option<accesskit::Role> {
+        self.element.a11y_role()
     }
 }
 

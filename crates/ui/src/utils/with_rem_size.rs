@@ -1,7 +1,5 @@
 use gpui::{
-    AnyElement, App, Bounds, Div, DivFrameState, Element, ElementId, GlobalElementId, Hitbox,
-    InteractiveElement as _, IntoElement, LayoutId, ParentElement, Pixels, StyleRefinement, Styled,
-    Window, div,
+    AnyElement, App, Bounds, Div, DivFrameState, Element, ElementId, GlobalElementId, Hitbox, InteractiveElement as _, IntoElement, LayoutId, ParentElement, Pixels, Role, StyleRefinement, Styled, Window, div
 };
 
 /// An element that sets a particular rem size for its children.
@@ -102,6 +100,10 @@ impl Element for WithRemSize {
                 cx,
             )
         })
+    }
+    
+    fn a11y_role(&self) -> Option<Role> {
+        self.div.a11y_role()
     }
 }
 
