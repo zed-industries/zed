@@ -1,5 +1,5 @@
 use crate::acp::AcpServerView;
-use crate::{AgentPanel, RemoveHistory, RemoveSelectedThread};
+use crate::{AgentPanel, RemoveHistory, RemoveSelectedThread, TogglePinThread};
 use acp_thread::{AgentSessionInfo, AgentSessionList, AgentSessionListRequest, SessionListUpdate};
 use agent_client_protocol as acp;
 use chrono::{Datelike as _, Local, NaiveDate, TimeDelta, Utc};
@@ -356,7 +356,21 @@ impl AcpThreadHistory {
     }
 
     pub(crate) fn get_recent_sessions(&self, limit: usize) -> Vec<AgentSessionInfo> {
-        self.sessions.iter().take(limit).cloned().collect()
+        let mut result: Vec<AgentSessionInfo> = self
+            .sessions
+            .iter()
+            .filter(|entry| entry.pinned)
+            .cloned()
+            .collect();
+        let remaining = limit.saturating_sub(result.len());
+        result.extend(
+            self.sessions
+                .iter()
+                .filter(|entry| !entry.pinned)
+                .take(remaining)
+                .cloned(),
+        );
+        result
     }
 
     pub fn supports_delete(&self) -> bool {
@@ -378,6 +392,56 @@ impl AcpThreadHistory {
         }
     }
 
+    pub fn supports_pin(&self) -> bool {
+        self.session_list
+            .as_ref()
+            .map(|sl| sl.supports_pin())
+            .unwrap_or(false)
+    }
+
+    pub(crate) fn set_session_pinned(
+        &self,
+        session_id: &acp::SessionId,
+        pinned: bool,
+        cx: &mut App,
+    ) -> Task<anyhow::Result<()>> {
+        if let Some(session_list) = self.session_list.as_ref() {
+            session_list.set_session_pinned(session_id, pinned, cx)
+        } else {
+            Task::ready(Ok(()))
+        }
+    }
+
+    fn toggle_pin_selected_thread(
+        &mut self,
+        _: &TogglePinThread,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.toggle_pin(self.selected_index, cx)
+    }
+
+    fn toggle_pin(&mut self, visible_item_ix: usize, cx: &mut Context<Self>) {
+        let Some(entry) = self.get_history_entry(visible_item_ix) else {
+            return;
+        };
+        if !self.supports_pin() {
+            return;
+        }
+        let new_pinned = !entry.pinned;
+        let task = self.set_session_pinned(&entry.session_id, new_pinned, cx);
+        task.detach_and_log_err(cx);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn get_pinned_sessions(&self) -> Vec<AgentSessionInfo> {
+        self.sessions
+            .iter()
+            .filter(|entry| entry.pinned)
+            .cloned()
+            .collect()
+    }
+
     fn add_list_separators(
         &self,
         entries: Vec<AgentSessionInfo>,
@@ -385,10 +449,30 @@ impl AcpThreadHistory {
     ) -> Task<Vec<ListItemType>> {
         cx.background_spawn(async move {
             let mut items = Vec::with_capacity(entries.len() + 1);
-            let mut bucket = None;
             let today = Local::now().naive_local().date();
 
-            for entry in entries.into_iter() {
+            let (pinned_entries, unpinned_entries): (Vec<_>, Vec<_>) =
+                entries.into_iter().partition(|entry| entry.pinned);
+
+            if !pinned_entries.is_empty() {
+                items.push(ListItemType::BucketSeparator(TimeBucket::Pinned));
+                for entry in pinned_entries {
+                    let entry_bucket = entry
+                        .updated_at
+                        .map(|timestamp| {
+                            let entry_date = timestamp.with_timezone(&Local).naive_local().date();
+                            TimeBucket::from_dates(today, entry_date)
+                        })
+                        .unwrap_or(TimeBucket::All);
+                    items.push(ListItemType::Entry {
+                        entry,
+                        format: entry_bucket.into(),
+                    });
+                }
+            }
+
+            let mut bucket = None;
+            for entry in unpinned_entries {
                 let entry_bucket = entry
                     .updated_at
                     .map(|timestamp| {
@@ -639,6 +723,7 @@ impl AcpThreadHistory {
     ) -> AnyElement {
         let selected = ix == self.selected_index;
         let hovered = Some(ix) == self.hovered_index;
+        let is_pinned = entry.pinned;
         let entry_time = entry.updated_at;
         let display_text = match (format, entry_time) {
             (EntryTimeFormat::DateAndTime, Some(entry_time)) => {
@@ -661,6 +746,9 @@ impl AcpThreadHistory {
             })
             .unwrap_or_else(|| "Unknown".to_string());
 
+        let supports_pin = self.supports_pin();
+        let supports_delete = self.supports_delete();
+
         h_flex()
             .w_full()
             .pb_1()
@@ -675,9 +763,24 @@ impl AcpThreadHistory {
                             .gap_2()
                             .justify_between()
                             .child(
-                                HighlightedLabel::new(thread_title(entry), highlight_positions)
-                                    .size(LabelSize::Small)
-                                    .truncate(),
+                                h_flex()
+                                    .gap_1()
+                                    .overflow_hidden()
+                                    .when(is_pinned && !hovered, |this| {
+                                        this.child(
+                                            Icon::new(IconName::Pin)
+                                                .size(IconSize::XSmall)
+                                                .color(Color::Muted),
+                                        )
+                                    })
+                                    .child(
+                                        HighlightedLabel::new(
+                                            thread_title(entry),
+                                            highlight_positions,
+                                        )
+                                        .size(LabelSize::Small)
+                                        .truncate(),
+                                    ),
                             )
                             .child(
                                 Label::new(display_text)
@@ -697,23 +800,46 @@ impl AcpThreadHistory {
 
                         cx.notify();
                     }))
-                    .end_slot::<IconButton>(if hovered && self.supports_delete() {
-                        Some(
-                            IconButton::new("delete", IconName::Trash)
-                                .shape(IconButtonShape::Square)
-                                .icon_size(IconSize::XSmall)
-                                .icon_color(Color::Muted)
-                                .tooltip(move |_window, cx| {
-                                    Tooltip::for_action("Delete", &RemoveSelectedThread, cx)
-                                })
-                                .on_click(cx.listener(move |this, _, _, cx| {
-                                    this.remove_thread(ix, cx);
-                                    cx.stop_propagation()
-                                })),
-                        )
-                    } else {
-                        None
-                    })
+                    .end_slot(
+                        h_flex()
+                            .gap_0p5()
+                            .when(hovered && supports_pin, |this| {
+                                let pin_icon = if is_pinned {
+                                    IconName::Unpin
+                                } else {
+                                    IconName::Pin
+                                };
+                                let pin_tooltip = if is_pinned { "Unpin" } else { "Pin" };
+                                this.child(
+                                    IconButton::new("pin", pin_icon)
+                                        .shape(IconButtonShape::Square)
+                                        .icon_size(IconSize::XSmall)
+                                        .icon_color(Color::Muted)
+                                        .tooltip(move |_window, cx| {
+                                            Tooltip::for_action(pin_tooltip, &TogglePinThread, cx)
+                                        })
+                                        .on_click(cx.listener(move |this, _, _, cx| {
+                                            this.toggle_pin(ix, cx);
+                                            cx.stop_propagation()
+                                        })),
+                                )
+                            })
+                            .when(hovered && supports_delete, |this| {
+                                this.child(
+                                    IconButton::new("delete", IconName::Trash)
+                                        .shape(IconButtonShape::Square)
+                                        .icon_size(IconSize::XSmall)
+                                        .icon_color(Color::Muted)
+                                        .tooltip(move |_window, cx| {
+                                            Tooltip::for_action("Delete", &RemoveSelectedThread, cx)
+                                        })
+                                        .on_click(cx.listener(move |this, _, _, cx| {
+                                            this.remove_thread(ix, cx);
+                                            cx.stop_propagation()
+                                        })),
+                                )
+                            }),
+                    )
                     .on_click(cx.listener(move |this, _, _, cx| this.confirm_entry(ix, cx))),
             )
             .into_any_element()
@@ -740,6 +866,7 @@ impl Render for AcpThreadHistory {
             .on_action(cx.listener(Self::select_last))
             .on_action(cx.listener(Self::confirm))
             .on_action(cx.listener(Self::remove_selected_thread))
+            .on_action(cx.listener(Self::toggle_pin_selected_thread))
             .on_action(cx.listener(|this, _: &RemoveHistory, window, cx| {
                 this.remove_history(window, cx);
             }))
@@ -866,6 +993,7 @@ pub struct AcpHistoryEntryElement {
     selected: bool,
     hovered: bool,
     supports_delete: bool,
+    supports_pin: bool,
     on_hover: Box<dyn Fn(&bool, &mut Window, &mut App) + 'static>,
 }
 
@@ -877,12 +1005,18 @@ impl AcpHistoryEntryElement {
             selected: false,
             hovered: false,
             supports_delete: false,
+            supports_pin: false,
             on_hover: Box::new(|_, _, _| {}),
         }
     }
 
     pub fn supports_delete(mut self, supports_delete: bool) -> Self {
         self.supports_delete = supports_delete;
+        self
+    }
+
+    pub fn supports_pin(mut self, supports_pin: bool) -> Self {
+        self.supports_pin = supports_pin;
         self
     }
 
@@ -901,6 +1035,8 @@ impl RenderOnce for AcpHistoryEntryElement {
     fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
         let id = ElementId::Name(self.entry.session_id.0.clone().into());
         let title = thread_title(&self.entry).clone();
+        let is_pinned = self.entry.pinned;
+        let is_hovered = self.hovered;
         let formatted_time = self
             .entry
             .updated_at
@@ -929,7 +1065,19 @@ impl RenderOnce for AcpHistoryEntryElement {
                     .w_full()
                     .gap_2()
                     .justify_between()
-                    .child(Label::new(title).size(LabelSize::Small).truncate())
+                    .child(
+                        h_flex()
+                            .gap_1()
+                            .overflow_hidden()
+                            .when(is_pinned && !is_hovered, |this| {
+                                this.child(
+                                    Icon::new(IconName::Pin)
+                                        .size(IconSize::XSmall)
+                                        .color(Color::Muted),
+                                )
+                            })
+                            .child(Label::new(title).size(LabelSize::Small).truncate()),
+                    )
                     .child(
                         Label::new(formatted_time)
                             .color(Color::Muted)
@@ -937,31 +1085,70 @@ impl RenderOnce for AcpHistoryEntryElement {
                     ),
             )
             .on_hover(self.on_hover)
-            .end_slot::<IconButton>(if (self.hovered || self.selected) && self.supports_delete {
-                Some(
-                    IconButton::new("delete", IconName::Trash)
-                        .shape(IconButtonShape::Square)
-                        .icon_size(IconSize::XSmall)
-                        .icon_color(Color::Muted)
-                        .tooltip(move |_window, cx| {
-                            Tooltip::for_action("Delete", &RemoveSelectedThread, cx)
-                        })
-                        .on_click({
-                            let thread_view = self.thread_view.clone();
-                            let entry = self.entry.clone();
-
-                            move |_event, _window, cx| {
-                                if let Some(thread_view) = thread_view.upgrade() {
-                                    thread_view.update(cx, |thread_view, cx| {
-                                        thread_view.delete_history_entry(entry.clone(), cx);
-                                    });
-                                }
-                            }
-                        }),
-                )
-            } else {
-                None
-            })
+            .end_slot(
+                h_flex()
+                    .gap_0p5()
+                    .when(is_hovered && self.supports_pin, {
+                        let thread_view = self.thread_view.clone();
+                        let entry = self.entry.clone();
+                        let pin_icon = if is_pinned {
+                            IconName::Unpin
+                        } else {
+                            IconName::Pin
+                        };
+                        let pin_tooltip: &'static str = if is_pinned { "Unpin" } else { "Pin" };
+                        move |this| {
+                            this.child(
+                                IconButton::new("pin", pin_icon)
+                                    .shape(IconButtonShape::Square)
+                                    .icon_size(IconSize::XSmall)
+                                    .icon_color(Color::Muted)
+                                    .tooltip(move |_window, cx| {
+                                        Tooltip::for_action(pin_tooltip, &TogglePinThread, cx)
+                                    })
+                                    .on_click({
+                                        let thread_view = thread_view.clone();
+                                        move |_event, _window, cx| {
+                                            if let Some(thread_view) = thread_view.upgrade() {
+                                                thread_view.update(cx, |thread_view, cx| {
+                                                    thread_view.toggle_pin_history_entry(
+                                                        entry.clone(),
+                                                        cx,
+                                                    );
+                                                });
+                                            }
+                                        }
+                                    }),
+                            )
+                        }
+                    })
+                    .when(is_hovered && self.supports_delete, {
+                        let thread_view = self.thread_view.clone();
+                        let entry = self.entry.clone();
+                        move |this| {
+                            this.child(
+                                IconButton::new("delete", IconName::Trash)
+                                    .shape(IconButtonShape::Square)
+                                    .icon_size(IconSize::XSmall)
+                                    .icon_color(Color::Muted)
+                                    .tooltip(move |_window, cx| {
+                                        Tooltip::for_action("Delete", &RemoveSelectedThread, cx)
+                                    })
+                                    .on_click({
+                                        let thread_view = thread_view.clone();
+                                        move |_event, _window, cx| {
+                                            if let Some(thread_view) = thread_view.upgrade() {
+                                                thread_view.update(cx, |thread_view, cx| {
+                                                    thread_view
+                                                        .delete_history_entry(entry.clone(), cx);
+                                                });
+                                            }
+                                        }
+                                    }),
+                            )
+                        }
+                    }),
+            )
             .on_click({
                 let thread_view = self.thread_view.clone();
                 let entry = self.entry;
@@ -1007,6 +1194,7 @@ impl EntryTimeFormat {
 impl From<TimeBucket> for EntryTimeFormat {
     fn from(bucket: TimeBucket) -> Self {
         match bucket {
+            TimeBucket::Pinned => EntryTimeFormat::DateAndTime,
             TimeBucket::Today => EntryTimeFormat::TimeOnly,
             TimeBucket::Yesterday => EntryTimeFormat::TimeOnly,
             TimeBucket::ThisWeek => EntryTimeFormat::DateAndTime,
@@ -1018,6 +1206,7 @@ impl From<TimeBucket> for EntryTimeFormat {
 
 #[derive(PartialEq, Eq, Clone, Copy, Debug)]
 enum TimeBucket {
+    Pinned,
     Today,
     Yesterday,
     ThisWeek,
@@ -1054,11 +1243,12 @@ impl TimeBucket {
 impl Display for TimeBucket {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            TimeBucket::Pinned => write!(f, "Pinned"),
             TimeBucket::Today => write!(f, "Today"),
             TimeBucket::Yesterday => write!(f, "Yesterday"),
             TimeBucket::ThisWeek => write!(f, "This Week"),
             TimeBucket::PastWeek => write!(f, "Past Week"),
-            TimeBucket::All => write!(f, "All"),
+            TimeBucket::All => write!(f, "Older"),
         }
     }
 }
@@ -1227,6 +1417,14 @@ mod tests {
             title: Some(title.to_string().into()),
             updated_at: None,
             meta: None,
+            pinned: false,
+        }
+    }
+
+    fn test_session_pinned(session_id: &str, title: &str) -> AgentSessionInfo {
+        AgentSessionInfo {
+            pinned: true,
+            ..test_session(session_id, title)
         }
     }
 
@@ -1438,6 +1636,7 @@ mod tests {
             title: Some("Original Title".into()),
             updated_at: None,
             meta: None,
+            pinned: false,
         }];
         let session_list = Rc::new(TestSessionList::new(sessions));
 
@@ -1474,6 +1673,7 @@ mod tests {
             title: Some("Original Title".into()),
             updated_at: None,
             meta: None,
+            pinned: false,
         }];
         let session_list = Rc::new(TestSessionList::new(sessions));
 
@@ -1507,6 +1707,7 @@ mod tests {
             title: Some("Original Title".into()),
             updated_at: None,
             meta: None,
+            pinned: false,
         }];
         let session_list = Rc::new(TestSessionList::new(sessions));
 
@@ -1543,6 +1744,7 @@ mod tests {
             title: None,
             updated_at: None,
             meta: None,
+            pinned: false,
         }];
         let session_list = Rc::new(TestSessionList::new(sessions));
 
@@ -1583,6 +1785,7 @@ mod tests {
             title: Some("Server Title".into()),
             updated_at: None,
             meta: None,
+            pinned: false,
         }];
         let session_list = Rc::new(TestSessionList::new(sessions));
 
@@ -1620,6 +1823,7 @@ mod tests {
             title: Some("Original".into()),
             updated_at: None,
             meta: None,
+            pinned: false,
         }];
         let session_list = Rc::new(TestSessionList::new(sessions));
 
@@ -1682,5 +1886,142 @@ mod tests {
 
         let date = NaiveDate::from_ymd_opt(2022, 12, 28).unwrap();
         assert_eq!(TimeBucket::from_dates(new_year, date), TimeBucket::ThisWeek);
+    }
+
+    #[gpui::test]
+    async fn test_get_pinned_sessions_returns_only_pinned(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let sessions = vec![
+            test_session_pinned("pinned-1", "Pinned Thread"),
+            test_session("unpinned-1", "Regular Thread"),
+            test_session_pinned("pinned-2", "Another Pinned"),
+        ];
+        let session_list = Rc::new(TestSessionList::new(sessions));
+
+        let (history, cx) = cx.add_window_view(|window, cx| {
+            AcpThreadHistory::new(Some(session_list.clone()), window, cx)
+        });
+        cx.run_until_parked();
+
+        history.update(cx, |history, _cx| {
+            let pinned = history.get_pinned_sessions();
+            assert_eq!(pinned.len(), 2);
+            assert_eq!(pinned[0].session_id, acp::SessionId::new("pinned-1"));
+            assert_eq!(pinned[1].session_id, acp::SessionId::new("pinned-2"));
+        });
+    }
+
+    #[gpui::test]
+    async fn test_pinned_entries_appear_before_unpinned_in_visible_items(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let sessions = vec![
+            test_session_pinned("pinned-1", "Pinned Thread"),
+            test_session("unpinned-1", "Regular Thread"),
+            test_session_pinned("pinned-2", "Another Pinned"),
+        ];
+        let session_list = Rc::new(TestSessionList::new(sessions));
+
+        let (history, cx) = cx.add_window_view(|window, cx| {
+            AcpThreadHistory::new(Some(session_list.clone()), window, cx)
+        });
+        cx.run_until_parked();
+
+        history.update(cx, |history, _cx| {
+            // First item should be the Pinned separator
+            assert!(
+                matches!(
+                    &history.visible_items[0],
+                    ListItemType::BucketSeparator(TimeBucket::Pinned)
+                ),
+                "first visible item should be a Pinned separator"
+            );
+
+            // Next two items should be the pinned entries
+            let first_entry = history.visible_items[1]
+                .history_entry()
+                .expect("should be an entry");
+            assert_eq!(first_entry.session_id, acp::SessionId::new("pinned-1"));
+            assert!(first_entry.pinned);
+
+            let second_entry = history.visible_items[2]
+                .history_entry()
+                .expect("should be an entry");
+            assert_eq!(second_entry.session_id, acp::SessionId::new("pinned-2"));
+            assert!(second_entry.pinned);
+
+            // The unpinned entry should come after, preceded by its own time-bucket separator
+            let unpinned_entry = history
+                .visible_items
+                .iter()
+                .find_map(|item| item.history_entry().filter(|e| !e.pinned))
+                .expect("should have an unpinned entry");
+            assert_eq!(unpinned_entry.session_id, acp::SessionId::new("unpinned-1"));
+        });
+    }
+
+    #[gpui::test]
+    async fn test_no_pinned_separator_when_no_pinned_entries(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let sessions = vec![
+            test_session("session-1", "Thread A"),
+            test_session("session-2", "Thread B"),
+        ];
+        let session_list = Rc::new(TestSessionList::new(sessions));
+
+        let (history, cx) = cx.add_window_view(|window, cx| {
+            AcpThreadHistory::new(Some(session_list.clone()), window, cx)
+        });
+        cx.run_until_parked();
+
+        history.update(cx, |history, _cx| {
+            let has_pinned_separator = history
+                .visible_items
+                .iter()
+                .any(|item| matches!(item, ListItemType::BucketSeparator(TimeBucket::Pinned)));
+            assert!(
+                !has_pinned_separator,
+                "should not have a Pinned separator when no entries are pinned"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_pinned_entries_appear_in_search_results(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let sessions = vec![
+            test_session_pinned("pinned-1", "Important Thread"),
+            test_session("unpinned-1", "Other Thread"),
+        ];
+        let session_list = Rc::new(TestSessionList::new(sessions));
+
+        let (history, cx) = cx.add_window_view(|window, cx| {
+            AcpThreadHistory::new(Some(session_list.clone()), window, cx)
+        });
+        cx.run_until_parked();
+
+        // Type a search query that matches the pinned entry
+        history.update(cx, |history, cx| {
+            history.search_query = "Important".into();
+            history.update_visible_items(false, cx);
+        });
+        cx.run_until_parked();
+
+        history.update(cx, |history, _cx| {
+            let search_results: Vec<_> = history
+                .visible_items
+                .iter()
+                .filter_map(|item| item.history_entry())
+                .collect();
+            assert_eq!(search_results.len(), 1);
+            assert_eq!(
+                search_results[0].session_id,
+                acp::SessionId::new("pinned-1")
+            );
+            assert!(search_results[0].pinned);
+        });
     }
 }

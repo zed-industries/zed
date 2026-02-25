@@ -961,6 +961,7 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
                         title: Some(format!("🔗 {}", response.title).into()),
                         updated_at: Some(chrono::Utc::now()),
                         meta: None,
+                        pinned: false,
                     };
 
                     let sharer_username = response.sharer_username.clone();

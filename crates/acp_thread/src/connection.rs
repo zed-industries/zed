@@ -241,6 +241,7 @@ pub struct AgentSessionInfo {
     pub title: Option<SharedString>,
     pub updated_at: Option<DateTime<Utc>>,
     pub meta: Option<acp::Meta>,
+    pub pinned: bool,
 }
 
 impl AgentSessionInfo {
@@ -251,6 +252,7 @@ impl AgentSessionInfo {
             title: None,
             updated_at: None,
             meta: None,
+            pinned: false,
         }
     }
 }
@@ -281,6 +283,19 @@ pub trait AgentSessionList {
 
     fn delete_sessions(&self, _cx: &mut App) -> Task<Result<()>> {
         Task::ready(Err(anyhow::anyhow!("delete_sessions not supported")))
+    }
+
+    fn supports_pin(&self) -> bool {
+        false
+    }
+
+    fn set_session_pinned(
+        &self,
+        _session_id: &acp::SessionId,
+        _pinned: bool,
+        _cx: &mut App,
+    ) -> Task<Result<()>> {
+        Task::ready(Err(anyhow::anyhow!("set_session_pinned not supported")))
     }
 
     fn watch(&self, _cx: &mut App) -> Option<smol::channel::Receiver<SessionListUpdate>> {

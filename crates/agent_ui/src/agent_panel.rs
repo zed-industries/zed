@@ -655,6 +655,7 @@ impl AgentPanel {
                             title: thread_info.title.map(SharedString::from),
                             updated_at: None,
                             meta: None,
+                            pinned: false,
                         };
                         panel.load_agent_thread(session_info, window, cx);
                     })?;
@@ -1487,6 +1488,7 @@ impl AgentPanel {
                 title: Some(title),
                 updated_at: Some(chrono::Utc::now()),
                 meta: None,
+                pinned: false,
             };
 
             this.update_in(cx, |this, window, cx| {
@@ -2226,6 +2228,12 @@ impl AgentPanel {
             }
             _ => false,
         };
+        let active_thread_pinned = match &self.active_view {
+            ActiveView::AgentThread { server_view } => {
+                server_view.read(cx).is_active_thread_pinned(cx)
+            }
+            _ => None,
+        };
 
         PopoverMenu::new("agent-options-menu")
             .trigger_with_tooltip(
@@ -2268,17 +2276,33 @@ impl AgentPanel {
                             }
 
                             if let Some(thread_view) = thread_view.as_ref() {
-                                menu = menu
-                                    .entry("Regenerate Thread Title", None, {
+                                menu = menu.entry("Regenerate Thread Title", None, {
+                                    let thread_view = thread_view.clone();
+                                    move |_, cx| {
+                                        Self::handle_regenerate_thread_title(
+                                            thread_view.clone(),
+                                            cx,
+                                        );
+                                    }
+                                });
+
+                                if let Some(is_pinned) = active_thread_pinned {
+                                    let pin_label = if is_pinned {
+                                        "Unpin Thread"
+                                    } else {
+                                        "Pin Thread"
+                                    };
+                                    menu = menu.entry(pin_label, None, {
                                         let thread_view = thread_view.clone();
                                         move |_, cx| {
-                                            Self::handle_regenerate_thread_title(
-                                                thread_view.clone(),
-                                                cx,
-                                            );
+                                            thread_view.update(cx, |thread_view, cx| {
+                                                thread_view.toggle_pin_active_thread(cx);
+                                            });
                                         }
-                                    })
-                                    .separator();
+                                    });
+                                }
+
+                                menu = menu.separator();
                             }
                         }
 

@@ -2689,6 +2689,7 @@ mod tests {
             title: Some("Previous Conversation".into()),
             updated_at: Some(chrono::Utc::now()),
             meta: None,
+            pinned: false,
         };
 
         let message_editor = cx.update(|window, cx| {
@@ -2770,6 +2771,7 @@ mod tests {
             title: Some("Previous Conversation".into()),
             updated_at: Some(chrono::Utc::now()),
             meta: None,
+            pinned: false,
         };
 
         let message_editor = cx.update(|window, cx| {

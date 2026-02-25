@@ -45,6 +45,7 @@ pub struct DbThreadMetadata {
     /// listing without decompressing thread data. The blob is the source of
     /// truth; this column is populated on save for query convenience.
     pub worktree_branch: Option<String>,
+    pub pinned: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -395,6 +396,13 @@ impl ThreadsDatabase {
             s().ok();
         }
 
+        if let Ok(mut s) = connection.exec(indoc! {"
+            ALTER TABLE threads ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0
+        "})
+        {
+            s().ok();
+        }
+
         let db = Self {
             executor,
             connection: Arc::new(Mutex::new(connection)),
@@ -439,7 +447,15 @@ impl ThreadsDatabase {
         let data = compressed;
 
         let mut insert = connection.exec_bound::<(Arc<str>, Option<Arc<str>>, Option<String>, String, String, DataType, Vec<u8>)>(indoc! {"
-            INSERT OR REPLACE INTO threads (id, parent_id, worktree_branch, summary, updated_at, data_type, data) VALUES (?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO threads (id, parent_id, worktree_branch, summary, updated_at, data_type, data)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+                parent_id = excluded.parent_id,
+                worktree_branch = excluded.worktree_branch,
+                summary = excluded.summary,
+                updated_at = excluded.updated_at,
+                data_type = excluded.data_type,
+                data = excluded.data
         "})?;
 
         insert((
@@ -462,20 +478,21 @@ impl ThreadsDatabase {
             let connection = connection.lock();
 
             let mut select = connection
-                .select_bound::<(), (Arc<str>, Option<Arc<str>>, Option<String>, String, String)>(indoc! {"
-                SELECT id, parent_id, worktree_branch, summary, updated_at FROM threads ORDER BY updated_at DESC
+                .select_bound::<(), (Arc<str>, Option<Arc<str>>, Option<String>, String, String, bool)>(indoc! {"
+                SELECT id, parent_id, worktree_branch, summary, updated_at, pinned FROM threads ORDER BY pinned DESC, updated_at DESC
             "})?;
 
             let rows = select(())?;
             let mut threads = Vec::new();
 
-            for (id, parent_id, worktree_branch, summary, updated_at) in rows {
+            for (id, parent_id, worktree_branch, summary, updated_at, pinned) in rows {
                 threads.push(DbThreadMetadata {
                     id: acp::SessionId::new(id),
                     parent_session_id: parent_id.map(acp::SessionId::new),
                     title: summary.into(),
                     updated_at: DateTime::parse_from_rfc3339(&updated_at)?.with_timezone(&Utc),
                     worktree_branch,
+                    pinned,
                 });
             }
 
@@ -527,6 +544,22 @@ impl ThreadsDatabase {
             "})?;
 
             delete(id.0)?;
+
+            Ok(())
+        })
+    }
+
+    pub fn set_thread_pinned(&self, id: acp::SessionId, pinned: bool) -> Task<Result<()>> {
+        let connection = self.connection.clone();
+
+        self.executor.spawn(async move {
+            let connection = connection.lock();
+
+            let mut update = connection.exec_bound::<(bool, Arc<str>)>(indoc! {"
+                UPDATE threads SET pinned = ? WHERE id = ?
+            "})?;
+
+            update((pinned, id.0))?;
 
             Ok(())
         })
@@ -842,5 +875,138 @@ mod tests {
             plain_entry.worktree_branch.is_none(),
             "plain thread should have no worktree_branch"
         );
+    }
+
+    #[gpui::test]
+    async fn test_new_threads_default_to_unpinned(cx: &mut TestAppContext) {
+        let database = ThreadsDatabase::new(cx.executor()).unwrap();
+
+        let thread_id = session_id("thread-a");
+        let thread = make_thread(
+            "Thread A",
+            Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap(),
+        );
+
+        database
+            .save_thread(thread_id.clone(), thread)
+            .await
+            .unwrap();
+
+        let entries = database.list_threads().await.unwrap();
+        assert_eq!(entries.len(), 1);
+        assert!(!entries[0].pinned);
+    }
+
+    #[gpui::test]
+    async fn test_set_thread_pinned(cx: &mut TestAppContext) {
+        let database = ThreadsDatabase::new(cx.executor()).unwrap();
+
+        let thread_id = session_id("thread-a");
+        let thread = make_thread(
+            "Thread A",
+            Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap(),
+        );
+
+        database
+            .save_thread(thread_id.clone(), thread)
+            .await
+            .unwrap();
+
+        database
+            .set_thread_pinned(thread_id.clone(), true)
+            .await
+            .unwrap();
+
+        let entries = database.list_threads().await.unwrap();
+        assert_eq!(entries.len(), 1);
+        assert!(entries[0].pinned);
+
+        database
+            .set_thread_pinned(thread_id.clone(), false)
+            .await
+            .unwrap();
+
+        let entries = database.list_threads().await.unwrap();
+        assert_eq!(entries.len(), 1);
+        assert!(!entries[0].pinned);
+    }
+
+    #[gpui::test]
+    async fn test_pinned_threads_sort_before_unpinned(cx: &mut TestAppContext) {
+        let database = ThreadsDatabase::new(cx.executor()).unwrap();
+
+        let older_id = session_id("thread-a");
+        let newer_id = session_id("thread-b");
+
+        let older_thread = make_thread(
+            "Thread A",
+            Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap(),
+        );
+        let newer_thread = make_thread(
+            "Thread B",
+            Utc.with_ymd_and_hms(2024, 1, 2, 0, 0, 0).unwrap(),
+        );
+
+        database
+            .save_thread(older_id.clone(), older_thread)
+            .await
+            .unwrap();
+        database
+            .save_thread(newer_id.clone(), newer_thread)
+            .await
+            .unwrap();
+
+        // Without pinning, newer thread comes first
+        let entries = database.list_threads().await.unwrap();
+        assert_eq!(entries[0].id, newer_id);
+        assert_eq!(entries[1].id, older_id);
+
+        // Pin the older thread — it should now come first
+        database
+            .set_thread_pinned(older_id.clone(), true)
+            .await
+            .unwrap();
+
+        let entries = database.list_threads().await.unwrap();
+        assert_eq!(entries[0].id, older_id);
+        assert!(entries[0].pinned);
+        assert_eq!(entries[1].id, newer_id);
+        assert!(!entries[1].pinned);
+    }
+
+    #[gpui::test]
+    async fn test_save_thread_preserves_pinned_state(cx: &mut TestAppContext) {
+        let database = ThreadsDatabase::new(cx.executor()).unwrap();
+
+        let thread_id = session_id("thread-a");
+        let thread = make_thread(
+            "Thread A",
+            Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap(),
+        );
+
+        database
+            .save_thread(thread_id.clone(), thread)
+            .await
+            .unwrap();
+
+        database
+            .set_thread_pinned(thread_id.clone(), true)
+            .await
+            .unwrap();
+
+        // Re-save the thread with updated content
+        let updated_thread = make_thread(
+            "Thread A Updated",
+            Utc.with_ymd_and_hms(2024, 1, 2, 0, 0, 0).unwrap(),
+        );
+        database
+            .save_thread(thread_id.clone(), updated_thread)
+            .await
+            .unwrap();
+
+        let entries = database.list_threads().await.unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].title.as_ref(), "Thread A Updated");
+        assert!(entries[0].pinned, "pinned state should survive re-save");
     }
 }

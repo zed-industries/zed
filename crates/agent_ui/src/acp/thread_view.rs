@@ -2583,6 +2583,37 @@ impl AcpServerView {
         });
         task.detach_and_log_err(cx);
     }
+
+    pub fn toggle_pin_history_entry(&mut self, entry: AgentSessionInfo, cx: &mut Context<Self>) {
+        let new_pinned = !entry.pinned;
+        let task = self.history.update(cx, |history, cx| {
+            history.set_session_pinned(&entry.session_id, new_pinned, cx)
+        });
+        task.detach_and_log_err(cx);
+    }
+
+    pub fn is_active_thread_pinned(&self, cx: &App) -> Option<bool> {
+        let session_id = self
+            .active_thread()?
+            .read(cx)
+            .thread
+            .read(cx)
+            .session_id()
+            .clone();
+        let session = self.history.read(cx).session_for_id(&session_id)?;
+        Some(session.pinned)
+    }
+
+    pub fn toggle_pin_active_thread(&mut self, cx: &mut Context<Self>) {
+        let Some(active_thread) = self.active_thread() else {
+            return;
+        };
+        let session_id = active_thread.read(cx).thread.read(cx).session_id().clone();
+        let Some(session) = self.history.read(cx).session_for_id(&session_id) else {
+            return;
+        };
+        self.toggle_pin_history_entry(session, cx);
+    }
 }
 
 fn loading_contents_spinner(size: IconSize) -> AnyElement {
