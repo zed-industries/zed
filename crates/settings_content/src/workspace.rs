@@ -19,6 +19,12 @@ pub struct WorkspaceSettingsContent {
     ///
     /// Default: platform_default
     pub text_rendering_mode: Option<TextRenderingMode>,
+    /// The rendering mode for the GPU pipeline.
+    /// - "platform_default": Use platform default rendering
+    /// - "immediate": Real-time rendering mode (may cause visual artifacts)
+    ///
+    /// Default: platform_default
+    pub rendering_mode: Option<RenderingMode>,
     /// Layout mode for the bottom dock
     ///
     /// Default: contained
@@ -621,6 +627,16 @@ pub enum TextRenderingMode {
     Subpixel,
     /// Use grayscale text rendering.
     Grayscale,
+}
+
+#[derive(Clone, Debug, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
+#[serde(rename_all = "snake_case")]
+pub enum RenderingMode {
+    /// Use platform default rendering.
+    #[default]
+    PlatformDefault,
+    /// Real-time rendering mode (may cause visual artifacts).
+    Immediate,
 }
 
 impl OnLastWindowClosed {

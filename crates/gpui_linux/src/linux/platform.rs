@@ -26,7 +26,8 @@ use gpui::{
     Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DisplayId,
     ForegroundExecutor, Keymap, Menu, MenuItem, OwnedMenu, PathPromptOptions, Platform,
     PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem,
-    PlatformWindow, Result, RunnableVariant, Task, ThermalState, WindowAppearance, WindowParams,
+    PlatformWindow, RenderingMode, Result, RunnableVariant, Task, ThermalState, WindowAppearance,
+    WindowParams,
 };
 #[cfg(any(feature = "wayland", feature = "x11"))]
 use gpui::{Pixels, Point, px};
@@ -179,6 +180,11 @@ impl<P: LinuxClient + 'static> Platform for LinuxPlatform<P> {
     fn on_keyboard_layout_change(&self, callback: Box<dyn FnMut()>) {
         self.inner
             .with_common(|common| common.callbacks.keyboard_layout_change = Some(callback));
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    fn set_rendering_mode(&self, mode: RenderingMode) {
+        gpui::platform::wgpu::set_rendering_mode(mode);
     }
 
     fn on_thermal_state_change(&self, _callback: Box<dyn FnMut()>) {}

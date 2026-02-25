@@ -226,6 +226,12 @@ pub trait Platform: 'static {
     fn keyboard_layout(&self) -> Box<dyn PlatformKeyboardLayout>;
     fn keyboard_mapper(&self) -> Rc<dyn PlatformKeyboardMapper>;
     fn on_keyboard_layout_change(&self, callback: Box<dyn FnMut()>);
+
+    #[cfg(target_os = "macos")]
+    fn set_rendering_mode(&self, mode: RenderingMode);
+
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    fn set_rendering_mode(&self, mode: RenderingMode);
 }
 
 /// A handle to a platform's display, e.g. a monitor or laptop screen.
@@ -1438,6 +1444,18 @@ pub enum TextRenderingMode {
     /// Use grayscale text rendering.
     Grayscale,
 }
+
+/// The rendering mode for the GPU pipeline.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+pub enum RenderingMode {
+    /// Use the platform's default rendering mode.
+    #[default]
+    PlatformDefault,
+    /// Real-time rendering mode (may cause visual artifacts).
+    Immediate,
+}
+
+impl crate::Global for RenderingMode {}
 
 /// The options that can be configured for a file dialog prompt
 #[derive(Clone, Debug)]

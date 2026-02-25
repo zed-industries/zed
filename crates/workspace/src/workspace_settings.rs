@@ -29,6 +29,7 @@ pub struct WorkspaceSettings {
     pub when_closing_with_no_tabs: settings::CloseWindowWhenNoItems,
     pub on_last_window_closed: settings::OnLastWindowClosed,
     pub text_rendering_mode: settings::TextRenderingMode,
+    pub rendering_mode: settings::RenderingMode,
     pub resize_all_panels_in_dock: Vec<DockPosition>,
     pub close_on_file_delete: bool,
     pub close_panel_on_toggle: bool,
@@ -101,6 +102,7 @@ impl Settings for WorkspaceSettings {
             when_closing_with_no_tabs: workspace.when_closing_with_no_tabs.unwrap(),
             on_last_window_closed: workspace.on_last_window_closed.unwrap(),
             text_rendering_mode: workspace.text_rendering_mode.unwrap(),
+            rendering_mode: workspace.rendering_mode.clone().unwrap_or_default(),
             resize_all_panels_in_dock: workspace
                 .resize_all_panels_in_dock
                 .clone()

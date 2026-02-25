@@ -43,9 +43,10 @@ use crate::{
     KeyBinding, KeyContext, Keymap, Keystroke, LayoutId, Menu, MenuItem, OwnedMenu,
     PathPromptOptions, Pixels, Platform, PlatformDisplay, PlatformKeyboardLayout,
     PlatformKeyboardMapper, Point, Priority, PromptBuilder, PromptButton, PromptHandle,
-    PromptLevel, Render, RenderImage, RenderablePromptHandle, Reservation, ScreenCaptureSource,
-    SharedString, SubscriberSet, Subscription, SvgRenderer, Task, TextRenderingMode, TextSystem,
-    ThermalState, Window, WindowAppearance, WindowHandle, WindowId, WindowInvalidator,
+    PromptLevel, Render, RenderImage, RenderablePromptHandle, RenderingMode, Reservation,
+    ScreenCaptureSource, SharedString, SubscriberSet, Subscription, SvgRenderer, Task,
+    TextRenderingMode, TextSystem, ThermalState, Window, WindowAppearance, WindowHandle, WindowId,
+    WindowInvalidator,
     colors::{Colors, GlobalColors},
     hash, init_app_menus,
 };
@@ -624,6 +625,7 @@ pub struct App {
     #[cfg(any(test, feature = "test-support", debug_assertions))]
     pub(crate) name: Option<&'static str>,
     pub(crate) text_rendering_mode: Rc<Cell<TextRenderingMode>>,
+    pub(crate) rendering_mode: Rc<Cell<RenderingMode>>,
     quit_mode: QuitMode,
     quitting: bool,
     /// Per-App element arena. This isolates element allocations between different
@@ -658,6 +660,7 @@ impl App {
                 platform: platform.clone(),
                 text_system,
                 text_rendering_mode: Rc::new(Cell::new(TextRenderingMode::default())),
+                rendering_mode: Rc::new(Cell::new(RenderingMode::default())),
                 mode: GpuiMode::Production,
                 actions: Rc::new(ActionRegistry::default()),
                 flushing_effects: false,
@@ -1157,6 +1160,19 @@ impl App {
     /// Returns the current text rendering mode for the application.
     pub fn text_rendering_mode(&self) -> TextRenderingMode {
         self.text_rendering_mode.get()
+    }
+
+    /// Sets the rendering mode for the application.
+    pub fn set_rendering_mode(&mut self, mode: RenderingMode) {
+        self.rendering_mode.set(mode);
+        self.set_global(mode);
+        #[cfg(target_os = "macos")]
+        self.platform.set_rendering_mode(mode);
+    }
+
+    /// Returns the current rendering mode for the application.
+    pub fn rendering_mode(&self) -> RenderingMode {
+        self.rendering_mode.get()
     }
 
     /// Writes data to the platform clipboard.

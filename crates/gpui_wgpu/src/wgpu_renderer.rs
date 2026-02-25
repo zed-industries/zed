@@ -4,14 +4,23 @@ use crate::{WgpuAtlas, WgpuContext};
 use bytemuck::{Pod, Zeroable};
 use gpui::{
     AtlasTextureId, Background, Bounds, DevicePixels, GpuSpecs, MonochromeSprite, Path, Point,
-    PolychromeSprite, PrimitiveBatch, Quad, ScaledPixels, Scene, Shadow, Size, SubpixelSprite,
-    Underline, get_gamma_correction_ratios,
+    PolychromeSprite, PrimitiveBatch, Quad, RenderingMode, ScaledPixels, Scene, Shadow, Size,
+    SubpixelSprite, Underline, get_gamma_correction_ratios,
 };
 use log::warn;
 #[cfg(not(target_family = "wasm"))]
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
+use std::cell::Cell;
 use std::num::NonZeroU64;
 use std::sync::{Arc, Mutex};
+
+thread_local! {
+    static RENDERING_MODE: Cell<RenderingMode> = const { Cell::new(RenderingMode::PlatformDefault) };
+}
+
+pub(crate) fn set_rendering_mode(mode: RenderingMode) {
+    RENDERING_MODE.with(|m| m.set(mode));
+}
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
@@ -262,13 +271,20 @@ impl WgpuRenderer {
             );
         }
 
+        let rendering_mode = RENDERING_MODE.with(|m| m.get());
         let surface_config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
             format: surface_format,
             width: clamped_width.max(1),
             height: clamped_height.max(1),
-            present_mode: wgpu::PresentMode::Fifo,
-            desired_maximum_frame_latency: 2,
+            present_mode: match rendering_mode {
+                RenderingMode::PlatformDefault => wgpu::PresentMode::Fifo,
+                RenderingMode::Immediate => wgpu::PresentMode::Immediate,
+            },
+            desired_maximum_frame_latency: match rendering_mode {
+                RenderingMode::PlatformDefault => 2,
+                RenderingMode::Immediate => 1,
+            },
             alpha_mode,
             view_formats: vec![],
         };

@@ -251,4 +251,6 @@ impl Platform for VisualTestPlatform {
     }
 
     fn on_thermal_state_change(&self, _callback: Box<dyn FnMut()>) {}
+
+    fn set_rendering_mode(&self, _mode: super::RenderingMode) {}
 }
