@@ -1140,28 +1140,32 @@ impl SplittableEditor {
                     c.remove_excerpt_mappings(old_lhs_ids, old_rhs_ids);
                 });
 
-                let Some(excerpt_id) = rhs_multibuffer.excerpts_for_path(&path).next() else {
+                let rhs_excerpt_ids: Vec<ExcerptId> =
+                    rhs_multibuffer.excerpts_for_path(&path).collect();
+                let Some(excerpt_id) = rhs_excerpt_ids.first().copied() else {
                     lhs.multibuffer.update(cx, |lhs_multibuffer, lhs_cx| {
                         lhs_multibuffer.remove_excerpts_for_path(path, lhs_cx);
                     });
                     continue;
                 };
-
-                let rhs_excerpt_ids: Vec<ExcerptId> =
-                    rhs_multibuffer.excerpts_for_path(&path).collect();
-
-                let main_buffer = rhs_multibuffer
+                let Some(main_buffer_snapshot) = rhs_multibuffer
                     .snapshot(cx)
                     .buffer_for_excerpt(excerpt_id)
                     .cloned()
-                    .unwrap();
+                else {
+                    continue;
+                };
+                let Some(main_buffer) = rhs_multibuffer.buffer(main_buffer_snapshot.remote_id())
+                else {
+                    continue;
+                };
+
                 let base_text_buffer = diff.read(cx).base_text_buffer().clone();
                 let diff_snapshot = diff.read(cx).snapshot(cx);
                 let base_text_buffer_snapshot = base_text_buffer.read(cx).snapshot();
-                let remote_id = base_text_buffer.read(cx).remote_id();
 
                 let lhs_ranges: Vec<ExcerptRange<Point>> = rhs_multibuffer
-                    .excerpts_for_buffer(main_buffer.remote_id(), cx)
+                    .excerpts_for_buffer(main_buffer_snapshot.remote_id(), cx)
                     .into_iter()
                     .filter(|(id, _)| rhs_excerpt_ids.contains(id))
                     .map(|(_, excerpt_range)| {
@@ -1169,20 +1173,20 @@ impl SplittableEditor {
                             let start = diff_snapshot
                                 .buffer_point_to_base_text_range(
                                     Point::new(range.start.row, 0),
-                                    &main_buffer,
+                                    &main_buffer_snapshot,
                                 )
                                 .start;
                             let end = diff_snapshot
                                 .buffer_point_to_base_text_range(
                                     Point::new(range.end.row, 0),
-                                    &main_buffer,
+                                    &main_buffer_snapshot,
                                 )
                                 .end;
                             let end_column = diff_snapshot.base_text().line_len(end.row);
                             Point::new(start.row, 0)..Point::new(end.row, end_column)
                         };
-                        let primary = excerpt_range.primary.to_point(&main_buffer);
-                        let context = excerpt_range.context.to_point(&main_buffer);
+                        let primary = excerpt_range.primary.to_point(&main_buffer_snapshot);
+                        let context = excerpt_range.context.to_point(&main_buffer_snapshot);
                         ExcerptRange {
                             primary: to_base_text(primary),
                             context: to_base_text(context),
@@ -1190,69 +1194,52 @@ impl SplittableEditor {
                     })
                     .collect();
 
-                let (lhs_excerpt_ids, rhs_groups) =
-                    lhs.multibuffer.update(cx, |lhs_multibuffer, lhs_cx| {
-                        let lhs_result = lhs_multibuffer.update_path_excerpts(
-                            path,
-                            diff.read(lhs_cx).base_text_buffer().clone(),
-                            &base_text_buffer_snapshot,
-                            lhs_ranges,
-                            lhs_cx,
-                        );
-                        if !lhs_result.excerpt_ids.is_empty()
-                            && lhs_multibuffer
-                                .diff_for(remote_id)
-                                .is_none_or(|old_diff| old_diff.entity_id() != diff.entity_id())
-                        {
-                            let main_buffer_entity = rhs_multibuffer
-                                .buffer(main_buffer.remote_id())
-                                .expect("main buffer should exist in rhs_multibuffer");
-                            lhs_multibuffer.add_inverted_diff(
-                                diff.clone(),
-                                main_buffer_entity,
-                                lhs_cx,
-                            );
-                        }
+                let groups = lhs.multibuffer.update(cx, |lhs_multibuffer, lhs_cx| {
+                    let lhs_result = lhs_multibuffer.update_path_excerpts(
+                        path,
+                        base_text_buffer,
+                        &base_text_buffer_snapshot,
+                        lhs_ranges,
+                        lhs_cx,
+                    );
+                    if !lhs_result.excerpt_ids.is_empty()
+                        && lhs_multibuffer
+                            .diff_for(base_text_buffer_snapshot.remote_id())
+                            .is_none_or(|old_diff| old_diff.entity_id() != diff.entity_id())
+                    {
+                        lhs_multibuffer.add_inverted_diff(diff.clone(), main_buffer, lhs_cx);
+                    }
 
-                        let mut rhs_merge_groups: Vec<Vec<ExcerptId>> = Vec::new();
-                        let mut current_group = Vec::new();
-                        let mut last_lhs_id = None;
-                        for (lhs_id, rhs_id) in lhs_result.excerpt_ids.iter().zip(rhs_excerpt_ids) {
-                            if last_lhs_id == Some(lhs_id) {
-                                current_group.push(rhs_id);
-                            } else {
-                                if !current_group.is_empty() {
-                                    rhs_merge_groups.push(current_group);
-                                }
-                                current_group = vec![rhs_id];
-                                last_lhs_id = Some(lhs_id);
-                            }
-                        }
-                        if !current_group.is_empty() {
-                            rhs_merge_groups.push(current_group);
-                        }
+                    let mut groups = Vec::new();
+                    for (lhs_id, chunk) in &lhs_result
+                        .excerpt_ids
+                        .iter()
+                        .copied()
+                        .zip(rhs_excerpt_ids)
+                        .chunk_by(|(lhs_id, _)| *lhs_id)
+                    {
+                        groups.push((lhs_id, chunk.map(|(_, rhs_id)| rhs_id).collect::<Vec<_>>()));
+                    }
+                    groups
+                });
 
-                        let deduped_lhs_ids: Vec<ExcerptId> =
-                            lhs_result.excerpt_ids.iter().dedup().copied().collect();
-                        (deduped_lhs_ids, rhs_merge_groups)
-                    });
-
-                let final_rhs_ids: Vec<ExcerptId> = rhs_groups
+                let pairs = groups
                     .into_iter()
-                    .map(|group| {
-                        if group.len() == 1 {
-                            group[0]
+                    .map(|(lhs_id, rhs_group)| {
+                        let rhs_id = if rhs_group.len() == 1 {
+                            rhs_group[0]
                         } else {
-                            rhs_multibuffer.merge_excerpts(&group, cx)
-                        }
+                            rhs_multibuffer.merge_excerpts(&rhs_group, cx)
+                        };
+                        (lhs_id, rhs_id)
                     })
-                    .collect();
+                    .collect::<Vec<_>>();
 
                 let lhs_buffer_id = diff.read(cx).base_text(cx).remote_id();
                 let rhs_buffer_id = diff.read(cx).buffer_id;
                 companion.update(cx, |c, _| {
-                    for (rhs_id, lhs_id) in final_rhs_ids.iter().zip(lhs_excerpt_ids.iter()) {
-                        c.add_excerpt_mapping(*lhs_id, *rhs_id);
+                    for (lhs_id, rhs_id) in pairs {
+                        c.add_excerpt_mapping(lhs_id, rhs_id);
                     }
                     c.add_buffer_mapping(lhs_buffer_id, rhs_buffer_id);
                 });
