@@ -142,6 +142,8 @@ jobs:
     - name: run_tests::check_style::fetch_ts_query_ls
       uses: dsaltares/fetch-gh-release-asset@aa37ae5c44d3c9820bc12fe675e8670ecd93bd1c
       with:
+        repo: ribru17/ts_query_ls
+        version: tags/v3.15.1
         file: ts_query_ls-x86_64-unknown-linux-gnu.tar.gz
     - name: run_tests::check_style::extract_and_run_ts_query_ls
       run: tar -xf ts_query_ls-x86_64-unknown-linux-gnu.tar.gz && ./ts_query_ls format --check .

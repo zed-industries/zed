@@ -285,9 +285,9 @@ fn check_style() -> NamedJob {
             "fetch-gh-release-asset",
             "aa37ae5c44d3c9820bc12fe675e8670ecd93bd1c",
         ) // v1.1.1
-        .with(("repo", "ribru17/ts_query_ls"))
-        .with(("version", "tags/v3.15.1"))
-        .with(("file", TS_QUERY_LS_FILE))
+        .add_with(("repo", "ribru17/ts_query_ls"))
+        .add_with(("version", "tags/v3.15.1"))
+        .add_with(("file", TS_QUERY_LS_FILE))
     }
 
     fn extract_and_run_ts_query_ls() -> Step<Run> {
