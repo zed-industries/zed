@@ -13,6 +13,7 @@ use gpui::{App, Entity, EventEmitter, WeakEntity, prelude::*};
 use parking_lot::RwLock;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 use fs::Fs;
 use project::Project;
 use tokio::sync::mpsc;
@@ -42,6 +43,29 @@ static EXTERNAL_ORIGINATED_ENTRIES: parking_lot::Mutex<Option<Arc<RwLock<HashMap
 /// Prevents creating duplicate subscriptions when follow-up messages arrive
 static PERSISTENT_SUBSCRIPTIONS: parking_lot::Mutex<Option<Arc<RwLock<HashSet<String>>>>> =
     parking_lot::Mutex::new(None);
+
+/// Streaming throttle state per message entry.
+/// Keyed by "{thread_id}:{entry_idx}" to support multi-entry streaming.
+static STREAMING_THROTTLE: parking_lot::Mutex<Option<Arc<RwLock<HashMap<String, StreamingThrottleState>>>>> =
+    parking_lot::Mutex::new(None);
+
+/// Minimum interval between message_added events for the same entry.
+/// Reduces Zed→Go wire traffic by ~90% (10 events/sec instead of 100+).
+const STREAMING_THROTTLE_INTERVAL: Duration = Duration::from_millis(100);
+
+/// Per-entry throttle state for streaming events.
+struct StreamingThrottleState {
+    last_sent: Instant,
+    pending_content: Option<PendingMessage>,
+}
+
+/// Content waiting to be sent when the throttle window expires.
+struct PendingMessage {
+    acp_thread_id: String,
+    message_id: String,
+    role: String,
+    content: String,
+}
 
 /// Initialize the thread registry
 pub fn init_thread_registry() {
@@ -98,6 +122,99 @@ fn mark_persistent_subscription(thread_id: String) {
     let subs = PERSISTENT_SUBSCRIPTIONS.lock();
     if let Some(s) = subs.as_ref() {
         s.write().insert(thread_id);
+    }
+}
+
+/// Initialize the streaming throttle state
+fn init_streaming_throttle() {
+    let mut throttle = STREAMING_THROTTLE.lock();
+    if throttle.is_none() {
+        *throttle = Some(Arc::new(RwLock::new(HashMap::new())));
+    }
+}
+
+/// Throttled send of message_added events. Only sends if enough time has passed
+/// since the last send for this entry. Otherwise, stores the content as pending.
+/// Returns true if the event was sent, false if throttled.
+fn throttled_send_message_added(
+    acp_thread_id: &str,
+    entry_idx: usize,
+    role: &str,
+    content: String,
+) -> bool {
+    init_streaming_throttle();
+    let key = format!("{}:{}", acp_thread_id, entry_idx);
+    let now = Instant::now();
+
+    let throttle_map = STREAMING_THROTTLE.lock();
+    let Some(map) = throttle_map.as_ref() else { return false };
+    let mut map = map.write();
+
+    let state = map.entry(key).or_insert_with(|| StreamingThrottleState {
+        last_sent: Instant::now() - STREAMING_THROTTLE_INTERVAL, // Allow first send immediately
+        pending_content: None,
+    });
+
+    if now.duration_since(state.last_sent) >= STREAMING_THROTTLE_INTERVAL {
+        // Enough time has passed — send immediately
+        state.last_sent = now;
+        state.pending_content = None;
+        drop(map);
+        drop(throttle_map);
+
+        let _ = crate::send_websocket_event(SyncEvent::MessageAdded {
+            acp_thread_id: acp_thread_id.to_string(),
+            message_id: entry_idx.to_string(),
+            role: role.to_string(),
+            content,
+            timestamp: chrono::Utc::now().timestamp(),
+        });
+        true
+    } else {
+        // Too soon — store as pending (will be flushed before message_completed)
+        state.pending_content = Some(PendingMessage {
+            acp_thread_id: acp_thread_id.to_string(),
+            message_id: entry_idx.to_string(),
+            role: role.to_string(),
+            content,
+        });
+        false
+    }
+}
+
+/// Flush all pending throttled messages for a given thread and clean up throttle state.
+/// Called before message_completed to ensure the final content is sent.
+pub fn flush_streaming_throttle(acp_thread_id: &str) {
+    init_streaming_throttle();
+
+    // Collect pending messages under lock, then send after releasing
+    let pending_messages: Vec<PendingMessage>;
+    {
+        let throttle_map = STREAMING_THROTTLE.lock();
+        let Some(map) = throttle_map.as_ref() else { return };
+        let mut map = map.write();
+
+        let prefix = format!("{}:", acp_thread_id);
+        let keys_to_remove: Vec<String> = map.keys()
+            .filter(|k| k.starts_with(&prefix))
+            .cloned()
+            .collect();
+
+        pending_messages = keys_to_remove.iter()
+            .filter_map(|key| map.remove(key))
+            .filter_map(|state| state.pending_content)
+            .collect();
+    }
+
+    // Send all pending messages outside the lock
+    for pending in pending_messages {
+        let _ = crate::send_websocket_event(SyncEvent::MessageAdded {
+            acp_thread_id: pending.acp_thread_id,
+            message_id: pending.message_id,
+            role: pending.role,
+            content: pending.content,
+            timestamp: chrono::Utc::now().timestamp(),
+        });
     }
 }
 
@@ -588,13 +705,12 @@ fn create_new_thread_sync(
                                 }
                                 _ => return,
                             };
-                            let _ = crate::send_websocket_event(SyncEvent::MessageAdded {
-                                acp_thread_id: thread_id_for_sub.clone(),
-                                message_id: entry_idx.to_string(),
-                                role: "assistant".to_string(),
+                            throttled_send_message_added(
+                                &thread_id_for_sub,
+                                *entry_idx,
+                                "assistant",
                                 content,
-                                timestamp: chrono::Utc::now().timestamp(),
-                            });
+                            );
                         }
                     }
                     _ => {}
@@ -629,6 +745,10 @@ fn create_new_thread_sync(
 
         eprintln!("✅ [THREAD_SERVICE] Message send awaited - AI response complete");
         log::info!("✅ [THREAD_SERVICE] Message send awaited - AI response complete");
+
+        // Flush any pending throttled messages before sending message_completed.
+        // The throttle may have buffered the final streaming tokens.
+        flush_streaming_throttle(&acp_thread_id);
 
         // Send message_completed after the response finishes
         // NOTE: Do NOT send a final summary message_added here. The streaming EntryUpdated
@@ -731,13 +851,12 @@ async fn handle_follow_up_message(
                                     }
                                     _ => return,
                                 };
-                                let _ = crate::send_websocket_event(SyncEvent::MessageAdded {
-                                    acp_thread_id: thread_id_for_sub.clone(),
-                                    message_id: entry_idx.to_string(),
-                                    role: "assistant".to_string(),
+                                throttled_send_message_added(
+                                    &thread_id_for_sub,
+                                    *entry_idx,
+                                    "assistant",
                                     content,
-                                    timestamp: chrono::Utc::now().timestamp(),
-                                });
+                                );
                             }
                         }
                         _ => {}
@@ -768,6 +887,9 @@ async fn handle_follow_up_message(
             return Err(e);
         }
     }
+
+    // Flush any pending throttled messages before sending message_completed.
+    flush_streaming_throttle(&thread_id);
 
     // Send message_completed for the follow-up response
     // NOTE: Do NOT send a final summary message_added here. The streaming EntryUpdated
@@ -918,16 +1040,12 @@ async fn load_thread_from_agent(
                             }
                             acp_thread::AgentThreadEntry::UserMessage(_) => return,
                         };
-                        let event = SyncEvent::MessageAdded {
-                            acp_thread_id: thread_id_for_events.clone(),
-                            message_id: entry_idx.to_string(),
-                            role: "assistant".to_string(),
-                            content: content.clone(),
-                            timestamp: chrono::Utc::now().timestamp(),
-                        };
-                        if let Err(e) = crate::send_websocket_event(event) {
-                            eprintln!("❌ [THREAD_SERVICE] Failed to send message_added: {}", e);
-                        }
+                        throttled_send_message_added(
+                            &thread_id_for_events,
+                            *entry_idx,
+                            "assistant",
+                            content,
+                        );
                     }
                 }
                 AcpThreadEvent::Stopped => {
