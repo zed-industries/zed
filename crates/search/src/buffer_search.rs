@@ -109,7 +109,6 @@ impl Render for BufferSearchBar {
                 .and_then(|weak| weak.upgrade())
                 .map(|splittable_editor| {
                     let is_split = splittable_editor.read(cx).is_split();
-                    let focus_handle = splittable_editor.focus_handle(cx);
                     h_flex()
                         .gap_1()
                         .child(
@@ -137,7 +136,7 @@ impl Render for BufferSearchBar {
                                         .into_any()
                                 }))
                                 .on_click({
-                                    let focus_handle = focus_handle.clone();
+                                    let splittable_editor = splittable_editor.downgrade();
                                     move |_, window, cx| {
                                         if window.modifiers().secondary() {
                                             update_settings_file(
@@ -150,9 +149,15 @@ impl Render for BufferSearchBar {
                                             );
                                         }
                                         if is_split {
-                                            focus_handle.focus(window, cx);
-                                            window
-                                                .dispatch_action(ToggleSplitDiff.boxed_clone(), cx);
+                                            splittable_editor
+                                                .update(cx, |editor, cx| {
+                                                    editor.toggle_split(
+                                                        &ToggleSplitDiff,
+                                                        window,
+                                                        cx,
+                                                    );
+                                                })
+                                                .ok();
                                         }
                                     }
                                 }),
@@ -182,6 +187,7 @@ impl Render for BufferSearchBar {
                                         .into_any()
                                 }))
                                 .on_click({
+                                    let splittable_editor = splittable_editor.downgrade();
                                     move |_, window, cx| {
                                         if window.modifiers().secondary() {
                                             update_settings_file(
@@ -194,9 +200,15 @@ impl Render for BufferSearchBar {
                                             );
                                         }
                                         if !is_split {
-                                            focus_handle.focus(window, cx);
-                                            window
-                                                .dispatch_action(ToggleSplitDiff.boxed_clone(), cx);
+                                            splittable_editor
+                                                .update(cx, |editor, cx| {
+                                                    editor.toggle_split(
+                                                        &ToggleSplitDiff,
+                                                        window,
+                                                        cx,
+                                                    );
+                                                })
+                                                .ok();
                                         }
                                     }
                                 }),

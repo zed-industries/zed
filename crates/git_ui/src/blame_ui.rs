@@ -400,13 +400,13 @@ fn deploy_blame_entry_context_menu(
     let context_menu = ContextMenu::build(window, cx, move |menu, _, _| {
         let sha = format!("{}", blame_entry.sha);
         menu.on_blur_subscription(Subscription::new(|| {}))
-            .entry("Copy commit SHA", None, move |_, cx| {
+            .entry("Copy Commit SHA", None, move |_, cx| {
                 cx.write_to_clipboard(ClipboardItem::new_string(sha.clone()));
             })
             .when_some(
                 details.and_then(|details| details.permalink.clone()),
                 |this, url| {
-                    this.entry("Open permalink", None, move |_, cx| {
+                    this.entry("Open Permalink", None, move |_, cx| {
                         cx.open_url(url.as_str())
                     })
                 },

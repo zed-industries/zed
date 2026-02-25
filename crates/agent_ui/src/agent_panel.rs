@@ -1,4 +1,13 @@
-use std::{ops::Range, path::Path, rc::Rc, sync::Arc, time::Duration};
+use std::{
+    ops::Range,
+    path::Path,
+    rc::Rc,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+    time::Duration,
+};
 
 use acp_thread::{AcpThread, AgentSessionInfo, MentionUri};
 use agent::{ContextServerRegistry, SharedThread, ThreadStore};
@@ -241,7 +250,14 @@ pub fn init(cx: &mut App) {
                     window.dispatch_action(workspace::RestoreBanner.boxed_clone(), cx);
                     window.refresh();
                 })
-                .register_action(|_workspace, _: &ResetTrialUpsell, _window, cx| {
+                .register_action(|workspace, _: &ResetTrialUpsell, _window, cx| {
+                    if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
+                        panel.update(cx, |panel, _| {
+                            panel
+                                .on_boarding_upsell_dismissed
+                                .store(false, Ordering::Release);
+                        });
+                    }
                     OnboardingUpsell::set_dismissed(false, cx);
                 })
                 .register_action(|_workspace, _: &ResetTrialEndUpsell, _window, cx| {
@@ -524,6 +540,7 @@ pub struct AgentPanel {
     selected_agent: AgentType,
     show_trust_workspace_message: bool,
     last_configuration_error_telemetry: Option<String>,
+    on_boarding_upsell_dismissed: AtomicBool,
 }
 
 impl AgentPanel {
@@ -743,11 +760,19 @@ impl AgentPanel {
                 .ok();
         });
 
+        let weak_panel = cx.entity().downgrade();
         let onboarding = cx.new(|cx| {
             AgentPanelOnboarding::new(
                 user_store.clone(),
                 client,
-                |_window, cx| {
+                move |_window, cx| {
+                    weak_panel
+                        .update(cx, |panel, _| {
+                            panel
+                                .on_boarding_upsell_dismissed
+                                .store(true, Ordering::Release);
+                        })
+                        .ok();
                     OnboardingUpsell::set_dismissed(true, cx);
                 },
                 cx,
@@ -803,6 +828,7 @@ impl AgentPanel {
             selected_agent: AgentType::default(),
             show_trust_workspace_message: false,
             last_configuration_error_telemetry: None,
+            on_boarding_upsell_dismissed: AtomicBool::new(OnboardingUpsell::dismissed()),
         };
 
         // Initial sync of agent servers from extensions
@@ -2773,7 +2799,7 @@ impl AgentPanel {
     }
 
     fn should_render_onboarding(&self, cx: &mut Context<Self>) -> bool {
-        if OnboardingUpsell::dismissed() {
+        if self.on_boarding_upsell_dismissed.load(Ordering::Acquire) {
             return false;
         }
 
@@ -2786,6 +2812,8 @@ impl AgentPanel {
                 .is_some_and(|date| date < chrono::Utc::now())
         {
             OnboardingUpsell::set_dismissed(true, cx);
+            self.on_boarding_upsell_dismissed
+                .store(true, Ordering::Release);
             return false;
         }
 

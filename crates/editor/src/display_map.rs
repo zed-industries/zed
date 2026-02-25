@@ -358,6 +358,19 @@ impl Companion {
         }
     }
 
+    #[cfg(test)]
+    pub(crate) fn excerpt_mappings(
+        &self,
+    ) -> (
+        &HashMap<ExcerptId, ExcerptId>,
+        &HashMap<ExcerptId, ExcerptId>,
+    ) {
+        (
+            &self.lhs_excerpt_to_rhs_excerpt,
+            &self.rhs_excerpt_to_lhs_excerpt,
+        )
+    }
+
     fn buffer_to_companion_buffer(&self, display_map_id: EntityId) -> &HashMap<BufferId, BufferId> {
         if self.is_rhs(display_map_id) {
             &self.rhs_buffer_to_lhs_buffer

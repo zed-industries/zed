@@ -983,7 +983,7 @@ impl AgentConfiguration {
                         })
                         .entry("Add Custom Agent", None, {
                             move |window, cx| {
-                                if let Some(workspace) = window.root().flatten() {
+                                if let Some(workspace) = Workspace::for_window(window, cx) {
                                     let workspace = workspace.downgrade();
                                     window
                                         .spawn(cx, async |cx| {
