@@ -1014,7 +1014,6 @@ mod a11y {
         }
 
         pub fn push_root(&mut self) {
-            dbg!(&self.all_nodes);
             debug_assert!(self.ids_stack.is_empty());
             debug_assert!(self.nodes_stack.is_empty());
             debug_assert!(self.all_nodes.is_empty());

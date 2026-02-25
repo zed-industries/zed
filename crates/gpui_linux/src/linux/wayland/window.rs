@@ -994,13 +994,21 @@ impl WaylandWindowStatePtr {
     }
 
     pub fn set_focused(&self, focus: bool) {
-        let mut state = self.state.borrow_mut();
+        self.state.borrow_mut().active = focus;
 
-        state.active = focus;
-        if let Some(ref mut fun) = self.callbacks.borrow_mut().active_status_change {
+        let mut callbacks = self.callbacks.borrow_mut();
+        let callback = callbacks.active_status_change.take();
+        drop(callbacks);
+
+        if let Some(mut fun) = callback {
             fun(focus);
+            let mut callbacks = self.callbacks.borrow_mut();
+            if callbacks.active_status_change.is_none() {
+                callbacks.active_status_change = Some(fun);
+            }
         }
 
+        let mut state = self.state.borrow_mut();
         if let Some(accesskit) = &mut state.accesskit {
             accesskit.update_window_focus_state(focus);
         }
