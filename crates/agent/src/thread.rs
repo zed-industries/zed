@@ -2461,6 +2461,7 @@ impl Thread {
                         name: tool_name.to_string(),
                         description: tool.description().to_string(),
                         input_schema: tool.input_schema(model.tool_input_format()).log_err()?,
+                        use_input_streaming: tool.supports_input_streaming(),
                     })
                 })
                 .collect::<Vec<_>>()
