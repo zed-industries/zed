@@ -15510,6 +15510,8 @@ name = "sidebar"
 version = "0.1.0"
 dependencies = [
  "acp_thread",
+ "agent",
+ "agent-client-protocol",
  "agent_ui",
  "chrono",
  "editor",

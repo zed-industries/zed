@@ -1,4 +1,6 @@
 use acp_thread::ThreadStatus;
+use agent::ThreadStore;
+use agent_client_protocol as acp;
 use agent_ui::{AgentPanel, AgentPanelEvent};
 use chrono::{Datelike, Local, NaiveDate, TimeDelta};
 
@@ -30,6 +32,78 @@ use workspace::{
     Sidebar as WorkspaceSidebar, SidebarEvent, ToggleWorkspaceSidebar, Workspace,
 };
 
+/*
+ *
+ * Active Projects (serialized, managed by the user):
+ * - zed
+ * - zed,ex
+ * - ex
+ * - zed.dev
+ * - zed.dev,cloud
+ * - cloud
+ *
+ * Windows (totally seperate, but can overlap with active projects):
+ * Window 1: cloud
+ * Window 2: zed,ex
+ * Window 3: alacritty <----????? How do you navigate back? Does it show up at all? Where's it going???
+ *
+ * Threads (Annotates the final set of projects with the associated thread data):
+ * Thread1 - cloud-olivetti
+ * Thread2 - zed.dev
+ * Thread3 - ex
+ * Thread4 - cloud-olivetti
+ * Thread5 - zed.dev
+ * Thread6 - ex
+ * Thread7 - cloud-olivetti
+ * Thread8 - zed.dev
+ * Thread9 - ex
+ *
+ *
+ * What the sidebar shows, is the union of Active Projects and Windows
+ * And the threads, which intersect with that overall set.
+ *
+ * Do this everytime the data chagnes to _derive_ the project groups from the underlying data:
+ *
+ * let project_groups = Vec::new();
+ * for each window {
+ *   project_groups.push(window.projects);
+ * }
+ *
+ * for each active_project {
+ *   if project_groups.does_not_contain(project) {
+ *      project_groups.push(window.projects);
+ *   }
+ * }
+ *
+ * for each thread {
+ *    project_groups.for_project(thread.project).push(thread.data)
+ * }
+ *
+ * Sidebar contents:
+ * - cloud 🪟
+ *    - Thread1 - olivetti   [x] <- When you click this x, delete the thread
+ *    - Thread4 - olivetti
+ *    - Thread7 - olivetti
+ * - alacritty 🪟            [x] <- When you click this x, close the window
+ * - zed                     [x] <- When you click this x, remove it from the active projects list
+ * - zed,ex 🪟               [x] <- When you click this x, remove it from the active projects list & close the window
+ * - ex
+ *   - Thread3
+ *   - Thread6
+ *   - Thread9
+ * - zed.dev
+ *  - Thread2
+ *  - Thread5
+ *  - Thread8
+ * - zed.dev,cloud
+ *
+ *  ^ What happens when I click [x]????
+ *
+ *
+ *
+ *
+ */
+
 // 2 datasets:
 // - The list of threads (We want to derive from and watch this data)
 //  - Threads contain worktree and project data in them.
@@ -44,53 +118,29 @@ use workspace::{
 //    - It's window (if any) is closed.
 // - This sidebar is the RIGHT JOIN of these two sets
 
-#[derive(Clone, Debug)]
-struct AgentThreadInfo {
-    title: SharedString,
-    status: AgentThreadStatus,
-    icon: IconName,
-}
-
 const DEFAULT_WIDTH: Pixels = px(320.0);
 const MIN_WIDTH: Pixels = px(200.0);
 const MAX_WIDTH: Pixels = px(800.0);
 const MAX_MATCHES: usize = 100;
 
-fn workspace_thread_info(workspace: &Entity<Workspace>, cx: &App) -> Option<AgentThreadInfo> {
+/// Returns the session ID of the workspace's active agent thread, if any.
+fn workspace_session_id(workspace: &Entity<Workspace>, cx: &App) -> Option<acp::SessionId> {
     let agent_panel = workspace.read(cx).panel::<AgentPanel>(cx)?;
-    let agent_panel_ref = agent_panel.read(cx);
-
-    let thread_view = agent_panel_ref.as_active_thread_view(cx)?.read(cx);
-    let thread = thread_view.thread.read(cx);
-
-    let icon = thread_view.agent_icon;
-    let title = thread.title();
-
-    let status = if thread.is_waiting_for_confirmation() {
-        AgentThreadStatus::WaitingForConfirmation
-    } else if thread.had_error() {
-        AgentThreadStatus::Error
-    } else {
-        match thread.status() {
-            ThreadStatus::Generating => AgentThreadStatus::Running,
-            ThreadStatus::Idle => AgentThreadStatus::Completed,
-        }
-    };
-    Some(AgentThreadInfo {
-        title,
-        status,
-        icon,
-    })
+    let thread = agent_panel.read(cx).active_agent_thread(cx)?;
+    Some(thread.read(cx).session_id().clone())
 }
 
 // We're going to have a pile of active projects
 // Those are going to have workspaces, and worktrees, and all this stuff,
 //  - Key point: They're all going to be live representations.
 
-/// A single workspace entry within a project group, with snapshotted thread info.
+/// A single workspace entry within a project group.
+///
+/// Thread metadata (title, timestamp, etc.) is read live from [`ThreadStore`]
+/// via the `session_id`.
 struct ProjectEntry {
-    workspace: Entity<Workspace>, // <- A "live" datastructure, not a serialized one
-    thread_info: Option<AgentThreadInfo>, // FIXME: Let's use agent::DbThreadMetadata instead
+    workspace: Entity<Workspace>,
+    session_id: Option<acp::SessionId>,
 }
 
 impl ProjectEntry {
@@ -108,11 +158,44 @@ impl ProjectEntry {
             .into()
     }
 
-    fn thread_title(&self) -> SharedString {
-        self.thread_info
-            .as_ref()
-            .map(|info| info.title.clone())
+    /// Returns the thread title from the database via [`ThreadStore`].
+    /// Falls back to "New Thread" if no thread is associated yet.
+    fn thread_title(&self, cx: &App) -> SharedString {
+        let Some(session_id) = self.session_id.as_ref() else {
+            return "New Thread".into();
+        };
+        let thread_store = ThreadStore::global(cx);
+        thread_store
+            .read(cx)
+            .thread_from_session_id(session_id)
+            .map(|m| m.title.clone())
             .unwrap_or_else(|| "New Thread".into())
+    }
+
+    /// Returns the agent icon from the live thread view, if available.
+    fn agent_icon(&self, cx: &App) -> Option<IconName> {
+        let agent_panel = self.workspace.read(cx).panel::<AgentPanel>(cx)?;
+        let thread_view = agent_panel.read(cx).as_active_thread_view(cx)?;
+        Some(thread_view.read(cx).agent_icon)
+    }
+
+    /// Derives the thread status from live agent thread state.
+    fn agent_thread_status(&self, cx: &App) -> Option<AgentThreadStatus> {
+        let agent_panel = self.workspace.read(cx).panel::<AgentPanel>(cx)?;
+        let thread = agent_panel.read(cx).active_agent_thread(cx)?;
+        let thread_ref = thread.read(cx);
+
+        let status = if thread_ref.is_waiting_for_confirmation() {
+            AgentThreadStatus::WaitingForConfirmation
+        } else if thread_ref.had_error() {
+            AgentThreadStatus::Error
+        } else {
+            match thread_ref.status() {
+                ThreadStatus::Generating => AgentThreadStatus::Running,
+                ThreadStatus::Idle => AgentThreadStatus::Completed,
+            }
+        };
+        Some(status)
     }
 }
 
@@ -132,11 +215,11 @@ impl ProjectGroup {
     fn from_workspace(workspace: Entity<Workspace>, cx: &mut App) -> Self {
         let paths = workspace.read(cx).root_paths(cx);
         let path_list = PathList::new(&paths);
-        let thread_info = workspace_thread_info(&workspace, cx);
+        let session_id = workspace_session_id(&workspace, cx);
 
         let entry = cx.new(|_| ProjectEntry {
             workspace,
-            thread_info,
+            session_id,
         });
 
         Self {
@@ -153,10 +236,10 @@ impl ProjectGroup {
         );
 
         if !self.contains(&workspace, cx) {
-            let thread_info = workspace_thread_info(&workspace, cx);
+            let session_id = workspace_session_id(&workspace, cx);
             let entry = cx.new(|_| ProjectEntry {
                 workspace,
-                thread_info,
+                session_id,
             });
             self.entries.push(entry);
         }
@@ -231,20 +314,21 @@ impl ActiveProjects {
         self.groups.iter().flat_map(|group| group.entries.iter())
     }
 
-    /// Preserve thread info from a previous snapshot for workspaces that
-    /// temporarily have no active thread (e.g. mid-switch).
-    fn preserve_thread_info_from(&mut self, old: &ActiveProjects, cx: &mut App) {
+    /// Preserve session IDs from a previous snapshot for workspaces that
+    /// temporarily have no active thread (e.g. mid-switch). The actual
+    /// thread metadata is always read live from [`ThreadStore`].
+    fn preserve_session_ids_from(&mut self, old: &ActiveProjects, cx: &mut App) {
         for group in &mut self.groups {
             for entry in &mut group.entries {
                 let entry_ref = entry.read(cx);
-                if entry_ref.thread_info.is_none() {
-                    // Find the same workspace in the old data and carry forward its info.
-                    let old_info = old
+                if entry_ref.session_id.is_none() {
+                    // Find the same workspace in the old data and carry forward its session ID.
+                    let old_session_id = old
                         .iter()
                         .find(|old| old.read(cx).workspace == entry_ref.workspace)
-                        .and_then(|old| old.read(cx).thread_info.clone());
-                    if let Some(info) = old_info {
-                        entry.update(cx, |e, _| e.thread_info = Some(info));
+                        .and_then(|old| old.read(cx).session_id.clone());
+                    if let Some(id) = old_session_id {
+                        entry.update(cx, |e, _| e.session_id = Some(id));
                     }
                 }
             }
@@ -360,7 +444,7 @@ impl PickerDelegate for ActiveProjectsDelegate {
             prev.group_name(cx) != entry_ref.group_name(cx)
         };
 
-        let thread_title = entry_ref.thread_title();
+        let thread_title = entry_ref.thread_title(cx);
 
         Some(
             v_flex()
@@ -400,11 +484,12 @@ pub struct Sidebar {
     width: Pixels,
     picker: Entity<Picker<ActiveProjectsDelegate>>,
     _subscription: Subscription,
+    _thread_store_subscription: Option<Subscription>,
     _project_subscriptions: Vec<Subscription>,
     _agent_panel_subscriptions: Vec<Subscription>,
     _thread_subscriptions: Vec<Subscription>,
     #[cfg(any(test, feature = "test-support"))]
-    test_thread_infos: HashMap<usize, AgentThreadInfo>,
+    test_statuses: HashMap<usize, AgentThreadStatus>,
     #[cfg(any(test, feature = "test-support"))]
     test_recent_project_thread_titles: HashMap<SharedString, SharedString>,
 }
@@ -439,16 +524,25 @@ impl Sidebar {
             },
         );
 
+        // Observe ThreadStore so the sidebar refreshes when thread metadata
+        // changes (e.g. title updated after summarization, thread deleted).
+        let thread_store_subscription = ThreadStore::try_global(cx).map(|thread_store| {
+            cx.observe_in(&thread_store, window, |this, _, window, cx| {
+                this.update_entries(window, cx);
+            })
+        });
+
         let mut this = Self {
             multi_workspace,
             width: DEFAULT_WIDTH,
             picker,
             _subscription: subscription,
+            _thread_store_subscription: thread_store_subscription,
             _project_subscriptions: Vec::new(),
             _agent_panel_subscriptions: Vec::new(),
             _thread_subscriptions: Vec::new(),
             #[cfg(any(test, feature = "test-support"))]
-            test_thread_infos: HashMap::new(),
+            test_statuses: HashMap::new(),
             #[cfg(any(test, feature = "test-support"))]
             test_recent_project_thread_titles: HashMap::new(),
         };
@@ -468,17 +562,12 @@ impl Sidebar {
     pub fn set_test_thread_info(
         &mut self,
         index: usize,
-        title: SharedString,
+        _title: SharedString,
         status: AgentThreadStatus,
     ) {
-        self.test_thread_infos.insert(
-            index,
-            AgentThreadInfo {
-                title,
-                status,
-                icon: IconName::ZedAgent,
-            },
-        );
+        // Title now comes from DbThreadMetadata via ThreadStore.
+        // We only track status here for future notification logic.
+        self.test_statuses.insert(index, status);
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -500,11 +589,11 @@ impl Sidebar {
                 (mw.workspaces().to_vec(), mw.workspace().clone())
             };
 
-            // Rebuild the active projects from scratch, preserving thread info
+            // Rebuild the active projects from scratch, preserving session IDs
             // for workspaces that temporarily have no active thread.
             let mut active_projects = ActiveProjects::from_workspaces(&workspaces, cx);
             this.picker.update(cx, |picker, cx| {
-                active_projects.preserve_thread_info_from(&picker.delegate.active_projects, cx);
+                active_projects.preserve_session_ids_from(&picker.delegate.active_projects, cx);
                 let flat_entries: Vec<_> = active_projects.iter().cloned().collect();
                 let selected_index = flat_entries
                     .iter()
