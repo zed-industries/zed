@@ -10061,6 +10061,7 @@ mod tests {
         let project_b = Project::test(fs, ["root".as_ref()], cx).await;
         let multi_workspace_handle =
             cx.add_window(|window, cx| MultiWorkspace::test_new(project_a.clone(), window, cx));
+        cx.run_until_parked();
 
         let workspace_a = multi_workspace_handle
             .read_with(cx, |mw, _| mw.workspace().clone())
@@ -10640,12 +10641,9 @@ mod tests {
         init_test(cx);
         let fs = FakeFs::new(cx.executor());
         let project = Project::test(fs, [], cx).await;
-        let multi_workspace_handle =
-            cx.add_window(|window, cx| MultiWorkspace::test_new(project, window, cx));
-        let workspace = multi_workspace_handle
-            .read_with(cx, |mw, _| mw.workspace().clone())
-            .unwrap();
-        let cx = &mut VisualTestContext::from_window(multi_workspace_handle.into(), cx);
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
         workspace.update_in(cx, |workspace, window, cx| {
             let first_item = cx.new(|cx| {
@@ -11139,12 +11137,9 @@ mod tests {
         init_test(cx);
         let fs = FakeFs::new(cx.executor());
         let project = Project::test(fs, [], cx).await;
-        let multi_workspace_handle =
-            cx.add_window(|window, cx| MultiWorkspace::test_new(project, window, cx));
-        let workspace = multi_workspace_handle
-            .read_with(cx, |mw, _| mw.workspace().clone())
-            .unwrap();
-        let cx = &mut VisualTestContext::from_window(multi_workspace_handle.into(), cx);
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
         // Open two docks (left and right) with one panel each
         let (left_panel, right_panel) = workspace.update_in(cx, |workspace, window, cx| {
@@ -11575,12 +11570,9 @@ mod tests {
         let fs = FakeFs::new(cx.executor());
 
         let project = Project::test(fs, [], cx).await;
-        let multi_workspace_handle =
-            cx.add_window(|window, cx| MultiWorkspace::test_new(project, window, cx));
-        let workspace = multi_workspace_handle
-            .read_with(cx, |mw, _| mw.workspace().clone())
-            .unwrap();
-        let cx = &mut VisualTestContext::from_window(multi_workspace_handle.into(), cx);
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
         let (panel_1, panel_2) = workspace.update_in(cx, |workspace, window, cx| {
             let panel_1 = cx.new(|cx| TestPanel::new(DockPosition::Left, 100, cx));
@@ -12487,12 +12479,9 @@ mod tests {
         init_test(cx);
         let fs = FakeFs::new(cx.executor());
         let project = Project::test(fs, [], cx).await;
-        let multi_workspace_handle =
-            cx.add_window(|window, cx| MultiWorkspace::test_new(project, window, cx));
-        let workspace = multi_workspace_handle
-            .read_with(cx, |mw, _| mw.workspace().clone())
-            .unwrap();
-        let cx = &mut VisualTestContext::from_window(multi_workspace_handle.into(), cx);
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
         // Add a new panel to the right dock, opening the dock and setting the
         // focus to the new panel.
@@ -13181,12 +13170,9 @@ mod tests {
 
         let fs = FakeFs::new(cx.executor());
         let project = Project::test(fs, [], cx).await;
-        let multi_workspace_handle =
-            cx.add_window(|window, cx| MultiWorkspace::test_new(project, window, cx));
-        let workspace = multi_workspace_handle
-            .read_with(cx, |mw, _| mw.workspace().clone())
-            .unwrap();
-        let cx = &mut VisualTestContext::from_window(multi_workspace_handle.into(), cx);
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
         let panel = workspace.update_in(cx, |workspace, window, cx| {
             let panel = cx.new(|cx| TestPanel::new(DockPosition::Right, 100, cx));
             workspace.add_panel(panel.clone(), window, cx);
@@ -13250,6 +13236,7 @@ mod tests {
 
         let multi_workspace_handle =
             cx.add_window(|window, cx| MultiWorkspace::test_new(project_a.clone(), window, cx));
+        cx.run_until_parked();
 
         let workspace_a = multi_workspace_handle
             .read_with(cx, |mw, _| mw.workspace().clone())
