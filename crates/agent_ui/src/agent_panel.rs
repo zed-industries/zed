@@ -4182,6 +4182,13 @@ impl AgentPanel {
         cx.notify();
     }
 
+    /// Returns the current worktree creation status.
+    ///
+    /// This is a test-only helper for visual tests.
+    pub fn worktree_creation_status_for_tests(&self) -> Option<&WorktreeCreationStatus> {
+        self.worktree_creation_status.as_ref()
+    }
+
     /// Sets the worktree creation status directly.
     ///
     /// This is a test-only helper for visual tests that need to show the

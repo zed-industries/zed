@@ -71,7 +71,7 @@ use {
         time::Duration,
     },
     util::ResultExt as _,
-    workspace::{AppState, MultiWorkspace, Workspace, WorkspaceId},
+    workspace::{AppState, MultiWorkspace, Panel as _, Workspace, WorkspaceId},
     zed_actions::OpenSettingsAt,
 };
 
@@ -3331,6 +3331,43 @@ edition = "2021"
 
     let prompt_builder =
         cx.update(|cx| prompt_store::PromptBuilder::load(app_state.fs.clone(), false, cx));
+
+    // Register an observer so that workspaces created by the worktree creation
+    // flow get AgentPanel and ProjectPanel loaded automatically. Without this,
+    // `workspace.panel::<AgentPanel>(cx)` returns None in the new workspace and
+    // the creation flow's `focus_panel::<AgentPanel>` call is a no-op.
+    cx.update({
+        let prompt_builder = prompt_builder.clone();
+        |cx| {
+            cx.observe_new(move |workspace: &mut Workspace, window, cx| {
+                let Some(window) = window else { return };
+                let prompt_builder = prompt_builder.clone();
+                let panels_task = cx.spawn_in(window, async move |workspace_handle, cx| {
+                    let project_panel = ProjectPanel::load(workspace_handle.clone(), cx.clone());
+                    let agent_panel =
+                        AgentPanel::load(workspace_handle.clone(), prompt_builder, cx.clone());
+                    if let Ok(panel) = project_panel.await {
+                        workspace_handle
+                            .update_in(cx, |workspace, window, cx| {
+                                workspace.add_panel(panel, window, cx);
+                            })
+                            .log_err();
+                    }
+                    if let Ok(panel) = agent_panel.await {
+                        workspace_handle
+                            .update_in(cx, |workspace, window, cx| {
+                                workspace.add_panel(panel, window, cx);
+                            })
+                            .log_err();
+                    }
+                    anyhow::Ok(())
+                });
+                workspace.set_panels_task(panels_task);
+            })
+            .detach();
+        }
+    });
+
     cx.background_executor.allow_parking();
     let panel = cx
         .foreground_executor
@@ -3489,35 +3526,41 @@ edition = "2021"
 
     // Insert a message into the active thread's message editor and submit.
     let thread_view = cx
-        .read(|cx| panel.read(cx).as_active_thread_view(cx).cloned())
+        .read(|cx| panel.read(cx).as_active_thread_view(cx))
         .ok_or_else(|| anyhow::anyhow!("No active thread view"))?;
 
     cx.update_window(workspace_window.into(), |_, window, cx| {
-        thread_view.update(cx, |thread_view, cx| {
-            let message_editor = thread_view.active_editor(cx);
-            message_editor.update(cx, |message_editor, cx| {
-                message_editor.set_message(
-                    vec![acp::ContentBlock::Text(acp::TextContent::new(
-                        "Create a worktree".to_string(),
-                    ))],
-                    window,
-                    cx,
-                );
-                message_editor.send(cx);
-            });
+        let message_editor = thread_view.read(cx).message_editor.clone();
+        message_editor.update(cx, |message_editor, cx| {
+            message_editor.set_message(
+                vec![acp::ContentBlock::Text(acp::TextContent::new(
+                    "Add a CLI flag to set the log level".to_string(),
+                ))],
+                window,
+                cx,
+            );
+            message_editor.send(cx);
         });
     })?;
     cx.run_until_parked();
 
-    // Wait for the worktree creation flow to complete.
+    // Wait for the full worktree creation flow to complete. The creation status
+    // is cleared to `None` at the very end of the async task, after panels are
+    // loaded, the agent panel is focused, and the new workspace is activated.
     cx.background_executor.allow_parking();
     let mut creation_complete = false;
     for _ in 0..120 {
         cx.run_until_parked();
+        let status_cleared = cx.read(|cx| {
+            panel
+                .read(cx)
+                .worktree_creation_status_for_tests()
+                .is_none()
+        });
         let workspace_count = workspace_window.update(cx, |multi_workspace, _window, _cx| {
             multi_workspace.workspaces().len()
         })?;
-        if workspace_count == 2 {
+        if workspace_count == 2 && status_cleared {
             creation_complete = true;
             break;
         }
@@ -3527,6 +3570,48 @@ edition = "2021"
 
     if !creation_complete {
         return Err(anyhow::anyhow!("Worktree creation did not complete"));
+    }
+
+    // The creation flow called `external_thread` on the new workspace's agent
+    // panel, which tried to launch a real agent binary and failed. Replace the
+    // error state by injecting the stub server, and shrink the panel so the
+    // editor content is visible.
+    workspace_window.update(cx, |multi_workspace, window, cx| {
+        let new_workspace = &multi_workspace.workspaces()[1];
+        new_workspace.update(cx, |workspace, cx| {
+            if let Some(new_panel) = workspace.panel::<AgentPanel>(cx) {
+                new_panel.update(cx, |panel, cx| {
+                    panel.set_size(Some(px(480.0)), window, cx);
+                    panel.open_external_thread_with_server(stub_agent.clone(), window, cx);
+                });
+            }
+        });
+    })?;
+    cx.run_until_parked();
+
+    // Type and send a message so the thread target dropdown disappears.
+    let new_panel = workspace_window.update(cx, |multi_workspace, _window, cx| {
+        let new_workspace = &multi_workspace.workspaces()[1];
+        new_workspace.read(cx).panel::<AgentPanel>(cx)
+    })?;
+    if let Some(new_panel) = new_panel {
+        let new_thread_view = cx.read(|cx| new_panel.read(cx).as_active_thread_view(cx));
+        if let Some(new_thread_view) = new_thread_view {
+            cx.update_window(workspace_window.into(), |_, window, cx| {
+                let message_editor = new_thread_view.read(cx).message_editor.clone();
+                message_editor.update(cx, |editor, cx| {
+                    editor.set_message(
+                        vec![acp::ContentBlock::Text(acp::TextContent::new(
+                            "Add a CLI flag to set the log level".to_string(),
+                        ))],
+                        window,
+                        cx,
+                    );
+                    editor.send(cx);
+                });
+            })?;
+            cx.run_until_parked();
+        }
     }
 
     cx.update_window(workspace_window.into(), |_, window, _cx| {
