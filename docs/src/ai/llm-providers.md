@@ -151,7 +151,9 @@ For the most up-to-date supported regions and models, refer to the [Supported Mo
 
 #### Extended Context Window {#bedrock-extended-context}
 
-Anthropic models on Bedrock support a [1M token extended context window](https://docs.anthropic.com/en/docs/build-with-claude/extended-context) beta. To enable this feature, add `"allow_extended_context": true` to your Bedrock configuration:
+> **Preview:** This feature is available in Zed Preview. It will be included in the next Stable release.
+
+Anthropic models on Bedrock support a 1M token extended context window through the `anthropic_beta` API parameter. To enable this feature, set `"allow_extended_context": true` in your Bedrock configuration:
 
 ```json [settings]
 {
@@ -166,9 +168,7 @@ Anthropic models on Bedrock support a [1M token extended context window](https:/
 }
 ```
 
-When enabled, Zed will include the `anthropic_beta` field in requests to Bedrock, enabling the 1M token context window for supported Anthropic models such as Claude Sonnet 4.5 and Claude Opus 4.6.
-
-> **Note**: Extended context usage may incur additional API costs. Refer to your AWS Bedrock pricing for details.
+Zed enables extended context for supported models (Claude Sonnet 4.5 and Claude Opus 4.6). Extended context usage may increase API costs—refer to AWS Bedrock pricing for details.
 
 ### Anthropic {#anthropic}
 
