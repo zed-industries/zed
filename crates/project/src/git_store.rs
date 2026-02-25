@@ -529,6 +529,7 @@ impl GitStore {
         client.add_entity_request_handler(Self::handle_askpass);
         client.add_entity_request_handler(Self::handle_check_for_pushed_commits);
         client.add_entity_request_handler(Self::handle_git_diff);
+        client.add_entity_request_handler(Self::handle_git_diff_stat);
         client.add_entity_request_handler(Self::handle_tree_diff);
         client.add_entity_request_handler(Self::handle_get_blob_content);
         client.add_entity_request_handler(Self::handle_open_unstaged_diff);
@@ -2682,6 +2683,45 @@ impl GitStore {
         }
 
         Ok(proto::GitDiffResponse { diff })
+    }
+
+    async fn handle_git_diff_stat(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::GitDiffStat>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::GitDiffStatResponse> {
+        let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
+        let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
+        let diff_type = match envelope.payload.diff_type() {
+            proto::git_diff_stat::DiffType::HeadToIndex => DiffType::HeadToIndex,
+            proto::git_diff_stat::DiffType::HeadToWorktree => DiffType::HeadToWorktree,
+            proto::git_diff_stat::DiffType::MergeBase => {
+                let base_ref = envelope
+                    .payload
+                    .merge_base_ref
+                    .ok_or_else(|| anyhow!("merge_base_ref is required for MergeBase diff type"))?;
+                DiffType::MergeBase {
+                    base_ref: base_ref.into(),
+                }
+            }
+        };
+
+        let stats = repository_handle
+            .update(&mut cx, |repository_handle, cx| {
+                repository_handle.diff_stat(diff_type, cx)
+            })
+            .await??;
+
+        let entries = stats
+            .into_iter()
+            .map(|(path, stat)| proto::GitDiffStatEntry {
+                path: path.to_proto(),
+                added: stat.added,
+                deleted: stat.deleted,
+            })
+            .collect();
+
+        Ok(proto::GitDiffStatResponse { entries })
     }
 
     async fn handle_tree_diff(
@@ -5691,7 +5731,6 @@ impl Repository {
     }
 
     /// Fetches per-line diff statistics (additions/deletions) via `git diff --numstat`.
-    /// Not yet figured out remote repos...
     pub fn diff_stat(
         &mut self,
         diff_type: DiffType,
@@ -5699,12 +5738,51 @@ impl Repository {
     ) -> oneshot::Receiver<
         Result<collections::HashMap<git::repository::RepoPath, git::status::DiffStat>>,
     > {
+        let id = self.id;
         self.send_job(None, move |repo, _cx| async move {
             match repo {
                 RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
                     backend.diff_stat(diff_type).await
                 }
-                RepositoryState::Remote(_) => Ok(collections::HashMap::default()),
+                RepositoryState::Remote(RemoteRepositoryState { project_id, client }) => {
+                    let (proto_diff_type, merge_base_ref) = match &diff_type {
+                        DiffType::HeadToIndex => {
+                            (proto::git_diff_stat::DiffType::HeadToIndex.into(), None)
+                        }
+                        DiffType::HeadToWorktree => {
+                            (proto::git_diff_stat::DiffType::HeadToWorktree.into(), None)
+                        }
+                        DiffType::MergeBase { base_ref } => (
+                            proto::git_diff_stat::DiffType::MergeBase.into(),
+                            Some(base_ref.to_string()),
+                        ),
+                    };
+                    let response = client
+                        .request(proto::GitDiffStat {
+                            project_id: project_id.0,
+                            repository_id: id.to_proto(),
+                            diff_type: proto_diff_type,
+                            merge_base_ref,
+                        })
+                        .await?;
+
+                    let stats = response
+                        .entries
+                        .into_iter()
+                        .filter_map(|entry| {
+                            let path = RepoPath::from_proto(&entry.path).log_err()?;
+                            Some((
+                                path,
+                                git::status::DiffStat {
+                                    added: entry.added,
+                                    deleted: entry.deleted,
+                                },
+                            ))
+                        })
+                        .collect();
+
+                    Ok(stats)
+                }
             }
         })
     }

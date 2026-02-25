@@ -229,6 +229,29 @@ message GitDiffResponse {
     string diff = 1;
 }
 
+message GitDiffStat {
+    uint64 project_id = 1;
+    uint64 repository_id = 2;
+    DiffType diff_type = 3;
+    optional string merge_base_ref = 4;
+
+    enum DiffType {
+        HEAD_TO_WORKTREE = 0;
+        HEAD_TO_INDEX = 1;
+        MERGE_BASE = 2;
+    }
+}
+
+message GitDiffStatResponse {
+    repeated GitDiffStatEntry entries = 1;
+}
+
+message GitDiffStatEntry {
+    string path = 1;
+    uint32 added = 2;
+    uint32 deleted = 3;
+}
+
 message GitInit {
     uint64 project_id = 1;
     string abs_path = 2;
