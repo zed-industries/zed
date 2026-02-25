@@ -1339,12 +1339,12 @@ async fn test_fold_with_unindented_multiline_raw_string(cx: &mut TestAppContext)
         .with_queries(LanguageQueries {
             overrides: Some(Cow::from(indoc! {"
                 [
-                    (string_literal)
-                    (raw_string_literal)
+                  (string_literal)
+                  (raw_string_literal)
                 ] @string
                 [
-                    (line_comment)
-                    (block_comment)
+                  (line_comment)
+                  (block_comment)
                 ] @comment.inclusive
             "})),
             ..Default::default()
@@ -1360,7 +1360,7 @@ async fn test_fold_with_unindented_multiline_raw_string(cx: &mut TestAppContext)
         b
         c
         \"#;
-        }
+        }ˇ
     "});
 
     cx.update_editor(|editor, window, cx| {
@@ -1371,7 +1371,7 @@ async fn test_fold_with_unindented_multiline_raw_string(cx: &mut TestAppContext)
                 fn main() {⋯
                 }
             "},
-        )
+        );
     });
 }
 
@@ -1389,12 +1389,12 @@ async fn test_fold_with_unindented_multiline_block_comment(cx: &mut TestAppConte
         .with_queries(LanguageQueries {
             overrides: Some(Cow::from(indoc! {"
                 [
-                    (string_literal)
-                    (raw_string_literal)
+                  (string_literal)
+                  (raw_string_literal)
                 ] @string
                 [
-                    (line_comment)
-                    (block_comment)
+                  (line_comment)
+                  (block_comment)
                 ] @comment.inclusive
             "})),
             ..Default::default()
@@ -1409,7 +1409,7 @@ async fn test_fold_with_unindented_multiline_block_comment(cx: &mut TestAppConte
             /*
         unindented comment line
             */
-        }
+        }ˇ
     "});
 
     cx.update_editor(|editor, window, cx| {
@@ -1420,7 +1420,7 @@ async fn test_fold_with_unindented_multiline_block_comment(cx: &mut TestAppConte
                 fn main() {⋯
                 }
             "},
-        )
+        );
     });
 }
 
