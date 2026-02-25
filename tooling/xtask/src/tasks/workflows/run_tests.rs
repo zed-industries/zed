@@ -29,7 +29,6 @@ pub(crate) fn run_tests() -> Workflow {
         "run_action_checks",
         r"^\.github/(workflows/|actions/|actionlint.yml)|tooling/xtask|script/",
     );
-    let should_check_queries = PathCondition::new("run_query_lint", r".*\.scm");
     let should_check_licences =
         PathCondition::new("run_licenses", r"^(Cargo.lock|script/.*licenses)");
 
@@ -37,7 +36,6 @@ pub(crate) fn run_tests() -> Workflow {
         &should_check_scripts,
         &should_check_docs,
         &should_check_licences,
-        &should_check_queries,
         &should_run_tests,
     ]);
 
@@ -56,7 +54,6 @@ pub(crate) fn run_tests() -> Workflow {
         should_run_tests.guard(check_dependencies()), // could be more specific here?
         should_check_docs.guard(check_docs()),
         should_check_licences.guard(check_licenses()),
-        should_check_queries.guard(check_query_style()),
         should_check_scripts.guard(check_scripts()),
     ];
     let tests_pass = tests_pass(&jobs);
@@ -270,6 +267,8 @@ pub fn tests_pass(jobs: &[NamedJob]) -> NamedJob {
     named::job(job)
 }
 
+const TS_QUERY_LS_FILE: &str = "ts_query_ls-x86_64-unknown-linux-gnu.tar.gz";
+
 fn check_style() -> NamedJob {
     fn check_for_typos() -> Step<Use> {
         named::uses(
@@ -278,6 +277,23 @@ fn check_style() -> NamedJob {
             "2d0ce569feab1f8752f1dde43cc2f2aa53236e06",
         ) // v1.40.0
         .with(("config", "./typos.toml"))
+    }
+
+    fn fetch_ts_query_ls() -> Step<Use> {
+        named::uses(
+            "dsaltares",
+            "fetch-gh-release-asset",
+            "aa37ae5c44d3c9820bc12fe675e8670ecd93bd1c",
+        ) // v1.1.1
+        .with(("repo", "ribru17/ts_query_ls"))
+        .with(("version", "tags/v3.15.1"))
+        .with(("file", TS_QUERY_LS_FILE))
+    }
+
+    fn extract_and_run_ts_query_ls() -> Step<Run> {
+        named::bash(format!(
+            "tar -xzf {TS_QUERY_LS_FILE} && ./ts_query_ls format --check ."
+        ))
     }
 
     named::job(
@@ -290,26 +306,9 @@ fn check_style() -> NamedJob {
             .add_step(steps::cargo_fmt())
             .add_step(steps::script("./script/check-todos"))
             .add_step(steps::script("./script/check-keymaps"))
-            .add_step(check_for_typos()),
-    )
-}
-
-fn check_query_style() -> NamedJob {
-    fn install_ts_query_ls() -> Step<Run> {
-        named::bash("cargo install ts_query_ls")
-    }
-
-    fn ts_query_ls_format() -> Step<Run> {
-        named::bash("ts_query_ls format --check .")
-    }
-
-    named::job(
-        release_job(&[])
-            .runs_on(runners::LINUX_MEDIUM)
-            .add_step(steps::checkout_repo())
-            .add_step(steps::cache_rust_dependencies_namespace())
-            .add_step(install_ts_query_ls())
-            .add_step(ts_query_ls_format()),
+            .add_step(check_for_typos())
+            .add_step(fetch_ts_query_ls())
+            .add_step(extract_and_run_ts_query_ls()),
     )
 }
 
