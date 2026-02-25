@@ -1963,7 +1963,7 @@ fn run_agent_thread_view_test(
     cx: &mut VisualTestAppContext,
     update_baseline: bool,
 ) -> Result<TestResult> {
-    use agent::AgentTool;
+    use agent::{AgentTool, ToolInput};
     use agent_ui::AgentPanel;
 
     // Create a temporary directory with the test image
@@ -2048,7 +2048,10 @@ fn run_agent_thread_view_test(
         start_line: None,
         end_line: None,
     };
-    let run_task = cx.update(|cx| tool.clone().run(input, event_stream, cx));
+    let run_task = cx.update(|cx| {
+        tool.clone()
+            .run(ToolInput::resolved(input), event_stream, cx)
+    });
 
     cx.background_executor.allow_parking();
     let run_result = cx.foreground_executor.block_test(run_task);
