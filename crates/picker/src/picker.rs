@@ -122,7 +122,7 @@ pub trait PickerDelegate: Sized + 'static {
         true
     }
 
-    // Allows binding some optional effect to when the selection changes.
+    /// Allows binding some optional effect to when the selection changes.
     fn selected_index_changed(
         &self,
         _ix: usize,
@@ -142,10 +142,10 @@ pub trait PickerDelegate: Sized + 'static {
         cx: &mut Context<Picker<Self>>,
     ) -> Task<()>;
 
-    // Delegates that support this method (e.g. the CommandPalette) can chose to block on any background
-    // work for up to `duration` to try and get a result synchronously.
-    // This avoids a flash of an empty command-palette on cmd-shift-p, and lets workspace::SendKeystrokes
-    // mostly work when dismissing a palette.
+    /// Delegates that support this method (e.g. the CommandPalette) can chose to block on any background
+    /// work for up to `duration` to try and get a result synchronously.
+    /// This avoids a flash of an empty command-palette on cmd-shift-p, and lets workspace::SendKeystrokes
+    /// mostly work when dismissing a palette.
     fn finalize_update_matches(
         &mut self,
         _query: String,
