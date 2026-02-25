@@ -267,7 +267,7 @@ impl MultiWorkspace {
     fn subscribe_to_workspace(workspace: &Entity<Workspace>, cx: &mut Context<Self>) {
         cx.subscribe(workspace, |this, workspace, event, cx| {
             if let WorkspaceEvent::Activate = event {
-                this.activate(workspace.clone(), cx);
+                this.activate(workspace, cx);
             }
         })
         .detach();
