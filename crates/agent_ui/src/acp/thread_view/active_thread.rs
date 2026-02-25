@@ -7456,7 +7456,66 @@ pub(crate) fn open_link(
             MentionUri::TerminalSelection { .. } => {}
             MentionUri::GitDiff { .. } => {}
         })
+    } else if !url.contains("://") {
+        // The URL has no scheme, so it is likely a relative file path emitted by an AI agent
+        // (e.g. "src/main.rs" or "src/main.rs:42"). Try to resolve it against the project.
+        open_relative_path(&url, workspace, window, cx);
     } else {
         cx.open_url(&url);
+    }
+}
+
+fn open_relative_path(
+    raw: &str,
+    workspace: Entity<Workspace>,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    // Strip an optional trailing `:line` or `:line:col` suffix (e.g. "src/main.rs:42").
+    let (file_part, line_number) = if let Some(colon_pos) = raw.rfind(':') {
+        let suffix = &raw[colon_pos + 1..];
+        if let Ok(line) = suffix.parse::<u32>() {
+            (&raw[..colon_pos], Some(line.saturating_sub(1)))
+        } else {
+            (raw, None)
+        }
+    } else {
+        (raw, None)
+    };
+
+    let path = std::path::Path::new(file_part);
+    let project = workspace.read(cx).project().clone();
+    let Some(project_path) =
+        project.update(cx, |project, cx| project.find_project_path(path, cx))
+    else {
+        return;
+    };
+
+    let item = workspace.update(cx, |workspace, cx| {
+        workspace.open_path(project_path, None, true, window, cx)
+    });
+
+    if let Some(line) = line_number {
+        window
+            .spawn(cx, async move |cx| {
+                let Some(editor) = item.await?.downcast::<Editor>() else {
+                    return Ok(());
+                };
+                let range = Point::new(line, 0)..Point::new(line, 0);
+                editor
+                    .update_in(cx, |editor, window, cx| {
+                        editor.change_selections(
+                            SelectionEffects::scroll(Autoscroll::center()),
+                            window,
+                            cx,
+                            |s| s.select_ranges(vec![range]),
+                        );
+                    })
+                    .ok();
+                anyhow::Ok(())
+            })
+            .detach_and_log_err(cx);
+    } else {
+        item.detach_and_log_err(cx);
     }
 }
