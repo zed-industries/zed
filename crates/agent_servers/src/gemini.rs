@@ -70,7 +70,6 @@ impl AgentServer for Gemini {
             }
             let (command, login) = store
                 .update(cx, |store, cx| {
-                    let mut extra_env = extra_env;
                     if store.no_browser() {
                         extra_env.insert("NO_BROWSER".to_owned(), "1".to_owned());
                     }

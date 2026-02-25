@@ -212,7 +212,7 @@ impl AgentServer for ClaudeCode {
     ) -> Task<Result<(Rc<dyn AgentConnection>, Option<task::SpawnInTerminal>)>> {
         let name = self.name();
         let store = delegate.store.downgrade();
-        let extra_env = load_proxy_env(cx);
+        let mut extra_env = load_proxy_env(cx);
         let default_mode = self.default_mode(cx);
         let default_model = self.default_model(cx);
         let default_config_options = cx.read_global(|settings: &SettingsStore, _| {
@@ -227,10 +227,10 @@ impl AgentServer for ClaudeCode {
         cx.spawn(async move |cx| {
             let (command, login) = store
                 .update(cx, |store, cx| {
-                    let mut extra_env = extra_env;
                     if store.no_browser() {
                         extra_env.insert("NO_BROWSER".to_owned(), "1".to_owned());
                     }
+                    extra_env.insert("ANTHROPIC_API_KEY".into(), "".into());
                     let agent = store
                         .get_external_agent(&CLAUDE_AGENT_NAME.into())
                         .context("Claude Agent is not registered")?;

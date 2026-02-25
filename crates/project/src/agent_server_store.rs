@@ -3,18 +3,14 @@ use std::{
     any::Any,
     borrow::Borrow,
     path::{Path, PathBuf},
-    str::FromStr as _,
     sync::Arc,
     time::Duration,
 };
 
 use anyhow::{Context as _, Result, bail};
 use collections::HashMap;
-use fs::{Fs, RemoveOptions, RenameOptions};
-use futures::StreamExt as _;
-use gpui::{
-    AppContext as _, AsyncApp, Context, Entity, EventEmitter, SharedString, Subscription, Task,
-};
+use fs::Fs;
+use gpui::{AsyncApp, Context, Entity, EventEmitter, SharedString, Subscription, Task};
 use http_client::{HttpClient, github::AssetKind};
 use node_runtime::NodeRuntime;
 use remote::RemoteClient;
@@ -23,7 +19,6 @@ use rpc::{
     proto::{self, ExternalExtensionAgent},
 };
 use schemars::JsonSchema;
-use semver::Version;
 use serde::{Deserialize, Serialize};
 use settings::{RegisterSetting, SettingsStore};
 use task::{Shell, SpawnInTerminal};
@@ -431,49 +426,6 @@ impl AgentServerStore {
 
         self.external_agents.clear();
 
-        self.external_agents.insert(
-            CODEX_NAME.into(),
-            ExternalAgentEntry::new(
-                Box::new(LocalCodex {
-                    fs: fs.clone(),
-                    project_environment: project_environment.clone(),
-                    custom_command: new_settings
-                        .codex
-                        .clone()
-                        .and_then(|settings| settings.custom_command()),
-                    settings_env: new_settings
-                        .codex
-                        .as_ref()
-                        .and_then(|settings| settings.env.clone()),
-                    http_client: http_client.clone(),
-                }),
-                ExternalAgentSource::Builtin,
-                None,
-                None,
-            ),
-        );
-        self.external_agents.insert(
-            CLAUDE_AGENT_NAME.into(),
-            ExternalAgentEntry::new(
-                Box::new(LocalClaudeCode {
-                    fs: fs.clone(),
-                    node_runtime: node_runtime.clone(),
-                    project_environment: project_environment.clone(),
-                    custom_command: new_settings
-                        .claude
-                        .clone()
-                        .and_then(|settings| settings.custom_command()),
-                    settings_env: new_settings
-                        .claude
-                        .as_ref()
-                        .and_then(|settings| settings.env.clone()),
-                }),
-                ExternalAgentSource::Builtin,
-                None,
-                None,
-            ),
-        );
-
         // Insert extension agents before custom/registry so registry entries override extensions.
         for (agent_name, ext_id, targets, env, icon_path, display_name) in extension_agents.iter() {
             let name = ExternalAgentServerName(agent_name.clone().into());
@@ -643,7 +595,7 @@ impl AgentServerStore {
                 extension_agents: vec![],
                 _subscriptions: subscriptions,
             },
-            external_agents: Default::default(),
+            external_agents: HashMap::default(),
         };
         if let Some(_events) = extension::ExtensionEvents::try_global(cx) {}
         this.agent_servers_settings_changed(cx);
@@ -651,70 +603,19 @@ impl AgentServerStore {
     }
 
     pub(crate) fn remote(project_id: u64, upstream_client: Entity<RemoteClient>) -> Self {
-        // Set up the builtin agents here so they're immediately available in
-        // remote projects--we know that the HeadlessProject on the other end
-        // will have them.
-        let external_agents: [(ExternalAgentServerName, ExternalAgentEntry); 3] = [
-            (
-                CLAUDE_AGENT_NAME.into(),
-                ExternalAgentEntry::new(
-                    Box::new(RemoteExternalAgentServer {
-                        project_id,
-                        upstream_client: upstream_client.clone(),
-                        name: CLAUDE_AGENT_NAME.into(),
-                        status_tx: None,
-                        new_version_available_tx: None,
-                    }) as Box<dyn ExternalAgentServer>,
-                    ExternalAgentSource::Builtin,
-                    None,
-                    None,
-                ),
-            ),
-            (
-                CODEX_NAME.into(),
-                ExternalAgentEntry::new(
-                    Box::new(RemoteExternalAgentServer {
-                        project_id,
-                        upstream_client: upstream_client.clone(),
-                        name: CODEX_NAME.into(),
-                        status_tx: None,
-                        new_version_available_tx: None,
-                    }) as Box<dyn ExternalAgentServer>,
-                    ExternalAgentSource::Builtin,
-                    None,
-                    None,
-                ),
-            ),
-            (
-                GEMINI_NAME.into(),
-                ExternalAgentEntry::new(
-                    Box::new(RemoteExternalAgentServer {
-                        project_id,
-                        upstream_client: upstream_client.clone(),
-                        name: GEMINI_NAME.into(),
-                        status_tx: None,
-                        new_version_available_tx: None,
-                    }) as Box<dyn ExternalAgentServer>,
-                    ExternalAgentSource::Builtin,
-                    None,
-                    None,
-                ),
-            ),
-        ];
-
         Self {
             state: AgentServerStoreState::Remote {
                 project_id,
                 upstream_client,
             },
-            external_agents: external_agents.into_iter().collect(),
+            external_agents: HashMap::default(),
         }
     }
 
     pub fn collab() -> Self {
         Self {
             state: AgentServerStoreState::Collab,
-            external_agents: Default::default(),
+            external_agents: HashMap::default(),
         }
     }
 
@@ -1044,170 +945,6 @@ impl AgentServerStore {
     }
 }
 
-fn get_or_npm_install_builtin_agent(
-    binary_name: SharedString,
-    package_name: SharedString,
-    entrypoint_path: PathBuf,
-    minimum_version: Option<semver::Version>,
-    status_tx: Option<watch::Sender<SharedString>>,
-    new_version_available: Option<watch::Sender<Option<String>>>,
-    fs: Arc<dyn Fs>,
-    node_runtime: NodeRuntime,
-    cx: &mut AsyncApp,
-) -> Task<std::result::Result<AgentServerCommand, anyhow::Error>> {
-    cx.spawn(async move |cx| {
-        let node_path = node_runtime.binary_path().await?;
-        let dir = paths::external_agents_dir().join(binary_name.as_str());
-        fs.create_dir(&dir).await?;
-
-        let mut stream = fs.read_dir(&dir).await?;
-        let mut versions = Vec::new();
-        let mut to_delete = Vec::new();
-        while let Some(entry) = stream.next().await {
-            let Ok(entry) = entry else { continue };
-            let Some(file_name) = entry.file_name() else {
-                continue;
-            };
-
-            if let Some(name) = file_name.to_str()
-                && let Some(version) = semver::Version::from_str(name).ok()
-                && fs
-                    .is_file(&dir.join(file_name).join(&entrypoint_path))
-                    .await
-            {
-                versions.push((version, file_name.to_owned()));
-            } else {
-                to_delete.push(file_name.to_owned())
-            }
-        }
-
-        versions.sort();
-        let newest_version = if let Some((version, _)) = versions.last().cloned()
-            && minimum_version.is_none_or(|minimum_version| version >= minimum_version)
-        {
-            versions.pop()
-        } else {
-            None
-        };
-        log::debug!("existing version of {package_name}: {newest_version:?}");
-        to_delete.extend(versions.into_iter().map(|(_, file_name)| file_name));
-
-        cx.background_spawn({
-            let fs = fs.clone();
-            let dir = dir.clone();
-            async move {
-                for file_name in to_delete {
-                    fs.remove_dir(
-                        &dir.join(file_name),
-                        RemoveOptions {
-                            recursive: true,
-                            ignore_if_not_exists: false,
-                        },
-                    )
-                    .await
-                    .ok();
-                }
-            }
-        })
-        .detach();
-
-        let version = if let Some((version, file_name)) = newest_version {
-            cx.background_spawn({
-                let dir = dir.clone();
-                let fs = fs.clone();
-                async move {
-                    let latest_version = node_runtime
-                        .npm_package_latest_version(&package_name)
-                        .await
-                        .ok();
-                    if let Some(latest_version) = latest_version
-                        && latest_version != version
-                    {
-                        let download_result = download_latest_version(
-                            fs,
-                            dir.clone(),
-                            node_runtime,
-                            package_name.clone(),
-                        )
-                        .await
-                        .log_err();
-                        if let Some(mut new_version_available) = new_version_available
-                            && download_result.is_some()
-                        {
-                            new_version_available
-                                .send(Some(latest_version.to_string()))
-                                .ok();
-                        }
-                    }
-                }
-            })
-            .detach();
-            file_name
-        } else {
-            if let Some(mut status_tx) = status_tx {
-                status_tx.send("Installing…".into()).ok();
-            }
-            let dir = dir.clone();
-            cx.background_spawn(download_latest_version(
-                fs.clone(),
-                dir.clone(),
-                node_runtime,
-                package_name.clone(),
-            ))
-            .await?
-            .to_string()
-            .into()
-        };
-
-        let agent_server_path = dir.join(version).join(entrypoint_path);
-        let agent_server_path_exists = fs.is_file(&agent_server_path).await;
-        anyhow::ensure!(
-            agent_server_path_exists,
-            "Missing entrypoint path {} after installation",
-            agent_server_path.to_string_lossy()
-        );
-
-        anyhow::Ok(AgentServerCommand {
-            path: node_path,
-            args: vec![agent_server_path.to_string_lossy().into_owned()],
-            env: None,
-        })
-    })
-}
-
-async fn download_latest_version(
-    fs: Arc<dyn Fs>,
-    dir: PathBuf,
-    node_runtime: NodeRuntime,
-    package_name: SharedString,
-) -> Result<Version> {
-    log::debug!("downloading latest version of {package_name}");
-
-    let tmp_dir = tempfile::tempdir_in(&dir)?;
-
-    node_runtime
-        .npm_install_packages(tmp_dir.path(), &[(&package_name, "latest")])
-        .await?;
-
-    let version = node_runtime
-        .npm_package_installed_version(tmp_dir.path(), &package_name)
-        .await?
-        .context("expected package to be installed")?;
-
-    fs.rename(
-        &tmp_dir.keep(),
-        &dir.join(version.to_string()),
-        RenameOptions {
-            ignore_if_exists: true,
-            overwrite: true,
-            create_parents: false,
-        },
-    )
-    .await?;
-
-    anyhow::Ok(version)
-}
-
 struct RemoteExternalAgentServer {
     project_id: u64,
     upstream_client: Entity<RemoteClient>,
@@ -1267,286 +1004,6 @@ impl ExternalAgentServer for RemoteExternalAgentServer {
     fn as_any_mut(&mut self) -> &mut dyn Any {
         self
     }
-}
-
-struct LocalClaudeCode {
-    fs: Arc<dyn Fs>,
-    node_runtime: NodeRuntime,
-    project_environment: Entity<ProjectEnvironment>,
-    custom_command: Option<AgentServerCommand>,
-    settings_env: Option<HashMap<String, String>>,
-}
-
-impl ExternalAgentServer for LocalClaudeCode {
-    fn get_command(
-        &mut self,
-        extra_env: HashMap<String, String>,
-        status_tx: Option<watch::Sender<SharedString>>,
-        new_version_available_tx: Option<watch::Sender<Option<String>>>,
-        cx: &mut AsyncApp,
-    ) -> Task<Result<(AgentServerCommand, Option<task::SpawnInTerminal>)>> {
-        let fs = self.fs.clone();
-        let node_runtime = self.node_runtime.clone();
-        let project_environment = self.project_environment.downgrade();
-        let custom_command = self.custom_command.clone();
-        let settings_env = self.settings_env.clone();
-
-        cx.spawn(async move |cx| {
-            let mut env = project_environment
-                .update(cx, |project_environment, cx| {
-                    project_environment.local_directory_environment(
-                        &Shell::System,
-                        paths::home_dir().as_path().into(),
-                        cx,
-                    )
-                })?
-                .await
-                .unwrap_or_default();
-            env.insert("ANTHROPIC_API_KEY".into(), "".into());
-
-            env.extend(settings_env.unwrap_or_default());
-
-            let (mut command, login_command) = if let Some(mut custom_command) = custom_command {
-                custom_command.env = Some(env);
-                (custom_command, None)
-            } else {
-                let mut command = get_or_npm_install_builtin_agent(
-                    "claude-agent-acp".into(),
-                    "@zed-industries/claude-agent-acp".into(),
-                    "node_modules/@zed-industries/claude-agent-acp/dist/index.js".into(),
-                    Some("0.17.0".parse().unwrap()),
-                    status_tx,
-                    new_version_available_tx,
-                    fs,
-                    node_runtime,
-                    cx,
-                )
-                .await?;
-                command.env = Some(env);
-
-                (command, None)
-            };
-
-            command.env.get_or_insert_default().extend(extra_env);
-            Ok((command, login_command))
-        })
-    }
-
-    fn as_any_mut(&mut self) -> &mut dyn Any {
-        self
-    }
-}
-
-struct LocalCodex {
-    fs: Arc<dyn Fs>,
-    project_environment: Entity<ProjectEnvironment>,
-    http_client: Arc<dyn HttpClient>,
-    custom_command: Option<AgentServerCommand>,
-    settings_env: Option<HashMap<String, String>>,
-}
-
-impl ExternalAgentServer for LocalCodex {
-    fn get_command(
-        &mut self,
-        extra_env: HashMap<String, String>,
-        mut status_tx: Option<watch::Sender<SharedString>>,
-        _new_version_available_tx: Option<watch::Sender<Option<String>>>,
-        cx: &mut AsyncApp,
-    ) -> Task<Result<(AgentServerCommand, Option<task::SpawnInTerminal>)>> {
-        let fs = self.fs.clone();
-        let project_environment = self.project_environment.downgrade();
-        let http = self.http_client.clone();
-        let custom_command = self.custom_command.clone();
-        let settings_env = self.settings_env.clone();
-        cx.spawn(async move |cx| {
-            let mut env = project_environment
-                .update(cx, |project_environment, cx| {
-                    project_environment.local_directory_environment(
-                        &Shell::System,
-                        paths::home_dir().as_path().into(),
-                        cx,
-                    )
-                })?
-                .await
-                .unwrap_or_default();
-            env.extend(settings_env.unwrap_or_default());
-
-            let mut command = if let Some(mut custom_command) = custom_command {
-                custom_command.env = Some(env);
-                custom_command
-            } else {
-                let dir = paths::external_agents_dir().join(CODEX_NAME);
-                fs.create_dir(&dir).await?;
-
-                let bin_name = if cfg!(windows) {
-                    "codex-acp.exe"
-                } else {
-                    "codex-acp"
-                };
-
-                let find_latest_local_version = async || -> Option<PathBuf> {
-                    let mut local_versions: Vec<(semver::Version, String)> = Vec::new();
-                    let mut stream = fs.read_dir(&dir).await.ok()?;
-                    while let Some(entry) = stream.next().await {
-                        let Ok(entry) = entry else { continue };
-                        let Some(file_name) = entry.file_name() else {
-                            continue;
-                        };
-                        let version_path = dir.join(&file_name);
-                        if fs.is_file(&version_path.join(bin_name)).await {
-                            let version_str = file_name.to_string_lossy();
-                            if let Ok(version) =
-                                semver::Version::from_str(version_str.trim_start_matches('v'))
-                            {
-                                local_versions.push((version, version_str.into_owned()));
-                            }
-                        }
-                    }
-                    local_versions.sort_by(|(a, _), (b, _)| a.cmp(b));
-                    local_versions.last().map(|(_, v)| dir.join(v))
-                };
-
-                let fallback_to_latest_local_version =
-                    async |err: anyhow::Error| -> Result<PathBuf, anyhow::Error> {
-                        if let Some(local) = find_latest_local_version().await {
-                            log::info!(
-                                "Falling back to locally installed Codex version: {}",
-                                local.display()
-                            );
-                            Ok(local)
-                        } else {
-                            Err(err)
-                        }
-                    };
-
-                let version_dir = match ::http_client::github::latest_github_release(
-                    CODEX_ACP_REPO,
-                    true,
-                    false,
-                    http.clone(),
-                )
-                .await
-                {
-                    Ok(release) => {
-                        let version_dir = dir.join(&release.tag_name);
-                        if !fs.is_dir(&version_dir).await {
-                            if let Some(ref mut status_tx) = status_tx {
-                                status_tx.send("Installing…".into()).ok();
-                            }
-
-                            let tag = release.tag_name.clone();
-                            let version_number = tag.trim_start_matches('v');
-                            let asset_name = asset_name(version_number)
-                                .context("codex acp is not supported for this architecture")?;
-                            let asset = release
-                                .assets
-                                .into_iter()
-                                .find(|asset| asset.name == asset_name)
-                                .with_context(|| {
-                                    format!("no asset found matching `{asset_name:?}`")
-                                })?;
-                            // Strip "sha256:" prefix from digest if present (GitHub API format)
-                            let digest = asset
-                                .digest
-                                .as_deref()
-                                .and_then(|d| d.strip_prefix("sha256:").or(Some(d)));
-                            match ::http_client::github_download::download_server_binary(
-                                &*http,
-                                &asset.browser_download_url,
-                                digest,
-                                &version_dir,
-                                if cfg!(target_os = "windows") {
-                                    AssetKind::Zip
-                                } else {
-                                    AssetKind::TarGz
-                                },
-                            )
-                            .await
-                            {
-                                Ok(()) => {
-                                    // remove older versions
-                                    util::fs::remove_matching(&dir, |entry| entry != version_dir)
-                                        .await;
-                                    version_dir
-                                }
-                                Err(err) => {
-                                    log::error!(
-                                        "Failed to download Codex release {}: {err:#}",
-                                        release.tag_name
-                                    );
-                                    fallback_to_latest_local_version(err).await?
-                                }
-                            }
-                        } else {
-                            version_dir
-                        }
-                    }
-                    Err(err) => {
-                        log::error!("Failed to fetch Codex latest release: {err:#}");
-                        fallback_to_latest_local_version(err).await?
-                    }
-                };
-
-                let bin_path = version_dir.join(bin_name);
-                anyhow::ensure!(
-                    fs.is_file(&bin_path).await,
-                    "Missing Codex binary at {} after installation",
-                    bin_path.to_string_lossy()
-                );
-
-                let mut cmd = AgentServerCommand {
-                    path: bin_path,
-                    args: Vec::new(),
-                    env: None,
-                };
-                cmd.env = Some(env);
-                cmd
-            };
-
-            command.env.get_or_insert_default().extend(extra_env);
-            Ok((command, None))
-        })
-    }
-
-    fn as_any_mut(&mut self) -> &mut dyn Any {
-        self
-    }
-}
-
-pub const CODEX_ACP_REPO: &str = "zed-industries/codex-acp";
-
-fn get_platform_info() -> Option<(&'static str, &'static str, &'static str)> {
-    let arch = if cfg!(target_arch = "x86_64") {
-        "x86_64"
-    } else if cfg!(target_arch = "aarch64") {
-        "aarch64"
-    } else {
-        return None;
-    };
-
-    let platform = if cfg!(target_os = "macos") {
-        "apple-darwin"
-    } else if cfg!(target_os = "windows") {
-        "pc-windows-msvc"
-    } else if cfg!(target_os = "linux") {
-        "unknown-linux-gnu"
-    } else {
-        return None;
-    };
-
-    // Windows uses .zip in release assets
-    let ext = if cfg!(target_os = "windows") {
-        "zip"
-    } else {
-        "tar.gz"
-    };
-
-    Some((arch, platform, ext))
-}
-
-fn asset_name(version: &str) -> Option<String> {
-    let (arch, platform, ext) = get_platform_info()?;
-    Some(format!("codex-acp-{version}-{arch}-{platform}.{ext}"))
 }
 
 pub struct LocalExtensionArchiveAgent {
