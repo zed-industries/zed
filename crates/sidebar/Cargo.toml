@@ -17,6 +17,7 @@ test-support = []
 
 [dependencies]
 acp_thread.workspace = true
+agent.workspace = true
 agent_ui.workspace = true
 chrono.workspace = true
 fs.workspace = true
@@ -30,6 +31,7 @@ ui.workspace = true
 ui_input.workspace = true
 util.workspace = true
 workspace.workspace = true
+worktree.workspace = true
 
 [dev-dependencies]
 editor.workspace = true

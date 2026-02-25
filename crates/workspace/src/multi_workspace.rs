@@ -95,6 +95,16 @@ impl<T: Sidebar> SidebarHandle for Entity<T> {
     }
 }
 
+// Core concept: Wrap the Entity<Workspace> in an Entity<MultiWorkspace>.
+// - Core approach: leave the existing Workspace alone, so that we can get a compiler driven refactor
+// - The MultiWorkspace only handles window-relative tasks, initially just maintaining
+//   the active index and sidebar state.
+// - The MultiWorkspace creates the layout for the sidebar, but the actually implementation
+//   of the sidebar is left for a trait (similar to how panels and items work today)
+// - This allows us to centralize _most_ of the workspace management logic into the sidebar.
+// - MultiWorkspace still retains the actual registered Workspace state, as some UI elements
+//   want to broadcast queries to all workspaces (Settings UI, Vim management, and workspace opening)
+
 pub struct MultiWorkspace {
     window_id: WindowId,
     workspaces: Vec<Entity<Workspace>>,

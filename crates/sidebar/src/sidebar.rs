@@ -1,4 +1,7 @@
+#![allow(unused)]
+//TODO!(remove above)
 use acp_thread::ThreadStatus;
+use agent::DbThreadMetadata;
 use agent_ui::{AgentPanel, AgentPanelEvent};
 use chrono::{Datelike, Local, NaiveDate, TimeDelta};
 
@@ -26,9 +29,236 @@ use ui::{
 use ui_input::ErasedEditor;
 use util::ResultExt as _;
 use workspace::{
-    FocusWorkspaceSidebar, MultiWorkspace, NewWorkspaceInWindow, Sidebar as WorkspaceSidebar,
-    SidebarEvent, ToggleWorkspaceSidebar, Workspace,
+    FocusWorkspaceSidebar, MultiWorkspace, NewWorkspaceInWindow, PathList,
+    Sidebar as WorkspaceSidebar, SidebarEvent, ToggleWorkspaceSidebar, Workspace,
 };
+use worktree::Worktree;
+
+// =============================================================================
+// Active Projects Architecture — Core Data Structures
+//
+// See ACTIVE_PROJECTS_ARCHITECTURE.md for the full narrative.
+//
+// The sidebar composes three data sources:
+// 1. WorkspaceStore — existing app-global entity for global workspaces (crates/workspace/src/workspace.rs),
+// 2. The thread database — historical thread metadata, includes worktree information (DbThreadMetadata)
+// 3. The active projects list - Maintained by this crate, mostly-manually managed by the user
+//                               (though we will auto-promote workspaces to the active project list)
+//
+// All 3 of these data sets are slightly overlapping, but they're also distinct.
+// The sidebar reads all 3 of these, dedups, and derives the Project groups from them
+// =============================================================================
+
+/// Compute a PathList from a workspace's current visible worktree paths.
+/// Used as the grouping key during project group derivation.
+fn path_list_from_workspace(workspace: &Workspace, cx: &App) -> PathList {
+    let paths: Vec<PathBuf> = workspace
+        .worktrees(cx)
+        .filter(|wt| wt.read(cx).is_visible())
+        .map(|wt| canonicalize_worktree_path(&wt.read(cx)))
+        .collect();
+    PathList::new(&paths)
+}
+
+/// If this worktree is a git worktree, returns the main repository's working
+/// directory so that e.g. `/tmp/zed-olivetti` and `/home/user/zed` resolve to
+/// the same PathList. For a normal checkout, returns abs_path unchanged.
+///
+fn canonicalize_worktree_path(worktree: &Worktree) -> PathBuf {
+    // Query the worktree's canonical working directory.
+    // The worktree crate already computes `common_dir_abs_path` and `dot_git_abs_path`
+    // in `LocalRepositoryEntry`; this could be done by exposing a public method like
+    // `Worktree::canonical_work_dir() -> Arc<Path>` that returns
+    // `common_dir.parent()` when they differ (git worktree), and the root abs path otherwise.
+    worktree.abs_path().to_path_buf()
+}
+
+/// Derive a display name from a PathList's folder names (e.g., "zed" or "ex, zed").
+fn display_name_for_path_list(path_list: &PathList) -> SharedString {
+    let names: Vec<&str> = path_list
+        .paths()
+        .iter()
+        .filter_map(|p| p.file_name().map(|n| n.to_str().unwrap_or("?")))
+        .collect();
+    if names.is_empty() {
+        "Empty Project".into()
+    } else {
+        names.join(", ").into()
+    }
+}
+
+/// Computed at render time by derive_project_groups(). Never stored.
+#[derive(Clone)]
+struct ProjectGroup {
+    /// The sorted folder paths that define this group.
+    path_list: PathList,
+    /// Display name derived from folder names (e.g., "zed" or "ex, zed").
+    display_name: SharedString,
+    /// The entries in this group, ready for rendering.
+    entries: Vec<ThreadEntry>,
+}
+
+/// A single entry in a project group, ready for rendering.
+///
+/// Each entry represents either:
+/// - A workspace with a live active thread (thread_info from AgentPanel)
+/// - A historical thread from the DB (thread_info from HistoricalThread)
+/// - A workspace with no thread at all (thread_info is None)
+#[derive(Clone)]
+struct ThreadEntry {
+    workspace: Entity<Workspace>,
+    thread_info: Option<SidebarThreadInfo>,
+    /// The window currently displaying this workspace, if any.
+    window: Option<gpui::WindowId>,
+    /// Git worktree annotation (e.g., "in olivetti") if applicable.
+    worktree_annotation: Option<SharedString>,
+}
+
+/// Assembled during project group derivation for display purposes.
+/// Not stored in the work registry — composed at render time from
+/// thread database records and live thread state.
+#[derive(Clone, Debug)]
+struct SidebarThreadInfo {
+    title: SharedString,
+    icon: IconName,
+    agent_name: Option<SharedString>,
+    status: AgentThreadStatus,
+    lines_added: Option<i32>,
+    lines_removed: Option<i32>,
+    updated_at: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+/// Derive project groups by merging three data sources:
+///
+/// 1. **Active projects** (persisted) — always shown, survive window close / app restart.
+/// 2. **Windowed workspaces** (ephemeral) — shown while their window is open, vanish on close.
+/// 3. **Thread DB metadata** (historical) — enriches groups with past threads.
+///
+/// The visible set is the union of (1) and (2), deduped by entity identity.
+/// Thread metadata from (3) is matched to groups by PathList to produce
+/// additional historical thread entries within each group.
+///
+/// This is a pure function — no side effects, no stored state.
+fn derive_project_groups(
+    windowed_workspaces: &[(gpui::WindowId, Entity<Workspace>)],
+    active_projects: &[Entity<Workspace>],
+    thread_metadata: &[DbThreadMetadata],
+    cx: &App,
+) -> Vec<ProjectGroup> {
+    // === Source 2: Build window lookup from windowed workspaces ===
+    let window_for_workspace: HashMap<_, _> = windowed_workspaces
+        .iter()
+        .map(|(window_id, workspace)| (workspace.entity_id(), *window_id))
+        .collect();
+
+    // === Merge sources 1 + 2, deduping by PathList ===
+    // Active projects are inserted first so their Entity<Workspace> wins when
+    // a windowed workspace has the same folder set. Windowed workspaces that
+    // match an existing group only contribute their window assignment.
+    let mut groups: Vec<(PathList, Entity<Workspace>)> = Vec::new();
+    for workspace in active_projects {
+        let path_list = path_list_from_workspace(workspace.read(cx), cx);
+        if !groups.iter().any(|(key, _)| *key == path_list) {
+            groups.push((path_list, workspace.clone()));
+        }
+    }
+    for (_, workspace) in windowed_workspaces {
+        let path_list = path_list_from_workspace(workspace.read(cx), cx);
+        if !groups.iter().any(|(key, _)| *key == path_list) {
+            groups.push((path_list, workspace.clone()));
+        }
+    }
+
+    // === Build entries per group, merging live thread state + DB history ===
+    let mut result: Vec<ProjectGroup> = groups
+        .into_iter()
+        .map(|(path_list, workspace)| {
+            let display_name = display_name_for_path_list(&path_list);
+
+            let window = window_for_workspace.get(&workspace.entity_id()).copied();
+            let thread_info = sidebar_thread_info(&workspace, cx);
+            let mut entries: Vec<ThreadEntry> = vec![ThreadEntry {
+                workspace: workspace.clone(),
+                thread_info,
+                window,
+                worktree_annotation: None, // TODO!(): git worktree detection
+            }];
+
+            // === Source 3: Historical threads from the DB ===
+            // Add entries for past threads that match this group's PathList.
+            // Skip any thread that's already represented by a live entry above.
+            //
+            // TODO!: DbThreadMetadata doesn't yet store folder paths,
+            // so we can't match threads to groups by PathList. Once the thread
+            // DB has a folder-paths column, filter thread_metadata by path_list
+            // here. For now, thread_metadata is unused.
+            let live_thread_ids: HashSet<SharedString> = entries
+                .iter()
+                .filter_map(|e| e.thread_info.as_ref().map(|info| info.title.clone()))
+                .collect();
+
+            {
+                for thread in thread_metadata {
+                    // TODO!: replace with path_list match once DB stores folder paths
+                    if live_thread_ids.contains(&thread.title) {
+                        continue;
+                    }
+                    entries.push(ThreadEntry {
+                        workspace: workspace.clone(), // same workspace for all entries in group
+                        thread_info: Some(SidebarThreadInfo {
+                            title: thread.title.clone(),
+                            icon: IconName::ZedAgent,
+                            agent_name: None,
+                            status: AgentThreadStatus::Completed,
+                            lines_added: None,
+                            lines_removed: None,
+                            updated_at: Some(thread.updated_at),
+                        }),
+                        window: None,
+                        worktree_annotation: None,
+                    });
+                }
+            }
+
+            ProjectGroup {
+                path_list,
+                display_name,
+                entries,
+            }
+        })
+        .collect();
+    result.sort_by(|a, b| a.display_name.cmp(&b.display_name));
+    result
+}
+
+/// Extract thread display info from a workspace's active agent thread.
+fn sidebar_thread_info(workspace: &Entity<Workspace>, cx: &App) -> Option<SidebarThreadInfo> {
+    let agent_panel = workspace.read(cx).panel::<AgentPanel>(cx)?;
+    let agent_panel_ref = agent_panel.read(cx);
+    let thread_view = agent_panel_ref.as_active_thread_view(cx)?.read(cx);
+    let thread = thread_view.thread.read(cx);
+
+    let status = if thread.is_waiting_for_confirmation() {
+        AgentThreadStatus::WaitingForConfirmation
+    } else if thread.had_error() {
+        AgentThreadStatus::Error
+    } else {
+        match thread.status() {
+            ThreadStatus::Generating => AgentThreadStatus::Running,
+            ThreadStatus::Idle => AgentThreadStatus::Completed,
+        }
+    };
+
+    Some(SidebarThreadInfo {
+        title: thread.title(),
+        icon: thread_view.agent_icon,
+        agent_name: None, // TODO!: from thread DB
+        status,
+        lines_added: None,   // TODO!: from thread DB
+        lines_removed: None, // TODO!: from thread DB
+        updated_at: None,    // TODO!: from thread DB
+    })
+}
 
 #[derive(Clone, Debug)]
 struct AgentThreadInfo {

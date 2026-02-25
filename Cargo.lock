@@ -15511,6 +15511,7 @@ name = "sidebar"
 version = "0.1.0"
 dependencies = [
  "acp_thread",
+ "agent",
  "agent_ui",
  "chrono",
  "editor",
@@ -15527,6 +15528,7 @@ dependencies = [
  "ui_input",
  "util",
  "workspace",
+ "worktree",
 ]
 
 [[package]]
