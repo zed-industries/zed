@@ -1833,6 +1833,11 @@ impl DiffBaseBranchPicker {
             .detach_and_log_err(cx);
         }
 
+        cx.subscribe(&picker, |_, _, _: &DismissEvent, cx| {
+            cx.emit(DismissEvent);
+        })
+        .detach();
+
         Self { picker }
     }
 }
