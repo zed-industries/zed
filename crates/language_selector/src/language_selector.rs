@@ -330,7 +330,7 @@ mod tests {
     use serde_json::json;
     use std::sync::Arc;
     use util::{path, rel_path::rel_path};
-    use workspace::{AppState, Workspace};
+    use workspace::{AppState, MultiWorkspace, Workspace};
 
     fn init_test(cx: &mut TestAppContext) -> Arc<AppState> {
         cx.update(|cx| {
@@ -542,8 +542,10 @@ mod tests {
             .await;
 
         let project = Project::test(app_state.fs.clone(), ["/test".as_ref()], cx).await;
-        let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace =
+            multi_workspace.read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone());
         register_test_languages(&project, cx);
 
         let rust_editor = open_file_editor(&workspace, &project, "rust_file.rs", cx).await;
