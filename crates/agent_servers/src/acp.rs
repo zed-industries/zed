@@ -10,7 +10,7 @@ use collections::HashMap;
 use futures::AsyncBufReadExt as _;
 use futures::io::BufReader;
 use project::Project;
-use project::agent_server_store::AgentServerCommand;
+use project::agent_server_store::{AgentServerCommand, GEMINI_NAME};
 use serde::Deserialize;
 use settings::Settings as _;
 use task::ShellBuilder;
@@ -319,8 +319,27 @@ impl AcpConnection {
             None
         };
 
+        // TODO: Remove this override once Google team releases their official auth methods
+        let auth_methods = if server_name == GEMINI_NAME {
+            let mut args = command.args.clone();
+            args.retain(|a| a != "--experimental-acp");
+            let value = serde_json::json!({
+                "label": "gemini /auth",
+                "command": command.path.to_string_lossy().into_owned(),
+                "args": args,
+                "env": command.env.clone().unwrap_or_default(),
+            });
+            let meta = acp::Meta::from_iter([("terminal-auth".to_string(), value)]);
+            vec![
+                acp::AuthMethod::new("spawn-gemini-cli", "Login")
+                    .description("Login with your Google or Vertex AI account")
+                    .meta(meta),
+            ]
+        } else {
+            response.auth_methods
+        };
         Ok(Self {
-            auth_methods: response.auth_methods,
+            auth_methods,
             connection,
             server_name,
             display_name,

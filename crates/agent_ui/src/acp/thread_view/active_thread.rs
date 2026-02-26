@@ -189,7 +189,6 @@ impl DiffStats {
 pub struct AcpThreadView {
     pub id: acp::SessionId,
     pub parent_id: Option<acp::SessionId>,
-    pub login: Option<task::SpawnInTerminal>, // is some <=> Active | Unauthenticated
     pub thread: Entity<AcpThread>,
     pub(crate) conversation: Entity<super::Conversation>,
     pub server_view: WeakEntity<AcpServerView>,
@@ -281,7 +280,6 @@ impl AcpThreadView {
         parent_id: Option<acp::SessionId>,
         thread: Entity<AcpThread>,
         conversation: Entity<super::Conversation>,
-        login: Option<task::SpawnInTerminal>,
         server_view: WeakEntity<AcpServerView>,
         agent_icon: IconName,
         agent_name: SharedString,
@@ -387,7 +385,6 @@ impl AcpThreadView {
             focus_handle: cx.focus_handle(),
             thread,
             conversation,
-            login,
             server_view,
             agent_icon,
             agent_name,
@@ -658,7 +655,7 @@ impl AcpThreadView {
         let text = text.trim();
         if text == "/login" || text == "/logout" {
             let connection = thread.read(cx).connection().clone();
-            let can_login = !connection.auth_methods().is_empty() || self.login.is_some();
+            let can_login = !connection.auth_methods().is_empty();
             // Does the agent have a specific logout command? Prefer that in case they need to reset internal state.
             let logout_supported = text == "/logout"
                 && self

@@ -21,7 +21,7 @@ use rpc::{
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{RegisterSetting, SettingsStore};
-use task::{Shell, SpawnInTerminal};
+use task::Shell;
 use util::{ResultExt as _, debug_panic};
 
 use crate::ProjectEnvironment;
@@ -104,7 +104,7 @@ pub trait ExternalAgentServer {
         status_tx: Option<watch::Sender<SharedString>>,
         new_version_available_tx: Option<watch::Sender<Option<String>>>,
         cx: &mut AsyncApp,
-    ) -> Task<Result<(AgentServerCommand, Option<task::SpawnInTerminal>)>>;
+    ) -> Task<Result<AgentServerCommand>>;
 
     fn as_any_mut(&mut self) -> &mut dyn Any;
 }
@@ -681,7 +681,7 @@ impl AgentServerStore {
         envelope: TypedEnvelope<proto::GetAgentServerCommand>,
         mut cx: AsyncApp,
     ) -> Result<proto::AgentServerCommand> {
-        let (command, login_command) = this
+        let command = this
             .update(&mut cx, |this, cx| {
                 let AgentServerStoreState::Local {
                     downstream_client, ..
@@ -759,9 +759,9 @@ impl AgentServerStore {
                 .env
                 .map(|env| env.into_iter().collect())
                 .unwrap_or_default(),
-            // This is no longer used, but returned for backwards compatibility
+            // root_dir and login are no longer used, but returned for backwards compatibility
             root_dir: paths::home_dir().to_string_lossy().to_string(),
-            login: login_command.map(|cmd| cmd.to_proto()),
+            login: None,
         })
     }
 
@@ -959,7 +959,7 @@ impl ExternalAgentServer for RemoteExternalAgentServer {
         status_tx: Option<watch::Sender<SharedString>>,
         new_version_available_tx: Option<watch::Sender<Option<String>>>,
         cx: &mut AsyncApp,
-    ) -> Task<Result<(AgentServerCommand, Option<task::SpawnInTerminal>)>> {
+    ) -> Task<Result<AgentServerCommand>> {
         let project_id = self.project_id;
         let name = self.name.to_string();
         let upstream_client = self.upstream_client.downgrade();
@@ -989,14 +989,11 @@ impl ExternalAgentServer for RemoteExternalAgentServer {
                     Interactive::No,
                 )
             })??;
-            Ok((
-                AgentServerCommand {
-                    path: command.program.into(),
-                    args: command.args,
-                    env: Some(command.env),
-                },
-                response.login.map(SpawnInTerminal::from_proto),
-            ))
+            Ok(AgentServerCommand {
+                path: command.program.into(),
+                args: command.args,
+                env: Some(command.env),
+            })
         })
     }
 
@@ -1023,7 +1020,7 @@ impl ExternalAgentServer for LocalExtensionArchiveAgent {
         _status_tx: Option<watch::Sender<SharedString>>,
         _new_version_available_tx: Option<watch::Sender<Option<String>>>,
         cx: &mut AsyncApp,
-    ) -> Task<Result<(AgentServerCommand, Option<task::SpawnInTerminal>)>> {
+    ) -> Task<Result<AgentServerCommand>> {
         let fs = self.fs.clone();
         let http_client = self.http_client.clone();
         let node_runtime = self.node_runtime.clone();
@@ -1199,7 +1196,7 @@ impl ExternalAgentServer for LocalExtensionArchiveAgent {
                 env: Some(env),
             };
 
-            Ok((command, None))
+            Ok(command)
         })
     }
 
@@ -1225,7 +1222,7 @@ impl ExternalAgentServer for LocalRegistryArchiveAgent {
         _status_tx: Option<watch::Sender<SharedString>>,
         _new_version_available_tx: Option<watch::Sender<Option<String>>>,
         cx: &mut AsyncApp,
-    ) -> Task<Result<(AgentServerCommand, Option<task::SpawnInTerminal>)>> {
+    ) -> Task<Result<AgentServerCommand>> {
         let fs = self.fs.clone();
         let http_client = self.http_client.clone();
         let node_runtime = self.node_runtime.clone();
@@ -1383,7 +1380,7 @@ impl ExternalAgentServer for LocalRegistryArchiveAgent {
                 env: Some(env),
             };
 
-            Ok((command, None))
+            Ok(command)
         })
     }
 
@@ -1408,7 +1405,7 @@ impl ExternalAgentServer for LocalRegistryNpxAgent {
         _status_tx: Option<watch::Sender<SharedString>>,
         _new_version_available_tx: Option<watch::Sender<Option<String>>>,
         cx: &mut AsyncApp,
-    ) -> Task<Result<(AgentServerCommand, Option<task::SpawnInTerminal>)>> {
+    ) -> Task<Result<AgentServerCommand>> {
         let node_runtime = self.node_runtime.clone();
         let project_environment = self.project_environment.downgrade();
         let package = self.package.clone();
@@ -1453,17 +1450,8 @@ impl ExternalAgentServer for LocalRegistryNpxAgent {
                 args: npm_command.args,
                 env: Some(env),
             };
-            // todo!() -> move this to auth code somewhere
-            //        // Gemini CLI doesn't seem to have a dedicated invocation for logging in--we just run it normally without any arguments.
-            // let login = task::SpawnInTerminal {
-            //     command: Some(command.path.to_string_lossy().into_owned()),
-            //     args: command.args.clone(),
-            //     env: command.env.clone().unwrap_or_default(),
-            //     label: "gemini /auth".into(),
-            //     ..Default::default()
-            // };
 
-            Ok((command, None))
+            Ok(command)
         })
     }
 
@@ -1484,7 +1472,7 @@ impl ExternalAgentServer for LocalCustomAgent {
         _status_tx: Option<watch::Sender<SharedString>>,
         _new_version_available_tx: Option<watch::Sender<Option<String>>>,
         cx: &mut AsyncApp,
-    ) -> Task<Result<(AgentServerCommand, Option<task::SpawnInTerminal>)>> {
+    ) -> Task<Result<AgentServerCommand>> {
         let mut command = self.command.clone();
         let project_environment = self.project_environment.downgrade();
         cx.spawn(async move |cx| {
@@ -1501,7 +1489,7 @@ impl ExternalAgentServer for LocalCustomAgent {
             env.extend(command.env.unwrap_or_default());
             env.extend(extra_env);
             command.env = Some(env);
-            Ok((command, None))
+            Ok(command)
         })
     }
 

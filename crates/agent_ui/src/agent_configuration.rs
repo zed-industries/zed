@@ -20,6 +20,7 @@ use gpui::{
     Action, AnyView, App, AsyncWindowContext, Corner, Entity, EventEmitter, FocusHandle, Focusable,
     ScrollHandle, Subscription, Task, WeakEntity,
 };
+use itertools::Itertools;
 use language::LanguageRegistry;
 use language_model::{
     IconOrSvg, LanguageModelProvider, LanguageModelProviderId, LanguageModelRegistry,
@@ -955,6 +956,7 @@ impl AgentConfiguration {
                 let source = agent_server_store.agent_source(&name).unwrap_or_default();
                 (name, icon, display_name, source)
             })
+            .sorted_unstable_by_key(|(_, _, display_name, _)| display_name.to_lowercase())
             .collect();
 
         let add_agent_popover = PopoverMenu::new("add-agent-server-popover")

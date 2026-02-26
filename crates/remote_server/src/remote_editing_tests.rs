@@ -2030,7 +2030,7 @@ async fn test_remote_external_agent_server(
             .collect::<Vec<_>>()
     });
     pretty_assertions::assert_eq!(names, ["gemini", "codex", "claude", "foo"]);
-    let (command, login) = project
+    let command = project
         .update(cx, |project, cx| {
             project.agent_server_store().update(cx, |store, cx| {
                 store
@@ -2057,7 +2057,6 @@ async fn test_remote_external_agent_server(
             ]))
         }
     );
-    assert!(login.is_none());
 }
 
 pub async fn init_test(

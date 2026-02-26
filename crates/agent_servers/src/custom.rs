@@ -323,7 +323,7 @@ impl AgentServer for CustomAgentServer {
         &self,
         delegate: AgentServerDelegate,
         cx: &mut App,
-    ) -> Task<Result<(Rc<dyn AgentConnection>, Option<task::SpawnInTerminal>)>> {
+    ) -> Task<Result<Rc<dyn AgentConnection>>> {
         let name = self.name();
         let display_name = delegate
             .store
@@ -369,6 +369,7 @@ impl AgentServer for CustomAgentServer {
                 (config_options, is_registry)
             });
 
+        // Intermediate step to allow for previous built-ins to also be triggered if they aren't in settings yet.
         let is_registry_agent = is_registry_agent || is_previous_built_in;
 
         if is_registry_agent {
@@ -407,7 +408,7 @@ impl AgentServer for CustomAgentServer {
                     extra_env.insert("GEMINI_API_KEY".into(), api_key);
                 }
             }
-            let (command, login) = store
+            let command = store
                 .update(cx, |store, cx| {
                     let agent = store
                         .get_external_agent(&ExternalAgentServerName(name.clone()))
@@ -432,7 +433,7 @@ impl AgentServer for CustomAgentServer {
                 cx,
             )
             .await?;
-            Ok((connection, login))
+            Ok(connection)
         })
     }
 
