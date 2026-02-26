@@ -46,7 +46,7 @@ use crate::{
 };
 use crate::{
     ManageProfiles,
-    acp::thread_view::{AcpThreadView, AcpThreadViewEvent},
+    acp::thread_view::{AcpThreadView, AcpThreadViewEvent, FirstSendPolicy},
 };
 use agent_settings::AgentSettings;
 use ai_onboarding::AgentPanelOnboarding;
@@ -1775,7 +1775,7 @@ impl AgentPanel {
         self._active_view_observation = match &self.active_view {
             ActiveView::AgentThread { server_view } => {
                 self._thread_view_subscription =
-                    Self::subscribe_to_active_thread_view(&server_view, window, cx);
+                    Self::subscribe_to_active_thread_view(server_view, window, cx);
                 Some(cx.subscribe_in(
                     server_view,
                     window,
@@ -1783,6 +1783,7 @@ impl AgentPanel {
                         AcpServerViewEvent::ActiveThreadChanged => {
                             this._thread_view_subscription =
                                 Self::subscribe_to_active_thread_view(&server_view, window, cx);
+                            this.sync_active_thread_first_send_policy(cx);
                             cx.emit(AgentPanelEvent::ActiveViewChanged);
                             this.serialize(cx);
                             cx.notify();
@@ -1795,6 +1796,8 @@ impl AgentPanel {
                 None
             }
         };
+
+        self.sync_active_thread_first_send_policy(cx);
 
         let is_in_agent_history = matches!(
             self.active_view,
@@ -1929,6 +1932,24 @@ impl AgentPanel {
         &self.thread_target
     }
 
+    fn first_send_policy_for_thread_target(&self) -> FirstSendPolicy {
+        match self.thread_target {
+            ThreadTarget::NewWorktree => FirstSendPolicy::InterceptAndEmitRequested,
+            ThreadTarget::LocalProject | ThreadTarget::ExistingWorktree { .. } => {
+                FirstSendPolicy::SendNormally
+            }
+        }
+    }
+
+    fn sync_active_thread_first_send_policy(&mut self, cx: &mut Context<Self>) {
+        let policy = self.first_send_policy_for_thread_target();
+        if let Some(thread_view) = self.as_active_thread_view(cx) {
+            thread_view.update(cx, |thread_view, _| {
+                thread_view.set_first_send_policy(policy);
+            });
+        }
+    }
+
     fn set_thread_target(&mut self, action: &SetThreadTarget, cx: &mut Context<Self>) {
         if matches!(
             action.kind,
@@ -1984,6 +2005,7 @@ impl AgentPanel {
             }
         };
         self.thread_target = new_target;
+        self.sync_active_thread_first_send_policy(cx);
         self.serialize(cx);
         cx.notify();
     }
@@ -2157,7 +2179,7 @@ impl AgentPanel {
         } else {
             cx.defer_in(window, move |_this, window, cx| {
                 thread_view.update(cx, |thread_view, cx| {
-                    thread_view.proceed_with_send(window, cx);
+                    thread_view.send(window, cx);
                 });
             });
         }

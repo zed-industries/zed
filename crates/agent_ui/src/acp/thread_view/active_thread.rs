@@ -190,6 +190,13 @@ pub enum AcpThreadViewEvent {
     FirstSendRequested { text: String },
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum FirstSendPolicy {
+    #[default]
+    SendNormally,
+    InterceptAndEmitRequested,
+}
+
 impl EventEmitter<AcpThreadViewEvent> for AcpThreadView {}
 
 pub struct AcpThreadView {
@@ -261,6 +268,7 @@ pub struct AcpThreadView {
     pub show_codex_windows_warning: bool,
     pub history: Entity<AcpThreadHistory>,
     pub _history_subscription: Subscription,
+    pub first_send_policy: FirstSendPolicy,
 }
 impl Focusable for AcpThreadView {
     fn focus_handle(&self, cx: &App) -> FocusHandle {
@@ -451,6 +459,7 @@ impl AcpThreadView {
             history,
             _history_subscription: history_subscription,
             show_codex_windows_warning,
+            first_send_policy: FirstSendPolicy::default(),
         };
         if should_auto_submit {
             let message_editor = this.message_editor.clone();
@@ -643,7 +652,10 @@ impl AcpThreadView {
 
         let message_editor = self.message_editor.clone();
 
-        if self.thread.read(cx).entries().is_empty() && !message_editor.read(cx).is_empty(cx) {
+        if self.first_send_policy == FirstSendPolicy::InterceptAndEmitRequested
+            && self.thread.read(cx).entries().is_empty()
+            && !message_editor.read(cx).is_empty(cx)
+        {
             let text = message_editor.read(cx).text(cx);
             cx.emit(AcpThreadViewEvent::FirstSendRequested { text });
             return;
@@ -706,12 +718,8 @@ impl AcpThreadView {
         self.send_impl(message_editor, window, cx)
     }
 
-    /// Called by `AgentPanel` when it has decided the first send should proceed
-    /// normally (i.e. the thread target is not `NewWorktree`). This bypasses the
-    /// first-send interception in `send()` to avoid re-emitting `FirstSendRequested`.
-    pub fn proceed_with_send(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let message_editor = self.message_editor.clone();
-        self.send_impl(message_editor, window, cx);
+    pub fn set_first_send_policy(&mut self, policy: FirstSendPolicy) {
+        self.first_send_policy = policy;
     }
 
     pub fn send_impl(
