@@ -5054,7 +5054,7 @@ impl Project {
                 column: envelope.payload.column,
                 wait: envelope.payload.wait,
             });
-        })?;
+        });
         Ok(proto::OpenPathOnClientResponse { success: true })
     }
 
