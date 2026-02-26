@@ -39,6 +39,10 @@ BOT_START_DATE = "2026-02-18"
 NEEDS_TRIAGE_LABEL = "state:needs triage"
 DEFAULT_PROJECT_NUMBER = 76
 VALID_CLOSED_AS_VALUES = {"duplicate", "not_planned", "completed"}
+# Bump this when the duplicate-detection bot's behavior changes in a way that
+# could affect outcome rates (e.g. prompt rewrites, model swaps, candidate
+# filtering changes). Don't bump for unrelated changes like comment formatting.
+BOT_VERSION = "v2"
 
 
 def github_api_get(path, params=None):
@@ -278,6 +282,8 @@ def add_or_update_project_item(issue_node_id, outcome, closed_as=None, status="A
 
     if notes:
         set_field_value(item_id, "Notes", notes)
+
+    set_field_value(item_id, "Bot version", BOT_VERSION)
 
     return item_id
 
