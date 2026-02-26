@@ -42,8 +42,8 @@ use rayon::slice::ParallelSliceMut;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{
-    DockSide, ProjectPanelEntrySpacing, Settings, SettingsStore, ShowDiagnostics, ShowIndentGuides,
-    update_settings_file,
+    DockSide, IndentDirection, ProjectPanelEntrySpacing, Settings, SettingsStore, ShowDiagnostics,
+    ShowIndentGuides, update_settings_file,
 };
 use smallvec::SmallVec;
 use std::{any::TypeId, time::Instant};
@@ -59,9 +59,9 @@ use std::{
 use theme::ThemeSettings;
 use ui::{
     Color, ContextMenu, ContextMenuEntry, DecoratedIcon, Divider, Icon, IconDecoration,
-    IconDecorationKind, IndentGuideColors, IndentGuideLayout, KeyBinding, Label, LabelSize,
-    ListItem, ListItemSpacing, ScrollAxes, ScrollableHandle, Scrollbars, StickyCandidate, Tooltip,
-    WithScrollbar, prelude::*, v_flex,
+    IconDecorationKind, IndentGuideColors, IndentGuideLayout, IndentSide, KeyBinding, Label,
+    LabelSize, ListItem, ListItemSpacing, ScrollAxes, ScrollableHandle, Scrollbars,
+    StickyCandidate, Tooltip, WithScrollbar, prelude::*, v_flex,
 };
 use util::{
     ResultExt, TakeUntilExt, TryFutureExt, maybe,
@@ -5525,6 +5525,10 @@ impl ProjectPanel {
                 ListItem::new(id)
                     .indent_level(depth)
                     .indent_step_size(px(settings.indent_size))
+                    .indent_side(match settings.indent_direction {
+                        IndentDirection::Left => IndentSide::Left,
+                        IndentDirection::Right => IndentSide::Right,
+                    })
                     .spacing(match settings.entry_spacing {
                         ProjectPanelEntrySpacing::Comfortable => ListItemSpacing::Dense,
                         ProjectPanelEntrySpacing::Standard => ListItemSpacing::ExtraDense,

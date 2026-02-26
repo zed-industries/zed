@@ -738,6 +738,8 @@
     "git_status": true,
     // Amount of indentation for nested items.
     "indent_size": 20,
+    // Direction of indentation for nested items. Can be 'left' or 'right'.
+    "indent_direction": "right",
     // Whether to reveal it in the project panel automatically,
     // when a corresponding project entry becomes active.
     // Gitignored entries are never auto revealed.

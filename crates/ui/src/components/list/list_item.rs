@@ -14,6 +14,13 @@ pub enum ListItemSpacing {
     Sparse,
 }
 
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, Default)]
+pub enum IndentSide {
+    Left,
+    #[default]
+    Right,
+}
+
 #[derive(IntoElement, RegisterComponent)]
 pub struct ListItem {
     id: ElementId,
@@ -23,6 +30,7 @@ pub struct ListItem {
     spacing: ListItemSpacing,
     indent_level: usize,
     indent_step_size: Pixels,
+    indent_side: IndentSide,
     /// A slot for content that appears before the children, like an icon or avatar.
     start_slot: Option<AnyElement>,
     /// A slot for content that appears after the children, usually on the other side of the header.
@@ -57,6 +65,7 @@ impl ListItem {
             spacing: ListItemSpacing::Dense,
             indent_level: 0,
             indent_step_size: px(12.),
+            indent_side: IndentSide::Right,
             start_slot: None,
             end_slot: None,
             end_hover_slot: None,
@@ -138,6 +147,11 @@ impl ListItem {
         self
     }
 
+    pub fn indent_side(mut self, indent_side: IndentSide) -> Self {
+        self.indent_side = indent_side;
+        self
+    }
+
     pub fn toggle(mut self, toggle: impl Into<Option<bool>>) -> Self {
         self.toggle = toggle.into();
         self
@@ -216,8 +230,12 @@ impl RenderOnce for ListItem {
             .relative()
             // When an item is inset draw the indent spacing outside of the item
             .when(self.inset, |this| {
-                this.ml(self.indent_level as f32 * self.indent_step_size)
-                    .px(DynamicSpacing::Base04.rems(cx))
+                let indent = self.indent_level as f32 * self.indent_step_size;
+                match self.indent_side {
+                    IndentSide::Left => this.mr(indent),
+                    IndentSide::Right => this.ml(indent),
+                }
+                .px(DynamicSpacing::Base04.rems(cx))
             })
             .when(!self.inset && !self.disabled, |this| {
                 this
@@ -298,7 +316,11 @@ impl RenderOnce for ListItem {
                             this.rounded_sm()
                         } else {
                             // When an item is not inset draw the indent spacing inside of the item
-                            this.ml(self.indent_level as f32 * self.indent_step_size)
+                            let indent = self.indent_level as f32 * self.indent_step_size;
+                            match self.indent_side {
+                                IndentSide::Left => this.mr(indent),
+                                IndentSide::Right => this.ml(indent),
+                            }
                         }
                     })
                     .children(self.toggle.map(|is_open| {

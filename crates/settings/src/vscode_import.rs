@@ -793,6 +793,7 @@ impl VsCodeSettings {
             hide_root: None,
             indent_guides: None,
             indent_size: None,
+            indent_direction: None,
             scrollbar: None,
             show_diagnostics: self
                 .read_bool("problems.decorations.enabled")

@@ -690,6 +690,10 @@ pub struct ProjectPanelSettingsContent {
     /// Default: 20
     #[serde(serialize_with = "serialize_optional_f32_with_two_decimal_places")]
     pub indent_size: Option<f32>,
+    /// Direction of indentation for nested items.
+    ///
+    /// Default: right
+    pub indent_direction: Option<IndentDirection>,
     /// Whether to reveal it in the project panel automatically,
     /// when a corresponding project entry becomes active.
     /// Gitignored entries are never auto revealed.
@@ -766,6 +770,29 @@ pub enum ProjectPanelEntrySpacing {
     Comfortable,
     /// The standard spacing of entries.
     Standard,
+}
+
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    Default,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    PartialEq,
+    Eq,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum IndentDirection {
+    /// Indent entries to the left.
+    Left,
+    /// Indent entries to the right.
+    #[default]
+    Right,
 }
 
 #[derive(

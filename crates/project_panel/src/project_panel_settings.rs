@@ -3,8 +3,8 @@ use gpui::Pixels;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{
-    DockSide, ProjectPanelEntrySpacing, ProjectPanelSortMode, RegisterSetting, Settings,
-    ShowDiagnostics, ShowIndentGuides,
+    DockSide, IndentDirection, ProjectPanelEntrySpacing, ProjectPanelSortMode, RegisterSetting,
+    Settings, ShowDiagnostics, ShowIndentGuides,
 };
 use ui::{
     px,
@@ -22,6 +22,7 @@ pub struct ProjectPanelSettings {
     pub folder_icons: bool,
     pub git_status: bool,
     pub indent_size: f32,
+    pub indent_direction: IndentDirection,
     pub indent_guides: IndentGuidesSettings,
     pub sticky_scroll: bool,
     pub auto_reveal_entries: bool,
@@ -103,6 +104,7 @@ impl Settings for ProjectPanelSettings {
                     .unwrap()
                     .is_git_status_enabled(),
             indent_size: project_panel.indent_size.unwrap(),
+            indent_direction: project_panel.indent_direction.unwrap(),
             indent_guides: IndentGuidesSettings {
                 show: project_panel.indent_guides.unwrap().show.unwrap(),
             },
