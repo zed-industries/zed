@@ -290,10 +290,10 @@ See the [Tool Permissions](./tool-permissions.md) documentation for more example
 
 > **Note:** Before Zed v0.224.0, tool approval was controlled by the `agent.always_allow_tool_actions` boolean (default `false`). Set it to `true` to auto-approve tool actions, or leave it `false` to require confirmation for edits and tool calls.
 
-### Single-file Review
+### Edit Display Mode
 
 Control whether to display review actions (accept & reject) in single buffers after the agent is done performing edits.
-The default value is `true`.
+The default value is `false`.
 
 ```json [settings]
 {
@@ -302,8 +302,6 @@ The default value is `true`.
   }
 }
 ```
-
-When set to `false`, these controls are only available in the multibuffer review tab.
 
 ### Sound Notification
 

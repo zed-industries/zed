@@ -397,7 +397,7 @@ struct BuildTiming {
     duration_ms: f32,
     first_crate: String,
     target: String,
-    lock_wait_ms: f32,
+    blocked_ms: f32,
     command: String,
 }
 
@@ -452,7 +452,7 @@ async fn upload_build_timings(_client: Arc<Client>) -> Result<()> {
             duration_ms = timing.duration_ms,
             first_crate = timing.first_crate,
             target = timing.target,
-            lock_wait_ms = timing.lock_wait_ms,
+            blocked_ms = timing.blocked_ms,
             command = timing.command,
             cpu_count = cpu_count,
             ram_size_gb = ram_size_gb

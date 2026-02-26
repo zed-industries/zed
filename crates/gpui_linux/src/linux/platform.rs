@@ -55,10 +55,12 @@ pub(crate) trait LinuxClient {
     fn display(&self, id: DisplayId) -> Option<Rc<dyn PlatformDisplay>>;
     fn primary_display(&self) -> Option<Rc<dyn PlatformDisplay>>;
 
+    #[allow(dead_code)]
     fn is_screen_capture_supported(&self) -> bool {
         false
     }
 
+    #[allow(dead_code)]
     fn screen_capture_sources(
         &self,
     ) -> oneshot::Receiver<Result<Vec<Rc<dyn gpui::ScreenCaptureSource>>>> {
@@ -364,7 +366,8 @@ impl<P: LinuxClient + 'static> Platform for LinuxPlatform<P> {
                         response
                             .uris()
                             .iter()
-                            .filter_map(|uri| uri.to_file_path().ok())
+                            .filter_map(|uri: &ashpd::Uri| url::Url::parse(uri.as_str()).ok())
+                            .filter_map(|uri: url::Url| uri.to_file_path().ok())
                             .collect::<Vec<_>>(),
                     )),
                     Err(ashpd::Error::Response(_)) => Ok(None),
@@ -426,7 +429,8 @@ impl<P: LinuxClient + 'static> Platform for LinuxPlatform<P> {
                         Ok(response) => Ok(response
                             .uris()
                             .first()
-                            .and_then(|uri| uri.to_file_path().ok())),
+                            .and_then(|uri: &ashpd::Uri| url::Url::parse(uri.as_str()).ok())
+                            .and_then(|uri: url::Url| uri.to_file_path().ok())),
                         Err(ashpd::Error::Response(_)) => Ok(None),
                         Err(e) => Err(e.into()),
                     };
@@ -627,7 +631,7 @@ pub(super) fn open_uri_internal(
     uri: &str,
     activation_token: Option<String>,
 ) {
-    if let Some(uri) = ashpd::url::Url::parse(uri).log_err() {
+    if let Some(uri) = ashpd::Uri::parse(uri).log_err() {
         executor
             .spawn(async move {
                 match ashpd::desktop::open_uri::OpenFileRequest::default()

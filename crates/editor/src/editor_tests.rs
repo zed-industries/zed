@@ -7,7 +7,7 @@ use crate::{
     linked_editing_ranges::LinkedEditingRanges,
     scroll::scroll_amount::ScrollAmount,
     test::{
-        assert_text_with_selections, build_editor,
+        assert_text_with_selections, build_editor, editor_content_with_blocks,
         editor_lsp_test_context::{EditorLspTestContext, git_commit_lang},
         editor_test_context::EditorTestContext,
         select_ranges,
@@ -35,9 +35,7 @@ use language_settings::Formatter;
 use languages::markdown_lang;
 use languages::rust_lang;
 use lsp::{CompletionParams, DEFAULT_LSP_REQUEST_TIMEOUT};
-use multi_buffer::{
-    ExcerptRange, IndentGuide, MultiBuffer, MultiBufferOffset, MultiBufferOffsetUtf16, PathKey,
-};
+use multi_buffer::{IndentGuide, MultiBuffer, MultiBufferOffset, MultiBufferOffsetUtf16, PathKey};
 use parking_lot::Mutex;
 use pretty_assertions::{assert_eq, assert_ne};
 use project::{
@@ -64,7 +62,6 @@ use util::{
     assert_set_eq, path,
     rel_path::rel_path,
     test::{TextRangeMarker, marked_text_ranges, marked_text_ranges_by, sample_text},
-    uri,
 };
 use workspace::{
     CloseActiveItem, CloseAllItems, CloseOtherItems, MultiWorkspace, NavigationEntry, OpenOptions,
@@ -3393,14 +3390,18 @@ fn test_newline_below_multibuffer(cx: &mut TestAppContext) {
     let buffer_2 = cx.new(|cx| Buffer::local("ddd\neee\nfff", cx));
     let multibuffer = cx.new(|cx| {
         let mut multibuffer = MultiBuffer::new(ReadWrite);
-        multibuffer.push_excerpts(
+        multibuffer.set_excerpts_for_path(
+            PathKey::sorted(0),
             buffer_1.clone(),
-            [ExcerptRange::new(Point::new(0, 0)..Point::new(2, 3))],
+            [Point::new(0, 0)..Point::new(2, 3)],
+            0,
             cx,
         );
-        multibuffer.push_excerpts(
+        multibuffer.set_excerpts_for_path(
+            PathKey::sorted(1),
             buffer_2.clone(),
-            [ExcerptRange::new(Point::new(0, 0)..Point::new(2, 3))],
+            [Point::new(0, 0)..Point::new(2, 3)],
+            0,
             cx,
         );
         multibuffer
@@ -3467,14 +3468,18 @@ fn test_newline_below_multibuffer_middle_of_excerpt(cx: &mut TestAppContext) {
     let buffer_2 = cx.new(|cx| Buffer::local("ddd\neee\nfff", cx));
     let multibuffer = cx.new(|cx| {
         let mut multibuffer = MultiBuffer::new(ReadWrite);
-        multibuffer.push_excerpts(
+        multibuffer.set_excerpts_for_path(
+            PathKey::sorted(0),
             buffer_1.clone(),
-            [ExcerptRange::new(Point::new(0, 0)..Point::new(2, 3))],
+            [Point::new(0, 0)..Point::new(2, 3)],
+            0,
             cx,
         );
-        multibuffer.push_excerpts(
+        multibuffer.set_excerpts_for_path(
+            PathKey::sorted(1),
             buffer_2.clone(),
-            [ExcerptRange::new(Point::new(0, 0)..Point::new(2, 3))],
+            [Point::new(0, 0)..Point::new(2, 3)],
+            0,
             cx,
         );
         multibuffer
@@ -3528,14 +3533,18 @@ fn test_newline_below_multibuffer_last_line_of_last_excerpt(cx: &mut TestAppCont
     let buffer_2 = cx.new(|cx| Buffer::local("ddd\neee\nfff", cx));
     let multibuffer = cx.new(|cx| {
         let mut multibuffer = MultiBuffer::new(ReadWrite);
-        multibuffer.push_excerpts(
+        multibuffer.set_excerpts_for_path(
+            PathKey::sorted(0),
             buffer_1.clone(),
-            [ExcerptRange::new(Point::new(0, 0)..Point::new(2, 3))],
+            [Point::new(0, 0)..Point::new(2, 3)],
+            0,
             cx,
         );
-        multibuffer.push_excerpts(
+        multibuffer.set_excerpts_for_path(
+            PathKey::sorted(1),
             buffer_2.clone(),
-            [ExcerptRange::new(Point::new(0, 0)..Point::new(2, 3))],
+            [Point::new(0, 0)..Point::new(2, 3)],
+            0,
             cx,
         );
         multibuffer
@@ -3589,14 +3598,18 @@ fn test_newline_below_multibuffer_multiple_cursors(cx: &mut TestAppContext) {
     let buffer_2 = cx.new(|cx| Buffer::local("ddd\neee\nfff", cx));
     let multibuffer = cx.new(|cx| {
         let mut multibuffer = MultiBuffer::new(ReadWrite);
-        multibuffer.push_excerpts(
+        multibuffer.set_excerpts_for_path(
+            PathKey::sorted(0),
             buffer_1.clone(),
-            [ExcerptRange::new(Point::new(0, 0)..Point::new(2, 3))],
+            [Point::new(0, 0)..Point::new(2, 3)],
+            0,
             cx,
         );
-        multibuffer.push_excerpts(
+        multibuffer.set_excerpts_for_path(
+            PathKey::sorted(1),
             buffer_2.clone(),
-            [ExcerptRange::new(Point::new(0, 0)..Point::new(2, 3))],
+            [Point::new(0, 0)..Point::new(2, 3)],
+            0,
             cx,
         );
         multibuffer
@@ -4671,14 +4684,18 @@ fn test_indent_outdent_with_excerpts(cx: &mut TestAppContext) {
         cx.new(|cx| Buffer::local("const c: usize = 3;\n", cx).with_language(rust_language, cx));
     let multibuffer = cx.new(|cx| {
         let mut multibuffer = MultiBuffer::new(ReadWrite);
-        multibuffer.push_excerpts(
+        multibuffer.set_excerpts_for_path(
+            PathKey::sorted(0),
             toml_buffer.clone(),
-            [ExcerptRange::new(Point::new(0, 0)..Point::new(2, 0))],
+            [Point::new(0, 0)..Point::new(2, 0)],
+            0,
             cx,
         );
-        multibuffer.push_excerpts(
+        multibuffer.set_excerpts_for_path(
+            PathKey::sorted(1),
             rust_buffer.clone(),
-            [ExcerptRange::new(Point::new(0, 0)..Point::new(1, 0))],
+            [Point::new(0, 0)..Point::new(1, 0)],
+            0,
             cx,
         );
         multibuffer
@@ -4880,6 +4897,32 @@ fn test_join_lines_with_single_selection(cx: &mut TestAppContext) {
                 .selections
                 .ranges::<Point>(&editor.display_snapshot(cx)),
             &[Point::new(0, 3)..Point::new(0, 3)]
+        );
+
+        editor.undo(&Undo, window, cx);
+        assert_eq!(buffer.read(cx).text(), "aaa\nbbb\nccc\nddd\n\n");
+
+        // Select a full line, i.e. start of the first line to the start of the second line
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_ranges([Point::new(0, 0)..Point::new(1, 0)])
+        });
+        editor.join_lines(&JoinLines, window, cx);
+        assert_eq!(buffer.read(cx).text(), "aaa bbb\nccc\nddd\n\n");
+
+        editor.undo(&Undo, window, cx);
+        assert_eq!(buffer.read(cx).text(), "aaa\nbbb\nccc\nddd\n\n");
+
+        // Select two full lines
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_ranges([Point::new(0, 0)..Point::new(2, 0)])
+        });
+        editor.join_lines(&JoinLines, window, cx);
+
+        // Only the selected lines should be joined, not the third.
+        assert_eq!(
+            buffer.read(cx).text(),
+            "aaa bbb\nccc\nddd\n\n",
+            "only the two selected lines (a and b) should be joined"
         );
 
         // When multiple lines are selected, remove newlines that are spanned by the selection
@@ -8030,16 +8073,54 @@ async fn test_copy_trim_line_mode(cx: &mut TestAppContext) {
     let mut cx = EditorTestContext::new(cx).await;
 
     cx.set_state(indoc! {"
-        «    a
-            bˇ»
+        «    fn main() {
+                dbg!(1)
+            }ˇ»
     "});
     cx.update_editor(|editor, _window, _cx| editor.selections.set_line_mode(true));
     cx.update_editor(|editor, window, cx| editor.copy_and_trim(&CopyAndTrim, window, cx));
 
     assert_eq!(
         cx.read_from_clipboard().and_then(|item| item.text()),
-        Some("a\nb\n".to_string())
+        Some("fn main() {\n    dbg!(1)\n}\n".to_string())
     );
+
+    let clipboard_selections: Vec<ClipboardSelection> = cx
+        .read_from_clipboard()
+        .and_then(|item| item.entries().first().cloned())
+        .and_then(|entry| match entry {
+            gpui::ClipboardEntry::String(text) => text.metadata_json(),
+            _ => None,
+        })
+        .expect("should have clipboard selections");
+
+    assert_eq!(clipboard_selections.len(), 1);
+    assert!(clipboard_selections[0].is_entire_line);
+
+    cx.set_state(indoc! {"
+        «fn main() {
+            dbg!(1)
+        }ˇ»
+    "});
+    cx.update_editor(|editor, _window, _cx| editor.selections.set_line_mode(true));
+    cx.update_editor(|editor, window, cx| editor.copy_and_trim(&CopyAndTrim, window, cx));
+
+    assert_eq!(
+        cx.read_from_clipboard().and_then(|item| item.text()),
+        Some("fn main() {\n    dbg!(1)\n}\n".to_string())
+    );
+
+    let clipboard_selections: Vec<ClipboardSelection> = cx
+        .read_from_clipboard()
+        .and_then(|item| item.entries().first().cloned())
+        .and_then(|entry| match entry {
+            gpui::ClipboardEntry::String(text) => text.metadata_json(),
+            _ => None,
+        })
+        .expect("should have clipboard selections");
+
+    assert_eq!(clipboard_selections.len(), 1);
+    assert!(clipboard_selections[0].is_entire_line);
 }
 
 #[gpui::test]
@@ -8064,9 +8145,11 @@ async fn test_clipboard_line_numbers_from_multibuffer(cx: &mut TestAppContext) {
 
     let multibuffer = cx.new(|cx| {
         let mut multibuffer = MultiBuffer::new(ReadWrite);
-        multibuffer.push_excerpts(
+        multibuffer.set_excerpts_for_path(
+            PathKey::sorted(0),
             buffer.clone(),
-            [ExcerptRange::new(Point::new(2, 0)..Point::new(5, 0))],
+            [Point::new(2, 0)..Point::new(5, 0)],
+            0,
             cx,
         );
         multibuffer
@@ -9581,31 +9664,25 @@ async fn test_select_previous_multibuffer(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
     let mut cx =
-        EditorTestContext::new_multibuffer(cx, ["aaa\n«bbb\nccc\n»ddd", "aaa\n«bbb\nccc\n»ddd"]);
+        EditorTestContext::new_multibuffer(cx, ["aaa\n«bbb\nccc»\nddd", "aaa\n«bbb\nccc»\nddd"]);
 
     cx.assert_editor_state(indoc! {"
         ˇbbb
         ccc
-
         bbb
-        ccc
-        "});
+        ccc"});
     cx.dispatch_action(SelectPrevious::default());
     cx.assert_editor_state(indoc! {"
                 «bbbˇ»
                 ccc
-
                 bbb
-                ccc
-                "});
+                ccc"});
     cx.dispatch_action(SelectPrevious::default());
     cx.assert_editor_state(indoc! {"
                 «bbbˇ»
                 ccc
-
                 «bbbˇ»
-                ccc
-                "});
+                ccc"});
 }
 
 #[gpui::test]
@@ -12708,10 +12785,10 @@ async fn test_multibuffer_format_during_save(cx: &mut TestAppContext) {
         sample_text_2,
         "llll\nmmmm\nnnnn\noooo\npppp\nqqqq\nrrrr\nssss\ntttt\nuuuu"
     );
-    let sample_text_3 = sample_text(rows, cols, 'v');
+    let sample_text_3 = sample_text(rows, cols, 'v').replace('\u{7f}', ".");
     assert_eq!(
         sample_text_3,
-        "vvvv\nwwww\nxxxx\nyyyy\nzzzz\n{{{{\n||||\n}}}}\n~~~~\n\u{7f}\u{7f}\u{7f}\u{7f}"
+        "vvvv\nwwww\nxxxx\nyyyy\nzzzz\n{{{{\n||||\n}}}}\n~~~~\n...."
     );
 
     let fs = FakeFs::new(cx.executor());
@@ -12770,33 +12847,40 @@ async fn test_multibuffer_format_during_save(cx: &mut TestAppContext) {
 
     let multi_buffer = cx.new(|cx| {
         let mut multi_buffer = MultiBuffer::new(ReadWrite);
-        multi_buffer.push_excerpts(
+        multi_buffer.set_excerpts_for_path(
+            PathKey::sorted(0),
             buffer_1.clone(),
             [
-                ExcerptRange::new(Point::new(0, 0)..Point::new(3, 0)),
-                ExcerptRange::new(Point::new(5, 0)..Point::new(7, 0)),
-                ExcerptRange::new(Point::new(9, 0)..Point::new(10, 4)),
+                Point::new(0, 0)..Point::new(2, 4),
+                Point::new(5, 0)..Point::new(6, 4),
+                Point::new(9, 0)..Point::new(9, 4),
             ],
+            0,
             cx,
         );
-        multi_buffer.push_excerpts(
+        multi_buffer.set_excerpts_for_path(
+            PathKey::sorted(1),
             buffer_2.clone(),
             [
-                ExcerptRange::new(Point::new(0, 0)..Point::new(3, 0)),
-                ExcerptRange::new(Point::new(5, 0)..Point::new(7, 0)),
-                ExcerptRange::new(Point::new(9, 0)..Point::new(10, 4)),
+                Point::new(0, 0)..Point::new(2, 4),
+                Point::new(5, 0)..Point::new(6, 4),
+                Point::new(9, 0)..Point::new(9, 4),
             ],
+            0,
             cx,
         );
-        multi_buffer.push_excerpts(
+        multi_buffer.set_excerpts_for_path(
+            PathKey::sorted(2),
             buffer_3.clone(),
             [
-                ExcerptRange::new(Point::new(0, 0)..Point::new(3, 0)),
-                ExcerptRange::new(Point::new(5, 0)..Point::new(7, 0)),
-                ExcerptRange::new(Point::new(9, 0)..Point::new(10, 4)),
+                Point::new(0, 0)..Point::new(2, 4),
+                Point::new(5, 0)..Point::new(6, 4),
+                Point::new(9, 0)..Point::new(9, 4),
             ],
+            0,
             cx,
         );
+        assert_eq!(multi_buffer.excerpt_ids().len(), 9);
         multi_buffer
     });
     let multi_buffer_editor = cx.new_window_entity(|window, cx| {
@@ -12810,30 +12894,61 @@ async fn test_multibuffer_format_during_save(cx: &mut TestAppContext) {
     });
 
     multi_buffer_editor.update_in(cx, |editor, window, cx| {
+        let a = editor.text(cx).find("aaaa").unwrap();
         editor.change_selections(
             SelectionEffects::scroll(Autoscroll::Next),
             window,
             cx,
-            |s| s.select_ranges(Some(MultiBufferOffset(1)..MultiBufferOffset(2))),
+            |s| s.select_ranges(Some(MultiBufferOffset(a + 1)..MultiBufferOffset(a + 2))),
         );
         editor.insert("|one|two|three|", window, cx);
     });
     assert!(cx.read(|cx| multi_buffer_editor.is_dirty(cx)));
     multi_buffer_editor.update_in(cx, |editor, window, cx| {
+        let n = editor.text(cx).find("nnnn").unwrap();
         editor.change_selections(
             SelectionEffects::scroll(Autoscroll::Next),
             window,
             cx,
-            |s| s.select_ranges(Some(MultiBufferOffset(60)..MultiBufferOffset(70))),
+            |s| s.select_ranges(Some(MultiBufferOffset(n + 4)..MultiBufferOffset(n + 14))),
         );
         editor.insert("|four|five|six|", window, cx);
     });
     assert!(cx.read(|cx| multi_buffer_editor.is_dirty(cx)));
 
     // First two buffers should be edited, but not the third one.
-    assert_eq!(
-        multi_buffer_editor.update(cx, |editor, cx| editor.text(cx)),
-        "a|one|two|three|aa\nbbbb\ncccc\n\nffff\ngggg\n\njjjj\nllll\nmmmm\nnnnn|four|five|six|\nr\n\nuuuu\nvvvv\nwwww\nxxxx\n\n{{{{\n||||\n\n\u{7f}\u{7f}\u{7f}\u{7f}",
+    pretty_assertions::assert_eq!(
+        editor_content_with_blocks(&multi_buffer_editor, cx),
+        indoc! {"
+            § main.rs
+            § -----
+            a|one|two|three|aa
+            bbbb
+            cccc
+            § -----
+            ffff
+            gggg
+            § -----
+            jjjj
+            § other.rs
+            § -----
+            llll
+            mmmm
+            nnnn|four|five|six|
+            § -----
+
+            § -----
+            uuuu
+            § lib.rs
+            § -----
+            vvvv
+            wwww
+            xxxx
+            § -----
+            {{{{
+            ||||
+            § -----
+            ...."}
     );
     buffer_1.update(cx, |buffer, _| {
         assert!(buffer.is_dirty());
@@ -12846,7 +12961,7 @@ async fn test_multibuffer_format_during_save(cx: &mut TestAppContext) {
         assert!(buffer.is_dirty());
         assert_eq!(
             buffer.text(),
-            "llll\nmmmm\nnnnn|four|five|six|oooo\npppp\nr\nssss\ntttt\nuuuu",
+            "llll\nmmmm\nnnnn|four|five|six|\noooo\npppp\n\nssss\ntttt\nuuuu",
         )
     });
     buffer_3.update(cx, |buffer, _| {
@@ -12872,10 +12987,10 @@ async fn test_multibuffer_format_during_save(cx: &mut TestAppContext) {
     let fake_server = fake_servers.next().await.unwrap();
     fake_server
         .server
-        .on_request::<lsp::request::Formatting, _, _>(move |params, _| async move {
+        .on_request::<lsp::request::Formatting, _, _>(move |_params, _| async move {
             Ok(Some(vec![lsp::TextEdit::new(
                 lsp::Range::new(lsp::Position::new(0, 3), lsp::Position::new(1, 0)),
-                format!("[{} formatted]", params.text_document.uri),
+                "[formatted]".to_string(),
             )]))
         })
         .detach();
@@ -12884,23 +12999,61 @@ async fn test_multibuffer_format_during_save(cx: &mut TestAppContext) {
     // After multibuffer saving, only first two buffers should be reformatted, but not the third one (as it was not dirty).
     assert!(cx.read(|cx| !multi_buffer_editor.is_dirty(cx)));
     assert_eq!(
-        multi_buffer_editor.update(cx, |editor, cx| editor.text(cx)),
-        uri!(
-            "a|o[file:///a/main.rs formatted]bbbb\ncccc\n\nffff\ngggg\n\njjjj\n\nlll[file:///a/other.rs formatted]mmmm\nnnnn|four|five|six|\nr\n\nuuuu\n\nvvvv\nwwww\nxxxx\n\n{{{{\n||||\n\n\u{7f}\u{7f}\u{7f}\u{7f}"
-        ),
+        editor_content_with_blocks(&multi_buffer_editor, cx),
+        indoc! {"
+            § main.rs
+            § -----
+            a|o[formatted]bbbb
+            cccc
+            § -----
+            ffff
+            gggg
+            § -----
+            jjjj
+
+            § other.rs
+            § -----
+            lll[formatted]mmmm
+            nnnn|four|five|six|
+            § -----
+
+            § -----
+            uuuu
+
+            § lib.rs
+            § -----
+            vvvv
+            wwww
+            xxxx
+            § -----
+            {{{{
+            ||||
+            § -----
+            ...."}
     );
     buffer_1.update(cx, |buffer, _| {
         assert!(!buffer.is_dirty());
         assert_eq!(
             buffer.text(),
-            uri!("a|o[file:///a/main.rs formatted]bbbb\ncccc\ndddd\neeee\nffff\ngggg\nhhhh\niiii\njjjj\n"),
+            "a|o[formatted]bbbb\ncccc\ndddd\neeee\nffff\ngggg\nhhhh\niiii\njjjj\n",
         )
     });
+    // Diff < left / right > :
+    //  lll[formatted]mmmm
+    // <nnnn|four|five|six|
+    // <oooo
+    // >nnnn|four|five|six|oooo
+    //  pppp
+    // <
+    //  ssss
+    //  tttt
+    //  uuuu
+
     buffer_2.update(cx, |buffer, _| {
         assert!(!buffer.is_dirty());
         assert_eq!(
             buffer.text(),
-            uri!("lll[file:///a/other.rs formatted]mmmm\nnnnn|four|five|six|oooo\npppp\nr\nssss\ntttt\nuuuu\n"),
+            "lll[formatted]mmmm\nnnnn|four|five|six|\noooo\npppp\n\nssss\ntttt\nuuuu\n",
         )
     });
     buffer_3.update(cx, |buffer, _| {
@@ -12957,19 +13110,25 @@ async fn test_autosave_with_dirty_buffers(cx: &mut TestAppContext) {
     // Create a multi-buffer with all three buffers
     let multi_buffer = cx.new(|cx| {
         let mut multi_buffer = MultiBuffer::new(ReadWrite);
-        multi_buffer.push_excerpts(
+        multi_buffer.set_excerpts_for_path(
+            PathKey::sorted(0),
             buffer_1.clone(),
-            [ExcerptRange::new(Point::new(0, 0)..Point::new(1, 0))],
+            [Point::new(0, 0)..Point::new(1, 0)],
+            0,
             cx,
         );
-        multi_buffer.push_excerpts(
+        multi_buffer.set_excerpts_for_path(
+            PathKey::sorted(1),
             buffer_2.clone(),
-            [ExcerptRange::new(Point::new(0, 0)..Point::new(1, 0))],
+            [Point::new(0, 0)..Point::new(1, 0)],
+            0,
             cx,
         );
-        multi_buffer.push_excerpts(
+        multi_buffer.set_excerpts_for_path(
+            PathKey::sorted(2),
             buffer_3.clone(),
-            [ExcerptRange::new(Point::new(0, 0)..Point::new(1, 0))],
+            [Point::new(0, 0)..Point::new(1, 0)],
+            0,
             cx,
         );
         multi_buffer
@@ -15456,7 +15615,9 @@ async fn test_completion_in_multibuffer_with_replace_range(cx: &mut TestAppConte
             10.satu;
 
             //
-            // separate cursors so they open in different excerpts (manually reproducible)
+            // separate1
+            // separate2
+            // separate3
             //
 
             10.satu20;
@@ -15465,8 +15626,6 @@ async fn test_completion_in_multibuffer_with_replace_range(cx: &mut TestAppConte
     let multibuffer_text_with_selections = indoc! {"
         fn main() {
             10.satuˇ;
-
-            //
 
             //
 
@@ -15479,14 +15638,9 @@ async fn test_completion_in_multibuffer_with_replace_range(cx: &mut TestAppConte
 
             //
 
-            //
-
             10.saturating_sub()ˇ;
         }
     "};
-
-    let first_excerpt_end = buffer_text.find("//").unwrap() + 3;
-    let second_excerpt_end = buffer_text.rfind("//").unwrap() - 4;
 
     let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
@@ -15527,14 +15681,14 @@ async fn test_completion_in_multibuffer_with_replace_range(cx: &mut TestAppConte
 
     let multi_buffer = cx.new(|cx| {
         let mut multi_buffer = MultiBuffer::new(Capability::ReadWrite);
-        multi_buffer.push_excerpts(
+        multi_buffer.set_excerpts_for_path(
+            PathKey::sorted(0),
             buffer.clone(),
-            [ExcerptRange::new(0..first_excerpt_end)],
-            cx,
-        );
-        multi_buffer.push_excerpts(
-            buffer.clone(),
-            [ExcerptRange::new(second_excerpt_end..buffer_text.len())],
+            [
+                Point::zero()..Point::new(2, 0),
+                Point::new(7, 0)..buffer.read(cx).max_point(),
+            ],
+            0,
             cx,
         );
         multi_buffer
@@ -15568,7 +15722,7 @@ async fn test_completion_in_multibuffer_with_replace_range(cx: &mut TestAppConte
         editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
             s.select_ranges([
                 Point::new(1, 11)..Point::new(1, 11),
-                Point::new(7, 11)..Point::new(7, 11),
+                Point::new(5, 11)..Point::new(5, 11),
             ])
         });
 
@@ -15587,12 +15741,12 @@ async fn test_completion_in_multibuffer_with_replace_range(cx: &mut TestAppConte
                     lsp::InsertReplaceEdit {
                         new_text: "saturating_sub()".to_owned(),
                         insert: lsp::Range::new(
-                            lsp::Position::new(7, 7),
-                            lsp::Position::new(7, 11),
+                            lsp::Position::new(9, 7),
+                            lsp::Position::new(9, 11),
                         ),
                         replace: lsp::Range::new(
-                            lsp::Position::new(7, 7),
-                            lsp::Position::new(7, 13),
+                            lsp::Position::new(9, 7),
+                            lsp::Position::new(9, 13),
                         ),
                     },
                 )),
@@ -17674,24 +17828,26 @@ async fn test_toggle_block_comment(cx: &mut TestAppContext) {
 fn test_editing_disjoint_excerpts(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
-    let buffer = cx.new(|cx| Buffer::local(sample_text(3, 4, 'a'), cx));
+    let buffer = cx.new(|cx| Buffer::local(sample_text(6, 4, 'a'), cx));
     let multibuffer = cx.new(|cx| {
         let mut multibuffer = MultiBuffer::new(ReadWrite);
-        multibuffer.push_excerpts(
+        multibuffer.set_excerpts_for_path(
+            PathKey::sorted(0),
             buffer.clone(),
             [
-                ExcerptRange::new(Point::new(0, 0)..Point::new(0, 4)),
-                ExcerptRange::new(Point::new(1, 0)..Point::new(1, 4)),
+                Point::new(0, 0)..Point::new(0, 4),
+                Point::new(5, 0)..Point::new(5, 4),
             ],
+            0,
             cx,
         );
-        assert_eq!(multibuffer.read(cx).text(), "aaaa\nbbbb");
+        assert_eq!(multibuffer.read(cx).text(), "aaaa\nffff");
         multibuffer
     });
 
     let (editor, cx) = cx.add_window_view(|window, cx| build_editor(multibuffer, window, cx));
     editor.update_in(cx, |editor, window, cx| {
-        assert_eq!(editor.text(cx), "aaaa\nbbbb");
+        assert_eq!(editor.text(cx), "aaaa\nffff");
         editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
             s.select_ranges([
                 Point::new(0, 0)..Point::new(0, 0),
@@ -17700,7 +17856,7 @@ fn test_editing_disjoint_excerpts(cx: &mut TestAppContext) {
         });
 
         editor.handle_input("X", window, cx);
-        assert_eq!(editor.text(cx), "Xaaaa\nXbbbb");
+        assert_eq!(editor.text(cx), "Xaaaa\nXffff");
         assert_eq!(
             editor.selections.ranges(&editor.display_snapshot(cx)),
             [
@@ -17714,7 +17870,7 @@ fn test_editing_disjoint_excerpts(cx: &mut TestAppContext) {
             s.select_ranges([Point::new(0, 2)..Point::new(1, 2)])
         });
         editor.backspace(&Default::default(), window, cx);
-        assert_eq!(editor.text(cx), "Xa\nbbb");
+        assert_eq!(editor.text(cx), "Xa\nfff");
         assert_eq!(
             editor.selections.ranges(&editor.display_snapshot(cx)),
             [Point::new(1, 0)..Point::new(1, 0)]
@@ -17724,7 +17880,7 @@ fn test_editing_disjoint_excerpts(cx: &mut TestAppContext) {
             s.select_ranges([Point::new(1, 1)..Point::new(0, 1)])
         });
         editor.backspace(&Default::default(), window, cx);
-        assert_eq!(editor.text(cx), "X\nbb");
+        assert_eq!(editor.text(cx), "X\nff");
         assert_eq!(
             editor.selections.ranges(&editor.display_snapshot(cx)),
             [Point::new(0, 1)..Point::new(0, 1)]
@@ -17733,114 +17889,22 @@ fn test_editing_disjoint_excerpts(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-fn test_editing_overlapping_excerpts(cx: &mut TestAppContext) {
-    init_test(cx, |_| {});
-
-    let markers = vec![('[', ']').into(), ('(', ')').into()];
-    let (initial_text, mut excerpt_ranges) = marked_text_ranges_by(
-        indoc! {"
-            [aaaa
-            (bbbb]
-            cccc)",
-        },
-        markers.clone(),
-    );
-    let excerpt_ranges = markers.into_iter().map(|marker| {
-        let context = excerpt_ranges.remove(&marker).unwrap()[0].clone();
-        ExcerptRange::new(context)
-    });
-    let buffer = cx.new(|cx| Buffer::local(initial_text, cx));
-    let multibuffer = cx.new(|cx| {
-        let mut multibuffer = MultiBuffer::new(ReadWrite);
-        multibuffer.push_excerpts(buffer, excerpt_ranges, cx);
-        multibuffer
-    });
-
-    let (editor, cx) = cx.add_window_view(|window, cx| build_editor(multibuffer, window, cx));
-    editor.update_in(cx, |editor, window, cx| {
-        let (expected_text, selection_ranges) = marked_text_ranges(
-            indoc! {"
-                aaaa
-                bˇbbb
-                bˇbbˇb
-                cccc"
-            },
-            true,
-        );
-        assert_eq!(editor.text(cx), expected_text);
-        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
-            s.select_ranges(
-                selection_ranges
-                    .iter()
-                    .map(|range| MultiBufferOffset(range.start)..MultiBufferOffset(range.end)),
-            )
-        });
-
-        editor.handle_input("X", window, cx);
-
-        let (expected_text, expected_selections) = marked_text_ranges(
-            indoc! {"
-                aaaa
-                bXˇbbXb
-                bXˇbbXˇb
-                cccc"
-            },
-            false,
-        );
-        assert_eq!(editor.text(cx), expected_text);
-        assert_eq!(
-            editor.selections.ranges(&editor.display_snapshot(cx)),
-            expected_selections
-                .iter()
-                .map(|range| MultiBufferOffset(range.start)..MultiBufferOffset(range.end))
-                .collect::<Vec<_>>()
-        );
-
-        editor.newline(&Newline, window, cx);
-        let (expected_text, expected_selections) = marked_text_ranges(
-            indoc! {"
-                aaaa
-                bX
-                ˇbbX
-                b
-                bX
-                ˇbbX
-                ˇb
-                cccc"
-            },
-            false,
-        );
-        assert_eq!(editor.text(cx), expected_text);
-        assert_eq!(
-            editor.selections.ranges(&editor.display_snapshot(cx)),
-            expected_selections
-                .iter()
-                .map(|range| MultiBufferOffset(range.start)..MultiBufferOffset(range.end))
-                .collect::<Vec<_>>()
-        );
-    });
-}
-
-#[gpui::test]
 fn test_refresh_selections(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
-    let buffer = cx.new(|cx| Buffer::local(sample_text(3, 4, 'a'), cx));
-    let mut excerpt1_id = None;
+    let buffer = cx.new(|cx| Buffer::local(sample_text(5, 4, 'a'), cx));
     let multibuffer = cx.new(|cx| {
         let mut multibuffer = MultiBuffer::new(ReadWrite);
-        excerpt1_id = multibuffer
-            .push_excerpts(
-                buffer.clone(),
-                [
-                    ExcerptRange::new(Point::new(0, 0)..Point::new(1, 4)),
-                    ExcerptRange::new(Point::new(1, 0)..Point::new(2, 4)),
-                ],
-                cx,
-            )
-            .into_iter()
-            .next();
-        assert_eq!(multibuffer.read(cx).text(), "aaaa\nbbbb\nbbbb\ncccc");
+        multibuffer.set_excerpts_for_path(
+            PathKey::sorted(0),
+            buffer.clone(),
+            [
+                Point::new(0, 0)..Point::new(1, 4),
+                Point::new(3, 0)..Point::new(4, 4),
+            ],
+            0,
+            cx,
+        );
         multibuffer
     });
 
@@ -17880,7 +17944,13 @@ fn test_refresh_selections(cx: &mut TestAppContext) {
     });
 
     multibuffer.update(cx, |multibuffer, cx| {
-        multibuffer.remove_excerpts([excerpt1_id.unwrap()], cx);
+        multibuffer.set_excerpts_for_path(
+            PathKey::sorted(0),
+            buffer.clone(),
+            [Point::new(3, 0)..Point::new(4, 4)],
+            0,
+            cx,
+        );
     });
     _ = editor.update(cx, |editor, window, cx| {
         // Removing an excerpt causes the first selection to become degenerate.
@@ -17898,8 +17968,8 @@ fn test_refresh_selections(cx: &mut TestAppContext) {
         assert_eq!(
             editor.selections.ranges(&editor.display_snapshot(cx)),
             [
+                Point::new(0, 0)..Point::new(0, 0),
                 Point::new(0, 1)..Point::new(0, 1),
-                Point::new(0, 3)..Point::new(0, 3)
             ]
         );
         assert!(editor.selections.pending_anchor().is_some());
@@ -17910,22 +17980,20 @@ fn test_refresh_selections(cx: &mut TestAppContext) {
 fn test_refresh_selections_while_selecting_with_mouse(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
-    let buffer = cx.new(|cx| Buffer::local(sample_text(3, 4, 'a'), cx));
-    let mut excerpt1_id = None;
+    let buffer = cx.new(|cx| Buffer::local(sample_text(5, 4, 'a'), cx));
     let multibuffer = cx.new(|cx| {
         let mut multibuffer = MultiBuffer::new(ReadWrite);
-        excerpt1_id = multibuffer
-            .push_excerpts(
-                buffer.clone(),
-                [
-                    ExcerptRange::new(Point::new(0, 0)..Point::new(1, 4)),
-                    ExcerptRange::new(Point::new(1, 0)..Point::new(2, 4)),
-                ],
-                cx,
-            )
-            .into_iter()
-            .next();
-        assert_eq!(multibuffer.read(cx).text(), "aaaa\nbbbb\nbbbb\ncccc");
+        multibuffer.set_excerpts_for_path(
+            PathKey::sorted(0),
+            buffer.clone(),
+            [
+                Point::new(0, 0)..Point::new(1, 4),
+                Point::new(3, 0)..Point::new(4, 4),
+            ],
+            0,
+            cx,
+        );
+        assert_eq!(multibuffer.read(cx).text(), "aaaa\nbbbb\ndddd\neeee");
         multibuffer
     });
 
@@ -17947,7 +18015,13 @@ fn test_refresh_selections_while_selecting_with_mouse(cx: &mut TestAppContext) {
     });
 
     multibuffer.update(cx, |multibuffer, cx| {
-        multibuffer.remove_excerpts([excerpt1_id.unwrap()], cx);
+        multibuffer.set_excerpts_for_path(
+            PathKey::sorted(0),
+            buffer.clone(),
+            [Point::new(3, 0)..Point::new(4, 4)],
+            0,
+            cx,
+        );
     });
     _ = editor.update(cx, |editor, window, cx| {
         assert_eq!(
@@ -17959,7 +18033,7 @@ fn test_refresh_selections_while_selecting_with_mouse(cx: &mut TestAppContext) {
         editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| s.refresh());
         assert_eq!(
             editor.selections.ranges(&editor.display_snapshot(cx)),
-            [Point::new(0, 3)..Point::new(0, 3)]
+            [Point::new(0, 0)..Point::new(0, 0)]
         );
         assert!(editor.selections.pending_anchor().is_some());
     });
@@ -18476,9 +18550,10 @@ async fn test_following_with_multiple_excerpts(cx: &mut TestAppContext) {
     // Remove some excerpts.
     leader.update(cx, |leader, cx| {
         leader.buffer.update(cx, |multibuffer, cx| {
-            let excerpt_ids = multibuffer.excerpt_ids();
-            multibuffer.remove_excerpts([excerpt_ids[1], excerpt_ids[2]], cx);
-            multibuffer.remove_excerpts([excerpt_ids[0]], cx);
+            multibuffer.remove_excerpts_for_path(
+                PathKey::with_sort_prefix(1, rel_path("b.txt").into_arc()),
+                cx,
+            );
         });
     });
 
@@ -20709,31 +20784,37 @@ async fn test_multibuffer_reverts(cx: &mut TestAppContext) {
 
     let multibuffer = cx.new(|cx| {
         let mut multibuffer = MultiBuffer::new(ReadWrite);
-        multibuffer.push_excerpts(
+        multibuffer.set_excerpts_for_path(
+            PathKey::sorted(0),
             buffer_1.clone(),
             [
-                ExcerptRange::new(Point::new(0, 0)..Point::new(3, 0)),
-                ExcerptRange::new(Point::new(5, 0)..Point::new(7, 0)),
-                ExcerptRange::new(Point::new(9, 0)..Point::new(10, 4)),
+                Point::new(0, 0)..Point::new(2, 0),
+                Point::new(5, 0)..Point::new(6, 0),
+                Point::new(9, 0)..Point::new(9, 4),
             ],
+            0,
             cx,
         );
-        multibuffer.push_excerpts(
+        multibuffer.set_excerpts_for_path(
+            PathKey::sorted(1),
             buffer_2.clone(),
             [
-                ExcerptRange::new(Point::new(0, 0)..Point::new(3, 0)),
-                ExcerptRange::new(Point::new(5, 0)..Point::new(7, 0)),
-                ExcerptRange::new(Point::new(9, 0)..Point::new(10, 4)),
+                Point::new(0, 0)..Point::new(2, 0),
+                Point::new(5, 0)..Point::new(6, 0),
+                Point::new(9, 0)..Point::new(9, 4),
             ],
+            0,
             cx,
         );
-        multibuffer.push_excerpts(
+        multibuffer.set_excerpts_for_path(
+            PathKey::sorted(2),
             buffer_3.clone(),
             [
-                ExcerptRange::new(Point::new(0, 0)..Point::new(3, 0)),
-                ExcerptRange::new(Point::new(5, 0)..Point::new(7, 0)),
-                ExcerptRange::new(Point::new(9, 0)..Point::new(10, 4)),
+                Point::new(0, 0)..Point::new(2, 0),
+                Point::new(5, 0)..Point::new(6, 0),
+                Point::new(9, 0)..Point::new(9, 4),
             ],
+            0,
             cx,
         );
         multibuffer
@@ -20760,7 +20841,7 @@ async fn test_multibuffer_reverts(cx: &mut TestAppContext) {
     cx.executor().run_until_parked();
 
     editor.update_in(cx, |editor, window, cx| {
-        assert_eq!(editor.text(cx), "Xaaa\nXbbb\nXccc\n\nXfff\nXggg\n\nXjjj\nXlll\nXmmm\nXnnn\n\nXqqq\nXrrr\n\nXuuu\nXvvv\nXwww\nXxxx\n\nX{{{\nX|||\n\nX\u{7f}\u{7f}\u{7f}");
+        assert_eq!(editor.display_text(cx), "\n\nXaaa\nXbbb\nXccc\n\nXfff\nXggg\n\nXjjj\n\n\nXlll\nXmmm\nXnnn\n\nXqqq\nXrrr\n\nXuuu\n\n\nXvvv\nXwww\nXxxx\n\nX{{{\nX|||\n\nX\u{7f}\u{7f}\u{7f}");
         editor.select_all(&SelectAll, window, cx);
         editor.git_restore(&Default::default(), window, cx);
     });
@@ -20768,7 +20849,7 @@ async fn test_multibuffer_reverts(cx: &mut TestAppContext) {
 
     // When all ranges are selected, all buffer hunks are reverted.
     editor.update(cx, |editor, cx| {
-        assert_eq!(editor.text(cx), "aaaa\nbbbb\ncccc\ndddd\neeee\nffff\ngggg\nhhhh\niiii\njjjj\n\n\nllll\nmmmm\nnnnn\noooo\npppp\nqqqq\nrrrr\nssss\ntttt\nuuuu\n\n\nvvvv\nwwww\nxxxx\nyyyy\nzzzz\n{{{{\n||||\n}}}}\n~~~~\n\u{7f}\u{7f}\u{7f}\u{7f}\n\n");
+        assert_eq!(editor.display_text(cx), "\n\naaaa\nbbbb\ncccc\ndddd\neeee\nffff\ngggg\nhhhh\niiii\njjjj\n\n\n\n\n\n\nllll\nmmmm\nnnnn\noooo\npppp\nqqqq\nrrrr\nssss\ntttt\nuuuu\n\n\n\n\n\n\nvvvv\nwwww\nxxxx\nyyyy\nzzzz\n{{{{\n||||\n}}}}\n~~~~\n\u{7f}\u{7f}\u{7f}\u{7f}\n\n\n\n");
     });
     buffer_1.update(cx, |buffer, _| {
         assert_eq!(buffer.text(), base_text_1);
@@ -20786,7 +20867,7 @@ async fn test_multibuffer_reverts(cx: &mut TestAppContext) {
 
     editor.update_in(cx, |editor, window, cx| {
         editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
-            s.select_ranges(Some(Point::new(0, 0)..Point::new(6, 0)));
+            s.select_ranges(Some(Point::new(0, 0)..Point::new(5, 0)));
         });
         editor.git_restore(&Default::default(), window, cx);
     });
@@ -20795,8 +20876,8 @@ async fn test_multibuffer_reverts(cx: &mut TestAppContext) {
     // but not affect buffer_2 and its related excerpts.
     editor.update(cx, |editor, cx| {
         assert_eq!(
-            editor.text(cx),
-            "aaaa\nbbbb\ncccc\ndddd\neeee\nffff\ngggg\nhhhh\niiii\njjjj\n\n\nXlll\nXmmm\nXnnn\n\nXqqq\nXrrr\n\nXuuu\nXvvv\nXwww\nXxxx\n\nX{{{\nX|||\n\nX\u{7f}\u{7f}\u{7f}"
+            editor.display_text(cx),
+            "\n\naaaa\nbbbb\ncccc\ndddd\neeee\nffff\ngggg\nhhhh\niiii\njjjj\n\n\n\n\n\n\nXlll\nXmmm\nXnnn\n\nXqqq\nXrrr\n\nXuuu\n\n\nXvvv\nXwww\nXxxx\n\nX{{{\nX|||\n\nX\u{7f}\u{7f}\u{7f}"
         );
     });
     buffer_1.update(cx, |buffer, _| {
@@ -20851,31 +20932,37 @@ async fn test_multibuffer_in_navigation_history(cx: &mut TestAppContext) {
 
     let multi_buffer = cx.new(|cx| {
         let mut multibuffer = MultiBuffer::new(ReadWrite);
-        multibuffer.push_excerpts(
+        multibuffer.set_excerpts_for_path(
+            PathKey::sorted(0),
             buffer_1.clone(),
             [
-                ExcerptRange::new(Point::new(0, 0)..Point::new(3, 0)),
-                ExcerptRange::new(Point::new(5, 0)..Point::new(7, 0)),
-                ExcerptRange::new(Point::new(9, 0)..Point::new(10, 4)),
+                Point::new(0, 0)..Point::new(2, 0),
+                Point::new(5, 0)..Point::new(6, 0),
+                Point::new(9, 0)..Point::new(9, 4),
             ],
+            0,
             cx,
         );
-        multibuffer.push_excerpts(
+        multibuffer.set_excerpts_for_path(
+            PathKey::sorted(1),
             buffer_2.clone(),
             [
-                ExcerptRange::new(Point::new(0, 0)..Point::new(3, 0)),
-                ExcerptRange::new(Point::new(5, 0)..Point::new(7, 0)),
-                ExcerptRange::new(Point::new(9, 0)..Point::new(10, 4)),
+                Point::new(0, 0)..Point::new(2, 0),
+                Point::new(5, 0)..Point::new(6, 0),
+                Point::new(9, 0)..Point::new(9, 4),
             ],
+            0,
             cx,
         );
-        multibuffer.push_excerpts(
+        multibuffer.set_excerpts_for_path(
+            PathKey::sorted(2),
             buffer_3.clone(),
             [
-                ExcerptRange::new(Point::new(0, 0)..Point::new(3, 0)),
-                ExcerptRange::new(Point::new(5, 0)..Point::new(7, 0)),
-                ExcerptRange::new(Point::new(9, 0)..Point::new(10, 4)),
+                Point::new(0, 0)..Point::new(2, 0),
+                Point::new(5, 0)..Point::new(6, 0),
+                Point::new(9, 0)..Point::new(9, 4),
             ],
+            0,
             cx,
         );
         multibuffer
@@ -21330,33 +21417,40 @@ async fn test_toggle_diff_expand_in_multi_buffer(cx: &mut TestAppContext) {
 
     let multi_buffer = cx.new(|cx| {
         let mut multibuffer = MultiBuffer::new(ReadWrite);
-        multibuffer.push_excerpts(
+        multibuffer.set_excerpts_for_path(
+            PathKey::sorted(0),
             buffer_1.clone(),
             [
-                ExcerptRange::new(Point::new(0, 0)..Point::new(3, 0)),
-                ExcerptRange::new(Point::new(5, 0)..Point::new(7, 0)),
-                ExcerptRange::new(Point::new(9, 0)..Point::new(10, 3)),
+                Point::new(0, 0)..Point::new(2, 3),
+                Point::new(5, 0)..Point::new(6, 3),
+                Point::new(9, 0)..Point::new(10, 3),
             ],
+            0,
             cx,
         );
-        multibuffer.push_excerpts(
+        multibuffer.set_excerpts_for_path(
+            PathKey::sorted(1),
             buffer_2.clone(),
             [
-                ExcerptRange::new(Point::new(0, 0)..Point::new(3, 0)),
-                ExcerptRange::new(Point::new(5, 0)..Point::new(7, 0)),
-                ExcerptRange::new(Point::new(9, 0)..Point::new(10, 3)),
+                Point::new(0, 0)..Point::new(2, 3),
+                Point::new(5, 0)..Point::new(6, 3),
+                Point::new(9, 0)..Point::new(10, 3),
             ],
+            0,
             cx,
         );
-        multibuffer.push_excerpts(
+        multibuffer.set_excerpts_for_path(
+            PathKey::sorted(2),
             buffer_3.clone(),
             [
-                ExcerptRange::new(Point::new(0, 0)..Point::new(3, 0)),
-                ExcerptRange::new(Point::new(5, 0)..Point::new(7, 0)),
-                ExcerptRange::new(Point::new(9, 0)..Point::new(10, 3)),
+                Point::new(0, 0)..Point::new(2, 3),
+                Point::new(5, 0)..Point::new(6, 3),
+                Point::new(9, 0)..Point::new(10, 3),
             ],
+            0,
             cx,
         );
+        assert_eq!(multibuffer.excerpt_ids().len(), 9);
         multibuffer
     });
 
@@ -21387,26 +21481,20 @@ async fn test_toggle_diff_expand_in_multi_buffer(cx: &mut TestAppContext) {
             ˇaaa
             ccc
             ddd
-
             ggg
             hhh
-
 
             lll
             mmm
             NNN
-
             qqq
             rrr
-
             uuu
             111
             222
             333
-
             666
             777
-
             000
             !!!"
         .unindent(),
@@ -21424,27 +21512,21 @@ async fn test_toggle_diff_expand_in_multi_buffer(cx: &mut TestAppContext) {
           - bbb
             ccc
             ddd
-
             ggg
             hhh
-
 
             lll
             mmm
           - nnn
           + NNN
-
             qqq
             rrr
-
             uuu
             111
             222
             333
-
           + 666
             777
-
             000
             !!!ˇ»"
             .unindent(),
@@ -21461,15 +21543,18 @@ async fn test_expand_diff_hunk_at_excerpt_boundary(cx: &mut TestAppContext) {
     let buffer = cx.new(|cx| Buffer::local(text.to_string(), cx));
     let multi_buffer = cx.new(|cx| {
         let mut multibuffer = MultiBuffer::new(ReadWrite);
-        multibuffer.push_excerpts(
+        multibuffer.set_excerpts_for_path(
+            PathKey::sorted(0),
             buffer.clone(),
             [
-                ExcerptRange::new(Point::new(0, 0)..Point::new(2, 0)),
-                ExcerptRange::new(Point::new(4, 0)..Point::new(7, 0)),
-                ExcerptRange::new(Point::new(9, 0)..Point::new(10, 0)),
+                Point::new(0, 0)..Point::new(1, 3),
+                Point::new(4, 0)..Point::new(6, 3),
+                Point::new(9, 0)..Point::new(9, 3),
             ],
+            0,
             cx,
         );
+        assert_eq!(multibuffer.excerpt_ids().len(), 3);
         multibuffer
     });
 
@@ -21502,15 +21587,12 @@ async fn test_expand_diff_hunk_at_excerpt_boundary(cx: &mut TestAppContext) {
             ˇaaa
           - bbb
           + BBB
-
           - ddd
           - eee
           + DDD
           + EEE
             fff
-
-            iii
-        "
+            iii"
         .unindent(),
     );
 }
@@ -24100,31 +24182,37 @@ async fn test_folding_buffers(cx: &mut TestAppContext) {
 
     let multi_buffer = cx.new(|cx| {
         let mut multi_buffer = MultiBuffer::new(ReadWrite);
-        multi_buffer.push_excerpts(
+        multi_buffer.set_excerpts_for_path(
+            PathKey::sorted(0),
             buffer_1.clone(),
             [
-                ExcerptRange::new(Point::new(0, 0)..Point::new(3, 0)),
-                ExcerptRange::new(Point::new(5, 0)..Point::new(7, 0)),
-                ExcerptRange::new(Point::new(9, 0)..Point::new(10, 4)),
+                Point::new(0, 0)..Point::new(2, 0),
+                Point::new(5, 0)..Point::new(6, 0),
+                Point::new(9, 0)..Point::new(10, 4),
             ],
+            0,
             cx,
         );
-        multi_buffer.push_excerpts(
+        multi_buffer.set_excerpts_for_path(
+            PathKey::sorted(1),
             buffer_2.clone(),
             [
-                ExcerptRange::new(Point::new(0, 0)..Point::new(3, 0)),
-                ExcerptRange::new(Point::new(5, 0)..Point::new(7, 0)),
-                ExcerptRange::new(Point::new(9, 0)..Point::new(10, 4)),
+                Point::new(0, 0)..Point::new(2, 0),
+                Point::new(5, 0)..Point::new(6, 0),
+                Point::new(9, 0)..Point::new(10, 4),
             ],
+            0,
             cx,
         );
-        multi_buffer.push_excerpts(
+        multi_buffer.set_excerpts_for_path(
+            PathKey::sorted(2),
             buffer_3.clone(),
             [
-                ExcerptRange::new(Point::new(0, 0)..Point::new(3, 0)),
-                ExcerptRange::new(Point::new(5, 0)..Point::new(7, 0)),
-                ExcerptRange::new(Point::new(9, 0)..Point::new(10, 4)),
+                Point::new(0, 0)..Point::new(2, 0),
+                Point::new(5, 0)..Point::new(6, 0),
+                Point::new(9, 0)..Point::new(10, 4),
             ],
+            0,
             cx,
         );
         multi_buffer
@@ -24141,7 +24229,7 @@ async fn test_folding_buffers(cx: &mut TestAppContext) {
 
     assert_eq!(
         multi_buffer_editor.update(cx, |editor, cx| editor.display_text(cx)),
-        "\n\naaaa\nbbbb\ncccc\n\n\nffff\ngggg\n\n\njjjj\n\n\nllll\nmmmm\nnnnn\n\n\nqqqq\nrrrr\n\n\nuuuu\n\n\nvvvv\nwwww\nxxxx\n\n\n1111\n2222\n\n\n5555",
+        "\n\naaaa\nbbbb\ncccc\n\nffff\ngggg\n\njjjj\n\n\nllll\nmmmm\nnnnn\n\nqqqq\nrrrr\n\nuuuu\n\n\nvvvv\nwwww\nxxxx\n\n1111\n2222\n\n5555",
     );
 
     multi_buffer_editor.update(cx, |editor, cx| {
@@ -24149,7 +24237,7 @@ async fn test_folding_buffers(cx: &mut TestAppContext) {
     });
     assert_eq!(
         multi_buffer_editor.update(cx, |editor, cx| editor.display_text(cx)),
-        "\n\n\n\nllll\nmmmm\nnnnn\n\n\nqqqq\nrrrr\n\n\nuuuu\n\n\nvvvv\nwwww\nxxxx\n\n\n1111\n2222\n\n\n5555",
+        "\n\n\n\nllll\nmmmm\nnnnn\n\nqqqq\nrrrr\n\nuuuu\n\n\nvvvv\nwwww\nxxxx\n\n1111\n2222\n\n5555",
         "After folding the first buffer, its text should not be displayed"
     );
 
@@ -24158,7 +24246,7 @@ async fn test_folding_buffers(cx: &mut TestAppContext) {
     });
     assert_eq!(
         multi_buffer_editor.update(cx, |editor, cx| editor.display_text(cx)),
-        "\n\n\n\n\n\nvvvv\nwwww\nxxxx\n\n\n1111\n2222\n\n\n5555",
+        "\n\n\n\n\n\nvvvv\nwwww\nxxxx\n\n1111\n2222\n\n5555",
         "After folding the second buffer, its text should not be displayed"
     );
 
@@ -24183,7 +24271,7 @@ async fn test_folding_buffers(cx: &mut TestAppContext) {
     });
     assert_eq!(
         multi_buffer_editor.update(cx, |editor, cx| editor.display_text(cx)),
-        "\n\n\n\nllll\nmmmm\nnnnn\n\n\nqqqq\nrrrr\n\n\nuuuu\n\n",
+        "\n\n\n\nllll\nmmmm\nnnnn\n\nqqqq\nrrrr\n\nuuuu\n\n",
         "After unfolding the second buffer, its text should be displayed"
     );
 
@@ -24205,7 +24293,7 @@ async fn test_folding_buffers(cx: &mut TestAppContext) {
 
     assert_eq!(
         multi_buffer_editor.update(cx, |editor, cx| editor.display_text(cx)),
-        "\n\naaaa\nBbbbb\ncccc\n\n\nffff\ngggg\n\n\njjjj\n\n\nllll\nmmmm\nnnnn\n\n\nqqqq\nrrrr\n\n\nuuuu\n\n",
+        "\n\naaaa\nBbbbb\ncccc\n\nffff\ngggg\n\njjjj\n\n\nllll\nmmmm\nnnnn\n\nqqqq\nrrrr\n\nuuuu\n\n",
         "After unfolding the first buffer, its and 2nd buffer's text should be displayed"
     );
 
@@ -24214,7 +24302,7 @@ async fn test_folding_buffers(cx: &mut TestAppContext) {
     });
     assert_eq!(
         multi_buffer_editor.update(cx, |editor, cx| editor.display_text(cx)),
-        "\n\naaaa\nBbbbb\ncccc\n\n\nffff\ngggg\n\n\njjjj\n\n\nllll\nmmmm\nnnnn\n\n\nqqqq\nrrrr\n\n\nuuuu\n\n\nvvvv\nwwww\nxxxx\n\n\n1111\n2222\n\n\n5555",
+        "\n\naaaa\nBbbbb\ncccc\n\nffff\ngggg\n\njjjj\n\n\nllll\nmmmm\nnnnn\n\nqqqq\nrrrr\n\nuuuu\n\n\nvvvv\nwwww\nxxxx\n\n1111\n2222\n\n5555",
         "After unfolding the all buffers, all original text should be displayed"
     );
 }
@@ -24268,19 +24356,25 @@ async fn test_folding_buffers_with_one_excerpt(cx: &mut TestAppContext) {
 
     let multi_buffer = cx.new(|cx| {
         let mut multi_buffer = MultiBuffer::new(ReadWrite);
-        multi_buffer.push_excerpts(
+        multi_buffer.set_excerpts_for_path(
+            PathKey::sorted(0),
             buffer_1.clone(),
-            [ExcerptRange::new(Point::new(0, 0)..Point::new(3, 0))],
+            [Point::new(0, 0)..Point::new(3, 0)],
+            0,
             cx,
         );
-        multi_buffer.push_excerpts(
+        multi_buffer.set_excerpts_for_path(
+            PathKey::sorted(1),
             buffer_2.clone(),
-            [ExcerptRange::new(Point::new(0, 0)..Point::new(3, 0))],
+            [Point::new(0, 0)..Point::new(3, 0)],
+            0,
             cx,
         );
-        multi_buffer.push_excerpts(
+        multi_buffer.set_excerpts_for_path(
+            PathKey::sorted(2),
             buffer_3.clone(),
-            [ExcerptRange::new(Point::new(0, 0)..Point::new(3, 0))],
+            [Point::new(0, 0)..Point::new(3, 0)],
+            0,
             cx,
         );
         multi_buffer
@@ -24391,15 +24485,15 @@ async fn test_folding_buffer_when_multibuffer_has_only_one_excerpt(cx: &mut Test
 
     let multi_buffer = cx.new(|cx| {
         let mut multi_buffer = MultiBuffer::new(ReadWrite);
-        multi_buffer.push_excerpts(
+        multi_buffer.set_excerpts_for_path(
+            PathKey::sorted(0),
             buffer_1.clone(),
-            [ExcerptRange::new(
-                Point::new(0, 0)
-                    ..Point::new(
-                        sample_text.chars().filter(|&c| c == '\n').count() as u32 + 1,
-                        0,
-                    ),
-            )],
+            [Point::new(0, 0)
+                ..Point::new(
+                    sample_text.chars().filter(|&c| c == '\n').count() as u32 + 1,
+                    0,
+                )],
+            0,
             cx,
         );
         multi_buffer
@@ -29645,19 +29739,25 @@ fn test_relative_line_numbers(cx: &mut TestAppContext) {
 
     let multibuffer = cx.new(|cx| {
         let mut multibuffer = MultiBuffer::new(ReadWrite);
-        multibuffer.push_excerpts(
+        multibuffer.set_excerpts_for_path(
+            PathKey::sorted(0),
             buffer_1.clone(),
-            [ExcerptRange::new(Point::new(0, 0)..Point::new(2, 0))],
+            [Point::new(0, 0)..Point::new(2, 0)],
+            0,
             cx,
         );
-        multibuffer.push_excerpts(
+        multibuffer.set_excerpts_for_path(
+            PathKey::sorted(1),
             buffer_2.clone(),
-            [ExcerptRange::new(Point::new(0, 0)..Point::new(2, 0))],
+            [Point::new(0, 0)..Point::new(2, 0)],
+            0,
             cx,
         );
-        multibuffer.push_excerpts(
+        multibuffer.set_excerpts_for_path(
+            PathKey::sorted(2),
             buffer_3.clone(),
-            [ExcerptRange::new(Point::new(0, 0)..Point::new(2, 0))],
+            [Point::new(0, 0)..Point::new(2, 0)],
+            0,
             cx,
         );
         multibuffer
