@@ -2094,6 +2094,10 @@ impl Panel for AgentPanel {
         AGENT_PANEL_KEY
     }
 
+    fn starts_open(&self, _window: &Window, cx: &App) -> bool {
+        AgentSettings::get_global(cx).auto_open_panel
+    }
+
     fn position(&self, _window: &Window, cx: &App) -> DockPosition {
         agent_panel_dock_position(cx)
     }
