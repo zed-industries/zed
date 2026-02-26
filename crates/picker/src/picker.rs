@@ -1111,7 +1111,6 @@ mod tests {
         });
     }
 
-
     struct TestItem {
         id: String,
         text: String,
