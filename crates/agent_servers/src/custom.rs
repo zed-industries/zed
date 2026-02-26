@@ -379,15 +379,15 @@ impl AgentServer for CustomAgentServer {
         }
 
         let mut extra_env = load_proxy_env(cx);
+        if delegate.store.read(cx).no_browser() {
+            extra_env.insert("NO_BROWSER".to_owned(), "1".to_owned());
+        }
         if is_registry_agent {
             match name.as_ref() {
                 CLAUDE_AGENT_NAME => {
                     extra_env.insert("ANTHROPIC_API_KEY".into(), "".into());
                 }
                 CODEX_NAME => {
-                    if delegate.store.read(cx).no_browser() {
-                        extra_env.insert("NO_BROWSER".to_owned(), "1".to_owned());
-                    }
                     if let Ok(api_key) = std::env::var("CODEX_API_KEY") {
                         extra_env.insert("CODEX_API_KEY".into(), api_key);
                     }
