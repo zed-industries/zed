@@ -6390,12 +6390,9 @@ impl ThreadView {
                     let session_id = thread.read(cx).session_id().clone();
                     this.when(is_expanded, |this| {
                         this.child(self.render_subagent_expanded_content(
-                            active_session_id,
-                            entry_ix,
                             thread_view,
                             is_running,
                             tool_call,
-                            focus_handle,
                             window,
                             cx,
                         ))
@@ -6435,12 +6432,9 @@ impl ThreadView {
 
     fn render_subagent_expanded_content(
         &self,
-        active_session_id: &acp::SessionId,
-        entry_ix: usize,
         thread_view: &Entity<ThreadView>,
         is_running: bool,
         tool_call: &ToolCall,
-        focus_handle: &FocusHandle,
         window: &Window,
         cx: &Context<Self>,
     ) -> impl IntoElement {
@@ -6449,101 +6443,66 @@ impl ThreadView {
         let subagent_view = thread_view.read(cx);
         let session_id = subagent_view.thread.read(cx).session_id().clone();
 
-        let base_container = || {
-            div()
-                .id(format!("subagent-content-{}", session_id))
-                .relative()
-                .w_full()
-                .h_56()
-                .border_t_1()
-                .border_color(self.tool_card_border_color(cx))
-                .overflow_hidden()
-        };
+        let is_canceled_or_failed = matches!(
+            tool_call.status,
+            ToolCallStatus::Canceled | ToolCallStatus::Failed | ToolCallStatus::Rejected
+        );
 
         let editor_bg = cx.theme().colors().editor_background;
-        let overlay = || {
+        let overlay = {
             div()
                 .absolute()
                 .inset_0()
                 .size_full()
                 .bg(linear_gradient(
                     180.,
-                    linear_color_stop(editor_bg, 0.),
+                    linear_color_stop(editor_bg.opacity(0.5), 0.),
                     linear_color_stop(editor_bg.opacity(0.), 0.1),
                 ))
                 .block_mouse_except_scroll()
         };
 
-        let show_thread_entries = is_running || tool_call.content.is_empty();
+        let entries = subagent_view.thread.read(cx).entries();
+        let total_entries = entries.len();
+        let start_ix = total_entries.saturating_sub(MAX_PREVIEW_ENTRIES);
 
-        if show_thread_entries {
-            let scroll_handle = self
-                .subagent_scroll_handles
-                .borrow_mut()
-                .entry(session_id.clone())
-                .or_default()
-                .clone();
-            if is_running {
-                scroll_handle.scroll_to_bottom();
-            }
-
-            let entries = subagent_view.thread.read(cx).entries();
-            let total_entries = entries.len();
-            let start_ix = total_entries.saturating_sub(MAX_PREVIEW_ENTRIES);
-
-            let rendered_entries: Vec<AnyElement> = entries[start_ix..]
-                .iter()
-                .enumerate()
-                .map(|(i, entry)| {
-                    let actual_ix = start_ix + i;
-                    subagent_view.render_entry(actual_ix, total_entries + 1, entry, window, cx)
-                })
-                .collect();
-
-            base_container()
-                .child(
-                    div()
-                        .id(format!("subagent-entries-{}", session_id))
-                        .size_full()
-                        .track_scroll(&scroll_handle)
-                        .pb_1()
-                        .children(rendered_entries),
-                )
-                .child(overlay())
-                .into_any_element()
-        } else {
-            base_container()
-                .child(
-                    v_flex()
-                        .id(format!("subagent-done-content-{}", session_id))
-                        .size_full()
-                        .justify_end()
-                        .children(tool_call.content.iter().enumerate().map(
-                            |(content_ix, content)| {
-                                div().p_2().child(self.render_tool_call_content(
-                                    active_session_id,
-                                    entry_ix,
-                                    content,
-                                    content_ix,
-                                    tool_call,
-                                    true,
-                                    false,
-                                    matches!(
-                                        tool_call.status,
-                                        ToolCallStatus::Failed
-                                            | ToolCallStatus::Rejected
-                                            | ToolCallStatus::Canceled
-                                    ),
-                                    focus_handle,
-                                    window,
-                                    cx,
-                                ))
-                            },
-                        )),
-                )
-                .child(overlay())
-                .into_any_element()
+        let scroll_handle = self
+            .subagent_scroll_handles
+            .borrow_mut()
+            .entry(session_id.clone())
+            .or_default()
+            .clone();
+        if is_running {
+            scroll_handle.scroll_to_bottom();
         }
+
+        let rendered_entries: Vec<AnyElement> = entries[start_ix..]
+            .iter()
+            .enumerate()
+            .map(|(i, entry)| {
+                let actual_ix = start_ix + i;
+                subagent_view.render_entry(actual_ix, total_entries + 1, entry, window, cx)
+            })
+            .collect();
+
+        div()
+            .relative()
+            .w_full()
+            .h_56()
+            .border_t_1()
+            .when(is_canceled_or_failed, |this| this.border_dashed())
+            .border_color(self.tool_card_border_color(cx))
+            .overflow_hidden()
+            .child(
+                div()
+                    .id(format!("subagent-entries-{}", session_id))
+                    .size_full()
+                    .track_scroll(&scroll_handle)
+                    .pb_1()
+                    .children(rendered_entries),
+            )
+            .child(overlay)
+            .into_any_element()
     }
 
     fn render_rules_item(&self, cx: &Context<Self>) -> Option<AnyElement> {
