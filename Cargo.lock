@@ -9009,19 +9009,6 @@ dependencies = [
 
 [[package]]
 name = "jsonwebtoken"
-version = "9.3.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5a87cc7a48537badeae96744432de36f4be2b4a34a05a5ef32e9dd8a1c169dde"
-dependencies = [
- "base64 0.22.1",
- "js-sys",
- "ring",
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "jsonwebtoken"
 version = "10.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0529410abe238729a60b108898784df8984c87f6054c9c4fcacc47e4803c1ce1"
@@ -9613,7 +9600,7 @@ dependencies = [
 [[package]]
 name = "libwebrtc"
 version = "0.3.26"
-source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=79cae9507d88318220995c5aa27ecc3368449461#79cae9507d88318220995c5aa27ecc3368449461"
+source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=9c38d9a0a91951967f8fa84ed86e193626436774#9c38d9a0a91951967f8fa84ed86e193626436774"
 dependencies = [
  "cxx",
  "glib",
@@ -9711,7 +9698,7 @@ checksum = "11d3d7f243d5c5a8b9bb5d6dd2b1602c0cb0b9db1621bafc7ed66e35ff9fe092"
 [[package]]
 name = "livekit"
 version = "0.7.32"
-source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=79cae9507d88318220995c5aa27ecc3368449461#79cae9507d88318220995c5aa27ecc3368449461"
+source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=9c38d9a0a91951967f8fa84ed86e193626436774#9c38d9a0a91951967f8fa84ed86e193626436774"
 dependencies = [
  "base64 0.22.1",
  "bmrng",
@@ -9737,12 +9724,11 @@ dependencies = [
 [[package]]
 name = "livekit-api"
 version = "0.4.14"
-source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=79cae9507d88318220995c5aa27ecc3368449461#79cae9507d88318220995c5aa27ecc3368449461"
+source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=9c38d9a0a91951967f8fa84ed86e193626436774#9c38d9a0a91951967f8fa84ed86e193626436774"
 dependencies = [
  "base64 0.21.7",
  "futures-util",
  "http 1.3.1",
- "jsonwebtoken 9.3.1",
  "livekit-protocol",
  "livekit-runtime",
  "log",
@@ -9754,7 +9740,6 @@ dependencies = [
  "rustls-native-certs 0.6.3",
  "scopeguard",
  "serde",
- "serde_json",
  "sha2",
  "thiserror 1.0.69",
  "tokio",
@@ -9766,7 +9751,7 @@ dependencies = [
 [[package]]
 name = "livekit-protocol"
 version = "0.7.1"
-source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=79cae9507d88318220995c5aa27ecc3368449461#79cae9507d88318220995c5aa27ecc3368449461"
+source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=9c38d9a0a91951967f8fa84ed86e193626436774#9c38d9a0a91951967f8fa84ed86e193626436774"
 dependencies = [
  "futures-util",
  "livekit-runtime",
@@ -9782,7 +9767,7 @@ dependencies = [
 [[package]]
 name = "livekit-runtime"
 version = "0.4.0"
-source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=79cae9507d88318220995c5aa27ecc3368449461#79cae9507d88318220995c5aa27ecc3368449461"
+source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=9c38d9a0a91951967f8fa84ed86e193626436774#9c38d9a0a91951967f8fa84ed86e193626436774"
 dependencies = [
  "tokio",
  "tokio-stream",
@@ -9794,7 +9779,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
- "jsonwebtoken 10.3.0",
+ "jsonwebtoken",
  "log",
  "prost 0.9.0",
  "prost-build 0.9.0",
@@ -19721,7 +19706,7 @@ dependencies = [
 [[package]]
 name = "webrtc-sys"
 version = "0.3.23"
-source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=79cae9507d88318220995c5aa27ecc3368449461#79cae9507d88318220995c5aa27ecc3368449461"
+source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=9c38d9a0a91951967f8fa84ed86e193626436774#9c38d9a0a91951967f8fa84ed86e193626436774"
 dependencies = [
  "cc",
  "cxx",
@@ -19735,7 +19720,7 @@ dependencies = [
 [[package]]
 name = "webrtc-sys-build"
 version = "0.3.13"
-source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=79cae9507d88318220995c5aa27ecc3368449461#79cae9507d88318220995c5aa27ecc3368449461"
+source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=9c38d9a0a91951967f8fa84ed86e193626436774#9c38d9a0a91951967f8fa84ed86e193626436774"
 dependencies = [
  "anyhow",
  "fs2",
