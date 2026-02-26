@@ -1103,7 +1103,7 @@ impl AgentConfiguration {
                 )),
                 IconName::AcpRegistry,
             )),
-            ExternalAgentSource::Builtin | ExternalAgentSource::Custom => None,
+            ExternalAgentSource::Custom => None,
         };
 
         let agent_server_name = ExternalAgentServerName(id.clone());
@@ -1157,7 +1157,7 @@ impl AgentConfiguration {
                     })),
                 )
             }
-            ExternalAgentSource::Builtin | ExternalAgentSource::Custom => None,
+            ExternalAgentSource::Custom => None,
         };
 
         h_flex()

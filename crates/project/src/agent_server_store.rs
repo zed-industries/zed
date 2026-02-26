@@ -90,7 +90,6 @@ impl Borrow<str> for ExternalAgentServerName {
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum ExternalAgentSource {
-    Builtin,
     #[default]
     Custom,
     Extension,
@@ -802,13 +801,7 @@ impl AgentServerStore {
                 .names
                 .into_iter()
                 .map(|name| {
-                    let agent_name = ExternalAgentServerName(name.clone().into());
-                    let fallback_source =
-                        if name == GEMINI_NAME || name == CLAUDE_AGENT_NAME || name == CODEX_NAME {
-                            ExternalAgentSource::Builtin
-                        } else {
-                            ExternalAgentSource::Custom
-                        };
+                    let agent_name = ExternalAgentServerName(name.into());
                     let (icon, display_name, source) = metadata
                         .remove(&agent_name)
                         .or_else(|| {
@@ -822,12 +815,7 @@ impl AgentServerStore {
                                     )
                                 })
                         })
-                        .unwrap_or((None, None, fallback_source));
-                    let source = if fallback_source == ExternalAgentSource::Builtin {
-                        ExternalAgentSource::Builtin
-                    } else {
-                        source
-                    };
+                        .unwrap_or((None, None, ExternalAgentSource::default()));
                     let agent = RemoteExternalAgentServer {
                         project_id: *project_id,
                         upstream_client: upstream_client.clone(),
