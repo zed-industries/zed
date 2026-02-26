@@ -4882,6 +4882,32 @@ fn test_join_lines_with_single_selection(cx: &mut TestAppContext) {
             &[Point::new(0, 3)..Point::new(0, 3)]
         );
 
+        editor.undo(&Undo, window, cx);
+        assert_eq!(buffer.read(cx).text(), "aaa\nbbb\nccc\nddd\n\n");
+
+        // Select a full line, i.e. start of the first line to the start of the second line
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_ranges([Point::new(0, 0)..Point::new(1, 0)])
+        });
+        editor.join_lines(&JoinLines, window, cx);
+        assert_eq!(buffer.read(cx).text(), "aaa bbb\nccc\nddd\n\n");
+
+        editor.undo(&Undo, window, cx);
+        assert_eq!(buffer.read(cx).text(), "aaa\nbbb\nccc\nddd\n\n");
+
+        // Select two full lines
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_ranges([Point::new(0, 0)..Point::new(2, 0)])
+        });
+        editor.join_lines(&JoinLines, window, cx);
+
+        // Only the selected lines should be joined, not the third.
+        assert_eq!(
+            buffer.read(cx).text(),
+            "aaa bbb\nccc\nddd\n\n",
+            "only the two selected lines (a and b) should be joined"
+        );
+
         // When multiple lines are selected, remove newlines that are spanned by the selection
         editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
             s.select_ranges([Point::new(0, 5)..Point::new(2, 2)])
