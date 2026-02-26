@@ -944,6 +944,7 @@ fn init_app_state(cx: &mut App) -> Arc<AppState> {
     let session = cx.new(|cx| session::AppSession::new(Session::test(), cx));
     let user_store = cx.new(|cx| client::UserStore::new(client.clone(), cx));
     let workspace_store = cx.new(|cx| workspace::WorkspaceStore::new(client.clone(), cx));
+    workspace::WorkspaceStore::set_global(workspace_store.clone(), cx);
 
     theme::init(theme::LoadThemes::JustBase, cx);
     client::init(&client, cx);

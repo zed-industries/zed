@@ -42,7 +42,7 @@ use ui::{
 
 use util::{ResultExt as _, paths::PathStyle, rel_path::RelPath};
 use workspace::{
-    AppState, MultiWorkspace, OpenOptions, OpenVisible, Workspace, client_side_decorations,
+    MultiWorkspace, OpenOptions, OpenVisible, Workspace, WorkspaceStore, client_side_decorations,
 };
 use zed_actions::{OpenProjectSettings, OpenSettings, OpenSettingsAt};
 
@@ -1536,13 +1536,16 @@ impl SettingsWindow {
         })
         .detach();
 
-        if let Some(app_state) = AppState::global(cx).upgrade() {
-            let workspaces: Vec<Entity<Workspace>> = app_state
-                .workspace_store
-                .read(cx)
-                .workspaces()
-                .filter_map(|weak| weak.upgrade())
-                .collect();
+        {
+            let workspaces: Vec<Entity<Workspace>> = WorkspaceStore::try_global(cx)
+                .map(|store| {
+                    store
+                        .read(cx)
+                        .workspaces()
+                        .filter_map(|weak| weak.upgrade())
+                        .collect()
+                })
+                .unwrap_or_default();
 
             for workspace in workspaces {
                 let project = workspace.read(cx).project().clone();
@@ -1557,8 +1560,6 @@ impl SettingsWindow {
                 })
                 .detach();
             }
-        } else {
-            log::error!("App state doesn't exist when creating a new settings window");
         }
 
         let this_weak = cx.weak_entity();
@@ -2159,7 +2160,7 @@ impl SettingsWindow {
             }
 
             if let Some(worktree_id) = settings_ui_file.worktree_id() {
-                let directory_name = all_projects(self.original_window.as_ref(), cx)
+                let directory_name = all_projects(cx)
                     .find_map(|project| project.read(cx).worktree_for_id(worktree_id, cx))
                     .map(|worktree| worktree.read(cx).root_name());
 
@@ -2188,7 +2189,7 @@ impl SettingsWindow {
 
         let mut missing_worktrees = Vec::new();
 
-        for worktree in all_projects(self.original_window.as_ref(), cx)
+        for worktree in all_projects(cx)
             .flat_map(|project| project.read(cx).visible_worktrees(cx))
             .filter(|tree| !self.worktree_root_dirs.contains_key(&tree.read(cx).id()))
         {
@@ -3732,32 +3733,15 @@ impl Render for SettingsWindow {
     }
 }
 
-fn all_projects(
-    window: Option<&WindowHandle<MultiWorkspace>>,
-    cx: &App,
-) -> impl Iterator<Item = Entity<Project>> {
+fn all_projects(cx: &App) -> impl Iterator<Item = Entity<Project>> {
     let mut seen_project_ids = std::collections::HashSet::new();
-    workspace::AppState::global(cx)
-        .upgrade()
-        .map(|app_state| {
-            app_state
-                .workspace_store
+    WorkspaceStore::try_global(cx)
+        .map(|store| {
+            store
                 .read(cx)
                 .workspaces()
                 .filter_map(|weak| weak.upgrade())
                 .map(|workspace: Entity<Workspace>| workspace.read(cx).project().clone())
-                .chain(
-                    window
-                        .and_then(|handle| handle.read(cx).ok())
-                        .into_iter()
-                        .flat_map(|multi_workspace| {
-                            multi_workspace
-                                .workspaces()
-                                .iter()
-                                .map(|workspace| workspace.read(cx).project().clone())
-                                .collect::<Vec<_>>()
-                        }),
-                )
                 .filter(move |project| seen_project_ids.insert(project.entity_id()))
         })
         .into_iter()
@@ -3958,14 +3942,12 @@ fn update_project_setting_file(
     settings_window: Entity<SettingsWindow>,
     cx: &mut App,
 ) -> Result<()> {
-    let Some((worktree, project)) =
-        all_projects(settings_window.read(cx).original_window.as_ref(), cx).find_map(|project| {
-            project
-                .read(cx)
-                .worktree_for_id(worktree_id, cx)
-                .zip(Some(project))
-        })
-    else {
+    let Some((worktree, project)) = all_projects(cx).find_map(|project| {
+        project
+            .read(cx)
+            .worktree_for_id(worktree_id, cx)
+            .zip(Some(project))
+    }) else {
         anyhow::bail!("Could not find project with worktree id: {}", worktree_id);
     };
 
@@ -4336,6 +4318,7 @@ fn render_icon_theme_picker(
 pub mod test {
 
     use super::*;
+    use workspace::AppState;
 
     impl SettingsWindow {
         fn navbar_entry(&self) -> usize {

@@ -90,7 +90,7 @@ use workspace::notifications::{
 
 use workspace::{
     AppState, MultiWorkspace, NewFile, NewWindow, OpenLog, Panel, Toast, Workspace,
-    WorkspaceSettings, create_and_open_local_file,
+    WorkspaceSettings, WorkspaceStore, create_and_open_local_file,
     notifications::simple_message_notification::MessageNotification, open_new,
 };
 use workspace::{
@@ -376,7 +376,7 @@ pub fn initialize_workspace(
             return;
         };
         let multi_workspace_handle = cx.entity();
-        let workspaces = multi_workspace.workspaces().to_vec();
+        let workspaces = vec![multi_workspace.workspace().clone()];
         let sidebar = cx.new(|cx| Sidebar::new(multi_workspace_handle, &workspaces, window, cx));
         multi_workspace.register_sidebar(sidebar, window, cx);
     })
@@ -1320,46 +1320,53 @@ fn quit(_: &Quit, cx: &mut App) {
         }
 
         // If the user cancels any save prompt, then keep the app open.
-        for window in &workspace_windows {
-            let window = *window;
-            let workspaces = window
-                .update(cx, |multi_workspace, _, _| {
-                    multi_workspace.workspaces().to_vec()
-                })
-                .log_err();
-
-            let Some(workspaces) = workspaces else {
-                continue;
-            };
-
-            for workspace in workspaces {
-                if let Some(should_close) = window
-                    .update(cx, |multi_workspace, window, cx| {
-                        multi_workspace.activate(workspace.clone(), cx);
-                        window.activate_window();
-                        workspace.update(cx, |workspace, cx| {
-                            workspace.prepare_to_close(CloseIntent::Quit, window, cx)
-                        })
+        let workspaces_to_close: Vec<(WindowHandle<MultiWorkspace>, Entity<Workspace>)> = cx
+            .update(|cx| {
+                let mut result: Vec<_> = WorkspaceStore::global(cx)
+                    .read(cx)
+                    .workspaces_with_windows()
+                    .filter_map(|(window, weak)| {
+                        Some((window.downcast::<MultiWorkspace>()?, weak.upgrade()?))
                     })
-                    .log_err()
-                {
-                    if !should_close.await? {
-                        return Ok(());
-                    }
+                    .collect();
+                // Prompt in the active window before switching to a different window.
+                result.sort_by_key(|(window, _)| window.is_active(cx) == Some(false));
+                result
+            });
+
+        for (window, workspace) in &workspaces_to_close {
+            let window = *window;
+            if let Some(should_close) = window
+                .update(cx, |multi_workspace, window, cx| {
+                    multi_workspace.activate(workspace.clone(), cx);
+                    window.activate_window();
+                    workspace.update(cx, |workspace, cx| {
+                        workspace.prepare_to_close(CloseIntent::Quit, window, cx)
+                    })
+                })
+                .log_err()
+            {
+                if !should_close.await? {
+                    return Ok(());
                 }
             }
         }
         // Flush all pending workspace serialization before quitting so that
         // session_id/window_id are up-to-date in the database.
         let mut flush_tasks = Vec::new();
+        for (window, workspace) in &workspaces_to_close {
+            let window = *window;
+            window
+                .update(cx, |_multi_workspace, window, cx| {
+                    flush_tasks.push(workspace.update(cx, |workspace, cx| {
+                        workspace.flush_serialization(window, cx)
+                    }));
+                })
+                .log_err();
+        }
         for window in &workspace_windows {
             window
-                .update(cx, |multi_workspace, window, cx| {
-                    for workspace in multi_workspace.workspaces() {
-                        flush_tasks.push(workspace.update(cx, |workspace, cx| {
-                            workspace.flush_serialization(window, cx)
-                        }));
-                    }
+                .update(cx, |multi_workspace, _window, _cx| {
                     flush_tasks.append(&mut multi_workspace.take_pending_removal_tasks());
                     flush_tasks.push(multi_workspace.flush_serialization());
                 })

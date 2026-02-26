@@ -1,4 +1,4 @@
-use crate::{MultiWorkspace, SuppressNotification, Toast, Workspace};
+use crate::{SuppressNotification, Toast, Workspace, WorkspaceStore};
 use anyhow::Context as _;
 use gpui::{
     AnyEntity, AnyView, App, AppContext as _, AsyncApp, AsyncWindowContext, ClickEvent, Context,
@@ -1036,21 +1036,18 @@ pub fn show_app_notification<V: Notification + 'static>(
             .lock()
             .insert(id.clone(), build_notification.clone());
 
-        for window in cx.windows() {
-            if let Some(multi_workspace) = window.downcast::<MultiWorkspace>() {
-                multi_workspace
-                    .update(cx, |multi_workspace, _window, cx| {
-                        for workspace in multi_workspace.workspaces() {
-                            workspace.update(cx, |workspace, cx| {
-                                workspace.show_notification_without_handling_dismiss_events(
-                                    &id,
-                                    cx,
-                                    |cx| build_notification(cx),
-                                );
-                            });
-                        }
-                    })
-                    .ok(); // Doesn't matter if the windows are dropped
+        if let Some(workspace_store) = WorkspaceStore::try_global(cx) {
+            let workspaces: Vec<_> = workspace_store
+                .read(cx)
+                .workspaces()
+                .filter_map(|weak| weak.upgrade())
+                .collect();
+            for workspace in workspaces {
+                workspace.update(cx, |workspace, cx| {
+                    workspace.show_notification_without_handling_dismiss_events(&id, cx, |cx| {
+                        build_notification(cx)
+                    });
+                });
             }
         }
     });
@@ -1061,18 +1058,14 @@ pub fn dismiss_app_notification(id: &NotificationId, cx: &mut App) {
     // Defer notification dismissal so that windows on the stack can be returned to GPUI
     cx.defer(move |cx| {
         GLOBAL_APP_NOTIFICATIONS.lock().remove(&id);
-        for window in cx.windows() {
-            if let Some(multi_workspace) = window.downcast::<MultiWorkspace>() {
-                let id = id.clone();
-                multi_workspace
-                    .update(cx, |multi_workspace, _window, cx| {
-                        for workspace in multi_workspace.workspaces() {
-                            workspace.update(cx, |workspace, cx| {
-                                workspace.dismiss_notification(&id, cx)
-                            });
-                        }
-                    })
-                    .ok();
+        if let Some(workspace_store) = WorkspaceStore::try_global(cx) {
+            let workspaces: Vec<_> = workspace_store
+                .read(cx)
+                .workspaces()
+                .filter_map(|weak| weak.upgrade())
+                .collect();
+            for workspace in workspaces {
+                workspace.update(cx, |workspace, cx| workspace.dismiss_notification(&id, cx));
             }
         }
     });
