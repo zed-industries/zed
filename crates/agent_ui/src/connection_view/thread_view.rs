@@ -186,12 +186,12 @@ impl DiffStats {
     }
 }
 
-pub struct AcpThreadView {
+pub struct ThreadView {
     pub id: acp::SessionId,
     pub parent_id: Option<acp::SessionId>,
     pub thread: Entity<AcpThread>,
     pub(crate) conversation: Entity<super::Conversation>,
-    pub server_view: WeakEntity<AcpServerView>,
+    pub server_view: WeakEntity<ConnectionView>,
     pub agent_icon: IconName,
     pub agent_name: SharedString,
     pub focus_handle: FocusHandle,
@@ -200,7 +200,7 @@ pub struct AcpThreadView {
     pub title_editor: Entity<Editor>,
     pub config_options_view: Option<Entity<ConfigOptionsView>>,
     pub mode_selector: Option<Entity<ModeSelector>>,
-    pub model_selector: Option<Entity<AcpModelSelectorPopover>>,
+    pub model_selector: Option<Entity<ModelSelectorPopover>>,
     pub profile_selector: Option<Entity<ProfileSelector>>,
     pub permission_dropdown_handle: PopoverMenuHandle<ContextMenu>,
     pub thread_retry_status: Option<RetryStatus>,
@@ -252,10 +252,10 @@ pub struct AcpThreadView {
     pub recent_history_entries: Vec<AgentSessionInfo>,
     pub hovered_recent_history_item: Option<usize>,
     pub show_codex_windows_warning: bool,
-    pub history: Entity<AcpThreadHistory>,
+    pub history: Entity<ThreadHistory>,
     pub _history_subscription: Subscription,
 }
-impl Focusable for AcpThreadView {
+impl Focusable for ThreadView {
     fn focus_handle(&self, cx: &App) -> FocusHandle {
         if self.parent_id.is_some() {
             self.focus_handle.clone()
@@ -275,12 +275,12 @@ pub struct TurnFields {
     pub turn_tokens: Option<u64>,
 }
 
-impl AcpThreadView {
+impl ThreadView {
     pub(crate) fn new(
         parent_id: Option<acp::SessionId>,
         thread: Entity<AcpThread>,
         conversation: Entity<super::Conversation>,
-        server_view: WeakEntity<AcpServerView>,
+        server_view: WeakEntity<ConnectionView>,
         agent_icon: IconName,
         agent_name: SharedString,
         agent_display_name: SharedString,
@@ -288,7 +288,7 @@ impl AcpThreadView {
         entry_view_state: Entity<EntryViewState>,
         config_options_view: Option<Entity<ConfigOptionsView>>,
         mode_selector: Option<Entity<ModeSelector>>,
-        model_selector: Option<Entity<AcpModelSelectorPopover>>,
+        model_selector: Option<Entity<ModelSelectorPopover>>,
         profile_selector: Option<Entity<ProfileSelector>>,
         list_state: ListState,
         prompt_capabilities: Rc<RefCell<PromptCapabilities>>,
@@ -297,7 +297,7 @@ impl AcpThreadView {
         resume_thread_metadata: Option<AgentSessionInfo>,
         project: WeakEntity<Project>,
         thread_store: Option<Entity<ThreadStore>>,
-        history: Entity<AcpThreadHistory>,
+        history: Entity<ThreadHistory>,
         prompt_store: Option<Entity<PromptStore>>,
         initial_content: Option<AgentInitialContent>,
         mut subscriptions: Vec<Subscription>,
@@ -671,7 +671,7 @@ impl AcpThreadView {
                     let agent_name = self.agent_name.clone();
                     let server_view = self.server_view.clone();
                     move |window, cx| {
-                        AcpServerView::handle_auth_required(
+                        ConnectionView::handle_auth_required(
                             server_view.clone(),
                             AuthRequired::new(),
                             agent_name,
@@ -1504,7 +1504,7 @@ impl AcpThreadView {
     pub fn sync_thread(
         &mut self,
         project: Entity<Project>,
-        server_view: Entity<AcpServerView>,
+        server_view: Entity<ConnectionView>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -3429,7 +3429,7 @@ impl AcpThreadView {
     }
 }
 
-impl AcpThreadView {
+impl ThreadView {
     pub(crate) fn render_entries(&mut self, cx: &mut Context<Self>) -> List {
         list(
             self.list_state.clone(),
@@ -6130,7 +6130,7 @@ impl AcpThreadView {
         &self,
         active_session_id: &acp::SessionId,
         entry_ix: usize,
-        thread_view: Option<&Entity<AcpThreadView>>,
+        thread_view: Option<&Entity<ThreadView>>,
         tool_call: &ToolCall,
         focus_handle: &FocusHandle,
         window: &Window,
@@ -6400,7 +6400,7 @@ impl AcpThreadView {
         &self,
         active_session_id: &acp::SessionId,
         entry_ix: usize,
-        thread_view: &Entity<AcpThreadView>,
+        thread_view: &Entity<ThreadView>,
         is_running: bool,
         tool_call: &ToolCall,
         focus_handle: &FocusHandle,
@@ -6734,7 +6734,7 @@ impl AcpThreadView {
                     }
                     let connection = this.thread.read(cx).connection().clone();
                     window.defer(cx, |window, cx| {
-                        AcpServerView::handle_auth_required(
+                        ConnectionView::handle_auth_required(
                             server_view,
                             AuthRequired::new(),
                             agent_name,
@@ -6853,7 +6853,7 @@ impl AcpThreadView {
 
     fn update_recent_history_from_cache(
         &mut self,
-        history: &Entity<AcpThreadHistory>,
+        history: &Entity<ThreadHistory>,
         cx: &mut Context<Self>,
     ) {
         self.recent_history_entries = history.read(cx).get_recent_sessions(3);
@@ -6926,7 +6926,7 @@ impl AcpThreadView {
                                     // TODO: Add keyboard navigation.
                                     let is_hovered =
                                         self.hovered_recent_history_item == Some(index);
-                                    crate::acp::thread_history::AcpHistoryEntryElement::new(
+                                    crate::thread_history::HistoryEntryElement::new(
                                         entry,
                                         self.server_view.clone(),
                                     )
@@ -7148,7 +7148,7 @@ impl AcpThreadView {
     }
 }
 
-impl Render for AcpThreadView {
+impl Render for ThreadView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let has_messages = self.list_state.item_count() > 0;
 

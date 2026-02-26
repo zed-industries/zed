@@ -1495,7 +1495,7 @@ impl TextThreadEditor {
             return;
         };
 
-        // Get buffer info for the delegate call (even if empty, AcpThreadView ignores these
+        // Get buffer info for the delegate call (even if empty, ThreadView ignores these
         // params and calls insert_selections which handles both terminal and buffer)
         if let Some((selections, buffer)) = maybe!({
             let editor = workspace
