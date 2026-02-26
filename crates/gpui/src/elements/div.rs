@@ -1858,10 +1858,14 @@ impl Interactivity {
 
         if let Some(focus_handle) = self.tracked_focus_handle.as_ref() {
             window.set_focus_handle(focus_handle, cx);
-            if let Some(global_id) = global_id
-                && focus_handle.is_focused(window)
-            {
-                window.a11y_nodes.set_focused(global_id.accesskit_node_id());
+            if let Some(global_id) = global_id {
+                window
+                    .a11y_focus_ids
+                    .insert(global_id.accesskit_node_id(), focus_handle.id);
+                
+                if focus_handle.is_focused(window) {
+                    window.a11y_nodes.set_focused(global_id.accesskit_node_id());
+                }
             }
         }
         window.with_optional_element_state::<InteractiveElementState, _>(
@@ -2077,6 +2081,7 @@ impl Interactivity {
                                             }
 
                                             self.paint_mouse_listeners(
+                                                global_id,
                                                 hitbox,
                                                 element_state.as_mut(),
                                                 window,
@@ -2231,6 +2236,7 @@ impl Interactivity {
 
     fn paint_mouse_listeners(
         &mut self,
+        global_id: Option<&GlobalElementId>,
         hitbox: &Hitbox,
         element_state: Option<&mut InteractiveElementState>,
         window: &mut Window,
@@ -2352,6 +2358,15 @@ impl Interactivity {
         let click_listeners = mem::take(&mut self.click_listeners);
         let aux_click_listeners = mem::take(&mut self.aux_click_listeners);
         let can_drop_predicate = mem::take(&mut self.can_drop_predicate);
+
+        if let Some(global_id) = global_id {
+            if !click_listeners.is_empty() {
+                let node_id = global_id.accesskit_node_id();
+                window
+                    .a11y_click_listeners
+                    .insert(node_id, click_listeners.clone());
+            }
+        }
 
         if !drop_listeners.is_empty() {
             let hitbox = hitbox.clone();

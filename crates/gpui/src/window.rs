@@ -21,14 +21,15 @@ use crate::{
     WindowOptions, WindowParams, WindowTextSystem, point, prelude::*, px, rems, size,
     transparent_black,
 };
-use accesskit::Role;
+use accesskit::{ActionRequest, Role};
 use anyhow::{Context as _, Result, anyhow};
 use collections::{FxHashMap, FxHashSet};
 #[cfg(target_os = "macos")]
 use core_video::pixel_buffer::CVPixelBuffer;
 use derive_more::{Deref, DerefMut};
 use futures::FutureExt;
-use futures::channel::oneshot;
+use futures::StreamExt as _;
+use futures::channel::{mpsc, oneshot};
 use itertools::FoldWhile::{Continue, Done};
 use itertools::Itertools;
 use parking_lot::RwLock;
@@ -912,7 +913,6 @@ pub struct Window {
     layout_engine: Option<TaffyLayoutEngine>,
     pub(crate) root: Option<AnyView>,
     pub(crate) element_id_stack: SmallVec<[ElementId; 32]>,
-    pub(crate) a11y_nodes: A11yNodes,
     pub(crate) text_style_stack: Vec<TextStyleRefinement>,
     pub(crate) rendered_entity_stack: Vec<EntityId>,
     pub(crate) element_offset_stack: Vec<Point<Pixels>>,
@@ -954,6 +954,9 @@ pub struct Window {
     pub(crate) pending_input_observers: SubscriberSet<(), AnyObserver>,
     prompt: Option<RenderablePromptHandle>,
     pub(crate) client_inset: Option<Pixels>,
+    pub(crate) a11y_nodes: A11yNodes,
+    pub(crate) a11y_click_listeners: FxHashMap<accesskit::NodeId, Vec<crate::ClickListener>>,
+    pub(crate) a11y_focus_ids: FxHashMap<accesskit::NodeId, FocusId>,
     #[cfg(any(feature = "inspector", debug_assertions))]
     inspector: Option<Entity<Inspector>>,
 }
@@ -1257,15 +1260,30 @@ impl Window {
             tree: Some(a11y_nodes.tree()),
             tree_id: accesskit::TreeId::ROOT,
         };
+        let (a11y_action_tx, a11y_action_rx) = mpsc::unbounded::<ActionRequest>();
         platform_window.a11y_init(A11yCallbacks {
             activation: TrivialActivationHandler(Box::new(move || {
                 Some(initial_tree_update.clone())
             })),
-            action: TrivialActionHandler(Box::new(|action| {
-                println!("doing action: {action:?}")
+            action: TrivialActionHandler(Box::new(move |request| {
+                a11y_action_tx
+                    .unbounded_send(request)
+                    .log_err();
             })),
-            deactivation: TrivialDeactivationHandler(Box::new(|| println!("deactivating a11y"))),
+            deactivation: TrivialDeactivationHandler(Box::new(|| {})),
         });
+
+        cx.spawn(async move |cx| {
+            let mut a11y_action_rx = a11y_action_rx;
+            while let Some(request) = a11y_action_rx.next().await {
+                handle
+                    .update(cx, |_, window, cx| {
+                        window.handle_a11y_action(request, cx);
+                    })
+                    .log_err();
+            }
+        })
+        .detach();
 
         let tab_bar_visible = platform_window.tab_bar_visible();
         SystemWindowTabController::init_visible(cx, tab_bar_visible);
@@ -1569,6 +1587,8 @@ impl Window {
             pending_input_observers: SubscriberSet::new(),
             prompt: None,
             client_inset: None,
+            a11y_click_listeners: FxHashMap::default(),
+            a11y_focus_ids: FxHashMap::default(),
             image_cache_stack: Vec::new(),
             #[cfg(any(feature = "inspector", debug_assertions))]
             inspector: None,
@@ -2406,6 +2426,8 @@ impl Window {
     fn draw_roots(&mut self, cx: &mut App) {
         self.invalidator.set_phase(DrawPhase::Prepaint);
         self.tooltip_bounds.take();
+        self.a11y_click_listeners.clear();
+        self.a11y_focus_ids.clear();
 
         let _inspector_width: Pixels = rems(30.0).to_pixels(self.rem_size());
         let root_size = {
@@ -2480,6 +2502,33 @@ impl Window {
 
         let tree_update = self.a11y_nodes.finalize();
         self.platform_window.a11y_tree_update(tree_update);
+    }
+
+    fn handle_a11y_action(&mut self, request: ActionRequest, cx: &mut App) {
+        match request.action {
+            accesskit::Action::Click => {
+                if let Some(listeners) = self.a11y_click_listeners.get(&request.target_node) {
+                    let listeners = listeners.clone();
+                    let event = crate::ClickEvent::default();
+                    for listener in &listeners {
+                        listener(&event, self, cx);
+                    }
+                }
+            }
+            accesskit::Action::Focus => {
+                if let Some(focus_id) = self.a11y_focus_ids.get(&request.target_node).copied() {
+                    if let Some(handle) = FocusHandle::for_id(focus_id, &cx.focus_handles) {
+                        self.focus(&handle, cx);
+                    }
+                }
+            }
+            accesskit::Action::Blur => {
+                self.blur();
+            }
+            _ => {
+                log::debug!("unhandled a11y action: {:?}", request);
+            }
+        }
     }
 
     fn prepaint_tooltip(&mut self, cx: &mut App) -> Option<AnyElement> {
