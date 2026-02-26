@@ -17,8 +17,8 @@ use gh_workflow::*;
 pub fn release_nightly() -> Workflow {
     let style = check_style();
     // run only on windows as that's our fastest platform right now.
-    let tests = run_platform_tests_no_filter(Platform::Windows);
-    let clippy_job = clippy(Platform::Windows);
+    let tests = run_platform_tests_no_filter(Platform::Windows, true);
+    let clippy_job = clippy(Platform::Windows, true);
     let nightly = Some(ReleaseChannel::Nightly);
 
     let bundle = ReleaseBundleJobs {

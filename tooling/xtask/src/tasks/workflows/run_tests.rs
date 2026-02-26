@@ -4,10 +4,7 @@ use gh_workflow::{
 };
 use indexmap::IndexMap;
 
-use crate::tasks::workflows::{
-    steps::{CommonJobConditions, repository_owner_guard_expression},
-    vars::{self, PathCondition},
-};
+use crate::tasks::workflows::vars::{self, PathCondition};
 
 use super::{
     runners::{self, Platform},
@@ -42,18 +39,18 @@ pub(crate) fn run_tests() -> Workflow {
     let mut jobs = vec![
         orchestrate,
         check_style(),
-        should_run_tests.guard(clippy(Platform::Windows)),
-        should_run_tests.guard(clippy(Platform::Linux)),
-        should_run_tests.guard(clippy(Platform::Mac)),
-        should_run_tests.guard(run_platform_tests(Platform::Windows)),
-        should_run_tests.guard(run_platform_tests(Platform::Linux)),
-        should_run_tests.guard(run_platform_tests(Platform::Mac)),
+        should_run_tests.guard(clippy(Platform::Windows, false)),
+        should_run_tests.guard(clippy(Platform::Linux, false)),
+        should_run_tests.guard(clippy(Platform::Mac, false)),
+        should_run_tests.guard(run_platform_tests(Platform::Windows, false)),
+        should_run_tests.guard(run_platform_tests(Platform::Linux, false)),
+        should_run_tests.guard(run_platform_tests(Platform::Mac, false)),
         should_run_tests.guard(doctests()),
         should_run_tests.guard(check_workspace_binaries()),
         should_run_tests.guard(check_dependencies()), // could be more specific here?
         should_check_docs.guard(check_docs()),
         should_check_licences.guard(check_licenses()),
-        should_check_scripts.guard(check_scripts()),
+        should_check_scripts.guard(check_scripts(false)),
     ];
     let tests_pass = tests_pass(&jobs);
 
@@ -218,7 +215,6 @@ fn orchestrate_impl(rules: &[&PathCondition], include_package_filter: bool) -> N
 
     let job = Job::default()
         .runs_on(runners::LINUX_SMALL)
-        .with_repository_owner_guard()
         .outputs(outputs)
         .add_step(steps::checkout_repo().with_deep_history_on_non_main())
         .add_step(Step::new(step_name.clone()).run(script).id(step_name));
@@ -260,7 +256,7 @@ pub fn tests_pass(jobs: &[NamedJob]) -> NamedJob {
                 .map(|j| j.name.to_string())
                 .collect::<Vec<String>>(),
         )
-        .cond(repository_owner_guard_expression(true))
+        .cond(Expression::new("always()"))
         .add_step(named::bash(&script));
 
     named::job(job)
@@ -276,7 +272,7 @@ fn check_style() -> NamedJob {
         .with(("config", "./typos.toml"))
     }
     named::job(
-        release_job(&[])
+        ci_job(&[])
             .runs_on(runners::LINUX_MEDIUM)
             .add_step(steps::checkout_repo())
             .add_step(steps::cache_rust_dependencies_namespace())
@@ -324,7 +320,7 @@ fn check_dependencies() -> NamedJob {
     }
 
     named::job(
-        release_job(&[])
+        ci_job(&[])
             .runs_on(runners::LINUX_SMALL)
             .add_step(steps::checkout_repo())
             .add_step(steps::cache_rust_dependencies_namespace())
@@ -337,7 +333,7 @@ fn check_dependencies() -> NamedJob {
 
 fn check_workspace_binaries() -> NamedJob {
     named::job(
-        release_job(&[])
+        ci_job(&[])
             .runs_on(runners::LINUX_LARGE)
             .add_step(steps::checkout_repo())
             .add_step(steps::setup_cargo_config(Platform::Linux))
@@ -351,15 +347,20 @@ fn check_workspace_binaries() -> NamedJob {
     )
 }
 
-pub(crate) fn clippy(platform: Platform) -> NamedJob {
+pub(crate) fn clippy(platform: Platform, require_owner_guard: bool) -> NamedJob {
     let runner = match platform {
         Platform::Windows => runners::WINDOWS_DEFAULT,
         Platform::Linux => runners::LINUX_DEFAULT,
         Platform::Mac => runners::MAC_DEFAULT,
     };
+    let job = if require_owner_guard {
+        release_job(&[])
+    } else {
+        ci_job(&[])
+    };
     NamedJob {
         name: format!("clippy_{platform}"),
-        job: release_job(&[])
+        job: job
             .runs_on(runner)
             .add_step(steps::checkout_repo())
             .add_step(steps::setup_cargo_config(platform))
@@ -377,23 +378,32 @@ pub(crate) fn clippy(platform: Platform) -> NamedJob {
     }
 }
 
-pub(crate) fn run_platform_tests(platform: Platform) -> NamedJob {
-    run_platform_tests_impl(platform, true)
+pub(crate) fn run_platform_tests(platform: Platform, require_owner_guard: bool) -> NamedJob {
+    run_platform_tests_impl(platform, true, require_owner_guard)
 }
 
-pub(crate) fn run_platform_tests_no_filter(platform: Platform) -> NamedJob {
-    run_platform_tests_impl(platform, false)
+pub(crate) fn run_platform_tests_no_filter(platform: Platform, require_owner_guard: bool) -> NamedJob {
+    run_platform_tests_impl(platform, false, require_owner_guard)
 }
 
-fn run_platform_tests_impl(platform: Platform, filter_packages: bool) -> NamedJob {
+fn run_platform_tests_impl(
+    platform: Platform,
+    filter_packages: bool,
+    require_owner_guard: bool,
+) -> NamedJob {
     let runner = match platform {
         Platform::Windows => runners::WINDOWS_DEFAULT,
         Platform::Linux => runners::LINUX_DEFAULT,
         Platform::Mac => runners::MAC_DEFAULT,
     };
+    let job = if require_owner_guard {
+        release_job(&[])
+    } else {
+        ci_job(&[])
+    };
     NamedJob {
         name: format!("run_tests_{platform}"),
-        job: release_job(&[])
+        job: job
             .runs_on(runner)
             .when(platform == Platform::Linux, |job| {
                 job.add_service(
@@ -465,7 +475,7 @@ pub(crate) fn check_postgres_and_protobuf_migrations() -> NamedJob {
     }
 
     named::job(
-        release_job(&[])
+        ci_job(&[])
             .runs_on(runners::LINUX_DEFAULT)
             .add_env(("GIT_AUTHOR_NAME", "Protobuf Action"))
             .add_env(("GIT_AUTHOR_EMAIL", "ci@zed.dev"))
@@ -487,7 +497,7 @@ fn doctests() -> NamedJob {
     }
 
     named::job(
-        release_job(&[])
+        ci_job(&[])
             .runs_on(runners::LINUX_DEFAULT)
             .add_step(steps::checkout_repo())
             .add_step(steps::cache_rust_dependencies_namespace())
@@ -540,7 +550,7 @@ fn check_docs() -> NamedJob {
     }
 
     named::job(
-        release_job(&[])
+        ci_job(&[])
             .runs_on(runners::LINUX_LARGE)
             .add_step(steps::checkout_repo())
             .add_step(steps::setup_cargo_config(Platform::Linux))
@@ -559,7 +569,7 @@ fn check_docs() -> NamedJob {
     )
 }
 
-pub(crate) fn check_scripts() -> NamedJob {
+pub(crate) fn check_scripts(require_owner_guard: bool) -> NamedJob {
     fn download_actionlint() -> Step<Run> {
         named::bash(
             "bash <(curl https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash)",
@@ -588,7 +598,11 @@ pub(crate) fn check_scripts() -> NamedJob {
     }
 
     named::job(
-        release_job(&[])
+        if require_owner_guard {
+            release_job(&[])
+        } else {
+            ci_job(&[])
+        }
             .runs_on(runners::LINUX_SMALL)
             .add_step(steps::checkout_repo())
             .add_step(run_shellcheck())
@@ -596,4 +610,8 @@ pub(crate) fn check_scripts() -> NamedJob {
             .add_step(run_actionlint())
             .add_step(check_xtask_workflows()),
     )
+}
+
+fn ci_job(deps: &[&NamedJob]) -> Job {
+    steps::dependant_job(deps).timeout_minutes(60u32)
 }

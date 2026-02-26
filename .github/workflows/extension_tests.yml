@@ -12,7 +12,6 @@ on:
   workflow_call: {}
 jobs:
   orchestrate:
-    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
     runs-on: ubuntu-latest
     steps:
     - name: steps::checkout_repo
@@ -139,7 +138,7 @@ jobs:
     - orchestrate
     - check_rust
     - check_extension
-    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions') && always()
+    if: always()
     runs-on: ubuntu-latest
     steps:
     - name: run_tests::tests_pass
