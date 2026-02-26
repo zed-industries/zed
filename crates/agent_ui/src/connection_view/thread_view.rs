@@ -6485,6 +6485,9 @@ impl ThreadView {
             })
             .collect();
 
+        let error_message =
+            self.subagent_error_message(subagent_view, is_canceled_or_failed, tool_call, cx);
+
         let parent_thread = self.thread.read(cx);
         let mut started_subagent_count = 0usize;
         let mut turn_has_our_call = false;
@@ -6509,7 +6512,7 @@ impl ThreadView {
             }
         }
 
-        div()
+        v_flex()
             .relative()
             .w_full()
             .border_t_1()
@@ -6519,17 +6522,58 @@ impl ThreadView {
             .child(
                 div()
                     .id(format!("subagent-entries-{}", session_id))
-                    .size_full()
+                    .flex_1()
+                    .min_h_0()
                     .track_scroll(&scroll_handle)
                     .pb_1()
                     .children(rendered_entries),
             )
+            .when_some(error_message, |this, message| {
+                this.child(
+                    Callout::new()
+                        .severity(Severity::Error)
+                        .icon(IconName::XCircle)
+                        .title(message),
+                )
+            })
             .when(started_subagent_count > 1, |this| {
                 this.h_56().child(overlay)
             })
             .into_any_element()
     }
 
+    fn subagent_error_message(
+        &self,
+        subagent_view: &ThreadView,
+        is_canceled_or_failed: bool,
+        tool_call: &ToolCall,
+        cx: &App,
+    ) -> Option<SharedString> {
+        subagent_view
+            .thread_error
+            .as_ref()
+            .and_then(|e| match e {
+                ThreadError::Refusal => Some("The agent refused to respond to this prompt.".into()),
+                ThreadError::Other { message, .. } => Some(message.clone()),
+                ThreadError::PaymentRequired | ThreadError::AuthenticationRequired(_) => None,
+            })
+            .or_else(|| {
+                if !is_canceled_or_failed {
+                    return None;
+                }
+                tool_call.content.iter().find_map(|content| {
+                    if let ToolCallContent::ContentBlock(block) = content {
+                        if let acp_thread::ContentBlock::Markdown { markdown } = block {
+                            let source = markdown.read(cx).source().to_string();
+                            if !source.is_empty() {
+                                return Some(SharedString::from(source));
+                            }
+                        }
+                    }
+                    None
+                })
+            })
+    }
     fn render_rules_item(&self, cx: &Context<Self>) -> Option<AnyElement> {
         let project_context = self
             .as_native_thread(cx)?
