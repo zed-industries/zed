@@ -1435,7 +1435,7 @@ impl ProjectPanel {
             path.len().saturating_sub(1)
         };
 
-        let scrolled_entries = (entry_ix - num_parents) as f64;
+        let scrolled_entries = entry_ix.saturating_sub(num_parents) as f64;
         let total_offset_y = scrolled_entries * entry_height;
 
         Some(-total_offset_y)
