@@ -1491,8 +1491,9 @@ mod tests {
     use std::num::NonZeroU32;
 
     use crate::{
-        ClosePosition, ItemSettingsContent, VsCodeSettingsSource, default_settings,
-        settings_content::LanguageSettingsContent, test_settings,
+        ClosePosition, ItemSettingsContent, ThemeAppearanceMode, ThemeSelection,
+        VsCodeSettingsSource, default_settings, settings_content::LanguageSettingsContent,
+        test_settings,
     };
 
     use super::*;
@@ -1525,6 +1526,36 @@ mod tests {
                 close_position: content.close_position.unwrap(),
                 git_status: content.git_status.unwrap(),
             }
+        }
+    }
+
+    fn set_theme_mode(content: &mut SettingsContent, mode: ThemeAppearanceMode) {
+        let theme = content.theme.as_mut();
+
+        if let Some(selection) = theme.theme.as_mut() {
+            match selection {
+                ThemeSelection::Static(theme_name) => {
+                    *selection = ThemeSelection::Dynamic {
+                        mode,
+                        light: theme_name.clone(),
+                        dark: theme_name.clone(),
+                    };
+                }
+                ThemeSelection::Dynamic {
+                    mode: mode_to_update,
+                    ..
+                } => *mode_to_update = mode,
+            }
+        } else {
+            let mut selection = ThemeSelection::default();
+            if let ThemeSelection::Dynamic {
+                mode: mode_to_update,
+                ..
+            } = &mut selection
+            {
+                *mode_to_update = mode;
+            }
+            theme.theme = Some(selection);
         }
     }
 
@@ -1698,7 +1729,7 @@ mod tests {
             }"#
             .unindent(),
             |settings| {
-                theme::set_mode(settings, settings::ThemeAppearanceMode::Light);
+                set_theme_mode(settings, ThemeAppearanceMode::Light);
             },
             r#"{
                 "theme": {
@@ -1730,7 +1761,7 @@ mod tests {
             }"#
             .unindent(),
             |settings| {
-                theme::set_mode(settings, settings::ThemeAppearanceMode::Dark);
+                set_theme_mode(settings, ThemeAppearanceMode::Dark);
             },
             r#"{
                 "theme": {
@@ -1762,7 +1793,7 @@ mod tests {
             }"#
             .unindent(),
             |settings| {
-                theme::set_mode(settings, settings::ThemeAppearanceMode::System);
+                set_theme_mode(settings, ThemeAppearanceMode::System);
             },
             r#"{
                 "theme": {
@@ -1795,7 +1826,7 @@ mod tests {
             }"#
             .unindent(),
             |settings| {
-                theme::set_mode(settings, settings::ThemeAppearanceMode::Light);
+                set_theme_mode(settings, ThemeAppearanceMode::Light);
             },
             r#"{
                 "theme": {
@@ -1819,7 +1850,7 @@ mod tests {
             }"#
             .unindent(),
             |settings| {
-                theme::set_mode(settings, settings::ThemeAppearanceMode::Dark);
+                set_theme_mode(settings, ThemeAppearanceMode::Dark);
             },
             r#"{
                 "theme": {
@@ -1843,7 +1874,7 @@ mod tests {
             }"#
             .unindent(),
             |settings| {
-                theme::set_mode(settings, settings::ThemeAppearanceMode::System);
+                set_theme_mode(settings, ThemeAppearanceMode::System);
             },
             r#"{
                 "theme": {
