@@ -1829,6 +1829,16 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.new_agent_thread_inner(agent, true, window, cx);
+    }
+
+    fn new_agent_thread_inner(
+        &mut self,
+        agent: AgentType,
+        focus: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         match agent {
             AgentType::TextThread => {
                 window.dispatch_action(NewTextThread.boxed_clone(), cx);
@@ -1837,7 +1847,7 @@ impl AgentPanel {
                 Some(crate::ExternalAgent::NativeAgent),
                 None,
                 None,
-                true,
+                focus,
                 window,
                 cx,
             ),
@@ -1845,7 +1855,7 @@ impl AgentPanel {
                 Some(crate::ExternalAgent::Gemini),
                 None,
                 None,
-                true,
+                focus,
                 window,
                 cx,
             ),
@@ -1856,7 +1866,7 @@ impl AgentPanel {
                     Some(crate::ExternalAgent::ClaudeCode),
                     None,
                     None,
-                    true,
+                    focus,
                     window,
                     cx,
                 )
@@ -1868,7 +1878,7 @@ impl AgentPanel {
                     Some(crate::ExternalAgent::Codex),
                     None,
                     None,
-                    true,
+                    focus,
                     window,
                     cx,
                 )
@@ -1877,7 +1887,7 @@ impl AgentPanel {
                 Some(crate::ExternalAgent::Custom { name }),
                 None,
                 None,
-                true,
+                focus,
                 window,
                 cx,
             ),
@@ -2030,7 +2040,7 @@ impl Panel for AgentPanel {
     fn set_active(&mut self, active: bool, window: &mut Window, cx: &mut Context<Self>) {
         if active && matches!(self.active_view, ActiveView::Uninitialized) {
             let selected_agent = self.selected_agent.clone();
-            self.new_agent_thread(selected_agent, window, cx);
+            self.new_agent_thread_inner(selected_agent, false, window, cx);
         }
     }
 
