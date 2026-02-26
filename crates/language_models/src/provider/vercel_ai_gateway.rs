@@ -324,11 +324,21 @@ fn extract_error_message(body: &str) -> String {
 }
 
 fn clean_error_message(message: &str) -> String {
-    if message.contains("VERCEL_OIDC_TOKEN") && message.contains("OIDC token") {
+    let lower = message.to_lowercase();
+
+    if lower.contains("vercel_oidc_token") && lower.contains("oidc token") {
         return "Authentication failed for AI Gateway. Use a Vercel AI Gateway key (vck_...).\nCreate or manage keys in Vercel AI Gateway console.\nIf this persists, regenerate the key and update it in AI Gateway provider settings in Zed.".to_string();
     }
 
+    if lower.contains("invalid api key") || lower.contains("invalid_api_key") {
+        return "Authentication failed for AI Gateway. Check that your Vercel AI Gateway key starts with vck_ and is active.".to_string();
+    }
+
     message.to_string()
+}
+
+fn has_tag(tags: &[String], expected: &str) -> bool {
+    tags.iter().any(|tag| tag.trim().eq_ignore_ascii_case(expected))
 }
 
 impl LanguageModel for VercelAiGatewayLanguageModel {
@@ -529,13 +539,15 @@ async fn list_models(
             .supported_parameters
             .iter()
             .any(|parameter| parameter == "tools")
-            || model.tags.iter().any(|tag| tag == "tool-use");
+            || has_tag(&model.tags, "tool-use")
+            || has_tag(&model.tags, "tools");
         let supports_images = model.architecture.is_some_and(|architecture| {
             architecture
                 .input_modalities
                 .iter()
                 .any(|modality| modality == "image")
-        }) || model.tags.iter().any(|tag| tag == "vision");
+        }) || has_tag(&model.tags, "vision")
+            || has_tag(&model.tags, "image-input");
         let parallel_tool_calls = model
             .supported_parameters
             .iter()
