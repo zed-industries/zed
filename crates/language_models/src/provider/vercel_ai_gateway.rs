@@ -21,7 +21,8 @@ use ui_input::InputField;
 use util::ResultExt;
 
 const PROVIDER_ID: LanguageModelProviderId = LanguageModelProviderId::new("vercel_ai_gateway");
-const PROVIDER_NAME: LanguageModelProviderName = LanguageModelProviderName::new("Vercel AI Gateway");
+const PROVIDER_NAME: LanguageModelProviderName =
+    LanguageModelProviderName::new("Vercel AI Gateway");
 
 const API_URL: &str = "https://ai-gateway.vercel.sh/v1";
 const API_KEY_ENV_VAR_NAME: &str = "VERCEL_AI_GATEWAY_API_KEY";
@@ -338,7 +339,8 @@ fn clean_error_message(message: &str) -> String {
 }
 
 fn has_tag(tags: &[String], expected: &str) -> bool {
-    tags.iter().any(|tag| tag.trim().eq_ignore_ascii_case(expected))
+    tags.iter()
+        .any(|tag| tag.trim().eq_ignore_ascii_case(expected))
 }
 
 impl LanguageModel for VercelAiGatewayLanguageModel {
