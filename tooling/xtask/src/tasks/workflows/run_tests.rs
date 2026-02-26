@@ -421,7 +421,7 @@ fn run_platform_tests_impl(platform: Platform, filter_packages: bool) -> NamedJo
             )
             .add_step(steps::setup_node())
             .when(
-                platform == Platform::Linux || platform == Platform::Mac,
+                platform == Platform::Linux || platform == Platform::Mac || platform == Platform::Windows,
                 |job| job.add_step(steps::cargo_install_nextest()),
             )
             .add_step(steps::clear_target_dir_if_large(platform))

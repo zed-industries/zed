@@ -21,7 +21,7 @@ jobs:
     # Disabled on fork: needs zed-industries infrastructure (namespace runners). Set up your own and re-enable.
     if: false
     runs-on:
-      - namespace-profile-16x32-ubuntu-2204
+      - ubuntu-latest
     steps:
       - name: Install Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4

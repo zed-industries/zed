@@ -26,9 +26,8 @@ on:
         required: true
 jobs:
   check_version_changed:
-    # Disabled on fork: needs zed-industries infrastructure (zed-extensions org, ZED_ZIPPY). Set up your own and re-enable.
-    if: false
-    runs-on: namespace-profile-2x4-ubuntu-2404
+    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
+    runs-on: ubuntu-latest
     steps:
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -63,8 +62,10 @@ jobs:
   bump_extension_version:
     needs:
     - check_version_changed
-    if: inputs.force-bump == 'true' || needs.check_version_changed.outputs.version_changed == 'false'
-    runs-on: namespace-profile-2x4-ubuntu-2404
+    if: |-
+      (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions') &&
+      (inputs.force-bump == 'true' || needs.check_version_changed.outputs.version_changed == 'false')
+    runs-on: ubuntu-latest
     steps:
     - id: generate-token
       name: extension_bump::generate_token
@@ -118,8 +119,8 @@ jobs:
   create_version_label:
     needs:
     - check_version_changed
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.check_version_changed.outputs.version_changed == 'true'
-    runs-on: namespace-profile-2x4-ubuntu-2404
+    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions') && github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.check_version_changed.outputs.version_changed == 'true'
+    runs-on: ubuntu-latest
     steps:
     - id: generate-token
       name: extension_bump::generate_token
@@ -147,7 +148,8 @@ jobs:
     needs:
     - check_version_changed
     - create_version_label
-    runs-on: namespace-profile-2x4-ubuntu-2404
+    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
+    runs-on: ubuntu-latest
     steps:
     - id: generate-token
       name: extension_bump::generate_token

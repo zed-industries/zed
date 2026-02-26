@@ -12,7 +12,7 @@ jobs:
   add-to-project:
     # Disabled on fork: needs zed-industries infrastructure (ZED_COMMUNITY_BOT, org project). Set up your own and re-enable.
     if: false
-    runs-on: namespace-profile-2x4-ubuntu-2404
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - id: get-app-token

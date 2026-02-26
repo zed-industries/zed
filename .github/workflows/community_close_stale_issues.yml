@@ -17,7 +17,7 @@ jobs:
   stale:
     # Disabled on fork: zed-industries community management workflow. Set up your own and re-enable.
     if: false
-    runs-on: namespace-profile-2x4-ubuntu-2404
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/stale@997185467fa4f803885201cee163a9f38240193d # v10
         with:

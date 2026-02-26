@@ -12,9 +12,8 @@ on:
     - main
 jobs:
   danger:
-    # Disabled on fork: needs zed-industries infrastructure (danger-proxy.zed.dev). Set up your own and re-enable.
-    if: false
-    runs-on: namespace-profile-2x4-ubuntu-2404
+    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
+    runs-on: ubuntu-latest
     steps:
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683

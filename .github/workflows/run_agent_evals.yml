@@ -21,19 +21,18 @@ on:
         type: string
 jobs:
   agent_evals:
-    # Disabled on fork: needs zed-industries infrastructure (API keys, namespace runners). Set up your own and re-enable.
-    if: false
-    runs-on: namespace-profile-16x32-ubuntu-2204
+    runs-on: ubuntu-latest
     steps:
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       with:
         clean: false
     - name: steps::cache_rust_dependencies_namespace
-      uses: namespacelabs/nscloud-cache-action@v1
+      uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
       with:
-        cache: rust
         path: ~/.rustup
+        key: ${{ runner.os }}-rustup-${{ hashFiles('rust-toolchain.toml') }}
+        restore-keys: ${{ runner.os }}-rustup-
     - name: steps::setup_linux
       run: ./script/linux
     - name: steps::install_mold

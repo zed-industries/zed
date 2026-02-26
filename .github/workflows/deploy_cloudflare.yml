@@ -10,7 +10,7 @@ jobs:
     # Disabled on fork: needs zed-industries infrastructure (Cloudflare). Set up your own and re-enable.
     if: false
     name: Deploy Docs
-    runs-on: namespace-profile-16x32-ubuntu-2204
+    runs-on: ubuntu-latest
 
     steps:
       - name: Checkout repo

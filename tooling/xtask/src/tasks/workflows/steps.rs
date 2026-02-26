@@ -191,6 +191,8 @@ pub fn cargo_install_nextest() -> Step<Use> {
 pub fn setup_cargo_config(platform: Platform) -> Step<Run> {
     match platform {
         Platform::Windows => named::pwsh(indoc::indoc! {r#"
+            git config --system core.longpaths true
+            "CARGO_NET_GIT_FETCH_WITH_CLI=true" | Out-File -FilePath $env:GITHUB_ENV -Append
             New-Item -ItemType Directory -Path "./../.cargo" -Force
             Copy-Item -Path "./.cargo/ci-config.toml" -Destination "./../.cargo/config.toml"
         "#}),
@@ -231,9 +233,24 @@ pub fn clippy(platform: Platform) -> Step<Run> {
 }
 
 pub fn cache_rust_dependencies_namespace() -> Step<Use> {
-    named::uses("namespacelabs", "nscloud-cache-action", "v1")
-        .add_with(("cache", "rust"))
-        .add_with(("path", "~/.rustup"))
+    named::uses(
+        "actions",
+        "cache",
+        "0057852bfaa89a56745cba8c7296529d2fc39830", // v4
+    )
+    .add_with(("path", "~/.rustup"))
+    .add_with((
+        "key",
+        "${{ runner.os }}-rustup-${{ hashFiles('rust-toolchain.toml') }}",
+    ))
+    .add_with(("restore-keys", "${{ runner.os }}-rustup-"))
+}
+
+pub fn enable_windows_longpaths() -> Step<Run> {
+    named::pwsh(indoc::indoc! {r#"
+        git config --system core.longpaths true
+        "CARGO_NET_GIT_FETCH_WITH_CLI=true" | Out-File -FilePath $env:GITHUB_ENV -Append
+    "#})
 }
 
 pub fn setup_sccache(platform: Platform) -> Step<Run> {
@@ -260,14 +277,28 @@ pub fn show_sccache_stats(platform: Platform) -> Step<Run> {
 }
 
 pub fn cache_nix_dependencies_namespace() -> Step<Use> {
-    named::uses("namespacelabs", "nscloud-cache-action", "v1").add_with(("cache", "nix"))
+    named::uses(
+        "actions",
+        "cache",
+        "0057852bfaa89a56745cba8c7296529d2fc39830", // v4
+    )
+    .add_with(("path", "/nix/store"))
+    .add_with(("key", "${{ runner.os }}-nix-store"))
+    .add_with(("restore-keys", "${{ runner.os }}-nix-store-"))
 }
 
 pub fn cache_nix_store_macos() -> Step<Use> {
     // On macOS, `/nix` is on a read-only root filesystem so nscloud's `cache: nix`
     // cannot mount or symlink there. Instead we cache a user-writable directory and
     // use nix-store --import/--export in separate steps to transfer store paths.
-    named::uses("namespacelabs", "nscloud-cache-action", "v1").add_with(("path", "~/nix-cache"))
+    named::uses(
+        "actions",
+        "cache",
+        "0057852bfaa89a56745cba8c7296529d2fc39830", // v4
+    )
+    .add_with(("path", "~/nix-cache"))
+    .add_with(("key", "${{ runner.os }}-nix-cache"))
+    .add_with(("restore-keys", "${{ runner.os }}-nix-cache-"))
 }
 
 pub fn setup_linux() -> Step<Run> {

@@ -12,9 +12,8 @@ on:
   workflow_call: {}
 jobs:
   orchestrate:
-    # Disabled on fork: needs zed-industries infrastructure (namespace runners, DigitalOcean). Set up your own and re-enable.
-    if: false
-    runs-on: namespace-profile-2x4-ubuntu-2404
+    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
+    runs-on: ubuntu-latest
     steps:
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -54,17 +53,18 @@ jobs:
     needs:
     - orchestrate
     if: needs.orchestrate.outputs.check_rust == 'true'
-    runs-on: namespace-profile-8x32-ubuntu-2404
+    runs-on: ubuntu-latest
     steps:
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       with:
         clean: false
     - name: steps::cache_rust_dependencies_namespace
-      uses: namespacelabs/nscloud-cache-action@v1
+      uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
       with:
-        cache: rust
         path: ~/.rustup
+        key: ${{ runner.os }}-rustup-${{ hashFiles('rust-toolchain.toml') }}
+        restore-keys: ${{ runner.os }}-rustup-
     - name: extension_tests::install_rust_target
       run: rustup target add wasm32-wasip2
     - name: steps::cargo_fmt
@@ -82,7 +82,7 @@ jobs:
     needs:
     - orchestrate
     if: needs.orchestrate.outputs.check_extension == 'true'
-    runs-on: namespace-profile-8x32-ubuntu-2404
+    runs-on: ubuntu-latest
     steps:
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -139,8 +139,8 @@ jobs:
     - orchestrate
     - check_rust
     - check_extension
-    if: always()
-    runs-on: namespace-profile-2x4-ubuntu-2404
+    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions') && always()
+    runs-on: ubuntu-latest
     steps:
     - name: run_tests::tests_pass
       run: |

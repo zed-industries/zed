@@ -10,19 +10,19 @@ on:
     - extension-cli
 jobs:
   publish_job:
-    # Disabled on fork: needs zed-industries infrastructure (DigitalOcean, ZED_ZIPPY). Set up your own and re-enable.
-    if: false
-    runs-on: namespace-profile-2x4-ubuntu-2404
+    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
+    runs-on: ubuntu-latest
     steps:
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       with:
         clean: false
     - name: steps::cache_rust_dependencies_namespace
-      uses: namespacelabs/nscloud-cache-action@v1
+      uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
       with:
-        cache: rust
         path: ~/.rustup
+        key: ${{ runner.os }}-rustup-${{ hashFiles('rust-toolchain.toml') }}
+        restore-keys: ${{ runner.os }}-rustup-
     - name: steps::setup_linux
       run: ./script/linux
     - name: publish_extension_cli::publish_job::build_extension_cli
@@ -35,7 +35,8 @@ jobs:
   update_sha_in_zed:
     needs:
     - publish_job
-    runs-on: namespace-profile-8x16-ubuntu-2204
+    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
+    runs-on: ubuntu-latest
     steps:
     - id: generate-token
       name: extension_bump::generate_token
@@ -48,10 +49,11 @@ jobs:
       with:
         clean: false
     - name: steps::cache_rust_dependencies_namespace
-      uses: namespacelabs/nscloud-cache-action@v1
+      uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
       with:
-        cache: rust
         path: ~/.rustup
+        key: ${{ runner.os }}-rustup-${{ hashFiles('rust-toolchain.toml') }}
+        restore-keys: ${{ runner.os }}-rustup-
     - id: short-sha
       name: publish_extension_cli::get_short_sha
       run: |
@@ -83,7 +85,8 @@ jobs:
   update_sha_in_extensions:
     needs:
     - publish_job
-    runs-on: namespace-profile-2x4-ubuntu-2404
+    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
+    runs-on: ubuntu-latest
     steps:
     - id: generate-token
       name: extension_bump::generate_token

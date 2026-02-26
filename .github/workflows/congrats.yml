@@ -8,7 +8,7 @@ jobs:
   check-author:
     # Disabled on fork: needs zed-industries infrastructure (Discord webhook, staff team check). Set up your own and re-enable.
     if: false
-    runs-on: namespace-profile-2x4-ubuntu-2404
+    runs-on: ubuntu-latest
     outputs:
       should_congratulate: ${{ steps.check.outputs.should_congratulate }}
     steps:
