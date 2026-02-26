@@ -27,13 +27,14 @@ if [[ -n $apt ]]; then
     g++
     libasound2-dev
     libfontconfig-dev
+    libgit2-dev
+    libssl-dev
+    libva-dev
+    libvulkan1
     libwayland-dev
     libx11-xcb-dev
     libxkbcommon-x11-dev
-    libssl-dev
     libzstd-dev
-    libvulkan1
-    libgit2-dev
     make
     cmake
     clang
