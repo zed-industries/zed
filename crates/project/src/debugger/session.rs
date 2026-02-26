@@ -717,6 +717,7 @@ pub struct Session {
     remote_client: Option<Entity<RemoteClient>>,
     node_runtime: Option<NodeRuntime>,
     http_client: Option<Arc<dyn HttpClient>>,
+    source_contents: HashMap<u64, Shared<Task<Result<String, Arc<anyhow::Error>>>>>,
     companion_port: Option<u16>,
 }
 
@@ -892,6 +893,7 @@ impl Session {
                 remote_client,
                 node_runtime,
                 http_client,
+                source_contents: Default::default(),
                 companion_port: None,
             }
         })
@@ -1771,6 +1773,7 @@ impl Session {
         self.invalidate_command_type::<ThreadsCommand>();
         self.invalidate_command_type::<DataBreakpointInfoCommand>();
         self.invalidate_command_type::<ReadMemory>();
+        self.source_contents.clear();
         let executor = self.as_running().map(|running| running.executor.clone());
         if let Some(executor) = executor {
             self.memory.clear(&executor);
@@ -2107,19 +2110,29 @@ impl Session {
     }
 
     pub fn fetch_source(
-        &self,
+        &mut self,
         source: dap::Source,
         cx: &mut Context<Self>,
-    ) -> Task<Result<String>> {
+    ) -> Shared<Task<Result<String, Arc<anyhow::Error>>>> {
         let source_reference = source.source_reference.unwrap_or(0);
+
+        if let Some(cached) = self.source_contents.get(&source_reference) {
+            return cached.clone();
+        }
+
         let request = self.state.request_dap(SourceCommand {
             source: Some(source),
             source_reference,
         });
-        cx.spawn(async move |_this, _cx| {
-            let response = request.await?;
-            Ok(response.content)
-        })
+        let task = cx
+            .spawn(async move |_this, _cx| {
+                let response = request.await.map_err(Arc::new)?;
+                Ok(response.content)
+            })
+            .shared();
+
+        self.source_contents.insert(source_reference, task.clone());
+        task
     }
 
     fn fallback_to_manual_restart(

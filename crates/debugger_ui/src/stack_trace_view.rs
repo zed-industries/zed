@@ -25,12 +25,14 @@ use workspace::{
 
 use crate::session::running::stack_frame_list::{StackFrameList, StackFrameListEvent};
 use anyhow::Result;
+use project::debugger::session::Session;
 
 pub(crate) struct StackTraceView {
     editor: Entity<Editor>,
     multibuffer: Entity<MultiBuffer>,
     workspace: WeakEntity<Workspace>,
     project: Entity<Project>,
+    session: Entity<Session>,
     stack_frame_list: Entity<StackFrameList>,
     selected_stack_frame_id: Option<StackFrameId>,
     highlights: Vec<(StackFrameId, Anchor)>,
@@ -43,6 +45,7 @@ impl StackTraceView {
     pub(crate) fn new(
         workspace: WeakEntity<Workspace>,
         project: Entity<Project>,
+        session: Entity<Session>,
         stack_frame_list: Entity<StackFrameList>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -135,6 +138,7 @@ impl StackTraceView {
             multibuffer,
             workspace,
             project,
+            session,
             excerpt_for_frames: HashMap::default(),
             highlights: Vec::default(),
             stack_frame_list,
@@ -159,10 +163,7 @@ impl StackTraceView {
 
         enum FrameSource {
             Path(Arc<std::path::Path>),
-            Reference {
-                source: dap::Source,
-                source_reference: u64,
-            },
+            Reference(dap::Source),
         }
 
         let frames_to_open: Vec<_> = stack_frames
@@ -179,10 +180,7 @@ impl StackTraceView {
                     Some((
                         frame.id,
                         line,
-                        FrameSource::Reference {
-                            source: frame.source?,
-                            source_reference,
-                        },
+                        FrameSource::Reference(frame.source?),
                     ))
                 } else {
                     Some((
@@ -194,7 +192,7 @@ impl StackTraceView {
             })
             .collect();
 
-        let session = self.stack_frame_list.read(cx).session().clone();
+        let session = self.session.clone();
 
         self.multibuffer
             .update(cx, |multi_buffer, cx| multi_buffer.clear(cx));
@@ -225,91 +223,58 @@ impl StackTraceView {
                             .await
                             .log_err()
                     }
-                    FrameSource::Reference {
-                        source,
-                        source_reference,
-                    } => {
-                        let cached = this
-                            .read_with(cx, |this, cx| {
-                                this.stack_frame_list.read(cx)
-                                    .source_reference_buffer(source_reference)
-                                    .cloned()
-                            })
-                            .ok()
-                            .flatten();
+                    FrameSource::Reference(source) => {
+                        let fetch_task = session
+                            .update(cx, |session, cx| {
+                                session.fetch_source(source.clone(), cx)
+                            });
 
-                        if let Some(buffer) = cached {
-                            Some(buffer)
-                        } else {
-                            let content: Option<String> = session
-                                .update(cx, |session, cx| {
-                                    session.fetch_source(source.clone(), cx)
+                        let content = match fetch_task.await {
+                            Ok(content) => content,
+                            Err(_) => continue,
+                        };
+
+                        let source_name = source.name.or(source.path);
+
+                        let language = if let Some(ref name) = source_name {
+                            let languages: Option<Arc<language::LanguageRegistry>> =
+                                this.read_with(cx, |this, cx| {
+                                    this.project
+                                        .read(cx)
+                                        .languages()
+                                        .clone()
                                 })
-                                .await
-                                .log_err();
+                                .ok();
 
-                            let source_name = source.name.or(source.path);
-
-                            match content {
-                                Some(ref content) => {
-                                    let language = if let Some(ref name) = source_name {
-                                        let languages: Option<Arc<language::LanguageRegistry>> =
-                                            this.read_with(cx, |this, cx| {
-                                                this.project
-                                                    .read(cx)
-                                                    .languages()
-                                                    .clone()
-                                            })
-                                            .ok();
-
-                                        if let Some(languages) = languages {
-                                            languages
-                                                .load_language_for_file_path(
-                                                    std::path::Path::new(name),
-                                                )
-                                                .await
-                                                .ok()
-                                        } else {
-                                            None
-                                        }
-                                    } else {
-                                        None
-                                    };
-
-                                    let buffer = this
-                                        .update(cx, |this, cx| {
-                                            this.project.update(cx, |project, cx| {
-                                                let buffer = project.create_local_buffer(
-                                                    content, language, false, cx,
-                                                );
-                                                buffer.update(cx, |buffer, cx| {
-                                                    buffer.set_capability(
-                                                        Capability::ReadOnly,
-                                                        cx,
-                                                    );
-                                                });
-                                                buffer
-                                            })
-                                        })
-                                        .ok();
-
-                                    if let Some(ref buffer) = buffer {
-                                        this.update(cx, |this, cx| {
-                                            this.stack_frame_list.update(cx, |list, _cx| {
-                                                list.cache_source_reference_buffer(
-                                                    source_reference,
-                                                    buffer.clone(),
-                                                );
-                                            });
-                                        })
-                                        .ok();
-                                    }
-
-                                    buffer
-                                }
-                                None => continue,
+                            if let Some(languages) = languages {
+                                languages
+                                    .load_language_for_file_path(
+                                        std::path::Path::new(name),
+                                    )
+                                    .await
+                                    .ok()
+                            } else {
+                                None
                             }
-                        }
+                        } else {
+                            None
+                        };
+
+                        this.update(cx, |this, cx| {
+                            this.project.update(cx, |project, cx| {
+                                let buffer = project.create_local_buffer(
+                                    &content, language, false, cx,
+                                );
+                                buffer.update(cx, |buffer, cx| {
+                                    buffer.set_capability(
+                                        Capability::ReadOnly,
+                                        cx,
+                                    );
+                                });
+                                buffer
+                            })
+                        })
+                        .ok()
                     }
                 };
 
