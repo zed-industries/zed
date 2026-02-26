@@ -86,10 +86,25 @@ fn format_absolute_date(
             macos::format_date(&timestamp)
         }
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "windows")]
+    {
+        if !enhanced_date_formatting {
+            return windows::format_date(&timestamp);
+        }
+
+        let timestamp_date = timestamp.date();
+        let reference_date = reference.date();
+        if timestamp_date == reference_date {
+            "Today".to_string()
+        } else if reference_date.previous_day() == Some(timestamp_date) {
+            "Yesterday".to_string()
+        } else {
+            windows::format_date(&timestamp)
+        }
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     {
         // todo(linux) respect user's date/time preferences
-        // todo(windows) respect user's date/time preferences
         let current_locale = CURRENT_LOCALE
             .get_or_init(|| sys_locale::get_locale().unwrap_or_else(|| String::from("en-US")));
         format_timestamp_naive_date(
@@ -105,10 +120,13 @@ fn format_absolute_time(timestamp: OffsetDateTime) -> String {
     {
         macos::format_time(&timestamp)
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "windows")]
+    {
+        windows::format_time(&timestamp)
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     {
         // todo(linux) respect user's date/time preferences
-        // todo(windows) respect user's date/time preferences
         let current_locale = CURRENT_LOCALE
             .get_or_init(|| sys_locale::get_locale().unwrap_or_else(|| String::from("en-US")));
         format_timestamp_naive_time(
@@ -123,7 +141,7 @@ fn format_absolute_timestamp(
     reference: OffsetDateTime,
     #[allow(unused_variables)] enhanced_date_formatting: bool,
 ) -> String {
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
     {
         if !enhanced_date_formatting {
             return format!(
@@ -147,10 +165,9 @@ fn format_absolute_timestamp(
             )
         }
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     {
         // todo(linux) respect user's date/time preferences
-        // todo(windows) respect user's date/time preferences
         format_timestamp_fallback(timestamp, reference)
     }
 }
@@ -176,10 +193,25 @@ fn format_absolute_date_medium(
             macos::format_date_medium(&timestamp)
         }
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "windows")]
+    {
+        if !enhanced_formatting {
+            return windows::format_date_medium(&timestamp);
+        }
+
+        let timestamp_date = timestamp.date();
+        let reference_date = reference.date();
+        if timestamp_date == reference_date {
+            "Today".to_string()
+        } else if reference_date.previous_day() == Some(timestamp_date) {
+            "Yesterday".to_string()
+        } else {
+            windows::format_date_medium(&timestamp)
+        }
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     {
         // todo(linux) respect user's date/time preferences
-        // todo(windows) respect user's date/time preferences
         let current_locale = CURRENT_LOCALE
             .get_or_init(|| sys_locale::get_locale().unwrap_or_else(|| String::from("en-US")));
         if !enhanced_formatting {
@@ -212,7 +244,11 @@ fn format_absolute_timestamp_medium(
     {
         format_absolute_date_medium(timestamp, reference, false)
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "windows")]
+    {
+        format_absolute_date_medium(timestamp, reference, false)
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     {
         // todo(linux) respect user's date/time preferences
         // todo(windows) respect user's date/time preferences
@@ -360,7 +396,7 @@ fn format_timestamp_naive_date(
     }
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
 fn format_timestamp_naive_date_medium(
     timestamp_local: OffsetDateTime,
     is_12_hour_time: bool,
@@ -415,10 +451,10 @@ pub fn format_timestamp_naive(
     }
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
 static CURRENT_LOCALE: std::sync::OnceLock<String> = std::sync::OnceLock::new();
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
 fn format_timestamp_fallback(timestamp: OffsetDateTime, reference: OffsetDateTime) -> String {
     let current_locale = CURRENT_LOCALE
         .get_or_init(|| sys_locale::get_locale().unwrap_or_else(|| String::from("en-US")));
@@ -428,7 +464,7 @@ fn format_timestamp_fallback(timestamp: OffsetDateTime, reference: OffsetDateTim
 }
 
 /// Returns `true` if the locale is recognized as a 12-hour time locale.
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
 fn is_12_hour_time_by_locale(locale: &str) -> bool {
     [
         "es-MX", "es-CO", "es-SV", "es-NI",
@@ -519,6 +555,92 @@ mod macos {
                 kCFDateFormatterNoStyle,
             )
         };
+    }
+}
+
+#[cfg(target_os = "windows")]
+mod windows {
+    use windows::Win32::Globalization::{
+        DATE_LONGDATE, DATE_SHORTDATE, ENUM_DATE_FORMATS_FLAGS, GetDateFormatEx, GetTimeFormatEx,
+        TIME_FORMAT_FLAGS,
+    };
+
+    pub fn format_time(timestamp: &time::OffsetDateTime) -> String {
+        format_with_system_time(timestamp)
+    }
+
+    pub fn format_date(timestamp: &time::OffsetDateTime) -> String {
+        format_with_system_date(timestamp, DATE_SHORTDATE)
+    }
+
+    pub fn format_date_medium(timestamp: &time::OffsetDateTime) -> String {
+        // Windows does not have date format equivalent to kCFDateFormatterMediumStyle,
+        // DATE_LONGDATE is the closest available option.
+        format_with_system_date(timestamp, DATE_LONGDATE)
+    }
+
+    fn format_with_system_time(timestamp: &time::OffsetDateTime) -> String {
+        let system_time = timestamp_to_system_time(timestamp);
+        let mut buffer = [0u16; 128];
+
+        let len = unsafe {
+            GetTimeFormatEx(
+                None, // NULL: LOCALE_NAME_USER_DEFAULT
+                TIME_FORMAT_FLAGS::default(),
+                Some(&system_time),
+                None,
+                Some(&mut buffer),
+            )
+        };
+
+        if len == 0 {
+            super::format_timestamp_naive_time(*timestamp, true)
+        } else {
+            String::from_utf16_lossy(&buffer[..len as usize - 1])
+        }
+    }
+
+    fn format_with_system_date(
+        timestamp: &time::OffsetDateTime,
+        flags: ENUM_DATE_FORMATS_FLAGS,
+    ) -> String {
+        let system_time = timestamp_to_system_time(timestamp);
+        let mut buffer = [0u16; 128];
+
+        let len = unsafe {
+            GetDateFormatEx(
+                None, // NULL: LOCALE_NAME_USER_DEFAULT
+                flags,
+                Some(&system_time),
+                None,
+                Some(&mut buffer),
+                None,
+            )
+        };
+
+        if len == 0 {
+            super::format_timestamp_naive_date(*timestamp, *timestamp, true)
+        } else {
+            String::from_utf16_lossy(&buffer[..len as usize - 1])
+        }
+    }
+
+    fn timestamp_to_system_time(
+        timestamp: &time::OffsetDateTime,
+    ) -> windows::Win32::Foundation::SYSTEMTIME {
+        let date = timestamp.date();
+        let time = timestamp.time();
+
+        windows::Win32::Foundation::SYSTEMTIME {
+            wYear: date.year() as u16,
+            wMonth: date.month() as u8 as u16,
+            wDayOfWeek: 0, // Not used
+            wDay: date.day() as u16,
+            wHour: time.hour() as u16,
+            wMinute: time.minute() as u16,
+            wSecond: time.second() as u16,
+            wMilliseconds: 0, // Not used
+        }
     }
 }
 
