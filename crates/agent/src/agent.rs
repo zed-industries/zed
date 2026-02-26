@@ -51,6 +51,7 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
 use util::ResultExt;
+use util::path_list::PathList;
 use util::rel_path::RelPath;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -848,13 +849,26 @@ impl NativeAgent {
         let Some(session) = self.sessions.get_mut(&id) else {
             return;
         };
+
+        let folder_paths = PathList::new(
+            &self
+                .project
+                .read(cx)
+                .visible_worktrees(cx)
+                .map(|worktree| worktree.read(cx).abs_path().to_path_buf())
+                .collect::<Vec<_>>(),
+        );
+
         let thread_store = self.thread_store.clone();
         session.pending_save = cx.spawn(async move |_, cx| {
             let Some(database) = database_future.await.map_err(|err| anyhow!(err)).log_err() else {
                 return;
             };
             let db_thread = db_thread.await;
-            database.save_thread(id, db_thread).await.log_err();
+            database
+                .save_thread(id, db_thread, folder_paths)
+                .await
+                .log_err();
             thread_store.update(cx, |store, cx| store.reload(cx));
         });
     }
