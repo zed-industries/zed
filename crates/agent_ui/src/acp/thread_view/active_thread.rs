@@ -4138,16 +4138,33 @@ impl AcpThreadView {
             });
 
             workspace.update_in(cx, |workspace, window, cx| {
-                let buffer = cx
-                    .new(|cx| MultiBuffer::singleton(buffer, cx).with_title(thread_title.clone()));
+                let multibuffer = cx
+                    .new(|cx| MultiBuffer::singleton(buffer.clone(), cx).with_title(thread_title.clone()));
+
+                let editor = cx.new(|cx| {
+                    let mut editor =
+                        Editor::for_multibuffer(multibuffer, Some(project.clone()), window, cx);
+                    editor.set_breadcrumb_header(thread_title);
+
+                    cx.subscribe(&buffer, move |editor, buffer, event, cx| {
+                        if let language::BufferEvent::Saved = event {
+                            if let Some(file) = buffer.read(cx).file() {
+                                let file_name = file.file_name(cx).to_string();
+                                editor.buffer().update(cx, |mb, cx| {
+                                    mb.set_title(file_name.clone(), cx);
+                                });
+                                editor.set_breadcrumb_header(file_name);
+                                cx.notify();
+                            }
+                        }
+                    })
+                    .detach();
+
+                    editor
+                });
 
                 workspace.add_item_to_active_pane(
-                    Box::new(cx.new(|cx| {
-                        let mut editor =
-                            Editor::for_multibuffer(buffer, Some(project.clone()), window, cx);
-                        editor.set_breadcrumb_header(thread_title);
-                        editor
-                    })),
+                    Box::new(editor),
                     None,
                     true,
                     window,
