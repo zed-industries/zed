@@ -606,7 +606,7 @@ pub trait TerminalHandle {
 
 pub trait SubagentHandle {
     fn id(&self) -> acp::SessionId;
-    fn run_turn(&self, message: String, cx: &AsyncApp) -> Task<Result<String>>;
+    fn send(&self, message: String, cx: &AsyncApp) -> Task<Result<String>>;
 }
 
 pub trait ThreadEnvironment {

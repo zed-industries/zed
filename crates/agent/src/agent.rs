@@ -1733,7 +1733,7 @@ impl SubagentHandle for NativeSubagentHandle {
         self.session_id.clone()
     }
 
-    fn run_turn(&self, message: String, cx: &AsyncApp) -> Task<Result<String>> {
+    fn send(&self, message: String, cx: &AsyncApp) -> Task<Result<String>> {
         let thread = self.subagent_thread.clone();
         let acp_thread = self.acp_thread.clone();
         let subagent_session_id = self.session_id.clone();
