@@ -1023,6 +1023,8 @@ impl Global for GlobalAppState {}
 
 pub struct WorkspaceStore {
     workspaces: HashSet<(gpui::AnyWindowHandle, WeakEntity<Workspace>)>,
+    /// Active projects are workspaces that have had a thread open.
+    active_projects: Vec<Entity<Workspace>>,
     client: Arc<Client>,
     _subscriptions: Vec<client::Subscription>,
 }
@@ -7772,6 +7774,7 @@ impl WorkspaceStore {
     pub fn new(client: Arc<Client>, cx: &mut Context<Self>) -> Self {
         Self {
             workspaces: Default::default(),
+            active_projects: Vec::new(),
             _subscriptions: vec![
                 client.add_request_handler(cx.weak_entity(), Self::handle_follow),
                 client.add_message_handler(cx.weak_entity(), Self::handle_update_followers),
@@ -7875,6 +7878,76 @@ impl WorkspaceStore {
         &self,
     ) -> impl Iterator<Item = (gpui::AnyWindowHandle, &WeakEntity<Workspace>)> {
         self.workspaces.iter().map(|(window, weak)| (*window, weak))
+    }
+
+    /// The active projects list (workspaces that have had threads).
+    pub fn active_projects(&self) -> &[Entity<Workspace>] {
+        &self.active_projects
+    }
+
+    /// Returns the window handles currently showing a workspace whose root
+    /// paths match `path_list`.
+    pub fn windows_for_path_list(
+        &self,
+        path_list: &PathList,
+        cx: &App,
+    ) -> impl Iterator<Item = gpui::AnyWindowHandle> {
+        self.workspaces
+            .iter()
+            .filter_map(|(window_handle, weak_workspace)| {
+                let workspace = weak_workspace.upgrade()?;
+                let workspace_path_list = PathList::new(&workspace.read(cx).root_paths(cx));
+                if workspace_path_list == *path_list {
+                    Some(*window_handle)
+                } else {
+                    None
+                }
+            })
+    }
+
+    /// A thread was created in a workspace. Add it to the active projects
+    /// list.
+    ///
+    /// If the workspace is already in the active list, this is a no-op.
+    ///
+    /// FIXME: This should also persist the project to the database but this is
+    /// not implemented yet.
+    pub fn persist_project(&mut self, workspace: &Entity<Workspace>, cx: &mut Context<Self>) {
+        let already_present = self
+            .active_projects
+            .iter()
+            .any(|existing| existing == workspace);
+        if !already_present {
+            self.active_projects.push(workspace.clone());
+            // FIXME: make sure this gets saved to the database.
+            cx.notify();
+        }
+    }
+
+    /// User clicked "Remove Project." Remove from the active projects list.
+    ///
+    /// The caller is responsible for handling any open windows or running
+    /// threads associated with this project.
+    ///
+    /// FIXME: once we have database-backed persistence, this will also need
+    /// to delete the row.
+    pub fn remove_project(&mut self, workspace: &Entity<Workspace>, cx: &mut Context<Self>) {
+        let len_before = self.active_projects.len();
+        self.active_projects.retain(|w| w != workspace);
+        if self.active_projects.len() != len_before {
+            cx.notify();
+        }
+    }
+
+    /// A window closed. The project stays in the active list (if present);
+    /// only the window-to-workspace association is removed.
+    pub fn detach_window(&mut self, window_handle: gpui::AnyWindowHandle, cx: &mut Context<Self>) {
+        let len_before = self.workspaces.len();
+        self.workspaces
+            .retain(|(handle, _)| *handle != window_handle);
+        if self.workspaces.len() != len_before {
+            cx.notify();
+        }
     }
 }
 
