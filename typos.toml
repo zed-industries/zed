@@ -36,10 +36,10 @@ extend-exclude = [
     "extensions/proto/extension.toml",
     "extensions/proto/src/language_servers/protols.rs",
     # Windows likes its abbreviations.
-    "crates/gpui/src/platform/windows/directx_renderer.rs",
-    "crates/gpui/src/platform/windows/events.rs",
-    "crates/gpui/src/platform/windows/direct_write.rs",
-    "crates/gpui/src/platform/windows/window.rs",
+    "crates/gpui_windows/src/directx_renderer.rs",
+    "crates/gpui_windows/src/events.rs",
+    "crates/gpui_windows/src/direct_write.rs",
+    "crates/gpui_windows/src/window.rs",
     # Some typos in the base mdBook CSS.
     "docs/theme/css/",
     # Spellcheck triggers on `|Fixe[sd]|` regex part.
@@ -57,9 +57,13 @@ extend-exclude = [
     # Some multibuffer test cases have word fragments that register as typos
     "crates/multi_buffer/src/multi_buffer_tests.rs",
     # Macos apis
-    "crates/gpui/src/platform/mac/dispatcher.rs",
+    "crates/gpui_macos/src/dispatcher.rs",
     # Tests contain partially incomplete words (by design)
     "crates/edit_prediction_cli/src/split_commit.rs",
+    # Eval examples contain intentionally partial words (e.g. "secur" for "secure")
+    "crates/edit_prediction_cli/evals/",
+    # Tests contain `baˇr` that cause `"ba" should be "by" or "be".`-like false-positives
+    "crates/editor/src/document_symbols.rs",
 ]
 
 [default]

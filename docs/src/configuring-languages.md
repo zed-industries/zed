@@ -1,3 +1,8 @@
+---
+title: Language Server and Tree-sitter Config - Zed
+description: Configure language support in Zed with Tree-sitter for syntax highlighting and LSP for diagnostics, completion, and formatting.
+---
+
 # Configuring Supported Languages
 
 Zed's language support is built on two technologies:
@@ -130,6 +135,10 @@ An example of what Zed considers a toolchain is a virtual environment in Python.
 Not all languages in Zed support toolchain discovery and selection, but for those that do, you can specify the toolchain from a toolchain picker (via {#action toolchain::Select}). To learn more about toolchains in Zed, see [`toolchains`](./toolchains.md).
 
 ### Configuring Language Servers
+
+> **Changed in Preview (v0.225).** See [release notes](/releases#0.225).
+
+When configuring language servers in your `settings.json`, autocomplete suggestions include all available LSP adapters recognized by Zed, not only those currently active for loaded languages. This helps you discover and configure language servers before opening files that use them.
 
 Many language servers accept custom configuration options. You can set these in the `lsp` section of your `settings.json`:
 

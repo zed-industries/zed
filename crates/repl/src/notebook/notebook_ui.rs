@@ -5,6 +5,7 @@ use std::{path::PathBuf, sync::Arc};
 use anyhow::{Context as _, Result};
 use client::proto::ViewId;
 use collections::HashMap;
+use editor::DisplayPoint;
 use feature_flags::{FeatureFlagAppExt as _, NotebookFeatureFlag};
 use futures::FutureExt;
 use futures::future::Shared;
@@ -14,6 +15,7 @@ use gpui::{
 };
 use jupyter_protocol::JupyterKernelspec;
 use language::{Language, LanguageRegistry};
+use log;
 use project::{Project, ProjectEntryId, ProjectPath};
 use settings::Settings as _;
 use ui::{CommonAnimationExt, Tooltip, prelude::*};
@@ -31,7 +33,7 @@ use uuid::Uuid;
 use crate::components::{KernelPickerDelegate, KernelSelector};
 use crate::kernels::{
     Kernel, KernelSession, KernelSpecification, KernelStatus, LocalKernelSpecification,
-    NativeRunningKernel, RemoteRunningKernel,
+    NativeRunningKernel, RemoteRunningKernel, SshRunningKernel, WslRunningKernel,
 };
 use crate::repl_store::ReplStore;
 
@@ -39,6 +41,7 @@ use picker::Picker;
 use runtimelib::{ExecuteRequest, JupyterMessage, JupyterMessageContent};
 use ui::PopoverMenuHandle;
 use zed_actions::editor::{MoveDown, MoveUp};
+use zed_actions::notebook::{NotebookMoveDown, NotebookMoveUp};
 
 actions!(
     notebook,
@@ -398,7 +401,9 @@ impl NotebookEditor {
             let display_name = match &spec {
                 KernelSpecification::Jupyter(s) => s.kernelspec.display_name.clone(),
                 KernelSpecification::PythonEnv(s) => s.kernelspec.display_name.clone(),
-                KernelSpecification::Remote(s) => s.kernelspec.display_name.clone(),
+                KernelSpecification::JupyterServer(s) => s.kernelspec.display_name.clone(),
+                KernelSpecification::SshRemote(s) => s.kernelspec.display_name.clone(),
+                KernelSpecification::WslRemote(s) => s.kernelspec.display_name.clone(),
             };
 
             let kernelspec_json = serde_json::json!({
@@ -414,8 +419,7 @@ impl NotebookEditor {
         });
 
         let kernel_task = match spec {
-            KernelSpecification::Jupyter(local_spec)
-            | KernelSpecification::PythonEnv(local_spec) => NativeRunningKernel::new(
+            KernelSpecification::Jupyter(local_spec) => NativeRunningKernel::new(
                 local_spec,
                 entity_id,
                 working_directory,
@@ -424,8 +428,25 @@ impl NotebookEditor {
                 window,
                 cx,
             ),
-            KernelSpecification::Remote(remote_spec) => {
+            KernelSpecification::PythonEnv(env_spec) => NativeRunningKernel::new(
+                env_spec.as_local_spec(),
+                entity_id,
+                working_directory,
+                fs,
+                view,
+                window,
+                cx,
+            ),
+            KernelSpecification::JupyterServer(remote_spec) => {
                 RemoteRunningKernel::new(remote_spec, working_directory, view, window, cx)
+            }
+
+            KernelSpecification::SshRemote(spec) => {
+                let project = self.project.clone();
+                SshRunningKernel::new(spec, working_directory, project, view, window, cx)
+            }
+            KernelSpecification::WslRemote(spec) => {
+                WslRunningKernel::new(spec, entity_id, working_directory, fs, view, window, cx)
             }
         };
 
@@ -442,6 +463,7 @@ impl NotebookEditor {
                         .ok();
                     }
                     Err(err) => {
+                        log::error!("Kernel failed to start: {:?}", err);
                         this.update(cx, |editor, cx| {
                             editor.kernel = Kernel::ErroredLaunch(err.to_string());
                             cx.notify();
@@ -1197,25 +1219,27 @@ impl Render for NotebookEditor {
             .size_full()
             .key_context("NotebookEditor")
             .track_focus(&self.focus_handle)
-            .on_action(cx.listener(|this, &OpenNotebook, window, cx| {
+            .on_action(cx.listener(|this, _: &OpenNotebook, window, cx| {
                 this.open_notebook(&OpenNotebook, window, cx)
             }))
             .on_action(
-                cx.listener(|this, &ClearOutputs, window, cx| this.clear_outputs(window, cx)),
+                cx.listener(|this, _: &ClearOutputs, window, cx| this.clear_outputs(window, cx)),
             )
             .on_action(
-                cx.listener(|this, &Run, window, cx| this.run_current_cell(&Run, window, cx)),
+                cx.listener(|this, _: &Run, window, cx| this.run_current_cell(&Run, window, cx)),
             )
-            .on_action(cx.listener(|this, &RunAll, window, cx| this.run_cells(window, cx)))
-            .on_action(cx.listener(|this, &MoveCellUp, window, cx| this.move_cell_up(window, cx)))
+            .on_action(cx.listener(|this, _: &RunAll, window, cx| this.run_cells(window, cx)))
             .on_action(
-                cx.listener(|this, &MoveCellDown, window, cx| this.move_cell_down(window, cx)),
+                cx.listener(|this, _: &MoveCellUp, window, cx| this.move_cell_up(window, cx)),
             )
-            .on_action(cx.listener(|this, &AddMarkdownBlock, window, cx| {
+            .on_action(
+                cx.listener(|this, _: &MoveCellDown, window, cx| this.move_cell_down(window, cx)),
+            )
+            .on_action(cx.listener(|this, _: &AddMarkdownBlock, window, cx| {
                 this.add_markdown_block(window, cx)
             }))
             .on_action(
-                cx.listener(|this, &AddCodeBlock, window, cx| this.add_code_block(window, cx)),
+                cx.listener(|this, _: &AddCodeBlock, window, cx| this.add_code_block(window, cx)),
             )
             .on_action(cx.listener(|this, _: &MoveUp, window, cx| {
                 this.select_previous(&menu::SelectPrevious, window, cx);
@@ -1273,6 +1297,127 @@ impl Render for NotebookEditor {
                     }
                 }
             }))
+            .on_action(cx.listener(|this, _: &NotebookMoveDown, window, cx| {
+                let Some(cell_id) = this.cell_order.get(this.selected_cell_index) else {
+                    return;
+                };
+                let Some(cell) = this.cell_map.get(cell_id) else {
+                    return;
+                };
+
+                let editor = match cell {
+                    Cell::Code(cell) => cell.read(cx).editor().clone(),
+                    Cell::Markdown(cell) => cell.read(cx).editor().clone(),
+                    _ => return,
+                };
+
+                let is_at_last_line = editor.update(cx, |editor, cx| {
+                    let display_snapshot = editor.display_snapshot(cx);
+                    let selections = editor.selections.all_display(&display_snapshot);
+                    if let Some(selection) = selections.last() {
+                        let head = selection.head();
+                        let cursor_row = head.row();
+                        let max_row = display_snapshot.max_point().row();
+
+                        cursor_row >= max_row
+                    } else {
+                        false
+                    }
+                });
+
+                if is_at_last_line {
+                    this.select_next(&menu::SelectNext, window, cx);
+                    if let Some(cell_id) = this.cell_order.get(this.selected_cell_index) {
+                        if let Some(cell) = this.cell_map.get(cell_id) {
+                            match cell {
+                                Cell::Code(cell) => {
+                                    let editor = cell.read(cx).editor().clone();
+                                    editor.update(cx, |editor, cx| {
+                                        editor.move_to_beginning(&Default::default(), window, cx);
+                                    });
+                                    editor.focus_handle(cx).focus(window, cx);
+                                }
+                                Cell::Markdown(cell) => {
+                                    cell.update(cx, |cell, cx| {
+                                        cell.set_editing(true);
+                                        cx.notify();
+                                    });
+                                    let editor = cell.read(cx).editor().clone();
+                                    editor.update(cx, |editor, cx| {
+                                        editor.move_to_beginning(&Default::default(), window, cx);
+                                    });
+                                    editor.focus_handle(cx).focus(window, cx);
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                } else {
+                    editor.update(cx, |editor, cx| {
+                        editor.move_down(&Default::default(), window, cx);
+                    });
+                }
+            }))
+            .on_action(cx.listener(|this, _: &NotebookMoveUp, window, cx| {
+                let Some(cell_id) = this.cell_order.get(this.selected_cell_index) else {
+                    return;
+                };
+                let Some(cell) = this.cell_map.get(cell_id) else {
+                    return;
+                };
+
+                let editor = match cell {
+                    Cell::Code(cell) => cell.read(cx).editor().clone(),
+                    Cell::Markdown(cell) => cell.read(cx).editor().clone(),
+                    _ => return,
+                };
+
+                let is_at_first_line = editor.update(cx, |editor, cx| {
+                    let display_snapshot = editor.display_snapshot(cx);
+                    let selections = editor.selections.all_display(&display_snapshot);
+                    if let Some(selection) = selections.first() {
+                        let head = selection.head();
+                        let cursor_row = head.row();
+
+                        cursor_row.0 == 0
+                    } else {
+                        false
+                    }
+                });
+
+                if is_at_first_line {
+                    this.select_previous(&menu::SelectPrevious, window, cx);
+                    if let Some(cell_id) = this.cell_order.get(this.selected_cell_index) {
+                        if let Some(cell) = this.cell_map.get(cell_id) {
+                            match cell {
+                                Cell::Code(cell) => {
+                                    let editor = cell.read(cx).editor().clone();
+                                    editor.update(cx, |editor, cx| {
+                                        editor.move_to_end(&Default::default(), window, cx);
+                                    });
+                                    editor.focus_handle(cx).focus(window, cx);
+                                }
+                                Cell::Markdown(cell) => {
+                                    cell.update(cx, |cell, cx| {
+                                        cell.set_editing(true);
+                                        cx.notify();
+                                    });
+                                    let editor = cell.read(cx).editor().clone();
+                                    editor.update(cx, |editor, cx| {
+                                        editor.move_to_end(&Default::default(), window, cx);
+                                    });
+                                    editor.focus_handle(cx).focus(window, cx);
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                } else {
+                    editor.update(cx, |editor, cx| {
+                        editor.move_up(&Default::default(), window, cx);
+                    });
+                }
+            }))
             .on_action(
                 cx.listener(|this, action, window, cx| this.restart_kernel(action, window, cx)),
             )
@@ -1327,7 +1472,10 @@ impl project::ProjectItem for NotebookItem {
                     .with_context(|| format!("finding the absolute path of {path:?}"))?;
 
                 // todo: watch for changes to the file
-                let file_content = fs.load(abs_path.as_path()).await?;
+                let buffer = project
+                    .update(cx, |project, cx| project.open_buffer(path.clone(), cx))
+                    .await?;
+                let file_content = buffer.read_with(cx, |buffer, _| buffer.text());
 
                 let notebook = if file_content.trim().is_empty() {
                     nbformat::v4::Notebook {
@@ -1613,13 +1761,19 @@ impl Item for NotebookEditor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
-        let path = self.notebook_item.read(cx).path.clone();
-        let fs = project.read(cx).fs().clone();
+        let project_path = self.notebook_item.read(cx).project_path.clone();
         let languages = self.languages.clone();
         let notebook_language = self.notebook_language.clone();
 
         cx.spawn_in(window, async move |this, cx| {
-            let file_content = fs.load(&path).await?;
+            let buffer = this
+                .update(cx, |this, cx| {
+                    this.project
+                        .update(cx, |project, cx| project.open_buffer(project_path, cx))
+                })?
+                .await?;
+
+            let file_content = buffer.read_with(cx, |buffer, _| buffer.text());
 
             let mut json: serde_json::Value = serde_json::from_str(&file_content)?;
             if let Some(cells) = json.get_mut("cells").and_then(|c| c.as_array_mut()) {

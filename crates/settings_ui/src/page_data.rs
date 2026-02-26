@@ -1,6 +1,9 @@
 use gpui::{Action as _, App};
 use itertools::Itertools as _;
-use settings::{LanguageSettingsContent, SemanticTokens, SettingsContent};
+use settings::{
+    AudioInputDeviceName, AudioOutputDeviceName, LanguageSettingsContent, SemanticTokens,
+    SettingsContent,
+};
 use std::sync::{Arc, OnceLock};
 use strum::{EnumMessage, IntoDiscriminant as _, VariantArray};
 use ui::IntoElement;
@@ -8,13 +11,21 @@ use ui::IntoElement;
 use crate::{
     ActionLink, DynamicItem, PROJECT, SettingField, SettingItem, SettingsFieldMetadata,
     SettingsPage, SettingsPageItem, SubPageLink, USER, active_language, all_language_names,
-    pages::{render_edit_prediction_setup_page, render_tool_permissions_setup_page},
+    pages::{
+        open_audio_test_window, render_edit_prediction_setup_page,
+        render_tool_permissions_setup_page,
+    },
 };
 
 const DEFAULT_STRING: String = String::new();
 /// A default empty string reference. Useful in `pick` functions for cases either in dynamic item fields, or when dealing with `settings::Maybe`
 /// to avoid the "NO DEFAULT" case.
 const DEFAULT_EMPTY_STRING: Option<&String> = Some(&DEFAULT_STRING);
+
+const DEFAULT_AUDIO_OUTPUT: AudioOutputDeviceName = AudioOutputDeviceName(None);
+const DEFAULT_EMPTY_AUDIO_OUTPUT: Option<&AudioOutputDeviceName> = Some(&DEFAULT_AUDIO_OUTPUT);
+const DEFAULT_AUDIO_INPUT: AudioInputDeviceName = AudioInputDeviceName(None);
+const DEFAULT_EMPTY_AUDIO_INPUT: Option<&AudioInputDeviceName> = Some(&DEFAULT_AUDIO_INPUT);
 
 macro_rules! concat_sections {
     (@vec, $($arr:expr),+ $(,)?) => {{
@@ -1252,6 +1263,7 @@ fn keymap_page() -> SettingsPage {
                         .ok();
                     window.remove_window();
                 }),
+                files: USER,
             }),
         ]
     }
@@ -1466,7 +1478,7 @@ fn editor_page() -> SettingsPage {
         ]
     }
 
-    fn multibuffer_section() -> [SettingsPageItem; 5] {
+    fn multibuffer_section() -> [SettingsPageItem; 6] {
         [
             SettingsPageItem::SectionHeader("Multibuffer"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -1528,6 +1540,19 @@ fn editor_page() -> SettingsPage {
                             .outline_panel
                             .get_or_insert_default()
                             .expand_outlines_with_depth = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Diff View Style",
+                description: "How to display diffs in the editor.",
+                field: Box::new(SettingField {
+                    json_path: Some("diff_view_style"),
+                    pick: |settings_content| settings_content.editor.diff_view_style.as_ref(),
+                    write: |settings_content, value| {
+                        settings_content.editor.diff_view_style = value;
                     },
                 }),
                 metadata: None,
@@ -3129,7 +3154,7 @@ fn search_and_files_page() -> SettingsPage {
         ]
     }
 
-    fn file_finder_section() -> [SettingsPageItem; 6] {
+    fn file_finder_section() -> [SettingsPageItem; 5] {
         [
             SettingsPageItem::SectionHeader("File Finder"),
             // todo: null by default
@@ -3212,24 +3237,6 @@ fn search_and_files_page() -> SettingsPage {
                             .file_finder
                             .get_or_insert_default()
                             .skip_focus_for_active_in_search = value;
-                    },
-                }),
-                metadata: None,
-                files: USER,
-            }),
-            SettingsPageItem::SettingItem(SettingItem {
-                title: "Git Status",
-                description: "Show the Git status in the file finder.",
-                field: Box::new(SettingField {
-                    json_path: Some("file_finder.git_status"),
-                    pick: |settings_content| {
-                        settings_content.file_finder.as_ref()?.git_status.as_ref()
-                    },
-                    write: |settings_content, value| {
-                        settings_content
-                            .file_finder
-                            .get_or_insert_default()
-                            .git_status = value;
                     },
                 }),
                 metadata: None,
@@ -4231,7 +4238,7 @@ fn window_and_layout_page() -> SettingsPage {
 }
 
 fn panels_page() -> SettingsPage {
-    fn project_panel_section() -> [SettingsPageItem; 21] {
+    fn project_panel_section() -> [SettingsPageItem; 22] {
         [
             SettingsPageItem::SectionHeader("Project Panel"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -4526,6 +4533,28 @@ fn panels_page() -> SettingsPage {
                             .project_panel
                             .get_or_insert_default()
                             .show_diagnostics = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Diagnostic Badges",
+                description: "Show error and warning count badges next to file names in the project panel.",
+                field: Box::new(SettingField {
+                    json_path: Some("project_panel.diagnostic_badges"),
+                    pick: |settings_content| {
+                        settings_content
+                            .project_panel
+                            .as_ref()?
+                            .diagnostic_badges
+                            .as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .project_panel
+                            .get_or_insert_default()
+                            .diagnostic_badges = value;
                     },
                 }),
                 metadata: None,
@@ -4992,7 +5021,7 @@ fn panels_page() -> SettingsPage {
         ]
     }
 
-    fn git_panel_section() -> [SettingsPageItem; 10] {
+    fn git_panel_section() -> [SettingsPageItem; 11] {
         [
             SettingsPageItem::SectionHeader("Git Panel"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -5129,6 +5158,24 @@ fn panels_page() -> SettingsPage {
                     },
                     write: |settings_content, value| {
                         settings_content.git_panel.get_or_insert_default().tree_view = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Diff Stats",
+                description: "Whether to show the addition/deletion change count next to each file in the Git panel.",
+                field: Box::new(SettingField {
+                    json_path: Some("git_panel.diff_stats"),
+                    pick: |settings_content| {
+                        settings_content.git_panel.as_ref()?.diff_stats.as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .git_panel
+                            .get_or_insert_default()
+                            .diff_stats = value;
                     },
                 }),
                 metadata: None,
@@ -6746,7 +6793,7 @@ fn collaboration_page() -> SettingsPage {
         ]
     }
 
-    fn experimental_section() -> [SettingsPageItem; 6] {
+    fn experimental_section() -> [SettingsPageItem; 9] {
         [
             SettingsPageItem::SectionHeader("Experimental"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -6841,6 +6888,61 @@ fn collaboration_page() -> SettingsPage {
                 metadata: None,
                 files: USER,
             }),
+            SettingsPageItem::ActionLink(ActionLink {
+                title: "Test Audio".into(),
+                description: Some("Test your microphone and speaker setup".into()),
+                button_text: "Test Audio".into(),
+                on_click: Arc::new(|_settings_window, window, cx| {
+                    open_audio_test_window(window, cx);
+                }),
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Output Audio Device",
+                description: "Select output audio device",
+                field: Box::new(SettingField {
+                    json_path: Some("audio.experimental.output_audio_device"),
+                    pick: |settings_content| {
+                        settings_content
+                            .audio
+                            .as_ref()?
+                            .output_audio_device
+                            .as_ref()
+                            .or(DEFAULT_EMPTY_AUDIO_OUTPUT)
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .audio
+                            .get_or_insert_default()
+                            .output_audio_device = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Input Audio Device",
+                description: "Select input audio device",
+                field: Box::new(SettingField {
+                    json_path: Some("audio.experimental.input_audio_device"),
+                    pick: |settings_content| {
+                        settings_content
+                            .audio
+                            .as_ref()?
+                            .input_audio_device
+                            .as_ref()
+                            .or(DEFAULT_EMPTY_AUDIO_INPUT)
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .audio
+                            .get_or_insert_default()
+                            .input_audio_device = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
         ]
     }
 
@@ -6859,47 +6961,25 @@ fn ai_page() -> SettingsPage {
                 description: "Whether to disable all AI features in Zed.",
                 field: Box::new(SettingField {
                     json_path: Some("disable_ai"),
-                    pick: |settings_content| settings_content.disable_ai.as_ref(),
+                    pick: |settings_content| settings_content.project.disable_ai.as_ref(),
                     write: |settings_content, value| {
-                        settings_content.disable_ai = value;
+                        settings_content.project.disable_ai = value;
                     },
                 }),
                 metadata: None,
-                files: USER,
+                files: USER | PROJECT,
             }),
         ]
     }
 
-    fn agent_configuration_section() -> [SettingsPageItem; 13] {
+    fn agent_configuration_section() -> [SettingsPageItem; 12] {
         [
             SettingsPageItem::SectionHeader("Agent Configuration"),
-            SettingsPageItem::SettingItem(SettingItem {
-                title: "Always Allow Tool Actions",
-                description: "When enabled, the agent can run potentially destructive actions without asking for your confirmation. This setting has no effect on external agents.",
-                field: Box::new(SettingField {
-                    json_path: Some("agent.always_allow_tool_actions"),
-                    pick: |settings_content| {
-                        settings_content
-                            .agent
-                            .as_ref()?
-                            .always_allow_tool_actions
-                            .as_ref()
-                    },
-                    write: |settings_content, value| {
-                        settings_content
-                            .agent
-                            .get_or_insert_default()
-                            .always_allow_tool_actions = value;
-                    },
-                }),
-                metadata: None,
-                files: USER,
-            }),
             SettingsPageItem::SubPageLink(SubPageLink {
-                title: "Configure Tool Rules".into(),
+                title: "Tool Permissions".into(),
                 r#type: Default::default(),
                 json_path: Some("agent.tool_permissions"),
-                description: Some("Set up regex patterns to auto-allow, auto-deny, or always prompt for specific tool inputs.".into()),
+                description: Some("Set up regex patterns to auto-allow, auto-deny, or always request confirmation, for specific tool inputs.".into()),
                 in_json: true,
                 files: USER,
                 render: render_tool_permissions_setup_page,
@@ -8498,7 +8578,7 @@ fn language_settings_data() -> Box<[SettingsPageItem]> {
 /// LanguageSettings items that should be included in the "Languages & Tools" page
 /// not the "Editor" page
 fn non_editor_language_settings_data() -> Box<[SettingsPageItem]> {
-    fn lsp_section() -> [SettingsPageItem; 7] {
+    fn lsp_section() -> [SettingsPageItem; 8] {
         [
             SettingsPageItem::SectionHeader("LSP"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -8628,6 +8708,25 @@ fn non_editor_language_settings_data() -> Box<[SettingsPageItem]> {
                     write: |settings_content, value| {
                         language_settings_field_mut(settings_content, value, |language, value| {
                             language.document_folding_ranges = value;
+                        })
+                    },
+                }),
+                metadata: None,
+                files: USER | PROJECT,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "LSP Document Symbols",
+                description: "When enabled, use the language server's document symbols for outlines and breadcrumbs instead of tree-sitter.",
+                field: Box::new(SettingField {
+                    json_path: Some("languages.$(language).document_symbols"),
+                    pick: |settings_content| {
+                        language_settings_field(settings_content, |language| {
+                            language.document_symbols.as_ref()
+                        })
+                    },
+                    write: |settings_content, value| {
+                        language_settings_field_mut(settings_content, value, |language, value| {
+                            language.document_symbols = value;
                         })
                     },
                 }),

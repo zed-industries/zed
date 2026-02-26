@@ -762,7 +762,9 @@ impl LineLayoutCache {
         }
 
         let text = materialize_text();
-        let mut layout = self.platform_text_system.layout_line(&text, font_size, runs);
+        let mut layout = self
+            .platform_text_system
+            .layout_line(&text, font_size, runs);
 
         if let Some(force_width) = force_width {
             let mut glyph_pos = 0;
@@ -796,10 +798,9 @@ impl LineLayoutCache {
 
 /// A run of text with a single font.
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
+#[expect(missing_docs)]
 pub struct FontRun {
-    /// The length of this run in bytes.
     pub len: usize,
-    /// The font ID for this run.
     pub font_id: FontId,
 }
 
@@ -921,8 +922,6 @@ impl AsCacheKeyRef for CacheKey {
         }
     }
 }
-
-
 
 impl PartialEq for CacheKey {
     fn eq(&self, other: &Self) -> bool {
@@ -1244,7 +1243,9 @@ impl LineLayoutCache {
 
         // Cache miss: materialize text and shape
         let text = key.materialize();
-        let mut layout = self.platform_text_system.layout_line(&text, font_size, runs);
+        let mut layout = self
+            .platform_text_system
+            .layout_line(&text, font_size, runs);
 
         if let Some(force_width) = force_width {
             let mut glyph_pos = 0;

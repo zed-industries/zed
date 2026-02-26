@@ -251,7 +251,7 @@ impl Console {
                         let range = buffer.anchor_after(MultiBufferOffset(range.start))
                             ..buffer.anchor_before(MultiBufferOffset(range.end));
                         let color_fn = color_fetcher(color);
-                        console.highlight_background_key(
+                        console.highlight_background(
                             HighlightKey::ConsoleAnsiHighlight(start_offset),
                             &[range],
                             move |_, theme| color_fn(theme),

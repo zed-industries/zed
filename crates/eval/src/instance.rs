@@ -26,7 +26,7 @@ use std::{
     time::Duration,
 };
 use unindent::Unindent as _;
-use util::{ResultExt as _, command::new_smol_command, markdown::MarkdownCodeBlock};
+use util::{ResultExt as _, command::new_command, markdown::MarkdownCodeBlock};
 
 use crate::{
     AgentAppState, ToolMetrics,
@@ -564,6 +564,7 @@ impl ExampleInstance {
                 stop: Vec::new(),
                 thinking_allowed: true,
                 thinking_effort: None,
+                speed: None,
             };
 
             let model = model.clone();
@@ -678,6 +679,14 @@ impl agent::ThreadEnvironment for EvalThreadEnvironment {
             });
             Ok(Rc::new(EvalTerminalHandle { terminal }) as Rc<dyn agent::TerminalHandle>)
         })
+    }
+
+    fn create_subagent(
+        &self,
+        _label: String,
+        _cx: &mut App,
+    ) -> Result<Rc<dyn agent::SubagentHandle>> {
+        unimplemented!()
     }
 }
 
@@ -1060,7 +1069,7 @@ pub fn repo_path_for_url(repos_dir: &Path, repo_url: &str) -> PathBuf {
 }
 
 pub async fn run_git(repo_path: &Path, args: &[&str]) -> Result<String> {
-    let output = new_smol_command("git")
+    let output = new_command("git")
         .current_dir(repo_path)
         .args(args)
         .output()

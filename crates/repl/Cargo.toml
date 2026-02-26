@@ -30,6 +30,7 @@ feature_flags.workspace = true
 file_icons.workspace = true
 futures.workspace = true
 gpui.workspace = true
+html_to_markdown.workspace = true
 http_client.workspace = true
 image.workspace = true
 jupyter-websocket-client.workspace = true
@@ -41,6 +42,7 @@ menu.workspace = true
 multi_buffer.workspace = true
 nbformat.workspace = true
 project.workspace = true
+remote.workspace = true
 runtimelib.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -72,4 +74,8 @@ theme = { workspace = true, features = ["test-support"] }
 tree-sitter-md.workspace = true
 tree-sitter-typescript.workspace = true
 tree-sitter-python.workspace = true
+workspace = { workspace = true, features = ["test-support"] }
 util = { workspace = true, features = ["test-support"] }
+
+[package.metadata.cargo-machete]
+ignored = ["remote"]

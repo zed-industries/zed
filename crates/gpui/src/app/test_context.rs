@@ -120,10 +120,16 @@ impl TestAppContext {
         let foreground_executor = ForegroundExecutor::new(arc_dispatcher);
         let platform = TestPlatform::new(background_executor.clone(), foreground_executor.clone());
         let asset_source = Arc::new(());
+        #[cfg(not(target_family = "wasm"))]
         let http_client = http_client::FakeHttpClient::with_404_response();
         let text_system = Arc::new(TextSystem::new(platform.text_system()));
 
-        let app = App::new_app(platform.clone(), asset_source, http_client);
+        let app = App::new_app(
+            platform.clone(),
+            asset_source,
+            #[cfg(not(target_family = "wasm"))]
+            http_client,
+        );
         app.borrow_mut().mode = GpuiMode::test();
 
         Self {
@@ -521,22 +527,25 @@ impl TestAppContext {
         let mut notifications = self.notifications(entity);
 
         use futures::FutureExt as _;
-        use smol::future::FutureExt as _;
+        use futures_concurrency::future::Race as _;
 
-        async {
-            loop {
-                if entity.update(self, &mut predicate) {
-                    return Ok(());
-                }
+        (
+            async {
+                loop {
+                    if entity.update(self, &mut predicate) {
+                        return Ok(());
+                    }
 
-                if notifications.next().await.is_none() {
-                    bail!("entity dropped")
+                    if notifications.next().await.is_none() {
+                        bail!("entity dropped")
+                    }
                 }
-            }
-        }
-        .race(timer.map(|_| Err(anyhow!("condition timed out"))))
-        .await
-        .unwrap();
+            },
+            timer.map(|_| Err(anyhow!("condition timed out"))),
+        )
+            .race()
+            .await
+            .unwrap();
     }
 
     /// Set a name for this App.

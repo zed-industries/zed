@@ -197,11 +197,6 @@ pub struct SettingsContent {
     // Settings related to calls in Zed
     pub calls: Option<CallSettingsContent>,
 
-    /// Whether to disable all AI features in Zed.
-    ///
-    /// Default: false
-    pub disable_ai: Option<SaturatingBool>,
-
     /// Settings for the which-key popup.
     pub which_key: Option<WhichKeySettingsContent>,
 
@@ -400,6 +395,48 @@ pub struct AudioSettingsContent {
     /// You need to rejoin a call for this setting to apply
     #[serde(rename = "experimental.legacy_audio_compatible")]
     pub legacy_audio_compatible: Option<bool>,
+    /// Requires 'rodio_audio: true'
+    ///
+    /// Select specific output audio device.
+    #[serde(rename = "experimental.output_audio_device")]
+    pub output_audio_device: Option<AudioOutputDeviceName>,
+    /// Requires 'rodio_audio: true'
+    ///
+    /// Select specific input audio device.
+    #[serde(rename = "experimental.input_audio_device")]
+    pub input_audio_device: Option<AudioInputDeviceName>,
+}
+
+#[derive(Clone, Default, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq)]
+#[serde(transparent)]
+pub struct AudioOutputDeviceName(pub Option<String>);
+
+impl AsRef<Option<String>> for AudioInputDeviceName {
+    fn as_ref(&self) -> &Option<String> {
+        &self.0
+    }
+}
+
+impl From<Option<String>> for AudioInputDeviceName {
+    fn from(value: Option<String>) -> Self {
+        Self(value)
+    }
+}
+
+#[derive(Clone, Default, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq)]
+#[serde(transparent)]
+pub struct AudioInputDeviceName(pub Option<String>);
+
+impl AsRef<Option<String>> for AudioOutputDeviceName {
+    fn as_ref(&self) -> &Option<String> {
+        &self.0
+    }
+}
+
+impl From<Option<String>> for AudioOutputDeviceName {
+    fn from(value: Option<String>) -> Self {
+        Self(value)
+    }
 }
 
 /// Control what info is collected by Zed.
@@ -582,6 +619,11 @@ pub struct GitPanelSettingsContent {
     ///
     /// Default: false
     pub tree_view: Option<bool>,
+
+    /// Whether to show the addition/deletion change count next to each file in the Git panel.
+    ///
+    /// Default: false
+    pub diff_stats: Option<bool>,
 }
 
 #[derive(
@@ -674,10 +716,6 @@ pub struct FileFinderSettingsContent {
     ///
     /// Default: true
     pub skip_focus_for_active_in_search: Option<bool>,
-    /// Determines whether to show the git status in the file finder
-    ///
-    /// Default: true
-    pub git_status: Option<bool>,
     /// Whether to use gitignored files when searching.
     /// Only the file Zed had indexed will be used, not necessary all the gitignored files.
     ///

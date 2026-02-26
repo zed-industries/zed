@@ -1,10 +1,13 @@
+#![cfg_attr(target_family = "wasm", no_main)]
+
 use futures::FutureExt;
 use gpui::{
-    App, AppContext, Application, Asset as _, AssetLogger, Bounds, ClickEvent, Context, ElementId,
-    Entity, ImageAssetLoader, ImageCache, ImageCacheProvider, KeyBinding, Menu, MenuItem,
+    App, AppContext, Asset as _, AssetLogger, Bounds, ClickEvent, Context, ElementId, Entity,
+    ImageAssetLoader, ImageCache, ImageCacheProvider, KeyBinding, Menu, MenuItem,
     RetainAllImageCache, SharedString, TitlebarOptions, Window, WindowBounds, WindowOptions,
     actions, div, hash, image_cache, img, prelude::*, px, rgb, size,
 };
+use gpui_platform::application;
 use reqwest_client::ReqwestClient;
 use std::{collections::HashMap, sync::Arc};
 
@@ -244,10 +247,8 @@ impl ImageCache for SimpleLruCache {
 
 actions!(image, [Quit]);
 
-fn main() {
-    env_logger::init();
-
-    Application::new().run(move |cx: &mut App| {
+fn run_example() {
+    application().run(move |cx: &mut App| {
         let http_client = ReqwestClient::user_agent("gpui example").unwrap();
         cx.set_http_client(Arc::new(http_client));
 
@@ -285,4 +286,17 @@ fn main() {
         })
         .unwrap();
     });
+}
+
+#[cfg(not(target_family = "wasm"))]
+fn main() {
+    env_logger::init();
+    run_example();
+}
+
+#[cfg(target_family = "wasm")]
+#[wasm_bindgen::prelude::wasm_bindgen(start)]
+pub fn start() {
+    gpui_platform::web_init();
+    run_example();
 }

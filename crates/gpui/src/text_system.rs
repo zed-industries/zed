@@ -49,19 +49,15 @@ pub struct FontId(pub usize);
 #[derive(Hash, PartialEq, Eq, Clone, Copy, Debug)]
 pub struct FontFamilyId(pub usize);
 
-/// Number of subpixel variants for horizontal glyph positioning.
-/// Used for subpixel antialiasing cache keys.
+/// Number of subpixel glyph variants along the X axis.
 pub const SUBPIXEL_VARIANTS_X: u8 = 4;
 
-/// Number of subpixel variants for vertical glyph positioning.
-/// On Windows/Linux this is 1 (no vertical subpixel rendering),
-/// on macOS it matches the horizontal variant count.
-pub const SUBPIXEL_VARIANTS_Y: u8 =
-    if cfg!(target_os = "windows") || cfg!(target_os = "linux") {
-        1
-    } else {
-        SUBPIXEL_VARIANTS_X
-    };
+/// Number of subpixel glyph variants along the Y axis.
+pub const SUBPIXEL_VARIANTS_Y: u8 = if cfg!(target_os = "windows") || cfg!(target_os = "linux") {
+    1
+} else {
+    SUBPIXEL_VARIANTS_X
+};
 
 /// The GPUI text rendering sub system.
 pub struct TextSystem {
@@ -219,6 +215,23 @@ impl TextSystem {
         Ok(result * font_size)
     }
 
+    // Consider removing this?
+    /// Returns the shaped layout width of for the given character, in the given font and size.
+    pub fn layout_width(&self, font_id: FontId, font_size: Pixels, ch: char) -> Pixels {
+        let mut buffer = [0; 4];
+        let buffer = ch.encode_utf8(&mut buffer);
+        self.platform_text_system
+            .layout_line(
+                buffer,
+                font_size,
+                &[FontRun {
+                    len: buffer.len(),
+                    font_id,
+                }],
+            )
+            .width
+    }
+
     /// Returns the width of an `em`.
     ///
     /// Uses the width of the `m` character in the given font and size.
@@ -231,6 +244,12 @@ impl TextSystem {
     /// Uses the advance width of the `m` character in the given font and size.
     pub fn em_advance(&self, font_id: FontId, font_size: Pixels) -> Result<Pixels> {
         Ok(self.advance(font_id, font_size, 'm')?.width)
+    }
+
+    // Consider removing this?
+    /// Returns the shaped layout width of an `em`.
+    pub fn em_layout_width(&self, font_id: FontId, font_size: Pixels) -> Pixels {
+        self.layout_width(font_id, font_size, 'm')
     }
 
     /// Returns the width of an `ch`.
@@ -309,9 +328,9 @@ impl TextSystem {
         let wrappers = lock
             .entry(FontIdWithSize { font_id, font_size })
             .or_default();
-        let wrapper = wrappers.pop().unwrap_or_else(|| {
-            LineWrapper::new(font_id, font_size, self.platform_text_system.clone())
-        });
+        let wrapper = wrappers
+            .pop()
+            .unwrap_or_else(|| LineWrapper::new(font_id, font_size, self.clone()));
 
         LineWrapperHandle {
             wrapper: Some(wrapper),
@@ -643,12 +662,9 @@ impl WindowTextSystem {
         }
 
         // Use the new cached layout API
-        let cached = self.line_layout_cache.layout_line_cached(
-            key,
-            font_size,
-            &font_runs,
-            force_width,
-        );
+        let cached =
+            self.line_layout_cache
+                .layout_line_cached(key, font_size, &font_runs, force_width);
 
         self.font_runs_pool.lock().push(font_runs);
 
@@ -1145,7 +1161,7 @@ impl TextRun {
 /// An identifier for a specific glyph, as returned by [`WindowTextSystem::layout_line`].
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
 #[repr(C)]
-pub struct GlyphId(pub(crate) u32);
+pub struct GlyphId(pub u32);
 
 /// Parameters for rendering a glyph, used as cache keys for raster bounds.
 ///
@@ -1153,20 +1169,14 @@ pub struct GlyphId(pub(crate) u32);
 /// font, size, subpixel positioning, and scale factor. It's used to look up
 /// cached raster bounds and sprite atlas entries.
 #[derive(Clone, Debug, PartialEq)]
+#[expect(missing_docs)]
 pub struct RenderGlyphParams {
-    /// The font to render the glyph with.
     pub font_id: FontId,
-    /// The specific glyph within the font.
     pub glyph_id: GlyphId,
-    /// The font size in pixels.
     pub font_size: Pixels,
-    /// Subpixel positioning variant for antialiasing.
     pub subpixel_variant: Point<u8>,
-    /// Display scale factor.
     pub scale_factor: f32,
-    /// Whether this glyph is an emoji (affects rendering path).
     pub is_emoji: bool,
-    /// Whether subpixel rendering is enabled.
     pub subpixel_rendering: bool,
 }
 
@@ -1242,32 +1252,32 @@ impl Font {
 pub struct FontMetrics {
     /// The number of font units that make up the "em square",
     /// a scalable grid for determining the size of a typeface.
-    pub(crate) units_per_em: u32,
+    pub units_per_em: u32,
 
     /// The vertical distance from the baseline of the font to the top of the glyph covers.
-    pub(crate) ascent: f32,
+    pub ascent: f32,
 
     /// The vertical distance from the baseline of the font to the bottom of the glyph covers.
-    pub(crate) descent: f32,
+    pub descent: f32,
 
     /// The recommended additional space to add between lines of type.
-    pub(crate) line_gap: f32,
+    pub line_gap: f32,
 
     /// The suggested position of the underline.
-    pub(crate) underline_position: f32,
+    pub underline_position: f32,
 
     /// The suggested thickness of the underline.
-    pub(crate) underline_thickness: f32,
+    pub underline_thickness: f32,
 
     /// The height of a capital letter measured from the baseline of the font.
-    pub(crate) cap_height: f32,
+    pub cap_height: f32,
 
     /// The height of a lowercase x.
-    pub(crate) x_height: f32,
+    pub x_height: f32,
 
     /// The outer limits of the area that the font covers.
     /// Corresponds to the xMin / xMax / yMin / yMax values in the OpenType `head` table
-    pub(crate) bounding_box: Bounds<f32>,
+    pub bounding_box: Bounds<f32>,
 }
 
 impl FontMetrics {
@@ -1312,8 +1322,9 @@ impl FontMetrics {
     }
 }
 
+/// Maps well-known virtual font names to their concrete equivalents.
 #[allow(unused)]
-pub(crate) fn font_name_with_fallbacks<'a>(name: &'a str, system: &'a str) -> &'a str {
+pub fn font_name_with_fallbacks<'a>(name: &'a str, system: &'a str) -> &'a str {
     // Note: the "Zed Plex" fonts were deprecated as we are not allowed to use "Plex"
     // in a derived font name. They are essentially indistinguishable from IBM Plex/Lilex,
     // and so retained here for backward compatibility.
@@ -1325,8 +1336,9 @@ pub(crate) fn font_name_with_fallbacks<'a>(name: &'a str, system: &'a str) -> &'
     }
 }
 
+/// Like [`font_name_with_fallbacks`] but accepts and returns [`SharedString`] references.
 #[allow(unused)]
-pub(crate) fn font_name_with_fallbacks_shared<'a>(
+pub fn font_name_with_fallbacks_shared<'a>(
     name: &'a SharedString,
     system: &'a SharedString,
 ) -> &'a SharedString {

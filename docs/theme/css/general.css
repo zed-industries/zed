@@ -133,6 +133,10 @@ h5 {
   margin-block-end: 0;
 }
 
+strong {
+  color: var(--full-contrast);
+}
+
 code:focus-visible,
 pre:focus-visible,
 li:focus-visible,

@@ -1,11 +1,13 @@
 mod assertions;
 mod marked_text;
 
-use std::path::{Path, PathBuf};
-use tempfile::TempDir;
-
 pub use assertions::*;
 pub use marked_text::*;
+
+use git2;
+use std::ffi::OsStr;
+use std::path::{Path, PathBuf};
+use tempfile::TempDir;
 
 pub struct TempTree {
     _temp_dir: TempDir,
@@ -40,6 +42,12 @@ fn write_tree(path: &Path, tree: serde_json::Value) {
             match contents {
                 Value::Object(_) => {
                     fs::create_dir(&path).unwrap();
+
+                    #[cfg(not(target_family = "wasm"))]
+                    if path.file_name() == Some(OsStr::new(".git")) {
+                        git2::Repository::init(path.parent().unwrap()).unwrap();
+                    }
+
                     write_tree(&path, contents);
                 }
                 Value::Null => {

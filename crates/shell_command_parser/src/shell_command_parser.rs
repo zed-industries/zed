@@ -232,6 +232,10 @@ fn normalize_word_piece_into(
     Some(())
 }
 
+fn is_known_safe_redirect_target(normalized_target: &str) -> bool {
+    normalized_target == "/dev/null"
+}
+
 fn normalize_io_redirect(redirect: &ast::IoRedirect) -> Option<RedirectNormalization> {
     match redirect {
         ast::IoRedirect::File(fd, kind, target) => {
@@ -257,6 +261,9 @@ fn normalize_io_redirect(redirect: &ast::IoRedirect) -> Option<RedirectNormaliza
                 None => String::new(),
             };
             let normalized = normalize_word(target_word)?;
+            if is_known_safe_redirect_target(&normalized) {
+                return Some(RedirectNormalization::Skip);
+            }
             Some(RedirectNormalization::Normalized(format!(
                 "{}{} {}",
                 fd_prefix, operator, normalized
@@ -265,6 +272,9 @@ fn normalize_io_redirect(redirect: &ast::IoRedirect) -> Option<RedirectNormaliza
         ast::IoRedirect::OutputAndError(word, append) => {
             let operator = if *append { "&>>" } else { "&>" };
             let normalized = normalize_word(word)?;
+            if is_known_safe_redirect_target(&normalized) {
+                return Some(RedirectNormalization::Skip);
+            }
             Some(RedirectNormalization::Normalized(format!(
                 "{} {}",
                 operator, normalized
@@ -896,7 +906,7 @@ mod tests {
     #[test]
     fn test_pipe_with_stderr_redirect_on_first_command() {
         let commands = extract_commands("ls 2>/dev/null | grep foo").expect("parse failed");
-        assert_eq!(commands, vec!["ls", "2> /dev/null", "grep foo"]);
+        assert_eq!(commands, vec!["ls", "grep foo"]);
     }
 
     #[test]
@@ -989,5 +999,66 @@ mod tests {
         let commands = extract_commands("{ cat; } > >(tee /tmp/log)").expect("parse failed");
         assert!(commands.contains(&"cat".to_string()));
         assert!(commands.contains(&"tee /tmp/log".to_string()));
+    }
+
+    #[test]
+    fn test_redirect_to_dev_null_skipped() {
+        let commands = extract_commands("cmd > /dev/null").expect("parse failed");
+        assert_eq!(commands, vec!["cmd"]);
+    }
+
+    #[test]
+    fn test_stderr_redirect_to_dev_null_skipped() {
+        let commands = extract_commands("cmd 2>/dev/null").expect("parse failed");
+        assert_eq!(commands, vec!["cmd"]);
+    }
+
+    #[test]
+    fn test_stderr_redirect_to_dev_null_with_space_skipped() {
+        let commands = extract_commands("cmd 2> /dev/null").expect("parse failed");
+        assert_eq!(commands, vec!["cmd"]);
+    }
+
+    #[test]
+    fn test_append_redirect_to_dev_null_skipped() {
+        let commands = extract_commands("cmd >> /dev/null").expect("parse failed");
+        assert_eq!(commands, vec!["cmd"]);
+    }
+
+    #[test]
+    fn test_output_and_error_redirect_to_dev_null_skipped() {
+        let commands = extract_commands("cmd &>/dev/null").expect("parse failed");
+        assert_eq!(commands, vec!["cmd"]);
+    }
+
+    #[test]
+    fn test_append_output_and_error_redirect_to_dev_null_skipped() {
+        let commands = extract_commands("cmd &>>/dev/null").expect("parse failed");
+        assert_eq!(commands, vec!["cmd"]);
+    }
+
+    #[test]
+    fn test_quoted_dev_null_redirect_skipped() {
+        let commands = extract_commands("cmd 2>'/dev/null'").expect("parse failed");
+        assert_eq!(commands, vec!["cmd"]);
+    }
+
+    #[test]
+    fn test_redirect_to_real_file_still_included() {
+        let commands = extract_commands("echo hello > /etc/passwd").expect("parse failed");
+        assert_eq!(commands, vec!["echo hello", "> /etc/passwd"]);
+    }
+
+    #[test]
+    fn test_dev_null_redirect_in_chained_command() {
+        let commands =
+            extract_commands("git log 2>/dev/null || echo fallback").expect("parse failed");
+        assert_eq!(commands, vec!["git log", "echo fallback"]);
+    }
+
+    #[test]
+    fn test_mixed_safe_and_unsafe_redirects() {
+        let commands = extract_commands("cmd > /tmp/out 2>/dev/null").expect("parse failed");
+        assert_eq!(commands, vec!["cmd", "> /tmp/out"]);
     }
 }
