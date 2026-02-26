@@ -9283,6 +9283,7 @@ dependencies = [
  "open_path_prompt",
  "picker",
  "project",
+ "serde_json",
  "settings",
  "ui",
  "util",
