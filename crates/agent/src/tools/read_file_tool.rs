@@ -10,7 +10,7 @@ use project::{AgentLocation, ImageItem, Project, WorktreeSettings, image_store};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
-use std::path::PathBuf;
+
 use std::sync::Arc;
 use util::markdown::MarkdownCodeBlock;
 

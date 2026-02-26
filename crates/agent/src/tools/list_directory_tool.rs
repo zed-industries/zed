@@ -12,7 +12,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
 use std::fmt::Write;
-use std::path::PathBuf;
+
 use std::sync::Arc;
 use util::markdown::MarkdownInlineCode;
 

@@ -476,7 +476,7 @@ mod tests {
 
     #[test]
     fn test_validate_name_mismatch() {
-        let mut metadata = SkillMetadata {
+        let metadata = SkillMetadata {
             name: "bar".to_string(),
             description: "Valid description".to_string(),
             license: None,
@@ -639,7 +639,7 @@ This is the skill content."#;
             "exact-skill".to_string(),
             Arc::new(Skill {
                 name: "exact-skill".to_string(),
-                description: exact_description.clone(),
+                description: exact_description,
                 path: PathBuf::from("/exact"),
             }),
         );
