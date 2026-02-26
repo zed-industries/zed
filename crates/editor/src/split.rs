@@ -1108,13 +1108,11 @@ impl SplittableEditor {
         SearchToken::new(self.focused_side() as u64)
     }
 
-    fn editor_for_token(&self, token: SearchToken) -> &Entity<Editor> {
+    fn editor_for_token(&self, token: SearchToken) -> Option<&Entity<Editor>> {
         if token.value() == SplitSide::Left as u64 {
-            if let Some(lhs) = &self.lhs {
-                return &lhs.editor;
-            }
+            return self.lhs.as_ref().map(|lhs| &lhs.editor);
         }
-        &self.rhs_editor
+        Some(&self.rhs_editor)
     }
 }
 
@@ -1753,7 +1751,10 @@ impl SearchableItem for SplittableEditor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.editor_for_token(token).update(cx, |editor, cx| {
+        let Some(target) = self.editor_for_token(token) else {
+            return;
+        };
+        target.update(cx, |editor, cx| {
             editor.update_matches(matches, active_match_index, token, window, cx);
         });
     }
@@ -1799,7 +1800,10 @@ impl SearchableItem for SplittableEditor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.editor_for_token(token).update(cx, |editor, cx| {
+        let Some(target) = self.editor_for_token(token) else {
+            return;
+        };
+        target.update(cx, |editor, cx| {
             editor.activate_match(index, matches, token, window, cx);
         });
     }
@@ -1811,7 +1815,10 @@ impl SearchableItem for SplittableEditor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.editor_for_token(token).update(cx, |editor, cx| {
+        let Some(target) = self.editor_for_token(token) else {
+            return;
+        };
+        target.update(cx, |editor, cx| {
             editor.select_matches(matches, token, window, cx);
         });
     }
@@ -1824,7 +1831,10 @@ impl SearchableItem for SplittableEditor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.editor_for_token(token).update(cx, |editor, cx| {
+        let Some(target) = self.editor_for_token(token) else {
+            return;
+        };
+        target.update(cx, |editor, cx| {
             editor.replace(identifier, query, token, window, cx);
         });
     }
@@ -1868,7 +1878,7 @@ impl SearchableItem for SplittableEditor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<usize> {
-        self.editor_for_token(token).update(cx, |editor, cx| {
+        self.editor_for_token(token)?.update(cx, |editor, cx| {
             editor.active_match_index(direction, matches, token, window, cx)
         })
     }
