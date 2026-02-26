@@ -53,9 +53,9 @@ pub fn parse_prediction_output(
 fn extract_zeta2_current_region(prompt: &str, format: ZetaFormat) -> Result<String> {
     let (current_marker, end_marker) = match format {
         ZetaFormat::V0112MiddleAtEnd => ("<|fim_middle|>current\n", "<|fim_middle|>updated"),
-        ZetaFormat::V0113Ordered | ZetaFormat::V0114180EditableRegion => {
-            ("<|fim_middle|>current\n", "<|fim_suffix|>")
-        }
+        ZetaFormat::V0113Ordered
+        | ZetaFormat::V0114180EditableRegion
+        | ZetaFormat::v0224Hashline => ("<|fim_middle|>current\n", "<|fim_suffix|>"),
         ZetaFormat::V0120GitMergeMarkers
         | ZetaFormat::V0131GitMergeMarkersPrefix
         | ZetaFormat::V0211Prefill => (
@@ -114,7 +114,8 @@ fn parse_zeta2_output(
         ZetaFormat::V0120GitMergeMarkers => zeta_prompt::v0120_git_merge_markers::END_MARKER,
         ZetaFormat::V0112MiddleAtEnd
         | ZetaFormat::V0113Ordered
-        | ZetaFormat::V0114180EditableRegion => "",
+        | ZetaFormat::V0114180EditableRegion
+        | ZetaFormat::v0224Hashline => "",
         ZetaFormat::V0211SeedCoder => zeta_prompt::seed_coder::END_MARKER,
     };
     if !suffix.is_empty() {

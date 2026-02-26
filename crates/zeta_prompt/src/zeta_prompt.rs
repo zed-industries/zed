@@ -812,6 +812,9 @@ pub mod hashline {
 
     use std::fmt::Display;
 
+    pub const END_MARKER: &str = "<|fim_middle|>updated";
+    pub const START_MARKER: &str = "<|fim_middle|>current";
+
     use super::*;
 
     pub fn special_tokens() -> &'static [&'static str] {
@@ -827,14 +830,6 @@ pub mod hashline {
         ];
     }
 
-    pub fn hash_line(line: &[u8]) -> u8 {
-        let mut h: u8 = 0;
-        for &byte in line {
-            h = h.wrapping_add(byte);
-        }
-        return h;
-    }
-
     /// A parsed line reference like `3:c3` (line index 3 with hash 0xc3).
     #[derive(Debug, Clone, PartialEq, Eq)]
     struct LineRef {
@@ -846,6 +841,80 @@ pub mod hashline {
         fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
             write!(f, "{}:{:02x}", self.index, self.hash)
         }
+    }
+
+    pub fn hash_line(line: &[u8]) -> u8 {
+        let mut h: u8 = 0;
+        for &byte in line {
+            h = h.wrapping_add(byte);
+        }
+        return h;
+    }
+
+    /// Write the hashline-encoded editable region into `out`. Each line of
+    /// `editable_text` is prefixed with `{line_index}:{hash}|` and the cursor
+    /// marker is inserted at `cursor_offset_in_editable` (byte offset relative
+    /// to the start of `editable_text`).
+    pub fn write_hashline_editable_region(
+        out: &mut String,
+        editable_text: &str,
+        cursor_offset_in_editable: usize,
+    ) {
+        let mut offset = 0;
+        for (i, line) in editable_text.lines().enumerate() {
+            let (head, cursor, tail) = if cursor_offset_in_editable > offset
+                && cursor_offset_in_editable < offset + line.len()
+            {
+                (
+                    &line[..cursor_offset_in_editable - offset],
+                    CURSOR_MARKER,
+                    &line[cursor_offset_in_editable - offset..],
+                )
+            } else {
+                (line, "", "")
+            };
+            write!(
+                out,
+                "\n{}|{head}{cursor}{tail}",
+                LineRef {
+                    index: i,
+                    hash: hash_line(line.as_bytes())
+                }
+            )
+            .unwrap();
+            offset += line.len() + 1;
+        }
+    }
+
+    pub fn write_cursor_excerpt_section(
+        prompt: &mut String,
+        path: &Path,
+        context: &str,
+        editable_range: &Range<usize>,
+        cursor_offset: usize,
+    ) {
+        let path_str = path.to_string_lossy();
+        write!(prompt, "<|file_sep|>{}\n", path_str).ok();
+
+        prompt.push_str("<|fim_prefix|>\n");
+        prompt.push_str(&context[..editable_range.start]);
+        prompt.push_str(START_MARKER);
+
+        let cursor_offset_in_editable = cursor_offset.saturating_sub(editable_range.start);
+        let editable_region = &context[editable_range.clone()];
+        write_hashline_editable_region(prompt, editable_region, cursor_offset_in_editable);
+
+        if !prompt.ends_with('\n') {
+            prompt.push('\n');
+        }
+
+        prompt.push_str("<|fim_suffix|>\n");
+        prompt.push_str(&context[editable_range.end..]);
+        if !prompt.ends_with('\n') {
+            prompt.push('\n');
+        }
+
+        prompt.push_str(END_MARKER);
     }
 
     /// A single edit command parsed from the model output.
@@ -1114,17 +1183,11 @@ pub mod hashline {
             old_hashes: &[u8],
         ) {
             if hunk.line_range.is_empty() {
-                // Pure insertion — reference the old line to insert after.
-                if let Some(after) = last_old_line {
-                    write!(
-                        result,
-                        "<|insert|>{}\n",
-                        LineRef {
-                            index: after,
-                            hash: old_hashes[after]
-                        }
-                    )
-                    .unwrap();
+                // Pure insertion — reference the old line to insert after when in bounds.
+                if let Some(after) = last_old_line
+                    && let Some(&hash) = old_hashes.get(after)
+                {
+                    write!(result, "<|insert|>{}\n", LineRef { index: after, hash }).unwrap();
                 } else {
                     result.push_str("<|insert|>\n");
                 }
@@ -1134,30 +1197,34 @@ pub mod hashline {
                 let deleted_line_count = end_exclusive.saturating_sub(start);
 
                 if deleted_line_count == 1 {
-                    write!(
-                        result,
-                        "<|set|>{}\n",
-                        LineRef {
-                            index: start,
-                            hash: old_hashes[start]
-                        }
-                    )
-                    .unwrap();
+                    if let Some(&hash) = old_hashes.get(start) {
+                        write!(result, "<|set|>{}\n", LineRef { index: start, hash }).unwrap();
+                    } else {
+                        result.push_str("<|set|>\n");
+                    }
                 } else {
                     let end_inclusive = end_exclusive - 1;
-                    write!(
-                        result,
-                        "<|set|>{}-{}\n",
-                        LineRef {
-                            index: start,
-                            hash: old_hashes[start]
-                        },
-                        LineRef {
-                            index: end_inclusive,
-                            hash: old_hashes[end_inclusive]
+                    match (
+                        old_hashes.get(start).copied(),
+                        old_hashes.get(end_inclusive).copied(),
+                    ) {
+                        (Some(start_hash), Some(end_hash)) => {
+                            write!(
+                                result,
+                                "<|set|>{}-{}\n",
+                                LineRef {
+                                    index: start,
+                                    hash: start_hash
+                                },
+                                LineRef {
+                                    index: end_inclusive,
+                                    hash: end_hash
+                                }
+                            )
+                            .unwrap();
                         }
-                    )
-                    .unwrap();
+                        _ => result.push_str("<|set|>\n"),
+                    }
                 }
             }
             for (line_offset, line) in hunk.new_text_lines.iter().enumerate() {
@@ -1182,31 +1249,13 @@ pub mod hashline {
                 }
 
                 // Parse hunk header: @@ -old_start[,old_count] +new_start[,new_count] @@
-                let header = raw_line
-                    .strip_prefix("@@")
-                    .and_then(|s| s.trim_start().split_once("@@"))
-                    .map(|(h, _)| h.trim());
-                if let Some(header) = header {
-                    let mut tokens = header.split_whitespace();
-                    if let Some(old_range_str) = tokens.next().and_then(|s| s.strip_prefix('-')) {
-                        let start_str = old_range_str
-                            .split_once(',')
-                            .map_or(old_range_str, |(s, _)| s);
-                        if let Ok(start_1indexed) = start_str.parse::<usize>() {
-                            old_line_index = start_1indexed.saturating_sub(1);
-                        }
-                    }
-                }
-
+                // We intentionally do not trust old_start as a direct local index into `old_text`,
+                // because some patches are produced against a larger file region and carry
+                // non-local line numbers. We keep indexing local by advancing from parsed patch lines.
                 if first_hunk {
                     new_text_byte_offset = 0;
                     first_hunk = false;
                 }
-                last_old_line_before_hunk = if old_line_index > 0 {
-                    Some(old_line_index - 1)
-                } else {
-                    None
-                };
                 continue;
             }
 
@@ -1281,82 +1330,12 @@ pub mod hashline {
             flush_hunk(hunk, last_old_line_before_hunk, &mut result, &old_hashes);
         }
 
-        if result.is_empty() {
-            return Err(anyhow!("patch produced no edit commands"));
-        }
-
         // Trim a single trailing newline.
         if result.ends_with('\n') {
             result.pop();
         }
 
         Ok(result)
-    }
-
-    /// Write the hashline-encoded editable region into `out`. Each line of
-    /// `editable_text` is prefixed with `{line_index}:{hash}|` and the cursor
-    /// marker is inserted at `cursor_offset_in_editable` (byte offset relative
-    /// to the start of `editable_text`).
-    pub fn write_hashline_editable_region(
-        out: &mut String,
-        editable_text: &str,
-        cursor_offset_in_editable: usize,
-    ) {
-        let mut offset = 0;
-        for (i, line) in editable_text.lines().enumerate() {
-            let (head, cursor, tail) = if cursor_offset_in_editable > offset
-                && cursor_offset_in_editable < offset + line.len()
-            {
-                (
-                    &line[..cursor_offset_in_editable - offset],
-                    CURSOR_MARKER,
-                    &line[cursor_offset_in_editable - offset..],
-                )
-            } else {
-                (line, "", "")
-            };
-            write!(
-                out,
-                "\n{}|{head}{cursor}{tail}",
-                LineRef {
-                    index: i,
-                    hash: hash_line(line.as_bytes())
-                }
-            )
-            .unwrap();
-            offset += line.len() + 1;
-        }
-    }
-
-    pub fn write_cursor_excerpt_section(
-        prompt: &mut String,
-        path: &Path,
-        context: &str,
-        editable_range: &Range<usize>,
-        cursor_offset: usize,
-    ) {
-        let path_str = path.to_string_lossy();
-        write!(prompt, "<|file_sep|>{}\n", path_str).ok();
-
-        prompt.push_str("<|fim_prefix|>\n");
-        prompt.push_str(&context[..editable_range.start]);
-        prompt.push_str("<|fim_middle|>");
-
-        let cursor_offset_in_editable = cursor_offset.saturating_sub(editable_range.start);
-        let editable_region = &context[editable_range.clone()];
-        write_hashline_editable_region(prompt, editable_region, cursor_offset_in_editable);
-
-        if !prompt.ends_with('\n') {
-            prompt.push('\n');
-        }
-
-        prompt.push_str("<|fim_suffix|>\n");
-        prompt.push_str(&context[editable_range.end..]);
-        if !prompt.ends_with('\n') {
-            prompt.push('\n');
-        }
-
-        prompt.push_str("<|fim_middle|>");
     }
 }
 
@@ -2524,10 +2503,10 @@ mod tests {
                 expected: indoc! {"
                     <|file_sep|>test.rs
                     <|fim_prefix|>
-                    <|fim_middle|>
+                    <|fim_middle|>current
                     0:5c|hello<|user_cursor|> world
                     <|fim_suffix|>
-                    <|fim_middle|>"},
+                    <|fim_middle|>updated"},
             },
             Case {
                 name: "multiline_cursor_on_second_line",
@@ -2537,12 +2516,12 @@ mod tests {
                 expected: indoc! {"
                     <|file_sep|>test.rs
                     <|fim_prefix|>
-                    <|fim_middle|>
+                    <|fim_middle|>current
                     0:23|aaa
                     1:26|b<|user_cursor|>bb
                     2:29|ccc
                     <|fim_suffix|>
-                    <|fim_middle|>"},
+                    <|fim_middle|>updated"},
             },
             Case {
                 name: "no_trailing_newline_in_context",
@@ -2552,11 +2531,11 @@ mod tests {
                 expected: indoc! {"
                     <|file_sep|>test.rs
                     <|fim_prefix|>
-                    <|fim_middle|>
+                    <|fim_middle|>current
                     0:d9|lin<|user_cursor|>e1
                     1:da|line2
                     <|fim_suffix|>
-                    <|fim_middle|>"},
+                    <|fim_middle|>updated"},
             },
             Case {
                 name: "leading_newline_in_editable_region",
@@ -2566,11 +2545,11 @@ mod tests {
                 expected: indoc! {"
                     <|file_sep|>test.rs
                     <|fim_prefix|>
-                    <|fim_middle|>
+                    <|fim_middle|>current
                     0:00|
                     1:26|a<|user_cursor|>bc
                     <|fim_suffix|>
-                    <|fim_middle|>"},
+                    <|fim_middle|>updated"},
             },
             Case {
                 name: "with_suffix",
@@ -2580,11 +2559,11 @@ mod tests {
                 expected: indoc! {"
                     <|file_sep|>test.rs
                     <|fim_prefix|>
-                    <|fim_middle|>
+                    <|fim_middle|>current
                     0:26|ab<|user_cursor|>c
                     <|fim_suffix|>
                     def
-                    <|fim_middle|>"},
+                    <|fim_middle|>updated"},
             },
             Case {
                 name: "unicode_two_byte_chars",
@@ -2594,10 +2573,10 @@ mod tests {
                 expected: indoc! {"
                     <|file_sep|>test.rs
                     <|fim_prefix|>
-                    <|fim_middle|>
+                    <|fim_middle|>current
                     0:1b|hé<|user_cursor|>llo
                     <|fim_suffix|>
-                    <|fim_middle|>"},
+                    <|fim_middle|>updated"},
             },
             Case {
                 name: "unicode_three_byte_chars",
@@ -2607,10 +2586,10 @@ mod tests {
                 expected: indoc! {"
                     <|file_sep|>test.rs
                     <|fim_prefix|>
-                    <|fim_middle|>
+                    <|fim_middle|>current
                     0:80|日本<|user_cursor|>語
                     <|fim_suffix|>
-                    <|fim_middle|>"},
+                    <|fim_middle|>updated"},
             },
             Case {
                 name: "unicode_four_byte_chars",
@@ -2620,10 +2599,10 @@ mod tests {
                 expected: indoc! {"
                     <|file_sep|>test.rs
                     <|fim_prefix|>
-                    <|fim_middle|>
+                    <|fim_middle|>current
                     0:6b|a🌍<|user_cursor|>b
                     <|fim_suffix|>
-                    <|fim_middle|>"},
+                    <|fim_middle|>updated"},
             },
             Case {
                 name: "cursor_at_start_of_region_not_placed",
@@ -2633,10 +2612,10 @@ mod tests {
                 expected: indoc! {"
                     <|file_sep|>test.rs
                     <|fim_prefix|>
-                    <|fim_middle|>
+                    <|fim_middle|>current
                     0:26|abc
                     <|fim_suffix|>
-                    <|fim_middle|>"},
+                    <|fim_middle|>updated"},
             },
             Case {
                 name: "cursor_at_end_of_line_not_placed",
@@ -2646,11 +2625,11 @@ mod tests {
                 expected: indoc! {"
                     <|file_sep|>test.rs
                     <|fim_prefix|>
-                    <|fim_middle|>
+                    <|fim_middle|>current
                     0:26|abc
                     1:2f|def
                     <|fim_suffix|>
-                    <|fim_middle|>"},
+                    <|fim_middle|>updated"},
             },
             Case {
                 name: "cursor_offset_relative_to_context_not_editable_region",
@@ -2664,12 +2643,12 @@ mod tests {
                     <|file_sep|>test.rs
                     <|fim_prefix|>
                     pre
-                    <|fim_middle|>
+                    <|fim_middle|>current
                     0:23|aaa
                     1:26|b<|user_cursor|>bb
                     <|fim_suffix|>
                     suf
-                    <|fim_middle|>"},
+                    <|fim_middle|>updated"},
             },
         ];
 
@@ -3060,6 +3039,24 @@ mod tests {
                         eprintln!("<|user_cursor|>");
                     }
                 "#},
+            },
+            Case {
+                name: "non_local_hunk_header_pure_insertion_repro",
+                old: indoc! {"
+                    aaa
+                    bbb
+                "},
+                patch: indoc! {"
+                    @@ -20,2 +20,3 @@
+                     aaa
+                    +xxx
+                     bbb
+                "},
+                expected_new: indoc! {"
+                    aaa
+                    xxx
+                    bbb
+                "},
             },
         ];
 
