@@ -1,6 +1,6 @@
 use crate::{
-    BackgroundExecutor, Clock, ForegroundExecutor, Priority, RunnableMeta, Scheduler, SessionId,
-    TestClock, Timer,
+    BackgroundExecutor, Clock, ForegroundExecutor, Instant, Priority, RunnableMeta, Scheduler,
+    SessionId, TestClock, Timer,
 };
 use async_task::Runnable;
 use backtrace::{Backtrace, BacktraceFrame};
@@ -28,7 +28,6 @@ use std::{
     thread::{self, Thread},
     time::Duration,
 };
-use web_time::Instant;
 
 const PENDING_TRACES_VAR_NAME: &str = "PENDING_TRACES";
 

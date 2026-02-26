@@ -1,7 +1,8 @@
 use chrono::{DateTime, Utc};
 use parking_lot::Mutex;
 use std::time::Duration;
-use web_time::Instant;
+
+pub use web_time::Instant;
 
 pub trait Clock {
     fn utc_now(&self) -> DateTime<Utc>;

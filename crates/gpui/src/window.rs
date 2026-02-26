@@ -33,6 +33,7 @@ use itertools::Itertools;
 use parking_lot::RwLock;
 use raw_window_handle::{HandleError, HasDisplayHandle, HasWindowHandle};
 use refineable::Refineable;
+use scheduler::Instant;
 use slotmap::SlotMap;
 use smallvec::SmallVec;
 use std::{
@@ -53,7 +54,6 @@ use std::{
     time::Duration,
 };
 use uuid::Uuid;
-use web_time::Instant;
 
 mod prompts;
 

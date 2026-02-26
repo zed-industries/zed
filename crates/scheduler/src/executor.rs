@@ -1,4 +1,4 @@
-use crate::{Priority, RunnableMeta, Scheduler, SessionId, Timer};
+use crate::{Instant, Priority, RunnableMeta, Scheduler, SessionId, Timer};
 use std::{
     future::Future,
     marker::PhantomData,
@@ -14,7 +14,6 @@ use std::{
     thread::{self, ThreadId},
     time::Duration,
 };
-use web_time::Instant;
 
 #[derive(Clone)]
 pub struct ForegroundExecutor {

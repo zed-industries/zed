@@ -2,6 +2,7 @@ use crate::{PlatformDispatcher, RunnableMeta};
 use async_task::Runnable;
 use chrono::{DateTime, Utc};
 use futures::channel::oneshot;
+use scheduler::Instant;
 use scheduler::{Clock, Priority, Scheduler, SessionId, TestScheduler, Timer};
 #[cfg(not(target_family = "wasm"))]
 use std::task::{Context, Poll};
@@ -14,7 +15,6 @@ use std::{
     },
     time::Duration,
 };
-use web_time::Instant;
 
 /// A production implementation of [`Scheduler`] that wraps a [`PlatformDispatcher`].
 ///

@@ -1,3 +1,4 @@
+use scheduler::Instant;
 use std::{
     any::{TypeId, type_name},
     cell::{BorrowMutError, Cell, Ref, RefCell, RefMut},
@@ -9,7 +10,6 @@ use std::{
     sync::{Arc, atomic::Ordering::SeqCst},
     time::Duration,
 };
-use web_time::Instant;
 
 use anyhow::{Context as _, Result, anyhow};
 use derive_more::{Deref, DerefMut};

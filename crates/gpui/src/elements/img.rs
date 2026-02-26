@@ -12,6 +12,7 @@ use image::{
     AnimationDecoder, DynamicImage, Frame, ImageError, ImageFormat, Rgba,
     codecs::{gif::GifDecoder, webp::WebPDecoder},
 };
+use scheduler::Instant;
 use smallvec::SmallVec;
 use std::{
     fs,
@@ -23,7 +24,6 @@ use std::{
     time::Duration,
 };
 use thiserror::Error;
-use web_time::Instant;
 
 use super::{Stateful, StatefulInteractiveElement};
 

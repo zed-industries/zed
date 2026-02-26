@@ -44,6 +44,7 @@ use image::RgbaImage;
 use image::codecs::gif::GifDecoder;
 use image::{AnimationDecoder as _, Frame};
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
+use scheduler::Instant;
 pub use scheduler::RunnableMeta;
 use schemars::JsonSchema;
 use seahash::SeaHasher;
@@ -63,7 +64,6 @@ use std::{
 };
 use strum::EnumIter;
 use uuid::Uuid;
-use web_time::Instant;
 
 pub use app_menu::*;
 pub use keyboard::*;

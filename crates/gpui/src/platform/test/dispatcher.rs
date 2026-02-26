@@ -1,4 +1,5 @@
 use crate::{PlatformDispatcher, Priority, RunnableVariant};
+use scheduler::Instant;
 use scheduler::{Clock, Scheduler, SessionId, TestScheduler, TestSchedulerConfig, Yield};
 use std::{
     sync::{
@@ -7,7 +8,6 @@ use std::{
     },
     time::Duration,
 };
-use web_time::Instant;
 
 /// TestDispatcher provides deterministic async execution for tests.
 ///
