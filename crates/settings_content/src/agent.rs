@@ -279,7 +279,6 @@ impl JsonSchema for LanguageModelProviderSetting {
                 {
                     "type": "string",
                     "enum": [
-                        "ai_gateway",
                         "amazon-bedrock",
                         "anthropic",
                         "copilot_chat",
@@ -291,6 +290,7 @@ impl JsonSchema for LanguageModelProviderSetting {
                         "openai",
                         "openrouter",
                         "vercel",
+                        "vercel_ai_gateway",
                         "x_ai",
                         "zed.dev"
                     ]
