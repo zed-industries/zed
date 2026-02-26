@@ -2,7 +2,6 @@
 
 use anyhow::{Context, Result};
 use collections::HashMap;
-use futures::{SinkExt, StreamExt};
 use gpui::{App, Task};
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};

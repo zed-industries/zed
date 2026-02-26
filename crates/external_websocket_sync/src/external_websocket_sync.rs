@@ -5,13 +5,11 @@
 //! and integration with AI platforms and other external tools.
 
 use anyhow::{Context, Result};
-use util::ResultExt;
 use assistant_text_thread::{TextThread, TextThreadId, TextThreadStore, MessageId};
 use assistant_slash_command::SlashCommandWorkingSet;
 use clock::ReplicaId;
 use collections::HashMap;
-use futures::StreamExt;
-use gpui::{App, AsyncApp, Entity, EventEmitter, Global, Subscription, Task};
+use gpui::{App, Entity, EventEmitter, Global, Subscription, Task};
 use tokio::sync::mpsc;
 
 use language_model;
@@ -21,8 +19,6 @@ use prompt_store::PromptBuilder;
 use serde::{Deserialize, Serialize};
 use session::AppSession;
 use std::sync::Arc;
-
-use settings::{Settings, SettingsStore};
 
 mod websocket_sync;
 
@@ -774,8 +770,8 @@ pub fn init_full(
 
 /// Initialize with session and prompt builder, store for later use
 pub async fn init_with_session(
-    session: Arc<AppSession>,
-    prompt_builder: Arc<PromptBuilder>,
+    _session: Arc<AppSession>,
+    _prompt_builder: Arc<PromptBuilder>,
 ) -> Result<()> {
     log::info!("Session and prompt builder will be passed directly to initialization methods");
     Ok(())
