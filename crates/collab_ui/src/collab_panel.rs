@@ -6,7 +6,7 @@ use crate::{CollaborationPanelSettings, channel_view::ChannelView};
 use anyhow::Context as _;
 use call::ActiveCall;
 use channel::{Channel, ChannelEvent, ChannelStore};
-use client::{ChannelId, Client, Contact, User, UserStore};
+use client::{ChannelId, Client, Contact, Notification, User, UserStore};
 use collections::{HashMap, HashSet};
 use contact_finder::ContactFinder;
 use db::kvp::KEY_VALUE_STORE;
@@ -20,6 +20,7 @@ use gpui::{
     anchored, canvas, deferred, div, fill, list, point, prelude::*, px,
 };
 use menu::{Cancel, Confirm, SecondaryConfirm, SelectNext, SelectPrevious};
+use notifications::{NotificationEntry, NotificationEvent, NotificationStore};
 use project::{Fs, Project};
 use rpc::{
     ErrorCode, ErrorExt,
@@ -28,7 +29,7 @@ use rpc::{
 use serde::{Deserialize, Serialize};
 use settings::Settings;
 use smallvec::SmallVec;
-use std::{mem, sync::Arc};
+use std::{mem, sync::Arc, time::Duration};
 use theme::{ActiveTheme, ThemeSettings};
 use ui::{
     Avatar, AvatarAvailabilityIndicator, ContextMenu, CopyButton, Facepile, HighlightedLabel,
@@ -39,7 +40,10 @@ use workspace::{
     CopyRoomId, Deafen, LeaveCall, MultiWorkspace, Mute, OpenChannelNotes, ScreenShare,
     ShareProject, Workspace,
     dock::{DockPosition, Panel, PanelEvent},
-    notifications::{DetachAndPromptErr, NotifyResultExt},
+    notifications::{
+        DetachAndPromptErr, Notification as WorkspaceNotification, NotificationId, NotifyResultExt,
+        SuppressEvent,
+    },
 };
 
 actions!(
@@ -80,6 +84,7 @@ struct ChannelMoveClipboard {
 }
 
 const COLLABORATION_PANEL_KEY: &str = "CollaborationPanel";
+const TOAST_DURATION: Duration = Duration::from_secs(5);
 
 pub fn init(cx: &mut App) {
     cx.observe_new(|workspace: &mut Workspace, _, _| {
@@ -238,6 +243,8 @@ pub struct CollabPanel {
     collapsed_channels: Vec<ChannelId>,
     filter_active_channels: bool,
     workspace: WeakEntity<Workspace>,
+    notification_store: Entity<NotificationStore>,
+    current_notification_toast: Option<(u64, Task<()>)>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -363,6 +370,8 @@ impl CollabPanel {
                 channel_editing_state: None,
                 selection: None,
                 channel_store: ChannelStore::global(cx),
+                notification_store: NotificationStore::global(cx),
+                current_notification_toast: None,
                 user_store: workspace.user_store().clone(),
                 project: workspace.project().clone(),
                 subscriptions: Vec::default(),
@@ -405,6 +414,11 @@ impl CollabPanel {
                         }
                     }
                 },
+            ));
+            this.subscriptions.push(cx.subscribe_in(
+                &this.notification_store,
+                window,
+                Self::on_notification_event,
             ));
 
             this
@@ -3058,6 +3072,121 @@ impl CollabPanel {
             item.child(self.channel_name_editor.clone())
         }
     }
+
+    fn on_notification_event(
+        &mut self,
+        _: &Entity<NotificationStore>,
+        event: &NotificationEvent,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match event {
+            NotificationEvent::NewNotification { entry } => {
+                self.add_toast(entry, cx);
+                cx.notify();
+            }
+            NotificationEvent::NotificationRemoved { entry }
+            | NotificationEvent::NotificationRead { entry } => {
+                self.remove_toast(entry.id, cx);
+                cx.notify();
+            }
+            NotificationEvent::NotificationsUpdated { .. } => {
+                cx.notify();
+            }
+        }
+    }
+
+    fn present_notification(
+        &self,
+        entry: &NotificationEntry,
+        cx: &App,
+    ) -> Option<(Option<Arc<User>>, String)> {
+        let user_store = self.user_store.read(cx);
+        let channel_store = self.channel_store.read(cx);
+        match &entry.notification {
+            Notification::ContactRequest { sender_id } => {
+                let requester = user_store.get_cached_user(*sender_id)?;
+                if !user_store.has_incoming_contact_request(requester.id) {
+                    return None;
+                }
+                Some((
+                    Some(requester.clone()),
+                    format!("{} wants to add you as a contact", requester.github_login),
+                ))
+            }
+            Notification::ContactRequestAccepted { responder_id } => {
+                let responder = user_store.get_cached_user(*responder_id)?;
+                Some((
+                    Some(responder.clone()),
+                    format!("{} accepted your contact request", responder.github_login),
+                ))
+            }
+            Notification::ChannelInvitation {
+                channel_name,
+                channel_id,
+                inviter_id,
+            } => {
+                let inviter = user_store.get_cached_user(*inviter_id)?;
+                if !channel_store.has_channel_invitation(ChannelId(*channel_id)) {
+                    return None;
+                }
+                Some((
+                    Some(inviter.clone()),
+                    format!(
+                        "{} invited you to join the #{channel_name} channel",
+                        inviter.github_login
+                    ),
+                ))
+            }
+        }
+    }
+
+    fn add_toast(&mut self, entry: &NotificationEntry, cx: &mut Context<Self>) {
+        let Some((actor, text)) = self.present_notification(entry, cx) else {
+            return;
+        };
+
+        let notification_id = entry.id;
+        self.current_notification_toast = Some((
+            notification_id,
+            cx.spawn(async move |this, cx| {
+                cx.background_executor().timer(TOAST_DURATION).await;
+                this.update(cx, |this, cx| this.remove_toast(notification_id, cx))
+                    .ok();
+            }),
+        ));
+
+        self.workspace
+            .update(cx, |workspace, cx| {
+                let id = NotificationId::unique::<CollabNotificationToast>();
+
+                workspace.dismiss_notification(&id, cx);
+                workspace.show_notification(id, cx, |cx| {
+                    let workspace = cx.entity().downgrade();
+                    cx.new(|cx| CollabNotificationToast {
+                        actor,
+                        text,
+                        workspace,
+                        focus_handle: cx.focus_handle(),
+                    })
+                })
+            })
+            .ok();
+    }
+
+    fn remove_toast(&mut self, notification_id: u64, cx: &mut Context<Self>) {
+        if let Some((current_id, _)) = &self.current_notification_toast {
+            if *current_id == notification_id {
+                self.current_notification_toast.take();
+                self.workspace
+                    .update(cx, |workspace, cx| {
+                        let id = NotificationId::unique::<CollabNotificationToast>();
+                        workspace.dismiss_notification(&id, cx)
+                    })
+                    .ok();
+            }
+        }
+    }
 }
 
 fn render_tree_branch(
@@ -3190,6 +3319,17 @@ impl Panel for CollabPanel {
         CollaborationPanelSettings::get_global(cx)
             .button
             .then_some(ui::IconName::UserGroup)
+    }
+
+    fn icon_label(&self, _window: &Window, cx: &App) -> Option<String> {
+        let user_store = self.user_store.read(cx);
+        let count = user_store.incoming_contact_requests().len()
+            + self.channel_store.read(cx).channel_invitations().len();
+        if count == 0 {
+            None
+        } else {
+            Some(count.to_string())
+        }
     }
 
     fn icon_tooltip(&self, _window: &Window, _cx: &App) -> Option<&'static str> {
@@ -3367,3 +3507,85 @@ impl Render for JoinChannelTooltip {
         })
     }
 }
+
+pub struct CollabNotificationToast {
+    actor: Option<Arc<User>>,
+    text: String,
+    workspace: WeakEntity<Workspace>,
+    focus_handle: FocusHandle,
+}
+
+impl Focusable for CollabNotificationToast {
+    fn focus_handle(&self, _cx: &App) -> FocusHandle {
+        self.focus_handle.clone()
+    }
+}
+
+impl WorkspaceNotification for CollabNotificationToast {}
+
+impl CollabNotificationToast {
+    fn focus_collab_panel(&self, window: &mut Window, cx: &mut Context<Self>) {
+        let workspace = self.workspace.clone();
+        window.defer(cx, move |window, cx| {
+            workspace
+                .update(cx, |workspace, cx| {
+                    workspace.focus_panel::<CollabPanel>(window, cx)
+                })
+                .ok();
+        })
+    }
+}
+
+impl Render for CollabNotificationToast {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let user = self.actor.clone();
+
+        let suppress = window.modifiers().shift;
+        let (close_id, close_icon) = if suppress {
+            ("suppress", IconName::Minimize)
+        } else {
+            ("close", IconName::Close)
+        };
+
+        h_flex()
+            .id("collab_notification_toast")
+            .elevation_3(cx)
+            .p_2()
+            .justify_between()
+            .children(user.map(|user| Avatar::new(user.avatar_uri.clone())))
+            .child(Label::new(self.text.clone()))
+            .on_modifiers_changed(cx.listener(|_, _, _, cx| cx.notify()))
+            .child(
+                IconButton::new(close_id, close_icon)
+                    .tooltip(move |_window, cx| {
+                        if suppress {
+                            Tooltip::for_action(
+                                "Suppress.\nClose with click.",
+                                &workspace::SuppressNotification,
+                                cx,
+                            )
+                        } else {
+                            Tooltip::for_action(
+                                "Close.\nSuppress with shift-click",
+                                &menu::Cancel,
+                                cx,
+                            )
+                        }
+                    })
+                    .on_click(cx.listener(move |_, _: &ClickEvent, _, cx| {
+                        if suppress {
+                            cx.emit(SuppressEvent);
+                        } else {
+                            cx.emit(DismissEvent);
+                        }
+                    })),
+            )
+            .on_click(cx.listener(|this, _, window, cx| {
+                this.focus_collab_panel(window, cx);
+                cx.emit(DismissEvent);
+            }))
+    }
+}
+
+impl EventEmitter<DismissEvent> for CollabNotificationToast {}
+impl EventEmitter<SuppressEvent> for CollabNotificationToast {}
