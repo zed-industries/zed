@@ -1,3 +1,6 @@
+mod active_projects;
+pub use active_projects::ActiveProjects;
+
 use acp_thread::ThreadStatus;
 use agent::ThreadStore;
 use agent_client_protocol as acp;
@@ -13,13 +16,13 @@ use gpui::{
 use picker::{Picker, PickerDelegate};
 use project::Event as ProjectEvent;
 use recent_projects::{RecentProjectEntry, get_recent_projects};
-use std::fmt::Display;
-
 use std::collections::{HashMap, HashSet};
+use std::fmt::Display;
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use theme::ActiveTheme;
+use ui::IconButtonShape;
 use ui::utils::TRAFFIC_LIGHT_PADDING;
 use ui::{
     AgentThreadStatus, Divider, DividerColor, KeyBinding, ListSubHeader, Tab, ThreadItem, Tooltip,
@@ -29,7 +32,7 @@ use ui_input::ErasedEditor;
 use util::ResultExt as _;
 use workspace::{
     FocusWorkspaceSidebar, MultiWorkspace, NewWorkspaceInWindow, PathList,
-    Sidebar as WorkspaceSidebar, SidebarEvent, ToggleWorkspaceSidebar, Workspace,
+    Sidebar as WorkspaceSidebar, SidebarEvent, ToggleWorkspaceSidebar, Workspace, WorkspaceStore,
 };
 
 /*
@@ -236,8 +239,8 @@ impl ProjectGroup {
 /// of group names, and any sorting we might apply.
 ///
 /// Although this is backed by a vec, we should never expose direct vec indices
-/// as part of the [`ActiveProjects`] API.
-struct ActiveProjects {
+/// as part of the [`ProjectGroups`] API.
+struct ProjectGroups {
     /// An association list mapping keys to projects
     ///
     /// We use an associate list because the set of project groups should be
@@ -247,12 +250,12 @@ struct ActiveProjects {
     groups: Vec<ProjectGroup>,
 }
 
-impl ActiveProjects {
+impl ProjectGroups {
     fn empty() -> Self {
         Self { groups: Vec::new() }
     }
 
-    /// Create a new [`ActiveProjects`] populated from a slice of workspaces.
+    /// Create a new [`ProjectGroups`] populated from a slice of workspaces.
     fn from_workspaces(workspaces: &[Entity<Workspace>], cx: &mut App) -> Self {
         let mut active_projects = Self::empty();
 
@@ -291,7 +294,7 @@ impl ActiveProjects {
     /// Preserve session IDs from a previous snapshot for workspaces that
     /// temporarily have no active thread (e.g. mid-switch). The actual
     /// thread metadata is always read live from [`ThreadStore`].
-    fn preserve_session_ids_from(&mut self, old: &ActiveProjects, cx: &mut App) {
+    fn preserve_session_ids_from(&mut self, old: &ProjectGroups, cx: &mut App) {
         for group in &mut self.groups {
             for entry in &mut group.entries {
                 let entry_ref = entry.read(cx);
@@ -310,10 +313,14 @@ impl ActiveProjects {
     }
 }
 
-struct ActiveProjectsDelegate {
+struct ProjectGroupsDelegate {
+    /// Handle to the [`MultiWorkspace`] that owns this window. Used for
+    /// window-local operations like activating a workspace in *this* window.
+    /// The global workspace list comes from `workspace_store` instead.
     multi_workspace: Entity<MultiWorkspace>,
+    workspace_store: Entity<WorkspaceStore>,
     /// The primary list of things shown in the sidebar.
-    active_projects: ActiveProjects,
+    project_groups: ProjectGroups,
     /// Flat view of all project entries in group order, for Picker indexing.
     ///
     /// Note that `active_projects` is the source of truth and this is simply
@@ -322,30 +329,38 @@ struct ActiveProjectsDelegate {
     selected_index: usize,
 }
 
-impl ActiveProjectsDelegate {
+impl ProjectGroupsDelegate {
     fn new(
         multi_workspace: Entity<MultiWorkspace>,
-        workspaces: &[Entity<Workspace>],
-        active_workspace: &Entity<Workspace>,
-        cx: &mut App,
+        workspace_store: Entity<WorkspaceStore>,
     ) -> Self {
-        let active_projects = ActiveProjects::from_workspaces(workspaces, cx);
-        let flat_entries: Vec<_> = active_projects.iter().cloned().collect();
-        let selected_index = flat_entries
-            .iter()
-            .position(|e| e.read(cx).workspace == *active_workspace)
-            .unwrap_or(0);
-
         Self {
             multi_workspace,
-            active_projects,
-            flat_entries,
-            selected_index,
+            workspace_store,
+            project_groups: ProjectGroups::empty(),
+            flat_entries: Vec::new(),
+            selected_index: 0,
         }
+    }
+
+    fn is_open_in_another_window(
+        &self,
+        entry: &ProjectEntry,
+        current_window_id: gpui::WindowId,
+        cx: &App,
+    ) -> bool {
+        self.workspace_store.read(cx).workspaces_with_windows().any(
+            |(window_handle, weak_workspace)| {
+                window_handle.window_id() != current_window_id
+                    && weak_workspace
+                        .upgrade()
+                        .is_some_and(|workspace| workspace == entry.workspace)
+            },
+        )
     }
 }
 
-impl PickerDelegate for ActiveProjectsDelegate {
+impl PickerDelegate for ProjectGroupsDelegate {
     type ListItem = AnyElement;
 
     fn match_count(&self) -> usize {
@@ -407,7 +422,7 @@ impl PickerDelegate for ActiveProjectsDelegate {
         &self,
         index: usize,
         selected: bool,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let entry = self.flat_entries.get(index)?;
@@ -419,13 +434,37 @@ impl PickerDelegate for ActiveProjectsDelegate {
         };
 
         let thread_title = entry_ref.thread_title(cx);
+        let open_in_another_window =
+            self.is_open_in_another_window(&entry_ref, window.window_handle().window_id(), cx);
 
         Some(
             v_flex()
                 .when(show_header, |el| {
                     el.child(ListSubHeader::new(entry_ref.group_name(cx)).inset(true))
                 })
-                .child(Label::new(thread_title).color(Color::Muted))
+                .child(
+                    h_flex()
+                        .w_full()
+                        .justify_between()
+                        .items_center()
+                        .gap_2()
+                        .child(Label::new(thread_title).color(Color::Muted))
+                        .when(open_in_another_window, |el| {
+                            el.child(
+                                IconButton::new(
+                                    format!("open-in-other-window-{index}"),
+                                    IconName::Screen,
+                                )
+                                .shape(IconButtonShape::Square)
+                                .style(ButtonStyle::Transparent)
+                                .icon_size(IconSize::XSmall)
+                                .icon_color(Color::Muted)
+                                .tooltip(Tooltip::text(
+                                    "This workspace is open in another window.",
+                                )),
+                            )
+                        }),
+                )
                 .into_any_element(),
         )
     }
@@ -454,10 +493,15 @@ impl PickerDelegate for ActiveProjectsDelegate {
 }
 
 pub struct Sidebar {
+    /// Handle to the [`MultiWorkspace`] that owns this window. Used for
+    /// window-local operations. The global workspace list
+    /// comes from `workspace_store` instead.
     multi_workspace: Entity<MultiWorkspace>,
+    workspace_store: Entity<WorkspaceStore>,
     width: Pixels,
-    picker: Entity<Picker<ActiveProjectsDelegate>>,
+    picker: Entity<Picker<ProjectGroupsDelegate>>,
     _subscription: Subscription,
+    _workspace_store_subscription: Subscription,
     _thread_store_subscription: Option<Subscription>,
     _project_subscriptions: Vec<Subscription>,
     _agent_panel_subscriptions: Vec<Subscription>,
@@ -471,18 +515,19 @@ pub struct Sidebar {
 impl EventEmitter<SidebarEvent> for Sidebar {}
 
 impl Sidebar {
+    /// Creates a new sidebar for the given window.
+    ///
+    /// `workspace_store` must be passed explicitly (rather than derived from
+    /// `multi_workspace`) so that this constructor can be called inside an
+    /// `observe_new` callback where the `MultiWorkspace` entity is already
+    /// mutably borrowed — reading through its entity handle would panic.
     pub fn new(
         multi_workspace: Entity<MultiWorkspace>,
-        workspaces: &[Entity<Workspace>],
+        workspace_store: Entity<WorkspaceStore>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let active_workspace = workspaces
-            .first()
-            .expect("must have at least one workspace")
-            .clone();
-        let delegate =
-            ActiveProjectsDelegate::new(multi_workspace.clone(), workspaces, &active_workspace, cx);
+        let delegate = ProjectGroupsDelegate::new(multi_workspace.clone(), workspace_store.clone());
         let picker = cx.new(|cx| {
             Picker::list(delegate, window, cx)
                 .max_height(None)
@@ -498,6 +543,11 @@ impl Sidebar {
             },
         );
 
+        let workspace_store_subscription =
+            cx.observe_in(&workspace_store, window, |this, _, window, cx| {
+                this.update_entries(window, cx);
+            });
+
         // Observe ThreadStore so the sidebar refreshes when thread metadata
         // changes (e.g. title updated after summarization, thread deleted).
         let thread_store_subscription = ThreadStore::try_global(cx).map(|thread_store| {
@@ -508,9 +558,11 @@ impl Sidebar {
 
         let mut this = Self {
             multi_workspace,
+            workspace_store,
             width: DEFAULT_WIDTH,
             picker,
             _subscription: subscription,
+            _workspace_store_subscription: workspace_store_subscription,
             _thread_store_subscription: thread_store_subscription,
             _project_subscriptions: Vec::new(),
             _agent_panel_subscriptions: Vec::new(),
@@ -553,27 +605,53 @@ impl Sidebar {
     ) {
     }
 
+    /// Collects the full set of workspaces the sidebar should display: the
+    /// union of windowed workspaces (ephemeral) and active projects (durable).
+    fn collect_all_workspaces(
+        workspace_store: &WorkspaceStore,
+        cx: &App,
+    ) -> Vec<Entity<Workspace>> {
+        let mut seen = HashSet::new();
+        let mut workspaces = Vec::new();
+
+        // Windowed workspaces (ephemeral — visible because they have a window).
+        for (_, weak_workspace) in workspace_store.workspaces_with_windows() {
+            if let Some(workspace) = weak_workspace.upgrade() {
+                if seen.insert(workspace.entity_id()) {
+                    workspaces.push(workspace);
+                }
+            }
+        }
+
+        // NOTE: Durable projects persisted in `ActiveProjects` that have no
+        // live window are not yet represented here. `collect_all_workspaces`
+        // returns `Vec<Entity<Workspace>>`, so windowless entries need
+        // `ProjectGroups` to support `PathList`-only groups before they can
+        // appear in the sidebar.
+
+        workspaces
+    }
+
     /// Reconciles the sidebar's displayed entries with the current state of all
     /// workspaces and their agent threads.
     fn update_entries(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let multi_workspace = self.multi_workspace.clone();
+        let workspace_store = self.workspace_store.clone();
         cx.defer_in(window, move |this, window, cx| {
-            let (workspaces, active_workspace) = {
-                let mw = multi_workspace.read(cx);
-                (mw.workspaces().to_vec(), mw.workspace().clone())
-            };
+            let active_workspace = multi_workspace.read(cx).workspace().clone();
+            let workspaces = Self::collect_all_workspaces(workspace_store.read(cx), cx);
 
             // Rebuild the active projects from scratch, preserving session IDs
             // for workspaces that temporarily have no active thread.
-            let mut active_projects = ActiveProjects::from_workspaces(&workspaces, cx);
+            let mut project_groups = ProjectGroups::from_workspaces(&workspaces, cx);
             this.picker.update(cx, |picker, cx| {
-                active_projects.preserve_session_ids_from(&picker.delegate.active_projects, cx);
-                let flat_entries: Vec<_> = active_projects.iter().cloned().collect();
+                project_groups.preserve_session_ids_from(&picker.delegate.project_groups, cx);
+                let flat_entries: Vec<_> = project_groups.iter().cloned().collect();
                 let selected_index = flat_entries
                     .iter()
                     .position(|e| e.read(cx).workspace == active_workspace)
                     .unwrap_or(0);
-                picker.delegate.active_projects = active_projects;
+                picker.delegate.project_groups = project_groups;
                 picker.delegate.flat_entries = flat_entries;
                 picker.delegate.selected_index = selected_index;
                 let query = picker.query(cx);
@@ -815,8 +893,8 @@ mod tests {
 
         let sidebar = multi_workspace.update_in(cx, |mw, window, cx| {
             let mw_handle = cx.entity();
-            let workspaces = mw.workspaces().to_vec();
-            cx.new(|cx| Sidebar::new(mw_handle, &workspaces, window, cx))
+            let workspace_store = mw.workspace().read(cx).app_state().workspace_store.clone();
+            cx.new(|cx| Sidebar::new(mw_handle, workspace_store, window, cx))
         });
         multi_workspace.update_in(cx, |mw, window, cx| {
             mw.register_sidebar(sidebar.clone(), window, cx);
@@ -879,8 +957,8 @@ mod tests {
 
         let sidebar = multi_workspace.update_in(cx, |mw, window, cx| {
             let mw_handle = cx.entity();
-            let workspaces = mw.workspaces().to_vec();
-            cx.new(|cx| Sidebar::new(mw_handle, &workspaces, window, cx))
+            let workspace_store = mw.workspace().read(cx).app_state().workspace_store.clone();
+            cx.new(|cx| Sidebar::new(mw_handle, workspace_store, window, cx))
         });
         multi_workspace.update_in(cx, |mw, window, cx| {
             mw.register_sidebar(sidebar.clone(), window, cx);
@@ -924,8 +1002,8 @@ mod tests {
 
         let sidebar = multi_workspace.update_in(cx, |mw, window, cx| {
             let mw_handle = cx.entity();
-            let workspaces = mw.workspaces().to_vec();
-            cx.new(|cx| Sidebar::new(mw_handle, &workspaces, window, cx))
+            let workspace_store = mw.workspace().read(cx).app_state().workspace_store.clone();
+            cx.new(|cx| Sidebar::new(mw_handle, workspace_store, window, cx))
         });
         multi_workspace.update_in(cx, |mw, window, cx| {
             mw.register_sidebar(sidebar.clone(), window, cx);

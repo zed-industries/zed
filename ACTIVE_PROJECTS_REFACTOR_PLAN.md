@@ -97,6 +97,20 @@ Add `db.workspace = true` to `crates/sidebar/Cargo.toml` so `ActiveProjects` can
 
 Persistence approach: store the entire list as a single JSON blob under a KVP key like `"active_projects"`. Each entry is a serialized `PathList`. This is simple and the list will be small (single digits to low tens of entries).
 
+```rust
+const ACTIVE_PROJECTS_KEY: &str = "active_projects";
+
+// Save
+let serialized: Vec<SerializedPathList> = self.projects.iter().map(|p| p.serialize()).collect();
+let json = serde_json::to_string(&serialized)?;
+KEY_VALUE_STORE.write_kvp(ACTIVE_PROJECTS_KEY.into(), json).await?;
+
+// Load
+let json = KEY_VALUE_STORE.read_kvp(ACTIVE_PROJECTS_KEY)?.unwrap_or_default();
+let serialized: Vec<SerializedPathList> = serde_json::from_str(&json)?;
+let projects = serialized.iter().map(|s| PathList::deserialize(s)).collect();
+```
+
 Note: `SerializedPathList` will need `Serialize`/`Deserialize` derives added (it currently only has `Debug`). Alternatively, we can use our own serialization struct for the JSON representation.
 
 ## File Inventory

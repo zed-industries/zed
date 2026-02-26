@@ -4,6 +4,7 @@ use std::{
 };
 
 use itertools::Itertools;
+use serde::{Deserialize, Serialize};
 use util::paths::SanitizedPath;
 
 /// A list of absolute paths, in a specific order.
@@ -12,7 +13,8 @@ use util::paths::SanitizedPath;
 /// other path lists without regard to the order of the paths.
 ///
 /// The paths can be retrieved in the original order using `ordered_paths()`.
-#[derive(Default, PartialEq, Eq, Debug, Clone)]
+#[derive(Default, PartialEq, Eq, Debug, Clone, Serialize, Deserialize)]
+#[serde(from = "PathListSerde", into = "PathListSerde")]
 pub struct PathList {
     /// The paths, in lexicographic order.
     paths: Arc<[PathBuf]>,
@@ -26,6 +28,38 @@ pub struct PathList {
 pub struct SerializedPathList {
     pub paths: String,
     pub order: String,
+}
+
+#[derive(Serialize, Deserialize)]
+struct PathListSerde {
+    paths: Vec<PathBuf>,
+    order: Vec<usize>,
+}
+
+impl From<PathList> for PathListSerde {
+    fn from(path_list: PathList) -> Self {
+        Self {
+            paths: path_list.paths.to_vec(),
+            order: path_list.order.to_vec(),
+        }
+    }
+}
+
+impl From<PathListSerde> for PathList {
+    fn from(serde: PathListSerde) -> Self {
+        let mut paths = serde.paths;
+        let mut order = serde.order;
+
+        if !paths.is_sorted() || order.len() != paths.len() {
+            order = (0..paths.len()).collect();
+            paths.sort();
+        }
+
+        Self {
+            paths: paths.into(),
+            order: order.into(),
+        }
+    }
 }
 
 impl PathList {

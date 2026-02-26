@@ -259,9 +259,19 @@ impl MultiWorkspace {
         if self.workspace == workspace {
             return;
         }
+        let workspace_store = workspace.read(cx).app_state().workspace_store.clone();
+        let window_handle = cx
+            .windows()
+            .into_iter()
+            .find(|window_handle| window_handle.window_id() == self.window_id);
         if self.sidebar_open {
             workspace.update(cx, |workspace, cx| {
                 workspace.set_workspace_sidebar_open(true, cx);
+            });
+        }
+        if let Some(window_handle) = window_handle {
+            workspace_store.update(cx, |store, cx| {
+                store.bind_window_to_workspace(window_handle, &workspace, cx);
             });
         }
         self.workspace = workspace;
