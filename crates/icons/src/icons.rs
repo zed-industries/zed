@@ -23,6 +23,7 @@ pub enum IconName {
     AiOpenAi,
     AiOpenAiCompat,
     AiOpenRouter,
+    AiVercel,
     AiVZero,
     AiXAi,
     AiZed,
