@@ -6,7 +6,10 @@ use serde::{Deserialize, Serialize, de::Error as _};
 use settings_macros::{MergeFrom, with_fallible_options};
 use std::sync::Arc;
 
-use crate::{DocumentFoldingRanges, DocumentSymbols, ExtendingVec, SemanticTokens, merge_from};
+use crate::{
+    DocumentFoldingRanges, DocumentSymbols, ExtendingVec, FontFamilyName, FontFeaturesContent,
+    FontWeightContent, SemanticTokens, merge_from,
+};
 
 /// The state of the modifier keys at some point in time
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema, MergeFrom)]
@@ -202,6 +205,19 @@ pub struct EditPredictionSettingsContent {
     pub enabled_in_text_threads: Option<bool>,
     /// The directory where manually captured edit prediction examples are stored.
     pub examples_dir: Option<Arc<Path>>,
+
+    /// The name of a font to use for rendering edit predictions.
+    ///
+    /// Defaults to inlay hints' font family.
+    pub font_family: Option<FontFamilyName>,
+    /// The weight of the editor font in CSS units from 100 to 900.
+    ///
+    /// Defaults to inlay hints' font weight.
+    pub font_weight: Option<FontWeightContent>,
+    /// The OpenType features to enable for rendering edit predictions.
+    ///
+    /// Defaults to inlay hints' font features.
+    pub font_features: Option<FontFeaturesContent>,
 }
 
 #[with_fallible_options]
@@ -695,7 +711,7 @@ pub struct JsxTagAutoCloseSettingsContent {
 
 /// The settings for inlay hints.
 #[with_fallible_options]
-#[derive(Clone, Default, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq)]
+#[derive(Clone, Default, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq)]
 pub struct InlayHintSettingsContent {
     /// Global switch to toggle hints on and off.
     ///
@@ -742,6 +758,19 @@ pub struct InlayHintSettingsContent {
     ///
     /// Default: null
     pub toggle_on_modifiers_press: Option<ModifiersContent>,
+
+    /// The name of a font to use for rendering inlay hints.
+    ///
+    /// Defaults to buffer's font family.
+    pub font_family: Option<FontFamilyName>,
+    /// The weight of the editor font in CSS units from 100 to 900.
+    ///
+    /// Defaults to buffer's font weight.
+    pub font_weight: Option<FontWeightContent>,
+    /// The OpenType features to enable for rendering inlay hints.
+    ///
+    /// Defaults to buffer's font features.
+    pub font_features: Option<FontFeaturesContent>,
 }
 
 /// The kind of an inlay hint.

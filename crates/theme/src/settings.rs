@@ -11,7 +11,7 @@ use refineable::Refineable;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 pub use settings::{FontFamilyName, IconThemeName, ThemeAppearanceMode, ThemeName};
-use settings::{IntoGpui, RegisterSetting, Settings, SettingsContent};
+use settings::{InlayHintSettingsContent, IntoGpui, RegisterSetting, Settings, SettingsContent};
 use std::sync::Arc;
 
 const MIN_FONT_SIZE: Pixels = px(6.0);
@@ -135,6 +135,10 @@ pub struct ThemeSettings {
     pub ui_density: UiDensity,
     /// The amount of fading applied to unnecessary code.
     pub unnecessary_code_fade: f32,
+    /// The font used for inlay hints.
+    pub inlay_hints_font: Font,
+    /// The font used for edit predictions.
+    pub edit_predictions_font: Font,
 }
 
 /// Returns the name of the default theme for the given [`Appearance`].
@@ -701,9 +705,51 @@ fn font_fallbacks_from_settings(
 
 impl settings::Settings for ThemeSettings {
     fn from_settings(content: &settings::SettingsContent) -> Self {
+        let project_content = &content.project;
         let content = &content.theme;
         let theme_selection: ThemeSelection = content.theme.clone().unwrap().into();
         let icon_theme_selection: IconThemeSelection = content.icon_theme.clone().unwrap().into();
+
+        let buffer_font_family = content.buffer_font_family.as_ref().unwrap();
+
+        let buffer_font_features = content.buffer_font_features.clone().unwrap();
+        let buffer_font_fallbacks =
+            font_fallbacks_from_settings(content.buffer_font_fallbacks.clone());
+        let buffer_font_weight = content.buffer_font_weight.unwrap();
+
+        // Inlay hints work in an "inheritance" manner. Base level is buffer options
+        // They can then be overridden by inlay hints options
+        // Then the underlying inlay hint type, which only edit predictions are
+        // supported for this atm.
+        // buffer > inlay hints > inlay type
+        let inlay_content = project_content
+            .all_languages
+            .defaults
+            .inlay_hints
+            .clone()
+            .unwrap_or_else(|| InlayHintSettingsContent {
+                font_family: Some(buffer_font_family.clone()),
+                font_weight: Some(buffer_font_weight),
+                font_features: Some(buffer_font_features.clone()),
+                ..Default::default()
+            });
+        let buffer_font_size = content.buffer_font_size.unwrap();
+        let inlay_hints_font_family = inlay_content
+            .font_family
+            .as_ref()
+            .unwrap_or(buffer_font_family);
+        let inlay_hints_font_weight = inlay_content.font_weight.unwrap_or(buffer_font_weight);
+        let inlay_hints_font_features = inlay_content
+            .font_features
+            .clone()
+            .unwrap_or(buffer_font_features.clone());
+
+        let edit_prediction_content = project_content
+            .all_languages
+            .edit_predictions
+            .clone()
+            .unwrap_or_default();
+
         Self {
             ui_font_size: clamp_font_size(content.ui_font_size.unwrap().into_gpui()),
             ui_font: Font {
@@ -713,20 +759,40 @@ impl settings::Settings for ThemeSettings {
                 weight: content.ui_font_weight.unwrap().into_gpui(),
                 style: Default::default(),
             },
-            buffer_font: Font {
-                family: content
-                    .buffer_font_family
+            inlay_hints_font: Font {
+                family: inlay_hints_font_family.0.clone().into(),
+                features: inlay_hints_font_features.clone().into_gpui(),
+                fallbacks: buffer_font_fallbacks.clone(),
+                weight: inlay_hints_font_weight.into_gpui(),
+                style: FontStyle::default(),
+            },
+            edit_predictions_font: Font {
+                family: edit_prediction_content
+                    .font_family
                     .as_ref()
-                    .unwrap()
+                    .unwrap_or(inlay_hints_font_family)
                     .0
                     .clone()
                     .into(),
-                features: content.buffer_font_features.clone().unwrap().into_gpui(),
-                fallbacks: font_fallbacks_from_settings(content.buffer_font_fallbacks.clone()),
-                weight: content.buffer_font_weight.unwrap().into_gpui(),
+                features: edit_prediction_content
+                    .font_features
+                    .unwrap_or(inlay_hints_font_features)
+                    .into_gpui(),
+                fallbacks: buffer_font_fallbacks.clone(),
+                weight: edit_prediction_content
+                    .font_weight
+                    .unwrap_or(inlay_hints_font_weight)
+                    .into_gpui(),
                 style: FontStyle::default(),
             },
-            buffer_font_size: clamp_font_size(content.buffer_font_size.unwrap().into_gpui()),
+            buffer_font: Font {
+                family: buffer_font_family.0.clone().into(),
+                features: buffer_font_features.into_gpui(),
+                fallbacks: buffer_font_fallbacks,
+                weight: buffer_font_weight.into_gpui(),
+                style: FontStyle::default(),
+            },
+            buffer_font_size: clamp_font_size(buffer_font_size.into_gpui()),
             buffer_line_height: content.buffer_line_height.unwrap().into(),
             agent_ui_font_size: content.agent_ui_font_size.map(|s| s.into_gpui()),
             agent_buffer_font_size: content.agent_buffer_font_size.map(|s| s.into_gpui()),

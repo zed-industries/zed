@@ -10,7 +10,7 @@ use crate::{
     inlays::{Inlay, InlayContent},
 };
 use collections::BTreeSet;
-use language::{Chunk, Edit, Point, TextSummary};
+use language::{Chunk, ChunkKind, Edit, Point, TextSummary};
 use multi_buffer::{
     MBTextSummary, MultiBufferOffset, MultiBufferRow, MultiBufferRows, MultiBufferSnapshot,
     RowInfo, ToOffset,
@@ -309,6 +309,7 @@ impl<'a> Iterator for InlayChunks<'a> {
                         chars,
                         tabs,
                         newlines,
+                        kind: ChunkKind::None,
                         ..chunk.clone()
                     },
                     renderer: None,
@@ -327,16 +328,21 @@ impl<'a> Iterator for InlayChunks<'a> {
                 }
 
                 let mut renderer = None;
-                let mut highlight_style = match inlay.id {
-                    InlayId::EditPrediction(_) => self.highlight_styles.edit_prediction.map(|s| {
-                        if inlay.text().chars().all(|c| c.is_whitespace()) {
-                            s.whitespace
-                        } else {
-                            s.insertion
-                        }
-                    }),
-                    InlayId::Hint(_) => self.highlight_styles.inlay_hint,
-                    InlayId::DebuggerValue(_) => self.highlight_styles.inlay_hint,
+                let (mut highlight_style, chunk_kind) = match inlay.id {
+                    InlayId::EditPrediction(_) => (
+                        self.highlight_styles.edit_prediction.map(|s| {
+                            if inlay.text().chars().all(|c| c.is_whitespace()) {
+                                s.whitespace
+                            } else {
+                                s.insertion
+                            }
+                        }),
+                        ChunkKind::EditPrediction,
+                    ),
+                    InlayId::Hint(_) => (self.highlight_styles.inlay_hint, ChunkKind::InlayHint),
+                    InlayId::DebuggerValue(_) => {
+                        (self.highlight_styles.inlay_hint, ChunkKind::InlayHint)
+                    }
                     InlayId::ReplResult(_) => {
                         let text = inlay.text().to_string();
                         renderer = Some(ChunkRenderer {
@@ -362,7 +368,7 @@ impl<'a> Iterator for InlayChunks<'a> {
                             constrain_width: false,
                             measured_width: None,
                         });
-                        self.highlight_styles.inlay_hint
+                        (self.highlight_styles.inlay_hint, ChunkKind::InlayHint)
                     }
                     InlayId::Color(_) => {
                         if let InlayContent::Color(color) = inlay.content {
@@ -393,7 +399,7 @@ impl<'a> Iterator for InlayChunks<'a> {
                                 measured_width: None,
                             });
                         }
-                        self.highlight_styles.inlay_hint
+                        (self.highlight_styles.inlay_hint, ChunkKind::InlayHint)
                     }
                 };
                 let next_inlay_highlight_endpoint;
@@ -469,7 +475,7 @@ impl<'a> Iterator for InlayChunks<'a> {
                         tabs: new_tabs,
                         newlines: new_newlines,
                         highlight_style,
-                        is_inlay: true,
+                        kind: chunk_kind,
                         ..Chunk::default()
                     },
                     renderer,
@@ -481,7 +487,6 @@ impl<'a> Iterator for InlayChunks<'a> {
             self.inlay_chunks = None;
             self.transforms.next();
         }
-
         Some(chunk)
     }
 }
@@ -2302,7 +2307,9 @@ mod tests {
         // Verify the highlighted portion includes the complete ellipsis character
         let highlighted_chunks: Vec<_> = chunks
             .iter()
-            .filter(|c| c.chunk.highlight_style.is_some() && c.chunk.is_inlay)
+            .filter(|c| {
+                c.chunk.highlight_style.is_some() && matches!(c.chunk.kind, ChunkKind::InlayHint)
+            })
             .collect();
 
         assert_eq!(highlighted_chunks.len(), 1);
@@ -2422,7 +2429,10 @@ mod tests {
             // Verify that the highlighted portion matches expectations
             let highlighted_text: String = chunks
                 .iter()
-                .filter(|c| c.chunk.highlight_style.is_some() && c.chunk.is_inlay)
+                .filter(|c| {
+                    c.chunk.highlight_style.is_some()
+                        && matches!(c.chunk.kind, ChunkKind::InlayHint)
+                })
                 .map(|c| c.chunk.text)
                 .collect();
             assert_eq!(

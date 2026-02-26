@@ -46,13 +46,13 @@ use gpui::{
     KeybindingKeystroke, Length, Modifiers, ModifiersChangedEvent, MouseButton, MouseClickEvent,
     MouseDownEvent, MouseMoveEvent, MousePressureEvent, MouseUpEvent, PaintQuad, ParentElement,
     Pixels, PressureStage, ScrollDelta, ScrollHandle, ScrollWheelEvent, ShapedLine, SharedString,
-    Size, StatefulInteractiveElement, Style, Styled, StyledText, TextAlign, TextRun,
+    Size, StatefulInteractiveElement, Style, Styled, StyledText, TextAlign, TextRun, TextStyle,
     TextStyleRefinement, WeakEntity, Window, anchored, checkerboard, deferred, div, fill,
     linear_color_stop, linear_gradient, outline, point, px, quad, relative, size, solid_background,
     transparent_black,
 };
 use itertools::Itertools;
-use language::{IndentGuideSettings, language_settings::ShowWhitespaceSetting};
+use language::{ChunkKind, IndentGuideSettings, language_settings::ShowWhitespaceSetting};
 use markdown::Markdown;
 use multi_buffer::{
     Anchor, ExcerptId, ExcerptInfo, ExpandExcerptDirection, ExpandInfo, MultiBufferPoint,
@@ -8648,6 +8648,19 @@ impl fmt::Debug for LineFragment {
 }
 
 impl LineWithInvisibles {
+    /// Helper function to get the appropriate font for a chunk, using inlay font if available
+    fn font_for_chunk(
+        kind: ChunkKind,
+        text_style: &TextStyle,
+        editor_style: &EditorStyle,
+    ) -> gpui::Font {
+        match kind {
+            ChunkKind::InlayHint => editor_style.inlay_hints_font.clone(),
+            ChunkKind::EditPrediction => editor_style.edit_predictions_font.clone(),
+            _ => text_style.font(),
+        }
+    }
+
     fn from_chunks<'a>(
         chunks: impl Iterator<Item = HighlightedChunk<'a>>,
         editor_style: &EditorStyle,
@@ -8680,7 +8693,7 @@ impl LineWithInvisibles {
             text: "\n",
             style: None,
             is_tab: false,
-            is_inlay: false,
+            kind: ChunkKind::None,
             replacement: None,
         }]) {
             if let Some(replacement) = highlighted_chunk.replacement {
@@ -8753,7 +8766,11 @@ impl LineWithInvisibles {
 
                         let run = TextRun {
                             len: x.len(),
-                            font: text_style.font(),
+                            font: Self::font_for_chunk(
+                                highlighted_chunk.kind,
+                                &text_style,
+                                editor_style,
+                            ),
                             color: text_style.color,
                             background_color: text_style.background_color,
                             underline: text_style.underline,
@@ -8823,40 +8840,49 @@ impl LineWithInvisibles {
 
                         styles.push(TextRun {
                             len: line_chunk.len(),
-                            font: text_style.font(),
+                            font: Self::font_for_chunk(
+                                highlighted_chunk.kind,
+                                &text_style,
+                                editor_style,
+                            ),
                             color: text_style.color,
                             background_color: text_style.background_color,
                             underline: text_style.underline,
                             strikethrough: text_style.strikethrough,
                         });
 
-                        if editor_mode.is_full() && !highlighted_chunk.is_inlay {
-                            // Line wrap pads its contents with fake whitespaces,
-                            // avoid printing them
-                            let is_soft_wrapped = is_row_soft_wrapped(row);
-                            if highlighted_chunk.is_tab {
-                                if non_whitespace_added || !is_soft_wrapped {
-                                    invisibles.push(Invisible::Tab {
-                                        line_start_offset: line.len(),
-                                        line_end_offset: line.len() + line_chunk.len(),
-                                    });
-                                }
-                            } else {
-                                invisibles.extend(line_chunk.char_indices().filter_map(
-                                    |(index, c)| {
-                                        let is_whitespace = c.is_whitespace();
-                                        non_whitespace_added |= !is_whitespace;
-                                        if is_whitespace
-                                            && (non_whitespace_added || !is_soft_wrapped)
-                                        {
-                                            Some(Invisible::Whitespace {
-                                                line_offset: line.len() + index,
-                                            })
-                                        } else {
-                                            None
+                        if editor_mode.is_full() {
+                            match highlighted_chunk.kind {
+                                ChunkKind::None => {
+                                    // Line wrap pads its contents with fake whitespaces,
+                                    // avoid printing them
+                                    let is_soft_wrapped = is_row_soft_wrapped(row);
+                                    if highlighted_chunk.is_tab {
+                                        if non_whitespace_added || !is_soft_wrapped {
+                                            invisibles.push(Invisible::Tab {
+                                                line_start_offset: line.len(),
+                                                line_end_offset: line.len() + line_chunk.len(),
+                                            });
                                         }
-                                    },
-                                ))
+                                    } else {
+                                        invisibles.extend(line_chunk.char_indices().filter_map(
+                                            |(index, c)| {
+                                                let is_whitespace = c.is_whitespace();
+                                                non_whitespace_added |= !is_whitespace;
+                                                if is_whitespace
+                                                    && (non_whitespace_added || !is_soft_wrapped)
+                                                {
+                                                    Some(Invisible::Whitespace {
+                                                        line_offset: line.len() + index,
+                                                    })
+                                                } else {
+                                                    None
+                                                }
+                                            },
+                                        ))
+                                    }
+                                }
+                                _ => {}
                             }
                         }
 

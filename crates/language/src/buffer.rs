@@ -559,6 +559,14 @@ pub struct BufferChunks<'a> {
     highlights: Option<BufferChunkHighlights<'a>>,
 }
 
+#[derive(Copy, Clone, Debug, Default)]
+pub enum ChunkKind {
+    #[default]
+    None,
+    InlayHint,
+    EditPrediction,
+}
+
 /// A chunk of a buffer's text, along with its syntax highlight and
 /// diagnostic status.
 #[derive(Clone, Debug, Default)]
@@ -582,8 +590,8 @@ pub struct Chunk<'a> {
     pub is_unnecessary: bool,
     /// Whether this chunk of text was originally a tab character.
     pub is_tab: bool,
-    /// Whether this chunk of text was originally an inlay.
-    pub is_inlay: bool,
+    /// What kind of chunk this is.
+    pub kind: ChunkKind,
     /// Whether to underline the corresponding text range in the editor.
     pub underline: bool,
 }
