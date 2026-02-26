@@ -613,6 +613,24 @@ fn create_remote_shell(
 ) -> Result<(Shell, HashMap<String, String>)> {
     insert_zed_terminal_env(&mut env, &release_channel::AppVersion::global(cx));
 
+    // Inject CLI environment for `zed` command in remote terminals.
+    // The socket path follows the same convention as the remote server state dir.
+    let identifier = remote_client.read(cx).unique_identifier().to_string();
+    let cli_socket_path = format!(
+        "$HOME/.local/share/zed/server_state/{}/cli.sock",
+        identifier
+    );
+    env.insert("ZED_REMOTE_CLI_SOCKET".to_string(), cli_socket_path);
+
+    // Prepend ~/.zed/bin to PATH so the `zed` wrapper script is discoverable
+    let existing_path = env.get("PATH").cloned().unwrap_or_default();
+    let new_path = if existing_path.is_empty() {
+        "$HOME/.zed/bin:$PATH".to_string()
+    } else {
+        format!("$HOME/.zed/bin:{existing_path}")
+    };
+    env.insert("PATH".to_string(), new_path);
+
     let (program, args) = match spawn_command {
         Some((program, args)) => (Some(program.clone()), args),
         None => (None, &Vec::new()),

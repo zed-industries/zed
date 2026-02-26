@@ -398,6 +398,14 @@ pub enum Event {
     WorkspaceEditApplied(ProjectTransaction),
     AgentLocationChanged,
     BufferEdited,
+    /// A request from the remote server to open a file on the client.
+    OpenPathOnClient {
+        path: String,
+        row: Option<u32>,
+        column: Option<u32>,
+        /// If true, the server is waiting for the file to be closed.
+        wait: bool,
+    },
 }
 
 pub struct AgentLocationChanged;
@@ -1582,6 +1590,7 @@ impl Project {
             remote_proto.add_entity_message_handler(Self::handle_update_worktree);
             remote_proto.add_entity_message_handler(Self::handle_update_project);
             remote_proto.add_entity_message_handler(Self::handle_toast);
+            remote_proto.add_entity_request_handler(Self::handle_open_path_on_client);
             remote_proto.add_entity_request_handler(Self::handle_language_server_prompt_request);
             remote_proto.add_entity_message_handler(Self::handle_hide_toast);
             remote_proto.add_entity_request_handler(Self::handle_update_buffer_from_remote_server);
@@ -5031,6 +5040,22 @@ impl Project {
             });
             Ok(())
         })
+    }
+
+    async fn handle_open_path_on_client(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::OpenPathOnClient>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::OpenPathOnClientResponse> {
+        this.update(&mut cx, |_, cx| {
+            cx.emit(Event::OpenPathOnClient {
+                path: envelope.payload.path,
+                row: envelope.payload.row,
+                column: envelope.payload.column,
+                wait: envelope.payload.wait,
+            });
+        })?;
+        Ok(proto::OpenPathOnClientResponse { success: true })
     }
 
     async fn handle_language_server_prompt_request(
