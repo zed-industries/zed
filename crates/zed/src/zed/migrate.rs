@@ -147,6 +147,12 @@ impl ToolbarItemView for MigrationBanner {
     ) -> ToolbarItemLocation {
         self.reset(cx);
 
+        // In Helix builds, settings are managed by the settings-sync-daemon.
+        // Don't prompt users to migrate settings that will be overwritten.
+        if cfg!(feature = "external_websocket_sync") {
+            return ToolbarItemLocation::Hidden;
+        }
+
         let Some(target) = active_pane_item
             .and_then(|item| item.act_as::<Editor>(cx))
             .and_then(|editor| editor.update(cx, |editor, cx| editor.target_file_abs_path(cx)))
