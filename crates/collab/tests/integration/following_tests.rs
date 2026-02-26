@@ -8,8 +8,8 @@ use collab_ui::{
 };
 use editor::{Editor, MultiBuffer, MultiBufferOffset, PathKey, SelectionEffects};
 use gpui::{
-    AppContext as _, BackgroundExecutor, BorrowAppContext, Entity, SharedString, TestAppContext,
-    VisualContext, VisualTestContext, point,
+    Action, AppContext as _, BackgroundExecutor, BorrowAppContext, Entity, SharedString,
+    TestAppContext, VisualContext, VisualTestContext, point,
 };
 use language::Capability;
 use rpc::proto::PeerId;
@@ -18,7 +18,7 @@ use settings::SettingsStore;
 use text::{Point, ToPoint};
 use util::{path, rel_path::rel_path, test::sample_text};
 use workspace::{
-    CollaboratorId, MultiWorkspace, ParticipantLocation, SplitDirection, Workspace,
+    CloseWindow, CollaboratorId, MultiWorkspace, ParticipantLocation, SplitDirection, Workspace,
     item::ItemHandle as _,
 };
 
@@ -259,8 +259,8 @@ async fn test_basic_following(
 
     // Client C closes the project.
     let weak_workspace_c = workspace_c.downgrade();
-    workspace_c.update_in(cx_c, |workspace, window, cx| {
-        workspace.close_window(&Default::default(), window, cx);
+    workspace_c.update_in(cx_c, |_, window, cx| {
+        window.dispatch_action(Box::new(CloseWindow) as Box<dyn Action>, cx);
     });
     executor.run_until_parked();
     // are you sure you want to leave the call?

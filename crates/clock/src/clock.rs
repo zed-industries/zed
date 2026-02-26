@@ -61,8 +61,8 @@ pub type Seq = u32;
 /// used to determine the ordering of events in the editor.
 #[derive(Clone, Copy, Eq, Hash, PartialEq, Serialize, Deserialize)]
 pub struct Lamport {
-    pub replica_id: ReplicaId,
     pub value: Seq,
+    pub replica_id: ReplicaId,
 }
 
 /// A [version vector](https://en.wikipedia.org/wiki/Version_vector).

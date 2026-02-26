@@ -5,6 +5,7 @@ use std::{path::PathBuf, sync::Arc};
 use anyhow::{Context as _, Result};
 use client::proto::ViewId;
 use collections::HashMap;
+use editor::DisplayPoint;
 use feature_flags::{FeatureFlagAppExt as _, NotebookFeatureFlag};
 use futures::FutureExt;
 use futures::future::Shared;
@@ -40,6 +41,7 @@ use picker::Picker;
 use runtimelib::{ExecuteRequest, JupyterMessage, JupyterMessageContent};
 use ui::PopoverMenuHandle;
 use zed_actions::editor::{MoveDown, MoveUp};
+use zed_actions::notebook::{NotebookMoveDown, NotebookMoveUp};
 
 actions!(
     notebook,
@@ -1293,6 +1295,127 @@ impl Render for NotebookEditor {
                             _ => {}
                         }
                     }
+                }
+            }))
+            .on_action(cx.listener(|this, _: &NotebookMoveDown, window, cx| {
+                let Some(cell_id) = this.cell_order.get(this.selected_cell_index) else {
+                    return;
+                };
+                let Some(cell) = this.cell_map.get(cell_id) else {
+                    return;
+                };
+
+                let editor = match cell {
+                    Cell::Code(cell) => cell.read(cx).editor().clone(),
+                    Cell::Markdown(cell) => cell.read(cx).editor().clone(),
+                    _ => return,
+                };
+
+                let is_at_last_line = editor.update(cx, |editor, cx| {
+                    let display_snapshot = editor.display_snapshot(cx);
+                    let selections = editor.selections.all_display(&display_snapshot);
+                    if let Some(selection) = selections.last() {
+                        let head = selection.head();
+                        let cursor_row = head.row();
+                        let max_row = display_snapshot.max_point().row();
+
+                        cursor_row >= max_row
+                    } else {
+                        false
+                    }
+                });
+
+                if is_at_last_line {
+                    this.select_next(&menu::SelectNext, window, cx);
+                    if let Some(cell_id) = this.cell_order.get(this.selected_cell_index) {
+                        if let Some(cell) = this.cell_map.get(cell_id) {
+                            match cell {
+                                Cell::Code(cell) => {
+                                    let editor = cell.read(cx).editor().clone();
+                                    editor.update(cx, |editor, cx| {
+                                        editor.move_to_beginning(&Default::default(), window, cx);
+                                    });
+                                    editor.focus_handle(cx).focus(window, cx);
+                                }
+                                Cell::Markdown(cell) => {
+                                    cell.update(cx, |cell, cx| {
+                                        cell.set_editing(true);
+                                        cx.notify();
+                                    });
+                                    let editor = cell.read(cx).editor().clone();
+                                    editor.update(cx, |editor, cx| {
+                                        editor.move_to_beginning(&Default::default(), window, cx);
+                                    });
+                                    editor.focus_handle(cx).focus(window, cx);
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                } else {
+                    editor.update(cx, |editor, cx| {
+                        editor.move_down(&Default::default(), window, cx);
+                    });
+                }
+            }))
+            .on_action(cx.listener(|this, _: &NotebookMoveUp, window, cx| {
+                let Some(cell_id) = this.cell_order.get(this.selected_cell_index) else {
+                    return;
+                };
+                let Some(cell) = this.cell_map.get(cell_id) else {
+                    return;
+                };
+
+                let editor = match cell {
+                    Cell::Code(cell) => cell.read(cx).editor().clone(),
+                    Cell::Markdown(cell) => cell.read(cx).editor().clone(),
+                    _ => return,
+                };
+
+                let is_at_first_line = editor.update(cx, |editor, cx| {
+                    let display_snapshot = editor.display_snapshot(cx);
+                    let selections = editor.selections.all_display(&display_snapshot);
+                    if let Some(selection) = selections.first() {
+                        let head = selection.head();
+                        let cursor_row = head.row();
+
+                        cursor_row.0 == 0
+                    } else {
+                        false
+                    }
+                });
+
+                if is_at_first_line {
+                    this.select_previous(&menu::SelectPrevious, window, cx);
+                    if let Some(cell_id) = this.cell_order.get(this.selected_cell_index) {
+                        if let Some(cell) = this.cell_map.get(cell_id) {
+                            match cell {
+                                Cell::Code(cell) => {
+                                    let editor = cell.read(cx).editor().clone();
+                                    editor.update(cx, |editor, cx| {
+                                        editor.move_to_end(&Default::default(), window, cx);
+                                    });
+                                    editor.focus_handle(cx).focus(window, cx);
+                                }
+                                Cell::Markdown(cell) => {
+                                    cell.update(cx, |cell, cx| {
+                                        cell.set_editing(true);
+                                        cx.notify();
+                                    });
+                                    let editor = cell.read(cx).editor().clone();
+                                    editor.update(cx, |editor, cx| {
+                                        editor.move_to_end(&Default::default(), window, cx);
+                                    });
+                                    editor.focus_handle(cx).focus(window, cx);
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                } else {
+                    editor.update(cx, |editor, cx| {
+                        editor.move_up(&Default::default(), window, cx);
+                    });
                 }
             }))
             .on_action(

@@ -88,6 +88,8 @@ pub enum Model {
     FivePointTwo,
     #[serde(rename = "gpt-5.2-codex")]
     FivePointTwoCodex,
+    #[serde(rename = "gpt-5.3-codex")]
+    FivePointThreeCodex,
     #[serde(rename = "custom")]
     Custom {
         name: String,
@@ -128,6 +130,7 @@ impl Model {
             "gpt-5.1" => Ok(Self::FivePointOne),
             "gpt-5.2" => Ok(Self::FivePointTwo),
             "gpt-5.2-codex" => Ok(Self::FivePointTwoCodex),
+            "gpt-5.3-codex" => Ok(Self::FivePointThreeCodex),
             invalid_id => anyhow::bail!("invalid model id '{invalid_id}'"),
         }
     }
@@ -149,6 +152,7 @@ impl Model {
             Self::FivePointOne => "gpt-5.1",
             Self::FivePointTwo => "gpt-5.2",
             Self::FivePointTwoCodex => "gpt-5.2-codex",
+            Self::FivePointThreeCodex => "gpt-5.3-codex",
             Self::Custom { name, .. } => name,
         }
     }
@@ -170,6 +174,7 @@ impl Model {
             Self::FivePointOne => "gpt-5.1",
             Self::FivePointTwo => "gpt-5.2",
             Self::FivePointTwoCodex => "gpt-5.2-codex",
+            Self::FivePointThreeCodex => "gpt-5.3-codex",
             Self::Custom { display_name, .. } => display_name.as_deref().unwrap_or(&self.id()),
         }
     }
@@ -191,6 +196,7 @@ impl Model {
             Self::FivePointOne => 400_000,
             Self::FivePointTwo => 400_000,
             Self::FivePointTwoCodex => 400_000,
+            Self::FivePointThreeCodex => 400_000,
             Self::Custom { max_tokens, .. } => *max_tokens,
         }
     }
@@ -215,6 +221,7 @@ impl Model {
             Self::FivePointOne => Some(128_000),
             Self::FivePointTwo => Some(128_000),
             Self::FivePointTwoCodex => Some(128_000),
+            Self::FivePointThreeCodex => Some(128_000),
         }
     }
 
@@ -223,6 +230,7 @@ impl Model {
             Self::Custom {
                 reasoning_effort, ..
             } => reasoning_effort.to_owned(),
+            Self::FivePointThreeCodex => Some(ReasoningEffort::Medium),
             _ => None,
         }
     }
@@ -233,7 +241,7 @@ impl Model {
                 supports_chat_completions,
                 ..
             } => *supports_chat_completions,
-            Self::FiveCodex | Self::FivePointTwoCodex => false,
+            Self::FiveCodex | Self::FivePointTwoCodex | Self::FivePointThreeCodex => false,
             _ => true,
         }
     }
@@ -254,6 +262,7 @@ impl Model {
             | Self::FivePointOne
             | Self::FivePointTwo
             | Self::FivePointTwoCodex
+            | Self::FivePointThreeCodex
             | Self::FiveNano => true,
             Self::O1 | Self::O3 | Self::O3Mini | Model::Custom { .. } => false,
         }

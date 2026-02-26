@@ -990,7 +990,7 @@ async fn install_release_macos(
     };
 
     let output = new_command("rsync")
-        .args(["-av", "--delete"])
+        .args(["-av", "--delete", "--exclude", "Icon?"])
         .arg(&mounted_app_path)
         .arg(&running_app_path)
         .output()
