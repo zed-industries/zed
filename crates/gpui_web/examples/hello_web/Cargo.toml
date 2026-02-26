@@ -13,5 +13,4 @@ path = "main.rs"
 [dependencies]
 gpui = { path = "../../../gpui" }
 gpui_platform = { path = "../../../gpui_platform" }
-log = "0.4"
 web-time = "1"
