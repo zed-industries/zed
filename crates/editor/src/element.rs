@@ -4296,7 +4296,7 @@ impl EditorElement {
                         editor_margins.gutter.width + *scroll_width + editor_margins.extended_right,
                     )
                     .into(),
-                (BlockStyle::FlexClipped, _) => hitbox
+                (BlockStyle::Spacer, _) => hitbox
                     .size
                     .width
                     .max(fixed_block_max_width)
@@ -4344,7 +4344,7 @@ impl EditorElement {
                     element,
                     available_space: size(width, element_size.height.into()),
                     style,
-                    overlaps_gutter: !block.place_near() && style != BlockStyle::FlexClipped,
+                    overlaps_gutter: !block.place_near() && style != BlockStyle::Spacer,
                     is_buffer_header: block.is_buffer_header(),
                 });
             }
@@ -4363,7 +4363,7 @@ impl EditorElement {
                         editor_margins.gutter.width + *scroll_width + editor_margins.extended_right,
                     ))
                 }
-                BlockStyle::FlexClipped => AvailableSpace::Definite(
+                BlockStyle::Spacer => AvailableSpace::Definite(
                     hitbox
                         .size
                         .width
@@ -4452,7 +4452,7 @@ impl EditorElement {
                 hitbox.origin + point(Pixels::ZERO, hitbox.size.height)
             };
 
-            if block.style == BlockStyle::FlexClipped {
+            if block.style == BlockStyle::Spacer {
                 origin += point(
                     gutter_hitbox.size.width + editor_margins.gutter.margin,
                     Pixels::ZERO,
@@ -7555,7 +7555,7 @@ impl EditorElement {
             if block.overlaps_gutter {
                 block.element.paint(window, cx);
             } else {
-                // let indent_guide_spacing = if matches!(block.style, BlockStyle::FlexClipped) {
+                // let indent_guide_spacing = if matches!(block.style, BlockStyle::Spacer) {
                 //     let width = std::cmp::max(settings.active_line_width, settings.line_width);
                 // } else {
                 //     0

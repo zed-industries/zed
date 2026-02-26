@@ -234,7 +234,7 @@ impl IndentGuideSettings {
     /// whether it is active, or `None` when line coloring is disabled.
     pub fn visible_line_width(&self, active: bool) -> Option<u32> {
         if self.coloring == settings::IndentGuideColoring::Disabled {
-           return None;
+            return None;
         }
         let width = if active {
             self.active_line_width

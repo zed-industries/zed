@@ -265,8 +265,10 @@ impl<P: Debug> Debug for BlockProperties<P> {
 pub enum BlockStyle {
     Fixed,
     Flex,
-    /// Like `Flex` but doesn't use the gutter
-    FlexClipped,
+    /// Like `Flex` but doesn't use the gutter:
+    /// - block content scrolls wtih buffer content
+    /// - doesn't paint in gutter
+    Spacer,
     Sticky,
 }
 
@@ -398,7 +400,7 @@ impl Block {
             Block::ExcerptBoundary { .. }
             | Block::FoldedBuffer { .. }
             | Block::BufferHeader { .. } => BlockStyle::Sticky,
-            Block::Spacer { .. } => BlockStyle::FlexClipped,
+            Block::Spacer { .. } => BlockStyle::Spacer,
         }
     }
 
@@ -1706,7 +1708,7 @@ pub(crate) fn balancing_block(
     Some(BlockProperties {
         placement: their_placement,
         height: my_block.height,
-        style: BlockStyle::FlexClipped,
+        style: BlockStyle::Spacer,
         render: Arc::new(move |cx| {
             crate::EditorElement::render_spacer_block(
                 cx.block_id,
