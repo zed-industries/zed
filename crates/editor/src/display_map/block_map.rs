@@ -3408,30 +3408,32 @@ mod tests {
     fn test_custom_blocks_inside_buffer_folds(cx: &mut gpui::TestAppContext) {
         cx.update(init_test);
 
-        let text = "111\n222\n333\n444\n555\n666";
+        let text = "111\n\n222\n\n333\n\n444\n\n555\n\n666";
 
         let buffer = cx.update(|cx| {
-            MultiBuffer::build_multi(
+            let multibuffer = MultiBuffer::build_multi(
                 [
                     (text, vec![Point::new(0, 0)..Point::new(0, 3)]),
                     (
                         text,
                         vec![
-                            Point::new(1, 0)..Point::new(1, 3),
                             Point::new(2, 0)..Point::new(2, 3),
-                            Point::new(3, 0)..Point::new(3, 3),
+                            Point::new(4, 0)..Point::new(4, 3),
+                            Point::new(6, 0)..Point::new(6, 3),
                         ],
                     ),
                     (
                         text,
                         vec![
-                            Point::new(4, 0)..Point::new(4, 3),
-                            Point::new(5, 0)..Point::new(5, 3),
+                            Point::new(8, 0)..Point::new(8, 3),
+                            Point::new(10, 0)..Point::new(10, 3),
                         ],
                     ),
                 ],
                 cx,
-            )
+            );
+            assert_eq!(multibuffer.read(cx).excerpt_ids().len(), 6);
+            multibuffer
         });
         let buffer_snapshot = cx.update(|cx| buffer.read(cx).snapshot(cx));
         let buffer_ids = buffer_snapshot

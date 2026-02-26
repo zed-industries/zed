@@ -12964,7 +12964,7 @@ async fn test_multibuffer_format_during_save(cx: &mut TestAppContext) {
         .on_request::<lsp::request::Formatting, _, _>(move |_params, _| async move {
             Ok(Some(vec![lsp::TextEdit::new(
                 lsp::Range::new(lsp::Position::new(0, 3), lsp::Position::new(1, 0)),
-                format!("[formatted]"),
+                "[formatted]".to_string(),
             )]))
         })
         .detach();
