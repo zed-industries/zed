@@ -17,16 +17,19 @@ test-support = []
 
 [dependencies]
 acp_thread.workspace = true
+anyhow.workspace = true
 agent-client-protocol.workspace = true
 agent.workspace = true
 agent_ui.workspace = true
 chrono.workspace = true
+db.workspace = true
 fs.workspace = true
 fuzzy.workspace = true
 gpui.workspace = true
 picker.workspace = true
 project.workspace = true
 recent_projects.workspace = true
+serde_json.workspace = true
 theme.workspace = true
 ui.workspace = true
 ui_input.workspace = true
