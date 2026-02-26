@@ -302,6 +302,8 @@ pub struct LanguageModel {
     pub supports_tools: bool,
     pub supports_images: bool,
     pub supports_thinking: bool,
+    #[serde(default)]
+    pub supports_fast_mode: bool,
     pub supported_effort_levels: Vec<SupportedEffortLevel>,
     #[serde(default)]
     pub supports_streaming_tools: bool,
