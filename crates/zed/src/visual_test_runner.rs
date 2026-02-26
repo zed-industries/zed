@@ -2665,8 +2665,13 @@ fn run_multi_workspace_sidebar_visual_tests(
     let sidebar = multi_workspace_window
         .update(cx, |multi_workspace, window, cx| {
             let multi_workspace_handle = cx.entity();
-            let workspaces = multi_workspace.workspaces().to_vec();
-            cx.new(|cx| sidebar::Sidebar::new(multi_workspace_handle, &workspaces, window, cx))
+            let workspace_store = multi_workspace
+                .workspace()
+                .read(cx)
+                .app_state()
+                .workspace_store
+                .clone();
+            cx.new(|cx| sidebar::Sidebar::new(multi_workspace_handle, workspace_store, window, cx))
         })
         .context("Failed to create sidebar")?;
 

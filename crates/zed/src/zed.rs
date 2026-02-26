@@ -376,8 +376,14 @@ pub fn initialize_workspace(
             return;
         };
         let multi_workspace_handle = cx.entity();
-        let workspaces = multi_workspace.workspaces().to_vec();
-        let sidebar = cx.new(|cx| Sidebar::new(multi_workspace_handle, &workspaces, window, cx));
+        let workspace_store = multi_workspace
+            .workspace()
+            .read(cx)
+            .app_state()
+            .workspace_store
+            .clone();
+        let sidebar =
+            cx.new(|cx| Sidebar::new(multi_workspace_handle, workspace_store, window, cx));
         multi_workspace.register_sidebar(sidebar, window, cx);
     })
     .detach();
