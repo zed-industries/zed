@@ -5,14 +5,36 @@ on:
   push:
     branches:
     - main
-    - preview
-    - stable
+  workflow_call:
+    inputs:
+      channel:
+        description: channel
+        type: string
+        default: ''
+      commit_sha:
+        description: commit_sha
+        type: string
+        default: ''
+    secrets:
+      DOCS_AMPLITUDE_API_KEY:
+        description: DOCS_AMPLITUDE_API_KEY
+        required: true
+      CLOUDFLARE_API_TOKEN:
+        description: CLOUDFLARE_API_TOKEN
+        required: true
+      CLOUDFLARE_ACCOUNT_ID:
+        description: CLOUDFLARE_ACCOUNT_ID
+        required: true
   workflow_dispatch:
     inputs:
       channel:
         description: 'Docs channel to deploy: nightly, preview, or stable'
         type: string
-        default: nightly
+        default: ''
+      commit_sha:
+        description: Exact commit SHA to checkout and deploy. Defaults to event SHA when omitted.
+        type: string
+        default: ''
 jobs:
   deploy_docs:
     if: github.repository_owner == 'zed-industries'
@@ -23,31 +45,18 @@ jobs:
       MDBOOK_BOOK__SITE_URL: ${{ steps.resolve-channel.outputs.site_url }}
       DOCS_CHANNEL: ${{ steps.resolve-channel.outputs.channel }}
     steps:
-    - name: steps::checkout_repo
-      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
-      with:
-        clean: false
     - id: resolve-channel
-      name: deploy_docs::resolve_channel_step
+      name: deploy_docs::deploy_docs_job::resolve_channel_step
       run: |
-        if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            CHANNEL="${{ inputs.channel }}"
-        else
-            case "${{ github.ref }}" in
-                "refs/heads/main")
-                    CHANNEL="nightly"
-                    ;;
-                "refs/heads/preview")
-                    CHANNEL="preview"
-                    ;;
-                "refs/heads/stable")
-                    CHANNEL="stable"
-                    ;;
-                *)
-                    echo "::error::Unsupported ref for docs deploy: ${{ github.ref }}"
-                    exit 1
-                    ;;
-            esac
+        CHANNEL="${{ inputs.channel }}"
+
+        if [ -z "$CHANNEL" ]; then
+            if [ "${{ github.ref }}" = "refs/heads/main" ]; then
+                CHANNEL="nightly"
+            else
+                echo "::error::channel input is required when ref is not main."
+                exit 1
+            fi
         fi
 
         case "$CHANNEL" in
@@ -72,6 +81,11 @@ jobs:
         echo "channel=$CHANNEL" >> "$GITHUB_OUTPUT"
         echo "site_url=$SITE_URL" >> "$GITHUB_OUTPUT"
         echo "project_name=$PROJECT_NAME" >> "$GITHUB_OUTPUT"
+    - name: steps::checkout_repo
+      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      with:
+        clean: false
+        ref: ${{ inputs.commit_sha != '' && inputs.commit_sha || github.sha }}
     - name: steps::setup_cargo_config
       run: |
         mkdir -p ./../.cargo
@@ -109,25 +123,25 @@ jobs:
         args: --no-progress --exclude '^http' 'target/deploy/docs'
         fail: true
         jobSummary: false
-    - name: deploy_docs::pages_deploy_step
+    - name: deploy_docs::docs_deploy_steps::deploy_to_cf_pages
       uses: cloudflare/wrangler-action@da0e0dfe58b7a431659754fdf3f186c529afbe65
       with:
         apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         command: pages deploy target/deploy --project-name=${{ steps.resolve-channel.outputs.project_name }}
-    - name: deploy_docs::deploy_install_script
+    - name: deploy_docs::docs_deploy_steps::upload_install_script
       uses: cloudflare/wrangler-action@da0e0dfe58b7a431659754fdf3f186c529afbe65
       with:
         apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         command: r2 object put -f script/install.sh zed-open-source-website-assets/install.sh
-    - name: deploy_docs::deploy_docs_worker
+    - name: deploy_docs::docs_deploy_steps::deploy_docs_worker
       uses: cloudflare/wrangler-action@da0e0dfe58b7a431659754fdf3f186c529afbe65
       with:
         apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         command: deploy .cloudflare/docs-proxy/src/worker.js
-    - name: deploy_docs::upload_wrangler_logs
+    - name: deploy_docs::docs_deploy_steps::upload_wrangler_logs
       if: always()
       uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
       with:

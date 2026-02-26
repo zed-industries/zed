@@ -1,4 +1,7 @@
-use gh_workflow::{Event, Expression, Push, Run, Step, Use, Workflow, ctx::Context};
+use gh_workflow::{
+    Event, Expression, Input, Job, Level, Permissions, Push, Run, Step, Use, UsesJob, Workflow,
+    ctx::Context,
+};
 use indoc::formatdoc;
 
 use crate::tasks::workflows::{
@@ -60,6 +63,7 @@ pub(crate) fn release() -> Workflow {
     let validate_release_assets = validate_release_assets(&[&upload_release_assets]);
 
     let auto_release_preview = auto_release_preview(&[&validate_release_assets]);
+    let deploy_docs = deploy_docs(&[&validate_release_assets], &create_draft_release);
 
     let test_jobs = [
         &macos_tests,
@@ -101,6 +105,7 @@ pub(crate) fn release() -> Workflow {
         .add_job(upload_release_assets.name, upload_release_assets.job)
         .add_job(validate_release_assets.name, validate_release_assets.job)
         .add_job(auto_release_preview.name, auto_release_preview.job)
+        .add_job(deploy_docs.name, deploy_docs.job)
         .add_job(push_slack_notification.name, push_slack_notification.job)
 }
 
@@ -195,6 +200,50 @@ fn auto_release_preview(deps: &[&NamedJob]) -> NamedJob {
                 .add_env(("GITHUB_TOKEN", &token)),
             )
     )
+}
+
+fn deploy_docs(deps: &[&NamedJob], create_draft_release: &NamedJob) -> NamedJob<UsesJob> {
+    let job = Job::default()
+        .needs(
+            deps.iter()
+                .map(|job| job.name.clone())
+                .chain(std::iter::once(create_draft_release.name.clone()))
+                .collect::<Vec<_>>(),
+        )
+        .permissions(Permissions::default().contents(Level::Read))
+        .uses(
+            "zed-industries",
+            "zed",
+            ".github/workflows/deploy_docs.yml",
+            "main",
+        )
+        .with(
+            Input::default()
+                .add(
+                    "channel",
+                    "${{ endsWith(github.ref_name, '-pre') && 'preview' || 'stable' }}",
+                )
+                .add("commit_sha", "${{ github.sha }}"),
+        )
+        .secrets(indexmap::IndexMap::from([
+            (
+                "DOCS_AMPLITUDE_API_KEY".to_owned(),
+                vars::DOCS_AMPLITUDE_API_KEY.to_owned(),
+            ),
+            (
+                "CLOUDFLARE_API_TOKEN".to_owned(),
+                vars::CLOUDFLARE_API_TOKEN.to_owned(),
+            ),
+            (
+                "CLOUDFLARE_ACCOUNT_ID".to_owned(),
+                vars::CLOUDFLARE_ACCOUNT_ID.to_owned(),
+            ),
+        ]));
+
+    NamedJob {
+        name: "deploy_docs".to_owned(),
+        job,
+    }
 }
 
 pub(crate) fn download_workflow_artifacts() -> Step<Use> {

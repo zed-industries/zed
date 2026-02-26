@@ -145,6 +145,8 @@ impl From<CheckoutStep> for Step<Use> {
     }
 }
 
+impl FluentBuilder for CheckoutStep {}
+
 pub fn checkout_repo() -> CheckoutStep {
     CheckoutStep::default()
 }

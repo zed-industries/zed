@@ -619,6 +619,20 @@ jobs:
       run: gh release edit "$GITHUB_REF_NAME" --repo=zed-industries/zed --draft=false
       env:
         GITHUB_TOKEN: ${{ steps.get-app-token.outputs.token }}
+  deploy_docs:
+    needs:
+    - validate_release_assets
+    - create_draft_release
+    permissions:
+      contents: read
+    uses: zed-industries/zed/.github/workflows/deploy_docs.yml@main
+    secrets:
+      DOCS_AMPLITUDE_API_KEY: ${{ secrets.DOCS_AMPLITUDE_API_KEY }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    with:
+      channel: ${{ endsWith(github.ref_name, '-pre') && 'preview' || 'stable' }}
+      commit_sha: ${{ github.sha }}
   push_release_update_notification:
     needs:
     - create_draft_release
