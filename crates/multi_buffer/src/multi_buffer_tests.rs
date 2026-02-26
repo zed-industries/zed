@@ -105,8 +105,8 @@ fn test_remote(cx: &mut App) {
 
 #[gpui::test]
 fn test_excerpt_boundaries_and_clipping(cx: &mut App) {
-    let buffer_1 = cx.new(|cx| Buffer::local(sample_text(6, 6, 'a'), cx));
-    let buffer_2 = cx.new(|cx| Buffer::local(sample_text(6, 6, 'g'), cx));
+    let buffer_1 = cx.new(|cx| Buffer::local(sample_text(7, 6, 'a'), cx));
+    let buffer_2 = cx.new(|cx| Buffer::local(sample_text(7, 6, 'g'), cx));
     let multibuffer = cx.new(|_| MultiBuffer::new(Capability::ReadWrite));
 
     let events = Arc::new(RwLock::new(Vec::<Event>::new()));
@@ -138,14 +138,17 @@ fn test_excerpt_boundaries_and_clipping(cx: &mut App) {
         );
 
         multibuffer.set_excerpt_ranges_for_path(
-            PathKey::sorted(1),
+            PathKey::sorted(0),
             buffer_1.clone(),
             &buffer_1.read(cx).snapshot(),
-            vec![ExcerptRange::new(Point::new(3, 3)..Point::new(4, 4))],
+            vec![
+                ExcerptRange::new(Point::new(1, 2)..Point::new(2, 5)),
+                ExcerptRange::new(Point::new(5, 3)..Point::new(6, 4)),
+            ],
             cx,
         );
         multibuffer.set_excerpt_ranges_for_path(
-            PathKey::sorted(2),
+            PathKey::sorted(1),
             buffer_2.clone(),
             &buffer_2.read(cx).snapshot(),
             vec![ExcerptRange::new(Point::new(3, 1)..Point::new(3, 3))],
@@ -185,8 +188,8 @@ fn test_excerpt_boundaries_and_clipping(cx: &mut App) {
             "
             bbbb
             ccccc
-            ddd
-            eeee
+            fff
+            gggg
             jj"
         ),
     );
@@ -195,14 +198,14 @@ fn test_excerpt_boundaries_and_clipping(cx: &mut App) {
             .row_infos(MultiBufferRow(0))
             .map(|info| info.buffer_row)
             .collect::<Vec<_>>(),
-        [Some(1), Some(2), Some(3), Some(4), Some(3)]
+        [Some(1), Some(2), Some(5), Some(6), Some(3)]
     );
     assert_eq!(
         snapshot
             .row_infos(MultiBufferRow(2))
             .map(|info| info.buffer_row)
             .collect::<Vec<_>>(),
-        [Some(3), Some(4), Some(3)]
+        [Some(5), Some(6), Some(3)]
     );
     assert_eq!(
         snapshot
@@ -223,7 +226,7 @@ fn test_excerpt_boundaries_and_clipping(cx: &mut App) {
         boundaries_in_range(Point::new(0, 0)..Point::new(4, 2), &snapshot),
         &[
             (MultiBufferRow(0), "bbbb\nccccc".to_string(), true),
-            (MultiBufferRow(2), "ddd\neeee".to_string(), false),
+            (MultiBufferRow(2), "fff\ngggg".to_string(), false),
             (MultiBufferRow(4), "jj".to_string(), true),
         ]
     );
@@ -241,15 +244,15 @@ fn test_excerpt_boundaries_and_clipping(cx: &mut App) {
     );
     assert_eq!(
         boundaries_in_range(Point::new(1, 0)..Point::new(4, 0), &snapshot),
-        &[(MultiBufferRow(2), "ddd\neeee".to_string(), false)]
+        &[(MultiBufferRow(2), "fff\ngggg".to_string(), false)]
     );
     assert_eq!(
         boundaries_in_range(Point::new(1, 0)..Point::new(4, 0), &snapshot),
-        &[(MultiBufferRow(2), "ddd\neeee".to_string(), false)]
+        &[(MultiBufferRow(2), "fff\ngggg".to_string(), false)]
     );
     assert_eq!(
         boundaries_in_range(Point::new(2, 0)..Point::new(3, 0), &snapshot),
-        &[(MultiBufferRow(2), "ddd\neeee".to_string(), false)]
+        &[(MultiBufferRow(2), "fff\ngggg".to_string(), false)]
     );
     assert_eq!(
         boundaries_in_range(Point::new(4, 0)..Point::new(4, 2), &snapshot),
@@ -279,8 +282,8 @@ fn test_excerpt_boundaries_and_clipping(cx: &mut App) {
             "bbbb\n", // Preserve newlines
             "c\n",    //
             "cc\n",   //
-            "ddd\n",  //
-            "eeee\n", //
+            "fff\n",  //
+            "gggg\n", //
             "jj"      //
         )
     );
@@ -316,9 +319,7 @@ fn test_excerpt_boundaries_and_clipping(cx: &mut App) {
     );
 
     let snapshot = multibuffer.update(cx, |multibuffer, cx| {
-        let (buffer_2_excerpt_id, _) =
-            multibuffer.excerpts_for_buffer(buffer_2.read(cx).remote_id(), cx)[0].clone();
-        multibuffer.remove_excerpts([buffer_2_excerpt_id], cx);
+        multibuffer.remove_excerpts_for_path(PathKey::sorted(1), cx);
         multibuffer.snapshot(cx)
     });
 
@@ -328,8 +329,8 @@ fn test_excerpt_boundaries_and_clipping(cx: &mut App) {
             "bbbb\n", // Preserve newlines
             "c\n",    //
             "cc\n",   //
-            "ddd\n",  //
-            "eeee",   //
+            "fff\n",  //
+            "gggg",   //
         )
     );
 
@@ -768,7 +769,7 @@ fn test_excerpt_events(cx: &mut App) {
         );
         leader.set_excerpt_ranges_for_path(
             PathKey::sorted(1),
-            buffer_2,
+            buffer_2.clone(),
             &buffer_2_snapshot,
             vec![
                 ExcerptRange::new((0..5).to_point(&buffer_2_snapshot)),
@@ -784,14 +785,26 @@ fn test_excerpt_events(cx: &mut App) {
     assert_eq!(*follower_edit_event_count.read(), 2);
 
     leader_multibuffer.update(cx, |leader, cx| {
-        let excerpt_ids = leader.excerpt_ids();
-        leader.remove_excerpts([excerpt_ids[1], excerpt_ids[3]], cx);
+        leader.set_excerpt_ranges_for_path(
+            PathKey::sorted(0),
+            buffer_1.clone(),
+            &buffer_1_snapshot,
+            vec![ExcerptRange::new((0..8).to_point(&buffer_1_snapshot))],
+            cx,
+        );
+        leader.set_excerpt_ranges_for_path(
+            PathKey::sorted(1),
+            buffer_2,
+            &buffer_2_snapshot,
+            vec![ExcerptRange::new((0..5).to_point(&buffer_2_snapshot))],
+            cx,
+        );
     });
     assert_eq!(
         leader_multibuffer.read(cx).snapshot(cx).text(),
         follower_multibuffer.read(cx).snapshot(cx).text(),
     );
-    assert_eq!(*follower_edit_event_count.read(), 3);
+    assert_eq!(*follower_edit_event_count.read(), 4);
 
     leader_multibuffer.update(cx, |leader, cx| {
         leader.clear(cx);
@@ -800,7 +813,7 @@ fn test_excerpt_events(cx: &mut App) {
         leader_multibuffer.read(cx).snapshot(cx).text(),
         follower_multibuffer.read(cx).snapshot(cx).text(),
     );
-    assert_eq!(*follower_edit_event_count.read(), 4);
+    assert_eq!(*follower_edit_event_count.read(), 5);
 }
 
 #[gpui::test]
