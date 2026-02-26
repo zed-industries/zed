@@ -5077,7 +5077,7 @@ async fn test_save_as(cx: &mut gpui::TestAppContext) {
     let fs = FakeFs::new(cx.executor());
     fs.insert_tree("/dir", json!({})).await;
 
-    let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
+    let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
 
     let languages = project.update(cx, |project, _| project.languages().clone());
     languages.add(rust_lang());
@@ -5102,13 +5102,13 @@ async fn test_save_as(cx: &mut gpui::TestAppContext) {
         })
         .await
         .unwrap();
-    assert_eq!(fs.load(Path::new("/dir/file1.rs")).await.unwrap(), "abc");
+    assert_eq!(fs.load(Path::new(path!("/dir/file1.rs"))).await.unwrap(), "abc");
 
     cx.executor().run_until_parked();
     buffer.update(cx, |buffer, cx| {
         assert_eq!(
             buffer.file().unwrap().full_path(cx),
-            Path::new("dir/file1.rs")
+            Path::new(path!("dir/file1.rs"))
         );
         assert!(!buffer.is_dirty());
         assert!(!buffer.has_conflict());
@@ -5169,7 +5169,7 @@ async fn test_save_as_existing_file(cx: &mut gpui::TestAppContext) {
     buffer.update(cx, |buffer, cx| {
         assert_eq!(
             buffer.file().unwrap().full_path(cx),
-            Path::new("dir/data_b.txt")
+            Path::new(path!("dir/data_b.txt"))
         )
     });
 
@@ -5186,7 +5186,7 @@ async fn test_save_as_existing_file(cx: &mut gpui::TestAppContext) {
         assert_eq!(buffer.text(), "data about a");
         assert_eq!(
             buffer.file().unwrap().full_path(cx),
-            Path::new("dir/data_a.txt")
+            Path::new(path!("dir/data_a.txt"))
         )
     });
 }
@@ -5427,7 +5427,7 @@ async fn test_buffer_deduping(cx: &mut gpui::TestAppContext) {
     )
     .await;
 
-    let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
+    let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
 
     // Spawn multiple tasks to open paths, repeating some paths.
     let (buffer_a_1, buffer_b, buffer_a_2) = project.update(cx, |p, cx| {
@@ -7215,7 +7215,7 @@ async fn test_create_entry(cx: &mut gpui::TestAppContext) {
     )
     .await;
 
-    let project = Project::test(fs.clone(), ["/one/two/three".as_ref()], cx).await;
+    let project = Project::test(fs.clone(), [path!("/one/two/three").as_ref()], cx).await;
     project
         .update(cx, |project, cx| {
             let id = project.worktrees(cx).next().unwrap().read(cx).id();
@@ -7727,9 +7727,9 @@ async fn test_reordering_worktrees(cx: &mut gpui::TestAppContext) {
     let project = Project::test(
         fs,
         [
-            "/dir/a.rs".as_ref(),
-            "/dir/b.rs".as_ref(),
-            "/dir/c.rs".as_ref(),
+            path!("/dir/a.rs").as_ref(),
+            path!("/dir/b.rs").as_ref(),
+            path!("/dir/c.rs").as_ref(),
         ],
         cx,
     )
@@ -7937,9 +7937,9 @@ async fn test_unstaged_diff_for_buffer(cx: &mut gpui::TestAppContext) {
     )
     .await;
 
-    fs.set_index_for_repo(Path::new("/dir/.git"), &[("src/main.rs", staged_contents)]);
+    fs.set_index_for_repo(Path::new(path!("/dir/.git")), &[("src/main.rs", staged_contents)]);
 
-    let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
+    let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
 
     let buffer = project
         .update(cx, |project, cx| {
@@ -7980,7 +7980,7 @@ async fn test_unstaged_diff_for_buffer(cx: &mut gpui::TestAppContext) {
     "#
     .unindent();
 
-    fs.set_index_for_repo(Path::new("/dir/.git"), &[("src/main.rs", staged_contents)]);
+    fs.set_index_for_repo(Path::new(path!("/dir/.git")), &[("src/main.rs", staged_contents)]);
 
     cx.run_until_parked();
     unstaged_diff.update(cx, |unstaged_diff, cx| {
@@ -8038,7 +8038,7 @@ async fn test_uncommitted_diff_for_buffer(cx: &mut gpui::TestAppContext) {
     .await;
 
     fs.set_head_for_repo(
-        Path::new("/dir/.git"),
+        Path::new(path!("/dir/.git")),
         &[
             ("src/modification.rs", committed_contents),
             ("src/deletion.rs", "// the-deleted-contents\n".into()),
@@ -8046,14 +8046,14 @@ async fn test_uncommitted_diff_for_buffer(cx: &mut gpui::TestAppContext) {
         "deadbeef",
     );
     fs.set_index_for_repo(
-        Path::new("/dir/.git"),
+        Path::new(path!("/dir/.git")),
         &[
             ("src/modification.rs", staged_contents),
             ("src/deletion.rs", "// the-deleted-contents\n".into()),
         ],
     );
 
-    let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
+    let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
     let language_registry = project.read_with(cx, |project, _| project.languages().clone());
     let language = rust_lang();
     language_registry.add(language.clone());
@@ -8106,7 +8106,7 @@ async fn test_uncommitted_diff_for_buffer(cx: &mut gpui::TestAppContext) {
     "#
     .unindent();
     fs.set_head_for_repo(
-        Path::new("/dir/.git"),
+        Path::new(path!("/dir/.git")),
         &[
             ("src/modification.rs", committed_contents.clone()),
             ("src/deletion.rs", "// the-deleted-contents\n".into()),
@@ -8164,7 +8164,7 @@ async fn test_uncommitted_diff_for_buffer(cx: &mut gpui::TestAppContext) {
 
     // Stage the deletion of this file
     fs.set_index_for_repo(
-        Path::new("/dir/.git"),
+        Path::new(path!("/dir/.git")),
         &[("src/modification.rs", committed_contents.clone())],
     );
     cx.run_until_parked();
@@ -8223,7 +8223,7 @@ async fn test_staging_hunks(cx: &mut gpui::TestAppContext) {
         &[("file.txt", committed_contents.clone())],
     );
 
-    let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
+    let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
 
     let buffer = project
         .update(cx, |project, cx| {
@@ -8370,7 +8370,7 @@ async fn test_staging_hunks(cx: &mut gpui::TestAppContext) {
 
     // Simulate a problem writing to the git index.
     fs.set_error_message_for_index_write(
-        "/dir/.git".as_ref(),
+        path!("/dir/.git").as_ref(),
         Some("failed to write git index".into()),
     );
 
@@ -8471,7 +8471,7 @@ async fn test_staging_hunks(cx: &mut gpui::TestAppContext) {
     }
 
     // Allow writing to the git index to succeed again.
-    fs.set_error_message_for_index_write("/dir/.git".as_ref(), None);
+    fs.set_error_message_for_index_write(path!("/dir/.git").as_ref(), None);
 
     // Stage two hunks with separate operations.
     uncommitted_diff.update(cx, |diff, cx| {
@@ -8569,16 +8569,16 @@ async fn test_staging_hunks_with_delayed_fs_event(cx: &mut gpui::TestAppContext)
     .await;
 
     fs.set_head_for_repo(
-        "/dir/.git".as_ref(),
+        path!("/dir/.git").as_ref(),
         &[("file.txt", committed_contents.clone())],
         "deadbeef",
     );
     fs.set_index_for_repo(
-        "/dir/.git".as_ref(),
+        path!("/dir/.git").as_ref(),
         &[("file.txt", committed_contents.clone())],
     );
 
-    let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
+    let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
 
     let buffer = project
         .update(cx, |project, cx| {
@@ -8879,16 +8879,16 @@ async fn test_single_file_diffs(cx: &mut gpui::TestAppContext) {
     .await;
 
     fs.set_head_for_repo(
-        Path::new("/dir/.git"),
+        Path::new(path!("/dir/.git")),
         &[("src/main.rs", committed_contents.clone())],
         "deadbeef",
     );
     fs.set_index_for_repo(
-        Path::new("/dir/.git"),
+        Path::new(path!("/dir/.git")),
         &[("src/main.rs", committed_contents.clone())],
     );
 
-    let project = Project::test(fs.clone(), ["/dir/src/main.rs".as_ref()], cx).await;
+    let project = Project::test(fs.clone(), [path!("/dir/src/main.rs").as_ref()], cx).await;
 
     let buffer = project
         .update(cx, |project, cx| {
@@ -9255,7 +9255,7 @@ async fn test_git_repository_status(cx: &mut gpui::TestAppContext) {
 
     git_add("a.txt", &repo);
     git_add("c.txt", &repo);
-    git_remove_index(Path::new("d.txt"), &repo);
+    git_remove_index(Path::new(path!("d.txt")), &repo);
     git_commit("Another commit", &repo);
     tree.flush_fs_events(cx).await;
     project
@@ -11617,7 +11617,7 @@ async fn test_find_project_path_abs(
         );
 
         // Test with an absolute path outside any worktree
-        let abs_path = Path::new("/some/other/path");
+        let abs_path = Path::new(path!("/some/other/path"));
         let found_path = project.find_project_path(abs_path, cx);
         assert!(
             found_path.is_none(),

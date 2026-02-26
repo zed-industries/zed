@@ -21,15 +21,15 @@ async fn test_checkpoints(executor: BackgroundExecutor) {
         }),
     )
     .await;
-    fs.with_git_state(Path::new("/foo/.git"), true, |_git| {})
+    fs.with_git_state(Path::new(path!("/foo/.git")), true, |_git| {})
         .unwrap();
     let repository = fs
-        .open_repo(Path::new("/foo/.git"), Some("git".as_ref()))
+        .open_repo(Path::new(path!("/foo/.git")), Some("git".as_ref()))
         .unwrap();
 
     let checkpoint_1 = repository.checkpoint().await.unwrap();
-    fs.write(Path::new("/foo/b"), b"IPSUM").await.unwrap();
-    fs.write(Path::new("/foo/c"), b"dolor").await.unwrap();
+    fs.write(Path::new(path!("/foo/b")), b"IPSUM").await.unwrap();
+    fs.write(Path::new(path!("/foo/c")), b"dolor").await.unwrap();
     let checkpoint_2 = repository.checkpoint().await.unwrap();
     let checkpoint_3 = repository.checkpoint().await.unwrap();
 

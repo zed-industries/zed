@@ -890,6 +890,7 @@ mod tests {
     use gpui::TestAppContext;
     use serde_json::json;
     use std::path::Path;
+    use util::path;
 
     #[gpui::test]
     async fn test_fake_worktree_lifecycle(cx: &mut TestAppContext) {
@@ -897,10 +898,10 @@ mod tests {
 
         for worktree_dir_setting in worktree_dir_settings {
             let fs = FakeFs::new(cx.executor());
-            fs.insert_tree("/project", json!({".git": {}, "file.txt": "content"}))
+            fs.insert_tree(path!("/project"), json!({".git": {}, "file.txt": "content"}))
                 .await;
             let repo = fs
-                .open_repo(Path::new("/project/.git"), None)
+                .open_repo(Path::new(path!("/project/.git")), None)
                 .expect("should open fake repo");
 
             // Initially no worktrees
@@ -908,7 +909,7 @@ mod tests {
             assert!(worktrees.is_empty());
 
             let expected_dir = git::repository::resolve_worktree_directory(
-                Path::new("/project"),
+                Path::new(path!("/project")),
                 worktree_dir_setting,
             );
 

@@ -530,7 +530,7 @@ async fn test_realfs_broken_symlink_metadata(executor: BackgroundExecutor) {
     let path = tempdir.path();
     let fs = RealFs::new(None, executor);
     let symlink_path = path.join("symlink");
-    smol::block_on(fs.create_symlink(&symlink_path, PathBuf::from("file_a.txt"))).unwrap();
+    smol::block_on(fs.create_symlink(&symlink_path, PathBuf::from(path!("file_a.txt")))).unwrap();
     let metadata = fs
         .metadata(&symlink_path)
         .await
@@ -550,7 +550,7 @@ async fn test_realfs_symlink_loop_metadata(executor: BackgroundExecutor) {
     let path = tempdir.path();
     let fs = RealFs::new(None, executor);
     let symlink_path = path.join("symlink");
-    smol::block_on(fs.create_symlink(&symlink_path, PathBuf::from("symlink"))).unwrap();
+    smol::block_on(fs.create_symlink(&symlink_path, PathBuf::from(path!("symlink")))).unwrap();
     let metadata = fs
         .metadata(&symlink_path)
         .await
