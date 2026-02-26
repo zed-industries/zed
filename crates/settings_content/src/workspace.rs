@@ -754,6 +754,10 @@ pub struct ProjectPanelSettingsContent {
     ///
     /// Default: false
     pub git_status_indicator: Option<bool>,
+    /// Whether to sort files and directories case-sensitive in the project panel.
+    ///
+    /// Default: false
+    pub case_sensitive: Option<bool>,
 }
 
 #[derive(

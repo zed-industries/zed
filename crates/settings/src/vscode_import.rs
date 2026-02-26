@@ -810,6 +810,7 @@ impl VsCodeSettings {
             auto_open: None,
             diagnostic_badges: None,
             git_status_indicator: None,
+            case_sensitive: None,
         };
 
         if let (Some(false), Some(false)) = (
