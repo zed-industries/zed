@@ -18,7 +18,7 @@ use editor::{
 };
 use futures::channel::oneshot;
 use gpui::{
-    Action, App, ClickEvent, Context, Entity, EventEmitter, Focusable, InteractiveElement as _,
+    App, ClickEvent, Context, Entity, EventEmitter, Focusable, InteractiveElement as _,
     IntoElement, KeyContext, ParentElement as _, Render, ScrollHandle, Styled, Subscription, Task,
     WeakEntity, Window, div,
 };
@@ -245,9 +245,9 @@ impl Render for BufferSearchBar {
                             cx,
                         )
                     })
-                    .on_click(|_event, window, cx| {
-                        window.dispatch_action(ToggleFoldAll.boxed_clone(), cx)
-                    })
+                    .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
+                        this.toggle_fold_all(&ToggleFoldAll, window, cx);
+                    }))
             };
 
             if self.dismissed {
