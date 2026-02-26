@@ -266,7 +266,7 @@ pub enum BlockStyle {
     Fixed,
     Flex,
     /// Like `Flex` but doesn't use the gutter:
-    /// - block content scrolls wtih buffer content
+    /// - block content scrolls with buffer content
     /// - doesn't paint in gutter
     Spacer,
     Sticky,
