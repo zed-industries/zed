@@ -1486,7 +1486,6 @@ impl ExternalAgentServer for LocalCustomAgent {
     }
 }
 
-// todo!() look at these
 pub const GEMINI_NAME: &str = "gemini";
 pub const CLAUDE_AGENT_NAME: &str = "claude-acp";
 pub const CODEX_NAME: &str = "codex-acp";
