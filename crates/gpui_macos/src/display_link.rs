@@ -34,7 +34,7 @@ impl DisplayLink {
 
         unsafe {
             let frame_requests = DispatchSource::new(
-                &_dispatch_source_type_data_add,
+                &raw const _dispatch_source_type_data_add as *mut _,
                 0,
                 0,
                 Some(DispatchQueue::main()),
