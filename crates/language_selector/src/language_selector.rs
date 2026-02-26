@@ -541,7 +541,7 @@ mod tests {
             )
             .await;
 
-        let project = Project::test(app_state.fs.clone(), ["/test".as_ref()], cx).await;
+        let project = Project::test(app_state.fs.clone(), [path!("/test").as_ref()], cx).await;
         let (multi_workspace, cx) =
             cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
         let workspace =
