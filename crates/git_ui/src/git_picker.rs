@@ -390,7 +390,7 @@ impl GitPicker {
     ) {
         if let Some(worktree_list) = &self.worktree_list {
             worktree_list.update(cx, |list, cx| {
-                list.handle_new_worktree(false, window, cx);
+                list.handle_new_worktree(true, window, cx);
             });
         }
     }
@@ -403,7 +403,7 @@ impl GitPicker {
     ) {
         if let Some(worktree_list) = &self.worktree_list {
             worktree_list.update(cx, |list, cx| {
-                list.handle_new_worktree(true, window, cx);
+                list.handle_new_worktree(false, window, cx);
             });
         }
     }

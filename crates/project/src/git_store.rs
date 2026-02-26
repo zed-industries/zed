@@ -267,6 +267,7 @@ pub struct RepositorySnapshot {
     pub id: RepositoryId,
     pub statuses_by_path: SumTree<StatusEntry>,
     pub work_directory_abs_path: Arc<Path>,
+    pub common_dir_abs_path: Option<Arc<Path>>,
     pub path_style: PathStyle,
     pub branch: Option<Branch>,
     pub head_commit: Option<CommitDetails>,
@@ -1507,7 +1508,7 @@ impl GitStore {
                 new_work_directory_abs_path: Some(work_directory_abs_path),
                 dot_git_abs_path: Some(dot_git_abs_path),
                 repository_dir_abs_path: Some(_repository_dir_abs_path),
-                common_dir_abs_path: Some(_common_dir_abs_path),
+                common_dir_abs_path: Some(common_dir_abs_path),
                 ..
             } = update
             {
@@ -1518,6 +1519,7 @@ impl GitStore {
                         id,
                         work_directory_abs_path.clone(),
                         dot_git_abs_path.clone(),
+                        common_dir_abs_path.clone(),
                         project_environment.downgrade(),
                         fs.clone(),
                         git_store,
@@ -3488,6 +3490,7 @@ impl RepositorySnapshot {
             id,
             statuses_by_path: Default::default(),
             work_directory_abs_path,
+            common_dir_abs_path: None,
             branch: None,
             head_commit: None,
             scan_id: 0,
@@ -3769,13 +3772,15 @@ impl Repository {
         id: RepositoryId,
         work_directory_abs_path: Arc<Path>,
         dot_git_abs_path: Arc<Path>,
+        common_dir_abs_path: Arc<Path>,
         project_environment: WeakEntity<ProjectEnvironment>,
         fs: Arc<dyn Fs>,
         git_store: WeakEntity<GitStore>,
         cx: &mut Context<Self>,
     ) -> Self {
-        let snapshot =
+        let mut snapshot =
             RepositorySnapshot::empty(id, work_directory_abs_path.clone(), PathStyle::local());
+        snapshot.common_dir_abs_path = Some(common_dir_abs_path);
         let state = cx
             .spawn(async move |_, cx| {
                 LocalRepositoryState::new(
@@ -6798,6 +6803,7 @@ async fn compute_snapshot(
         id,
         statuses_by_path,
         work_directory_abs_path,
+        common_dir_abs_path: prev_snapshot.common_dir_abs_path.clone(),
         path_style: prev_snapshot.path_style,
         scan_id: prev_snapshot.scan_id + 1,
         branch,

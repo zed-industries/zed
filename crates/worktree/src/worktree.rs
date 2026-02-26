@@ -668,10 +668,10 @@ impl Worktree {
     }
 
     /// Returns true if the given relative path within this worktree is a git
-    /// repository root. Checks both the indexed git repositories map and
-    /// falls back to looking for a `.git` entry in case the background
-    /// scanner hasn't finished indexing yet. This is used to prevent git
-    /// worktrees from being claimed as subdirectories of their parent
+    /// repository root. Checks the indexed git repositories map, then the
+    /// scanner's entry list, and finally the real filesystem (for paths the
+    /// scanner skips, e.g. gitignored directories). This is used to prevent
+    /// git worktrees from being claimed as subdirectories of their parent
     /// repository's workspace.
     pub fn contains_git_repo_at(&self, relative_path: &RelPath) -> bool {
         if let Some(local) = self.as_local() {
@@ -682,13 +682,16 @@ impl Worktree {
                 return true;
             }
         }
-        // Fallback: check for a .git entry at the path even if the
-        // background scanner hasn't indexed the repository yet.
         let Ok(dot_git) = RelPath::unix(DOT_GIT) else {
             return false;
         };
         let dot_git_path = relative_path.join(dot_git);
-        self.entry_for_path(&dot_git_path).is_some()
+        if self.entry_for_path(&dot_git_path).is_some() {
+            return true;
+        }
+        // The scanner may not have indexed this path (e.g. it is
+        // gitignored). Fall back to a direct filesystem check.
+        self.abs_path().join(dot_git_path.as_std_path()).exists()
     }
 
     pub fn replica_id(&self) -> ReplicaId {
