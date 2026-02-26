@@ -308,6 +308,8 @@ pub fn request_prediction_with_zeta(
                         edits,
                         cursor_position,
                         received_response_at,
+                        full_context_offset_range,
+                        editable_range_in_buffer,
                     )),
                 )),
                 usage,
@@ -329,6 +331,8 @@ pub fn request_prediction_with_zeta(
             edits,
             cursor_position,
             received_response_at,
+            full_context_offset_range,
+            editable_range_in_buffer,
         )) = prediction
         else {
             return Ok(Some(EditPredictionResult {
@@ -336,6 +340,47 @@ pub fn request_prediction_with_zeta(
                 prediction: Err(EditPredictionRejectReason::Empty),
             }));
         };
+
+        if can_collect_data {
+            cx.spawn({
+                let weak_buffer = edited_buffer.downgrade();
+                let context_anchor_range =
+                    edited_buffer_snapshot.anchor_range_around(full_context_offset_range);
+                let editable_anchor_range =
+                    edited_buffer_snapshot.anchor_range_around(editable_range_in_buffer);
+                let request_id = id.0.clone();
+                async move |cx| {
+                    cx.background_executor()
+                        .timer(std::time::Duration::from_secs(30))
+                        .await;
+
+                    let Some(buffer) = weak_buffer.upgrade() else {
+                        return;
+                    };
+                    let (new_cursor_region, editable_range_in_excerpt) =
+                        buffer.read_with(cx, |buffer, _| {
+                            let context_start =
+                                buffer.offset_for_anchor(&context_anchor_range.start);
+                            let editable_range_in_excerpt = (buffer
+                                .offset_for_anchor(&editable_anchor_range.start)
+                                - context_start)
+                                ..(buffer.offset_for_anchor(&editable_anchor_range.end)
+                                    - context_start);
+                            let text = buffer
+                                .text_for_range(context_anchor_range)
+                                .collect::<String>();
+                            (text, editable_range_in_excerpt)
+                        });
+                    telemetry::event!(
+                        "Edit Prediction Snapshot",
+                        request_id,
+                        new_cursor_region,
+                        editable_range_in_excerpt,
+                    );
+                }
+            })
+            .detach();
+        }
 
         Ok(Some(
             EditPredictionResult::new(
