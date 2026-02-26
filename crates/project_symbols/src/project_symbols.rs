@@ -318,7 +318,7 @@ mod tests {
     use settings::SettingsStore;
     use std::{path::Path, sync::Arc};
     use util::path;
-    use workspace::WindowRoot;
+    use workspace::MultiWorkspace;
 
     #[gpui::test]
     async fn test_project_symbols(cx: &mut TestAppContext) {
@@ -411,7 +411,7 @@ mod tests {
         );
 
         let (multi_workspace, cx) =
-            cx.add_window_view(|window, cx| WindowRoot::test_new(project.clone(), window, cx));
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
         let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
         // Create the project symbols view.

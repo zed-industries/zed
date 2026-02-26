@@ -10,7 +10,7 @@ use settings::{ProjectPanelAutoOpenSettings, SettingsStore};
 use std::path::{Path, PathBuf};
 use util::{path, paths::PathStyle, rel_path::rel_path};
 use workspace::{
-    AppState, ItemHandle, WindowRoot, Pane, Workspace,
+    AppState, ItemHandle, MultiWorkspace, Pane, Workspace,
     item::{Item, ProjectItem},
     register_project_item,
 };
@@ -57,7 +57,7 @@ async fn test_visible_list(cx: &mut gpui::TestAppContext) {
     .await;
 
     let project = Project::test(fs.clone(), ["/root1".as_ref(), "/root2".as_ref()], cx).await;
-    let window = cx.add_window(|window, cx| WindowRoot::test_new(project.clone(), window, cx));
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
     let workspace = window
         .read_with(cx, |mw, _| mw.workspace().clone())
         .unwrap();
@@ -126,7 +126,7 @@ async fn test_opening_file(cx: &mut gpui::TestAppContext) {
     .await;
 
     let project = Project::test(fs.clone(), [path!("/src").as_ref()], cx).await;
-    let window = cx.add_window(|window, cx| WindowRoot::test_new(project.clone(), window, cx));
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
     let workspace = window
         .read_with(cx, |mw, _| mw.workspace().clone())
         .unwrap();
@@ -216,7 +216,7 @@ async fn test_exclusions_in_visible_list(cx: &mut gpui::TestAppContext) {
     .await;
 
     let project = Project::test(fs.clone(), ["/root1".as_ref(), "/root2".as_ref()], cx).await;
-    let window = cx.add_window(|window, cx| WindowRoot::test_new(project.clone(), window, cx));
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
     let workspace = window
         .read_with(cx, |mw, _| mw.workspace().clone())
         .unwrap();
@@ -330,7 +330,7 @@ async fn test_auto_collapse_dir_paths(cx: &mut gpui::TestAppContext) {
         cx,
     )
     .await;
-    let window = cx.add_window(|window, cx| WindowRoot::test_new(project.clone(), window, cx));
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
     let workspace = window
         .read_with(cx, |mw, _| mw.workspace().clone())
         .unwrap();
@@ -417,7 +417,7 @@ async fn test_auto_collapse_dir_paths(cx: &mut gpui::TestAppContext) {
     {
         let project = Project::test(fs.clone(), [path!("/root1").as_ref()], cx).await;
         let window =
-            cx.add_window(|window, cx| WindowRoot::test_new(project.clone(), window, cx));
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
         let workspace = window
             .read_with(cx, |mw, _| mw.workspace().clone())
             .unwrap();
@@ -520,7 +520,7 @@ async fn test_editing_files(cx: &mut gpui::TestAppContext) {
     .await;
 
     let project = Project::test(fs.clone(), ["/root1".as_ref(), "/root2".as_ref()], cx).await;
-    let window = cx.add_window(|window, cx| WindowRoot::test_new(project.clone(), window, cx));
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
     let workspace = window
         .read_with(cx, |mw, _| mw.workspace().clone())
         .unwrap();
@@ -953,7 +953,7 @@ async fn test_adding_directories_via_file(cx: &mut gpui::TestAppContext) {
     .await;
 
     let project = Project::test(fs.clone(), ["/root1".as_ref(), "/root2".as_ref()], cx).await;
-    let window = cx.add_window(|window, cx| WindowRoot::test_new(project.clone(), window, cx));
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
     let workspace = window
         .read_with(cx, |mw, _| mw.workspace().clone())
         .unwrap();
@@ -1066,7 +1066,7 @@ async fn test_adding_directory_via_file(cx: &mut gpui::TestAppContext) {
     .await;
 
     let project = Project::test(fs.clone(), [path!("/root1").as_ref()], cx).await;
-    let window = cx.add_window(|window, cx| WindowRoot::test_new(project.clone(), window, cx));
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
     let workspace = window
         .read_with(cx, |mw, _| mw.workspace().clone())
         .unwrap();
@@ -1197,7 +1197,7 @@ async fn test_copy_paste(cx: &mut gpui::TestAppContext) {
     .await;
 
     let project = Project::test(fs.clone(), ["/root1".as_ref()], cx).await;
-    let window = cx.add_window(|window, cx| WindowRoot::test_new(project.clone(), window, cx));
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
     let workspace = window
         .read_with(cx, |mw, _| mw.workspace().clone())
         .unwrap();
@@ -1307,7 +1307,7 @@ async fn test_cut_paste(cx: &mut gpui::TestAppContext) {
     .await;
 
     let project = Project::test(fs.clone(), ["/root".as_ref()], cx).await;
-    let window = cx.add_window(|window, cx| WindowRoot::test_new(project.clone(), window, cx));
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
     let workspace = window
         .read_with(cx, |mw, _| mw.workspace().clone())
         .unwrap();
@@ -1415,7 +1415,7 @@ async fn test_cut_paste_between_different_worktrees(cx: &mut gpui::TestAppContex
     .await;
 
     let project = Project::test(fs.clone(), ["/root1".as_ref(), "/root2".as_ref()], cx).await;
-    let window = cx.add_window(|window, cx| WindowRoot::test_new(project.clone(), window, cx));
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
     let workspace = window
         .read_with(cx, |mw, _| mw.workspace().clone())
         .unwrap();
@@ -1515,7 +1515,7 @@ async fn test_copy_paste_between_different_worktrees(cx: &mut gpui::TestAppConte
     .await;
 
     let project = Project::test(fs.clone(), ["/root1".as_ref(), "/root2".as_ref()], cx).await;
-    let window = cx.add_window(|window, cx| WindowRoot::test_new(project.clone(), window, cx));
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
     let workspace = window
         .read_with(cx, |mw, _| mw.workspace().clone())
         .unwrap();
@@ -1641,7 +1641,7 @@ async fn test_copy_paste_directory(cx: &mut gpui::TestAppContext) {
     .await;
 
     let project = Project::test(fs.clone(), ["/root".as_ref()], cx).await;
-    let window = cx.add_window(|window, cx| WindowRoot::test_new(project.clone(), window, cx));
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
     let workspace = window
         .read_with(cx, |mw, _| mw.workspace().clone())
         .unwrap();
@@ -1784,7 +1784,7 @@ async fn test_copy_paste_directory_with_sibling_file(cx: &mut gpui::TestAppConte
     .await;
 
     let project = Project::test(fs.clone(), ["/test".as_ref()], cx).await;
-    let window = cx.add_window(|window, cx| WindowRoot::test_new(project.clone(), window, cx));
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
     let workspace = window
         .read_with(cx, |mw, _| mw.workspace().clone())
         .unwrap();
@@ -1893,7 +1893,7 @@ async fn test_copy_paste_nested_and_root_entries(cx: &mut gpui::TestAppContext) 
     .await;
 
     let project = Project::test(fs.clone(), ["/test".as_ref()], cx).await;
-    let window = cx.add_window(|window, cx| WindowRoot::test_new(project.clone(), window, cx));
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
     let workspace = window
         .read_with(cx, |mw, _| mw.workspace().clone())
         .unwrap();
@@ -1974,7 +1974,7 @@ async fn test_remove_opened_file(cx: &mut gpui::TestAppContext) {
     .await;
 
     let project = Project::test(fs.clone(), [path!("/src").as_ref()], cx).await;
-    let window = cx.add_window(|window, cx| WindowRoot::test_new(project.clone(), window, cx));
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
     let workspace = window
         .read_with(cx, |mw, _| mw.workspace().clone())
         .unwrap();
@@ -2065,7 +2065,7 @@ async fn test_auto_open_new_file_when_enabled(cx: &mut gpui::TestAppContext) {
     fs.insert_tree(path!("/root"), json!({})).await;
 
     let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
-    let window = cx.add_window(|window, cx| WindowRoot::test_new(project.clone(), window, cx));
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
     let workspace = window
         .read_with(cx, |mw, _| mw.workspace().clone())
         .unwrap();
@@ -2104,7 +2104,7 @@ async fn test_auto_open_new_file_when_disabled(cx: &mut gpui::TestAppContext) {
     fs.insert_tree(path!("/root"), json!({})).await;
 
     let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
-    let window = cx.add_window(|window, cx| WindowRoot::test_new(project.clone(), window, cx));
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
     let workspace = window
         .read_with(cx, |mw, _| mw.workspace().clone())
         .unwrap();
@@ -2152,7 +2152,7 @@ async fn test_auto_open_on_paste_when_enabled(cx: &mut gpui::TestAppContext) {
     .await;
 
     let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
-    let window = cx.add_window(|window, cx| WindowRoot::test_new(project.clone(), window, cx));
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
     let workspace = window
         .read_with(cx, |mw, _| mw.workspace().clone())
         .unwrap();
@@ -2201,7 +2201,7 @@ async fn test_auto_open_on_paste_when_disabled(cx: &mut gpui::TestAppContext) {
     .await;
 
     let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
-    let window = cx.add_window(|window, cx| WindowRoot::test_new(project.clone(), window, cx));
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
     let workspace = window
         .read_with(cx, |mw, _| mw.workspace().clone())
         .unwrap();
@@ -2251,7 +2251,7 @@ async fn test_auto_open_on_drop_when_enabled(cx: &mut gpui::TestAppContext) {
         .await;
 
     let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
-    let window = cx.add_window(|window, cx| WindowRoot::test_new(project.clone(), window, cx));
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
     let workspace = window
         .read_with(cx, |mw, _| mw.workspace().clone())
         .unwrap();
@@ -2289,7 +2289,7 @@ async fn test_auto_open_on_drop_when_disabled(cx: &mut gpui::TestAppContext) {
         .await;
 
     let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
-    let window = cx.add_window(|window, cx| WindowRoot::test_new(project.clone(), window, cx));
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
     let workspace = window
         .read_with(cx, |mw, _| mw.workspace().clone())
         .unwrap();
@@ -2328,7 +2328,7 @@ async fn test_create_duplicate_items(cx: &mut gpui::TestAppContext) {
     .await;
 
     let project = Project::test(fs.clone(), ["/src".as_ref()], cx).await;
-    let window = cx.add_window(|window, cx| WindowRoot::test_new(project.clone(), window, cx));
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
     let workspace = window
         .read_with(cx, |mw, _| mw.workspace().clone())
         .unwrap();
@@ -2534,7 +2534,7 @@ async fn test_create_duplicate_items_and_check_history(cx: &mut gpui::TestAppCon
     .await;
 
     let project = Project::test(fs.clone(), ["/src".as_ref()], cx).await;
-    let window = cx.add_window(|window, cx| WindowRoot::test_new(project.clone(), window, cx));
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
     let workspace = window
         .read_with(cx, |mw, _| mw.workspace().clone())
         .unwrap();
@@ -2800,7 +2800,7 @@ async fn test_rename_item_and_check_history(cx: &mut gpui::TestAppContext) {
     .await;
 
     let project = Project::test(fs.clone(), ["/src".as_ref()], cx).await;
-    let window = cx.add_window(|window, cx| WindowRoot::test_new(project.clone(), window, cx));
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
     let workspace = window
         .read_with(cx, |mw, _| mw.workspace().clone())
         .unwrap();
@@ -2973,7 +2973,7 @@ async fn test_select_git_entry(cx: &mut gpui::TestAppContext) {
     scan2_complete.await;
     cx.run_until_parked();
 
-    let window = cx.add_window(|window, cx| WindowRoot::test_new(project.clone(), window, cx));
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
     let workspace = window
         .read_with(cx, |mw, _| mw.workspace().clone())
         .unwrap();
@@ -3225,7 +3225,7 @@ async fn test_select_directory(cx: &mut gpui::TestAppContext) {
     .await;
 
     let project = Project::test(fs.clone(), ["/project_root".as_ref()], cx).await;
-    let window = cx.add_window(|window, cx| WindowRoot::test_new(project.clone(), window, cx));
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
     let workspace = window
         .read_with(cx, |mw, _| mw.workspace().clone())
         .unwrap();
@@ -3326,7 +3326,7 @@ async fn test_select_first_last(cx: &mut gpui::TestAppContext) {
     .await;
 
     let project = Project::test(fs.clone(), ["/project_root".as_ref()], cx).await;
-    let window = cx.add_window(|window, cx| WindowRoot::test_new(project.clone(), window, cx));
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
     let workspace = window
         .read_with(cx, |mw, _| mw.workspace().clone())
         .unwrap();
@@ -3435,7 +3435,7 @@ async fn test_dir_toggle_collapse(cx: &mut gpui::TestAppContext) {
     .await;
 
     let project = Project::test(fs.clone(), ["/project_root".as_ref()], cx).await;
-    let window = cx.add_window(|window, cx| WindowRoot::test_new(project.clone(), window, cx));
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
     let workspace = window
         .read_with(cx, |mw, _| mw.workspace().clone())
         .unwrap();
@@ -3490,7 +3490,7 @@ async fn test_collapse_all_entries(cx: &mut gpui::TestAppContext) {
     .await;
 
     let project = Project::test(fs.clone(), ["/project_root".as_ref()], cx).await;
-    let window = cx.add_window(|window, cx| WindowRoot::test_new(project.clone(), window, cx));
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
     let workspace = window
         .read_with(cx, |mw, _| mw.workspace().clone())
         .unwrap();
@@ -3548,7 +3548,7 @@ async fn test_collapse_all_entries_multiple_worktrees(cx: &mut gpui::TestAppCont
         cx,
     )
     .await;
-    let window = cx.add_window(|window, cx| WindowRoot::test_new(project.clone(), window, cx));
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
     let workspace = window
         .read_with(cx, |mw, _| mw.workspace().clone())
         .unwrap();
@@ -3594,7 +3594,7 @@ async fn test_collapse_all_entries_with_collapsed_root(cx: &mut gpui::TestAppCon
     .await;
 
     let project = Project::test(fs.clone(), ["/project_root".as_ref()], cx).await;
-    let window = cx.add_window(|window, cx| WindowRoot::test_new(project.clone(), window, cx));
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
     let workspace = window
         .read_with(cx, |mw, _| mw.workspace().clone())
         .unwrap();
@@ -3666,7 +3666,7 @@ async fn test_collapse_all_entries_with_invisible_worktree(cx: &mut gpui::TestAp
     .await;
 
     let project = Project::test(fs.clone(), ["/project_root".as_ref()], cx).await;
-    let window = cx.add_window(|window, cx| WindowRoot::test_new(project.clone(), window, cx));
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
     let workspace = window
         .read_with(cx, |mw, _| mw.workspace().clone())
         .unwrap();
@@ -3709,7 +3709,7 @@ async fn test_new_file_move(cx: &mut gpui::TestAppContext) {
     let fs = FakeFs::new(cx.executor());
     fs.as_fake().insert_tree(path!("/root"), json!({})).await;
     let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
-    let window = cx.add_window(|window, cx| WindowRoot::test_new(project.clone(), window, cx));
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
     let workspace = window
         .read_with(cx, |mw, _| mw.workspace().clone())
         .unwrap();
@@ -3791,7 +3791,7 @@ async fn test_rename_root_of_worktree(cx: &mut gpui::TestAppContext) {
     .await;
 
     let project = Project::test(fs.clone(), ["/root1".as_ref()], cx).await;
-    let window = cx.add_window(|window, cx| WindowRoot::test_new(project.clone(), window, cx));
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
     let workspace = window
         .read_with(cx, |mw, _| mw.workspace().clone())
         .unwrap();
@@ -3876,7 +3876,7 @@ async fn test_rename_with_hide_root(cx: &mut gpui::TestAppContext) {
     {
         let project = Project::test(fs.clone(), ["/root1".as_ref()], cx).await;
         let window =
-            cx.add_window(|window, cx| WindowRoot::test_new(project.clone(), window, cx));
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
         let workspace = window
             .read_with(cx, |mw, _| mw.workspace().clone())
             .unwrap();
@@ -3918,7 +3918,7 @@ async fn test_rename_with_hide_root(cx: &mut gpui::TestAppContext) {
     {
         let project = Project::test(fs.clone(), ["/root1".as_ref(), "/root2".as_ref()], cx).await;
         let window =
-            cx.add_window(|window, cx| WindowRoot::test_new(project.clone(), window, cx));
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
         let workspace = window
             .read_with(cx, |mw, _| mw.workspace().clone())
             .unwrap();
@@ -3979,7 +3979,7 @@ async fn test_multiple_marked_entries(cx: &mut gpui::TestAppContext) {
 
     let project = Project::test(fs.clone(), ["/project_root".as_ref()], cx).await;
     let worktree_id = cx.update(|cx| project.read(cx).worktrees(cx).next().unwrap().read(cx).id());
-    let window = cx.add_window(|window, cx| WindowRoot::test_new(project.clone(), window, cx));
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
     let workspace = window
         .read_with(cx, |mw, _| mw.workspace().clone())
         .unwrap();
@@ -4184,7 +4184,7 @@ async fn test_dragged_selection_resolve_entry(cx: &mut gpui::TestAppContext) {
     .await;
 
     let project = Project::test(fs.clone(), ["/root".as_ref()], cx).await;
-    let window = cx.add_window(|window, cx| WindowRoot::test_new(project.clone(), window, cx));
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
     let workspace = window
         .read_with(cx, |mw, _| mw.workspace().clone())
         .unwrap();
@@ -4351,7 +4351,7 @@ async fn test_drag_marked_entries_in_folded_directories(cx: &mut gpui::TestAppCo
     .await;
 
     let project = Project::test(fs.clone(), ["/root".as_ref()], cx).await;
-    let window = cx.add_window(|window, cx| WindowRoot::test_new(project.clone(), window, cx));
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
     let workspace = window
         .read_with(cx, |mw, _| mw.workspace().clone())
         .unwrap();
@@ -4446,7 +4446,7 @@ async fn test_drag_entries_between_different_worktrees(cx: &mut gpui::TestAppCon
     .await;
 
     let project = Project::test(fs.clone(), ["/root_a".as_ref(), "/root_b".as_ref()], cx).await;
-    let window = cx.add_window(|window, cx| WindowRoot::test_new(project.clone(), window, cx));
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
     let workspace = window
         .read_with(cx, |mw, _| mw.workspace().clone())
         .unwrap();
@@ -4541,7 +4541,7 @@ async fn test_drag_multiple_entries(cx: &mut gpui::TestAppContext) {
     .await;
 
     let project = Project::test(fs.clone(), ["/root".as_ref()], cx).await;
-    let window = cx.add_window(|window, cx| WindowRoot::test_new(project.clone(), window, cx));
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
     let workspace = window
         .read_with(cx, |mw, _| mw.workspace().clone())
         .unwrap();
@@ -4642,7 +4642,7 @@ async fn test_autoreveal_and_gitignored_files(cx: &mut gpui::TestAppContext) {
     .await;
 
     let project = Project::test(fs.clone(), ["/project_root".as_ref()], cx).await;
-    let window = cx.add_window(|window, cx| WindowRoot::test_new(project.clone(), window, cx));
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
     let workspace = window
         .read_with(cx, |mw, _| mw.workspace().clone())
         .unwrap();
@@ -4893,7 +4893,7 @@ async fn test_gitignored_and_always_included(cx: &mut gpui::TestAppContext) {
     .await;
 
     let project = Project::test(fs.clone(), ["/project_root".as_ref()], cx).await;
-    let window = cx.add_window(|window, cx| WindowRoot::test_new(project.clone(), window, cx));
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
     let workspace = window
         .read_with(cx, |mw, _| mw.workspace().clone())
         .unwrap();
@@ -5010,7 +5010,7 @@ async fn test_explicit_reveal(cx: &mut gpui::TestAppContext) {
     .await;
 
     let project = Project::test(fs.clone(), ["/project_root".as_ref()], cx).await;
-    let window = cx.add_window(|window, cx| WindowRoot::test_new(project.clone(), window, cx));
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
     let workspace = window
         .read_with(cx, |mw, _| mw.workspace().clone())
         .unwrap();
@@ -5204,7 +5204,7 @@ async fn test_creating_excluded_entries(cx: &mut gpui::TestAppContext) {
     .await;
 
     let project = Project::test(fs.clone(), ["/root1".as_ref()], cx).await;
-    let window = cx.add_window(|window, cx| WindowRoot::test_new(project.clone(), window, cx));
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
     let workspace = window
         .read_with(cx, |mw, _| mw.workspace().clone())
         .unwrap();
@@ -5389,7 +5389,7 @@ async fn test_selection_restored_when_creation_cancelled(cx: &mut gpui::TestAppC
     .await;
 
     let project = Project::test(fs.clone(), ["/src".as_ref()], cx).await;
-    let window = cx.add_window(|window, cx| WindowRoot::test_new(project.clone(), window, cx));
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
     let workspace = window
         .read_with(cx, |mw, _| mw.workspace().clone())
         .unwrap();
@@ -5495,7 +5495,7 @@ async fn test_basic_file_deletion_scenarios(cx: &mut gpui::TestAppContext) {
     .await;
 
     let project = Project::test(fs.clone(), ["/root".as_ref()], cx).await;
-    let window = cx.add_window(|window, cx| WindowRoot::test_new(project.clone(), window, cx));
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
     let workspace = window
         .read_with(cx, |mw, _| mw.workspace().clone())
         .unwrap();
@@ -5620,7 +5620,7 @@ async fn test_deletion_gitignored(cx: &mut gpui::TestAppContext) {
     .await;
 
     let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
-    let window = cx.add_window(|window, cx| WindowRoot::test_new(project.clone(), window, cx));
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
     let workspace = window
         .read_with(cx, |mw, _| mw.workspace().clone())
         .unwrap();
@@ -5722,7 +5722,7 @@ async fn test_nested_deletion_gitignore(cx: &mut gpui::TestAppContext) {
     .await;
 
     let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
-    let window = cx.add_window(|window, cx| WindowRoot::test_new(project.clone(), window, cx));
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
     let workspace = window
         .read_with(cx, |mw, _| mw.workspace().clone())
         .unwrap();
@@ -5799,7 +5799,7 @@ async fn test_complex_selection_scenarios(cx: &mut gpui::TestAppContext) {
     .await;
 
     let project = Project::test(fs.clone(), ["/root".as_ref()], cx).await;
-    let window = cx.add_window(|window, cx| WindowRoot::test_new(project.clone(), window, cx));
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
     let workspace = window
         .read_with(cx, |mw, _| mw.workspace().clone())
         .unwrap();
@@ -5915,7 +5915,7 @@ async fn test_delete_all_files_and_directories(cx: &mut gpui::TestAppContext) {
     .await;
 
     let project = Project::test(fs.clone(), ["/root".as_ref()], cx).await;
-    let window = cx.add_window(|window, cx| WindowRoot::test_new(project.clone(), window, cx));
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
     let workspace = window
         .read_with(cx, |mw, _| mw.workspace().clone())
         .unwrap();
@@ -5991,7 +5991,7 @@ async fn test_nested_selection_deletion(cx: &mut gpui::TestAppContext) {
     .await;
 
     let project = Project::test(fs.clone(), ["/root".as_ref()], cx).await;
-    let window = cx.add_window(|window, cx| WindowRoot::test_new(project.clone(), window, cx));
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
     let workspace = window
         .read_with(cx, |mw, _| mw.workspace().clone())
         .unwrap();
@@ -6069,7 +6069,7 @@ async fn test_multiple_worktrees_deletion(cx: &mut gpui::TestAppContext) {
     .await;
 
     let project = Project::test(fs.clone(), ["/root1".as_ref(), "/root2".as_ref()], cx).await;
-    let window = cx.add_window(|window, cx| WindowRoot::test_new(project.clone(), window, cx));
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
     let workspace = window
         .read_with(cx, |mw, _| mw.workspace().clone())
         .unwrap();
@@ -6204,7 +6204,7 @@ async fn test_selection_vs_marked_entries_priority(cx: &mut gpui::TestAppContext
     .await;
 
     let project = Project::test(fs.clone(), ["/root".as_ref()], cx).await;
-    let window = cx.add_window(|window, cx| WindowRoot::test_new(project.clone(), window, cx));
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
     let workspace = window
         .read_with(cx, |mw, _| mw.workspace().clone())
         .unwrap();
@@ -6311,7 +6311,7 @@ async fn test_selection_fallback_to_next_highest_worktree(cx: &mut gpui::TestApp
     .await;
 
     let project = Project::test(fs.clone(), ["/root_b".as_ref(), "/root_c".as_ref()], cx).await;
-    let window = cx.add_window(|window, cx| WindowRoot::test_new(project.clone(), window, cx));
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
     let workspace = window
         .read_with(cx, |mw, _| mw.workspace().clone())
         .unwrap();
@@ -6415,7 +6415,7 @@ async fn test_expand_all_for_entry(cx: &mut gpui::TestAppContext) {
     .await;
 
     let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
-    let window = cx.add_window(|window, cx| WindowRoot::test_new(project.clone(), window, cx));
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
     let workspace = window
         .read_with(cx, |mw, _| mw.workspace().clone())
         .unwrap();
@@ -6604,7 +6604,7 @@ async fn test_collapse_all_for_entry(cx: &mut gpui::TestAppContext) {
     .await;
 
     let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
-    let window = cx.add_window(|window, cx| WindowRoot::test_new(project.clone(), window, cx));
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
     let workspace = window
         .read_with(cx, |mw, _| mw.workspace().clone())
         .unwrap();
@@ -6793,7 +6793,7 @@ async fn test_collapse_selected_entry_and_children_action(cx: &mut gpui::TestApp
     .await;
 
     let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
-    let window = cx.add_window(|window, cx| WindowRoot::test_new(project.clone(), window, cx));
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
     let workspace = window
         .read_with(cx, |mw, _| mw.workspace().clone())
         .unwrap();
@@ -6883,7 +6883,7 @@ async fn test_collapse_root_single_worktree(cx: &mut gpui::TestAppContext) {
     .await;
 
     let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
-    let window = cx.add_window(|window, cx| WindowRoot::test_new(project.clone(), window, cx));
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
     let workspace = window
         .read_with(cx, |mw, _| mw.workspace().clone())
         .unwrap();
@@ -6978,7 +6978,7 @@ async fn test_collapse_root_multi_worktree(cx: &mut gpui::TestAppContext) {
         cx,
     )
     .await;
-    let window = cx.add_window(|window, cx| WindowRoot::test_new(project.clone(), window, cx));
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
     let workspace = window
         .read_with(cx, |mw, _| mw.workspace().clone())
         .unwrap();
@@ -7083,7 +7083,7 @@ async fn test_collapse_non_root_multi_worktree(cx: &mut gpui::TestAppContext) {
         cx,
     )
     .await;
-    let window = cx.add_window(|window, cx| WindowRoot::test_new(project.clone(), window, cx));
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
     let workspace = window
         .read_with(cx, |mw, _| mw.workspace().clone())
         .unwrap();
@@ -7179,7 +7179,7 @@ async fn test_collapse_all_for_root_single_worktree(cx: &mut gpui::TestAppContex
     .await;
 
     let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
-    let window = cx.add_window(|window, cx| WindowRoot::test_new(project.clone(), window, cx));
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
     let workspace = window
         .read_with(cx, |mw, _| mw.workspace().clone())
         .unwrap();
@@ -7270,7 +7270,7 @@ async fn test_collapse_all_for_root_multi_worktree(cx: &mut gpui::TestAppContext
         cx,
     )
     .await;
-    let window = cx.add_window(|window, cx| WindowRoot::test_new(project.clone(), window, cx));
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
     let workspace = window
         .read_with(cx, |mw, _| mw.workspace().clone())
         .unwrap();
@@ -7341,7 +7341,7 @@ async fn test_collapse_all_for_root_noop_on_non_root(cx: &mut gpui::TestAppConte
     .await;
 
     let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
-    let window = cx.add_window(|window, cx| WindowRoot::test_new(project.clone(), window, cx));
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
     let workspace = window
         .read_with(cx, |mw, _| mw.workspace().clone())
         .unwrap();
@@ -7405,7 +7405,7 @@ async fn test_create_entries_without_selection(cx: &mut gpui::TestAppContext) {
     .await;
 
     let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
-    let window = cx.add_window(|window, cx| WindowRoot::test_new(project.clone(), window, cx));
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
     let workspace = window
         .read_with(cx, |mw, _| mw.workspace().clone())
         .unwrap();
@@ -7474,7 +7474,7 @@ async fn test_create_entries_without_selection_hide_root(cx: &mut gpui::TestAppC
     .await;
 
     let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
-    let window = cx.add_window(|window, cx| WindowRoot::test_new(project.clone(), window, cx));
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
     let workspace = window
         .read_with(cx, |mw, _| mw.workspace().clone())
         .unwrap();
@@ -7630,7 +7630,7 @@ async fn test_create_entry_with_trailing_dot_windows(cx: &mut gpui::TestAppConte
     .await;
 
     let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
-    let window = cx.add_window(|window, cx| WindowRoot::test_new(project.clone(), window, cx));
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
     let workspace = window
         .read_with(cx, |mw, _| mw.workspace().clone())
         .unwrap();
@@ -7702,7 +7702,7 @@ async fn test_highlight_entry_for_external_drag(cx: &mut gpui::TestAppContext) {
     .await;
 
     let project = Project::test(fs.clone(), ["/root".as_ref()], cx).await;
-    let window = cx.add_window(|window, cx| WindowRoot::test_new(project.clone(), window, cx));
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
     let workspace = window
         .read_with(cx, |mw, _| mw.workspace().clone())
         .unwrap();
@@ -7779,7 +7779,7 @@ async fn test_highlight_entry_for_selection_drag(cx: &mut gpui::TestAppContext) 
     .await;
 
     let project = Project::test(fs.clone(), ["/root".as_ref()], cx).await;
-    let window = cx.add_window(|window, cx| WindowRoot::test_new(project.clone(), window, cx));
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
     let workspace = window
         .read_with(cx, |mw, _| mw.workspace().clone())
         .unwrap();
@@ -7922,7 +7922,7 @@ async fn test_highlight_entry_for_selection_drag_cross_worktree(cx: &mut gpui::T
     .await;
 
     let project = Project::test(fs.clone(), ["/root1".as_ref(), "/root2".as_ref()], cx).await;
-    let window = cx.add_window(|window, cx| WindowRoot::test_new(project.clone(), window, cx));
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
     let workspace = window
         .read_with(cx, |mw, _| mw.workspace().clone())
         .unwrap();
@@ -8016,7 +8016,7 @@ async fn test_should_highlight_background_for_selection_drag(cx: &mut gpui::Test
     .await;
 
     let project = Project::test(fs.clone(), ["/root1".as_ref(), "/root2".as_ref()], cx).await;
-    let window = cx.add_window(|window, cx| WindowRoot::test_new(project.clone(), window, cx));
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
     let workspace = window
         .read_with(cx, |mw, _| mw.workspace().clone())
         .unwrap();
@@ -8179,7 +8179,7 @@ async fn test_hide_root(cx: &mut gpui::TestAppContext) {
     {
         let project = Project::test(fs.clone(), ["/root1".as_ref()], cx).await;
         let window =
-            cx.add_window(|window, cx| WindowRoot::test_new(project.clone(), window, cx));
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
         let workspace = window
             .read_with(cx, |mw, _| mw.workspace().clone())
             .unwrap();
@@ -8216,7 +8216,7 @@ async fn test_hide_root(cx: &mut gpui::TestAppContext) {
     {
         let project = Project::test(fs.clone(), ["/root1".as_ref()], cx).await;
         let window =
-            cx.add_window(|window, cx| WindowRoot::test_new(project.clone(), window, cx));
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
         let workspace = window
             .read_with(cx, |mw, _| mw.workspace().clone())
             .unwrap();
@@ -8262,7 +8262,7 @@ async fn test_hide_root(cx: &mut gpui::TestAppContext) {
     {
         let project = Project::test(fs.clone(), ["/root1".as_ref(), "/root2".as_ref()], cx).await;
         let window =
-            cx.add_window(|window, cx| WindowRoot::test_new(project.clone(), window, cx));
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
         let workspace = window
             .read_with(cx, |mw, _| mw.workspace().clone())
             .unwrap();
@@ -8302,7 +8302,7 @@ async fn test_hide_root(cx: &mut gpui::TestAppContext) {
     {
         let project = Project::test(fs.clone(), ["/root1".as_ref(), "/root2".as_ref()], cx).await;
         let window =
-            cx.add_window(|window, cx| WindowRoot::test_new(project.clone(), window, cx));
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
         let workspace = window
             .read_with(cx, |mw, _| mw.workspace().clone())
             .unwrap();
@@ -8356,7 +8356,7 @@ async fn test_compare_selected_files(cx: &mut gpui::TestAppContext) {
     .await;
 
     let project = Project::test(fs.clone(), ["/root".as_ref()], cx).await;
-    let window = cx.add_window(|window, cx| WindowRoot::test_new(project.clone(), window, cx));
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
     let workspace = window
         .read_with(cx, |mw, _| mw.workspace().clone())
         .unwrap();
@@ -8461,7 +8461,7 @@ async fn test_compare_files_context_menu(cx: &mut gpui::TestAppContext) {
     .await;
 
     let project = Project::test(fs.clone(), ["/root".as_ref()], cx).await;
-    let window = cx.add_window(|window, cx| WindowRoot::test_new(project.clone(), window, cx));
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
     let workspace = window
         .read_with(cx, |mw, _| mw.workspace().clone())
         .unwrap();
@@ -8562,7 +8562,7 @@ async fn test_hide_hidden_entries(cx: &mut gpui::TestAppContext) {
     .await;
 
     let project = Project::test(fs.clone(), ["/root".as_ref()], cx).await;
-    let window = cx.add_window(|window, cx| WindowRoot::test_new(project.clone(), window, cx));
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
     let workspace = window
         .read_with(cx, |mw, _| mw.workspace().clone())
         .unwrap();
@@ -8910,7 +8910,7 @@ async fn test_sort_mode_directories_first(cx: &mut gpui::TestAppContext) {
     .await;
 
     let project = Project::test(fs.clone(), ["/root".as_ref()], cx).await;
-    let window = cx.add_window(|window, cx| WindowRoot::test_new(project.clone(), window, cx));
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
     let workspace = window
         .read_with(cx, |mw, _| mw.workspace().clone())
         .unwrap();
@@ -8950,7 +8950,7 @@ async fn test_sort_mode_mixed(cx: &mut gpui::TestAppContext) {
     .await;
 
     let project = Project::test(fs.clone(), ["/root".as_ref()], cx).await;
-    let window = cx.add_window(|window, cx| WindowRoot::test_new(project.clone(), window, cx));
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
     let workspace = window
         .read_with(cx, |mw, _| mw.workspace().clone())
         .unwrap();
@@ -9002,7 +9002,7 @@ async fn test_sort_mode_files_first(cx: &mut gpui::TestAppContext) {
     .await;
 
     let project = Project::test(fs.clone(), ["/root".as_ref()], cx).await;
-    let window = cx.add_window(|window, cx| WindowRoot::test_new(project.clone(), window, cx));
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
     let workspace = window
         .read_with(cx, |mw, _| mw.workspace().clone())
         .unwrap();
@@ -9051,7 +9051,7 @@ async fn test_sort_mode_toggle(cx: &mut gpui::TestAppContext) {
     .await;
 
     let project = Project::test(fs.clone(), ["/root".as_ref()], cx).await;
-    let window = cx.add_window(|window, cx| WindowRoot::test_new(project.clone(), window, cx));
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
     let workspace = window
         .read_with(cx, |mw, _| mw.workspace().clone())
         .unwrap();
@@ -9239,7 +9239,7 @@ async fn test_preserve_temporary_unfolded_active_index_on_blur_from_context_menu
     .await;
 
     let project = Project::test(fs.clone(), ["/root1".as_ref()], cx).await;
-    let window = cx.add_window(|window, cx| WindowRoot::test_new(project.clone(), window, cx));
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
     let workspace = window
         .read_with(cx, |mw, _| mw.workspace().clone())
         .unwrap();
@@ -9423,7 +9423,7 @@ async fn run_create_file_in_folded_path_case(
     .await;
 
     let project = Project::test(fs.clone(), ["/root1".as_ref()], cx).await;
-    let window = cx.add_window(|window, cx| WindowRoot::test_new(project.clone(), window, cx));
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
     let workspace = window
         .read_with(cx, |mw, _| mw.workspace().clone())
         .unwrap();

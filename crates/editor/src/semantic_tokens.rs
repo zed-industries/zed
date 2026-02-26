@@ -470,7 +470,7 @@ mod tests {
     use rope::Point;
     use serde_json::json;
     use settings::{LanguageSettingsContent, SemanticTokenRules, SemanticTokens, SettingsStore};
-    use workspace::{WindowRoot, WorkspaceHandle as _};
+    use workspace::{MultiWorkspace, WorkspaceHandle as _};
 
     use crate::{
         Capability,
@@ -891,7 +891,7 @@ mod tests {
             .await;
 
         let (multi_workspace, cx) =
-            cx.add_window_view(|window, cx| WindowRoot::test_new(project.clone(), window, cx));
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
         let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
         project
             .update(cx, |project, cx| {
@@ -1110,7 +1110,7 @@ mod tests {
             .await;
 
         let (multi_workspace, cx) =
-            cx.add_window_view(|window, cx| WindowRoot::test_new(project.clone(), window, cx));
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
         let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
         project
             .update(cx, |project, cx| {
@@ -1341,7 +1341,7 @@ mod tests {
             .await;
 
         let (multi_workspace, cx) =
-            cx.add_window_view(|window, cx| WindowRoot::test_new(project.clone(), window, cx));
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
         let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
         project
             .update(cx, |project, cx| {

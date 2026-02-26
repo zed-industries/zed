@@ -7,7 +7,7 @@ use gpui::{AppContext as _, TestAppContext, VisualTestContext};
 use project::ProjectPath;
 use serde_json::json;
 use util::{path, rel_path::rel_path};
-use workspace::{WindowRoot, Workspace};
+use workspace::{MultiWorkspace, Workspace};
 
 //
 use crate::TestServer;
@@ -67,7 +67,7 @@ async fn test_project_diff(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext)
                 cx,
             )
         });
-        WindowRoot::new(workspace, window, cx)
+        MultiWorkspace::new(workspace, window, cx)
     });
     let cx_b = &mut VisualTestContext::from_window(*window_b, cx_b);
     let workspace_b = window_b

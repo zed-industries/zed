@@ -1847,7 +1847,7 @@ mod tests {
     use pretty_assertions::assert_eq;
     use project::FakeFs;
     use settings::SettingsStore;
-    use workspace::WindowRoot;
+    use workspace::MultiWorkspace;
 
     #[test]
     fn test_prepare_empty_task() {
@@ -1880,7 +1880,7 @@ mod tests {
         let fs = FakeFs::new(cx.executor());
         let project = Project::test(fs, [], cx).await;
         let window_handle =
-            cx.add_window(|window, cx| WindowRoot::test_new(project, window, cx));
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project, window, cx));
 
         let terminal_panel = window_handle
             .update(cx, |multi_workspace, window, cx| {
@@ -1966,7 +1966,7 @@ mod tests {
         let fs = FakeFs::new(cx.executor());
         let project = Project::test(fs, [], cx).await;
         let window_handle =
-            cx.add_window(|window, cx| WindowRoot::test_new(project, window, cx));
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project, window, cx));
 
         let terminal_panel = window_handle
             .update(cx, |multi_workspace, window, cx| {
@@ -2010,7 +2010,7 @@ mod tests {
         let fs = FakeFs::new(cx.executor());
         let project = Project::test(fs, [], cx).await;
         let window_handle =
-            cx.add_window(|window, cx| WindowRoot::test_new(project, window, cx));
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project, window, cx));
 
         let terminal_panel = window_handle
             .update(cx, |multi_workspace, window, cx| {

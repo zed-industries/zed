@@ -400,7 +400,7 @@ mod tests {
     use task::{TaskContext, TaskVariables, VariableName};
     use ui::VisualContext;
     use util::{path, rel_path::rel_path};
-    use workspace::{AppState, WindowRoot};
+    use workspace::{AppState, MultiWorkspace};
 
     use crate::task_contexts;
 
@@ -475,7 +475,7 @@ mod tests {
             project.worktrees(cx).next().unwrap().read(cx).id()
         });
         let (multi_workspace, cx) =
-            cx.add_window_view(|window, cx| WindowRoot::test_new(project.clone(), window, cx));
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
         let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
         let buffer1 = workspace

@@ -53,7 +53,7 @@ use std::{
 use text::Point;
 use util::{path, rel_path::rel_path, uri};
 use workspace::item::Item as _;
-use workspace::{CloseIntent, WindowRoot, Workspace};
+use workspace::{CloseIntent, MultiWorkspace, Workspace};
 
 #[gpui::test(iterations = 10)]
 async fn test_host_disconnect(
@@ -107,7 +107,7 @@ async fn test_host_disconnect(
                 cx,
             )
         });
-        WindowRoot::new(workspace, window, cx)
+        MultiWorkspace::new(workspace, window, cx)
     });
     let cx_b = &mut VisualTestContext::from_window(*window_b, cx_b);
     let workspace_b = window_b

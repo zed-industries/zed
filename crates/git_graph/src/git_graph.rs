@@ -2323,7 +2323,7 @@ mod tests {
     use smallvec::{SmallVec, smallvec};
     use std::path::Path;
     use std::sync::{Arc, Mutex};
-    use workspace::WindowRoot;
+    use workspace::MultiWorkspace;
 
     fn init_test(cx: &mut TestAppContext) {
         cx.update(|cx| {
@@ -3112,7 +3112,7 @@ mod tests {
         cx.run_until_parked();
 
         let (multi_workspace, cx) =
-            cx.add_window_view(|window, cx| WindowRoot::test_new(project.clone(), window, cx));
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
 
         let workspace_weak =
             multi_workspace.read_with(&*cx, |multi, _| multi.workspace().downgrade());

@@ -540,7 +540,7 @@ mod tests {
         terminal_settings::{AlternateScroll, CursorShape},
     };
     use util::path;
-    use workspace::{AppState, WindowRoot};
+    use workspace::{AppState, MultiWorkspace};
 
     async fn init_test(
         app_cx: &mut TestAppContext,
@@ -570,7 +570,7 @@ mod tests {
         .await;
 
         let (multi_workspace, cx) = app_cx
-            .add_window_view(|window, cx| WindowRoot::test_new(project.clone(), window, cx));
+            .add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
         let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
         let terminal = app_cx.new(|cx| {

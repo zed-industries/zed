@@ -8,7 +8,7 @@ use ui::{
     ModalFooter, ModalHeader, ParentElement, Section, Styled, StyledExt, Window, div, h_flex, rems,
 };
 use workspace::{
-    ModalView, WindowRoot, OpenOptions, Workspace, notifications::DetachAndPromptErr,
+    ModalView, MultiWorkspace, OpenOptions, Workspace, notifications::DetachAndPromptErr,
 };
 
 use crate::open_remote_project;
@@ -111,7 +111,7 @@ impl DisconnectedOverlay {
             return;
         };
 
-        let Some(window_handle) = window.window_handle().downcast::<WindowRoot>() else {
+        let Some(window_handle) = window.window_handle().downcast::<MultiWorkspace>() else {
             return;
         };
 

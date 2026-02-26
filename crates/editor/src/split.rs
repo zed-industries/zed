@@ -2156,7 +2156,7 @@ mod tests {
     use settings::{DiffViewStyle, SettingsStore};
     use ui::{VisualContext as _, div, px};
     use util::rel_path::rel_path;
-    use workspace::WindowRoot;
+    use workspace::MultiWorkspace;
 
     use crate::SplittableEditor;
     use crate::display_map::{
@@ -2179,7 +2179,7 @@ mod tests {
         });
         let project = Project::test(FakeFs::new(cx.executor()), [], cx).await;
         let (multi_workspace, cx) =
-            cx.add_window_view(|window, cx| WindowRoot::test_new(project.clone(), window, cx));
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
         let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
         let rhs_multibuffer = cx.new(|cx| {
             let mut multibuffer = MultiBuffer::new(Capability::ReadWrite);

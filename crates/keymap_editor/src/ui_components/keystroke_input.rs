@@ -674,7 +674,7 @@ mod tests {
     use itertools::Itertools as _;
     use project::Project;
     use settings::SettingsStore;
-    use workspace::WindowRoot;
+    use workspace::MultiWorkspace;
 
     pub struct KeystrokeInputTestHelper {
         input: Entity<KeystrokeInput>,
@@ -1121,7 +1121,7 @@ mod tests {
         let fs = FakeFs::new(cx.executor());
         let project = Project::test(fs, [], cx).await;
         let window_handle =
-            cx.add_window(|window, cx| WindowRoot::test_new(project.clone(), window, cx));
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
         let cx = VisualTestContext::from_window(window_handle.into(), cx);
         KeystrokeInputTestHelper::new(cx)
     }

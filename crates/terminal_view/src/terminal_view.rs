@@ -1843,7 +1843,7 @@ mod tests {
     use std::path::Path;
     use util::paths::PathStyle;
     use util::rel_path::RelPath;
-    use workspace::{AppState, WindowRoot};
+    use workspace::{AppState, MultiWorkspace};
 
     // Working directory calculation tests
 
@@ -2021,7 +2021,7 @@ mod tests {
 
         let project = Project::test(params.fs.clone(), [], cx).await;
         let window_handle =
-            cx.add_window(|window, cx| WindowRoot::test_new(project.clone(), window, cx));
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
         let workspace = window_handle
             .read_with(cx, |mw, _| mw.workspace().clone())
             .unwrap();

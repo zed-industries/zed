@@ -44,7 +44,7 @@ use ui::{
 };
 use util::{ResultExt, paths::PathExt};
 use workspace::{
-    HistoryManager, ModalView, WindowRoot, OpenOptions, OpenVisible, PathList,
+    HistoryManager, ModalView, MultiWorkspace, OpenOptions, OpenVisible, PathList,
     SerializedWorkspaceLocation, WORKSPACE_DB, Workspace, WorkspaceId,
     notifications::DetachAndPromptErr, with_active_or_new_workspace,
 };
@@ -235,7 +235,7 @@ pub fn init(cx: &mut App) {
             );
 
             let app_state = workspace.app_state().clone();
-            let window_handle = window.window_handle().downcast::<WindowRoot>();
+            let window_handle = window.window_handle().downcast::<MultiWorkspace>();
 
             cx.spawn_in(window, async move |workspace, cx| {
                 use util::paths::SanitizedPath;
@@ -315,7 +315,7 @@ pub fn init(cx: &mut App) {
             let fs = workspace.project().read(cx).fs().clone();
             add_wsl_distro(fs, &open_wsl.distro, cx);
             let open_options = OpenOptions {
-                replace_window: window.window_handle().downcast::<WindowRoot>(),
+                replace_window: window.window_handle().downcast::<MultiWorkspace>(),
                 ..Default::default()
             };
 
@@ -925,7 +925,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                             let paths = candidate_workspace_paths.paths().to_vec();
                             if replace_current_window {
                                 if let Some(handle) =
-                                    window.window_handle().downcast::<WindowRoot>()
+                                    window.window_handle().downcast::<MultiWorkspace>()
                                 {
                                     cx.defer(move |cx| {
                                         if let Some(task) = handle
@@ -946,7 +946,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                         SerializedWorkspaceLocation::Remote(mut connection) => {
                             let app_state = workspace.app_state().clone();
                             let replace_window = if replace_current_window {
-                                window.window_handle().downcast::<WindowRoot>()
+                                window.window_handle().downcast::<MultiWorkspace>()
                             } else {
                                 None
                             };
@@ -1627,7 +1627,7 @@ mod tests {
         .unwrap();
         assert_eq!(cx.update(|cx| cx.windows().len()), 1);
 
-        let multi_workspace = cx.update(|cx| cx.windows()[0].downcast::<WindowRoot>().unwrap());
+        let multi_workspace = cx.update(|cx| cx.windows()[0].downcast::<MultiWorkspace>().unwrap());
         multi_workspace
             .update(cx, |multi_workspace, _, cx| {
                 assert!(!multi_workspace.workspace().read(cx).is_edited())
@@ -1730,7 +1730,7 @@ mod tests {
     }
 
     fn open_recent_projects(
-        multi_workspace: &WindowHandle<WindowRoot>,
+        multi_workspace: &WindowHandle<MultiWorkspace>,
         cx: &mut TestAppContext,
     ) -> Entity<Picker<RecentProjectsDelegate>> {
         cx.dispatch_action(
@@ -1785,7 +1785,7 @@ mod tests {
         .unwrap();
 
         assert_eq!(cx.update(|cx| cx.windows().len()), 1);
-        let multi_workspace = cx.update(|cx| cx.windows()[0].downcast::<WindowRoot>().unwrap());
+        let multi_workspace = cx.update(|cx| cx.windows()[0].downcast::<MultiWorkspace>().unwrap());
 
         cx.run_until_parked();
 
@@ -1848,7 +1848,7 @@ mod tests {
         .unwrap();
 
         assert_eq!(cx.update(|cx| cx.windows().len()), 1);
-        let multi_workspace = cx.update(|cx| cx.windows()[0].downcast::<WindowRoot>().unwrap());
+        let multi_workspace = cx.update(|cx| cx.windows()[0].downcast::<MultiWorkspace>().unwrap());
 
         cx.run_until_parked();
 

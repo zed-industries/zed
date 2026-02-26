@@ -2395,8 +2395,8 @@ mod tests {
 
     #[gpui::test]
     async fn test_multi_workspace_serializes_on_add_and_remove(cx: &mut gpui::TestAppContext) {
+        use crate::multi_workspace::MultiWorkspace;
         use crate::persistence::read_multi_workspace_state;
-        use crate::window_root::WindowRoot;
         use feature_flags::FeatureFlagAppExt;
         use gpui::AppContext as _;
         use project::Project;
@@ -2413,7 +2413,7 @@ mod tests {
         let project2 = Project::test(fs.clone(), [], cx).await;
 
         let (multi_workspace, cx) =
-            cx.add_window_view(|window, cx| WindowRoot::test_new(project1.clone(), window, cx));
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project1.clone(), window, cx));
 
         multi_workspace.update_in(cx, |mw, _, cx| {
             mw.set_random_database_id(cx);
@@ -3945,7 +3945,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_flush_serialization_completes_before_quit(cx: &mut gpui::TestAppContext) {
-        use crate::window_root::WindowRoot;
+        use crate::multi_workspace::MultiWorkspace;
         use feature_flags::FeatureFlagAppExt;
 
         use project::Project;
@@ -3960,10 +3960,10 @@ mod tests {
         let fs = fs::FakeFs::new(cx.executor());
         let project = Project::test(fs.clone(), [], cx).await;
 
-        let (window_root, cx) =
-            cx.add_window_view(|window, cx| WindowRoot::test_new(project.clone(), window, cx));
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
 
-        let workspace = window_root.read_with(cx, |mw, _| mw.workspace().clone());
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
         // Assign a database_id so serialization will actually persist.
         let workspace_id = DB.next_id().await.unwrap();
@@ -3977,7 +3977,7 @@ mod tests {
         // Call flush_serialization and await the returned task directly
         // (without run_until_parked — the point is that awaiting the task
         // alone is sufficient).
-        let task = window_root.update_in(cx, |mw, window, cx| {
+        let task = multi_workspace.update_in(cx, |mw, window, cx| {
             mw.workspace()
                 .update(cx, |ws, cx| ws.flush_serialization(window, cx))
         });
@@ -3995,8 +3995,8 @@ mod tests {
     async fn test_create_workspace_serializes_active_workspace_id_after_db_id_assigned(
         cx: &mut gpui::TestAppContext,
     ) {
+        use crate::multi_workspace::MultiWorkspace;
         use crate::persistence::read_multi_workspace_state;
-        use crate::window_root::WindowRoot;
         use feature_flags::FeatureFlagAppExt;
 
         use project::Project;
@@ -4011,19 +4011,19 @@ mod tests {
         let fs = fs::FakeFs::new(cx.executor());
         let project = Project::test(fs.clone(), [], cx).await;
 
-        let (window_root, cx) =
-            cx.add_window_view(|window, cx| WindowRoot::test_new(project.clone(), window, cx));
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
 
         // Give the first workspace a database_id.
-        window_root.update_in(cx, |mw, _, cx| {
+        multi_workspace.update_in(cx, |mw, _, cx| {
             mw.set_random_database_id(cx);
         });
 
         let window_id =
-            window_root.update_in(cx, |_, window, _cx| window.window_handle().window_id());
+            multi_workspace.update_in(cx, |_, window, _cx| window.window_handle().window_id());
 
         // Create a new workspace via the MultiWorkspace API (triggers next_id()).
-        window_root.update_in(cx, |mw, window, cx| {
+        multi_workspace.update_in(cx, |mw, window, cx| {
             mw.create_workspace(window, cx);
         });
 
@@ -4036,7 +4036,7 @@ mod tests {
         // The new workspace should now have a database_id, and the multi-workspace
         // state should record it as the active workspace.
         let new_workspace_db_id =
-            window_root.read_with(cx, |mw, cx| mw.workspace().read(cx).database_id());
+            multi_workspace.read_with(cx, |mw, cx| mw.workspace().read(cx).database_id());
         assert!(
             new_workspace_db_id.is_some(),
             "New workspace should have a database_id after run_until_parked"
@@ -4049,7 +4049,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_create_workspace_individual_serialization(cx: &mut gpui::TestAppContext) {
-        use crate::window_root::WindowRoot;
+        use crate::multi_workspace::MultiWorkspace;
         use feature_flags::FeatureFlagAppExt;
 
         use project::Project;
@@ -4064,22 +4064,23 @@ mod tests {
         let fs = fs::FakeFs::new(cx.executor());
         let project = Project::test(fs.clone(), [], cx).await;
 
-        let (window_root, cx) =
-            cx.add_window_view(|window, cx| WindowRoot::test_new(project.clone(), window, cx));
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
 
-        window_root.update_in(cx, |mw, _, cx| {
+        multi_workspace.update_in(cx, |mw, _, cx| {
             mw.set_random_database_id(cx);
         });
 
         // Create a new workspace.
-        window_root.update_in(cx, |mw, window, cx| {
+        multi_workspace.update_in(cx, |mw, window, cx| {
             mw.create_workspace(window, cx);
         });
 
         cx.run_until_parked();
 
         // Get the new workspace's database_id.
-        let new_db_id = window_root.read_with(cx, |mw, cx| mw.workspace().read(cx).database_id());
+        let new_db_id =
+            multi_workspace.read_with(cx, |mw, cx| mw.workspace().read(cx).database_id());
         assert!(
             new_db_id.is_some(),
             "New workspace should have a database_id"
@@ -4098,7 +4099,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_remove_workspace_deletes_db_row(cx: &mut gpui::TestAppContext) {
-        use crate::window_root::WindowRoot;
+        use crate::multi_workspace::MultiWorkspace;
         use feature_flags::FeatureFlagAppExt;
         use gpui::AppContext as _;
         use project::Project;
@@ -4114,17 +4115,17 @@ mod tests {
         let project1 = Project::test(fs.clone(), [], cx).await;
         let project2 = Project::test(fs.clone(), [], cx).await;
 
-        let (window_root, cx) =
-            cx.add_window_view(|window, cx| WindowRoot::test_new(project1.clone(), window, cx));
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project1.clone(), window, cx));
 
-        window_root.update_in(cx, |mw, _, cx| {
+        multi_workspace.update_in(cx, |mw, _, cx| {
             mw.set_random_database_id(cx);
         });
 
         // Get a real DB id for workspace2 so the row actually exists.
         let workspace2_db_id = DB.next_id().await.unwrap();
 
-        window_root.update_in(cx, |mw, window, cx| {
+        multi_workspace.update_in(cx, |mw, window, cx| {
             let workspace = cx.new(|cx| crate::Workspace::test_new(project2.clone(), window, cx));
             workspace.update(cx, |ws: &mut crate::Workspace, _cx| {
                 ws.set_database_id(workspace2_db_id)
@@ -4155,7 +4156,7 @@ mod tests {
         );
 
         // Remove workspace at index 1 (the second workspace).
-        window_root.update_in(cx, |mw, window, cx| {
+        multi_workspace.update_in(cx, |mw, window, cx| {
             mw.remove_workspace(1, window, cx);
         });
 
@@ -4170,7 +4171,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_remove_workspace_not_restored_as_zombie(cx: &mut gpui::TestAppContext) {
-        use crate::window_root::WindowRoot;
+        use crate::multi_workspace::MultiWorkspace;
         use feature_flags::FeatureFlagAppExt;
         use gpui::AppContext as _;
         use project::Project;
@@ -4195,16 +4196,16 @@ mod tests {
         let ws1_id = DB.next_id().await.unwrap();
         let ws2_id = DB.next_id().await.unwrap();
 
-        let (window_root, cx) =
-            cx.add_window_view(|window, cx| WindowRoot::test_new(project1.clone(), window, cx));
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project1.clone(), window, cx));
 
-        window_root.update_in(cx, |mw, _, cx| {
+        multi_workspace.update_in(cx, |mw, _, cx| {
             mw.workspace().update(cx, |ws, _cx| {
                 ws.set_database_id(ws1_id);
             });
         });
 
-        window_root.update_in(cx, |mw, window, cx| {
+        multi_workspace.update_in(cx, |mw, window, cx| {
             let workspace = cx.new(|cx| crate::Workspace::test_new(project2.clone(), window, cx));
             workspace.update(cx, |ws: &mut crate::Workspace, _cx| {
                 ws.set_database_id(ws2_id)
@@ -4248,7 +4249,7 @@ mod tests {
         .await;
 
         // Remove workspace2 (index 1).
-        window_root.update_in(cx, |mw, window, cx| {
+        multi_workspace.update_in(cx, |mw, window, cx| {
             mw.remove_workspace(1, window, cx);
         });
 
@@ -4274,7 +4275,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_pending_removal_tasks_drained_on_flush(cx: &mut gpui::TestAppContext) {
-        use crate::window_root::WindowRoot;
+        use crate::multi_workspace::MultiWorkspace;
         use feature_flags::FeatureFlagAppExt;
         use gpui::AppContext as _;
         use project::Project;
@@ -4293,14 +4294,14 @@ mod tests {
         // Get a real DB id for workspace2 so the row actually exists.
         let workspace2_db_id = DB.next_id().await.unwrap();
 
-        let (window_root, cx) =
-            cx.add_window_view(|window, cx| WindowRoot::test_new(project1.clone(), window, cx));
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project1.clone(), window, cx));
 
-        window_root.update_in(cx, |mw, _, cx| {
+        multi_workspace.update_in(cx, |mw, _, cx| {
             mw.set_random_database_id(cx);
         });
 
-        window_root.update_in(cx, |mw, window, cx| {
+        multi_workspace.update_in(cx, |mw, window, cx| {
             let workspace = cx.new(|cx| crate::Workspace::test_new(project2.clone(), window, cx));
             workspace.update(cx, |ws: &mut crate::Workspace, _cx| {
                 ws.set_database_id(workspace2_db_id)
@@ -4327,13 +4328,13 @@ mod tests {
         cx.run_until_parked();
 
         // Remove workspace2 — this pushes a task to pending_removal_tasks.
-        window_root.update_in(cx, |mw, window, cx| {
+        multi_workspace.update_in(cx, |mw, window, cx| {
             mw.remove_workspace(1, window, cx);
         });
 
         // Simulate the quit handler pattern: collect flush tasks + pending
         // removal tasks and await them all.
-        let all_tasks = window_root.update_in(cx, |mw, window, cx| {
+        let all_tasks = multi_workspace.update_in(cx, |mw, window, cx| {
             let mut tasks: Vec<Task<()>> = mw
                 .workspaces()
                 .iter()

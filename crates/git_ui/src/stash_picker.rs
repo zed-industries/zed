@@ -594,7 +594,7 @@ mod tests {
     use picker::PickerDelegate;
     use project::{FakeFs, Project};
     use settings::SettingsStore;
-    use workspace::WindowRoot;
+    use workspace::MultiWorkspace;
 
     fn init_test(cx: &mut TestAppContext) {
         cx.update(|cx| {
@@ -627,7 +627,7 @@ mod tests {
         let fs = FakeFs::new(cx.executor());
         let project = Project::test(fs, [], cx).await;
         let multi_workspace =
-            cx.add_window(|window, cx| WindowRoot::test_new(project, window, cx));
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project, window, cx));
         let cx = &mut VisualTestContext::from_window(*multi_workspace, cx);
         let workspace = multi_workspace
             .update(cx, |workspace, _, _| workspace.workspace().clone())

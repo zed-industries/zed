@@ -71,7 +71,7 @@ use {
         time::Duration,
     },
     util::ResultExt as _,
-    workspace::{AppState, WindowRoot, Workspace, WorkspaceId},
+    workspace::{AppState, MultiWorkspace, Workspace, WorkspaceId},
     zed_actions::OpenSettingsAt,
 };
 
@@ -1288,7 +1288,7 @@ fn run_settings_ui_subpage_visual_tests(
         )
     });
 
-    let workspace_window: WindowHandle<WindowRoot> = cx
+    let workspace_window: WindowHandle<MultiWorkspace> = cx
         .update(|cx| {
             cx.open_window(
                 WindowOptions {
@@ -1301,7 +1301,7 @@ fn run_settings_ui_subpage_visual_tests(
                     let workspace = cx.new(|cx| {
                         Workspace::new(None, project.clone(), app_state.clone(), window, cx)
                     });
-                    cx.new(|cx| WindowRoot::new(workspace, window, cx))
+                    cx.new(|cx| MultiWorkspace::new(workspace, window, cx))
                 },
             )
         })
@@ -2344,7 +2344,7 @@ fn run_tool_permissions_visual_tests(
         )
     });
 
-    let workspace_window: WindowHandle<WindowRoot> = cx
+    let workspace_window: WindowHandle<MultiWorkspace> = cx
         .update(|cx| {
             cx.open_window(
                 WindowOptions {
@@ -2357,7 +2357,7 @@ fn run_tool_permissions_visual_tests(
                     let workspace = cx.new(|cx| {
                         Workspace::new(None, project.clone(), app_state.clone(), window, cx)
                     });
-                    cx.new(|cx| WindowRoot::new(workspace, window, cx))
+                    cx.new(|cx| MultiWorkspace::new(workspace, window, cx))
                 },
             )
         })
@@ -2586,7 +2586,7 @@ fn run_multi_workspace_sidebar_visual_tests(
     };
 
     // Open a MultiWorkspace window with both workspaces created at construction time
-    let multi_workspace_window: WindowHandle<WindowRoot> = cx
+    let multi_workspace_window: WindowHandle<MultiWorkspace> = cx
         .update(|cx| {
             cx.open_window(
                 WindowOptions {
@@ -2603,7 +2603,7 @@ fn run_multi_workspace_sidebar_visual_tests(
                         Workspace::new(None, project2.clone(), app_state.clone(), window, cx)
                     });
                     cx.new(|cx| {
-                        let mut multi_workspace = WindowRoot::new(workspace1, window, cx);
+                        let mut multi_workspace = MultiWorkspace::new(workspace1, window, cx);
                         multi_workspace.activate(workspace2, cx);
                         multi_workspace
                     })

@@ -20,7 +20,7 @@ use settings::Settings;
 use std::{path::PathBuf, sync::Arc};
 use ui::{HighlightedLabel, KeyBinding, ListItem, ListItemSpacing, prelude::*};
 use util::ResultExt;
-use workspace::{ModalView, WindowRoot, Workspace, notifications::DetachAndPromptErr};
+use workspace::{ModalView, MultiWorkspace, Workspace, notifications::DetachAndPromptErr};
 
 actions!(git, [WorktreeFromDefault, WorktreeFromDefaultOnWindow]);
 
@@ -432,7 +432,7 @@ async fn open_remote_worktree(
 ) -> anyhow::Result<()> {
     let workspace_window = cx
         .window_handle()
-        .downcast::<WindowRoot>()
+        .downcast::<MultiWorkspace>()
         .ok_or_else(|| anyhow::anyhow!("Window is not a Workspace window"))?;
 
     let connect_task = workspace.update_in(cx, |workspace, window, cx| {
@@ -505,7 +505,7 @@ async fn open_remote_worktree(
                 workspace.centered_layout = workspace_position.centered_layout;
                 workspace
             });
-            cx.new(|cx| WindowRoot::new(workspace, window, cx))
+            cx.new(|cx| MultiWorkspace::new(workspace, window, cx))
         })?
     };
 

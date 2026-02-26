@@ -1295,7 +1295,7 @@ mod tests {
     use serde_json::json;
     use settings::SettingsStore;
     use util::path;
-    use workspace::WindowRoot;
+    use workspace::MultiWorkspace;
 
     fn init_test(cx: &mut TestAppContext) {
         cx.update(|cx| {
@@ -1349,7 +1349,7 @@ mod tests {
         let project = Project::test(fs, [], cx).await;
 
         let window_handle =
-            cx.add_window(|window, cx| WindowRoot::test_new(project, window, cx));
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project, window, cx));
         let workspace = window_handle
             .read_with(cx, |mw, _| mw.workspace().clone())
             .unwrap();

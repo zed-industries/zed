@@ -28,7 +28,7 @@ use util::ResultExt;
 use util::paths::PathWithPosition;
 use workspace::PathList;
 use workspace::item::ItemHandle;
-use workspace::{AppState, WindowRoot, OpenOptions, SerializedWorkspaceLocation};
+use workspace::{AppState, MultiWorkspace, OpenOptions, SerializedWorkspaceLocation};
 
 #[derive(Default, Debug)]
 pub struct OpenRequest {
@@ -335,7 +335,7 @@ pub async fn open_paths_with_positions(
     open_options: workspace::OpenOptions,
     cx: &mut AsyncApp,
 ) -> Result<(
-    WindowHandle<WindowRoot>,
+    WindowHandle<MultiWorkspace>,
     Vec<Option<Result<Box<dyn ItemHandle>>>>,
 )> {
     let paths = path_positions
@@ -740,7 +740,7 @@ mod tests {
     use serde_json::json;
     use std::{sync::Arc, task::Poll};
     use util::path;
-    use workspace::{AppState, WindowRoot};
+    use workspace::{AppState, MultiWorkspace};
 
     #[gpui::test]
     fn test_parse_ssh_url(cx: &mut TestAppContext) {
@@ -876,7 +876,7 @@ mod tests {
         open_workspace_file(path!("/root/dir1"), None, app_state.clone(), cx).await;
 
         assert_eq!(cx.windows().len(), 1);
-        let multi_workspace = cx.windows()[0].downcast::<WindowRoot>().unwrap();
+        let multi_workspace = cx.windows()[0].downcast::<MultiWorkspace>().unwrap();
         multi_workspace
             .update(cx, |multi_workspace, _, cx| {
                 multi_workspace.workspace().update(cx, |workspace, cx| {
@@ -908,7 +908,7 @@ mod tests {
 
         assert_eq!(cx.windows().len(), 2);
 
-        let multi_workspace_2 = cx.windows()[1].downcast::<WindowRoot>().unwrap();
+        let multi_workspace_2 = cx.windows()[1].downcast::<MultiWorkspace>().unwrap();
         multi_workspace_2
             .update(cx, |multi_workspace, _, cx| {
                 multi_workspace.workspace().update(cx, |workspace, cx| {
@@ -991,7 +991,7 @@ mod tests {
         open_workspace_file(path!("/root/file5.txt"), None, app_state.clone(), cx).await;
 
         assert_eq!(cx.windows().len(), 1);
-        let multi_workspace_1 = cx.windows()[0].downcast::<WindowRoot>().unwrap();
+        let multi_workspace_1 = cx.windows()[0].downcast::<MultiWorkspace>().unwrap();
         multi_workspace_1
             .update(cx, |multi_workspace, _, cx| {
                 multi_workspace.workspace().update(cx, |workspace, cx| {
@@ -1019,7 +1019,7 @@ mod tests {
         open_workspace_file(path!("/root/file7.txt"), Some(true), app_state.clone(), cx).await;
 
         assert_eq!(cx.windows().len(), 2);
-        let multi_workspace_2 = cx.windows()[1].downcast::<WindowRoot>().unwrap();
+        let multi_workspace_2 = cx.windows()[1].downcast::<MultiWorkspace>().unwrap();
         multi_workspace_2
             .update(cx, |multi_workspace, _, cx| {
                 multi_workspace.workspace().update(cx, |workspace, cx| {
@@ -1315,7 +1315,7 @@ mod tests {
             .await;
 
         assert_eq!(cx.windows().len(), 1);
-        let multi_workspace_1 = cx.windows()[0].downcast::<WindowRoot>().unwrap();
+        let multi_workspace_1 = cx.windows()[0].downcast::<MultiWorkspace>().unwrap();
 
         // Open second workspace in a new window
         let workspace_paths_2 = vec![file2_path.to_string()];
@@ -1342,7 +1342,7 @@ mod tests {
             .await;
 
         assert_eq!(cx.windows().len(), 2);
-        let multi_workspace_2 = cx.windows()[1].downcast::<WindowRoot>().unwrap();
+        let multi_workspace_2 = cx.windows()[1].downcast::<MultiWorkspace>().unwrap();
 
         // Focus window2
         multi_workspace_2

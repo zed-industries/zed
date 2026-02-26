@@ -6350,7 +6350,7 @@ mod tests {
     use util::path;
     use util::rel_path::rel_path;
 
-    use workspace::WindowRoot;
+    use workspace::MultiWorkspace;
 
     use super::*;
 
@@ -6399,7 +6399,7 @@ mod tests {
         let project =
             Project::test(fs.clone(), [path!("/root/zed/crates/gpui").as_ref()], cx).await;
         let window_handle =
-            cx.add_window(|window, cx| WindowRoot::test_new(project.clone(), window, cx));
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
         let workspace = window_handle
             .read_with(cx, |mw, _| mw.workspace().clone())
             .unwrap();
@@ -6523,7 +6523,7 @@ mod tests {
 
         let project = Project::test(fs.clone(), [Path::new(path!("/root/project"))], cx).await;
         let window_handle =
-            cx.add_window(|window, cx| WindowRoot::test_new(project.clone(), window, cx));
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
         let workspace = window_handle
             .read_with(cx, |mw, _| mw.workspace().clone())
             .unwrap();
@@ -6718,7 +6718,7 @@ mod tests {
 
         let project = Project::test(fs.clone(), [Path::new(path!("/root/project"))], cx).await;
         let window_handle =
-            cx.add_window(|window, cx| WindowRoot::test_new(project.clone(), window, cx));
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
         let workspace = window_handle
             .read_with(cx, |mw, _| mw.workspace().clone())
             .unwrap();
@@ -6932,7 +6932,7 @@ mod tests {
 
         let project = Project::test(fs.clone(), [Path::new(path!("/root/project"))], cx).await;
         let window_handle =
-            cx.add_window(|window, cx| WindowRoot::test_new(project.clone(), window, cx));
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
         let workspace = window_handle
             .read_with(cx, |mw, _| mw.workspace().clone())
             .unwrap();
@@ -7004,7 +7004,7 @@ mod tests {
 
         let project = Project::test(fs.clone(), [Path::new(path!("/root/project"))], cx).await;
         let window_handle =
-            cx.add_window(|window, cx| WindowRoot::test_new(project.clone(), window, cx));
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
         let workspace = window_handle
             .read_with(cx, |mw, _| mw.workspace().clone())
             .unwrap();
@@ -7093,7 +7093,7 @@ mod tests {
 
         let project = Project::test(fs.clone(), [Path::new(path!("/project"))], cx).await;
         let window_handle =
-            cx.add_window(|window, cx| WindowRoot::test_new(project.clone(), window, cx));
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
         let workspace = window_handle
             .read_with(cx, |mw, _| mw.workspace().clone())
             .unwrap();
@@ -7169,7 +7169,7 @@ mod tests {
 
         let project = Project::test(fs.clone(), [Path::new(path!("/project"))], cx).await;
         let window_handle =
-            cx.add_window(|window, cx| WindowRoot::test_new(project.clone(), window, cx));
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
         let workspace = window_handle
             .read_with(cx, |mw, _| mw.workspace().clone())
             .unwrap();
@@ -7298,7 +7298,7 @@ mod tests {
 
         let project = Project::test(fs.clone(), [Path::new(path!("/project"))], cx).await;
         let window_handle =
-            cx.add_window(|window, cx| WindowRoot::test_new(project.clone(), window, cx));
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
         let workspace = window_handle
             .read_with(cx, |mw, _| mw.workspace().clone())
             .unwrap();
@@ -7497,7 +7497,7 @@ mod tests {
 
         let project = Project::test(fs.clone(), [Path::new(path!("/project"))], cx).await;
         let window_handle =
-            cx.add_window(|window, cx| WindowRoot::test_new(project.clone(), window, cx));
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
         let workspace = window_handle
             .read_with(cx, |mw, _| mw.workspace().clone())
             .unwrap();

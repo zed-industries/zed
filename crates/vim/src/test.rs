@@ -29,7 +29,7 @@ use project::FakeFs;
 use search::BufferSearchBar;
 use search::{ProjectSearchView, project_search};
 use serde_json::json;
-use workspace::{DeploySearch, WindowRoot};
+use workspace::{DeploySearch, MultiWorkspace};
 
 use crate::{PushSneak, PushSneakBackward, VimAddon, insert::NormalBefore, motion, state::Mode};
 
@@ -2786,7 +2786,7 @@ async fn test_project_search_opens_in_normal_mode(cx: &mut gpui::TestAppContext)
 
     let project = project::Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
     let window_handle =
-        cx.add_window(|window, cx| WindowRoot::test_new(project.clone(), window, cx));
+        cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
     let workspace = window_handle
         .read_with(cx, |mw, _| mw.workspace().clone())
         .unwrap();
