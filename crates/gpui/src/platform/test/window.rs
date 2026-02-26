@@ -12,7 +12,7 @@ use std::{
     sync::{self, Arc},
 };
 
-pub(crate) struct TestPlatformWindowState {
+pub(crate) struct TestWindowState {
     pub(crate) bounds: Bounds<Pixels>,
     pub(crate) handle: AnyWindowHandle,
     display: Rc<dyn PlatformDisplay>,
@@ -32,9 +32,9 @@ pub(crate) struct TestPlatformWindowState {
 }
 
 #[derive(Clone)]
-pub(crate) struct TestPlatformWindow(pub(crate) Rc<Mutex<TestPlatformWindowState>>);
+pub(crate) struct TestWindow(pub(crate) Rc<Mutex<TestWindowState>>);
 
-impl HasWindowHandle for TestPlatformWindow {
+impl HasWindowHandle for TestWindow {
     fn window_handle(
         &self,
     ) -> Result<raw_window_handle::WindowHandle<'_>, raw_window_handle::HandleError> {
@@ -42,7 +42,7 @@ impl HasWindowHandle for TestPlatformWindow {
     }
 }
 
-impl HasDisplayHandle for TestPlatformWindow {
+impl HasDisplayHandle for TestWindow {
     fn display_handle(
         &self,
     ) -> Result<raw_window_handle::DisplayHandle<'_>, raw_window_handle::HandleError> {
@@ -50,14 +50,14 @@ impl HasDisplayHandle for TestPlatformWindow {
     }
 }
 
-impl TestPlatformWindow {
+impl TestWindow {
     pub fn new(
         handle: AnyWindowHandle,
         params: WindowParams,
         platform: Weak<TestPlatform>,
         display: Rc<dyn PlatformDisplay>,
     ) -> Self {
-        Self(Rc::new(Mutex::new(TestPlatformWindowState {
+        Self(Rc::new(Mutex::new(TestWindowState {
             bounds: params.bounds,
             display,
             platform,
@@ -112,7 +112,7 @@ impl TestPlatformWindow {
     }
 }
 
-impl PlatformWindow for TestPlatformWindow {
+impl PlatformWindow for TestWindow {
     fn bounds(&self) -> Bounds<Pixels> {
         self.0.lock().bounds
     }
@@ -281,7 +281,7 @@ impl PlatformWindow for TestPlatformWindow {
         self.0.lock().sprite_atlas.clone()
     }
 
-    fn as_test(&mut self) -> Option<&mut TestPlatformWindow> {
+    fn as_test(&mut self) -> Option<&mut TestWindow> {
         Some(self)
     }
 

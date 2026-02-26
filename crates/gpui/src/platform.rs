@@ -23,9 +23,6 @@ mod test;
 #[cfg(all(target_os = "macos", any(test, feature = "test-support")))]
 mod visual_test;
 
-#[cfg(all(target_os = "macos", any(test, feature = "test-support")))]
-mod headless_metal;
-
 #[cfg(target_os = "windows")]
 mod windows;
 
@@ -96,15 +93,8 @@ pub use linux::layer_shell;
 #[cfg(any(test, feature = "test-support"))]
 pub use test::{TestDispatcher, TestScreenCaptureSource, TestScreenCaptureStream};
 
-// Re-export MacTextSystem publicly so consumers can use real font shaping
-#[cfg(target_os = "macos")]
-pub use mac::MacTextSystem;
-
 #[cfg(all(target_os = "macos", any(test, feature = "test-support")))]
 pub use visual_test::VisualTestPlatform;
-
-#[cfg(all(target_os = "macos", any(test, feature = "test-support")))]
-pub use headless_metal::{HeadlessMetalAppContext, HeadlessMetalPlatform, HeadlessMetalWindow};
 
 /// Returns a background executor for the current platform.
 pub fn background_executor() -> BackgroundExecutor {
@@ -603,7 +593,7 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn update_ime_position(&self, _bounds: Bounds<Pixels>);
 
     #[cfg(any(test, feature = "test-support"))]
-    fn as_test(&mut self) -> Option<&mut TestPlatformWindow> {
+    fn as_test(&mut self) -> Option<&mut TestWindow> {
         None
     }
 

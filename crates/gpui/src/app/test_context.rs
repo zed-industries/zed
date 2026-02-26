@@ -3,7 +3,7 @@ use crate::{
     BackgroundExecutor, BorrowAppContext, Bounds, Capslock, ClipboardItem, DrawPhase, Drawable,
     Element, Empty, EventEmitter, ForegroundExecutor, Global, InputEvent, Keystroke, Modifiers,
     ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels,
-    Platform, Point, Render, Result, Size, Task, TestDispatcher, TestPlatform, TestPlatformWindow,
+    Platform, Point, Render, Result, Size, Task, TestDispatcher, TestPlatform, TestWindow,
     TestScreenCaptureSource, TextSystem, VisualContext, Window, WindowBounds, WindowHandle,
     WindowOptions, app::GpuiMode,
 };
@@ -457,7 +457,7 @@ impl TestAppContext {
     }
 
     /// Returns the `TestWindow` backing the given handle.
-    pub(crate) fn test_window(&self, window: AnyWindowHandle) -> TestPlatformWindow {
+    pub(crate) fn test_window(&self, window: AnyWindowHandle) -> TestWindow {
         self.app
             .borrow_mut()
             .windows

@@ -20,202 +20,6 @@ pub(crate) type PathVertex_ScaledPixels = PathVertex<ScaledPixels>;
 
 pub(crate) type DrawOrder = u32;
 
-/// Test-only scene snapshot for inspecting rendered content.
-#[cfg(any(test, feature = "test-support"))]
-pub mod test_scene {
-    use crate::{Bounds, Hsla, Pixels, Point, ScaledPixels, SharedString};
-    use std::{
-        any::{Any, TypeId},
-        sync::Arc,
-    };
-
-    /// A rendered quad (background, border, cursor, selection, etc.)
-    #[derive(Debug, Clone)]
-    pub struct RenderedQuad {
-        /// Bounds in scaled pixels.
-        pub bounds: Bounds<ScaledPixels>,
-        /// Background color (if solid).
-        pub background_color: Option<Hsla>,
-        /// Border color.
-        pub border_color: Hsla,
-    }
-
-    /// A named diagnostic entry for tests and debugging of imperative paint logic.
-    ///
-    /// This is not necessarily a "real" painted primitive; it is metadata recorded alongside a scene.
-    ///
-    /// When used as `Diagnostic<()>`, this matches the untyped/legacy diagnostic API.
-    #[derive(Debug, Clone)]
-    pub struct Diagnostic<T> {
-        /// A stable name that test code can filter by.
-        pub name: SharedString,
-        /// Bounds in logical pixels (not scaled).
-        pub bounds: Bounds<Pixels>,
-        /// Optional color hint (useful when visualizing).
-        pub color: Option<Hsla>,
-        /// Optional typed payload. For untyped diagnostics, this will be `()`.
-        pub payload: T,
-    }
-
-    /// A named typed diagnostic entry with an erased payload.
-    ///
-    /// This stores the payload as type-erased data (plus its `TypeId`) so tests can later
-    /// retrieve only the diagnostics for a specific payload type.
-    #[derive(Clone)]
-    pub struct ErasedTypedDiagnostic {
-        /// A stable name that test code can filter by.
-        pub name: SharedString,
-        /// Bounds in logical pixels (not scaled).
-        pub bounds: Bounds<Pixels>,
-        /// Optional color hint (useful when visualizing).
-        pub color: Option<Hsla>,
-        /// The concrete payload type stored in `payload`.
-        pub payload_type: TypeId,
-        /// The type-erased payload (typically a `T` recorded via `Window::record_typed_diagnostic`).
-        pub payload: Arc<dyn Any + Send + Sync>,
-    }
-
-    impl std::fmt::Debug for ErasedTypedDiagnostic {
-        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-            f.debug_struct("ErasedTypedDiagnostic")
-                .field("name", &self.name)
-                .field("bounds", &self.bounds)
-                .field("color", &self.color)
-                .field("payload_type", &self.payload_type)
-                .finish_non_exhaustive()
-        }
-    }
-
-    impl ErasedTypedDiagnostic {
-        /// Create a new erased typed diagnostic for payload type `T`.
-        pub fn new<T: 'static + Clone + Send + Sync>(
-            name: SharedString,
-            bounds: Bounds<Pixels>,
-            color: Option<Hsla>,
-            payload: T,
-        ) -> Self {
-            Self {
-                name,
-                bounds,
-                color,
-                payload_type: TypeId::of::<T>(),
-                payload: Arc::new(payload),
-            }
-        }
-
-        /// Attempt to downcast the stored payload to `T` and clone it out into a typed diagnostic.
-        ///
-        /// Returns `None` if this diagnostic's payload type is not `T`.
-        pub fn downcast_clone<T: 'static + Clone>(&self) -> Option<Diagnostic<T>> {
-            if self.payload_type != TypeId::of::<T>() {
-                return None;
-            }
-
-            let payload = self.payload.as_ref().downcast_ref::<T>()?.clone();
-            Some(Diagnostic {
-                name: self.name.clone(),
-                bounds: self.bounds,
-                color: self.color,
-                payload,
-            })
-        }
-    }
-
-    /// A rendered text glyph.
-    #[derive(Debug, Clone)]
-    pub struct RenderedGlyph {
-        /// Origin position in scaled pixels.
-        pub origin: Point<ScaledPixels>,
-        /// Size in scaled pixels.
-        pub size: crate::Size<ScaledPixels>,
-        /// Color of the glyph.
-        pub color: Hsla,
-    }
-
-    /// Snapshot of scene contents for testing.
-    #[derive(Debug, Default)]
-    pub struct SceneSnapshot {
-        /// All rendered quads.
-        pub quads: Vec<RenderedQuad>,
-        /// All rendered text glyphs.
-        pub glyphs: Vec<RenderedGlyph>,
-        /// Named diagnostics recorded by imperative drawing code for tests/debugging.
-        ///
-        /// This is the untyped diagnostic stream (`payload = ()`).
-        pub diagnostics: Vec<Diagnostic<()>>,
-        /// Named typed diagnostics recorded by imperative drawing code for tests/debugging.
-        pub typed_diagnostics: Vec<ErasedTypedDiagnostic>,
-        /// Number of shadow primitives.
-        pub shadow_count: usize,
-        /// Number of path primitives.
-        pub path_count: usize,
-        /// Number of underline primitives.
-        pub underline_count: usize,
-        /// Number of polychrome sprites (images, emoji).
-        pub polychrome_sprite_count: usize,
-        /// Number of surface primitives.
-        pub surface_count: usize,
-    }
-
-    impl SceneSnapshot {
-        /// Get unique Y positions of quads, sorted.
-        pub fn quad_y_positions(&self) -> Vec<f32> {
-            let mut positions: Vec<f32> = self.quads.iter().map(|q| q.bounds.origin.y.0).collect();
-            positions.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-            positions.dedup();
-            positions
-        }
-
-        /// Get unique Y positions of glyphs, sorted.
-        pub fn glyph_y_positions(&self) -> Vec<f32> {
-            let mut positions: Vec<f32> = self.glyphs.iter().map(|g| g.origin.y.0).collect();
-            positions.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-            positions.dedup();
-            positions
-        }
-
-        /// Find quads within a Y range.
-        pub fn quads_in_y_range(&self, min_y: f32, max_y: f32) -> Vec<&RenderedQuad> {
-            self.quads
-                .iter()
-                .filter(|q| {
-                    let y = q.bounds.origin.y.0;
-                    y >= min_y && y < max_y
-                })
-                .collect()
-        }
-
-        /// Find glyphs within a Y range.
-        pub fn glyphs_in_y_range(&self, min_y: f32, max_y: f32) -> Vec<&RenderedGlyph> {
-            self.glyphs
-                .iter()
-                .filter(|g| {
-                    let y = g.origin.y.0;
-                    y >= min_y && y < max_y
-                })
-                .collect()
-        }
-
-        /// Debug summary string.
-        pub fn summary(&self) -> String {
-            format!(
-                "quads: {}, glyphs: {}, diagnostics: {}, shadows: {}, paths: {}, underlines: {}, polychrome: {}, surfaces: {}",
-                self.quads.len(),
-                self.glyphs.len(),
-                self.diagnostics.len(),
-                self.shadow_count,
-                self.path_count,
-                self.underline_count,
-                self.polychrome_sprite_count,
-                self.surface_count,
-            )
-        }
-    }
-}
-
-#[cfg(any(test, feature = "test-support"))]
-pub use test_scene::*;
-
 #[derive(Default)]
 pub(crate) struct Scene {
     pub(crate) paint_operations: Vec<PaintOperation>,
@@ -229,10 +33,6 @@ pub(crate) struct Scene {
     pub(crate) subpixel_sprites: Vec<SubpixelSprite>,
     pub(crate) polychrome_sprites: Vec<PolychromeSprite>,
     pub(crate) surfaces: Vec<PaintSurface>,
-    #[cfg(any(test, feature = "test-support"))]
-    pub(crate) diagnostics: Vec<test_scene::Diagnostic<()>>,
-    #[cfg(any(test, feature = "test-support"))]
-    pub(crate) typed_diagnostics: Vec<test_scene::ErasedTypedDiagnostic>,
 }
 
 impl Scene {
@@ -248,10 +48,6 @@ impl Scene {
         self.subpixel_sprites.clear();
         self.polychrome_sprites.clear();
         self.surfaces.clear();
-        #[cfg(any(test, feature = "test-support"))]
-        self.diagnostics.clear();
-        #[cfg(any(test, feature = "test-support"))]
-        self.typed_diagnostics.clear();
     }
 
     pub fn len(&self) -> usize {
@@ -334,42 +130,6 @@ impl Scene {
         }
     }
 
-    /// Create a snapshot of the scene for testing.
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn snapshot(&self) -> SceneSnapshot {
-        let quads = self
-            .quads
-            .iter()
-            .map(|q| RenderedQuad {
-                bounds: q.bounds,
-                background_color: q.background.as_solid(),
-                border_color: q.border_color,
-            })
-            .collect();
-
-        let glyphs = self
-            .monochrome_sprites
-            .iter()
-            .map(|s| RenderedGlyph {
-                origin: s.bounds.origin,
-                size: s.bounds.size,
-                color: s.color,
-            })
-            .collect();
-
-        SceneSnapshot {
-            quads,
-            glyphs,
-            diagnostics: self.diagnostics.clone(),
-            typed_diagnostics: self.typed_diagnostics.clone(),
-            shadow_count: self.shadows.len(),
-            path_count: self.paths.len(),
-            underline_count: self.underlines.len(),
-            polychrome_sprite_count: self.polychrome_sprites.len(),
-            surface_count: self.surfaces.len(),
-        }
-    }
-
     pub fn finish(&mut self) {
         self.shadows.sort_by_key(|shadow| shadow.order);
         self.quads.sort_by_key(|quad| quad.order);
@@ -382,14 +142,6 @@ impl Scene {
         self.polychrome_sprites
             .sort_by_key(|sprite| (sprite.order, sprite.tile.tile_id));
         self.surfaces.sort_by_key(|surface| surface.order);
-
-        #[cfg(any(test, feature = "test-support"))]
-        self.diagnostics
-            .sort_by(|a, b| a.name.as_ref().cmp(b.name.as_ref()));
-
-        #[cfg(any(test, feature = "test-support"))]
-        self.typed_diagnostics
-            .sort_by(|a, b| a.name.as_ref().cmp(b.name.as_ref()));
     }
 
     #[cfg_attr(
