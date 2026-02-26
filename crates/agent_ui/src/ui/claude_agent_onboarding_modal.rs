@@ -1,4 +1,3 @@
-use client::zed_urls;
 use gpui::{
     ClickEvent, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, MouseDownEvent, Render,
     linear_color_stop, linear_gradient,
@@ -54,8 +53,8 @@ impl ClaudeCodeOnboardingModal {
         claude_agent_onboarding_event!("Open Panel Clicked");
     }
 
-    fn view_docs(&mut self, _: &ClickEvent, _: &mut Window, cx: &mut Context<Self>) {
-        cx.open_url(&zed_urls::external_agents_docs(cx));
+    fn view_docs(&mut self, _: &ClickEvent, window: &mut Window, cx: &mut Context<Self>) {
+        window.dispatch_action(Box::new(zed_actions::AcpRegistry), cx);
         cx.notify();
 
         claude_agent_onboarding_event!("Documentation Link Clicked");

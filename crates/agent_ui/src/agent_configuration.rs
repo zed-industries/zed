@@ -8,7 +8,6 @@ use std::{ops::Range, sync::Arc};
 
 use agent::ContextServerRegistry;
 use anyhow::Result;
-use client::zed_urls;
 use cloud_api_types::Plan;
 use collections::HashMap;
 use context_server::ContextServerId;
@@ -994,22 +993,6 @@ impl AgentConfiguration {
                         })
                         .separator()
                         .header("Learn More")
-                        .item(
-                            ContextMenuEntry::new("Agent Servers Docs")
-                                .icon(IconName::ArrowUpRight)
-                                .icon_color(Color::Muted)
-                                .icon_position(IconPosition::End)
-                                .handler({
-                                    move |window, cx| {
-                                        window.dispatch_action(
-                                            Box::new(OpenBrowser {
-                                                url: zed_urls::agent_server_docs(cx),
-                                            }),
-                                            cx,
-                                        );
-                                    }
-                                }),
-                        )
                         .item(
                             ContextMenuEntry::new("ACP Docs")
                                 .icon(IconName::ArrowUpRight)
