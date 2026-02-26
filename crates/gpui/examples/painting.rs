@@ -1,3 +1,5 @@
+#![cfg_attr(target_family = "wasm", no_main)]
+
 use gpui::{
     Background, Bounds, ColorSpace, Context, MouseDownEvent, Path, PathBuilder, PathStyle, Pixels,
     Point, Render, StrokeOptions, Window, WindowOptions, canvas, div, linear_color_stop,
@@ -445,7 +447,7 @@ impl Render for PaintingViewer {
     }
 }
 
-fn main() {
+fn run_example() {
     application().run(|cx| {
         cx.open_window(
             WindowOptions {
@@ -461,4 +463,16 @@ fn main() {
         .detach();
         cx.activate(true);
     });
+}
+
+#[cfg(not(target_family = "wasm"))]
+fn main() {
+    run_example();
+}
+
+#[cfg(target_family = "wasm")]
+#[wasm_bindgen::prelude::wasm_bindgen(start)]
+pub fn start() {
+    gpui_platform::web_init();
+    run_example();
 }

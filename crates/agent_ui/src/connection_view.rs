@@ -75,8 +75,8 @@ use crate::{
     ClearMessageQueue, CycleFavoriteModels, CycleModeSelector, CycleThinkingEffort,
     EditFirstQueuedMessage, ExpandMessageEditor, Follow, KeepAll, NewThread, OpenAddContextMenu,
     OpenAgentDiff, OpenHistory, RejectAll, RejectOnce, RemoveFirstQueuedMessage,
-    SelectPermissionGranularity, SendImmediately, SendNextQueuedMessage, ToggleProfileSelector,
-    ToggleThinkingEffortMenu, ToggleThinkingMode, UndoLastReject,
+    SelectPermissionGranularity, SendImmediately, SendNextQueuedMessage, ToggleFastMode,
+    ToggleProfileSelector, ToggleThinkingEffortMenu, ToggleThinkingMode, UndoLastReject,
 };
 
 const STOPWATCH_THRESHOLD: Duration = Duration::from_secs(30);
