@@ -36,6 +36,7 @@ pub struct ProjectPanelSettings {
     pub auto_open: AutoOpenSettings,
     pub sort_mode: ProjectPanelSortMode,
     pub diagnostic_badges: bool,
+    pub case_sensitive: bool,
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -128,6 +129,7 @@ impl Settings for ProjectPanelSettings {
             },
             sort_mode: project_panel.sort_mode.unwrap(),
             diagnostic_badges: project_panel.diagnostic_badges.unwrap(),
+            case_sensitive: project_panel.case_sensitive.unwrap(),
         }
     }
 }

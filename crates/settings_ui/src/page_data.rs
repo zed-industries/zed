@@ -4709,7 +4709,7 @@ fn panels_page() -> SettingsPage {
         ]
     }
 
-    fn auto_open_files_section() -> [SettingsPageItem; 5] {
+    fn auto_open_files_section() -> [SettingsPageItem; 6] {
         [
             SettingsPageItem::SectionHeader("Auto Open Files"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -4804,6 +4804,24 @@ fn panels_page() -> SettingsPage {
                             .sort_mode = value;
                     },
                     json_path: Some("project_panel.sort_mode"),
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Case-Sensitive",
+                description: "Whether to sort files and directories case-sensitive in the project panel.",
+                field: Box::new(SettingField {
+                    pick: |settings_content| {
+                        settings_content.project_panel.as_ref()?.case_sensitive.as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .project_panel
+                            .get_or_insert_default()
+                            .case_sensitive = value;
+                    },
+                    json_path: Some("project_panel.case_sensitive"),
                 }),
                 metadata: None,
                 files: USER,
