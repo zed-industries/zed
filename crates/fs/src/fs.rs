@@ -698,13 +698,11 @@ impl Fs for RealFs {
             Storage::{StorageDeleteOption, StorageFile},
             core::HSTRING,
         };
-        // todo(windows)
-        // When new version of `windows-rs` release, make this operation `async`
-        let path = path.canonicalize()?;
+        let path = self.canonicalize(path).await?;
         let path = SanitizedPath::new(&path);
         let path_string = path.to_string();
-        let file = StorageFile::GetFileFromPathAsync(&HSTRING::from(path_string))?.get()?;
-        file.DeleteAsync(StorageDeleteOption::Default)?.get()?;
+        let file = StorageFile::GetFileFromPathAsync(&HSTRING::from(path_string))?.await?;
+        file.DeleteAsync(StorageDeleteOption::Default)?.await?;
         Ok(())
     }
 
@@ -726,13 +724,11 @@ impl Fs for RealFs {
             core::HSTRING,
         };
 
-        // todo(windows)
-        // When new version of `windows-rs` release, make this operation `async`
-        let path = path.canonicalize()?;
+        let path = self.canonicalize(path).await?;
         let path = SanitizedPath::new(&path);
         let path_string = path.to_string();
-        let folder = StorageFolder::GetFolderFromPathAsync(&HSTRING::from(path_string))?.get()?;
-        folder.DeleteAsync(StorageDeleteOption::Default)?.get()?;
+        let folder = StorageFolder::GetFolderFromPathAsync(&HSTRING::from(path_string))?.await?;
+        folder.DeleteAsync(StorageDeleteOption::Default)?.await?;
         Ok(())
     }
 
