@@ -84,6 +84,8 @@ impl Drop for DisplayLink {
         // We might also want to upgrade to CADisplayLink, but that requires dropping old macOS support.
         std::mem::forget(self.display_link.take());
         self.frame_requests.cancel();
+        // A suspended DispatchSource cannot be destroyed.
+        self.frame_requests.resume();
     }
 }
 
