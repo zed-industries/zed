@@ -107,8 +107,8 @@ pub(crate) enum ThreadError {
     },
 }
 
-impl ThreadError {
-    fn from_err(error: anyhow::Error, agent_name: &str) -> Self {
+impl From<anyhow::Error> for ThreadError {
+    fn from(error: anyhow::Error) -> Self {
         if error.is::<language_model::PaymentRequiredError>() {
             Self::PaymentRequired
         } else if let Some(acp_error) = error.downcast_ref::<acp::Error>()
@@ -123,18 +123,9 @@ impl ThreadError {
                 .downcast_ref::<acp::Error>()
                 .map(|acp_error| SharedString::from(acp_error.code.to_string()));
 
-            // TODO: we should have Gemini return better errors here.
-            if agent_name == "Gemini CLI"
-                && message.contains("Could not load the default credentials")
-                || message.contains("API key not valid")
-                || message.contains("Request had invalid authentication credentials")
-            {
-                Self::AuthenticationRequired(message)
-            } else {
-                Self::Other {
-                    message,
-                    acp_error_code,
-                }
+            Self::Other {
+                message,
+                acp_error_code,
             }
         }
     }
@@ -286,7 +277,6 @@ pub struct AcpServerView {
     thread_store: Option<Entity<ThreadStore>>,
     prompt_store: Option<Entity<PromptStore>>,
     server_state: ServerState,
-    login: Option<task::SpawnInTerminal>, // is some <=> Active | Unauthenticated
     history: Entity<AcpThreadHistory>,
     focus_handle: FocusHandle,
     notifications: Vec<WindowHandle<AgentNotification>>,
@@ -296,6 +286,12 @@ pub struct AcpServerView {
 }
 
 impl AcpServerView {
+    pub fn has_auth_methods(&self) -> bool {
+        self.as_connected().map_or(false, |connected| {
+            !connected.connection.auth_methods().is_empty()
+        })
+    }
+
     pub fn active_thread(&self) -> Option<&Entity<AcpThreadView>> {
         match &self.server_state {
             ServerState::Connected(connected) => connected.active_view(),
@@ -487,7 +483,6 @@ impl AcpServerView {
                 window,
                 cx,
             ),
-            login: None,
             notifications: Vec::new(),
             notification_subscriptions: HashMap::default(),
             auth_task: None,
@@ -598,16 +593,13 @@ impl AcpServerView {
         let connect_task = agent.connect(delegate, cx);
         let load_task = cx.spawn_in(window, async move |this, cx| {
             let connection = match connect_task.await {
-                Ok((connection, login)) => {
-                    this.update(cx, |this, _| this.login = login).ok();
-                    connection
-                }
+                Ok(connection) => connection,
                 Err(err) => {
                     this.update_in(cx, |this, window, cx| {
                         if err.downcast_ref::<LoadError>().is_some() {
                             this.handle_load_error(err, window, cx);
                         } else if let Some(active) = this.active_thread() {
-                            active.update(cx, |active, cx| active.handle_any_thread_error(err, cx));
+                            active.update(cx, |active, cx| active.handle_thread_error(err, cx));
                         } else {
                             this.handle_load_error(err, window, cx);
                         }
@@ -922,7 +914,6 @@ impl AcpServerView {
                 parent_id,
                 thread,
                 conversation,
-                self.login.clone(),
                 weak,
                 agent_icon,
                 agent_name,
@@ -1480,7 +1471,7 @@ impl AcpServerView {
                                     }
                                     if let Some(active) = this.active_thread() {
                                         active.update(cx, |active, cx| {
-                                            active.handle_any_thread_error(err, cx);
+                                            active.handle_thread_error(err, cx);
                                         })
                                     }
                                 } else {
@@ -1496,79 +1487,10 @@ impl AcpServerView {
             }
         }
 
-        if method.0.as_ref() == "gemini-api-key" {
-            let registry = LanguageModelRegistry::global(cx);
-            let provider = registry
-                .read(cx)
-                .provider(&language_model::GOOGLE_PROVIDER_ID)
-                .unwrap();
-            if !provider.is_authenticated(cx) {
-                let this = cx.weak_entity();
-                let agent_name = self.agent.name();
-                let connection = connection.clone();
-                window.defer(cx, |window, cx| {
-                    Self::handle_auth_required(
-                        this,
-                        AuthRequired {
-                            description: Some("GEMINI_API_KEY must be set".to_owned()),
-                            provider_id: Some(language_model::GOOGLE_PROVIDER_ID),
-                        },
-                        agent_name,
-                        connection,
-                        window,
-                        cx,
-                    );
-                });
-                return;
-            }
-        } else if method.0.as_ref() == "vertex-ai"
-            && std::env::var("GOOGLE_API_KEY").is_err()
-            && (std::env::var("GOOGLE_CLOUD_PROJECT").is_err()
-                || (std::env::var("GOOGLE_CLOUD_PROJECT").is_err()))
-        {
-            let this = cx.weak_entity();
-            let agent_name = self.agent.name();
-            let connection = connection.clone();
-
-            window.defer(cx, |window, cx| {
-                    Self::handle_auth_required(
-                        this,
-                        AuthRequired {
-                            description: Some(
-                                "GOOGLE_API_KEY must be set in the environment to use Vertex AI authentication for Gemini CLI. Please export it and restart Zed."
-                                    .to_owned(),
-                            ),
-                            provider_id: None,
-                        },
-                        agent_name,
-                        connection,
-                        window,
-                        cx,
-                    )
-                });
-            return;
-        }
-
         configuration_view.take();
         pending_auth_method.replace(method.clone());
-        let authenticate = if let Some(login) = self.login.clone() {
-            if let Some(workspace) = self.workspace.upgrade() {
-                let project = self.project.clone();
-                Self::spawn_external_agent_login(
-                    login,
-                    workspace,
-                    project,
-                    method.clone(),
-                    false,
-                    window,
-                    cx,
-                )
-            } else {
-                Task::ready(Ok(()))
-            }
-        } else {
-            connection.authenticate(method, cx)
-        };
+
+        let authenticate = connection.authenticate(method, cx);
         cx.notify();
         self.auth_task = Some(cx.spawn_in(window, {
             async move |this, cx| {
@@ -1598,7 +1520,7 @@ impl AcpServerView {
                             pending_auth_method.take();
                         }
                         if let Some(active) = this.active_thread() {
-                            active.update(cx, |active, cx| active.handle_any_thread_error(err, cx));
+                            active.update(cx, |active, cx| active.handle_thread_error(err, cx));
                         }
                     } else {
                         this.reset(window, cx);
@@ -1843,15 +1765,7 @@ impl AcpServerView {
                     .enumerate()
                     .rev()
                     .map(|(ix, method)| {
-                        let (method_id, name) = if self.project.read(cx).is_via_remote_server()
-                            && method.id.0.as_ref() == "oauth-personal"
-                            && method.name == "Log in with Google"
-                        {
-                            ("spawn-gemini-cli".into(), "Log in with Gemini CLI".into())
-                        } else {
-                            (method.id.0.clone(), method.name.clone())
-                        };
-
+                        let (method_id, name) = (method.id.0.clone(), method.name.clone());
                         let agent_telemetry_id = connection.telemetry_id();
 
                         Button::new(method_id.clone(), name)
@@ -3617,8 +3531,8 @@ pub(crate) mod tests {
             &self,
             _delegate: AgentServerDelegate,
             _cx: &mut App,
-        ) -> Task<gpui::Result<(Rc<dyn AgentConnection>, Option<task::SpawnInTerminal>)>> {
-            Task::ready(Ok((Rc::new(self.connection.clone()), None)))
+        ) -> Task<gpui::Result<Rc<dyn AgentConnection>>> {
+            Task::ready(Ok(Rc::new(self.connection.clone())))
         }
 
         fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
@@ -3641,7 +3555,7 @@ pub(crate) mod tests {
             &self,
             _delegate: AgentServerDelegate,
             _cx: &mut App,
-        ) -> Task<gpui::Result<(Rc<dyn AgentConnection>, Option<task::SpawnInTerminal>)>> {
+        ) -> Task<gpui::Result<Rc<dyn AgentConnection>>> {
             Task::ready(Err(anyhow!(
                 "extracting downloaded asset for \
                  https://github.com/zed-industries/codex-acp/releases/download/v0.9.4/\
