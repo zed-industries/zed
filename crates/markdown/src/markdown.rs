@@ -364,6 +364,62 @@ impl Markdown {
         self.code_block_scroll_handles.clear();
     }
 
+    fn code_block_scroll_handle_for_source_index(
+        &self,
+        source_index: usize,
+    ) -> Option<ScrollHandle> {
+        let index = source_index.min(self.source.len());
+        let check_start = index.saturating_sub(1);
+
+        let code_block_start = self.parsed_markdown.events.iter().rev().find_map(
+            |(range, event)| match event {
+                MarkdownEvent::Start(MarkdownTag::CodeBlock { .. })
+                    if range.start <= check_start && index <= range.end =>
+                {
+                    Some(range.start)
+                }
+                _ => None,
+            },
+        )?;
+
+        self.code_block_scroll_handles
+            .get(&code_block_start)
+            .cloned()
+    }
+
+    fn autoscroll_code_block_horizontally(
+        &mut self,
+        source_index: usize,
+        mouse_position: Point<Pixels>,
+    ) {
+        let Some(scroll_handle) = self.code_block_scroll_handle_for_source_index(source_index)
+        else {
+            return;
+        };
+
+        let scroll_bounds = scroll_handle.bounds();
+        let edge_threshold = px(24.);
+        let left_edge = scroll_bounds.left() + edge_threshold;
+        let right_edge = scroll_bounds.right() - edge_threshold;
+
+        let horizontal_delta = if mouse_position.x < left_edge {
+            px(6.) + (left_edge - mouse_position.x) * 0.35
+        } else if mouse_position.x > right_edge {
+            -(px(6.) + (mouse_position.x - right_edge) * 0.35)
+        } else {
+            return;
+        };
+
+        let max_offset = scroll_handle.max_offset().width;
+        if max_offset <= px(0.) {
+            return;
+        }
+
+        let mut offset = scroll_handle.offset();
+        offset.x = (offset.x + horizontal_delta).clamp(-max_offset, px(0.));
+        scroll_handle.set_offset(offset);
+    }
+
     pub fn is_parsing(&self) -> bool {
         self.pending_parse.is_some()
     }
@@ -903,6 +959,7 @@ impl MarkdownElement {
                     };
                     markdown.selection.set_head(source_index, &rendered_text);
                     markdown.autoscroll_request = Some(source_index);
+                    markdown.autoscroll_code_block_horizontally(source_index, event.position);
                     cx.notify();
                 } else {
                     let is_hovering_link = hitbox.is_hovered(window)
