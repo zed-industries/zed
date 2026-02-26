@@ -6530,7 +6530,7 @@ impl ThreadView {
             .collect();
 
         let error_message =
-            self.subagent_error_message(subagent_view, is_canceled_or_failed, tool_call, cx);
+            self.subagent_error_message(subagent_view, &tool_call.status, tool_call, cx);
 
         let parent_thread = self.thread.read(cx);
         let mut started_subagent_count = 0usize;
@@ -6590,10 +6590,14 @@ impl ThreadView {
     fn subagent_error_message(
         &self,
         subagent_view: &ThreadView,
-        is_canceled_or_failed: bool,
+        status: &ToolCallStatus,
         tool_call: &ToolCall,
         cx: &App,
     ) -> Option<SharedString> {
+        if matches!(status, ToolCallStatus::Canceled | ToolCallStatus::Rejected) {
+            return None;
+        }
+
         subagent_view
             .thread_error
             .as_ref()
@@ -6603,9 +6607,6 @@ impl ThreadView {
                 ThreadError::PaymentRequired | ThreadError::AuthenticationRequired(_) => None,
             })
             .or_else(|| {
-                if !is_canceled_or_failed {
-                    return None;
-                }
                 tool_call.content.iter().find_map(|content| {
                     if let ToolCallContent::ContentBlock(block) = content {
                         if let acp_thread::ContentBlock::Markdown { markdown } = block {
