@@ -186,7 +186,10 @@ impl SelectionLayout {
 
 #[derive(Default)]
 struct RenderBlocksOutput {
-    blocks: Vec<BlockLayout>,
+    // We store spacer blocks separately because they paint in a different order
+    // (spacers -> indent guides -> non-spacers)
+    non_spacer_blocks: Vec<BlockLayout>,
+    spacer_blocks: Vec<BlockLayout>,
     row_block_types: HashMap<DisplayRow, bool>,
     resized_blocks: Option<HashMap<CustomBlockId, u32>>,
 }
@@ -4231,6 +4234,7 @@ impl EditorElement {
             .update(cx, |editor, _| editor.take_focused_block());
         let mut fixed_block_max_width = Pixels::ZERO;
         let mut blocks = Vec::new();
+        let mut spacer_blocks = Vec::new();
         let mut resized_blocks = HashMap::default();
         let mut row_block_types = HashMap::default();
         let mut block_resize_offset: i32 = 0;
@@ -4337,7 +4341,7 @@ impl EditorElement {
                 window,
                 cx,
             ) {
-                blocks.push(BlockLayout {
+                let layout = BlockLayout {
                     id: block_id,
                     x_offset,
                     row: Some(row),
@@ -4346,7 +4350,12 @@ impl EditorElement {
                     style,
                     overlaps_gutter: !block.place_near() && style != BlockStyle::Spacer,
                     is_buffer_header: block.is_buffer_header(),
-                });
+                };
+                if style == BlockStyle::Spacer {
+                    spacer_blocks.push(layout);
+                } else {
+                    blocks.push(layout);
+                }
             }
         }
 
@@ -4419,7 +4428,8 @@ impl EditorElement {
         }
 
         RenderBlocksOutput {
-            blocks,
+            non_spacer_blocks: blocks,
+            spacer_blocks,
             row_block_types,
             resized_blocks: (!resized_blocks.is_empty()).then_some(resized_blocks),
         }
@@ -7550,16 +7560,31 @@ impl EditorElement {
         }
     }
 
-    fn paint_blocks(&mut self, layout: &mut EditorLayout, window: &mut Window, cx: &mut App) {
+    fn paint_spacer_blocks(
+        &mut self,
+        layout: &mut EditorLayout,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        for mut block in layout.spacer_blocks.drain(..) {
+            let mut bounds = layout.hitbox.bounds;
+            bounds.origin.x += layout.gutter_hitbox.bounds.size.width;
+            window.with_content_mask(Some(ContentMask { bounds }), |window| {
+                block.element.paint(window, cx);
+            })
+        }
+    }
+
+    fn paint_non_spacer_blocks(
+        &mut self,
+        layout: &mut EditorLayout,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
         for mut block in layout.blocks.drain(..) {
             if block.overlaps_gutter {
                 block.element.paint(window, cx);
             } else {
-                // let indent_guide_spacing = if matches!(block.style, BlockStyle::Spacer) {
-                //     let width = std::cmp::max(settings.active_line_width, settings.line_width);
-                // } else {
-                //     0
-                // };
                 let mut bounds = layout.hitbox.bounds;
                 bounds.origin.x += layout.gutter_hitbox.bounds.size.width;
                 window.with_content_mask(Some(ContentMask { bounds }), |window| {
@@ -10346,7 +10371,8 @@ impl Element for EditorElement {
                         })
                         .unwrap_or_default();
                     let RenderBlocksOutput {
-                        mut blocks,
+                        non_spacer_blocks: mut blocks,
+                        mut spacer_blocks,
                         row_block_types,
                         resized_blocks,
                     } = blocks;
@@ -10609,6 +10635,17 @@ impl Element for EditorElement {
                     window.with_element_namespace("blocks", |window| {
                         self.layout_blocks(
                             &mut blocks,
+                            &hitbox,
+                            &gutter_hitbox,
+                            line_height,
+                            scroll_position,
+                            scroll_pixel_position,
+                            &editor_margins,
+                            window,
+                            cx,
+                        );
+                        self.layout_blocks(
+                            &mut spacer_blocks,
                             &hitbox,
                             &gutter_hitbox,
                             line_height,
@@ -11009,6 +11046,7 @@ impl Element for EditorElement {
                         inline_blame_layout,
                         inline_code_actions,
                         blocks,
+                        spacer_blocks,
                         cursors,
                         visible_cursors,
                         selections,
@@ -11070,6 +11108,13 @@ impl Element for EditorElement {
                 window.with_content_mask(Some(ContentMask { bounds }), |window| {
                     self.paint_mouse_listeners(layout, window, cx);
                     self.paint_background(layout, window, cx);
+
+                    if !layout.spacer_blocks.is_empty() {
+                        window.with_element_namespace("blocks", |window| {
+                            self.paint_spacer_blocks(layout, window, cx);
+                        });
+                    }
+
                     self.paint_indent_guides(layout, window, cx);
 
                     if layout.gutter_hitbox.size.width > Pixels::ZERO {
@@ -11086,7 +11131,7 @@ impl Element for EditorElement {
 
                     if !layout.blocks.is_empty() {
                         window.with_element_namespace("blocks", |window| {
-                            self.paint_blocks(layout, window, cx);
+                            self.paint_non_spacer_blocks(layout, window, cx);
                         });
                     }
 
@@ -11188,6 +11233,7 @@ pub struct EditorLayout {
     inline_blame_layout: Option<InlineBlameLayout>,
     inline_code_actions: Option<AnyElement>,
     blocks: Vec<BlockLayout>,
+    spacer_blocks: Vec<BlockLayout>,
     highlighted_ranges: Vec<(Range<DisplayPoint>, Hsla)>,
     highlighted_gutter_ranges: Vec<(Range<DisplayPoint>, Hsla)>,
     redacted_ranges: Vec<Range<DisplayPoint>>,
