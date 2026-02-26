@@ -3667,6 +3667,7 @@ impl ThreadView {
             AgentThreadEntry::AssistantMessage(AssistantMessage {
                 chunks,
                 indented: _,
+                is_subagent_output: _,
             }) => {
                 let mut is_blank = true;
                 let is_last = entry_ix + 1 == total_entries;
@@ -3737,6 +3738,42 @@ impl ThreadView {
                     cx,
                 )
                 .into_any(),
+        };
+
+        let is_subagent_output = self.is_subagent()
+            && matches!(entry, AgentThreadEntry::AssistantMessage(msg) if msg.is_subagent_output);
+
+        let primary = if is_subagent_output {
+            v_flex()
+                .w_full()
+                .child(
+                    h_flex()
+                        .id("subagent_output")
+                        .px_5()
+                        .py_1()
+                        .gap_2()
+                        .child(Divider::horizontal())
+                        .child(
+                            h_flex()
+                                .gap_1()
+                                .child(
+                                    Icon::new(IconName::ForwardArrowUp)
+                                        .color(Color::Muted)
+                                        .size(IconSize::Small),
+                                )
+                                .child(
+                                    Label::new("Subagent Output")
+                                        .size(LabelSize::Custom(self.tool_name_font_size()))
+                                        .color(Color::Muted),
+                                ),
+                        )
+                        .child(Divider::horizontal())
+                        .tooltip(Tooltip::text("Everything below this line was sent as output from this subagent to the main agent.")),
+                )
+                .child(primary)
+                .into_any_element()
+        } else {
+            primary
         };
 
         let primary = if is_indented {
