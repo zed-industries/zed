@@ -84,6 +84,8 @@ Keep the thread database consistent when folder paths change.
 - Agent selector in the header.
 - Notification dots for completed threads.
 - Keyboard navigation across the grouped structure.
+- Remove the defunct `NextWorkspaceInWindow` and `PreviousWorkspaceInWindow` actions (currently registered as no-ops so existing keybindings don't break).
+- Rename `MultiWorkspace` to `WindowRoot` and clean up remaining compatibility shims (`workspaces()`, `active_workspace_index()`, `remove_workspace()`, `activate_index()`).
 
 ## Open Items Not Yet Phased
 

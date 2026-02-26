@@ -97,8 +97,7 @@ impl<T: Sidebar> SidebarHandle for Entity<T> {
 
 pub struct MultiWorkspace {
     window_id: WindowId,
-    workspaces: Vec<Entity<Workspace>>,
-    active_workspace_index: usize,
+    workspace: Entity<Workspace>,
     sidebar: Option<Box<dyn SidebarHandle>>,
     sidebar_open: bool,
     _sidebar_subscription: Option<Subscription>,
@@ -124,8 +123,7 @@ impl MultiWorkspace {
         let quit_subscription = cx.on_app_quit(Self::app_will_quit);
         Self {
             window_id: window.window_handle().window_id(),
-            workspaces: vec![workspace],
-            active_workspace_index: 0,
+            workspace,
             sidebar: None,
             sidebar_open: false,
             _sidebar_subscription: None,
@@ -214,22 +212,18 @@ impl MultiWorkspace {
 
     pub fn open_sidebar(&mut self, cx: &mut Context<Self>) {
         self.sidebar_open = true;
-        for workspace in &self.workspaces {
-            workspace.update(cx, |workspace, cx| {
-                workspace.set_workspace_sidebar_open(true, cx);
-            });
-        }
+        self.workspace.update(cx, |workspace, cx| {
+            workspace.set_workspace_sidebar_open(true, cx);
+        });
         self.serialize(cx);
         cx.notify();
     }
 
     fn close_sidebar(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.sidebar_open = false;
-        for workspace in &self.workspaces {
-            workspace.update(cx, |workspace, cx| {
-                workspace.set_workspace_sidebar_open(false, cx);
-            });
-        }
+        self.workspace.update(cx, |workspace, cx| {
+            workspace.set_workspace_sidebar_open(false, cx);
+        });
         let pane = self.workspace().read(cx).active_pane().clone();
         let pane_focus = pane.read(cx).focus_handle(cx);
         window.focus(&pane_focus, cx);
@@ -242,93 +236,51 @@ impl MultiWorkspace {
     }
 
     pub fn workspace(&self) -> &Entity<Workspace> {
-        &self.workspaces[self.active_workspace_index]
+        &self.workspace
     }
 
+    /// Returns the window's workspace as a one-element slice.
+    ///
+    /// Several callers iterate over all workspaces in a window (vim, notifications,
+    /// quit handler, etc.). This shim keeps them working during the transition to
+    /// a single-workspace-per-window model. Once those callers are updated, this
+    /// method can be removed.
     pub fn workspaces(&self) -> &[Entity<Workspace>] {
-        &self.workspaces
+        std::slice::from_ref(&self.workspace)
     }
 
     pub fn active_workspace_index(&self) -> usize {
-        self.active_workspace_index
+        // Compatibility shim — always returns 0 now that each window has one
+        // workspace. Will be removed once callers are updated.
+        0
     }
 
     pub fn activate(&mut self, workspace: Entity<Workspace>, cx: &mut Context<Self>) {
-        if !self.multi_workspace_enabled(cx) {
-            self.workspaces[0] = workspace;
-            self.active_workspace_index = 0;
-            cx.notify();
+        if self.workspace == workspace {
             return;
         }
-
-        let old_index = self.active_workspace_index;
-        let new_index = self.set_active_workspace(workspace, cx);
-        if old_index != new_index {
-            self.serialize(cx);
+        if self.sidebar_open {
+            workspace.update(cx, |workspace, cx| {
+                workspace.set_workspace_sidebar_open(true, cx);
+            });
         }
-    }
-
-    fn set_active_workspace(
-        &mut self,
-        workspace: Entity<Workspace>,
-        cx: &mut Context<Self>,
-    ) -> usize {
-        let index = self.add_workspace(workspace, cx);
-        self.active_workspace_index = index;
+        self.workspace = workspace;
+        self.serialize(cx);
         cx.notify();
-        index
     }
 
-    /// Adds a workspace to this window without changing which workspace is active.
-    /// Returns the index of the workspace (existing or newly inserted).
-    pub fn add_workspace(&mut self, workspace: Entity<Workspace>, cx: &mut Context<Self>) -> usize {
-        if let Some(index) = self.workspaces.iter().position(|w| *w == workspace) {
-            index
-        } else {
-            if self.sidebar_open {
-                workspace.update(cx, |workspace, cx| {
-                    workspace.set_workspace_sidebar_open(true, cx);
-                });
-            }
-            self.workspaces.push(workspace);
-            cx.notify();
-            self.workspaces.len() - 1
-        }
-    }
-
-    pub fn activate_index(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
-        debug_assert!(
-            index < self.workspaces.len(),
-            "workspace index out of bounds"
-        );
-        self.active_workspace_index = index;
+    /// Compatibility shim — activates the workspace and focuses it.
+    /// The `index` parameter is ignored since there is only one workspace.
+    pub fn activate_index(&mut self, _index: usize, window: &mut Window, cx: &mut Context<Self>) {
         self.serialize(cx);
         self.focus_active_workspace(window, cx);
         cx.notify();
     }
 
-    pub fn activate_next_workspace(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.workspaces.len() > 1 {
-            let next_index = (self.active_workspace_index + 1) % self.workspaces.len();
-            self.activate_index(next_index, window, cx);
-        }
-    }
-
-    pub fn activate_previous_workspace(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.workspaces.len() > 1 {
-            let prev_index = if self.active_workspace_index == 0 {
-                self.workspaces.len() - 1
-            } else {
-                self.active_workspace_index - 1
-            };
-            self.activate_index(prev_index, window, cx);
-        }
-    }
-
     fn serialize(&mut self, cx: &mut App) {
         let window_id = self.window_id;
         let state = crate::persistence::model::MultiWorkspaceState {
-            active_workspace_id: self.workspace().read(cx).database_id(),
+            active_workspace_id: self.workspace.read(cx).database_id(),
             sidebar_open: self.sidebar_open,
         };
         self._serialize_task = Some(cx.background_spawn(async move {
@@ -493,7 +445,7 @@ impl MultiWorkspace {
         if !self.multi_workspace_enabled(cx) {
             return;
         }
-        let app_state = self.workspace().read(cx).app_state().clone();
+        let app_state = self.workspace.read(cx).app_state().clone();
         let project = Project::local(
             app_state.client.clone(),
             app_state.node_runtime.clone(),
@@ -505,7 +457,7 @@ impl MultiWorkspace {
             cx,
         );
         let new_workspace = cx.new(|cx| Workspace::new(None, project, app_state, window, cx));
-        self.set_active_workspace(new_workspace.clone(), cx);
+        self.activate(new_workspace.clone(), cx);
         self.focus_active_workspace(window, cx);
 
         let weak_workspace = new_workspace.downgrade();
@@ -539,12 +491,6 @@ impl MultiWorkspace {
                 }
                 Err(error) => {
                     log::error!("Failed to create workspace: {error:#}");
-                    if let Some(index) = weak_workspace
-                        .upgrade()
-                        .and_then(|w| this.workspaces.iter().position(|ws| *ws == w))
-                    {
-                        this.remove_workspace(index, window, cx);
-                    }
                     this.workspace().update(cx, |workspace, cx| {
                         let id = NotificationId::unique::<MultiWorkspace>();
                         workspace.show_toast(
@@ -558,33 +504,20 @@ impl MultiWorkspace {
         }));
     }
 
-    pub fn remove_workspace(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
-        if self.workspaces.len() <= 1 || index >= self.workspaces.len() {
-            return;
-        }
-
-        let removed_workspace = self.workspaces.remove(index);
-
-        if self.active_workspace_index >= self.workspaces.len() {
-            self.active_workspace_index = self.workspaces.len() - 1;
-        } else if self.active_workspace_index > index {
-            self.active_workspace_index -= 1;
-        }
-
-        if let Some(workspace_id) = removed_workspace.read(cx).database_id() {
-            self.pending_removal_tasks.retain(|task| !task.is_ready());
-            self.pending_removal_tasks
-                .push(cx.background_spawn(async move {
-                    crate::persistence::DB
-                        .delete_workspace_by_id(workspace_id)
-                        .await
-                        .log_err();
-                }));
-        }
-
-        self.serialize(cx);
-        self.focus_active_workspace(window, cx);
-        cx.notify();
+    /// Removes the current workspace from this window.
+    ///
+    /// In the single-workspace-per-window model, this is a no-op — the window
+    /// must always have a workspace. Callers that need to close a window or
+    /// swap its workspace should use `activate()` or close the window directly.
+    ///
+    /// Kept as a compatibility shim; will be removed once callers are updated.
+    pub fn remove_workspace(
+        &mut self,
+        _index: usize,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) {
+        // No-op: a window must always have exactly one workspace.
     }
 
     pub fn open_project(
@@ -682,16 +615,12 @@ impl Render for MultiWorkspace {
                         this.create_workspace(window, cx);
                     }),
                 )
-                .on_action(
-                    cx.listener(|this: &mut Self, _: &NextWorkspaceInWindow, window, cx| {
-                        this.activate_next_workspace(window, cx);
-                    }),
-                )
-                .on_action(cx.listener(
-                    |this: &mut Self, _: &PreviousWorkspaceInWindow, window, cx| {
-                        this.activate_previous_workspace(window, cx);
-                    },
-                ))
+                .on_action(|_: &NextWorkspaceInWindow, _, _| {
+                    // No-op: each window now has a single workspace.
+                })
+                .on_action(|_: &PreviousWorkspaceInWindow, _, _| {
+                    // No-op: each window now has a single workspace.
+                })
                 .on_action(cx.listener(
                     |this: &mut Self, _: &ToggleWorkspaceSidebar, window, cx| {
                         this.toggle_sidebar(window, cx);

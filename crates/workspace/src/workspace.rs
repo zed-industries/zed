@@ -8641,7 +8641,6 @@ pub fn open_workspace_by_id(
                     workspace.centered_layout = centered_layout;
                     workspace
                 });
-                multi_workspace.add_workspace(workspace.clone(), cx);
                 workspace
             })?;
             (window, workspace)
