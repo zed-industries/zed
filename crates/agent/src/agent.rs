@@ -4,6 +4,7 @@ mod legacy_thread;
 mod native_agent_server;
 pub mod outline;
 mod pattern_extraction;
+mod skills;
 mod templates;
 #[cfg(test)]
 mod tests;
@@ -18,6 +19,7 @@ use itertools::Itertools;
 pub use native_agent_server::NativeAgentServer;
 pub use pattern_extraction::*;
 pub use shell_command_parser::extract_commands;
+pub use skills::*;
 pub use templates::*;
 pub use thread::*;
 pub use thread_store::*;

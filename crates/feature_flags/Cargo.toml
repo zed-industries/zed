@@ -14,3 +14,6 @@ path = "src/feature_flags.rs"
 [dependencies]
 futures.workspace = true
 gpui.workspace = true
+
+[dev-dependencies]
+gpui = { workspace = true, features = ["test-support"] }

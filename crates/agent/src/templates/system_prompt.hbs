@@ -157,6 +157,10 @@ Default Shell: {{shell}}
 You are powered by the model named {{model_name}}.
 
 {{/if}}
+{{#if available_skills}}
+{{{available_skills}}}
+
+{{/if}}
 {{#if (or has_rules has_user_rules)}}
 ## User's Custom Instructions
 

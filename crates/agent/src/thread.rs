@@ -2,7 +2,7 @@ use crate::{
     ContextServerRegistry, CopyPathTool, CreateDirectoryTool, DbLanguageModel, DbThread,
     DeletePathTool, DiagnosticsTool, EditFileTool, FetchTool, FindPathTool, GrepTool,
     ListDirectoryTool, MovePathTool, NowTool, OpenTool, ProjectSnapshot, ReadFileTool,
-    RestoreFileFromDiskTool, SaveFileTool, SpawnAgentTool, StreamingEditFileTool,
+    RestoreFileFromDiskTool, SaveFileTool, SkillsContext, SpawnAgentTool, StreamingEditFileTool,
     SystemPromptTemplate, Template, Templates, TerminalTool, ToolPermissionDecision, WebSearchTool,
     decide_permission_from_settings,
 };
@@ -884,6 +884,8 @@ pub struct Thread {
     profile_id: AgentProfileId,
     project_context: Entity<ProjectContext>,
     pub(crate) templates: Arc<Templates>,
+    /// Formatted available skills for the system prompt.
+    available_skills: Entity<SkillsContext>,
     model: Option<Arc<dyn LanguageModel>>,
     summarization_model: Option<Arc<dyn LanguageModel>>,
     thinking_enabled: bool,
@@ -977,6 +979,12 @@ impl Thread {
             .and_then(|model| model.effort.clone());
         let (prompt_capabilities_tx, prompt_capabilities_rx) =
             watch::channel(Self::prompt_capabilities(model.as_deref()));
+        let worktree_roots: Vec<std::path::PathBuf> = project
+            .read(cx)
+            .visible_worktrees(cx)
+            .map(|worktree| worktree.read(cx).abs_path().as_ref().to_path_buf())
+            .collect();
+        let available_skills = SkillsContext::new(worktree_roots, templates.clone(), cx);
         Self {
             id: acp::SessionId::new(uuid::Uuid::new_v4().to_string()),
             prompt_id: PromptId::new(),
@@ -1003,6 +1011,7 @@ impl Thread {
             profile_id,
             project_context,
             templates,
+            available_skills,
             model,
             summarization_model: None,
             thinking_enabled: enable_thinking,
@@ -1193,6 +1202,12 @@ impl Thread {
             watch::channel(Self::prompt_capabilities(model.as_deref()));
 
         let action_log = cx.new(|_| ActionLog::new(project.clone()));
+        let worktree_roots: Vec<std::path::PathBuf> = project
+            .read(cx)
+            .visible_worktrees(cx)
+            .map(|worktree| worktree.read(cx).abs_path().as_ref().to_path_buf())
+            .collect();
+        let available_skills = SkillsContext::new(worktree_roots, templates.clone(), cx);
 
         Self {
             id,
@@ -1218,6 +1233,7 @@ impl Thread {
             profile_id,
             project_context,
             templates,
+            available_skills,
             model,
             summarization_model: None,
             thinking_enabled: db_thread.thinking_enabled,
@@ -2835,6 +2851,7 @@ impl Thread {
         let system_prompt = SystemPromptTemplate {
             project: self.project_context.read(cx),
             available_tools,
+            available_skills: self.available_skills.read(cx).formatted().to_string(),
             model_name: self.model.as_ref().map(|m| m.name().0.to_string()),
         }
         .render(&self.templates)
