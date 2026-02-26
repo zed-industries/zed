@@ -20,6 +20,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use theme::ActiveTheme;
+use ui::IconButtonShape;
 use ui::utils::TRAFFIC_LIGHT_PADDING;
 use ui::{
     AgentThreadStatus, Divider, DividerColor, KeyBinding, ListSubHeader, Tab, ThreadItem, Tooltip,
@@ -339,6 +340,22 @@ impl ActiveProjectsDelegate {
             selected_index: 0,
         }
     }
+
+    fn is_open_in_another_window(
+        &self,
+        entry: &ProjectEntry,
+        current_window_id: gpui::WindowId,
+        cx: &App,
+    ) -> bool {
+        self.workspace_store.read(cx).workspaces_with_windows().any(
+            |(window_handle, weak_workspace)| {
+                window_handle.window_id() != current_window_id
+                    && weak_workspace
+                        .upgrade()
+                        .is_some_and(|workspace| workspace == entry.workspace)
+            },
+        )
+    }
 }
 
 impl PickerDelegate for ActiveProjectsDelegate {
@@ -403,7 +420,7 @@ impl PickerDelegate for ActiveProjectsDelegate {
         &self,
         index: usize,
         selected: bool,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let entry = self.flat_entries.get(index)?;
@@ -415,13 +432,37 @@ impl PickerDelegate for ActiveProjectsDelegate {
         };
 
         let thread_title = entry_ref.thread_title(cx);
+        let open_in_another_window =
+            self.is_open_in_another_window(&entry_ref, window.window_handle().window_id(), cx);
 
         Some(
             v_flex()
                 .when(show_header, |el| {
                     el.child(ListSubHeader::new(entry_ref.group_name(cx)).inset(true))
                 })
-                .child(Label::new(thread_title).color(Color::Muted))
+                .child(
+                    h_flex()
+                        .w_full()
+                        .justify_between()
+                        .items_center()
+                        .gap_2()
+                        .child(Label::new(thread_title).color(Color::Muted))
+                        .when(open_in_another_window, |el| {
+                            el.child(
+                                IconButton::new(
+                                    format!("open-in-other-window-{index}"),
+                                    IconName::Screen,
+                                )
+                                .shape(IconButtonShape::Square)
+                                .style(ButtonStyle::Transparent)
+                                .icon_size(IconSize::XSmall)
+                                .icon_color(Color::Muted)
+                                .tooltip(Tooltip::text(
+                                    "This workspace is open in another window.",
+                                )),
+                            )
+                        }),
+                )
                 .into_any_element(),
         )
     }

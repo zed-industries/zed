@@ -1022,6 +1022,7 @@ struct GlobalAppState(Weak<AppState>);
 impl Global for GlobalAppState {}
 
 pub struct WorkspaceStore {
+    // If a workspace moves to a different window (i.e. we close it) we need to update this.
     workspaces: HashSet<(gpui::AnyWindowHandle, WeakEntity<Workspace>)>,
     /// Active projects are workspaces that have had a thread open.
     active_projects: Vec<Entity<Workspace>>,
@@ -7946,6 +7947,40 @@ impl WorkspaceStore {
         self.workspaces
             .retain(|(handle, _)| *handle != window_handle);
         if self.workspaces.len() != len_before {
+            cx.notify();
+        }
+    }
+
+    /// Updates the workspace shown in a window, removing stale mappings for
+    /// that window and inserting the current one.
+    pub fn bind_window_to_workspace(
+        &mut self,
+        window_handle: gpui::AnyWindowHandle,
+        workspace: &Entity<Workspace>,
+        cx: &mut Context<Self>,
+    ) {
+        let current_bindings_for_window = self
+            .workspaces
+            .iter()
+            .filter(|(handle, _)| *handle == window_handle)
+            .collect::<Vec<_>>();
+        let is_already_bound = current_bindings_for_window.len() == 1
+            && current_bindings_for_window[0]
+                .1
+                .upgrade()
+                .is_some_and(|w| w == *workspace);
+        if is_already_bound {
+            return;
+        }
+
+        let len_before = self.workspaces.len();
+        self.workspaces
+            .retain(|(handle, _)| *handle != window_handle);
+        let inserted = self
+            .workspaces
+            .insert((window_handle, workspace.downgrade()));
+
+        if inserted || self.workspaces.len() != len_before {
             cx.notify();
         }
     }

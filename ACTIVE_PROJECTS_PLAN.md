@@ -9,6 +9,7 @@ Extend the existing `WorkspaceStore` (in `crates/workspace/src/workspace.rs`) wi
 - `WorkspaceStore` already exists as an app-global entity tracking all workspaces with their window handles.
 - Add the `active_projects` field — the append-mostly list of workspaces that have had threads. (Not yet persisted to DB — in-memory only for now.)
 - Add `persist_project()`, `remove_project()`, `detach_window()` methods.
+- Add `bind_window_to_workspace()` to atomically rebind window→workspace mappings when a window switches workspaces.
 - Add `active_projects()` and `windows_for_path_list()` queries.
 - The store emits change notifications so observers (the sidebar) can react.
 
@@ -18,6 +19,7 @@ Extend the existing `WorkspaceStore` (in `crates/workspace/src/workspace.rs`) wi
 - `persist_project()` adds to the in-memory `active_projects` list. A FIXME marks where DB persistence should go.
 - `remove_project()` takes `&Entity<Workspace>` (entity identity) rather than an index for robustness.
 - `detach_window()` removes the window-to-workspace association; the project stays in `active_projects` if present.
+- `bind_window_to_workspace()` removes stale mappings for a window and inserts the current workspace mapping, with an early return when the binding is already correct.
 - All mutation methods only call `cx.notify()` when state actually changes.
 
 ## Phase 2: Hollow Out MultiWorkspace ✅
@@ -25,7 +27,7 @@ Extend the existing `WorkspaceStore` (in `crates/workspace/src/workspace.rs`) wi
 Narrow `MultiWorkspace` down to a window shell (rename to `WindowRoot` deferred to Phase 8).
 
 - ✅ Replaced `workspaces: Vec<Entity<Workspace>>` and `active_workspace_index: usize` with a single `workspace: Entity<Workspace>`.
-- ✅ `activate()` now simply swaps the single workspace field. It does **not** add to `active_projects` — workspaces are ephemeral until a thread is created. They are already tracked in `WorkspaceStore.workspaces` via `Workspace::new`.
+- ✅ `activate()` now swaps the single workspace and rebinds the window’s mapping in `WorkspaceStore` via `bind_window_to_workspace()`. It does **not** add to `active_projects` — workspaces are ephemeral until a thread is created.
 - ✅ `open_sidebar()` / `close_sidebar()` operate on the single workspace directly.
 - ✅ Removed `add_workspace()` — workspaces are tracked by `WorkspaceStore` at creation time.
 - ✅ Removed `activate_next_workspace()` / `activate_previous_workspace()` — no-ops with single workspace.
@@ -48,6 +50,8 @@ Rewrite the sidebar's data flow to use `WorkspaceStore` as its source.
 - ✅ Removed the `workspaces: &[Entity<Workspace>]` parameter from `Sidebar::new` — no longer needed since `update_entries()` derives everything from `WorkspaceStore`.
 - ✅ `Sidebar::new` takes `workspace_store: Entity<WorkspaceStore>` as an explicit parameter (required because the constructor is called inside `observe_new` where `MultiWorkspace` is already mutably borrowed — reading through the entity handle would cause a GPUI re-entrancy panic).
 - ✅ `ActiveProjectsDelegate::new` simplified to just take `multi_workspace` and `workspace_store` — initial state is empty, immediately populated by `update_entries()`.
+- ✅ Added a cross-window affordance in the sidebar row UI: a monitor icon + tooltip (`"This workspace is open in another window."`) for workspaces currently shown by a different window.
+- ✅ Fixed indicator over-reporting by keying cross-window detection on workspace entity identity (not just shared `PathList`).
 
 **Architecture of the sidebar's data sources:**
 - `multi_workspace: Entity<MultiWorkspace>` — window-local operations (activate workspace in this window, create workspace, read which workspace is active in this window).
@@ -55,6 +59,14 @@ Rewrite the sidebar's data flow to use `WorkspaceStore` as its source.
 - `ThreadStore` (global) — thread metadata (titles, timestamps, etc.).
 
 Thread data is still read from the existing `AgentPanel` / live thread entities (same as before). The `derive_project_groups()` function from the architecture doc is effectively what `ActiveProjects::from_workspaces()` + `collect_all_workspaces()` do today, though the thread-enrichment part (Phase 5) is not yet wired in.
+
+## Next Immediate Work: Populate Active Threads From DB
+
+Before continuing deeper into persistence phases, the next priority is to populate sidebar thread rows from thread database history for each active project/workspace group.
+
+- Reuse the existing thread persistence foundation (`ThreadStore` + thread DB metadata/restore flows) rather than introducing a brand-new persistence layer.
+- Focus on wiring the query/join path into sidebar derivation and rendering first.
+- Defer schema expansion (for richer grouping fields) to the formal Phase 5 work items below.
 
 ## Phase 4: Active Projects Persistence
 
@@ -109,7 +121,7 @@ Keep the thread database consistent when folder paths change.
 ## Open Items Not Yet Phased
 
 - How does "New Thread in... > New Worktree" work mechanically? (Creating a git worktree, opening it as a workspace, starting a thread.)
-- What exactly does the window indicator look like? (Icon, badge, color?) Waiting on design updates from Danilo.
+- Fine-tune the window indicator design (iconography, prominence, placement, and tooltip copy) based on team feedback from dogfooding.
 - How does the sidebar interact with session restore? (`WorkspaceStore` loads first, then windows restore and register themselves.)
 - Multiple windows showing the same project — same `Entity<Workspace>` or different instances? (Needs a decision before Phase 4.)
 - Lazy loading of active projects at startup — the architecture doc sketches a `WorkspaceEntry` enum (`Loaded` / `Unloaded`) but this is deferred until the active projects list grows large enough to be a problem. The current design supports it cleanly.
