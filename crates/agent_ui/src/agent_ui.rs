@@ -25,7 +25,6 @@ mod ui;
 use std::rc::Rc;
 use std::sync::Arc;
 
-// Another comment
 use agent_settings::{AgentProfileId, AgentSettings};
 use assistant_slash_command::SlashCommandRegistry;
 use client::Client;
@@ -310,6 +309,10 @@ pub fn init(
                     .find_map(|item| item.downcast::<AgentRegistryPage>());
 
                 if let Some(existing) = existing {
+                    existing.update(cx, |_, cx| {
+                        project::AgentRegistryStore::global(cx)
+                            .update(cx, |store, cx| store.refresh(cx));
+                    });
                     workspace.activate_item(&existing, true, true, window, cx);
                 } else {
                     let registry_page = AgentRegistryPage::new(workspace, window, cx);

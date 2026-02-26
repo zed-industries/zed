@@ -127,7 +127,7 @@ jobs:
     - id: short-sha
       name: extension_workflow_rollout::rollout_workflows_to_extension::get_short_sha
       run: |
-        echo "sha_short=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+        echo "sha_short=$(git rev-parse --short=7 HEAD)" >> "$GITHUB_OUTPUT"
       working-directory: zed
     - id: create-pr
       name: extension_workflow_rollout::rollout_workflows_to_extension::create_pull_request

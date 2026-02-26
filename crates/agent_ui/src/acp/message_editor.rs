@@ -747,70 +747,90 @@ impl MessageEditor {
                 _ => None,
             })
         {
-            let path_style = workspace.read(cx).project().read(cx).path_style(cx);
-
-            // Parse markdown mention links in format: [@name](uri)
-            let parsed_mentions = parse_mention_links(&clipboard_text, path_style);
-
-            if !parsed_mentions.is_empty() {
+            if clipboard_text.contains("[@") {
                 cx.stop_propagation();
-
-                let insertion_offset = self.editor.update(cx, |editor, cx| {
+                let selections_before = self.editor.update(cx, |editor, cx| {
                     let snapshot = editor.buffer().read(cx).snapshot(cx);
-                    editor.selections.newest_anchor().start.to_offset(&snapshot)
+                    editor
+                        .selections
+                        .disjoint_anchors()
+                        .iter()
+                        .map(|selection| {
+                            (
+                                selection.start.bias_left(&snapshot),
+                                selection.end.bias_right(&snapshot),
+                            )
+                        })
+                        .collect::<Vec<_>>()
                 });
 
-                // Insert the raw text first
                 self.editor.update(cx, |editor, cx| {
                     editor.insert(&clipboard_text, window, cx);
                 });
 
-                let supports_images = self.prompt_capabilities.borrow().image;
-                let http_client = workspace.read(cx).client().http_client();
-
-                // Now create creases for each mention and load their content
                 let snapshot = self.editor.read(cx).buffer().read(cx).snapshot(cx);
-                for (range, mention_uri) in parsed_mentions {
-                    let start_offset = insertion_offset.0 + range.start;
-                    let anchor = snapshot.anchor_before(MultiBufferOffset(start_offset));
-                    let content_len = range.end - range.start;
+                let path_style = workspace.read(cx).project().read(cx).path_style(cx);
 
-                    let Some((crease_id, tx)) = insert_crease_for_mention(
-                        anchor.excerpt_id,
-                        anchor.text_anchor,
-                        content_len,
-                        mention_uri.name().into(),
-                        mention_uri.icon_path(cx),
-                        None,
-                        self.editor.clone(),
-                        window,
-                        cx,
-                    ) else {
-                        continue;
-                    };
+                let mut all_mentions = Vec::new();
+                for (start_anchor, end_anchor) in selections_before {
+                    let start_offset = start_anchor.to_offset(&snapshot);
+                    let end_offset = end_anchor.to_offset(&snapshot);
 
-                    // Create the confirmation task based on the mention URI type.
-                    // This properly loads file content, fetches URLs, etc.
-                    let task = self.mention_set.update(cx, |mention_set, cx| {
-                        mention_set.confirm_mention_for_uri(
-                            mention_uri.clone(),
-                            supports_images,
-                            http_client.clone(),
-                            cx,
-                        )
-                    });
-                    let task = cx
-                        .spawn(async move |_, _| task.await.map_err(|e| e.to_string()))
-                        .shared();
+                    // Get the actual inserted text from the buffer (may differ due to auto-indent)
+                    let inserted_text: String =
+                        snapshot.text_for_range(start_offset..end_offset).collect();
 
-                    self.mention_set.update(cx, |mention_set, _cx| {
-                        mention_set.insert_mention(crease_id, mention_uri.clone(), task.clone())
-                    });
-
-                    // Drop the tx after inserting to signal the crease is ready
-                    drop(tx);
+                    let parsed_mentions = parse_mention_links(&inserted_text, path_style);
+                    for (range, mention_uri) in parsed_mentions {
+                        let mention_start_offset = MultiBufferOffset(start_offset.0 + range.start);
+                        let anchor = snapshot.anchor_before(mention_start_offset);
+                        let content_len = range.end - range.start;
+                        all_mentions.push((anchor, content_len, mention_uri));
+                    }
                 }
-                return;
+
+                if !all_mentions.is_empty() {
+                    let supports_images = self.prompt_capabilities.borrow().image;
+                    let http_client = workspace.read(cx).client().http_client();
+
+                    for (anchor, content_len, mention_uri) in all_mentions {
+                        let Some((crease_id, tx)) = insert_crease_for_mention(
+                            anchor.excerpt_id,
+                            anchor.text_anchor,
+                            content_len,
+                            mention_uri.name().into(),
+                            mention_uri.icon_path(cx),
+                            None,
+                            self.editor.clone(),
+                            window,
+                            cx,
+                        ) else {
+                            continue;
+                        };
+
+                        // Create the confirmation task based on the mention URI type.
+                        // This properly loads file content, fetches URLs, etc.
+                        let task = self.mention_set.update(cx, |mention_set, cx| {
+                            mention_set.confirm_mention_for_uri(
+                                mention_uri.clone(),
+                                supports_images,
+                                http_client.clone(),
+                                cx,
+                            )
+                        });
+                        let task = cx
+                            .spawn(async move |_, _| task.await.map_err(|e| e.to_string()))
+                            .shared();
+
+                        self.mention_set.update(cx, |mention_set, _cx| {
+                            mention_set.insert_mention(crease_id, mention_uri.clone(), task.clone())
+                        });
+
+                        // Drop the tx after inserting to signal the crease is ready
+                        drop(tx);
+                    }
+                    return;
+                }
             }
         }
 
@@ -1449,12 +1469,16 @@ mod tests {
     use acp_thread::{AgentSessionInfo, MentionUri};
     use agent::{ThreadStore, outline};
     use agent_client_protocol as acp;
-    use editor::{AnchorRangeExt as _, Editor, EditorMode, MultiBufferOffset};
+    use editor::{
+        AnchorRangeExt as _, Editor, EditorMode, MultiBufferOffset, SelectionEffects,
+        actions::Paste,
+    };
 
     use fs::FakeFs;
     use futures::StreamExt as _;
     use gpui::{
-        AppContext, Entity, EventEmitter, FocusHandle, Focusable, TestAppContext, VisualTestContext,
+        AppContext, ClipboardItem, Entity, EventEmitter, FocusHandle, Focusable, TestAppContext,
+        VisualTestContext,
     };
     use language_model::LanguageModelRegistry;
     use lsp::{CompletionContext, CompletionTriggerKind};
@@ -3332,5 +3356,105 @@ mod tests {
         editor.update(&mut cx, |editor, cx| {
             assert_eq!(editor.text(cx), "😄😄@file");
         });
+    }
+
+    #[gpui::test]
+    async fn test_paste_mention_link_with_multiple_selections(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let app_state = cx.update(AppState::test);
+
+        cx.update(|cx| {
+            editor::init(cx);
+            workspace::init(app_state.clone(), cx);
+        });
+
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(path!("/project"), json!({"file.txt": "content"}))
+            .await;
+
+        let project = Project::test(app_state.fs.clone(), [path!("/project").as_ref()], cx).await;
+        let window =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = window
+            .read_with(cx, |mw, _| mw.workspace().clone())
+            .unwrap();
+
+        let mut cx = VisualTestContext::from_window(window.into(), cx);
+
+        let thread_store = cx.new(|cx| ThreadStore::new(cx));
+        let history = cx
+            .update(|window, cx| cx.new(|cx| crate::acp::AcpThreadHistory::new(None, window, cx)));
+
+        let (message_editor, editor) = workspace.update_in(&mut cx, |workspace, window, cx| {
+            let workspace_handle = cx.weak_entity();
+            let message_editor = cx.new(|cx| {
+                MessageEditor::new(
+                    workspace_handle,
+                    project.downgrade(),
+                    Some(thread_store),
+                    history.downgrade(),
+                    None,
+                    Default::default(),
+                    Default::default(),
+                    "Test Agent".into(),
+                    "Test",
+                    EditorMode::AutoHeight {
+                        max_lines: None,
+                        min_lines: 1,
+                    },
+                    window,
+                    cx,
+                )
+            });
+            workspace.active_pane().update(cx, |pane, cx| {
+                pane.add_item(
+                    Box::new(cx.new(|_| MessageEditorItem(message_editor.clone()))),
+                    true,
+                    true,
+                    None,
+                    window,
+                    cx,
+                );
+            });
+            message_editor.read(cx).focus_handle(cx).focus(window, cx);
+            let editor = message_editor.read(cx).editor().clone();
+            (message_editor, editor)
+        });
+
+        editor.update_in(&mut cx, |editor, window, cx| {
+            editor.set_text(
+                "AAAAAAAAAAAAAAAAAAAAAAAAA     AAAAAAAAAAAAAAAAAAAAAAAAA",
+                window,
+                cx,
+            );
+        });
+
+        cx.run_until_parked();
+
+        editor.update_in(&mut cx, |editor, window, cx| {
+            editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+                s.select_ranges([
+                    MultiBufferOffset(0)..MultiBufferOffset(25), // First selection (large)
+                    MultiBufferOffset(30)..MultiBufferOffset(55), // Second selection (newest)
+                ]);
+            });
+        });
+
+        let mention_link = "[@f](file:///test.txt)";
+        cx.write_to_clipboard(ClipboardItem::new_string(mention_link.into()));
+
+        message_editor.update_in(&mut cx, |message_editor, window, cx| {
+            message_editor.paste(&Paste, window, cx);
+        });
+
+        let text = editor.update(&mut cx, |editor, cx| editor.text(cx));
+        assert!(
+            text.contains("[@f](file:///test.txt)"),
+            "Expected mention link to be pasted, got: {}",
+            text
+        );
     }
 }
