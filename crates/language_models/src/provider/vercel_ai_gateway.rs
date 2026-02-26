@@ -20,8 +20,8 @@ use ui::{ButtonLink, ConfiguredApiCard, List, ListBulletItem, prelude::*};
 use ui_input::InputField;
 use util::ResultExt;
 
-const PROVIDER_ID: LanguageModelProviderId = LanguageModelProviderId::new("ai_gateway");
-const PROVIDER_NAME: LanguageModelProviderName = LanguageModelProviderName::new("AI Gateway");
+const PROVIDER_ID: LanguageModelProviderId = LanguageModelProviderId::new("vercel_ai_gateway");
+const PROVIDER_NAME: LanguageModelProviderName = LanguageModelProviderName::new("Vercel AI Gateway");
 
 const API_URL: &str = "https://ai-gateway.vercel.sh/v1";
 const API_KEY_ENV_VAR_NAME: &str = "VERCEL_AI_GATEWAY_API_KEY";
@@ -327,11 +327,11 @@ fn clean_error_message(message: &str) -> String {
     let lower = message.to_lowercase();
 
     if lower.contains("vercel_oidc_token") && lower.contains("oidc token") {
-        return "Authentication failed for AI Gateway. Use a Vercel AI Gateway key (vck_...).\nCreate or manage keys in Vercel AI Gateway console.\nIf this persists, regenerate the key and update it in AI Gateway provider settings in Zed.".to_string();
+        return "Authentication failed for Vercel AI Gateway. Use a Vercel AI Gateway key (vck_...).\nCreate or manage keys in Vercel AI Gateway console.\nIf this persists, regenerate the key and update it in Vercel AI Gateway provider settings in Zed.".to_string();
     }
 
     if lower.contains("invalid api key") || lower.contains("invalid_api_key") {
-        return "Authentication failed for AI Gateway. Check that your Vercel AI Gateway key starts with vck_ and is active.".to_string();
+        return "Authentication failed for Vercel AI Gateway. Check that your Vercel AI Gateway key starts with vck_ and is active.".to_string();
     }
 
     message.to_string()
@@ -388,7 +388,7 @@ impl LanguageModel for VercelAiGatewayLanguageModel {
     }
 
     fn telemetry_id(&self) -> String {
-        format!("ai_gateway/{}", self.model.name)
+        format!("vercel_ai_gateway/{}", self.model.name)
     }
 
     fn max_token_count(&self) -> u64 {
@@ -666,7 +666,7 @@ impl Render for ConfigurationView {
                 .size_full()
                 .on_action(cx.listener(Self::save_api_key))
                 .child(Label::new(
-                    "To use Zed's agent with AI Gateway, you need to add an API key. Follow these steps:",
+                    "To use Zed's agent with Vercel AI Gateway, you need to add an API key. Follow these steps:",
                 ))
                 .child(
                     List::new()
