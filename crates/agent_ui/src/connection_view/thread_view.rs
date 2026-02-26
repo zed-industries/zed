@@ -6568,8 +6568,9 @@ impl ThreadView {
                     .id(format!("subagent-entries-{}", session_id))
                     .flex_1()
                     .min_h_0()
-                    .track_scroll(&scroll_handle)
                     .pb_1()
+                    .overflow_hidden()
+                    .track_scroll(&scroll_handle)
                     .children(rendered_entries),
             )
             .when_some(error_message, |this, message| {
