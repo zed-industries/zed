@@ -18,7 +18,7 @@ wayland = [
     "bitflags",
     "gpui_wgpu",
     "ashpd/wayland",
-    "gpui_cosmic_text",
+
     "calloop-wayland-source",
     "wayland-backend",
     "wayland-client",
@@ -34,7 +34,7 @@ wayland = [
 x11 = [
     "gpui_wgpu",
     "ashpd",
-    "gpui_cosmic_text",
+
     "as-raw-xcb-connection",
     "x11rb",
     "xkbcommon",
@@ -56,8 +56,7 @@ bytemuck = "1"
 collections.workspace = true
 futures.workspace = true
 gpui.workspace = true
-gpui_cosmic_text = { workspace = true, features = ["font-kit"], optional = true }
-gpui_wgpu = { workspace = true, optional = true }
+gpui_wgpu = { workspace = true, optional = true, features = ["font-kit"] }
 http_client.workspace = true
 itertools.workspace = true
 libc.workspace = true

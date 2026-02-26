@@ -267,7 +267,7 @@ fn load_shell_from_passwd() -> Result<()> {
     );
 
     let shell = unsafe { std::ffi::CStr::from_ptr(entry.pw_shell).to_str().unwrap() };
-    let should_set_shell = env::var("SHELL").map_or(true, |shell_env| {
+    let should_set_shell = std::env::var("SHELL").map_or(true, |shell_env| {
         shell_env != shell && !std::path::Path::new(&shell_env).exists()
     });
 
@@ -276,7 +276,7 @@ fn load_shell_from_passwd() -> Result<()> {
             "updating SHELL environment variable to value from passwd entry: {:?}",
             shell,
         );
-        unsafe { env::set_var("SHELL", shell) };
+        unsafe { std::env::set_var("SHELL", shell) };
     }
 
     Ok(())
@@ -348,6 +348,8 @@ pub fn get_zed_cli_path() -> Result<PathBuf> {
 
 #[cfg(unix)]
 pub async fn load_login_shell_environment() -> Result<()> {
+    use anyhow::Context as _;
+
     load_shell_from_passwd().log_err();
 
     // If possible, we want to `cd` in the user's `$HOME` to trigger programs
@@ -366,7 +368,7 @@ pub async fn load_login_shell_environment() -> Result<()> {
         if name == "SHLVL" {
             continue;
         }
-        unsafe { env::set_var(&name, &value) };
+        unsafe { std::env::set_var(&name, &value) };
     }
 
     log::info!(

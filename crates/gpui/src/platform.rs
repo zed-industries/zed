@@ -1236,7 +1236,7 @@ pub struct WindowOptions {
     ),
     allow(dead_code)
 )]
-#[expect(missing_docs)]
+#[allow(missing_docs)]
 pub struct WindowParams {
     pub bounds: Bounds<Pixels>,
 
