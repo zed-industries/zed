@@ -87,7 +87,7 @@ jobs:
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       with:
         clean: false
-        fetch-depth: ${{ github.ref == 'refs/heads/main' && 2 || 350 }}
+        fetch-depth: 0
     - id: cache-zed-extension-cli
       name: extension_tests::cache_zed_extension_cli
       uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
@@ -113,10 +113,10 @@ jobs:
       name: extension_bump::compare_versions
       run: |
         CURRENT_VERSION="$(sed -n 's/^version = \"\(.*\)\"/\1/p' < extension.toml | tr -d '[:space:]')"
-        PR_PARENT_SHA="${{ github.event.pull_request.head.sha }}"
 
-        if [[ -n "$PR_PARENT_SHA" ]]; then
-            git checkout "$PR_PARENT_SHA"
+        if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            PR_FORK_POINT="$(git merge-base origin/main HEAD)"
+            git checkout "$PR_FORK_POINT"
         elif BRANCH_PARENT_SHA="$(git merge-base origin/main origin/zed-zippy-autobump)"; then
             git checkout "$BRANCH_PARENT_SHA"
         else

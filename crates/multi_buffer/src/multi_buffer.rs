@@ -624,7 +624,7 @@ pub struct MultiBufferSnapshot {
     diffs: TreeMap<BufferId, DiffStateSnapshot>,
     diff_transforms: SumTree<DiffTransform>,
     excerpt_ids: SumTree<ExcerptIdMapping>,
-    replaced_excerpts: TreeMap<ExcerptId, ExcerptId>,
+    replaced_excerpts: Arc<HashMap<ExcerptId, ExcerptId>>,
     non_text_state_update_count: usize,
     edit_count: usize,
     is_dirty: bool,
@@ -1967,7 +1967,10 @@ impl MultiBuffer {
         *has_deleted_file = false;
         *has_conflict = false;
         *has_inverted_diff = false;
-        replaced_excerpts.clear();
+        match Arc::get_mut(replaced_excerpts) {
+            Some(replaced_excerpts) => replaced_excerpts.clear(),
+            None => *replaced_excerpts = Default::default(),
+        }
 
         let edits = Self::sync_diff_transforms(
             self.snapshot.get_mut(),
@@ -6938,18 +6941,23 @@ impl MultiBufferSnapshot {
     }
 
     fn excerpt_locator_for_id(&self, id: ExcerptId) -> &Locator {
+        self.try_excerpt_locator_for_id(id)
+            .unwrap_or_else(|| panic!("invalid excerpt id {id:?}"))
+    }
+
+    fn try_excerpt_locator_for_id(&self, id: ExcerptId) -> Option<&Locator> {
         if id == ExcerptId::min() {
-            Locator::min_ref()
+            Some(Locator::min_ref())
         } else if id == ExcerptId::max() {
-            Locator::max_ref()
+            Some(Locator::max_ref())
         } else {
             let (_, _, item) = self.excerpt_ids.find::<ExcerptId, _>((), &id, Bias::Left);
             if let Some(entry) = item
                 && entry.id == id
             {
-                return &entry.locator;
+                return Some(&entry.locator);
             }
-            panic!("invalid excerpt id {id:?}")
+            None
         }
     }
 
@@ -7034,16 +7042,16 @@ impl MultiBufferSnapshot {
     /// afterwards.
     fn excerpt(&self, excerpt_id: ExcerptId) -> Option<&Excerpt> {
         let excerpt_id = self.latest_excerpt_id(excerpt_id);
-        let mut cursor = self.excerpts.cursor::<Option<&Locator>>(());
-        let locator = self.excerpt_locator_for_id(excerpt_id);
-        cursor.seek(&Some(locator), Bias::Left);
-        if let Some(excerpt) = cursor.item()
+        let locator = self.try_excerpt_locator_for_id(excerpt_id)?;
+        let (_, _, item) =
+            self.excerpts
+                .find::<Option<&Locator>, _>((), &Some(locator), Bias::Left);
+        if let Some(excerpt) = item
             && excerpt.id == excerpt_id
         {
             return Some(excerpt);
-        } else if cursor.item().is_none() && excerpt_id == ExcerptId::max() {
-            cursor.prev();
-            return cursor.item();
+        } else if item.is_none() && excerpt_id == ExcerptId::max() {
+            return self.excerpts.last();
         }
         None
     }

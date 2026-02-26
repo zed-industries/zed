@@ -382,9 +382,7 @@ impl MultiBuffer {
                 {
                     last.context.end = last.context.end.max(existing_range.end);
                     to_remove.push(*existing_id);
-                    self.snapshot
-                        .get_mut()
-                        .replaced_excerpts
+                    Arc::make_mut(&mut self.snapshot.get_mut().replaced_excerpts)
                         .insert(*existing_id, *last_id);
                     existing_iter.next();
                     continue;
@@ -462,9 +460,7 @@ impl MultiBuffer {
                 (Some(_), Some((_, existing_range))) => {
                     let existing_id = existing_iter.next().unwrap();
                     let new_id = next_excerpt_id();
-                    self.snapshot
-                        .get_mut()
-                        .replaced_excerpts
+                    Arc::make_mut(&mut self.snapshot.get_mut().replaced_excerpts)
                         .insert(existing_id, new_id);
                     to_remove.push(existing_id);
                     let mut range = new_iter.next().unwrap();

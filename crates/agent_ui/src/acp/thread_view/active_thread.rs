@@ -6367,37 +6367,31 @@ impl AcpThreadView {
                         ))
                         .child(
                             h_flex()
-                                .p_1()
+                                .id(entry_ix)
+                                .py_1()
                                 .w_full()
+                                .justify_center()
                                 .border_t_1()
                                 .when(is_canceled_or_failed, |this| this.border_dashed())
                                 .border_color(cx.theme().colors().border_variant)
+                                .hover(|s| s.bg(cx.theme().colors().element_hover))
                                 .child(
-                                    Button::new(
-                                        format!("expand-subagent-{}", entry_ix),
-                                        "Full Screen",
-                                    )
-                                    .full_width()
-                                    .style(ButtonStyle::Outlined)
-                                    .label_size(LabelSize::Small)
-                                    .icon(IconName::Maximize)
-                                    .icon_color(Color::Muted)
-                                    .icon_size(IconSize::Small)
-                                    .icon_position(IconPosition::Start)
-                                    .on_click(cx.listener(
-                                        move |this, _event, window, cx| {
-                                            this.server_view
-                                                .update(cx, |this, cx| {
-                                                    this.navigate_to_session(
-                                                        session_id.clone(),
-                                                        window,
-                                                        cx,
-                                                    );
-                                                })
-                                                .ok();
-                                        },
-                                    )),
-                                ),
+                                    Icon::new(IconName::Maximize)
+                                        .color(Color::Muted)
+                                        .size(IconSize::Small),
+                                )
+                                .tooltip(Tooltip::text("Make Subagent Full Screen"))
+                                .on_click(cx.listener(move |this, _event, window, cx| {
+                                    this.server_view
+                                        .update(cx, |this, cx| {
+                                            this.navigate_to_session(
+                                                session_id.clone(),
+                                                window,
+                                                cx,
+                                            );
+                                        })
+                                        .ok();
+                                })),
                         )
                     })
                 }
@@ -6430,6 +6424,20 @@ impl AcpThreadView {
                 .border_t_1()
                 .border_color(self.tool_card_border_color(cx))
                 .overflow_hidden()
+        };
+
+        let editor_bg = cx.theme().colors().editor_background;
+        let overlay = || {
+            div()
+                .absolute()
+                .inset_0()
+                .size_full()
+                .bg(linear_gradient(
+                    180.,
+                    linear_color_stop(editor_bg, 0.),
+                    linear_color_stop(editor_bg.opacity(0.), 0.1),
+                ))
+                .block_mouse_except_scroll()
         };
 
         let show_thread_entries = is_running || tool_call.content.is_empty();
@@ -6467,21 +6475,7 @@ impl AcpThreadView {
                         .pb_1()
                         .children(rendered_entries),
                 )
-                .when(is_running, |this| {
-                    let editor_bg = cx.theme().colors().editor_background;
-                    this.child(
-                        div()
-                            .absolute()
-                            .inset_0()
-                            .size_full()
-                            .bg(linear_gradient(
-                                180.,
-                                linear_color_stop(editor_bg, 0.),
-                                linear_color_stop(editor_bg.opacity(0.), 0.15),
-                            ))
-                            .block_mouse_except_scroll(),
-                    )
-                })
+                .child(overlay())
                 .into_any_element()
         } else {
             base_container()
@@ -6513,6 +6507,7 @@ impl AcpThreadView {
                             },
                         )),
                 )
+                .child(overlay())
                 .into_any_element()
         }
     }

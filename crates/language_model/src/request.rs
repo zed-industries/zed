@@ -431,6 +431,7 @@ pub struct LanguageModelRequestTool {
     pub name: String,
     pub description: String,
     pub input_schema: serde_json::Value,
+    pub use_input_streaming: bool,
 }
 
 #[derive(Debug, PartialEq, Hash, Clone, Serialize, Deserialize)]
