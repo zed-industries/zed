@@ -177,7 +177,7 @@ impl LanguageModelProvider for VercelAiGatewayLanguageModelProvider {
     }
 
     fn icon(&self) -> IconOrSvg {
-        IconOrSvg::Icon(IconName::AiGateway)
+        IconOrSvg::Icon(IconName::AiVercel)
     }
 
     fn default_model(&self, _cx: &App) -> Option<Arc<dyn LanguageModel>> {
