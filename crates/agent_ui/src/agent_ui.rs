@@ -294,6 +294,36 @@ pub fn init(
     context_server_configuration::init(language_registry.clone(), fs.clone(), cx);
     TextThreadEditor::init(cx);
 
+    // Register action to create new text thread as an editor tab
+    cx.observe_new(|workspace: &mut Workspace, _window, cx| {
+        workspace.register_action(
+            |workspace: &mut Workspace,
+             _: &zed_actions::editor::NewTextThreadInEditor,
+             window: &mut Window,
+             cx: &mut Context<Workspace>| {
+                let project = workspace.project().clone();
+                let fs = workspace.app_state().fs.clone();
+                let text_thread_store = assistant_text_thread::TextThreadStore::global(cx);
+                let text_thread_editor = TextThreadEditor::new_in_workspace(
+                    workspace.entity().clone(),
+                    project,
+                    fs,
+                    text_thread_store,
+                    window,
+                    cx,
+                );
+                workspace.add_item_to_active_pane(
+                    Box::new(text_thread_editor),
+                    None,
+                    true,
+                    window,
+                    cx,
+                );
+            },
+        );
+    })
+    .detach();
+
     // Register global action to dismiss all agent notifications
     cx.on_action(|_: &DismissOsNotifications, cx| {
         dismiss_all_agent_notifications(cx);

@@ -202,6 +202,8 @@ pub mod editor {
             MoveUp,
             /// Moves cursor down.
             MoveDown,
+            /// Creates a new AI text thread as an editor tab.
+            NewTextThreadInEditor,
         ]
     );
 }

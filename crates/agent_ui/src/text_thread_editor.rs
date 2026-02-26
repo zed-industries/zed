@@ -233,6 +233,35 @@ impl TextThreadEditor {
         .detach();
     }
 
+    /// Creates a new text thread editor as a standalone item in the workspace.
+    pub fn new_in_workspace(
+        workspace: Entity<Workspace>,
+        project: Entity<Project>,
+        fs: Arc<dyn Fs>,
+        text_thread_store: Entity<assistant_text_thread::TextThreadStore>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Entity<Self> {
+        let text_thread = text_thread_store.update(cx, |store, cx| store.create(cx));
+        let lsp_adapter_delegate = make_lsp_adapter_delegate(&project, cx)
+            .log_err()
+            .flatten();
+
+        cx.new(|cx| {
+            let mut editor = Self::for_text_thread(
+                text_thread,
+                fs,
+                workspace.downgrade(),
+                project,
+                lsp_adapter_delegate,
+                window,
+                cx,
+            );
+            editor.insert_default_prompt(window, cx);
+            editor
+        })
+    }
+
     pub fn for_text_thread(
         text_thread: Entity<TextThread>,
         fs: Arc<dyn Fs>,
