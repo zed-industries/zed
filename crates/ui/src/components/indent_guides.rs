@@ -116,6 +116,7 @@ impl IndentGuides {
                 indent_guides,
                 indent_size: self.indent_size,
                 item_height,
+                list_width: bounds.size.width,
             };
             custom_render(params, window, cx)
         } else {
@@ -159,6 +160,8 @@ pub struct RenderIndentGuideParams {
     pub indent_size: Pixels,
     /// The height of each item in pixels.
     pub item_height: Pixels,
+    /// The width of the list container in pixels.
+    pub list_width: Pixels,
 }
 
 /// Represents a rendered indent guide with its visual properties and interaction areas.

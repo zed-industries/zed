@@ -5525,6 +5525,10 @@ impl ProjectPanel {
                 ListItem::new(id)
                     .indent_level(depth)
                     .indent_step_size(px(settings.indent_size))
+                    .indent_offset(match settings.indent_direction {
+                        IndentDirection::Left => SCROLLBAR_OFFSET,
+                        IndentDirection::Right => px(0.),
+                    })
                     .indent_side(match settings.indent_direction {
                         IndentDirection::Left => IndentSide::Left,
                         IndentDirection::Right => IndentSide::Right,
@@ -6305,12 +6309,15 @@ fn item_width_estimate(depth: usize, item_text_chars: usize, is_symlink: bool) -
     item_width
 }
 
+const SCROLLBAR_OFFSET: Pixels = px(12.);
+
 impl Render for ProjectPanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let has_worktree = !self.state.visible_entries.is_empty();
         let project = self.project.read(cx);
         let panel_settings = ProjectPanelSettings::get_global(cx);
         let indent_size = panel_settings.indent_size;
+        let indent_direction = panel_settings.indent_direction;
         let show_indent_guides = panel_settings.indent_guides.show == ShowIndentGuides::Always;
         let show_sticky_entries = {
             if panel_settings.sticky_scroll {
@@ -6549,7 +6556,7 @@ impl Render for ProjectPanel {
                                     .with_render_fn(
                                         cx.entity(),
                                         move |this, params, _, cx| {
-                                            const LEFT_OFFSET: Pixels = px(14.);
+                                            const EDGE_OFFSET: Pixels = px(14.);
                                             const PADDING_Y: Pixels = px(4.);
                                             const HITBOX_OVERDRAW: Pixels = px(3.);
 
@@ -6561,6 +6568,7 @@ impl Render for ProjectPanel {
 
                                             let indent_size = params.indent_size;
                                             let item_height = params.item_height;
+                                            let list_width = params.list_width;
 
                                             params
                                                 .indent_guides
@@ -6572,10 +6580,21 @@ impl Render for ProjectPanel {
                                                     } else {
                                                         PADDING_Y
                                                     };
+                                                    let guide_x = match indent_direction {
+                                                        IndentDirection::Left => {
+                                                            list_width
+                                                                - layout.offset.x * indent_size
+                                                                - EDGE_OFFSET
+                                                                - SCROLLBAR_OFFSET
+                                                        }
+                                                        IndentDirection::Right => {
+                                                            layout.offset.x * indent_size
+                                                                + EDGE_OFFSET
+                                                        }
+                                                    };
                                                     let bounds = Bounds::new(
                                                         point(
-                                                            layout.offset.x * indent_size
-                                                                + LEFT_OFFSET,
+                                                            guide_x,
                                                             layout.offset.y * item_height + offset,
                                                         ),
                                                         size(
@@ -6645,19 +6664,32 @@ impl Render for ProjectPanel {
                                         .with_render_fn(
                                             cx.entity(),
                                             move |_, params, _, _| {
-                                                const LEFT_OFFSET: Pixels = px(14.);
+                                                const EDGE_OFFSET: Pixels = px(14.);
 
                                                 let indent_size = params.indent_size;
                                                 let item_height = params.item_height;
+                                                let list_width = params.list_width;
 
                                                 params
                                                     .indent_guides
                                                     .into_iter()
                                                     .map(|layout| {
+                                                        let guide_x = match indent_direction {
+                                                            IndentDirection::Left => {
+                                                                list_width
+                                                                    - layout.offset.x
+                                                                        * indent_size
+                                                                    - EDGE_OFFSET
+                                                                    - SCROLLBAR_OFFSET
+                                                            }
+                                                            IndentDirection::Right => {
+                                                                layout.offset.x * indent_size
+                                                                    + EDGE_OFFSET
+                                                            }
+                                                        };
                                                         let bounds = Bounds::new(
                                                             point(
-                                                                layout.offset.x * indent_size
-                                                                    + LEFT_OFFSET,
+                                                                guide_x,
                                                                 layout.offset.y * item_height,
                                                             ),
                                                             size(

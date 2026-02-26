@@ -4,7 +4,7 @@ use component::{Component, ComponentScope, example_group_with_title, single_exam
 use gpui::{AnyElement, AnyView, ClickEvent, MouseButton, MouseDownEvent, Pixels, px};
 use smallvec::SmallVec;
 
-use crate::{Disclosure, prelude::*};
+use crate::{Disclosure, IconName, prelude::*};
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, Default)]
 pub enum ListItemSpacing {
@@ -30,6 +30,7 @@ pub struct ListItem {
     spacing: ListItemSpacing,
     indent_level: usize,
     indent_step_size: Pixels,
+    indent_offset: Pixels,
     indent_side: IndentSide,
     /// A slot for content that appears before the children, like an icon or avatar.
     start_slot: Option<AnyElement>,
@@ -65,6 +66,7 @@ impl ListItem {
             spacing: ListItemSpacing::Dense,
             indent_level: 0,
             indent_step_size: px(12.),
+            indent_offset: px(0.),
             indent_side: IndentSide::Right,
             start_slot: None,
             end_slot: None,
@@ -144,6 +146,11 @@ impl ListItem {
 
     pub fn indent_step_size(mut self, indent_step_size: Pixels) -> Self {
         self.indent_step_size = indent_step_size;
+        self
+    }
+
+    pub fn indent_offset(mut self, indent_offset: Pixels) -> Self {
+        self.indent_offset = indent_offset;
         self
     }
 
@@ -230,7 +237,8 @@ impl RenderOnce for ListItem {
             .relative()
             // When an item is inset draw the indent spacing outside of the item
             .when(self.inset, |this| {
-                let indent = self.indent_level as f32 * self.indent_step_size;
+                let indent =
+                    self.indent_level as f32 * self.indent_step_size + self.indent_offset;
                 match self.indent_side {
                     IndentSide::Left => this.mr(indent),
                     IndentSide::Right => this.ml(indent),
@@ -268,6 +276,9 @@ impl RenderOnce for ListItem {
                     .relative()
                     .gap_1()
                     .px(DynamicSpacing::Base06.rems(cx))
+                    .when(self.indent_side == IndentSide::Left, |this| {
+                        this.flex_row_reverse()
+                    })
                     .map(|this| match self.spacing {
                         ListItemSpacing::Dense => this,
                         ListItemSpacing::ExtraDense => this.py_neg_px(),
@@ -316,7 +327,8 @@ impl RenderOnce for ListItem {
                             this.rounded_sm()
                         } else {
                             // When an item is not inset draw the indent spacing inside of the item
-                            let indent = self.indent_level as f32 * self.indent_step_size;
+                            let indent =
+                                self.indent_level as f32 * self.indent_step_size + self.indent_offset;
                             match self.indent_side {
                                 IndentSide::Left => this.mr(indent),
                                 IndentSide::Right => this.ml(indent),
@@ -327,12 +339,18 @@ impl RenderOnce for ListItem {
                         div()
                             .flex()
                             .absolute()
-                            .left(rems(-1.))
+                            .map(|this| match self.indent_side {
+                                IndentSide::Left => this.right(rems(-1.)),
+                                IndentSide::Right => this.left(rems(-1.)),
+                            })
                             .when(is_open && !self.always_show_disclosure_icon, |this| {
                                 this.visible_on_hover("")
                             })
                             .child(
                                 Disclosure::new("toggle", is_open)
+                                    .when(self.indent_side == IndentSide::Left, |this| {
+                                        this.closed_icon(IconName::ChevronLeft)
+                                    })
                                     .on_toggle_expanded(self.on_toggle),
                             )
                     }))
@@ -342,6 +360,9 @@ impl RenderOnce for ListItem {
                             .flex_shrink_0()
                             .flex_basis(relative(0.25))
                             .gap(DynamicSpacing::Base06.rems(cx))
+                            .when(self.indent_side == IndentSide::Left, |this| {
+                                this.flex_row_reverse()
+                            })
                             .map(|list_content| {
                                 if self.overflow_x {
                                     list_content
