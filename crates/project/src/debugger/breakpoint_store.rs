@@ -6,7 +6,9 @@ pub use breakpoints_in_file::{BreakpointSessionState, BreakpointWithPosition};
 use breakpoints_in_file::{BreakpointsInFile, StatefulBreakpoint};
 use collections::{BTreeMap, HashMap};
 use dap::{StackFrameId, client::SessionId};
-use gpui::{App, AppContext, AsyncApp, Context, Entity, EventEmitter, Subscription, Task};
+use gpui::{
+    App, AppContext, AsyncApp, Context, Entity, EntityId, EventEmitter, Subscription, Task,
+};
 use itertools::Itertools;
 use language::{Buffer, BufferSnapshot, proto::serialize_anchor as serialize_text_anchor};
 use rpc::{
@@ -154,6 +156,7 @@ pub struct BreakpointStore {
     breakpoints: BTreeMap<Arc<Path>, BreakpointsInFile>,
     downstream_client: Option<(AnyProtoClient, u64)>,
     active_stack_frame: Option<ActiveStackFrame>,
+    active_debug_line_pane_id: Option<EntityId>,
     // E.g ssh
     mode: BreakpointStoreMode,
 }
@@ -171,6 +174,7 @@ impl BreakpointStore {
             worktree_store,
             downstream_client: None,
             active_stack_frame: Default::default(),
+            active_debug_line_pane_id: None,
         }
     }
 
@@ -190,6 +194,7 @@ impl BreakpointStore {
             worktree_store,
             downstream_client: None,
             active_stack_frame: Default::default(),
+            active_debug_line_pane_id: None,
         }
     }
 
@@ -628,6 +633,10 @@ impl BreakpointStore {
                 file_breakpoints.breakpoints.iter().filter_map({
                     let range = range.clone();
                     move |bp| {
+                        if !buffer_snapshot.can_resolve(bp.position()) {
+                            return None;
+                        }
+
                         if let Some(range) = &range
                             && (bp.position().cmp(&range.start, buffer_snapshot).is_lt()
                                 || bp.position().cmp(&range.end, buffer_snapshot).is_gt())
@@ -647,16 +656,30 @@ impl BreakpointStore {
         self.active_stack_frame.as_ref()
     }
 
+    pub fn active_debug_line_pane_id(&self) -> Option<EntityId> {
+        self.active_debug_line_pane_id
+    }
+
+    pub fn set_active_debug_pane_id(&mut self, pane_id: EntityId) {
+        self.active_debug_line_pane_id = Some(pane_id);
+    }
+
     pub fn remove_active_position(
         &mut self,
         session_id: Option<SessionId>,
         cx: &mut Context<Self>,
     ) {
         if let Some(session_id) = session_id {
-            self.active_stack_frame
-                .take_if(|active_stack_frame| active_stack_frame.session_id == session_id);
+            if self
+                .active_stack_frame
+                .take_if(|active_stack_frame| active_stack_frame.session_id == session_id)
+                .is_some()
+            {
+                self.active_debug_line_pane_id = None;
+            }
         } else {
             self.active_stack_frame.take();
+            self.active_debug_line_pane_id = None;
         }
 
         cx.emit(BreakpointStoreEvent::ClearDebugLines);

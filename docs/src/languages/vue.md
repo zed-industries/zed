@@ -1,3 +1,8 @@
+---
+title: Vue
+description: "Configure Vue language support in Zed, including language servers, formatting, and debugging."
+---
+
 # Vue
 
 Vue support is available through the [Vue extension](https://github.com/zed-extensions/vue).

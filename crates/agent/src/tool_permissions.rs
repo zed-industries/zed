@@ -1151,6 +1151,32 @@ mod tests {
     }
 
     #[test]
+    fn dev_null_redirect_does_not_cause_false_negative() {
+        // Redirects to /dev/null are known-safe and should be skipped during
+        // command extraction, so they don't prevent auto-allow from matching.
+        t(r#"git log --oneline -20 2>/dev/null || echo "not a git repo or no commits""#)
+            .allow(&[r"^git\s+(status|diff|log|show)\b", "^echo"])
+            .is_allow();
+    }
+
+    #[test]
+    fn redirect_to_real_file_still_causes_confirm() {
+        // Redirects to real files (not /dev/null) should still be included in
+        // the extracted commands, so they prevent auto-allow when unmatched.
+        t("echo hello > /etc/passwd").allow(&["^echo"]).is_confirm();
+    }
+
+    #[test]
+    fn pipe_does_not_cause_false_negative_when_all_commands_match() {
+        // A piped command like `echo "y\ny" | git add -p file` produces two commands:
+        // "echo y\ny" and "git add -p file". Both should match their respective allow
+        // patterns, so the overall command should be auto-allowed.
+        t(r#"echo "y\ny" | git add -p crates/acp_thread/src/acp_thread.rs"#)
+            .allow(&[r"^git\s+(--no-pager\s+)?(fetch|status|diff|log|show|add|commit|push|checkout\s+-b)\b", "^echo"])
+            .is_allow();
+    }
+
+    #[test]
     fn deny_triggers_on_any_matching_command() {
         t("ls && rm file").allow(&["^ls"]).deny(&["^rm"]).is_deny();
     }
@@ -1174,29 +1200,69 @@ mod tests {
     #[test]
     fn always_allow_button_works_end_to_end() {
         // This test verifies that the "Always Allow" button behavior works correctly:
-        // 1. User runs a command like "cargo build"
-        // 2. They click "Always Allow for `cargo` commands"
-        // 3. The pattern extracted from that command should match future cargo commands
+        // 1. User runs a command like "cargo build --release"
+        // 2. They click "Always Allow for `cargo build` commands"
+        // 3. The pattern extracted should match future "cargo build" commands
+        //    but NOT other cargo subcommands like "cargo test"
         let original_command = "cargo build --release";
         let extracted_pattern = pattern(original_command);
 
         // The extracted pattern should allow the original command
         t(original_command).allow(&[extracted_pattern]).is_allow();
 
-        // It should also allow other commands with the same base command
-        t("cargo test").allow(&[extracted_pattern]).is_allow();
-        t("cargo fmt").allow(&[extracted_pattern]).is_allow();
+        // It should allow other "cargo build" invocations with different flags
+        t("cargo build").allow(&[extracted_pattern]).is_allow();
+        t("cargo build --features foo")
+            .allow(&[extracted_pattern])
+            .is_allow();
+
+        // But NOT other cargo subcommands — the pattern is subcommand-specific
+        t("cargo test").allow(&[extracted_pattern]).is_confirm();
+        t("cargo fmt").allow(&[extracted_pattern]).is_confirm();
+
+        // Hyphenated extensions of the subcommand should not match either
+        // (e.g. cargo plugins like "cargo build-foo")
+        t("cargo build-foo")
+            .allow(&[extracted_pattern])
+            .is_confirm();
+        t("cargo builder").allow(&[extracted_pattern]).is_confirm();
 
         // But not commands with different base commands
         t("npm install").allow(&[extracted_pattern]).is_confirm();
 
-        // And it should work with subcommand extraction (chained commands)
-        t("cargo build && cargo test")
+        // Chained commands: all must match the pattern
+        t("cargo build && cargo build --release")
             .allow(&[extracted_pattern])
             .is_allow();
 
         // But reject if any subcommand doesn't match
         t("cargo build && npm install")
+            .allow(&[extracted_pattern])
+            .is_confirm();
+    }
+
+    #[test]
+    fn always_allow_button_works_without_subcommand() {
+        // When the second token is a flag (e.g. "ls -la"), the extracted pattern
+        // should only include the command name, not the flag.
+        let original_command = "ls -la";
+        let extracted_pattern = pattern(original_command);
+
+        // The extracted pattern should allow the original command
+        t(original_command).allow(&[extracted_pattern]).is_allow();
+
+        // It should allow other invocations of the same command
+        t("ls").allow(&[extracted_pattern]).is_allow();
+        t("ls -R /tmp").allow(&[extracted_pattern]).is_allow();
+
+        // But not different commands
+        t("cat file.txt").allow(&[extracted_pattern]).is_confirm();
+
+        // Chained commands: all must match
+        t("ls -la && ls /tmp")
+            .allow(&[extracted_pattern])
+            .is_allow();
+        t("ls -la && cat file.txt")
             .allow(&[extracted_pattern])
             .is_confirm();
     }

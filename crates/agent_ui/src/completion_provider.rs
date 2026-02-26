@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
-use crate::acp::AcpThreadHistory;
+use crate::ThreadHistory;
 use acp_thread::{AgentSessionInfo, MentionUri};
 use anyhow::Result;
 use editor::{
@@ -206,7 +206,7 @@ pub struct PromptCompletionProvider<T: PromptCompletionProviderDelegate> {
     source: Arc<T>,
     editor: WeakEntity<Editor>,
     mention_set: Entity<MentionSet>,
-    history: WeakEntity<AcpThreadHistory>,
+    history: WeakEntity<ThreadHistory>,
     prompt_store: Option<Entity<PromptStore>>,
     workspace: WeakEntity<Workspace>,
 }
@@ -216,7 +216,7 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
         source: T,
         editor: WeakEntity<Editor>,
         mention_set: Entity<MentionSet>,
-        history: WeakEntity<AcpThreadHistory>,
+        history: WeakEntity<ThreadHistory>,
         prompt_store: Option<Entity<PromptStore>>,
         workspace: WeakEntity<Workspace>,
     ) -> Self {
@@ -2050,7 +2050,17 @@ fn selection_ranges(
 
         selections
             .into_iter()
-            .map(|s| snapshot.anchor_after(s.start)..snapshot.anchor_before(s.end))
+            .map(|s| {
+                let (start, end) = if s.is_empty() {
+                    let row = multi_buffer::MultiBufferRow(s.start.row);
+                    let line_start = text::Point::new(s.start.row, 0);
+                    let line_end = text::Point::new(s.start.row, snapshot.line_len(row));
+                    (line_start, line_end)
+                } else {
+                    (s.start, s.end)
+                };
+                snapshot.anchor_after(start)..snapshot.anchor_before(end)
+            })
             .flat_map(|range| {
                 let (start_buffer, start) = buffer.text_anchor_for_position(range.start, cx)?;
                 let (end_buffer, end) = buffer.text_anchor_for_position(range.end, cx)?;

@@ -1,12 +1,14 @@
 use fs::Fs;
-use gpui::{AppContext, Application};
+use gpui::AppContext;
+use gpui_platform::headless;
+
 fn main() {
     let Some(path_to_read) = std::env::args().nth(1) else {
         println!("Expected path to read as 1st argument.");
         return;
     };
 
-    let _ = Application::headless().run(|cx| {
+    let _ = headless().run(|cx| {
         let fs = fs::RealFs::new(None, cx.background_executor().clone());
         cx.background_spawn(async move {
             let timer = std::time::Instant::now();

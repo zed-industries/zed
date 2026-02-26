@@ -1,3 +1,8 @@
+---
+title: Dart
+description: "Configure Dart language support in Zed, including language servers, formatting, and debugging."
+---
+
 # Dart
 
 Dart support is available through the [Dart extension](https://github.com/zed-extensions/dart).

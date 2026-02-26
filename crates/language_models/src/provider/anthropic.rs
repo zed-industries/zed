@@ -141,8 +141,8 @@ impl LanguageModelProvider for AnthropicLanguageModelProvider {
 
     fn recommended_models(&self, _cx: &App) -> Vec<Arc<dyn LanguageModel>> {
         [
-            anthropic::Model::ClaudeSonnet4_5,
-            anthropic::Model::ClaudeSonnet4_5Thinking,
+            anthropic::Model::ClaudeSonnet4_6,
+            anthropic::Model::ClaudeSonnet4_6Thinking,
         ]
         .into_iter()
         .map(|model| self.create_language_model(model))
@@ -370,6 +370,7 @@ pub fn into_anthropic_count_tokens_request(
                 name: tool.name,
                 description: tool.description,
                 input_schema: tool.input_schema,
+                eager_input_streaming: tool.use_input_streaming,
             })
             .collect(),
         tool_choice: request.tool_choice.map(|choice| match choice {
@@ -713,6 +714,7 @@ pub fn into_anthropic(
                 name: tool.name,
                 description: tool.description,
                 input_schema: tool.input_schema,
+                eager_input_streaming: tool.use_input_streaming,
             })
             .collect(),
         tool_choice: request.tool_choice.map(|choice| match choice {
