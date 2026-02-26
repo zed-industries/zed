@@ -11628,6 +11628,58 @@ impl Editor {
         self.restore_hunks_in_ranges(selections, window, cx);
     }
 
+    pub fn restore_and_next(
+        &mut self,
+        _: &::git::RestoreAndNext,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.hide_mouse_cursor(HideMouseCursorOrigin::TypingAction, cx);
+        let selections = self
+            .selections
+            .all(&self.display_snapshot(cx))
+            .into_iter()
+            .map(|s| s.range())
+            .collect();
+        self.restore_hunks_in_ranges(selections, window, cx);
+
+        let snapshot = self.snapshot(window, cx);
+        let position = self
+            .selections
+            .newest::<Point>(&snapshot.display_snapshot)
+            .head();
+        let mut row = snapshot
+            .buffer_snapshot()
+            .diff_hunks_in_range(position..snapshot.buffer_snapshot().max_point())
+            .find(|hunk| hunk.row_range.start.0 > position.row)
+            .map(|hunk| hunk.row_range.start);
+
+        let all_diff_hunks_expanded = self.buffer().read(cx).all_diff_hunks_expanded();
+        // Outside of the project diff editor, wrap around to the beginning.
+        if !all_diff_hunks_expanded {
+            row = row.or_else(|| {
+                snapshot
+                    .buffer_snapshot()
+                    .diff_hunks_in_range(Point::zero()..position)
+                    .find(|hunk| hunk.row_range.end.0 < position.row)
+                    .map(|hunk| hunk.row_range.start)
+            });
+        }
+
+        if let Some(row) = row {
+            let destination = Point::new(row.0, 0);
+            let autoscroll = Autoscroll::center();
+
+            // TODO!: There's already a call to `Editor.change_selections` in
+            // `Editor.restore_hunks_in_ranges` so we might want to consolidate
+            // that into a single call.
+            self.unfold_ranges(&[destination..destination], false, false, cx);
+            self.change_selections(SelectionEffects::scroll(autoscroll), window, cx, |s| {
+                s.select_ranges([destination..destination]);
+            });
+        }
+    }
+
     pub fn restore_hunks_in_ranges(
         &mut self,
         ranges: Vec<Range<Point>>,
