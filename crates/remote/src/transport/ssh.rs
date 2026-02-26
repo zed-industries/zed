@@ -354,7 +354,12 @@ impl RemoteConnection for SshRemoteConnection {
         args.push("-N".into());
         for (local_port, host, remote_port) in forwards {
             args.push("-L".into());
-            args.push(format!("{}:{}:{}", local_port, bracket_ipv6(&host), remote_port));
+            args.push(format!(
+                "{}:{}:{}",
+                local_port,
+                bracket_ipv6(&host),
+                remote_port
+            ));
         }
         args.push(socket.connection_options.ssh_destination());
         Ok(CommandTemplate {
@@ -1582,7 +1587,10 @@ impl SshConnectionOptions {
 
                 format!(
                     "-L{}:{}:{}:{}",
-                    bracket_ipv6(local_host), pf.local_port, bracket_ipv6(remote_host), pf.remote_port
+                    bracket_ipv6(local_host),
+                    pf.local_port,
+                    bracket_ipv6(remote_host),
+                    pf.remote_port
                 )
             }));
         }
@@ -1689,7 +1697,12 @@ fn build_command_posix(
 
     if let Some((local_port, host, remote_port)) = port_forward {
         args.push("-L".into());
-        args.push(format!("{}:{}:{}", local_port, bracket_ipv6(&host), remote_port));
+        args.push(format!(
+            "{}:{}:{}",
+            local_port,
+            bracket_ipv6(&host),
+            remote_port
+        ));
     }
 
     // -q suppresses the "Connection to ... closed." message that SSH prints when
@@ -1779,7 +1792,12 @@ fn build_command_windows(
 
     if let Some((local_port, host, remote_port)) = port_forward {
         args.push("-L".into());
-        args.push(format!("{}:{}:{}", local_port, bracket_ipv6(&host), remote_port));
+        args.push(format!(
+            "{}:{}:{}",
+            local_port,
+            bracket_ipv6(&host),
+            remote_port
+        ));
     }
 
     // -q suppresses the "Connection to ... closed." message that SSH prints when
@@ -2061,6 +2079,4 @@ mod tests {
 
         Ok(())
     }
-
-
 }
