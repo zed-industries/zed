@@ -97,6 +97,8 @@ actions!(
         InsertIntoEditor,
         /// Splits the conversation at the current cursor position.
         Split,
+        /// Sends the current message in a text thread editor.
+        SendMessage,
     ]
 );
 
@@ -243,9 +245,7 @@ impl TextThreadEditor {
         cx: &mut App,
     ) -> Entity<Self> {
         let text_thread = text_thread_store.update(cx, |store, cx| store.create(cx));
-        let lsp_adapter_delegate = make_lsp_adapter_delegate(&project, cx)
-            .log_err()
-            .flatten();
+        let lsp_adapter_delegate = make_lsp_adapter_delegate(&project, cx).log_err().flatten();
 
         cx.new(|cx| {
             let mut editor = Self::for_text_thread(
@@ -437,6 +437,13 @@ impl TextThreadEditor {
             return;
         }
         telemetry::event!("Agent Message Sent", agent = "zed-text");
+        self.send_to_model(window, cx);
+    }
+
+    fn send(&mut self, _: &SendMessage, window: &mut Window, cx: &mut Context<Self>) {
+        if self.sending_disabled(cx) {
+            return;
+        }
         self.send_to_model(window, cx);
     }
 
@@ -2674,7 +2681,7 @@ impl Render for TextThreadEditor {
         let language_model_selector = self.language_model_selector_menu_handle.clone();
 
         v_flex()
-            .key_context("ContextEditor")
+            .key_context("TextThreadEditor")
             .capture_action(cx.listener(TextThreadEditor::cancel))
             .capture_action(cx.listener(TextThreadEditor::save))
             .capture_action(cx.listener(TextThreadEditor::copy))
@@ -2684,6 +2691,7 @@ impl Render for TextThreadEditor {
             .capture_action(cx.listener(TextThreadEditor::cycle_message_role))
             .capture_action(cx.listener(TextThreadEditor::confirm_command))
             .on_action(cx.listener(TextThreadEditor::assist))
+            .on_action(cx.listener(TextThreadEditor::send))
             .on_action(cx.listener(TextThreadEditor::split))
             .on_action(move |_: &ToggleModelSelector, window, cx| {
                 language_model_selector.toggle(window, cx);
