@@ -831,6 +831,6 @@ To do so, add the following to your settings file ([how to edit](../configuring-
 }
 ```
 
-Currently, `some-provider` can be any of the following values: `anthropic`, `deepseek`, `google`, `lmstudio`, `mistral`, `ollama`, `openai`, `open_router`, `vercel`, `vercel_ai_gateway`, `x_ai`.
+Currently, `some-provider` can be any of the following values: `anthropic`, `google`, `ollama`, `openai`.
 
 This is the same infrastructure that powers models that are, for example, [OpenAI-compatible](#openai-api-compatible).
