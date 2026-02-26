@@ -9160,7 +9160,7 @@ async fn test_sort_mode_toggle(cx: &mut gpui::TestAppContext) {
 async fn test_file_nesting_mixed_exact_and_glob_targets(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
-    cx.update(|_, cx| {
+    cx.update(|cx| {
         cx.update_global::<SettingsStore, _>(|store, cx| {
             store.update_user_settings(cx, |settings| {
                 settings.project_panel.get_or_insert_default().file_nesting =
@@ -9211,7 +9211,7 @@ async fn test_file_nesting_mixed_exact_and_glob_targets(cx: &mut gpui::TestAppCo
         visible_entries_as_strings(&panel, 0..50, cx),
         &[
             "v root",
-            "      main.go",
+            "      main.go  <== selected",
             "          main_test.go",
             "          main.helper.go",
             "      other.go",
