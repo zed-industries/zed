@@ -139,10 +139,10 @@ impl VercelAiGatewayLanguageModelProvider {
 
     fn default_available_model() -> AvailableModel {
         AvailableModel {
-            name: "openai/gpt-4o-mini".to_string(),
-            display_name: Some("OpenAI GPT-4o mini".to_string()),
-            max_tokens: 128_000,
-            max_output_tokens: Some(16_384),
+            name: "openai/gpt-5.3-codex".to_string(),
+            display_name: Some("GPT 5.3 Codex".to_string()),
+            max_tokens: 400_000,
+            max_output_tokens: Some(128_000),
             max_completion_tokens: None,
             capabilities: ModelCapabilities::default(),
         }
@@ -185,7 +185,7 @@ impl LanguageModelProvider for VercelAiGatewayLanguageModelProvider {
     }
 
     fn default_fast_model(&self, _cx: &App) -> Option<Arc<dyn LanguageModel>> {
-        Some(self.create_language_model(Self::default_available_model()))
+        None
     }
 
     fn provided_models(&self, cx: &App) -> Vec<Arc<dyn LanguageModel>> {
