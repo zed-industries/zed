@@ -23,8 +23,8 @@ use git::{
     status::FileStatus,
 };
 use gpui::{
-    Action, AnyElement, App, AppContext as _, AsyncWindowContext, Entity, EventEmitter,
-    FocusHandle, Focusable, Render, Subscription, Task, WeakEntity, actions,
+    Action, AnyElement, App, AppContext as _, AsyncWindowContext, DismissEvent, Entity,
+    EventEmitter, FocusHandle, Focusable, Render, Subscription, Task, WeakEntity, actions,
 };
 use language::{Anchor, Buffer, BufferId, Capability, OffsetRangeExt};
 use multi_buffer::{MultiBuffer, PathKey};
@@ -40,7 +40,11 @@ use smol::future::yield_now;
 use std::any::{Any, TypeId};
 use std::sync::Arc;
 use theme::ActiveTheme;
-use ui::{DiffStat, Divider, KeyBinding, Tooltip, prelude::*, vertical_divider};
+use picker::{Picker, PickerDelegate};
+use ui::{
+    DiffStat, Divider, HighlightedLabel, KeyBinding, ListItem, ListItemSpacing, PopoverMenu,
+    Tooltip, prelude::*, vertical_divider,
+};
 use util::{ResultExt as _, rel_path::RelPath};
 use workspace::{
     CloseActiveItem, ItemNavHistory, SerializableItem, ToolbarItemEvent, ToolbarItemLocation,
@@ -458,6 +462,13 @@ impl ProjectDiff {
 
     pub fn diff_base<'a>(&'a self, cx: &'a App) -> &'a DiffBase {
         self.branch_diff.read(cx).diff_base()
+    }
+
+    pub fn set_diff_base(&mut self, diff_base: DiffBase, cx: &mut Context<Self>) {
+        self.branch_diff.update(cx, |branch_diff, cx| {
+            branch_diff.set_diff_base(diff_base, cx);
+        });
+        cx.notify();
     }
 
     pub fn move_to_entry(
@@ -1601,11 +1612,15 @@ fn render_send_review_to_agent_button(review_count: usize, focus_handle: &FocusH
 
 pub struct BranchDiffToolbar {
     project_diff: Option<WeakEntity<ProjectDiff>>,
+    workspace: WeakEntity<Workspace>,
 }
 
 impl BranchDiffToolbar {
-    pub fn new(_cx: &mut Context<Self>) -> Self {
-        Self { project_diff: None }
+    pub fn new(workspace: &Workspace, _cx: &mut Context<Self>) -> Self {
+        Self {
+            project_diff: None,
+            workspace: workspace.weak_handle(),
+        }
     }
 
     fn project_diff(&self, _: &App) -> Option<Entity<ProjectDiff>> {
@@ -1666,6 +1681,14 @@ impl Render for BranchDiffToolbar {
 
         let show_review_button = !is_multibuffer_empty && is_ai_enabled;
 
+        let base_branch_name: SharedString = match project_diff.read(cx).diff_base(cx) {
+            DiffBase::Merge { base_ref } => base_ref.clone(),
+            DiffBase::Head => "HEAD".into(),
+        };
+
+        let workspace = self.workspace.clone();
+        let project_diff_weak = project_diff.downgrade();
+
         h_group_xl()
             .my_neg_1()
             .py_1()
@@ -1673,6 +1696,35 @@ impl Render for BranchDiffToolbar {
             .flex_wrap()
             .justify_end()
             .gap_2()
+            .child(
+                PopoverMenu::new("branch-diff-base-picker")
+                    .menu(move |window, cx| {
+                        let workspace = workspace.upgrade()?;
+                        let project = workspace.read(cx).project().clone();
+                        let repo = project
+                            .read(cx)
+                            .git_store()
+                            .read(cx)
+                            .active_repository();
+                        let project_diff_weak = project_diff_weak.clone();
+                        Some(cx.new(|cx| {
+                            DiffBaseBranchPicker::new(
+                                project_diff_weak,
+                                repo,
+                                window,
+                                cx,
+                            )
+                        }))
+                    })
+                    .trigger(
+                        Button::new("branch-base-selector", base_branch_name)
+                            .icon(IconName::GitBranch)
+                            .icon_position(IconPosition::Start)
+                            .icon_size(IconSize::Small)
+                            .icon_color(Color::Muted),
+                    )
+                    .anchor(gpui::Corner::TopRight),
+            )
             .when(!is_multibuffer_empty, |this| {
                 this.child(DiffStat::new(
                     "branch-diff-stat",
@@ -1712,6 +1764,263 @@ impl Render for BranchDiffToolbar {
                     ),
                 )
             })
+    }
+}
+
+pub struct DiffBaseBranchPicker {
+    picker: Entity<Picker<DiffBaseBranchDelegate>>,
+}
+
+impl DiffBaseBranchPicker {
+    fn new(
+        project_diff: WeakEntity<ProjectDiff>,
+        repo: Option<Entity<Repository>>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let delegate = DiffBaseBranchDelegate {
+            project_diff,
+            all_branches: Vec::new(),
+            matches: Vec::new(),
+            selected_index: 0,
+        };
+        let picker = cx.new(|cx| {
+            Picker::uniform_list(delegate, window, cx)
+                .max_height(Some(rems(20.).into()))
+                .modal(false)
+        });
+
+        if let Some(repo) = repo {
+            let branches_task = repo.update(cx, |repo, _| repo.branches());
+            cx.spawn_in(window, {
+                let picker = picker.clone();
+                async move |_this, cx| {
+                    let mut branches = branches_task.await??;
+                    let branches = cx
+                        .background_spawn(async move {
+                            let remote_upstreams: collections::HashSet<_> = branches
+                                .iter()
+                                .filter_map(|branch| {
+                                    branch
+                                        .upstream
+                                        .as_ref()
+                                        .filter(|upstream| upstream.is_remote())
+                                        .map(|upstream| upstream.ref_name.clone())
+                                })
+                                .collect();
+                            branches
+                                .retain(|branch| !remote_upstreams.contains(&branch.ref_name));
+                            branches.sort_by_key(|branch| {
+                                (
+                                    !branch.is_head,
+                                    branch
+                                        .most_recent_commit
+                                        .as_ref()
+                                        .map(|commit| 0i64 - commit.commit_timestamp),
+                                )
+                            });
+                            branches
+                        })
+                        .await;
+
+                    picker.update_in(cx, |picker, window, cx| {
+                        picker.delegate.all_branches = branches;
+                        picker.refresh(window, cx);
+                    })?;
+                    anyhow::Ok(())
+                }
+            })
+            .detach_and_log_err(cx);
+        }
+
+        Self { picker }
+    }
+}
+
+impl EventEmitter<DismissEvent> for DiffBaseBranchPicker {}
+
+impl Focusable for DiffBaseBranchPicker {
+    fn focus_handle(&self, cx: &App) -> FocusHandle {
+        self.picker.focus_handle(cx)
+    }
+}
+
+impl Render for DiffBaseBranchPicker {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .w(rems(20.))
+            .elevation_2(cx)
+            .child(self.picker.clone())
+    }
+}
+
+struct DiffBaseBranchDelegate {
+    project_diff: WeakEntity<ProjectDiff>,
+    all_branches: Vec<Branch>,
+    matches: Vec<BranchMatch>,
+    selected_index: usize,
+}
+
+struct BranchMatch {
+    branch: Branch,
+    positions: Vec<usize>,
+}
+
+impl PickerDelegate for DiffBaseBranchDelegate {
+    type ListItem = ListItem;
+
+    fn match_count(&self) -> usize {
+        self.matches.len()
+    }
+
+    fn selected_index(&self) -> usize {
+        self.selected_index
+    }
+
+    fn set_selected_index(
+        &mut self,
+        ix: usize,
+        _window: &mut Window,
+        cx: &mut Context<Picker<Self>>,
+    ) {
+        self.selected_index = ix.min(self.matches.len().saturating_sub(1));
+        cx.notify();
+    }
+
+    fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
+        "Select base branch...".into()
+    }
+
+    fn update_matches(
+        &mut self,
+        query: String,
+        window: &mut Window,
+        cx: &mut Context<Picker<Self>>,
+    ) -> Task<()> {
+        let all_branches = self.all_branches.clone();
+
+        cx.spawn_in(window, async move |picker, cx| {
+            let matches = if query.is_empty() {
+                all_branches
+                    .into_iter()
+                    .map(|branch| BranchMatch {
+                        branch,
+                        positions: Vec::new(),
+                    })
+                    .collect()
+            } else {
+                let candidates: Vec<_> = all_branches
+                    .iter()
+                    .enumerate()
+                    .map(|(ix, branch)| {
+                        fuzzy::StringMatchCandidate::new(ix, branch.name())
+                    })
+                    .collect();
+
+                let string_matches = fuzzy::match_strings(
+                    &candidates,
+                    &query,
+                    true,
+                    true,
+                    10000,
+                    &Default::default(),
+                    cx.background_executor().clone(),
+                )
+                .await;
+
+                string_matches
+                    .into_iter()
+                    .map(|m| BranchMatch {
+                        branch: all_branches[m.candidate_id].clone(),
+                        positions: m.positions,
+                    })
+                    .collect()
+            };
+
+            picker
+                .update_in(cx, |picker, _window, cx| {
+                    picker.delegate.matches = matches;
+                    if picker.delegate.matches.is_empty() {
+                        picker.delegate.selected_index = 0;
+                    } else {
+                        picker.delegate.selected_index = picker
+                            .delegate
+                            .selected_index
+                            .min(picker.delegate.matches.len() - 1);
+                    }
+                    cx.notify();
+                })
+                .ok();
+        })
+    }
+
+    fn confirm(&mut self, _secondary: bool, _window: &mut Window, cx: &mut Context<Picker<Self>>) {
+        let Some(selected) = self.matches.get(self.selected_index) else {
+            return;
+        };
+        let new_base_ref = selected.branch.ref_name.clone();
+
+        self.project_diff
+            .update(cx, |project_diff, cx| {
+                project_diff.set_diff_base(
+                    DiffBase::Merge {
+                        base_ref: new_base_ref,
+                    },
+                    cx,
+                );
+            })
+            .ok();
+
+        cx.emit(DismissEvent);
+    }
+
+    fn dismissed(&mut self, _window: &mut Window, cx: &mut Context<Picker<Self>>) {
+        cx.emit(DismissEvent);
+    }
+
+    fn render_match(
+        &self,
+        ix: usize,
+        selected: bool,
+        _window: &mut Window,
+        cx: &mut Context<Picker<Self>>,
+    ) -> Option<Self::ListItem> {
+        let branch_match = self.matches.get(ix)?;
+        let is_current_base = self
+            .project_diff
+            .read_with(cx, |project_diff, cx| {
+                matches!(
+                    project_diff.diff_base(cx),
+                    DiffBase::Merge { base_ref } if *base_ref == branch_match.branch.ref_name
+                )
+            })
+            .unwrap_or(false);
+
+        Some(
+            ListItem::new(ix)
+                .inset(true)
+                .spacing(ListItemSpacing::Sparse)
+                .toggle_state(selected)
+                .child(
+                    h_flex()
+                        .gap_1()
+                        .child(
+                            HighlightedLabel::new(
+                                branch_match.branch.name().to_string(),
+                                branch_match.positions.clone(),
+                            )
+                            .single_line()
+                            .truncate(),
+                        )
+                        .when(is_current_base, |this| {
+                            this.child(
+                                Icon::new(IconName::Check)
+                                    .size(IconSize::Small)
+                                    .color(Color::Accent),
+                            )
+                        }),
+                ),
+        )
     }
 }
 
