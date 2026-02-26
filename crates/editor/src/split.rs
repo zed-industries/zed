@@ -454,11 +454,11 @@ impl SplittableEditor {
                 &rhs_editor,
                 |this, _, event: &EditorEvent, cx| match event {
                     EditorEvent::ExpandExcerptsRequested {
-                        excerpt_ids,
+                        anchor_ranges,
                         lines,
                         direction,
                     } => {
-                        this.expand_excerpts(excerpt_ids.iter().copied(), *lines, *direction, cx);
+                        this.expand_excerpts(anchor_ranges.clone(), *lines, *direction, cx);
                     }
                     _ => cx.emit(event.clone()),
                 },
@@ -544,7 +544,7 @@ impl SplittableEditor {
             window,
             |this, _, event: &EditorEvent, window, cx| match event {
                 EditorEvent::ExpandExcerptsRequested {
-                    excerpt_ids,
+                    anchor_ranges,
                     lines,
                     direction,
                 } => {
@@ -1035,25 +1035,26 @@ impl SplittableEditor {
 
     fn expand_excerpts(
         &mut self,
-        excerpt_ids: impl Iterator<Item = ExcerptId> + Clone,
+        ranges: impl IntoIterator<Item = Range<Anchor>> + Clone,
         lines: u32,
         direction: ExpandExcerptDirection,
         cx: &mut Context<Self>,
     ) {
         let Some(companion) = self.companion(cx) else {
             self.rhs_multibuffer.update(cx, |rhs_multibuffer, cx| {
-                rhs_multibuffer.expand_excerpts(excerpt_ids, lines, direction, cx);
+                rhs_multibuffer.expand_excerpts(ranges, lines, direction, cx);
             });
             return;
         };
 
         let paths_with_old_ids: Vec<_> = self.rhs_multibuffer.update(cx, |rhs_multibuffer, cx| {
             let snapshot = rhs_multibuffer.snapshot(cx);
-            let paths = excerpt_ids
-                .clone()
-                .filter_map(|excerpt_id| {
+            let paths: Vec<(PathKey,BufferId, Range<Anchor>)> = snapshot.paths_for_ranges(ranges);
+            let paths = ranges
+                .into_iter()
+                .filter_map(|range| {
+                    let buffer = snapshot.buffer_id_for_anchor(range.start)?;
                     let path = rhs_multibuffer.path_for_excerpt(excerpt_id)?;
-                    let buffer = snapshot.buffer_for_excerpt(excerpt_id)?;
                     let diff = rhs_multibuffer.diff_for(buffer.remote_id())?;
                     Some((path, diff))
                 })
@@ -1064,7 +1065,7 @@ impl SplittableEditor {
                     (path, old_ids, diff)
                 })
                 .collect();
-            rhs_multibuffer.expand_excerpts(excerpt_ids, lines, direction, cx);
+            rhs_multibuffer.expand_excerpts(ranges, lines, direction, cx);
             paths
         });
 

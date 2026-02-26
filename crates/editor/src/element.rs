@@ -2681,7 +2681,7 @@ impl EditorElement {
     fn layout_inline_blame(
         &self,
         display_row: DisplayRow,
-        row_info: &RowInfo,
+        row_info: RowInfo,
         line_layout: &LineWithInvisibles,
         crease_trailer: Option<&CreaseTrailerLayout>,
         em_width: Pixels,
@@ -2719,9 +2719,7 @@ impl EditorElement {
         };
 
         let (buffer_id, entry) = blame
-            .update(cx, |blame, cx| {
-                blame.blame_for_rows(&[*row_info], cx).next()
-            })
+            .update(cx, |blame, cx| blame.blame_for_rows(&[row_info], cx).next())
             .flatten()?;
 
         let mut element = render_inline_blame_entry(entry.clone(), &self.style, cx)?;
@@ -3383,9 +3381,9 @@ impl EditorElement {
             .enumerate()
             .map(|(ix, row_info)| {
                 let ExpandInfo {
-                    excerpt_id,
+                    anchor_range,
                     direction,
-                } = row_info.expand_info?;
+                } = row_info.expand_info.as_ref()?;
 
                 let icon_name = match direction {
                     ExpandExcerptDirection::Up => IconName::ExpandUp,
@@ -3407,13 +3405,15 @@ impl EditorElement {
                     available_width + em_width - px(5.)
                 };
 
+                let anchor_range = anchor_range.clone();
+                let direction = *direction;
                 let toggle = IconButton::new(("expand", ix), icon_name)
                     .icon_color(Color::Custom(cx.theme().colors().editor_line_number))
                     .icon_size(IconSize::Custom(rems(editor_font_size / window.rem_size())))
                     .width(width)
                     .on_click(move |_, window, cx| {
                         editor.update(cx, |editor, cx| {
-                            editor.expand_excerpt(excerpt_id, direction, window, cx);
+                            editor.expand_excerpt(anchor_range.clone(), direction, window, cx);
                         });
                     })
                     .tooltip(Tooltip::for_action_title(
@@ -10591,7 +10591,7 @@ impl Element for EditorElement {
                                 let crease_trailer_layout = crease_trailer.as_ref();
                                 if let Some(layout) = self.layout_inline_blame(
                                     display_row,
-                                    row_info,
+                                    row_info.clone(),
                                     line_layout,
                                     crease_trailer_layout,
                                     em_width,

@@ -1214,11 +1214,14 @@ mod tests {
         );
 
         // Get the excerpt id for the TOML excerpt and expand it down by 2 lines.
-        let toml_excerpt_id =
-            editor.read_with(cx, |editor, cx| editor.buffer().read(cx).excerpt_ids()[0]);
+        let toml_excerpt_range = editor.read_with(cx, |editor, cx| {
+            let snapshot = editor.buffer().read(cx).snapshot(cx);
+            let (id, _, range) = snapshot.excerpts().next().unwrap();
+            multi_buffer::Anchor::range_in_buffer(id, range.context)
+        });
         editor.update_in(cx, |editor, _, cx| {
             editor.buffer().update(cx, |buffer, cx| {
-                buffer.expand_excerpts([toml_excerpt_id], 2, ExpandExcerptDirection::Down, cx);
+                buffer.expand_excerpts([toml_excerpt_range], 2, ExpandExcerptDirection::Down, cx);
             });
         });
 

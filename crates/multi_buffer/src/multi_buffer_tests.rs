@@ -2792,7 +2792,7 @@ impl ReferenceMultibuffer {
                             expand_info: expand_direction.zip(region.excerpt_id).map(
                                 |(direction, excerpt_id)| ExpandInfo {
                                     direction,
-                                    excerpt_id,
+                                    anchor_range: excerpt_id,
                                 },
                             ),
                         }

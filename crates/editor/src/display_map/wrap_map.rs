@@ -1138,7 +1138,7 @@ impl Iterator for WrapRows<'_> {
             return None;
         }
 
-        let buffer_row = self.input_buffer_row;
+        let buffer_row = self.input_buffer_row.clone();
         let soft_wrapped = self.soft_wrapped;
         let diff_status = self.input_buffer_row.diff_status;
 

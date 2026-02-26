@@ -593,7 +593,8 @@ pub fn start_of_excerpt(
         Direction::Prev => {
             let mut start = excerpt.start_anchor().to_display_point(map);
             if start >= display_point && start.row() > DisplayRow(0) {
-                let Some(excerpt) = map.buffer_snapshot().excerpt_before(excerpt.id()) else {
+                let Some(excerpt) = map.buffer_snapshot().excerpt_before(excerpt.start_anchor())
+                else {
                     return display_point;
                 };
                 start = excerpt.start_anchor().to_display_point(map);

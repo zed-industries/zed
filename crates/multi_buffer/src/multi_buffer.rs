@@ -727,13 +727,13 @@ impl ExcerptBoundary {
     }
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ExpandInfo {
     pub direction: ExpandExcerptDirection,
-    pub excerpt_id: ExcerptId,
+    pub anchor_range: Range<Anchor>,
 }
 
-#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct RowInfo {
     pub buffer_id: Option<BufferId>,
     pub buffer_row: Option<u32>,
@@ -2957,7 +2957,7 @@ impl MultiBuffer {
 
     pub fn expand_excerpts(
         &mut self,
-        ids: impl IntoIterator<Item = ExcerptId>,
+        anchors: impl IntoIterator<Item = Range<Anchor>>,
         line_count: u32,
         direction: ExpandExcerptDirection,
         cx: &mut Context<Self>,
@@ -2966,13 +2966,22 @@ impl MultiBuffer {
             return;
         }
         self.sync_mut(cx);
+
+        let snapshot = self.snapshot(cx);
+        let excerpt_ids = anchors
+            .into_iter()
+            .flat_map(|range| snapshot.excerpt_ids_for_range(range))
+            .unique()
+            .sorted()
+            .collect::<Vec<_>>();
+
         if !self.excerpts_by_path.is_empty() {
-            self.expand_excerpts_with_paths(ids, line_count, direction, cx);
+            self.expand_excerpts_with_paths(excerpt_ids, line_count, direction, cx);
             return;
         }
         let mut snapshot = self.snapshot.get_mut();
 
-        let ids = ids.into_iter().collect::<Vec<_>>();
+        let ids = excerpt_ids.into_iter().collect::<Vec<_>>();
         let locators = snapshot.excerpt_locators_for_ids(ids.iter().copied());
         let mut new_excerpts = SumTree::default();
         let mut cursor = snapshot
@@ -3829,22 +3838,21 @@ impl MultiBuffer {
                 self.clear(cx);
                 continue;
             } else if rng.random_bool(0.1) && !self.excerpt_ids().is_empty() {
-                let ids = self.excerpt_ids();
+                let snapshot = self.snapshot(cx);
+                let all_excerpts: Vec<_> = snapshot.excerpts().collect();
                 let mut excerpts = HashSet::default();
-                for _ in 0..rng.random_range(0..ids.len()) {
-                    excerpts.extend(ids.choose(rng).copied());
+                let mut ids = HashSet::default();
+                for _ in 0..rng.random_range(0..all_excerpts.len()) {
+                    let (id, _, range) = all_excerpts.choose(rng).unwrap();
+                    ids.insert(*id);
+                    excerpts.insert(Anchor::range_in_buffer(*id, range.context.clone()));
                 }
 
                 let line_count = rng.random_range(0..5);
 
-                log::info!("Expanding excerpts {excerpts:?} by {line_count} lines");
+                log::info!("Expanding excerpts {ids:?} by {line_count} lines");
 
-                self.expand_excerpts(
-                    excerpts.iter().cloned(),
-                    line_count,
-                    ExpandExcerptDirection::UpAndDown,
-                    cx,
-                );
+                self.expand_excerpts(excerpts, line_count, ExpandExcerptDirection::UpAndDown, cx);
                 continue;
             }
 
@@ -6051,7 +6059,8 @@ impl MultiBufferSnapshot {
         }
     }
 
-    pub fn excerpt_before(&self, excerpt_id: ExcerptId) -> Option<MultiBufferExcerpt<'_>> {
+    pub fn excerpt_before(&self, anchor: Anchor) -> Option<MultiBufferExcerpt<'_>> {
+        let excerpt_id = self.excerpt_containing(anchor..anchor)?.id();
         let start_locator = self.excerpt_locator_for_id(excerpt_id);
         let mut excerpts = self
             .excerpts
@@ -8294,7 +8303,10 @@ impl Iterator for MultiBufferRows<'_> {
                     }
                     .map(|direction| ExpandInfo {
                         direction,
-                        excerpt_id: last_excerpt.id,
+                        anchor_range: Anchor::range_in_buffer(
+                            last_excerpt.id,
+                            last_excerpt.range.context.clone(),
+                        ),
                     })
                 };
                 self.point += Point::new(1, 0);
@@ -8336,7 +8348,10 @@ impl Iterator for MultiBufferRows<'_> {
             }
             .map(|direction| ExpandInfo {
                 direction,
-                excerpt_id: region.excerpt.id,
+                anchor_range: Anchor::range_in_buffer(
+                    region.excerpt.id,
+                    region.excerpt.range.context.clone(),
+                ),
             })
         };
 

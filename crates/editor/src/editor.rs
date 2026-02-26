@@ -17439,17 +17439,14 @@ impl Editor {
             lines
         };
 
-        let snapshot = self.buffer.read(cx).snapshot(cx);
-        let excerpt_ids = selections
+        let anchor_ranges = selections
             .iter()
-            .flat_map(|selection| snapshot.excerpt_ids_for_range(selection.range()))
-            .unique()
-            .sorted()
+            .map(|selection| selection.range())
             .collect::<Vec<_>>();
 
         if self.delegate_expand_excerpts {
             cx.emit(EditorEvent::ExpandExcerptsRequested {
-                excerpt_ids,
+                anchor_ranges: anchor_ranges.clone(),
                 lines,
                 direction,
             });
@@ -17457,13 +17454,13 @@ impl Editor {
         }
 
         self.buffer.update(cx, |buffer, cx| {
-            buffer.expand_excerpts(excerpt_ids, lines, direction, cx)
+            buffer.expand_excerpts(anchor_ranges, lines, direction, cx)
         })
     }
 
     pub fn expand_excerpt(
         &mut self,
-        excerpt: ExcerptId,
+        excerpt_range: Range<Anchor>,
         direction: ExpandExcerptDirection,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -17472,7 +17469,7 @@ impl Editor {
 
         if self.delegate_expand_excerpts {
             cx.emit(EditorEvent::ExpandExcerptsRequested {
-                excerpt_ids: vec![excerpt],
+                anchor_ranges: vec![excerpt_range],
                 lines: lines_to_expand,
                 direction,
             });
@@ -17484,13 +17481,10 @@ impl Editor {
 
         if direction == ExpandExcerptDirection::Down {
             let multi_buffer = self.buffer.read(cx);
-            let snapshot = multi_buffer.snapshot(cx);
-            if let Some(buffer_id) = snapshot.buffer_id_for_excerpt(excerpt)
-                && let Some(buffer) = multi_buffer.buffer(buffer_id)
-                && let Some(excerpt_range) = snapshot.context_range_for_excerpt(excerpt)
-            {
+            if let Some(buffer) = multi_buffer.buffer_for_anchor(excerpt_range.start, cx) {
                 let buffer_snapshot = buffer.read(cx).snapshot();
-                let excerpt_end_row = Point::from_anchor(&excerpt_range.end, &buffer_snapshot).row;
+                let excerpt_end_row =
+                    Point::from_anchor(&excerpt_range.end.text_anchor, &buffer_snapshot).row;
                 let last_row = buffer_snapshot.max_point().row;
                 let lines_below = last_row.saturating_sub(excerpt_end_row);
                 if lines_below >= lines_to_expand {
@@ -17506,14 +17500,14 @@ impl Editor {
                 .buffer
                 .read(cx)
                 .snapshot(cx)
-                .excerpt_before(excerpt)
+                .excerpt_before(excerpt_range.start)
                 .is_none()
         {
             scroll = Some(current_scroll_position);
         }
 
         self.buffer.update(cx, |buffer, cx| {
-            buffer.expand_excerpts([excerpt], lines_to_expand, direction, cx)
+            buffer.expand_excerpts([excerpt_range], lines_to_expand, direction, cx)
         });
 
         if let Some(new_scroll_position) = scroll {
@@ -27956,7 +27950,7 @@ pub enum EditorEvent {
         ids: Vec<ExcerptId>,
     },
     ExpandExcerptsRequested {
-        excerpt_ids: Vec<ExcerptId>,
+        anchor_ranges: Vec<Range<Anchor>>,
         lines: u32,
         direction: ExpandExcerptDirection,
     },
