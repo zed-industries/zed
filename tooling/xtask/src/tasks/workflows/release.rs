@@ -157,7 +157,7 @@ fn validate_release_assets(deps: &[&NamedJob]) -> NamedJob {
         EXPECTED_ASSETS='{expected_assets_json}'
         TAG="$GITHUB_REF_NAME"
 
-        ACTUAL_ASSETS=$(gh release view "$TAG" --repo=zed-industries/zed --json assets -q '[.assets[].name]')
+        ACTUAL_ASSETS=$(gh release view "$TAG" --repo="$GITHUB_REPOSITORY" --json assets -q '[.assets[].name]')
 
         MISSING_ASSETS=$(echo "$EXPECTED_ASSETS" | jq -r --argjson actual "$ACTUAL_ASSETS" '. - $actual | .[]')
 
@@ -190,7 +190,7 @@ fn auto_release_preview(deps: &[&NamedJob]) -> NamedJob {
             .add_step(authenticate)
             .add_step(
                 steps::script(
-                    r#"gh release edit "$GITHUB_REF_NAME" --repo=zed-industries/zed --draft=false"#,
+                    r#"gh release edit "$GITHUB_REF_NAME" --repo="$GITHUB_REPOSITORY" --draft=false"#,
                 )
                 .add_env(("GITHUB_TOKEN", &token)),
             )
@@ -227,7 +227,7 @@ fn upload_release_assets(deps: &[&NamedJob], bundle: &ReleaseBundleJobs) -> Name
             .add_step(steps::script("ls -lR ./artifacts"))
             .add_step(prep_release_artifacts())
             .add_step(
-                steps::script("gh release upload \"$GITHUB_REF_NAME\" --repo=zed-industries/zed release-artifacts/*")
+                steps::script("gh release upload \"$GITHUB_REF_NAME\" --repo=\"$GITHUB_REPOSITORY\" release-artifacts/*")
                     .add_env(("GITHUB_TOKEN", vars::GITHUB_TOKEN)),
             ),
     )
@@ -288,7 +288,7 @@ pub(crate) fn push_release_update_notification(
         if [ "$DRAFT_RESULT" == "failure" ]; then
             echo "❌ Draft release creation failed for $TAG: $RUN_URL"
         else
-            RELEASE_URL=$(gh release view "$TAG" --repo=zed-industries/zed --json url -q '.url')
+            RELEASE_URL=$(gh release view "$TAG" --repo="$GITHUB_REPOSITORY" --json url -q '.url')
             if [ "$UPLOAD_RESULT" == "failure" ]; then
                 echo "❌ Release asset upload failed for $TAG: $RELEASE_URL"
             elif [ "$UPLOAD_RESULT" == "cancelled" ] || [ "$UPLOAD_RESULT" == "skipped" ]; then

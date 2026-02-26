@@ -7,7 +7,7 @@ on:
   workflow_dispatch: {}
 jobs:
   fetch_extension_repos:
-    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions') && github.ref == 'refs/heads/main'
+    if: true && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
     - id: list-repos

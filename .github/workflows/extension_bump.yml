@@ -26,7 +26,7 @@ on:
         required: true
 jobs:
   check_version_changed:
-    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
+    if: 'true'
     runs-on: ubuntu-latest
     steps:
     - name: steps::checkout_repo
@@ -63,7 +63,7 @@ jobs:
     needs:
     - check_version_changed
     if: |-
-      (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions') &&
+      true &&
       (inputs.force-bump == 'true' || needs.check_version_changed.outputs.version_changed == 'false')
     runs-on: ubuntu-latest
     steps:
@@ -119,7 +119,7 @@ jobs:
   create_version_label:
     needs:
     - check_version_changed
-    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions') && github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.check_version_changed.outputs.version_changed == 'true'
+    if: true && github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.check_version_changed.outputs.version_changed == 'true'
     runs-on: ubuntu-latest
     steps:
     - id: generate-token
@@ -148,7 +148,7 @@ jobs:
     needs:
     - check_version_changed
     - create_version_label
-    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
+    if: 'true'
     runs-on: ubuntu-latest
     steps:
     - id: generate-token

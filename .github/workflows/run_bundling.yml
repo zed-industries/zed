@@ -275,7 +275,7 @@ jobs:
         if-no-files-found: error
     timeout-minutes: 60
   build_nix_linux_x86_64:
-    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions') && ((github.event.action == 'labeled' && github.event.label.name == 'run-bundling') || (github.event.action == 'synchronize' && contains(github.event.pull_request.labels.*.name, 'run-bundling')))
+    if: true && ((github.event.action == 'labeled' && github.event.label.name == 'run-bundling') || (github.event.action == 'synchronize' && contains(github.event.pull_request.labels.*.name, 'run-bundling')))
     runs-on: ubuntu-20.04
     env:
       ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
@@ -309,7 +309,7 @@ jobs:
     timeout-minutes: 60
     continue-on-error: true
   build_nix_mac_aarch64:
-    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions') && ((github.event.action == 'labeled' && github.event.label.name == 'run-bundling') || (github.event.action == 'synchronize' && contains(github.event.pull_request.labels.*.name, 'run-bundling')))
+    if: true && ((github.event.action == 'labeled' && github.event.label.name == 'run-bundling') || (github.event.action == 'synchronize' && contains(github.event.pull_request.labels.*.name, 'run-bundling')))
     runs-on: macos-latest
     env:
       ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}

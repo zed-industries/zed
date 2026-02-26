@@ -341,8 +341,7 @@ pub struct NamedJob<J: JobType = RunJob> {
 //     }
 // }
 
-pub(crate) const DEFAULT_REPOSITORY_OWNER_GUARD: &str =
-    "(github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')";
+pub(crate) const DEFAULT_REPOSITORY_OWNER_GUARD: &str = "true";
 
 pub fn repository_owner_guard_expression(trigger_always: bool) -> Expression {
     Expression::new(format!(

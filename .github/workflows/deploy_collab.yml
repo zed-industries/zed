@@ -9,7 +9,7 @@ on:
     - collab-production
 jobs:
   style:
-    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
+    if: 'true'
     name: Check formatting and Clippy lints
     runs-on: ubuntu-latest
     steps:

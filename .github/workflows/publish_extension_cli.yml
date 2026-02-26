@@ -10,7 +10,7 @@ on:
     - extension-cli
 jobs:
   publish_job:
-    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
+    if: 'true'
     runs-on: ubuntu-latest
     steps:
     - name: steps::checkout_repo
@@ -35,7 +35,7 @@ jobs:
   update_sha_in_zed:
     needs:
     - publish_job
-    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
+    if: 'true'
     runs-on: ubuntu-latest
     steps:
     - id: generate-token
@@ -85,7 +85,7 @@ jobs:
   update_sha_in_extensions:
     needs:
     - publish_job
-    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
+    if: 'true'
     runs-on: ubuntu-latest
     steps:
     - id: generate-token

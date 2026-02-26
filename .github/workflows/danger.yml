@@ -12,7 +12,7 @@ on:
     - main
 jobs:
   danger:
-    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
+    if: 'true'
     runs-on: ubuntu-latest
     steps:
     - name: steps::checkout_repo
