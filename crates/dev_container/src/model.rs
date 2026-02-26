@@ -11,6 +11,7 @@ use http_client::HttpClient;
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json_lenient::Value;
 use smol::process::Command;
+use util::ResultExt;
 
 use crate::{
     DevContainerConfig, devcontainer_api::DevContainerUp, download_and_extract_oci_feature,
@@ -570,6 +571,13 @@ struct DockerInspectConfig {
 
 #[derive(Debug, Clone, Deserialize, Serialize, Eq, PartialEq)]
 #[serde(rename_all = "PascalCase")]
+struct DockerComposeConfig {
+    name: String,
+    services: HashMap<String, Value>, // TODO need more here
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, Eq, PartialEq)]
+#[serde(rename_all = "PascalCase")]
 struct DockerInspectMount {
     source: String,
     destination: String,
@@ -685,39 +693,143 @@ pub(crate) async fn spawn_dev_container_v2(
         let devcontainer_dir = config_path
             .parent()
             .expect("TODO, this should actually combine the dockerfile property with the parent");
-        let built_docker_image = build_docker_image(
-            http_client,
-            &devcontainer,
-            devcontainer_dir.display().to_string(),
-        )
-        .await?;
+        if &devcontainer.build_type() == &DevContainerBuildType::DockerCompose {
+            let docker_compose_files =
+                build_and_extend_compose_files(http_client, &devcontainer, devcontainer_dir)
+                    .await?;
 
-        let running_container =
-            run_docker_image(&built_docker_image, &labels, &local_project_path).await?;
+            let running_container =
+                run_docker_compose(docker_compose_files, &labels, &local_project_path).await?;
 
-        let remote_user = get_remote_user_from_config(&running_container, &devcontainer)?;
-        let remote_workspace_folder = get_remote_dir_from_config(
-            &running_container,
-            (&local_project_path.display()).to_string(),
-        )?;
+            let remote_user = get_remote_user_from_config(&running_container, &devcontainer)?;
+            let remote_workspace_folder = get_remote_dir_from_config(
+                &running_container,
+                (&local_project_path.display()).to_string(),
+            )?;
 
-        Ok(DevContainerUp {
-            _outcome: "todo".to_string(),
-            container_id: running_container.id,
-            remote_user,
-            remote_workspace_folder,
-        })
+            Ok(DevContainerUp {
+                _outcome: "todo".to_string(),
+                container_id: running_container.id,
+                remote_user,
+                remote_workspace_folder,
+            })
+        } else {
+            let built_docker_image = build_docker_image(
+                http_client,
+                &devcontainer,
+                devcontainer_dir.display().to_string(),
+            )
+            .await?;
+
+            let running_container =
+                run_docker_image(&built_docker_image, &labels, &local_project_path).await?;
+
+            let remote_user = get_remote_user_from_config(&running_container, &devcontainer)?;
+            let remote_workspace_folder = get_remote_dir_from_config(
+                &running_container,
+                (&local_project_path.display()).to_string(),
+            )?;
+
+            Ok(DevContainerUp {
+                _outcome: "todo".to_string(),
+                container_id: running_container.id,
+                remote_user,
+                remote_workspace_folder,
+            })
+        }
     }
-    // 5. If dockerfile or image config
-    //     1. check for existing container by params + id labels (pending rebuild)
-    //     2. If exists and running, return it
-    //     3. If exists and not running, start it
-    //     4. If not exists
-    //         1. Build it
-    //         2. Run the built thing you just made
-    // 6. If docker-compose config
-    //     1. TODO - this is the next thing
-    // Err(RenameMeError::UnmappedError)
+    /*
+     * For the docker-compose case:
+     * - Checks for existing container the same way
+     * - If not found, things work a little differently (but also somewhat symmetric to what we do now):
+     * -- Identify the main run service in the docker-compose file
+     * -- If image and no features: just create a runtime override and get after it
+     * -- If image and features: build the extended dockerfile with the features resources, run with image + build context (this one probably needs a bit more examination)
+     * -- If dockerfile and no features: build the dockerfile extended and create a build override
+     * -- If dockerfile and features: same
+     * - So, basically, identify the main run service, and apply the same transformations we're applying today, but wrapped in a dockercompose/yaml syntax
+     */
+}
+
+async fn run_docker_compose(
+    _docker_compose_files: Vec<String>,
+    _labels: &Vec<(&str, String)>,
+    _local_project_path: &Arc<&Path>,
+) -> Result<DockerInspect, RenameMeError> {
+    Err(RenameMeError::UnmappedError)
+}
+
+async fn build_and_extend_compose_files(
+    http_client: Arc<dyn HttpClient + 'static>,
+    devcontainer: &DevContainer,
+    devcontainer_dir: &Path,
+) -> Result<Vec<String>, RenameMeError> {
+    let Some(docker_compose_files) = devcontainer.docker_compose_file.clone() else {
+        return Err(RenameMeError::UnmappedError);
+    };
+    let docker_compose_full_paths = docker_compose_files
+        .iter()
+        .map(|relative| devcontainer_dir.join(relative).display().to_string())
+        .collect::<Vec<String>>();
+
+    let mut docker_compose_config_command =
+        create_docker_compose_config_command(docker_compose_full_paths)?;
+
+    let output = docker_compose_config_command.output().await.map_err(|e| {
+        log::error!("Error building docker image: {e}");
+        RenameMeError::UnmappedError
+    })?;
+
+    let Some(docker_compose_config) = deserialize_json_output::<DockerComposeConfig>(output)?
+    else {
+        log::error!("Output could not deserialize into DockerComposeConfig");
+        return Err(RenameMeError::UnmappedError);
+    };
+
+    let _main_service = find_primary_service(&docker_compose_config, devcontainer)?;
+    // Ok, from here can I re-use the other stuff
+    // If main_service.uses_image and dev_container.no_features:
+    // // Build the runtime override
+    // // Return existing compose files + runtime override
+    //
+
+    // TODO
+    // The CLI determines the image user from `imageDetails.Config.User || 'root'`.
+    // Our DockerInspect doesn't yet carry the User field, so we default to "root".
+    let image_user = "root";
+
+    let build_info = prepare_features_build_info(devcontainer, image_user)?; // can this just get re-used?
+    // I think I can re-use this, but i would then need to create an override service definition with what I've got here. So basically has to be wrapped in some stuff
+
+    // Use http_client to do the actual OCI retrieval here
+    construct_features_build_resources(
+        devcontainer,
+        &build_info,
+        &http_client,
+        None, // TODO this should be the dockerfile found from docker-compose.yml
+    )
+    .await?; // Can this just get re-used?
+    // I think I can re-use this too. Dockerfile_dir should be the location of the dockerfile, if any, defined in the main docker-compose service
+
+    // let mut command = create_docker_build(&build_info, dev_container, &dockerfile_dir)?; equivalent is: create_docker_compose build
+    // Execute the build, assert success
+    // Construct the runtime override, return the files
+
+    Err(RenameMeError::UnmappedError)
+}
+
+// TODO
+fn find_primary_service(
+    _docker_compose_config: &DockerComposeConfig,
+    _devcontainer: &DevContainer,
+) -> Result<String, RenameMeError> {
+    Err(RenameMeError::UnmappedError)
+}
+
+fn create_docker_compose_config_command(
+    _docker_compose_full_paths: Vec<String>,
+) -> Result<Command, RenameMeError> {
+    todo!()
 }
 
 async fn run_docker_image(
@@ -780,7 +892,7 @@ fn generate_features_image_tag(
     format!("{}-{:x}-features", prefix, hash)
 }
 
-/// Prepares a `FeaturesBuildInfo` for an image-based dev container that has features.
+/// Prepares a `FeaturesBuildInfo` for an image-based or Dockerfile-based dev container that has features.
 ///
 /// This creates the temp directories and Dockerfile.extended needed by `create_docker_build`.
 /// The actual feature content (install scripts, env files) must be staged into the returned
@@ -1182,7 +1294,7 @@ async fn construct_features_build_resources(
     dev_container: &DevContainer,
     build_info: &FeaturesBuildInfo,
     http_client: &Arc<dyn HttpClient>,
-    dockerfile_dir: &str,
+    dockerfile_location: Option<PathBuf>,
 ) -> Result<(), RenameMeError> {
     // TODO probably a more elegant way of doing this
     let features = match &dev_container.features {
@@ -1320,22 +1432,27 @@ async fn construct_features_build_resources(
         feature_layers.push_str(&generate_feature_layer(&consecutive_id));
     }
 
-    let dockerfile_base_content = if dev_container.build_type() == DevContainerBuildType::Dockerfile
-    {
-        let Some(build) = &dev_container.build else {
-            return Err(RenameMeError::UnmappedError);
-        };
+    // TODO this should either be build_type is Dockerfile or (DockerCompose + dockercompose service is a dockerfile)
+    // Or more graecefully, the caller should just provide the full path to dockerfile_location as an Option, and we read it if it's there
+    // let dockerfile_base_content = if dev_container.build_type() == DevContainerBuildType::Dockerfile
+    // {
+    //     let Some(build) = &dev_container.build else {
+    //         return Err(RenameMeError::UnmappedError);
+    //     };
 
-        let dockerfile_relative_location = &build.dockerfile;
-        let dockerfile_location = PathBuf::from(dockerfile_dir).join(dockerfile_relative_location);
+    //     let dockerfile_relative_location = &build.dockerfile;
+    //     let dockerfile_location = PathBuf::from(dockerfile_dir).join(dockerfile_relative_location);
 
-        Some(std::fs::read_to_string(dockerfile_location).map_err(|e| {
-            log::error!("Unable to read dockerfile defined in devcontainer: {e}");
-            RenameMeError::UnmappedError
-        })?)
-    } else {
-        None
-    };
+    //     Some(std::fs::read_to_string(dockerfile_location).map_err(|e| {
+    //         log::error!("Unable to read dockerfile defined in devcontainer: {e}");
+    //         RenameMeError::UnmappedError
+    //     })?)
+    // } else {
+    //     None
+    // };
+    let dockerfile_base_content = dockerfile_location
+        .as_ref()
+        .and_then(|path_buf| std::fs::read_to_string(path_buf).log_err());
 
     // --- 4. Generate and write Dockerfile.extended ---
     let dockerfile_content = generate_dockerfile_extended(
@@ -1385,9 +1502,18 @@ async fn build_docker_image(
 
     let build_info = prepare_features_build_info(dev_container, image_user)?;
 
-    // Use http_client to do the actual OCI retrieval here
-    construct_features_build_resources(dev_container, &build_info, &http_client, &dockerfile_dir)
-        .await?;
+    let dockerfile_location = dev_container
+        .build
+        .as_ref()
+        .map(|build| PathBuf::from(&dockerfile_dir).join(&build.dockerfile));
+
+    construct_features_build_resources(
+        dev_container,
+        &build_info,
+        &http_client,
+        dockerfile_location,
+    )
+    .await?;
     let mut command = create_docker_build(&build_info, dev_container, &dockerfile_dir)?;
 
     let output = command.output().await.map_err(|e| {
@@ -1438,6 +1564,7 @@ async fn check_for_existing_container(
     labels: &Vec<(&str, String)>,
 ) -> Result<Option<DockerPs>, RenameMeError> {
     let mut command = create_docker_query_containers(Some(labels))?;
+    dbg!(&command);
 
     let output = command.output().await.map_err(|e| {
         log::error!("Error executing docker query containers command: {e}");
@@ -1664,18 +1791,37 @@ while sleep 1 & wait $!; do :; done
     Ok(command)
 }
 
+// Ok this needs some work, because we should be able to find a mount that works as an ancestor to this remote dir
+// E.g. it might be /Source/myproject:workspaces/myproject
+// But it might also be Source/:workspaces/
+// In the latter case, we want to found that mount destination (e.g. workspaces/), and fill in the rest of the path to the workspace (so that it's workspaces/myproject)
 fn get_remote_dir_from_config(
     config: &DockerInspect,
     local_dir: String,
 ) -> Result<String, RenameMeError> {
+    let local_path = PathBuf::from(&local_dir);
+
     let Some(mounts) = &config.mounts else {
+        log::error!("No mounts");
         return Err(RenameMeError::UnmappedError);
     };
     for mount in mounts {
+        dbg!(&mount);
+        let mount_source = PathBuf::from(&mount.source);
+        // if mount source is an ancestor of local_path
+        if let Ok(relative_path_to_project) = local_path.strip_prefix(&mount_source) {
+            let remote_dir = format!(
+                "{}/{}",
+                &mount.destination,
+                relative_path_to_project.display()
+            );
+            return Ok(remote_dir);
+        }
         if mount.source == local_dir {
             return Ok(mount.destination.clone());
         }
     }
+    log::error!("No mounts to local folder");
     Err(RenameMeError::UnmappedError)
 }
 
@@ -1691,6 +1837,7 @@ fn get_remote_user_from_config(
         return Ok(user.clone());
     }
     let Some(metadata) = &docker_config.config.labels.metadata else {
+        log::error!("Could not locate metadata");
         return Err(RenameMeError::UnmappedError);
     };
     for metadatum in metadata {
@@ -2681,7 +2828,8 @@ mod test {
             };
 
             let result =
-                construct_features_build_resources(&dev_container, &build_info, &client, "").await;
+                construct_features_build_resources(&dev_container, &build_info, &client, None)
+                    .await;
             assert!(
                 result.is_ok(),
                 "construct_features_build_resources failed: {:?}",
@@ -2800,7 +2948,8 @@ mod test {
             };
 
             let result =
-                construct_features_build_resources(&dev_container, &build_info, &client, "").await;
+                construct_features_build_resources(&dev_container, &build_info, &client, None)
+                    .await;
             assert!(result.is_ok());
 
             // With override order: node first (index 0), aws-cli second (index 1)
@@ -2869,7 +3018,8 @@ mod test {
             };
 
             let result =
-                construct_features_build_resources(&dev_container, &build_info, &client, "").await;
+                construct_features_build_resources(&dev_container, &build_info, &client, None)
+                    .await;
             assert!(result.is_ok());
 
             // aws-cli is disabled (false) — its directory should not exist
@@ -2917,7 +3067,8 @@ mod test {
             };
 
             let result =
-                construct_features_build_resources(&dev_container, &build_info, &client, "").await;
+                construct_features_build_resources(&dev_container, &build_info, &client, None)
+                    .await;
             assert!(
                 result.is_err(),
                 "Expected error when OCI download fails, but got Ok"
