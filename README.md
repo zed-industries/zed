@@ -246,6 +246,8 @@ These are missing in latest `dima` branch (I had them implemented at same point)
 - show command output for `acp::ToolKind::Execute` always below the `Run Command` view in a plain text view to preserve newlines
   - I added `prepare_execute_tool_output_from_qwen()` to strip trailing and leading information for cleaner output
 - allow `New From Summary` for ACP agents, instead of only for Zed Agent
+- add `editor::NewTextThreadInEditor` action to create a new AI text thread as a standalone editor tab
+  - add `agent::SendMessage` action to trigger sending the current message in a text thread editor, otherwise you can't send messages from the text thread editor tab via keyboad
 
 #### Agent OS Notifications
 

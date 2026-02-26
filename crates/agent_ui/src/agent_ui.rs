@@ -28,7 +28,7 @@ use std::sync::Arc;
 
 // Another comment
 use agent_settings::{AgentProfileId, AgentSettings};
-use assistant_slash_command::SlashCommandRegistry;
+use assistant_slash_command::{SlashCommandRegistry, SlashCommandWorkingSet};
 use client::Client;
 use command_palette_hooks::CommandPaletteFilter;
 use feature_flags::{AgentV2FeatureFlag, FeatureFlagAppExt as _};
@@ -47,6 +47,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{LanguageModelSelection, Settings as _, SettingsStore};
 use std::any::TypeId;
+use util::ResultExt as _;
 use workspace::Workspace;
 
 use crate::agent_configuration::{ConfigureContextServerModal, ManageProfilesModal};
@@ -293,6 +294,55 @@ pub fn init(
     agent_panel::init(cx);
     context_server_configuration::init(language_registry.clone(), fs.clone(), cx);
     TextThreadEditor::init(cx);
+
+    // Register action to create new text thread as an editor tab
+    cx.observe_new(|workspace: &mut Workspace, _window, _cx| {
+        workspace.register_action(
+            |workspace: &mut Workspace,
+             _: &zed_actions::editor::NewTextThreadInEditor,
+             window: &mut Window,
+             cx: &mut Context<Workspace>| {
+                let project = workspace.project().clone();
+                let fs = workspace.app_state().fs.clone();
+                let workspace_handle = cx.entity();
+                let slash_commands = Arc::new(SlashCommandWorkingSet::default());
+                let prompt_builder = PromptBuilder::load(fs.clone(), false, cx);
+
+                let text_thread_store_task = assistant_text_thread::TextThreadStore::new(
+                    project,
+                    prompt_builder,
+                    slash_commands,
+                    cx,
+                );
+
+                cx.spawn_in(window, async move |workspace, cx| {
+                    let text_thread_store = text_thread_store_task.await?;
+                    workspace
+                        .update_in(cx, |workspace, window, cx| {
+                            let text_thread_editor = TextThreadEditor::new_in_workspace(
+                                workspace_handle,
+                                workspace.project().clone(),
+                                fs,
+                                text_thread_store,
+                                window,
+                                cx,
+                            );
+                            workspace.add_item_to_active_pane(
+                                Box::new(text_thread_editor),
+                                None,
+                                true,
+                                window,
+                                cx,
+                            );
+                        })
+                        .log_err();
+                    anyhow::Ok(())
+                })
+                .detach_and_log_err(cx);
+            },
+        );
+    })
+    .detach();
 
     // Register global action to dismiss all agent notifications
     cx.on_action(|_: &DismissOsNotifications, cx| {
