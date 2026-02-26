@@ -24,6 +24,7 @@ use core_foundation::{
     string::{CFString, CFStringRef},
 };
 use ctor::ctor;
+use dispatch2::DispatchQueue;
 use futures::channel::oneshot;
 use gpui::{
     Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, ForegroundExecutor,
@@ -493,13 +494,11 @@ impl Platform for MacPlatform {
         // this, we make quitting the application asynchronous so that we aren't holding borrows to
         // the app state on the stack when we actually terminate the app.
 
-        use crate::dispatcher::{dispatch_get_main_queue, dispatch_sys::dispatch_async_f};
-
         unsafe {
-            dispatch_async_f(dispatch_get_main_queue(), ptr::null_mut(), Some(quit));
+            DispatchQueue::main().exec_async_f(ptr::null_mut(), quit);
         }
 
-        unsafe extern "C" fn quit(_: *mut c_void) {
+        extern "C" fn quit(_: *mut c_void) {
             unsafe {
                 let app = NSApplication::sharedApplication(nil);
                 let _: () = msg_send![app, terminate: nil];
@@ -1261,19 +1260,13 @@ extern "C" fn on_thermal_state_change(this: &mut Object, _: Sel, _: id) {
     // Defer to the next run loop iteration to avoid re-entrant borrows of the App RefCell,
     // as NSNotificationCenter delivers this notification synchronously and it may fire while
     // the App is already borrowed (same pattern as quit() above).
-    use crate::dispatcher::{dispatch_get_main_queue, dispatch_sys::dispatch_async_f};
-
     let platform = unsafe { get_mac_platform(this) };
     let platform_ptr = platform as *const MacPlatform as *mut c_void;
     unsafe {
-        dispatch_async_f(
-            dispatch_get_main_queue(),
-            platform_ptr,
-            Some(on_thermal_state_change),
-        );
+        DispatchQueue::main().exec_async_f(platform_ptr, on_thermal_state_change);
     }
 
-    unsafe extern "C" fn on_thermal_state_change(context: *mut c_void) {
+    extern "C" fn on_thermal_state_change(context: *mut c_void) {
         let platform = unsafe { &*(context as *const MacPlatform) };
         let mut lock = platform.0.lock();
         if let Some(mut callback) = lock.on_thermal_state_change.take() {
