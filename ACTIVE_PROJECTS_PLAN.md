@@ -1,82 +1,88 @@
-# Active Projects Implementation Plan (Draft)
+# Active Projects Implementation Plan
 
-This is a high-level sketch — phases and scope will shift after reviewing the architecture doc with fresh eyes. The goal is to show the rough shape of the work, not to commit to specifics.
+This is a high-level sketch — phases and scope will shift as work progresses. The goal is to show the rough shape of the work, not to commit to specifics.
 
-## Phase 1: The Work Registry
+## Phase 1: The Inert Active Projects Entity ← **current work**
 
-Extend the existing `WorkspaceStore` (in `crates/workspace/src/workspace.rs`) with an `active_projects: Vec<Entity<Workspace>>` field and the persistence/lifecycle methods.
+Create `ActiveProjects` as a standalone entity in the `sidebar` crate (`crates/sidebar/src/active_projects.rs`). It owns a persisted `Vec<PathList>` — nothing more.
 
-- `WorkspaceStore` already exists as an app-global entity tracking all workspaces with their window handles.
-- Add the `active_projects` field — the persisted, append-mostly list of workspaces that have had threads.
-- Add `persist_project()`, `remove_project()`, `detach_window()` methods.
-- Add `active_projects()` and `windows_for_folder_set()` queries.
-- The store emits change notifications so observers (the sidebar) can react.
+- `ActiveProjects` is a GPUI global entity, same pattern as `ThreadStore`.
+- It stores an inert list of `PathList` values — no live workspaces, no entities, no language servers.
+- API: `projects()`, `contains()`, `add()`, `remove()`. All mutations call `cx.notify()`.
+- Persisted to the KVP store. Loaded on startup as-is — no rehydration step.
+- Idempotent adds: if the `PathList` is already present, `add()` is a no-op.
+- Append-mostly: entries are only removed by explicit user action.
 
-`WorkspaceStore` already tracks window↔workspace associations. The new `active_projects` field is the only addition to stored state.
+## Phase 2: Hollow Out MultiWorkspace ✅ **done**
 
-## Phase 2: Hollow Out MultiWorkspace
+Narrowed `MultiWorkspace` down to a window shell holding a single `Entity<Workspace>`.
 
-Narrow `MultiWorkspace` down to a window shell (maybe rename to `WindowRoot`).
+- Removed `Vec<Entity<Workspace>>` and `active_workspace_index`.
+- Holds a single `workspace: Entity<Workspace>`.
+- Kept sidebar layout, resize handle, open/close/focus logic.
+- Compatibility shims (`workspaces()`, `active_workspace_index()`) in place for callers that haven't been updated.
 
-- Remove `Vec<Entity<Workspace>>` and `active_workspace_index` from `MultiWorkspace`.
-- It holds a single `Entity<Workspace>` — whatever `WorkspaceStore` says this window should display.
-- Keep the sidebar layout, resize handle, open/close/focus logic.
-- The sidebar reads from the global `WorkspaceStore` instead of from `MultiWorkspace.workspaces()`.
-- Window-switching actions (`NextWorkspaceInWindow`, etc.) go through `WorkspaceStore`.
+## Phase 3: Make WorkspaceStore a GPUI Global ✅ **done**
 
-This is mostly deletion and re-wiring. The sidebar infrastructure stays intact.
+- `WorkspaceStore` registered as a GPUI global (same pattern as `ThreadStore`).
+- All callers migrated from iterating windows → MultiWorkspace → workspaces() to using `WorkspaceStore::global(cx)` directly.
+- Removed `active_projects` field and related methods from `WorkspaceStore`.
 
-## Phase 3: Sidebar Reads From WorkspaceStore
+## Phase 4: Sidebar Reads From ActiveProjects + WorkspaceStore
 
-Rewrite the sidebar's data flow to use `WorkspaceStore` as its source.
+Rewrite the sidebar's data flow to compose the three independent sources.
 
-- The sidebar observes `WorkspaceStore` for changes.
-- Build the `derive_project_groups()` function that groups workspaces by `PathList`.
-- Render project group headers, workspace entries underneath.
-- Show window indicators for workspaces that have a window assigned.
-- Thread data is still read from the existing `AgentPanel` / live thread entities for now (same as today).
+- The sidebar observes `ActiveProjects`, `WorkspaceStore`, and `ThreadStore` for changes.
+- Rename the sidebar's internal `ActiveProjects` struct (the grouping logic) to `ProjectGroups` to avoid confusion with the new entity.
+- Build the `derive_project_groups()` function:
+  - Start with inert `PathList` values from `ActiveProjects`.
+  - Add any windowed workspaces not yet in the active list (ephemeral entries).
+  - For each `PathList`, find live workspaces from `WorkspaceStore` (for window indicators and live path data).
+- Clicking an entry with no window creates a workspace on demand.
+- Clicking an entry with a window focuses that window or swaps the current window to it.
+- Show window indicators for entries that have a live workspace.
 
-At this point the sidebar shows the new grouped UI but is still only showing live/windowed workspaces. No persistence yet.
+At this point the sidebar shows the new grouped UI with both persisted and ephemeral entries. No thread history yet.
 
-## Phase 4: Active Projects Persistence
+## Phase 5: Active Projects Persistence
 
-Add the persisted active projects list — the append-mostly database table.
+Wire up the database persistence for `ActiveProjects`.
 
-- Define the DB schema: folder paths + workspace ID per entry.
-- When a thread is created in a workspace, persist that workspace to the active list.
-- On startup, deserialize the active list and eagerly rehydrate all entries into live `Entity<Workspace>` instances.
-- Auto-remove entries whose folders no longer exist on disk (stale detection).
-- "Remove Project" action deletes from the persisted list and kills any running threads.
+- Serialize `Vec<PathList>` to the KVP store (single JSON blob). `PathList` already has `serialize()`/`deserialize()`.
+- Load on startup, save on every mutation.
+- The "persist on thread creation" trigger: when a thread is created in a workspace, compute its `PathList` and call `ActiveProjects::add()`.
+- "Remove Project" action calls `ActiveProjects::remove()`.
+- Auto-remove entries whose folders no longer exist on disk (optional — could defer to polish phase as a lightweight path-existence check).
 
 After this phase, projects survive window close and app restart. The sidebar shows the union of persisted entries and ephemeral windowed workspaces.
 
-## Phase 5: Thread Database Integration
+## Phase 6: Thread Database Integration
 
 Enrich the sidebar with thread history from the thread database.
 
 - Add/extend the query to fetch threads by folder paths from the thread DB.
 - Wire thread metadata into `derive_project_groups()` so threads appear under their project groups.
 - Extend `SidebarThreadInfo` with the richer fields (agent name, diff stats, timestamp).
-- Handle the case where a thread's folder paths don't match any active project (orphaned — just don't show it).
+- Handle the case where a thread's folder paths don't match any active project (orphaned — don't show it).
 
-## Phase 6: PathList Canonicalization and Git Worktrees
+## Phase 7: PathList Canonicalization and Git Worktrees
 
 Make git worktrees group correctly.
 
 - Implement git-aware canonicalization in `path_list_from_workspace`.
 - Worktrees at different physical paths but same git repo resolve to the same `PathList`.
-- Add worktree annotations (e.g., "in olivetti") to `DerivedEntry`.
+- Add worktree annotations (e.g., "in olivetti") to derived entries.
 - Likely needs work in the git integration layer to expose "main repo path" for a worktree.
 
-## Phase 7: Thread DB Path Reconciliation
+## Phase 8: Thread DB Path Reconciliation
 
 Keep the thread database consistent when folder paths change.
 
-- When a workspace detects a path rename (via file watcher), propagate the old→new mapping to the thread DB.
+- When a live workspace detects a path rename (via file watcher), propagate the old→new mapping to the thread DB.
 - Update stored folder paths in thread records so grouping stays correct.
-- Update the persisted active projects list entries too.
+- Update the stored `PathList` in `ActiveProjects` to match the live workspace's current paths.
 
-## Phase 8: Polish
+## Phase 9: Polish
 
 - Collapsible project groups with "View More" truncation.
 - Context menu on project group headers (Remove Project, Collapse, New Thread, New Thread in...).
@@ -84,12 +90,14 @@ Keep the thread database consistent when folder paths change.
 - Agent selector in the header.
 - Notification dots for completed threads.
 - Keyboard navigation across the grouped structure.
-- Remove the defunct `NextWorkspaceInWindow` and `PreviousWorkspaceInWindow` actions (currently registered as no-ops so existing keybindings don't break).
-- Rename `MultiWorkspace` to `WindowRoot` and clean up remaining compatibility shims (`workspaces()`, `active_workspace_index()`, `remove_workspace()`, `activate_index()`).
+- Visual indication of stale entries (folders that no longer exist on disk).
+- Remove compatibility shims from MultiWorkspace (`workspaces()`, `active_workspace_index()`).
+- Consider renaming `MultiWorkspace` to `WindowRoot`.
 
 ## Open Items Not Yet Phased
 
 - How does "New Thread in... > New Worktree" work mechanically? (Creating a git worktree, opening it as a workspace, starting a thread.)
 - What exactly does the window indicator look like? (Icon, badge, color?)
-- How does the sidebar interact with session restore? (`WorkspaceStore` loads first, then windows restore and register themselves.)
+- How does the sidebar interact with session restore? (`ActiveProjects` loads its inert list first, then windows restore and `WorkspaceStore` populates.)
 - Multiple windows showing the same project — same `Entity<Workspace>` or different instances?
+- When the user adds/removes folders from a workspace, should `ActiveProjects` update its stored `PathList`? (Yes, eventually — but can defer to Phase 8.)

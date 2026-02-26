@@ -16,17 +16,20 @@ The set of active projects is a **superset** of currently open windows. If you h
 
 This is the fundamental shift from the current model where the sidebar shows "workspaces in this window" to showing "everything I'm working on, globally."
 
-## Two Data Sources
+## Three Data Sources
 
-The sidebar merges two datasets:
+The sidebar merges three independent datasets:
 
-### 1. Live Workspace Data
-Real-time, reactive state from `Entity<Workspace>`. Folder renames show up instantly. Worktree additions and removals are reflected immediately. This is the source of truth for "what folders define this project" and "is this project currently loaded."
+### 1. Active Projects List (Persisted, Inert)
+A flat, persisted list of `PathList` values — the folder sets the user is actively working on. This is just data: no live workspaces, no language servers, no file watchers. It's the durable record of "what do I care about right now?" Entries are added when the user creates a thread in a workspace, and removed only by explicit user action. Owned by the `ActiveProjects` entity in the `sidebar` crate.
 
-### 2. Thread History
-Persistent data from the threads database. This enriches each project with its thread history — titles, diff stats, timestamps, agent identifiers, run status. A project with zero threads is completely valid; it just shows the project header without any thread children.
+### 2. Live Window State (Ephemeral)
+Real-time state from `WorkspaceStore` — which windows are open and which live `Entity<Workspace>` each one is displaying. This is the source of truth for "is this project currently loaded" and "which window is showing it." Workspaces that are open in a window but not yet in the active projects list appear as ephemeral sidebar entries.
 
-The active projects list is the **live data structure**. The threads database **enhances** it. The sidebar renders the merge of both.
+### 3. Thread History (Persisted)
+Persistent data from the threads database via `ThreadStore`. This enriches each project with its thread history — titles, diff stats, timestamps, agent identifiers, run status. A project with zero threads is completely valid; it just shows the project header without any thread children.
+
+The sidebar is the sole composition point. It observes all three sources, derives grouped project entries, and renders the merge. No source knows about the others.
 
 ## Data Model
 
@@ -34,17 +37,18 @@ The active projects list is the **live data structure**. The threads database **
 
 The underlying data is two independent flat lists. No grouping, no hierarchy — just workspaces and threads.
 
-#### Active Workspaces
+#### Active Projects
 
-A flat list of live workspaces the user is currently working on. Every entry is a live `Entity<Workspace>` — no lazy loading, no deferred state. At startup, all persisted entries are eagerly rehydrated into live workspaces.
+A flat list of folder sets the user is currently working on. Each entry is a `PathList` — a sorted set of absolute paths. No live state, no entities. At startup, the list is loaded from the database as-is.
 
 ```rust
-/// The active list is just a Vec of live workspaces. That's it.
-/// Every entry is fully loaded with worktrees, language servers, etc.
-active_workspaces: Vec<Entity<Workspace>>
+/// The active projects list. Just folder sets. Lives in crates/sidebar/src/active_projects.rs.
+pub struct ActiveProjects {
+    projects: Vec<PathList>,
+}
 ```
 
-Each workspace is the live source of truth for its own folder paths. You can always ask it "what are your current worktrees?" and get the real answer — no stale caches, no consistency problems.
+When a project has a window open, the live `Entity<Workspace>` is the source of truth for its current folder paths. When a project has no window, the stored `PathList` is the last-known state — folder names can go stale if renamed while Zed isn't watching, but this is rare and acceptable.
 
 #### Threads
 
@@ -71,7 +75,8 @@ struct DbThreadMetadata {
 
 ```rust
 fn derive_project_groups(
-    workspaces: &[Entity<Workspace>],
+    active_projects: &[PathList],
+    windowed_workspaces: &[(AnyWindowHandle, Entity<Workspace>)],
     threads: &[DbThreadMetadata],
     cx: &App,
 ) -> Vec<ProjectGroup>;
@@ -79,10 +84,12 @@ fn derive_project_groups(
 
 The derivation works as follows:
 
-1. For each workspace, compute a `PathList` from its current visible worktree paths.
-2. For each thread, look at which folder paths it was created against.
-3. Group workspaces and threads that share the same `PathList`.
-4. Produce `ProjectGroup` values for the sidebar to render.
+1. Start with the persisted active projects list (inert `PathList` values).
+2. Add any windowed workspaces whose `PathList` isn't already in the active list (ephemeral entries).
+3. For each thread, look at which folder paths it was created against.
+4. Group everything that shares the same `PathList`.
+5. For each group, check if any live workspace matches (for window indicators and live path data).
+6. Produce `ProjectGroup` values for the sidebar to render.
 
 ```rust
 /// Computed at render time. Never stored.
@@ -98,11 +105,11 @@ struct ProjectGroup {
 
 /// A single entry in a project group, ready for rendering.
 struct ThreadEntry {
-    workspace: Entity<Workspace>,
+    path_list: PathList,
+    workspace: Option<Entity<Workspace>>,
     thread_info: Option<SidebarThreadInfo>,
-    /// The window currently displaying this workspace, if any.
-    /// Only 0 or 1 windows can display a given workspace.
-    window: Option<WindowId>,
+    /// The windows currently displaying a workspace for this project.
+    windows: Vec<WindowId>,
     /// Git worktree annotation (e.g., "in olivetti") if applicable.
     worktree_annotation: Option<SharedString>,
 }
@@ -170,7 +177,7 @@ This is significantly richer than the current `AgentThreadInfo` which only has t
 
 The sidebar composes three independent data sources into a grouped UI. They have separate responsibilities and separate persistence.
 
-### 1. Active Projects List (Persisted)
+### 1. Active Projects List (Persisted, Inert)
 
 An app-global, persisted list of projects the user is actively working on. This is its own data — not derived from recent projects, not derived from thread history. It has its own spot in the database.
 
@@ -178,16 +185,16 @@ An app-global, persisted list of projects the user is actively working on. This 
 /// App-global persisted list. Its own database table/file.
 /// This is an append-mostly list — entries are added automatically
 /// when a thread is created, and removed only by explicit user action.
-/// At startup, every entry is eagerly rehydrated into a live Entity<Workspace>.
+/// No live state — just folder paths.
 struct ActiveProjectsList {
-    /// Every entry is a live workspace. Rehydrated eagerly at startup.
-    entries: Vec<Entity<Workspace>>,
+    /// Each entry is just a set of folder paths. No live workspaces, no rehydration.
+    projects: Vec<PathList>,
 }
 ```
 
 **Entry condition:** A project joins this list when the user creates a thread in it. Having an open workspace is not enough — the thread is the "save" trigger. This is the moment the project becomes durable.
 
-**Persistence:** The list is serialized as folder paths + workspace database IDs. On startup, each entry is deserialized back into a live `Entity<Workspace>` — worktrees are opened, language servers start, file watchers attach. The serialized form is an implementation detail of persistence, not part of the runtime data model.
+**Persistence:** The list is serialized as folder paths. On startup, the list is loaded as-is — no rehydration, no workspace creation, no language servers. The `PathList` values are inert data. Live workspaces are only created on demand when the user clicks an entry or when a window opens.
 
 **The list is append-mostly:** Once a project is in the list, it stays. No automatic removal based on time, inactivity, or window closing.
 
@@ -243,55 +250,43 @@ The sidebar observes all three data sources and derives the grouped view:
 
 This keeps all three systems decoupled. The active projects list doesn't know about threads or windows. The thread database doesn't know about windows or active/inactive state. The window state doesn't know about persistence. The sidebar is the composition and derivation layer.
 
-### WorkspaceStore (Coordination Layer)
+### WorkspaceStore (Window Tracking Only)
 
-The existing `WorkspaceStore` (in `crates/workspace/src/workspace.rs`) is already an app-global entity that tracks all workspaces with their window handles. It's currently used for collaboration/follow features. We extend it to also own the persisted active projects list and provide the unified API the sidebar needs.
+The existing `WorkspaceStore` (in `crates/workspace/src/workspace.rs`) is already an app-global entity that tracks all workspaces with their window handles. It's currently used for collaboration/follow features. It continues to serve as the source of truth for "which windows are open and what workspace is each one showing." It does **not** own the active projects list — that belongs to `ActiveProjects` in the sidebar crate.
 
 ```rust
-/// Already exists in workspace crate. Extended for active projects.
+/// Already exists in workspace crate. Unchanged for active projects.
 pub struct WorkspaceStore {
     /// Existing: all workspaces with their window handles (used for collab/follow).
     workspaces: HashSet<(AnyWindowHandle, WeakEntity<Workspace>)>,
-    /// NEW: the persisted active projects list. Workspaces that have had
-    /// at least one thread created in them. Eagerly rehydrated at startup.
-    active_projects: Vec<Entity<Workspace>>,
     client: Arc<Client>,
     _subscriptions: Vec<client::Subscription>,
 }
 ```
 
-#### Key Queries (new)
+#### Key Queries
 
 ```rust
 impl WorkspaceStore {
     /// Existing: all workspaces with their window handles.
     fn workspaces_with_windows(&self) -> impl Iterator<Item = (AnyWindowHandle, &WeakEntity<Workspace>)>;
 
-    /// NEW: the persisted active projects (workspaces with threads).
-    fn active_projects(&self) -> &[Entity<Workspace>];
-
-    /// NEW: which windows are currently showing a workspace with this PathList.
+    /// Which windows are currently showing a workspace with this PathList.
     fn windows_for_path_list(&self, path_list: &PathList, cx: &App) -> Vec<WindowId>;
 }
 ```
 
-#### Key Mutations (new)
+#### Key Mutations
 
 ```rust
 impl WorkspaceStore {
-    /// NEW: a thread was created in a workspace. Persist it to the active list.
-    fn persist_project(&mut self, workspace: &Entity<Workspace>, cx: &mut App);
-
-    /// NEW: user clicked "Remove Project." Remove from the active list.
-    fn remove_project(&mut self, index: usize, cx: &mut App);
-
-    /// NEW: a window closed. The project stays in the active list if persisted;
-    /// disappears from the sidebar if it was only ephemeral.
+    /// A window closed. The project stays in the active list (owned by ActiveProjects)
+    /// if persisted; disappears from the sidebar if it was only ephemeral.
     fn detach_window(&mut self, window_id: WindowId, cx: &mut App);
 }
 ```
 
-Note: window assignment tracking already exists via `workspaces: HashSet<(AnyWindowHandle, WeakEntity<Workspace>)>`. We don't need a separate `window_assignments` map — the existing set already associates windows with workspaces. The new `active_projects` field is the only addition to stored state.
+Note: window assignment tracking already exists via `workspaces: HashSet<(AnyWindowHandle, WeakEntity<Workspace>)>`. We don't need a separate `window_assignments` map — the existing set already associates windows with workspaces. The active projects list is owned by the `ActiveProjects` entity in the sidebar crate, not by `WorkspaceStore`.
 
 ## What Happens To MultiWorkspace
 
@@ -304,16 +299,16 @@ MultiWorkspace doesn't get deleted. It gets **hollowed out**.
 - **Action routing** — keyboard shortcuts for toggling sidebar, focus switching
 - **Window shell** — client-side decorations, the top-level element composition
 
-### What It Loses
+### What It Lost (already done)
 
-- `Vec<Entity<Workspace>>` — moves to `WorkspaceStore.active_projects`
+- `Vec<Entity<Workspace>>` — the active projects list is now owned by `ActiveProjects` in the sidebar crate
 - `active_workspace_index` — `WorkspaceStore` tracks which project is in which window
-- `create_workspace` / `remove_workspace` — `WorkspaceStore` handles lifecycle
-- `activate_index` / `activate_next` / `activate_previous` — navigation goes through `WorkspaceStore`
+- `create_workspace` / `remove_workspace` — lifecycle is handled externally
+- `activate_index` / `activate_next` / `activate_previous` — navigation goes through the sidebar
 
-### What It Becomes
+### What It Is Now
 
-Essentially a **WindowRoot** — a thin component that holds one workspace, overlays the sidebar, and handles window-level layout. It might even be renamed to reflect this.
+Essentially a **WindowRoot** — a thin component that holds one workspace, overlays the sidebar, and handles window-level layout.
 
 ```
 WindowRoot (née MultiWorkspace)
@@ -323,7 +318,7 @@ WindowRoot (née MultiWorkspace)
   sidebar_open: bool
 ```
 
-The key conceptual shift: MultiWorkspace today *owns* workspaces. WindowRoot *borrows* whichever workspace `WorkspaceStore` tells it to display.
+The key conceptual shift: MultiWorkspace used to *own* workspaces. WindowRoot *borrows* whichever workspace `WorkspaceStore` tells it to display.
 
 ## Sidebar Rendering (unchanged from original)
 
@@ -413,59 +408,34 @@ What changes is *where the multiplexing lives* — it moves from inside the wind
 
 The sidebar infrastructure (SidebarHandle, resize, focus management), the serialization plumbing (workspace IDs, session bindings), and the deep understanding of workspace lifecycle — all of that carries forward directly.
 
-## Addendum: Future Optimization — Lazy Loading
+## Addendum: The Inert Model Eliminates The Lazy Loading Problem
 
-The V1 data model is intentionally simple: every active project is a live `Entity<Workspace>`, eagerly rehydrated at startup. This means N workspaces = N sets of language servers, file watchers, worktrees, etc.
+The original architecture called for every active project to be a live `Entity<Workspace>`, eagerly rehydrated at startup (N workspaces = N sets of language servers, file watchers, worktrees). This created a scaling concern and a planned `WorkspaceEntry::Loaded`/`Unloaded` enum optimization.
 
-This will work fine when the active list is small (single digits to low tens). As the list grows, startup cost and memory usage will become concerns. The optimization path is:
+The inert model eliminates this entirely. The active projects list is just `Vec<PathList>` — loading it is trivial regardless of size. Live workspaces are only created on demand when the user clicks an entry or when a window opens. There is no rehydration step, no startup cost beyond reading a small database table, and no need for a `WorkspaceEntry` enum.
 
-### WorkspaceEntry Enum
+## Addendum: Path Staleness and Reconciliation
 
-Replace `Vec<Entity<Workspace>>` with `Vec<WorkspaceEntry>`:
+There are two staleness concerns with the inert model:
 
-```rust
-enum WorkspaceEntry {
-    /// Fully loaded — worktrees, language servers, file watchers all running.
-    Loaded(Entity<Workspace>),
-    /// Just metadata — folder paths and database ID. No live state.
-    Unloaded {
-        folder_paths: Vec<PathBuf>,
-        workspace_id: Option<WorkspaceId>,
-    },
-}
-```
+### Active Projects List Staleness
 
-### Loading Strategy
+Since the active projects list stores `PathList` values (not live workspaces), folder renames on disk won't be reflected until the project is opened in a window. If the user renames `/home/user/zed` to `/home/user/zed2` while no window is showing that project, the stored `PathList` still says `zed`. This is acceptable — the sidebar shows the last-known name, and when the user opens the project, the live workspace detects the rename and the stored `PathList` can be updated.
 
-- Rehydrate only the N most recent projects eagerly (e.g., the last 5 used).
-- Keep the rest as `Unloaded` entries with just paths.
-- When the user clicks an unloaded entry, create the workspace on demand.
-- Optionally pre-warm workspaces in the background after startup settles.
+When a project *does* have a window open, the live workspace detects renames through file watching. The sidebar should update the stored `PathList` in `ActiveProjects` to match the live workspace's current paths, keeping the persisted list consistent with reality.
 
-### Display Implications
+### Thread DB Staleness
 
-Unloaded entries can't show live worktree data (folder renames won't be detected). The sidebar would show the last-known folder names from persistence. This is acceptable — the names only go stale if the user renames a folder while Zed isn't watching it, which is rare.
-
-### When To Do This
-
-Not now. The architecture supports it cleanly because the derivation function and the sidebar don't care whether a workspace is live or not — they just need folder paths and thread data. The `WorkspaceEntry` enum can be introduced later without changing the sidebar, the thread database, or the derivation logic. It's a contained optimization at the storage layer.
-
-## Addendum: Path Staleness and Thread DB Reconciliation
-
-With the eager loading model, live workspaces detect folder renames through normal file watching — if you rename a folder, the worktree picks it up and the sidebar derivation reflects the new name. No staleness problem for loaded workspaces.
-
-But there's a second-order issue: the thread database stores folder paths at thread-creation time. If a folder is renamed, existing threads in the DB still reference the old path. This means:
+The thread database stores folder paths at thread-creation time. If a folder is renamed, existing threads in the DB still reference the old path. This means:
 
 - The thread was created against `{zed}`, the folder gets renamed to `{zed2}`.
-- The workspace sees `{zed2}` (live data, file watcher caught it) — its `PathList` changes.
+- The live workspace sees `{zed2}` (file watcher caught it) — its `PathList` changes.
 - The thread DB still says `{zed}`.
 - The derivation sees the workspace under "zed2" and the thread under "zed" — their `PathList`s don't match, so they don't group together.
 
-This is not optional — it's an essential part of the active projects work. We don't currently store folder-path associations in the thread database in a way that needs rewriting, but we will once the sidebar is grouping threads by folder set. At that point, path reconciliation becomes necessary for correctness, not just polish.
+The fix is straightforward: when a workspace detects a path change, it updates the thread DB to reconcile old paths with new ones. The live workspace knows both the old and new paths, so it can issue the update.
 
-The fix is straightforward: when a workspace detects a path change, it updates the thread DB to reconcile old paths with new ones. The live workspace knows both the old and new paths, so it can issue the update. This keeps the thread DB consistent with reality.
-
-Folder renames are an edge case, so this doesn't need to be in the very first implementation phase. But it should be part of the active projects work — not deferred indefinitely. It can be its own phase or cut out as a follow-up, but it needs to land as part of this overall effort.
+Folder renames are an edge case, so this doesn't need to be in the very first implementation phase. But it should be part of the active projects work — not deferred indefinitely.
 
 ## Lifecycle Scenarios
 
@@ -714,10 +684,10 @@ Legend:
 
 > User quits and relaunches Zed.
 
-- **Active List:** loaded from database. All persisted entries are present.
+- **Active List:** loaded from database as inert `PathList` values. All persisted entries are present.
 - **Window State:** empty initially, then populated as windows restore.
-- All persisted entries are eagerly rehydrated into live `Entity<Workspace>` instances — worktrees open, language servers start, file watchers attach.
-- **Sidebar:** immediately shows all active projects (live, with real-time folder data) without window indicators. As session restore opens windows, indicators appear.
+- No rehydration step — the active list is just folder paths. Live workspaces are only created when windows restore or the user clicks an entry.
+- **Sidebar:** immediately shows all active projects (using stored folder names from `PathList`) without window indicators. As session restore opens windows, indicators appear and live folder names replace stored ones.
 
 #### Empty sidebar (fresh install, no history)
 
@@ -731,10 +701,11 @@ Legend:
 
 > "old-project" is in the active list, but `/home/user/old-project` was deleted.
 
-- During rehydration at startup, we detect that the folder paths no longer exist.
-- **Active List:** the entry is auto-removed. If the folder is gone, the project is no longer active.
-- **Sidebar:** "old-project" never appears. Clean slate.
-- Threads associated with "old-project" are still in the thread database on disk. They're not lost — they're just not surfaced in the active projects sidebar. A future "historical threads" view or search could find them.
+- Since the active list is inert (`PathList` values), the entry is loaded regardless — we don't check disk at startup.
+- **Active List:** still contains "old-project."
+- **Sidebar:** shows "old-project" using the stored folder name. If the user clicks it, workspace creation discovers the folder is gone and shows an appropriate error or empty state.
+- Alternatively, the sidebar could do a lightweight path-existence check during derivation and visually indicate stale entries. This is a polish concern.
+- Threads associated with "old-project" are still in the thread database on disk and would appear under the entry.
 
 #### A thread's folder paths don't match any active project
 
