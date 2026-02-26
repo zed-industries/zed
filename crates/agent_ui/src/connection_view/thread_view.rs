@@ -2805,6 +2805,20 @@ impl ThreadView {
             let output = crate::text_thread_editor::humanize_token_count(usage.output_tokens);
             let output_max = crate::text_thread_editor::humanize_token_count(max_output_tokens);
 
+            let input_percentage = if usage.max_tokens > max_output_tokens {
+                ((usage.input_tokens as f32
+                    / usage.max_tokens.saturating_sub(max_output_tokens) as f32)
+                    * 100.0)
+                    .round() as u32
+            } else {
+                0
+            };
+            let output_percentage = if max_output_tokens > 0 {
+                ((usage.output_tokens as f32 / max_output_tokens as f32) * 100.0).round() as u32
+            } else {
+                0
+            };
+
             Some(
                 h_flex()
                     .flex_shrink_0()
@@ -2812,43 +2826,100 @@ impl ThreadView {
                     .mr_1p5()
                     .child(
                         h_flex()
+                            .id("split_input_tokens")
                             .gap_0p5()
                             .child(
                                 Icon::new(IconName::ArrowUp)
                                     .size(IconSize::XSmall)
                                     .color(Color::Muted),
                             )
-                            .child(token_label(input, "input-tokens-label"))
+                            .child(token_label(input.clone(), "input-tokens-label"))
                             .child(
                                 Label::new("/")
                                     .size(LabelSize::Small)
                                     .color(separator_color),
                             )
                             .child(
-                                Label::new(input_max)
+                                Label::new(input_max.clone())
                                     .size(LabelSize::Small)
                                     .color(Color::Muted),
-                            ),
+                            )
+                            .tooltip(Tooltip::element({
+                                move |_, _cx| {
+                                    v_flex()
+                                        .min_w_40()
+                                        .child(
+                                            Label::new("Input tokens")
+                                                .color(Color::Muted)
+                                                .size(LabelSize::Small),
+                                        )
+                                        .child(
+                                            h_flex()
+                                                .gap_0p5()
+                                                .child(Label::new(format!("{}%", input_percentage)))
+                                                .child(
+                                                    Label::new("•").color(separator_color).mx_1(),
+                                                )
+                                                .child(Label::new(input.clone()))
+                                                .child(Label::new("/").color(separator_color))
+                                                .child(
+                                                    Label::new(input_max.clone())
+                                                        .color(Color::Muted),
+                                                ),
+                                        )
+                                        .into_any_element()
+                                }
+                            })),
                     )
                     .child(
                         h_flex()
+                            .id("split_output_tokens")
                             .gap_0p5()
                             .child(
                                 Icon::new(IconName::ArrowDown)
                                     .size(IconSize::XSmall)
                                     .color(Color::Muted),
                             )
-                            .child(token_label(output, "output-tokens-label"))
+                            .child(token_label(output.clone(), "output-tokens-label"))
                             .child(
                                 Label::new("/")
                                     .size(LabelSize::Small)
                                     .color(separator_color),
                             )
                             .child(
-                                Label::new(output_max)
+                                Label::new(output_max.clone())
                                     .size(LabelSize::Small)
                                     .color(Color::Muted),
-                            ),
+                            )
+                            .tooltip(Tooltip::element({
+                                move |_, _cx| {
+                                    v_flex()
+                                        .min_w_40()
+                                        .child(
+                                            Label::new("Output tokens")
+                                                .color(Color::Muted)
+                                                .size(LabelSize::Small),
+                                        )
+                                        .child(
+                                            h_flex()
+                                                .gap_0p5()
+                                                .child(Label::new(format!(
+                                                    "{}%",
+                                                    output_percentage
+                                                )))
+                                                .child(
+                                                    Label::new("•").color(separator_color).mx_1(),
+                                                )
+                                                .child(Label::new(output.clone()))
+                                                .child(Label::new("/").color(separator_color))
+                                                .child(
+                                                    Label::new(output_max.clone())
+                                                        .color(Color::Muted),
+                                                ),
+                                        )
+                                        .into_any_element()
+                                }
+                            })),
                     )
                     .into_any_element(),
             )
