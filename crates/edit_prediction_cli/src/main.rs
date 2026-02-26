@@ -55,6 +55,7 @@ use crate::load_project::run_load_project;
 use crate::paths::{FAILED_EXAMPLES_DIR, RUN_DIR};
 use crate::predict::run_prediction;
 use crate::progress::Progress;
+use crate::pull_examples::{fetch_snapshot_examples_after, parse_snapshot_after_input};
 use crate::retrieve_context::run_context_retrieval;
 use crate::score::run_scoring;
 use crate::split_commit::SplitCommitArgs;
@@ -132,6 +133,10 @@ Inputs can be file paths or special specifiers:
       Fetch rejected edit predictions from Snowflake after the given RFC3339 timestamp.
       These are predictions that were shown to users but rejected (useful for DPO training).
 
+  snapshot-after:{timestamp}
+      Fetch snapshot stream examples from Snowflake after the given RFC3339 timestamp.
+      These are examples from the edit prediction snapshot stream.
+
   rated-after:{timestamp}
       Fetch user-rated edit predictions from Snowflake after the given RFC3339 timestamp.
       These are predictions that users explicitly rated as positive or negative via the
@@ -165,6 +170,9 @@ Examples:
 
   # Read user-rated predictions
   ep read rated-after:2025-01-01T00:00:00Z -o rated.jsonl
+
+  # Read snapshot stream examples
+  ep read snapshot-after:2025-01-01T00:00:00Z -o snapshot.jsonl
 
   # Read only positively rated predictions
   ep read rated-positive-after:2025-01-01T00:00:00Z -o positive.jsonl
@@ -635,6 +643,7 @@ async fn load_examples(
     let mut captured_after_timestamps = Vec::new();
     let mut rejected_after_timestamps = Vec::new();
     let mut requested_after_timestamps = Vec::new();
+    let mut snapshot_after_timestamps = Vec::new();
     let mut rated_after_inputs: Vec<(String, Option<telemetry_events::EditPredictionRating>)> =
         Vec::new();
     let mut file_inputs = Vec::new();
@@ -651,6 +660,8 @@ async fn load_examples(
             pull_examples::parse_requested_after_input(input_string.as_ref())
         {
             requested_after_timestamps.push(timestamp.to_string());
+        } else if let Some(timestamp) = parse_snapshot_after_input(input_string.as_ref()) {
+            snapshot_after_timestamps.push(timestamp.to_string());
         } else if let Some((timestamp, rating_filter)) =
             pull_examples::parse_rated_after_input(input_string.as_ref())
         {
@@ -716,6 +727,21 @@ async fn load_examples(
             )
             .await?;
             examples.append(&mut requested_examples);
+        }
+
+        if !snapshot_after_timestamps.is_empty() {
+            snapshot_after_timestamps.sort();
+
+            let mut snapshot_examples = fetch_snapshot_examples_after(
+                http_client.clone(),
+                &snapshot_after_timestamps,
+                max_rows_per_timestamp,
+                remaining_offset,
+                background_executor.clone(),
+                Some(MIN_CAPTURE_VERSION),
+            )
+            .await?;
+            examples.append(&mut snapshot_examples);
         }
 
         if !rated_after_inputs.is_empty() {
