@@ -637,7 +637,11 @@ impl PlatformWindow for WebWindow {
     }
 
     fn draw(&self, scene: &Scene) {
-        self.inner.state.borrow_mut().renderer.draw(scene);
+        let mut state = self.inner.state.borrow_mut();
+        if state.bounds.size.width <= Pixels::ZERO || state.bounds.size.height <= Pixels::ZERO {
+            return;
+        }
+        state.renderer.draw(scene);
     }
 
     fn completed_frame(&self) {
