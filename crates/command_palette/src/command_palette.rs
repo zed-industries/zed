@@ -19,7 +19,7 @@ use gpui::{
     ParentElement, Render, Styled, Task, WeakEntity, Window,
 };
 use persistence::COMMAND_PALETTE_HISTORY;
-use picker::Direction;
+use picker::{Direction, stable_id::StableId};
 use picker::{Picker, PickerDelegate};
 use postage::{sink::Sink, stream::Stream};
 use settings::Settings;
@@ -366,9 +366,13 @@ impl CommandPaletteDelegate {
     }
 }
 
+#[derive(Clone, Eq, PartialEq, Hash, Debug)]
+pub struct CommandPaletteStableId(SharedString);
+impl StableId for CommandPaletteStableId {}
+
 impl PickerDelegate for CommandPaletteDelegate {
     type ListItem = ListItem;
-    type StableId = ();
+    type StableId = CommandPaletteStableId;
 
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
         "Execute a command...".into()
@@ -512,6 +516,20 @@ impl PickerDelegate for CommandPaletteDelegate {
                         .matches_updated(query, commands, matches, intercept_result, cx)
                 })
                 .ok();
+        })
+    }
+
+    fn match_stable_id(&self, ix: usize) -> Option<CommandPaletteStableId> {
+        let candidate_id = self.matches.get(ix)?.candidate_id;
+        let name = self.commands.get(candidate_id)?.name.clone();
+        Some(CommandPaletteStableId(name.into()))
+    }
+
+    fn find_match_by_stable_id(&self, stable_id: &CommandPaletteStableId) -> Option<usize> {
+        self.matches.iter().position(|m| {
+            self.commands
+                .get(m.candidate_id)
+                .is_some_and(|cmd| cmd.name == stable_id.0.as_ref())
         })
     }
 
