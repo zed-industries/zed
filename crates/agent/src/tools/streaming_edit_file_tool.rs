@@ -21,7 +21,7 @@ use serde::{Deserialize, Serialize};
 use std::ops::Range;
 use std::path::PathBuf;
 use std::sync::Arc;
-use text::BufferSnapshot;
+use text::{BufferSnapshot, ToOffset as _};
 use ui::SharedString;
 use util::rel_path::RelPath;
 use util::{Deferred, ResultExt, debug_panic};
@@ -139,6 +139,8 @@ enum StreamingEditState {
         buffer: Entity<Buffer>,
         old_text: Arc<String>,
         diff: Entity<Diff>,
+        mode: StreamingEditFileMode,
+        last_content_len: usize,
         edit_state: IncrementalEditState,
         _finalize_diff_guard: Deferred<Box<dyn FnOnce()>>,
     },
@@ -146,9 +148,15 @@ enum StreamingEditState {
 
 #[derive(Default)]
 struct IncrementalEditState {
-    applied_count: usize,
     in_progress_matcher: Option<StreamingFuzzyMatcher>,
     last_old_text_len: usize,
+    applied_ranges: Vec<Range<text::Anchor>>,
+}
+
+impl IncrementalEditState {
+    fn applied_count(&self) -> usize {
+        self.applied_ranges.len()
+    }
 }
 
 impl StreamingEditState {
@@ -172,7 +180,7 @@ impl StreamingEditState {
                 .await?;
                 0
             }
-            StreamingEditState::BufferResolved { edit_state, .. } => edit_state.applied_count,
+            StreamingEditState::BufferResolved { edit_state, .. } => edit_state.applied_count(),
         };
 
         let StreamingEditState::BufferResolved {
@@ -340,21 +348,36 @@ impl StreamingEditState {
                 buffer,
                 edit_state,
                 diff,
+                mode,
+                last_content_len,
                 ..
-            } => {
-                if let Some(edits) = partial.edits {
-                    Self::process_streaming_edits(
-                        buffer,
-                        diff,
-                        edit_state,
-                        &edits,
-                        abs_path,
-                        tool,
-                        event_stream,
-                        cx,
-                    )?;
+            } => match mode {
+                StreamingEditFileMode::Create | StreamingEditFileMode::Overwrite => {
+                    if let Some(content) = &partial.content {
+                        Self::process_streaming_content(
+                            buffer,
+                            diff,
+                            last_content_len,
+                            content,
+                            cx,
+                        )?;
+                    }
                 }
-            }
+                StreamingEditFileMode::Edit => {
+                    if let Some(edits) = partial.edits {
+                        Self::process_streaming_edits(
+                            buffer,
+                            diff,
+                            edit_state,
+                            &edits,
+                            abs_path,
+                            tool,
+                            event_stream,
+                            cx,
+                        )?;
+                    }
+                }
+            },
         }
         Ok(())
     }
@@ -369,7 +392,7 @@ impl StreamingEditState {
     ) -> Result<Self, StreamingEditFileToolOutput> {
         let path = PathBuf::from(path_str);
         let project_path = cx
-            .update(|cx| resolve_path(mode, &path, &tool.project, cx))
+            .update(|cx| resolve_path(mode.clone(), &path, &tool.project, cx))
             .map_err(|e| StreamingEditFileToolOutput::Error {
                 error: e.to_string(),
             })?;
@@ -424,9 +447,45 @@ impl StreamingEditState {
             buffer,
             old_text,
             diff,
+            mode,
+            last_content_len: 0,
             edit_state: IncrementalEditState::default(),
             _finalize_diff_guard: finalize_diff_guard,
         })
+    }
+
+    fn process_streaming_content(
+        buffer: &Entity<Buffer>,
+        diff: &Entity<Diff>,
+        last_content_len: &mut usize,
+        content: &str,
+        cx: &mut AsyncApp,
+    ) -> Result<(), StreamingEditFileToolOutput> {
+        let new_len = content.len();
+        if new_len > *last_content_len {
+            let new_chunk = &content[*last_content_len..];
+            cx.update(|cx| {
+                buffer.update(cx, |buffer, cx| {
+                    // On the first update, replace the entire buffer (handles Overwrite
+                    // clearing existing content). For Create the buffer is already empty
+                    // so 0..0 is a no-op range prefix.
+                    let insert_at = if *last_content_len == 0 {
+                        0..buffer.len()
+                    } else {
+                        let len = buffer.len();
+                        len..len
+                    };
+                    buffer.edit([(insert_at, new_chunk)], None, cx);
+                });
+            });
+            *last_content_len = new_len;
+
+            let anchor_range = buffer.read_with(cx, |buffer, _cx| {
+                buffer.anchor_range_between(0..buffer.len())
+            });
+            diff.update(cx, |diff, cx| diff.reveal_range(anchor_range, cx));
+        }
+        Ok(())
     }
 
     fn process_streaming_edits(
@@ -449,17 +508,15 @@ impl StreamingEditState {
         let completed_count = edits.len().saturating_sub(1);
 
         // Apply newly-complete edits
-        while edit_state.applied_count < completed_count {
-            let edit_index = edit_state.applied_count;
+        while edit_state.applied_count() < completed_count {
+            let edit_index = edit_state.applied_count();
             let partial_edit = &edits[edit_index];
 
-            let old_text = match &partial_edit.old_text {
-                Some(t) => t.clone(),
-                None => {
-                    edit_state.applied_count += 1;
-                    continue;
+            let old_text = partial_edit.old_text.clone().ok_or_else(|| {
+                StreamingEditFileToolOutput::Error {
+                    error: format!("Edit at index {} is missing old_text.", edit_index),
                 }
-            };
+            })?;
             let new_text = partial_edit.new_text.clone().unwrap_or_default();
 
             edit_state.in_progress_matcher = None;
@@ -476,7 +533,7 @@ impl StreamingEditState {
                 .ok();
 
             // On the first edit, mark the buffer as read
-            if edit_state.applied_count == 0 {
+            if edit_state.applied_count() == 0 {
                 if let Some(action_log) = &action_log {
                     action_log.update(cx, |log, cx| {
                         log.buffer_read(buffer.clone(), cx);
@@ -484,21 +541,78 @@ impl StreamingEditState {
                 }
             }
 
-            resolve_reveal_and_apply_edit(
-                buffer,
-                diff,
-                &edit_op,
-                edit_index,
-                abs_path,
-                action_log.as_ref(),
-                event_stream,
-                cx,
-            )
-            .map_err(|e| StreamingEditFileToolOutput::Error {
-                error: e.to_string(),
-            })?;
+            let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot());
 
-            edit_state.applied_count += 1;
+            let (range, new_text) =
+                match resolve_and_reveal_edit(buffer, diff, &snapshot, &edit_op, cx) {
+                    Ok(resolved) => resolved,
+                    Err(EditResolveError::NotFound) => {
+                        return Err(StreamingEditFileToolOutput::Error {
+                            error: format!(
+                                "Could not find matching text for edit at index {}. \
+                             The old_text did not match any content in the file. \
+                             Please read the file again to get the current content.",
+                                edit_index
+                            ),
+                        });
+                    }
+                    Err(EditResolveError::Ambiguous(ranges)) => {
+                        let lines = ranges
+                            .iter()
+                            .map(|r| (snapshot.offset_to_point(r.start).row + 1).to_string())
+                            .collect::<Vec<_>>()
+                            .join(", ");
+                        return Err(StreamingEditFileToolOutput::Error {
+                            error: format!(
+                                "Edit {} matched multiple locations in the file at lines: {}. \
+                             Please provide more context in old_text to uniquely \
+                             identify the location.",
+                                edit_index, lines
+                            ),
+                        });
+                    }
+                };
+
+            for previous_range in &edit_state.applied_ranges {
+                let previous_start = previous_range.start.to_offset(&snapshot);
+                let previous_end = previous_range.end.to_offset(&snapshot);
+                if range.start < previous_end && previous_start < range.end {
+                    let earlier_start_line = snapshot.offset_to_point(previous_start).row + 1;
+                    let earlier_end_line = snapshot.offset_to_point(previous_end).row + 1;
+                    let later_start_line = snapshot.offset_to_point(range.start).row + 1;
+                    let later_end_line = snapshot.offset_to_point(range.end).row + 1;
+                    return Err(StreamingEditFileToolOutput::Error {
+                        error: format!(
+                            "Conflicting edit ranges detected: lines {}-{} \
+                             conflicts with lines {}-{}. Conflicting edit \
+                             ranges are not allowed, as they would overwrite \
+                             each other.",
+                            earlier_start_line, earlier_end_line, later_start_line, later_end_line,
+                        ),
+                    });
+                }
+            }
+
+            let anchor_range =
+                buffer.read_with(cx, |buffer, _cx| buffer.anchor_range_between(range.clone()));
+            edit_state.applied_ranges.push(anchor_range);
+
+            let line = snapshot.offset_to_point(range.start).row;
+            event_stream.update_fields(
+                ToolCallUpdateFields::new()
+                    .locations(vec![ToolCallLocation::new(abs_path).line(Some(line))]),
+            );
+
+            if let Some(action_log) = action_log {
+                cx.update(|cx| {
+                    buffer.update(cx, |buffer, cx| {
+                        buffer.edit([(range, new_text.as_str())], None, cx);
+                    });
+                    action_log.update(cx, |log, cx| {
+                        log.buffer_edited(buffer.clone(), cx);
+                    });
+                });
+            }
         }
 
         // Feed the in-progress last edit's old_text to the matcher for live preview
@@ -910,65 +1024,6 @@ fn apply_edits(
     }
 
     Ok(())
-}
-
-/// Resolves, reveals, and applies a single edit to the buffer. Emits
-/// a location update and reports the change to the action log.
-fn resolve_reveal_and_apply_edit(
-    buffer: &Entity<Buffer>,
-    diff: &Entity<Diff>,
-    edit: &EditOperation,
-    edit_index: usize,
-    abs_path: &PathBuf,
-    action_log: Option<&Entity<action_log::ActionLog>>,
-    event_stream: &ToolCallEventStream,
-    cx: &mut AsyncApp,
-) -> Result<()> {
-    let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot());
-
-    match resolve_and_reveal_edit(buffer, diff, &snapshot, edit, cx) {
-        Ok((range, new_text)) => {
-            let line = snapshot.offset_to_point(range.start).row;
-            event_stream.update_fields(
-                ToolCallUpdateFields::new()
-                    .locations(vec![ToolCallLocation::new(abs_path).line(Some(line))]),
-            );
-
-            if let Some(action_log) = action_log {
-                cx.update(|cx| {
-                    buffer.update(cx, |buffer, cx| {
-                        buffer.edit([(range, new_text.as_str())], None, cx);
-                    });
-                    action_log.update(cx, |log, cx| {
-                        log.buffer_edited(buffer.clone(), cx);
-                    });
-                });
-            }
-
-            Ok(())
-        }
-        Err(EditResolveError::NotFound) => {
-            anyhow::bail!(
-                "Could not find matching text for edit at index {}. \
-                 The old_text did not match any content in the file. \
-                 Please read the file again to get the current content.",
-                edit_index
-            );
-        }
-        Err(EditResolveError::Ambiguous(ranges)) => {
-            let lines = ranges
-                .iter()
-                .map(|r| (snapshot.offset_to_point(r.start).row + 1).to_string())
-                .collect::<Vec<_>>()
-                .join(", ");
-            anyhow::bail!(
-                "Edit {} matched multiple locations in the file at lines: {}. \
-                 Please provide more context in old_text to uniquely identify the location.",
-                edit_index,
-                lines
-            );
-        }
-    }
 }
 
 enum EditResolveError {
@@ -4383,6 +4438,403 @@ mod tests {
             "Error should ask user to manually save or revert when tools aren't available, got: {}",
             error
         );
+    }
+
+    #[gpui::test]
+    async fn test_streaming_overlapping_edits_detected_early(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = project::FakeFs::new(cx.executor());
+        // The file content is crafted so that edit 1's replacement still
+        // contains the old_text of edit 2 as a contiguous substring.
+        // Without early overlap detection, edit 2 would silently match
+        // inside the already-modified region and corrupt the file instead
+        // of producing a clear "Conflicting edit ranges" error.
+        fs.insert_tree(
+            "/root",
+            json!({
+                "file.txt": "aaa\nbbb\nccc\nddd\neee\n"
+            }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+        let language_registry = project.read_with(cx, |project, _cx| project.languages().clone());
+        let context_server_registry =
+            cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
+        let model = Arc::new(FakeLanguageModel::default());
+        let thread = cx.new(|cx| {
+            crate::Thread::new(
+                project.clone(),
+                cx.new(|_cx| ProjectContext::default()),
+                context_server_registry,
+                Templates::new(),
+                Some(model),
+                cx,
+            )
+        });
+
+        let (sender, input) = ToolInput::<StreamingEditFileToolInput>::test();
+        let (event_stream, _receiver) = ToolCallEventStream::test();
+
+        let tool = Arc::new(StreamingEditFileTool::new(
+            project.clone(),
+            thread.downgrade(),
+            language_registry,
+        ));
+
+        let task = cx.update(|cx| tool.run(input, event_stream, cx));
+
+        // Setup: resolve the buffer
+        sender.send_partial(json!({
+            "display_description": "Overlapping edits",
+            "path": "root/file.txt",
+            "mode": "edit"
+        }));
+        cx.run_until_parked();
+
+        // Edit 1 targets "bbb\nccc" (lines 2-3) and replaces it with
+        // text that preserves "ccc\nddd" as a contiguous substring in the
+        // buffer — so edit 2's old_text will still match after edit 1 is
+        // applied.
+        //
+        // Edit 2 targets "ccc\nddd" (lines 3-4), overlapping with edit 1 on
+        // line 3 ("ccc"). After edit 1 runs, the buffer becomes:
+        //   "aaa\nXXX\nccc\nddd\nddd\neee\n"
+        // and "ccc\nddd" is still present, so edit 2 would silently
+        // succeed without early overlap detection.
+        //
+        // Edit 3 exists only to mark edit 2 as "complete" during streaming.
+        sender.send_partial(json!({
+            "display_description": "Overlapping edits",
+            "path": "root/file.txt",
+            "mode": "edit",
+            "edits": [
+                {"old_text": "bbb\nccc", "new_text": "XXX\nccc\nddd"},
+                {"old_text": "ccc\nddd", "new_text": "ZZZ"},
+                {"old_text": "eee", "new_text": "DUMMY"}
+            ]
+        }));
+        cx.run_until_parked();
+
+        // Send the final input with all three edits.
+        sender.send_final(json!({
+            "display_description": "Overlapping edits",
+            "path": "root/file.txt",
+            "mode": "edit",
+            "edits": [
+                {"old_text": "bbb\nccc", "new_text": "XXX\nccc\nddd"},
+                {"old_text": "ccc\nddd", "new_text": "ZZZ"},
+                {"old_text": "eee", "new_text": "DUMMY"}
+            ]
+        }));
+
+        let result = task.await;
+        // We expect a "Conflicting edit ranges" error. Currently the overlap
+        // goes undetected during streaming and the file gets silently
+        // corrupted, so this assertion will fail until we add early overlap
+        // detection.
+        match result {
+            Err(StreamingEditFileToolOutput::Error { error })
+                if error.contains("Conflicting edit ranges") => {}
+            Err(StreamingEditFileToolOutput::Error { error }) => {
+                panic!("Expected 'Conflicting edit ranges' error, got different error: {error}");
+            }
+            Ok(output) => {
+                panic!("Expected 'Conflicting edit ranges' error, but got success: {output}");
+            }
+            Err(other) => {
+                panic!("Expected 'Conflicting edit ranges' error, got unexpected output: {other}");
+            }
+        }
+    }
+
+    #[gpui::test]
+    async fn test_streaming_create_content_streamed(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = project::FakeFs::new(cx.executor());
+        fs.insert_tree("/root", json!({"dir": {}})).await;
+        let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+        let language_registry = project.read_with(cx, |project, _cx| project.languages().clone());
+        let context_server_registry =
+            cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
+        let model = Arc::new(FakeLanguageModel::default());
+        let thread = cx.new(|cx| {
+            crate::Thread::new(
+                project.clone(),
+                cx.new(|_cx| ProjectContext::default()),
+                context_server_registry,
+                Templates::new(),
+                Some(model),
+                cx,
+            )
+        });
+
+        let (sender, input) = ToolInput::<StreamingEditFileToolInput>::test();
+        let (event_stream, _receiver) = ToolCallEventStream::test();
+
+        let tool = Arc::new(StreamingEditFileTool::new(
+            project.clone(),
+            thread.downgrade(),
+            language_registry,
+        ));
+
+        let task = cx.update(|cx| tool.run(input, event_stream, cx));
+
+        // Transition to BufferResolved
+        sender.send_partial(json!({
+            "display_description": "Create new file",
+            "path": "root/dir/new_file.txt",
+            "mode": "create"
+        }));
+        cx.run_until_parked();
+
+        // Stream content incrementally
+        sender.send_partial(json!({
+            "display_description": "Create new file",
+            "path": "root/dir/new_file.txt",
+            "mode": "create",
+            "content": "line 1\n"
+        }));
+        cx.run_until_parked();
+
+        // Verify buffer has partial content
+        let buffer = project.update(cx, |project, cx| {
+            let path = project
+                .find_project_path("root/dir/new_file.txt", cx)
+                .unwrap();
+            project.get_open_buffer(&path, cx).unwrap()
+        });
+        assert_eq!(buffer.read_with(cx, |b, _| b.text()), "line 1\n");
+
+        // Stream more content
+        sender.send_partial(json!({
+            "display_description": "Create new file",
+            "path": "root/dir/new_file.txt",
+            "mode": "create",
+            "content": "line 1\nline 2\n"
+        }));
+        cx.run_until_parked();
+        assert_eq!(buffer.read_with(cx, |b, _| b.text()), "line 1\nline 2\n");
+
+        // Stream final chunk
+        sender.send_partial(json!({
+            "display_description": "Create new file",
+            "path": "root/dir/new_file.txt",
+            "mode": "create",
+            "content": "line 1\nline 2\nline 3\n"
+        }));
+        cx.run_until_parked();
+        assert_eq!(
+            buffer.read_with(cx, |b, _| b.text()),
+            "line 1\nline 2\nline 3\n"
+        );
+
+        // Send final input
+        sender.send_final(json!({
+            "display_description": "Create new file",
+            "path": "root/dir/new_file.txt",
+            "mode": "create",
+            "content": "line 1\nline 2\nline 3\n"
+        }));
+
+        let result = task.await;
+        let StreamingEditFileToolOutput::Success { new_text, .. } = result.unwrap() else {
+            panic!("expected success");
+        };
+        assert_eq!(new_text, "line 1\nline 2\nline 3\n");
+    }
+
+    #[gpui::test]
+    async fn test_streaming_overwrite_diff_revealed_during_streaming(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = project::FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/root",
+            json!({
+                "file.txt": "old line 1\nold line 2\nold line 3\n"
+            }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+        let language_registry = project.read_with(cx, |project, _cx| project.languages().clone());
+        let context_server_registry =
+            cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
+        let model = Arc::new(FakeLanguageModel::default());
+        let thread = cx.new(|cx| {
+            crate::Thread::new(
+                project.clone(),
+                cx.new(|_cx| ProjectContext::default()),
+                context_server_registry,
+                Templates::new(),
+                Some(model),
+                cx,
+            )
+        });
+
+        let (sender, input) = ToolInput::<StreamingEditFileToolInput>::test();
+        let (event_stream, mut receiver) = ToolCallEventStream::test();
+
+        let tool = Arc::new(StreamingEditFileTool::new(
+            project.clone(),
+            thread.downgrade(),
+            language_registry,
+        ));
+
+        let task = cx.update(|cx| tool.run(input, event_stream, cx));
+
+        // Transition to BufferResolved
+        sender.send_partial(json!({
+            "display_description": "Overwrite file",
+            "path": "root/file.txt",
+            "mode": "overwrite"
+        }));
+        cx.run_until_parked();
+
+        // Get the diff entity from the event stream
+        receiver.expect_update_fields().await;
+        let diff = receiver.expect_diff().await;
+
+        // Diff starts pending with no revealed ranges
+        diff.read_with(cx, |diff, cx| {
+            assert!(matches!(diff, Diff::Pending(_)));
+            assert!(!diff.has_revealed_range(cx));
+        });
+
+        // Stream first content chunk
+        sender.send_partial(json!({
+            "display_description": "Overwrite file",
+            "path": "root/file.txt",
+            "mode": "overwrite",
+            "content": "new line 1\n"
+        }));
+        cx.run_until_parked();
+
+        // Diff should now have revealed ranges showing the new content
+        diff.read_with(cx, |diff, cx| {
+            assert!(diff.has_revealed_range(cx));
+        });
+
+        // Send final input
+        sender.send_final(json!({
+            "display_description": "Overwrite file",
+            "path": "root/file.txt",
+            "mode": "overwrite",
+            "content": "new line 1\nnew line 2\n"
+        }));
+
+        let result = task.await;
+        let StreamingEditFileToolOutput::Success {
+            new_text, old_text, ..
+        } = result.unwrap()
+        else {
+            panic!("expected success");
+        };
+        assert_eq!(new_text, "new line 1\nnew line 2\n");
+        assert_eq!(*old_text, "old line 1\nold line 2\nold line 3\n");
+
+        // Diff is finalized after completion
+        diff.read_with(cx, |diff, _| assert!(matches!(diff, Diff::Finalized(_))));
+    }
+
+    #[gpui::test]
+    async fn test_streaming_overwrite_content_streamed(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = project::FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/root",
+            json!({
+                "file.txt": "old line 1\nold line 2\nold line 3\n"
+            }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+        let language_registry = project.read_with(cx, |project, _cx| project.languages().clone());
+        let context_server_registry =
+            cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
+        let model = Arc::new(FakeLanguageModel::default());
+        let thread = cx.new(|cx| {
+            crate::Thread::new(
+                project.clone(),
+                cx.new(|_cx| ProjectContext::default()),
+                context_server_registry,
+                Templates::new(),
+                Some(model),
+                cx,
+            )
+        });
+
+        let (sender, input) = ToolInput::<StreamingEditFileToolInput>::test();
+        let (event_stream, _receiver) = ToolCallEventStream::test();
+
+        let tool = Arc::new(StreamingEditFileTool::new(
+            project.clone(),
+            thread.downgrade(),
+            language_registry,
+        ));
+
+        let task = cx.update(|cx| tool.run(input, event_stream, cx));
+
+        // Transition to BufferResolved
+        sender.send_partial(json!({
+            "display_description": "Overwrite file",
+            "path": "root/file.txt",
+            "mode": "overwrite"
+        }));
+        cx.run_until_parked();
+
+        // Verify buffer still has old content (no content partial yet)
+        let buffer = project.update(cx, |project, cx| {
+            let path = project.find_project_path("root/file.txt", cx).unwrap();
+            project.get_open_buffer(&path, cx).unwrap()
+        });
+        assert_eq!(
+            buffer.read_with(cx, |b, _| b.text()),
+            "old line 1\nold line 2\nold line 3\n"
+        );
+
+        // First content partial replaces old content
+        sender.send_partial(json!({
+            "display_description": "Overwrite file",
+            "path": "root/file.txt",
+            "mode": "overwrite",
+            "content": "new line 1\n"
+        }));
+        cx.run_until_parked();
+        assert_eq!(buffer.read_with(cx, |b, _| b.text()), "new line 1\n");
+
+        // Subsequent content partials append
+        sender.send_partial(json!({
+            "display_description": "Overwrite file",
+            "path": "root/file.txt",
+            "mode": "overwrite",
+            "content": "new line 1\nnew line 2\n"
+        }));
+        cx.run_until_parked();
+        assert_eq!(
+            buffer.read_with(cx, |b, _| b.text()),
+            "new line 1\nnew line 2\n"
+        );
+
+        // Send final input with complete content
+        sender.send_final(json!({
+            "display_description": "Overwrite file",
+            "path": "root/file.txt",
+            "mode": "overwrite",
+            "content": "new line 1\nnew line 2\nnew line 3\n"
+        }));
+
+        let result = task.await;
+        let StreamingEditFileToolOutput::Success {
+            new_text, old_text, ..
+        } = result.unwrap()
+        else {
+            panic!("expected success");
+        };
+        assert_eq!(new_text, "new line 1\nnew line 2\nnew line 3\n");
+        assert_eq!(*old_text, "old line 1\nold line 2\nold line 3\n");
     }
 
     fn init_test(cx: &mut TestAppContext) {

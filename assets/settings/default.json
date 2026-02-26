@@ -1271,8 +1271,6 @@
     //
     // Default: true
     "skip_focus_for_active_in_search": true,
-    // Whether to show the git status in the file finder.
-    "git_status": true,
     // Whether to use gitignored files when searching.
     // Only the file Zed had indexed will be used, not necessary all the gitignored files.
     //

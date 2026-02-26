@@ -1,8 +1,8 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/acp_tools",
     "crates/acp_thread",
+    "crates/acp_tools",
     "crates/action_log",
     "crates/activity_indicator",
     "crates/agent",
@@ -13,9 +13,9 @@ members = [
     "crates/anthropic",
     "crates/askpass",
     "crates/assets",
-    "crates/assistant_text_thread",
     "crates/assistant_slash_command",
     "crates/assistant_slash_commands",
+    "crates/assistant_text_thread",
     "crates/audio",
     "crates/auto_update",
     "crates/auto_update_helper",
@@ -32,6 +32,7 @@ members = [
     "crates/cloud_api_client",
     "crates/cloud_api_types",
     "crates/cloud_llm_client",
+    "crates/codestral",
     "crates/collab",
     "crates/collab_ui",
     "crates/collections",
@@ -56,9 +57,10 @@ members = [
     "crates/diagnostics",
     "crates/docs_preprocessor",
     "crates/edit_prediction",
+    "crates/edit_prediction_cli",
+    "crates/edit_prediction_context",
     "crates/edit_prediction_types",
     "crates/edit_prediction_ui",
-    "crates/edit_prediction_context",
     "crates/editor",
     "crates/encoding_selector",
     "crates/etw_tracing",
@@ -88,9 +90,11 @@ members = [
     "crates/gpui_macos",
     "crates/gpui_macros",
     "crates/gpui_platform",
+    "crates/gpui_tokio",
+    "crates/gpui_util",
+    "crates/gpui_web",
     "crates/gpui_wgpu",
     "crates/gpui_windows",
-    "crates/gpui_tokio",
     "crates/html_to_markdown",
     "crates/http_client",
     "crates/http_client_tls",
@@ -119,8 +123,8 @@ members = [
     "crates/media",
     "crates/menu",
     "crates/migrator",
-    "crates/mistral",
     "crates/miniprofiler_ui",
+    "crates/mistral",
     "crates/multi_buffer",
     "crates/nc",
     "crates/net",
@@ -136,6 +140,7 @@ members = [
     "crates/panel",
     "crates/paths",
     "crates/picker",
+    "crates/platform_title_bar",
     "crates/prettier",
     "crates/project",
     "crates/project_benchmarks",
@@ -147,7 +152,6 @@ members = [
     "crates/refineable",
     "crates/refineable/derive_refineable",
     "crates/release_channel",
-    "crates/scheduler",
     "crates/remote",
     "crates/remote_connection",
     "crates/remote_server",
@@ -157,10 +161,10 @@ members = [
     "crates/rope",
     "crates/rpc",
     "crates/rules_library",
+    "crates/scheduler",
     "crates/schema_generator",
     "crates/search",
     "crates/session",
-    "crates/sidebar",
     "crates/settings",
     "crates/settings_content",
     "crates/settings_json",
@@ -168,6 +172,7 @@ members = [
     "crates/settings_profile_selector",
     "crates/settings_ui",
     "crates/shell_command_parser",
+    "crates/sidebar",
     "crates/snippet",
     "crates/snippet_provider",
     "crates/snippets_ui",
@@ -179,7 +184,6 @@ members = [
     "crates/sum_tree",
     "crates/supermaven",
     "crates/supermaven_api",
-    "crates/codestral",
     "crates/svg_preview",
     "crates/system_specs",
     "crates/tab_switcher",
@@ -195,7 +199,6 @@ members = [
     "crates/theme_importer",
     "crates/theme_selector",
     "crates/time_format",
-    "crates/platform_title_bar",
     "crates/title_bar",
     "crates/toolchain_selector",
     "crates/ui",
@@ -207,10 +210,10 @@ members = [
     "crates/vercel",
     "crates/vim",
     "crates/vim_mode_setting",
-    "crates/which_key",
     "crates/watch",
     "crates/web_search",
     "crates/web_search_providers",
+    "crates/which_key",
     "crates/workspace",
     "crates/worktree",
     "crates/worktree_benchmarks",
@@ -218,7 +221,6 @@ members = [
     "crates/zed",
     "crates/zed_actions",
     "crates/zed_env_vars",
-    "crates/edit_prediction_cli",
     "crates/zeta_prompt",
     "crates/zlog",
     "crates/zlog_settings",
@@ -332,9 +334,11 @@ gpui_linux = { path = "crates/gpui_linux", default-features = false }
 gpui_macos = { path = "crates/gpui_macos", default-features = false }
 gpui_macros = { path = "crates/gpui_macros" }
 gpui_platform = { path = "crates/gpui_platform", default-features = false }
+gpui_web = { path = "crates/gpui_web" }
 gpui_wgpu = { path = "crates/gpui_wgpu" }
 gpui_windows = { path = "crates/gpui_windows", default-features = false }
 gpui_tokio = { path = "crates/gpui_tokio" }
+gpui_util = { path = "crates/gpui_util" }
 html_to_markdown = { path = "crates/html_to_markdown" }
 http_client = { path = "crates/http_client" }
 http_client_tls = { path = "crates/http_client_tls" }
@@ -487,6 +491,7 @@ ashpd = { version = "0.13", default-features = false, features = [
     "settings",
     "trash"
 ] }
+async-channel = "2.5.0"
 async-compat = "0.2.1"
 async-compression = { version = "0.4", features = ["gzip", "futures-io"] }
 async-dispatcher = "0.1"
@@ -547,6 +552,7 @@ exec = "0.3.1"
 fancy-regex = "0.16.0"
 fork = "0.4.0"
 futures = "0.3"
+futures-concurrency = "7.7.1"
 futures-lite = "1.13"
 gh-workflow = { git = "https://github.com/zed-industries/gh-workflow", rev = "c9eac0ed361583e1072860d96776fa52775b82ac" }
 git2 = { version = "0.20.1", default-features = false, features = ["vendored-libgit2"] }
@@ -637,6 +643,7 @@ profiling = "1"
 prost = "0.9"
 prost-build = "0.9"
 prost-types = "0.9"
+pollster = "0.4.0"
 pulldown-cmark = { version = "0.13.0", default-features = false }
 quote = "1.0.9"
 rand = "0.9"
@@ -761,6 +768,8 @@ wasmtime = { version = "33", default-features = false, features = [
 wasmtime-wasi = "33"
 wax = "0.7"
 which = "6.0.0"
+wasm-bindgen = "0.2.104"
+web-time = "1.1.0"
 wgpu = "28.0"
 windows-core = "0.61"
 yawc = "0.2.5"

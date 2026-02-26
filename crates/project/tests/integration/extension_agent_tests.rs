@@ -29,15 +29,12 @@ impl ExternalAgentServer for NoopExternalAgent {
         _status_tx: Option<watch::Sender<SharedString>>,
         _new_version_available_tx: Option<watch::Sender<Option<String>>>,
         _cx: &mut AsyncApp,
-    ) -> Task<Result<(AgentServerCommand, Option<task::SpawnInTerminal>)>> {
-        Task::ready(Ok((
-            AgentServerCommand {
-                path: PathBuf::from("noop"),
-                args: Vec::new(),
-                env: None,
-            },
-            None,
-        )))
+    ) -> Task<Result<AgentServerCommand>> {
+        Task::ready(Ok(AgentServerCommand {
+            path: PathBuf::from("noop"),
+            args: Vec::new(),
+            env: None,
+        }))
     }
 
     fn as_any_mut(&mut self) -> &mut dyn Any {
@@ -299,26 +296,6 @@ async fn test_commands_run_in_extraction_directory(cx: &mut TestAppContext) {
 
 #[test]
 fn test_tilde_expansion_in_settings() {
-    let settings = settings::BuiltinAgentServerSettings {
-        path: Some(PathBuf::from("~/bin/agent")),
-        args: Some(vec!["--flag".into()]),
-        env: None,
-        ignore_system_version: None,
-        default_mode: None,
-        default_model: None,
-        favorite_models: vec![],
-        default_config_options: Default::default(),
-        favorite_config_option_values: Default::default(),
-    };
-
-    let BuiltinAgentServerSettings { path, .. } = settings.into();
-
-    let path = path.unwrap();
-    assert!(
-        !path.to_string_lossy().starts_with("~"),
-        "Tilde should be expanded for builtin agent path"
-    );
-
     let settings = settings::CustomAgentServerSettings::Custom {
         path: PathBuf::from("~/custom/agent"),
         args: vec!["serve".into()],

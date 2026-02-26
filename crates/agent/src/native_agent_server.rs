@@ -37,12 +37,7 @@ impl AgentServer for NativeAgentServer {
         &self,
         delegate: AgentServerDelegate,
         cx: &mut App,
-    ) -> Task<
-        Result<(
-            Rc<dyn acp_thread::AgentConnection>,
-            Option<task::SpawnInTerminal>,
-        )>,
-    > {
+    ) -> Task<Result<Rc<dyn acp_thread::AgentConnection>>> {
         log::debug!("NativeAgentServer::connect");
         let project = delegate.project().clone();
         let fs = self.fs.clone();
@@ -62,10 +57,7 @@ impl AgentServer for NativeAgentServer {
             let connection = NativeAgentConnection(agent);
             log::debug!("NativeAgentServer connection established successfully");
 
-            Ok((
-                Rc::new(connection) as Rc<dyn acp_thread::AgentConnection>,
-                None,
-            ))
+            Ok(Rc::new(connection) as Rc<dyn acp_thread::AgentConnection>)
         })
     }
 

@@ -31,3 +31,7 @@ gpui_windows.workspace = true
 
 [target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies]
 gpui_linux.workspace = true
+
+[target.'cfg(target_family = "wasm")'.dependencies]
+gpui_web.workspace = true
+console_error_panic_hook = "0.1.7"

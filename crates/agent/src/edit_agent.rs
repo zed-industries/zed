@@ -749,6 +749,7 @@ impl EditAgent {
             temperature: None,
             thinking_allowed: self.thinking_allowed,
             thinking_effort: None,
+            speed: None,
         };
 
         Ok(self.model.stream_completion_text(request, cx).await?.stream)

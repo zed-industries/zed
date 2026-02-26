@@ -960,9 +960,9 @@ fn spawn_editor_hints_refresh(
 pub mod tests {
     use crate::editor_tests::update_test_language_settings;
     use crate::inlays::inlay_hints::InlayHintRefreshReason;
+    use crate::scroll::Autoscroll;
     use crate::scroll::ScrollAmount;
     use crate::{Editor, SelectionEffects};
-    use crate::{ExcerptRange, scroll::Autoscroll};
     use collections::HashSet;
     use futures::{StreamExt, future};
     use gpui::{AppContext as _, Context, TestAppContext, WindowHandle};
@@ -972,7 +972,7 @@ pub mod tests {
     use language::{Language, LanguageConfig, LanguageMatcher};
     use languages::rust_lang;
     use lsp::{DEFAULT_LSP_REQUEST_TIMEOUT, FakeLanguageServer};
-    use multi_buffer::{MultiBuffer, MultiBufferOffset};
+    use multi_buffer::{MultiBuffer, MultiBufferOffset, PathKey};
     use parking_lot::Mutex;
     use pretty_assertions::assert_eq;
     use project::{FakeFs, Project};
@@ -2322,28 +2322,32 @@ pub mod tests {
             .unwrap();
         let multibuffer = cx.new(|cx| {
             let mut multibuffer = MultiBuffer::new(Capability::ReadWrite);
-            multibuffer.push_excerpts(
+            multibuffer.set_excerpts_for_path(
+                PathKey::sorted(0),
                 buffer_1.clone(),
                 [
-                    ExcerptRange::new(Point::new(0, 0)..Point::new(2, 0)),
-                    ExcerptRange::new(Point::new(4, 0)..Point::new(11, 0)),
-                    ExcerptRange::new(Point::new(22, 0)..Point::new(33, 0)),
-                    ExcerptRange::new(Point::new(44, 0)..Point::new(55, 0)),
-                    ExcerptRange::new(Point::new(56, 0)..Point::new(66, 0)),
-                    ExcerptRange::new(Point::new(67, 0)..Point::new(77, 0)),
+                    Point::new(0, 0)..Point::new(2, 0),
+                    Point::new(4, 0)..Point::new(11, 0),
+                    Point::new(22, 0)..Point::new(33, 0),
+                    Point::new(44, 0)..Point::new(55, 0),
+                    Point::new(56, 0)..Point::new(66, 0),
+                    Point::new(67, 0)..Point::new(77, 0),
                 ],
+                0,
                 cx,
             );
-            multibuffer.push_excerpts(
+            multibuffer.set_excerpts_for_path(
+                PathKey::sorted(1),
                 buffer_2.clone(),
                 [
-                    ExcerptRange::new(Point::new(0, 1)..Point::new(2, 1)),
-                    ExcerptRange::new(Point::new(4, 1)..Point::new(11, 1)),
-                    ExcerptRange::new(Point::new(22, 1)..Point::new(33, 1)),
-                    ExcerptRange::new(Point::new(44, 1)..Point::new(55, 1)),
-                    ExcerptRange::new(Point::new(56, 1)..Point::new(66, 1)),
-                    ExcerptRange::new(Point::new(67, 1)..Point::new(77, 1)),
+                    Point::new(0, 1)..Point::new(2, 1),
+                    Point::new(4, 1)..Point::new(11, 1),
+                    Point::new(22, 1)..Point::new(33, 1),
+                    Point::new(44, 1)..Point::new(55, 1),
+                    Point::new(56, 1)..Point::new(66, 1),
+                    Point::new(67, 1)..Point::new(77, 1),
                 ],
+                0,
                 cx,
             );
             multibuffer
@@ -2733,19 +2737,21 @@ let c = 3;"#
             .unwrap();
         let multi_buffer = cx.new(|cx| {
             let mut multibuffer = MultiBuffer::new(Capability::ReadWrite);
-            multibuffer.push_excerpts(
+            multibuffer.set_excerpts_for_path(
+                PathKey::sorted(0),
                 buffer_1.clone(),
                 [
-                    // Have first excerpt to spawn over 2 chunks (50 lines each).
-                    ExcerptRange::new(Point::new(49, 0)..Point::new(53, 0)),
-                    // Have 2nd excerpt to be in the 2nd chunk only.
-                    ExcerptRange::new(Point::new(70, 0)..Point::new(73, 0)),
+                    Point::new(49, 0)..Point::new(53, 0),
+                    Point::new(70, 0)..Point::new(73, 0),
                 ],
+                0,
                 cx,
             );
-            multibuffer.push_excerpts(
+            multibuffer.set_excerpts_for_path(
+                PathKey::sorted(1),
                 buffer_2.clone(),
-                [ExcerptRange::new(Point::new(0, 0)..Point::new(4, 0))],
+                [Point::new(0, 0)..Point::new(4, 0)],
+                0,
                 cx,
             );
             multibuffer
@@ -2931,16 +2937,23 @@ let c = 3;"#
             .unwrap();
         let multibuffer = cx.new(|_| MultiBuffer::new(Capability::ReadWrite));
         let (buffer_1_excerpts, buffer_2_excerpts) = multibuffer.update(cx, |multibuffer, cx| {
-            let buffer_1_excerpts = multibuffer.push_excerpts(
+            multibuffer.set_excerpts_for_path(
+                PathKey::sorted(0),
                 buffer_1.clone(),
-                [ExcerptRange::new(Point::new(0, 0)..Point::new(2, 0))],
+                [Point::new(0, 0)..Point::new(2, 0)],
+                0,
                 cx,
             );
-            let buffer_2_excerpts = multibuffer.push_excerpts(
+            multibuffer.set_excerpts_for_path(
+                PathKey::sorted(1),
                 buffer_2.clone(),
-                [ExcerptRange::new(Point::new(0, 1)..Point::new(2, 1))],
+                [Point::new(0, 1)..Point::new(2, 1)],
+                0,
                 cx,
             );
+            let excerpt_ids = multibuffer.excerpt_ids();
+            let buffer_1_excerpts = vec![excerpt_ids[0]];
+            let buffer_2_excerpts = vec![excerpt_ids[1]];
             (buffer_1_excerpts, buffer_2_excerpts)
         });
 
@@ -3047,7 +3060,7 @@ let c = 3;"#
         editor
             .update(cx, |editor, _, cx| {
                 editor.buffer().update(cx, |multibuffer, cx| {
-                    multibuffer.remove_excerpts(buffer_2_excerpts, cx)
+                    multibuffer.remove_excerpts_for_path(PathKey::sorted(1), cx);
                 })
             })
             .unwrap();
@@ -4001,20 +4014,24 @@ let c = 3;"#
             .unwrap();
         let multi_buffer = cx.new(|cx| {
             let mut multibuffer = MultiBuffer::new(Capability::ReadWrite);
-            multibuffer.push_excerpts(
+            multibuffer.set_excerpts_for_path(
+                PathKey::sorted(0),
                 buffer_2.clone(),
                 [
-                    ExcerptRange::new(Point::new(0, 0)..Point::new(10, 0)),
-                    ExcerptRange::new(Point::new(23, 0)..Point::new(34, 0)),
+                    Point::new(0, 0)..Point::new(10, 0),
+                    Point::new(23, 0)..Point::new(34, 0),
                 ],
+                0,
                 cx,
             );
-            multibuffer.push_excerpts(
+            multibuffer.set_excerpts_for_path(
+                PathKey::sorted(1),
                 buffer_1.clone(),
                 [
-                    ExcerptRange::new(Point::new(0, 0)..Point::new(10, 0)),
-                    ExcerptRange::new(Point::new(13, 0)..Point::new(23, 0)),
+                    Point::new(0, 0)..Point::new(10, 0),
+                    Point::new(13, 0)..Point::new(23, 0),
                 ],
+                0,
                 cx,
             );
             multibuffer

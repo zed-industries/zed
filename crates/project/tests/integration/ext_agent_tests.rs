@@ -13,15 +13,12 @@ impl ExternalAgentServer for NoopExternalAgent {
         _status_tx: Option<watch::Sender<SharedString>>,
         _new_version_available_tx: Option<watch::Sender<Option<String>>>,
         _cx: &mut AsyncApp,
-    ) -> Task<Result<(AgentServerCommand, Option<task::SpawnInTerminal>)>> {
-        Task::ready(Ok((
-            AgentServerCommand {
-                path: PathBuf::from("noop"),
-                args: Vec::new(),
-                env: None,
-            },
-            None,
-        )))
+    ) -> Task<Result<AgentServerCommand>> {
+        Task::ready(Ok(AgentServerCommand {
+            path: PathBuf::from("noop"),
+            args: Vec::new(),
+            env: None,
+        }))
     }
 
     fn as_any_mut(&mut self) -> &mut dyn Any {

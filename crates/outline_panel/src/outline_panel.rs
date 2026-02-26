@@ -2618,24 +2618,21 @@ impl OutlinePanel {
         } else {
             &search_matches
         };
-        let label_element = outline::render_item(
-            &OutlineItem {
-                depth,
-                annotation_range: None,
-                range: search_data.context_range.clone(),
-                text: search_data.context_text.clone(),
-                source_range_for_text: search_data.context_range.clone(),
-                highlight_ranges: search_data
-                    .highlights_data
-                    .get()
-                    .cloned()
-                    .unwrap_or_default(),
-                name_ranges: search_data.search_match_indices.clone(),
-                body_range: Some(search_data.context_range.clone()),
-            },
-            match_ranges.iter().cloned(),
-            cx,
-        );
+        let outline_item = OutlineItem {
+            depth,
+            annotation_range: None,
+            range: search_data.context_range.clone(),
+            text: search_data.context_text.clone(),
+            source_range_for_text: search_data.context_range.clone(),
+            highlight_ranges: search_data
+                .highlights_data
+                .get()
+                .cloned()
+                .unwrap_or_default(),
+            name_ranges: search_data.search_match_indices.clone(),
+            body_range: Some(search_data.context_range.clone()),
+        };
+        let label_element = outline::render_item(&outline_item, match_ranges.iter().cloned(), cx);
         let truncated_contents_label = || Label::new(TRUNCATED_CONTEXT_MARK);
         let entire_label = h_flex()
             .justify_center()

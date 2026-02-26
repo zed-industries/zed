@@ -1,4 +1,4 @@
-use crate::{Priority, RunnableMeta, Scheduler, SessionId, Timer};
+use crate::{Instant, Priority, RunnableMeta, Scheduler, SessionId, Timer};
 use std::{
     future::Future,
     marker::PhantomData,
@@ -12,7 +12,7 @@ use std::{
     },
     task::{Context, Poll},
     thread::{self, ThreadId},
-    time::{Duration, Instant},
+    time::Duration,
 };
 
 #[derive(Clone)]

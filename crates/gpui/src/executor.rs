@@ -1,18 +1,13 @@
 use crate::{App, PlatformDispatcher, PlatformScheduler};
 use futures::channel::mpsc;
+use futures::prelude::*;
+use gpui_util::TryFutureExt;
+use scheduler::Instant;
 use scheduler::Scheduler;
-use smol::prelude::*;
 use std::{
-    fmt::Debug,
-    future::Future,
-    marker::PhantomData,
-    mem,
-    pin::Pin,
-    rc::Rc,
-    sync::Arc,
-    time::{Duration, Instant},
+    fmt::Debug, future::Future, marker::PhantomData, mem, pin::Pin, rc::Rc, sync::Arc,
+    time::Duration,
 };
-use util::TryFutureExt;
 
 pub use scheduler::{FallibleTask, ForegroundExecutor as SchedulerForegroundExecutor, Priority};
 
@@ -569,9 +564,15 @@ mod test {
 
         let platform = TestPlatform::new(background_executor.clone(), foreground_executor);
         let asset_source = Arc::new(());
+        #[cfg(not(target_family = "wasm"))]
         let http_client = http_client::FakeHttpClient::with_404_response();
 
-        let app = App::new_app(platform, asset_source, http_client);
+        let app = App::new_app(
+            platform,
+            asset_source,
+            #[cfg(not(target_family = "wasm"))]
+            http_client,
+        );
         (dispatcher, background_executor, app)
     }
 
