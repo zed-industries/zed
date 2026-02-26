@@ -7401,6 +7401,5 @@ fn git_status_indicator(git_status: GitSummary) -> Option<(&'static str, Color)>
     None
 }
 
-
 #[cfg(test)]
 mod project_panel_tests;
