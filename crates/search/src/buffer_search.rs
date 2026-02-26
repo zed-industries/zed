@@ -18,7 +18,7 @@ use editor::{
 };
 use futures::channel::oneshot;
 use gpui::{
-    Action, App, ClickEvent, Context, Entity, EventEmitter, Focusable, InteractiveElement as _,
+    App, ClickEvent, Context, Entity, EventEmitter, Focusable, InteractiveElement as _,
     IntoElement, KeyContext, ParentElement as _, Render, ScrollHandle, Styled, Subscription, Task,
     WeakEntity, Window, div,
 };
