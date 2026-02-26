@@ -32,8 +32,9 @@ use smallvec::SmallVec;
 use std::{mem, sync::Arc, time::Duration};
 use theme::{ActiveTheme, ThemeSettings};
 use ui::{
-    Avatar, AvatarAvailabilityIndicator, ContextMenu, CopyButton, Facepile, HighlightedLabel,
-    IconButtonShape, Indicator, ListHeader, ListItem, Tab, Tooltip, prelude::*, tooltip_container,
+    Avatar, AvatarAvailabilityIndicator, CollabNotification, ContextMenu, CopyButton, Facepile,
+    HighlightedLabel, IconButtonShape, Indicator, ListHeader, ListItem, Tab, Tooltip, prelude::*,
+    tooltip_container,
 };
 use util::{ResultExt, TryFutureExt, maybe};
 use workspace::{
@@ -3146,6 +3147,12 @@ impl CollabPanel {
             return;
         };
 
+        let notification = entry.notification.clone();
+        let needs_response = matches!(
+            notification,
+            Notification::ContactRequest { .. } | Notification::ChannelInvitation { .. }
+        );
+
         let notification_id = entry.id;
         self.current_notification_toast = Some((
             notification_id,
@@ -3156,6 +3163,8 @@ impl CollabPanel {
             }),
         ));
 
+        let user_store = self.user_store.clone();
+        let channel_store = self.channel_store.clone();
         self.workspace
             .update(cx, |workspace, cx| {
                 let id = NotificationId::unique::<CollabNotificationToast>();
@@ -3166,6 +3175,9 @@ impl CollabPanel {
                     cx.new(|cx| CollabNotificationToast {
                         actor,
                         text,
+                        notification: needs_response.then(|| notification),
+                        user_store: user_store.clone(),
+                        channel_store: channel_store.clone(),
                         workspace,
                         focus_handle: cx.focus_handle(),
                     })
@@ -3177,15 +3189,19 @@ impl CollabPanel {
     fn remove_toast(&mut self, notification_id: u64, cx: &mut Context<Self>) {
         if let Some((current_id, _)) = &self.current_notification_toast {
             if *current_id == notification_id {
-                self.current_notification_toast.take();
-                self.workspace
-                    .update(cx, |workspace, cx| {
-                        let id = NotificationId::unique::<CollabNotificationToast>();
-                        workspace.dismiss_notification(&id, cx)
-                    })
-                    .ok();
+                self.dismiss_toast(cx);
             }
         }
+    }
+
+    fn dismiss_toast(&mut self, cx: &mut Context<Self>) {
+        self.current_notification_toast.take();
+        self.workspace
+            .update(cx, |workspace, cx| {
+                let id = NotificationId::unique::<CollabNotificationToast>();
+                workspace.dismiss_notification(&id, cx)
+            })
+            .ok();
     }
 }
 
@@ -3313,6 +3329,21 @@ impl Panel for CollabPanel {
         cx.defer_in(window, |this, _, cx| {
             this.serialize(cx);
         });
+    }
+
+    fn set_active(&mut self, active: bool, _window: &mut Window, cx: &mut Context<Self>) {
+        if active && self.current_notification_toast.is_some() {
+            self.current_notification_toast.take();
+            let workspace = self.workspace.clone();
+            cx.defer(move |cx| {
+                workspace
+                    .update(cx, |workspace, cx| {
+                        let id = NotificationId::unique::<CollabNotificationToast>();
+                        workspace.dismiss_notification(&id, cx)
+                    })
+                    .ok();
+            });
+        }
     }
 
     fn icon(&self, _window: &Window, cx: &App) -> Option<ui::IconName> {
@@ -3511,6 +3542,9 @@ impl Render for JoinChannelTooltip {
 pub struct CollabNotificationToast {
     actor: Option<Arc<User>>,
     text: String,
+    notification: Option<Notification>,
+    user_store: Entity<UserStore>,
+    channel_store: Entity<ChannelStore>,
     workspace: WeakEntity<Workspace>,
     focus_handle: FocusHandle,
 }
@@ -3534,56 +3568,71 @@ impl CollabNotificationToast {
                 .ok();
         })
     }
+
+    fn respond(&mut self, accept: bool, cx: &mut Context<Self>) {
+        if let Some(notification) = self.notification.take() {
+            match notification {
+                Notification::ContactRequest { sender_id } => {
+                    self.user_store
+                        .update(cx, |store, cx| {
+                            store.respond_to_contact_request(sender_id, accept, cx)
+                        })
+                        .detach();
+                }
+                Notification::ChannelInvitation { channel_id, .. } => {
+                    self.channel_store
+                        .update(cx, |store, cx| {
+                            store.respond_to_channel_invite(ChannelId(channel_id), accept, cx)
+                        })
+                        .detach();
+                }
+                _ => {}
+            }
+        }
+        cx.emit(DismissEvent);
+    }
 }
 
 impl Render for CollabNotificationToast {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let user = self.actor.clone();
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let needs_response = self.notification.is_some();
 
-        let suppress = window.modifiers().shift;
-        let (close_id, close_icon) = if suppress {
-            ("suppress", IconName::Minimize)
+        let accept_button = if needs_response {
+            Button::new("accept", "Accept").on_click(cx.listener(|this, _, _, cx| {
+                this.respond(true, cx);
+            }))
         } else {
-            ("close", IconName::Close)
+            Button::new("dismiss", "Dismiss").on_click(cx.listener(|_, _, _, cx| {
+                cx.emit(DismissEvent);
+            }))
         };
 
-        h_flex()
+        let decline_button = if needs_response {
+            Button::new("decline", "Decline").on_click(cx.listener(|this, _, _, cx| {
+                this.respond(false, cx);
+            }))
+        } else {
+            Button::new("close", "Close").on_click(cx.listener(|_, _, _, cx| {
+                cx.emit(DismissEvent);
+            }))
+        };
+
+        let avatar_uri = self
+            .actor
+            .as_ref()
+            .map(|user| user.avatar_uri.clone())
+            .unwrap_or_default();
+
+        div()
             .id("collab_notification_toast")
-            .elevation_3(cx)
-            .p_2()
-            .justify_between()
-            .children(user.map(|user| Avatar::new(user.avatar_uri.clone())))
-            .child(Label::new(self.text.clone()))
-            .on_modifiers_changed(cx.listener(|_, _, _, cx| cx.notify()))
-            .child(
-                IconButton::new(close_id, close_icon)
-                    .tooltip(move |_window, cx| {
-                        if suppress {
-                            Tooltip::for_action(
-                                "Suppress.\nClose with click.",
-                                &workspace::SuppressNotification,
-                                cx,
-                            )
-                        } else {
-                            Tooltip::for_action(
-                                "Close.\nSuppress with shift-click",
-                                &menu::Cancel,
-                                cx,
-                            )
-                        }
-                    })
-                    .on_click(cx.listener(move |_, _: &ClickEvent, _, cx| {
-                        if suppress {
-                            cx.emit(SuppressEvent);
-                        } else {
-                            cx.emit(DismissEvent);
-                        }
-                    })),
-            )
             .on_click(cx.listener(|this, _, window, cx| {
                 this.focus_collab_panel(window, cx);
                 cx.emit(DismissEvent);
             }))
+            .child(
+                CollabNotification::new(avatar_uri, accept_button, decline_button)
+                    .child(Label::new(self.text.clone())),
+            )
     }
 }
 
