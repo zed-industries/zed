@@ -1,0 +1,39 @@
+{{#if has_skills}}
+## Available Agent Skills
+
+Skills are located in:
+- Global: `~/.config/zed/skills/<skill-name>/`
+- Worktree-specific: `<worktree>/.agents/skills/<skill-name>/`
+
+Each skill contains:
+- `SKILL.md` - Main instructions
+- `scripts/` - Executable scripts
+- `references/` - Additional documentation
+- `assets/` - Templates, data files, images
+
+To use a skill, you should use the read_file and list_directory tools to explore skill files, and only use bash for running executable scripts:
+
+**For reading and exploring (use internal tools):**
+- Read SKILL.md: `read_file` with path `~/.config/zed/skills/<skill-name>/SKILL.md`
+- List skill references: `list_directory` with path `~/.config/zed/skills/<skill-name>/references/`
+- List skill scripts: `list_directory` with path `~/.config/zed/skills/<skill-name>/scripts/`
+- Read references: `read_file` with path `~/.config/zed/skills/<skill-name>/references/doc.md`
+
+**For running scripts only (use bash):**
+- Run scripts: `bash ~/.config/zed/skills/<skill-name>/scripts/script.sh`
+
+Note: You typically want to run tools for the current project you're working on, which is why you should use your worktree root as the working directory.
+
+| Skill | Description | Location |
+|-------|-------------|----------|
+{{#each skills}}
+| {{name}} | {{description}} | {{path}} |
+{{/each}}
+
+When a skill is relevant to the user's request:
+1. **Always start here:** Read SKILL.md to load the skill's instructions using `read_file` with path `~/.config/zed/skills/<skill-name>/SKILL.md`
+2. **Then, based on the instructions in SKILL.md and the user's specific needs:**
+   - Use `list_directory` to explore available resources
+   - Use `read_file` to read reference files
+   - Use `bash` only to run executable scripts
+{{/if}}
