@@ -304,7 +304,7 @@ pub fn init(
              cx: &mut Context<Workspace>| {
                 let project = workspace.project().clone();
                 let fs = workspace.app_state().fs.clone();
-                let workspace_handle = cx.entity().clone();
+                let workspace_handle = cx.entity();
                 let slash_commands = Arc::new(SlashCommandWorkingSet::default());
                 let prompt_builder = PromptBuilder::load(fs.clone(), false, cx);
 
