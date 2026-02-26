@@ -866,7 +866,7 @@ mod test {
     use serde_json::json;
     use settings::SettingsStore;
     use util::path;
-    use workspace::{DeploySearch, MultiWorkspace};
+    use workspace::{DeploySearch, WindowRoot};
 
     use crate::{VimAddon, state::Mode, test::VimTestContext};
 
@@ -1732,7 +1732,7 @@ mod test {
 
         let project = project::Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
         let window_handle =
-            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+            cx.add_window(|window, cx| WindowRoot::test_new(project.clone(), window, cx));
         let workspace = window_handle
             .read_with(cx, |mw, _| mw.workspace().clone())
             .unwrap();

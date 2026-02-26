@@ -2526,7 +2526,7 @@ pub mod tests {
     };
     use util::{path, paths::PathStyle, rel_path::rel_path};
     use util_macros::perf;
-    use workspace::{DeploySearch, MultiWorkspace};
+    use workspace::{DeploySearch, WindowRoot};
 
     #[test]
     fn test_split_glob_patterns() {
@@ -2666,7 +2666,7 @@ pub mod tests {
         .await;
         let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
         let window =
-            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+            cx.add_window(|window, cx| WindowRoot::test_new(project.clone(), window, cx));
         let workspace = window
             .read_with(cx, |mw, _| mw.workspace().clone())
             .unwrap();
@@ -2839,7 +2839,7 @@ pub mod tests {
         .await;
         let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
         let window =
-            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+            cx.add_window(|window, cx| WindowRoot::test_new(project.clone(), window, cx));
         let workspace = window
             .read_with(cx, |mw, _| mw.workspace().clone())
             .unwrap();
@@ -2978,7 +2978,7 @@ pub mod tests {
         )
         .await;
         let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
-        let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let window = cx.add_window(|window, cx| WindowRoot::test_new(project, window, cx));
         let workspace = window
             .read_with(cx, |mw, _| mw.workspace().clone())
             .unwrap();
@@ -3216,7 +3216,7 @@ pub mod tests {
         )
         .await;
         let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
-        let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let window = cx.add_window(|window, cx| WindowRoot::test_new(project, window, cx));
         let workspace = window
             .read_with(cx, |mw, _| mw.workspace().clone())
             .unwrap();
@@ -3337,7 +3337,7 @@ pub mod tests {
         )
         .await;
         let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
-        let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let window = cx.add_window(|window, cx| WindowRoot::test_new(project, window, cx));
         let workspace = window
             .read_with(cx, |mw, _| mw.workspace().clone())
             .unwrap();
@@ -3636,7 +3636,7 @@ pub mod tests {
         let worktree_id = project.read_with(cx, |project, cx| {
             project.worktrees(cx).next().unwrap().read(cx).id()
         });
-        let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let window = cx.add_window(|window, cx| WindowRoot::test_new(project, window, cx));
         let workspace = window
             .read_with(cx, |mw, _| mw.workspace().clone())
             .unwrap();
@@ -3755,7 +3755,7 @@ pub mod tests {
         )
         .await;
         let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
-        let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let window = cx.add_window(|window, cx| WindowRoot::test_new(project, window, cx));
         let workspace = window
             .read_with(cx, |mw, _| mw.workspace().clone())
             .unwrap();
@@ -4088,7 +4088,7 @@ pub mod tests {
             this.worktrees(cx).next().unwrap().read(cx).id()
         });
 
-        let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let window = cx.add_window(|window, cx| WindowRoot::test_new(project, window, cx));
         let workspace = window
             .read_with(cx, |mw, _| mw.workspace().clone())
             .unwrap();
@@ -4308,7 +4308,7 @@ pub mod tests {
         let worktree_id = project.update(cx, |this, cx| {
             this.worktrees(cx).next().unwrap().read(cx).id()
         });
-        let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let window = cx.add_window(|window, cx| WindowRoot::test_new(project, window, cx));
         let workspace = window
             .read_with(cx, |mw, _| mw.workspace().clone())
             .unwrap();
@@ -4476,7 +4476,7 @@ pub mod tests {
         .await;
         let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
         let window =
-            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+            cx.add_window(|window, cx| WindowRoot::test_new(project.clone(), window, cx));
         let workspace = window
             .read_with(cx, |mw, _| mw.workspace().clone())
             .unwrap();
@@ -4543,7 +4543,7 @@ pub mod tests {
             this.worktrees(cx).next().unwrap().read(cx).id()
         });
         let window =
-            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+            cx.add_window(|window, cx| WindowRoot::test_new(project.clone(), window, cx));
         let workspace = window
             .read_with(cx, |mw, _| mw.workspace().clone())
             .unwrap();
@@ -4620,7 +4620,7 @@ pub mod tests {
         .await;
         let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
         let window =
-            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+            cx.add_window(|window, cx| WindowRoot::test_new(project.clone(), window, cx));
         let workspace = window
             .read_with(cx, |mw, _| mw.workspace().clone())
             .unwrap();
@@ -4731,7 +4731,7 @@ pub mod tests {
         );
 
         let window =
-            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+            cx.add_window(|window, cx| WindowRoot::test_new(project.clone(), window, cx));
         let workspace = window
             .read_with(cx, |mw, _| mw.workspace().clone())
             .unwrap();

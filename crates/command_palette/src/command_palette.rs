@@ -723,7 +723,7 @@ mod tests {
     use language::Point;
     use project::Project;
     use settings::KeymapFile;
-    use workspace::{AppState, MultiWorkspace, Workspace};
+    use workspace::{AppState, WindowRoot, Workspace};
 
     #[test]
     fn test_humanize_action_name() {
@@ -778,7 +778,7 @@ mod tests {
         let app_state = init_test(cx);
         let project = Project::test(app_state.fs.clone(), [], cx).await;
         let (multi_workspace, cx) =
-            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+            cx.add_window_view(|window, cx| WindowRoot::test_new(project.clone(), window, cx));
         let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
         let editor = cx.new_window_entity(|window, cx| {
@@ -850,7 +850,7 @@ mod tests {
         let app_state = init_test(cx);
         let project = Project::test(app_state.fs.clone(), [], cx).await;
         let (multi_workspace, cx) =
-            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+            cx.add_window_view(|window, cx| WindowRoot::test_new(project.clone(), window, cx));
         let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
         let editor = cx.new_window_entity(|window, cx| {
@@ -887,7 +887,7 @@ mod tests {
         let app_state = init_test(cx);
         let project = Project::test(app_state.fs.clone(), [], cx).await;
         let (multi_workspace, cx) =
-            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+            cx.add_window_view(|window, cx| WindowRoot::test_new(project.clone(), window, cx));
         let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
         cx.simulate_keystrokes("cmd-n");
@@ -978,7 +978,7 @@ mod tests {
         let app_state = init_test(cx);
         let project = Project::test(app_state.fs.clone(), [], cx).await;
         let (multi_workspace, cx) =
-            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+            cx.add_window_view(|window, cx| WindowRoot::test_new(project.clone(), window, cx));
         let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
         let palette = open_palette_with_history(&workspace, &["backspace", "select all"], cx);
@@ -1022,7 +1022,7 @@ mod tests {
         let app_state = init_test(cx);
         let project = Project::test(app_state.fs.clone(), [], cx).await;
         let (multi_workspace, cx) =
-            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+            cx.add_window_view(|window, cx| WindowRoot::test_new(project.clone(), window, cx));
         let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
         let palette = open_palette_with_history(&workspace, &["backspace"], cx);
@@ -1047,7 +1047,7 @@ mod tests {
         let app_state = init_test(cx);
         let project = Project::test(app_state.fs.clone(), [], cx).await;
         let (multi_workspace, cx) =
-            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+            cx.add_window_view(|window, cx| WindowRoot::test_new(project.clone(), window, cx));
         let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
         let palette = open_palette_with_history(&workspace, &["editor: close", "editor: open"], cx);
@@ -1090,7 +1090,7 @@ mod tests {
         let app_state = init_test(cx);
         let project = Project::test(app_state.fs.clone(), [], cx).await;
         let (multi_workspace, cx) =
-            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+            cx.add_window_view(|window, cx| WindowRoot::test_new(project.clone(), window, cx));
         let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
         let palette = open_palette_with_history(
@@ -1144,7 +1144,7 @@ mod tests {
         let app_state = init_test(cx);
         let project = Project::test(app_state.fs.clone(), [], cx).await;
         let (multi_workspace, cx) =
-            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+            cx.add_window_view(|window, cx| WindowRoot::test_new(project.clone(), window, cx));
         let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
         let palette =
@@ -1167,7 +1167,7 @@ mod tests {
         let app_state = init_test(cx);
         let project = Project::test(app_state.fs.clone(), [], cx).await;
         let (multi_workspace, cx) =
-            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+            cx.add_window_view(|window, cx| WindowRoot::test_new(project.clone(), window, cx));
         let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
         let palette = open_palette_with_history(&workspace, &["alpha", "beta", "gamma"], cx);

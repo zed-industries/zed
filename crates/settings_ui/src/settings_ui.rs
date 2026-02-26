@@ -42,7 +42,7 @@ use ui::{
 
 use util::{ResultExt as _, paths::PathStyle, rel_path::RelPath};
 use workspace::{
-    AppState, MultiWorkspace, OpenOptions, OpenVisible, Workspace, client_side_decorations,
+    AppState, WindowRoot, OpenOptions, OpenVisible, Workspace, client_side_decorations,
 };
 use zed_actions::{OpenProjectSettings, OpenSettings, OpenSettingsAt};
 
@@ -398,7 +398,7 @@ pub fn init(cx: &mut App) {
                 |workspace, OpenSettingsAt { path }: &OpenSettingsAt, window, cx| {
                     let window_handle = window
                         .window_handle()
-                        .downcast::<MultiWorkspace>()
+                        .downcast::<WindowRoot>()
                         .expect("Workspaces are root Windows");
                     open_settings_editor(workspace, Some(&path), None, window_handle, cx);
                 },
@@ -406,14 +406,14 @@ pub fn init(cx: &mut App) {
             .register_action(|workspace, _: &OpenSettings, window, cx| {
                 let window_handle = window
                     .window_handle()
-                    .downcast::<MultiWorkspace>()
+                    .downcast::<WindowRoot>()
                     .expect("Workspaces are root Windows");
                 open_settings_editor(workspace, None, None, window_handle, cx);
             })
             .register_action(|workspace, _: &OpenProjectSettings, window, cx| {
                 let window_handle = window
                     .window_handle()
-                    .downcast::<MultiWorkspace>()
+                    .downcast::<WindowRoot>()
                     .expect("Workspaces are root Windows");
                 let target_worktree_id = workspace
                     .project()
@@ -566,7 +566,7 @@ pub fn open_settings_editor(
     _workspace: &mut Workspace,
     path: Option<&str>,
     target_worktree_id: Option<WorktreeId>,
-    workspace_handle: WindowHandle<MultiWorkspace>,
+    workspace_handle: WindowHandle<WindowRoot>,
     cx: &mut App,
 ) {
     telemetry::event!("Settings Viewed");
@@ -727,7 +727,7 @@ fn active_language_mut() -> Option<std::sync::RwLockWriteGuard<'static, Option<S
 
 pub struct SettingsWindow {
     title_bar: Option<Entity<PlatformTitleBar>>,
-    original_window: Option<WindowHandle<MultiWorkspace>>,
+    original_window: Option<WindowHandle<WindowRoot>>,
     files: Vec<(SettingsUiFile, FocusHandle)>,
     worktree_root_dirs: HashMap<WorktreeId, String>,
     current_file: SettingsUiFile,
@@ -1466,7 +1466,7 @@ impl SettingsUiFile {
 
 impl SettingsWindow {
     fn new(
-        original_window: Option<WindowHandle<MultiWorkspace>>,
+        original_window: Option<WindowHandle<WindowRoot>>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -3364,7 +3364,7 @@ impl SettingsWindow {
                     .workspaces_with_windows()
                     .filter_map(|(window_handle, weak)| {
                         let workspace = weak.upgrade()?;
-                        let window = window_handle.downcast::<MultiWorkspace>()?;
+                        let window = window_handle.downcast::<WindowRoot>()?;
                         Some((window, workspace))
                     })
                     .find_map(|(window, workspace): (_, Entity<Workspace>)| {
@@ -3733,7 +3733,7 @@ impl Render for SettingsWindow {
 }
 
 fn all_projects(
-    window: Option<&WindowHandle<MultiWorkspace>>,
+    window: Option<&WindowHandle<WindowRoot>>,
     cx: &App,
 ) -> impl Iterator<Item = Entity<Project>> {
     let mut seen_project_ids = std::collections::HashSet::new();
@@ -4801,7 +4801,7 @@ pub mod test {
                     cx,
                 )
             });
-            MultiWorkspace::new(workspace, window, cx)
+            WindowRoot::new(workspace, window, cx)
         });
 
         let (_multi_workspace2, cx) = cx.add_window_view(|window, cx| {
@@ -4814,10 +4814,10 @@ pub mod test {
                     cx,
                 )
             });
-            MultiWorkspace::new(workspace, window, cx)
+            WindowRoot::new(workspace, window, cx)
         });
 
-        let workspace2_handle = cx.window_handle().downcast::<MultiWorkspace>().unwrap();
+        let workspace2_handle = cx.window_handle().downcast::<WindowRoot>().unwrap();
 
         cx.run_until_parked();
 
@@ -4946,10 +4946,10 @@ pub mod test {
                     cx,
                 )
             });
-            MultiWorkspace::new(workspace, window, cx)
+            WindowRoot::new(workspace, window, cx)
         });
 
-        let workspace1_handle = cx.window_handle().downcast::<MultiWorkspace>().unwrap();
+        let workspace1_handle = cx.window_handle().downcast::<WindowRoot>().unwrap();
 
         cx.run_until_parked();
 
@@ -4996,7 +4996,7 @@ pub mod test {
                     cx,
                 )
             });
-            MultiWorkspace::new(workspace, window, cx)
+            WindowRoot::new(workspace, window, cx)
         });
 
         cx.run_until_parked();

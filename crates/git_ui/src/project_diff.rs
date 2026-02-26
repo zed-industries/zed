@@ -2004,7 +2004,7 @@ mod tests {
         rel_path::{RelPath, rel_path},
     };
 
-    use workspace::MultiWorkspace;
+    use workspace::WindowRoot;
 
     use super::*;
 
@@ -2054,7 +2054,7 @@ mod tests {
         );
 
         let (multi_workspace, cx) =
-            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+            cx.add_window_view(|window, cx| WindowRoot::test_new(project.clone(), window, cx));
         let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
         let diff = cx.new_window_entity(|window, cx| {
             ProjectDiff::new(project.clone(), workspace, window, cx)
@@ -2103,7 +2103,7 @@ mod tests {
         .await;
         let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
         let (multi_workspace, cx) =
-            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+            cx.add_window_view(|window, cx| WindowRoot::test_new(project.clone(), window, cx));
         let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
         let diff = cx.new_window_entity(|window, cx| {
             ProjectDiff::new(project.clone(), workspace, window, cx)
@@ -2174,7 +2174,7 @@ mod tests {
         .await;
         let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
         let (multi_workspace, cx) =
-            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+            cx.add_window_view(|window, cx| WindowRoot::test_new(project.clone(), window, cx));
         let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
         fs.set_head_for_repo(
             path!("/project/.git").as_ref(),
@@ -2305,7 +2305,7 @@ mod tests {
 
         let project = Project::test(fs, [Path::new(path!("/a"))], cx).await;
         let (multi_workspace, cx) =
-            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+            cx.add_window_view(|window, cx| WindowRoot::test_new(project, window, cx));
         let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
         cx.run_until_parked();
@@ -2420,7 +2420,7 @@ mod tests {
 
         let project = Project::test(fs, [Path::new(path!("/a"))], cx).await;
         let (multi_workspace, cx) =
-            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+            cx.add_window_view(|window, cx| WindowRoot::test_new(project, window, cx));
         let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
         cx.run_until_parked();
@@ -2476,7 +2476,7 @@ mod tests {
         );
         let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
         let (multi_workspace, cx) =
-            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+            cx.add_window_view(|window, cx| WindowRoot::test_new(project.clone(), window, cx));
         let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
         let diff = cx.new_window_entity(|window, cx| {
             ProjectDiff::new(project.clone(), workspace, window, cx)
@@ -2589,7 +2589,7 @@ mod tests {
 
         let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
         let (multi_workspace, cx) =
-            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+            cx.add_window_view(|window, cx| WindowRoot::test_new(project.clone(), window, cx));
         let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
         let _project_diff = cx
             .update(|window, cx| {
@@ -2712,7 +2712,7 @@ mod tests {
         .await;
         let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
         let (multi_workspace, cx) =
-            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+            cx.add_window_view(|window, cx| WindowRoot::test_new(project.clone(), window, cx));
         let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
         let diff = cx.new_window_entity(|window, cx| {
             ProjectDiff::new(project.clone(), workspace, window, cx)
@@ -2829,7 +2829,7 @@ mod tests {
         .await;
         let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
         let (multi_workspace, cx) =
-            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+            cx.add_window_view(|window, cx| WindowRoot::test_new(project.clone(), window, cx));
         let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
         let diff = cx
             .update(|window, cx| {
@@ -2927,7 +2927,7 @@ mod tests {
             project.worktrees(cx).next().unwrap().read(cx).id()
         });
         let (multi_workspace, cx) =
-            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+            cx.add_window_view(|window, cx| WindowRoot::test_new(project.clone(), window, cx));
         let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
         cx.run_until_parked();
 
@@ -3013,7 +3013,7 @@ mod tests {
         });
 
         let (multi_workspace, cx) =
-            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+            cx.add_window_view(|window, cx| WindowRoot::test_new(project.clone(), window, cx));
         let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
         cx.run_until_parked();
 

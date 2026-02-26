@@ -89,7 +89,7 @@ use workspace::notifications::{
 };
 
 use workspace::{
-    AppState, MultiWorkspace, NewFile, NewWindow, OpenLog, Panel, Toast, Workspace,
+    AppState, WindowRoot, NewFile, NewWindow, OpenLog, Panel, Toast, Workspace,
     WorkspaceSettings, create_and_open_local_file,
     notifications::simple_message_notification::MessageNotification, open_new,
 };
@@ -371,7 +371,7 @@ pub fn initialize_workspace(
     })
     .detach();
 
-    cx.observe_new(|multi_workspace: &mut MultiWorkspace, window, cx| {
+    cx.observe_new(|multi_workspace: &mut WindowRoot, window, cx| {
         let Some(window) = window else {
             return;
         };
@@ -1074,7 +1074,7 @@ fn register_actions(
         .register_action({
             let app_state = Arc::downgrade(&app_state);
             move |_, _: &CloseProject, window, cx| {
-                let Some(window_handle) = window.window_handle().downcast::<MultiWorkspace>() else {
+                let Some(window_handle) = window.window_handle().downcast::<WindowRoot>() else {
                     return;
                 };
                 if let Some(app_state) = app_state.upgrade() {
@@ -1283,10 +1283,10 @@ fn quit(_: &Quit, cx: &mut App) {
 
     let should_confirm = WorkspaceSettings::get_global(cx).confirm_quit;
     cx.spawn(async move |cx| {
-        let mut workspace_windows: Vec<WindowHandle<MultiWorkspace>> = cx.update(|cx| {
+        let mut workspace_windows: Vec<WindowHandle<WindowRoot>> = cx.update(|cx| {
             cx.windows()
                 .into_iter()
-                .filter_map(|window| window.downcast::<MultiWorkspace>())
+                .filter_map(|window| window.downcast::<WindowRoot>())
                 .collect::<Vec<_>>()
         });
 
@@ -2304,7 +2304,7 @@ mod tests {
         path,
         rel_path::{RelPath, rel_path},
     };
-    use workspace::MultiWorkspace;
+    use workspace::WindowRoot;
     use workspace::{
         NewFile, OpenOptions, OpenVisible, SERIALIZATION_THROTTLE_TIME, SaveIntent, SplitDirection,
         WorkspaceHandle,
@@ -2340,7 +2340,7 @@ mod tests {
         .unwrap();
         assert_eq!(cx.read(|cx| cx.windows().len()), 1);
 
-        let multi_workspace = cx.windows()[0].downcast::<MultiWorkspace>().unwrap();
+        let multi_workspace = cx.windows()[0].downcast::<WindowRoot>().unwrap();
         multi_workspace
             .update(cx, |multi_workspace, _, cx| {
                 multi_workspace.workspace().update(cx, |workspace, cx| {
@@ -2414,7 +2414,7 @@ mod tests {
         .unwrap();
         assert_eq!(cx.read(|cx| cx.windows().len()), 1);
         let multi_workspace_1 = cx
-            .read(|cx| cx.windows()[0].downcast::<MultiWorkspace>())
+            .read(|cx| cx.windows()[0].downcast::<WindowRoot>())
             .unwrap();
         cx.run_until_parked();
         multi_workspace_1
@@ -2450,7 +2450,7 @@ mod tests {
 
         // Replace existing windows
         let window = cx
-            .update(|cx| cx.windows()[0].downcast::<MultiWorkspace>())
+            .update(|cx| cx.windows()[0].downcast::<WindowRoot>())
             .unwrap();
         cx.update(|cx| {
             open_paths(
@@ -2468,7 +2468,7 @@ mod tests {
         cx.background_executor.run_until_parked();
         assert_eq!(cx.read(|cx| cx.windows().len()), 2);
         let multi_workspace_1 = cx
-            .update(|cx| cx.windows()[0].downcast::<MultiWorkspace>())
+            .update(|cx| cx.windows()[0].downcast::<WindowRoot>())
             .unwrap();
         multi_workspace_1
             .update(cx, |multi_workspace, window, cx| {
@@ -2644,9 +2644,9 @@ mod tests {
         assert_eq!(cx.update(|cx| cx.windows().len()), 1);
 
         // When opening the workspace, the window is not in a edited state.
-        let window = cx.update(|cx| cx.windows()[0].downcast::<MultiWorkspace>().unwrap());
+        let window = cx.update(|cx| cx.windows()[0].downcast::<WindowRoot>().unwrap());
 
-        let window_is_edited = |window: WindowHandle<MultiWorkspace>, cx: &mut TestAppContext| {
+        let window_is_edited = |window: WindowHandle<WindowRoot>, cx: &mut TestAppContext| {
             cx.update(|cx| window.read(cx).unwrap().workspace().read(cx).is_edited())
         };
         let pane = window
@@ -2804,9 +2804,9 @@ mod tests {
         assert_eq!(cx.update(|cx| cx.windows().len()), 1);
 
         // When opening the workspace, the window is not in a edited state.
-        let window = cx.update(|cx| cx.windows()[0].downcast::<MultiWorkspace>().unwrap());
+        let window = cx.update(|cx| cx.windows()[0].downcast::<WindowRoot>().unwrap());
 
-        let window_is_edited = |window: WindowHandle<MultiWorkspace>, cx: &mut TestAppContext| {
+        let window_is_edited = |window: WindowHandle<WindowRoot>, cx: &mut TestAppContext| {
             cx.update(|cx| window.read(cx).unwrap().workspace().read(cx).is_edited())
         };
 
@@ -2864,7 +2864,7 @@ mod tests {
         let window = cx.update(|cx| {
             cx.active_window()
                 .unwrap()
-                .downcast::<MultiWorkspace>()
+                .downcast::<WindowRoot>()
                 .unwrap()
         });
         assert!(window_is_edited(window, cx));
@@ -2904,7 +2904,7 @@ mod tests {
         cx.run_until_parked();
 
         let multi_workspace = cx
-            .update(|cx| cx.windows().first().unwrap().downcast::<MultiWorkspace>())
+            .update(|cx| cx.windows().first().unwrap().downcast::<WindowRoot>())
             .unwrap();
 
         let editor = multi_workspace
@@ -2966,7 +2966,7 @@ mod tests {
 
         let project = Project::test(app_state.fs.clone(), [path!("/root").as_ref()], cx).await;
         project.update(cx, |project, _cx| project.languages().add(markdown_lang()));
-        let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let window = cx.add_window(|window, cx| WindowRoot::test_new(project, window, cx));
         let workspace = window
             .read_with(cx, |mw, _| mw.workspace().clone())
             .unwrap();
@@ -3131,7 +3131,7 @@ mod tests {
         .unwrap();
         cx.run_until_parked();
         assert_eq!(cx.update(|cx| cx.windows().len()), 1);
-        let window = cx.update(|cx| cx.windows()[0].downcast::<MultiWorkspace>().unwrap());
+        let window = cx.update(|cx| cx.windows()[0].downcast::<WindowRoot>().unwrap());
         let workspace = window
             .read_with(cx, |mw, _| mw.workspace().clone())
             .unwrap();
@@ -3422,7 +3422,7 @@ mod tests {
         project.update(cx, |project, _cx| project.languages().add(markdown_lang()));
         let window = cx.add_window({
             let project = project.clone();
-            |window, cx| MultiWorkspace::test_new(project, window, cx)
+            |window, cx| WindowRoot::test_new(project, window, cx)
         });
         let workspace = window
             .read_with(cx, |mw, _| mw.workspace().clone())
@@ -3519,7 +3519,7 @@ mod tests {
 
         let project = Project::test(app_state.fs.clone(), [path!("/root").as_ref()], cx).await;
         project.update(cx, |project, _cx| project.languages().add(markdown_lang()));
-        let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let window = cx.add_window(|window, cx| WindowRoot::test_new(project, window, cx));
         let workspace = window
             .read_with(cx, |mw, _| mw.workspace().clone())
             .unwrap();
@@ -3598,7 +3598,7 @@ mod tests {
             project.languages().add(markdown_lang());
             project.languages().add(rust_lang());
         });
-        let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let window = cx.add_window(|window, cx| WindowRoot::test_new(project, window, cx));
         let workspace = window
             .read_with(cx, |mw, _| mw.workspace().clone())
             .unwrap();
@@ -3760,7 +3760,7 @@ mod tests {
             project.languages().add(language::rust_lang());
             project.languages().add(language::markdown_lang());
         });
-        let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let window = cx.add_window(|window, cx| WindowRoot::test_new(project, window, cx));
         let workspace = window
             .read_with(cx, |mw, _| mw.workspace().clone())
             .unwrap();
@@ -3842,7 +3842,7 @@ mod tests {
 
         let project = Project::test(app_state.fs.clone(), [path!("/root").as_ref()], cx).await;
         project.update(cx, |project, _cx| project.languages().add(markdown_lang()));
-        let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let window = cx.add_window(|window, cx| WindowRoot::test_new(project, window, cx));
         let workspace = window
             .read_with(cx, |mw, _| mw.workspace().clone())
             .unwrap();
@@ -3935,7 +3935,7 @@ mod tests {
         let project = Project::test(app_state.fs.clone(), [path!("/root").as_ref()], cx).await;
         project.update(cx, |project, _cx| project.languages().add(markdown_lang()));
         let window =
-            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+            cx.add_window(|window, cx| WindowRoot::test_new(project.clone(), window, cx));
         let workspace = window
             .read_with(cx, |mw, _| mw.workspace().clone())
             .unwrap();
@@ -4295,7 +4295,7 @@ mod tests {
 
         let project = Project::test(app_state.fs.clone(), [path!("/root").as_ref()], cx).await;
         project.update(cx, |project, _cx| project.languages().add(markdown_lang()));
-        let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let window = cx.add_window(|window, cx| WindowRoot::test_new(project, window, cx));
         let workspace = window
             .read_with(cx, |mw, _| mw.workspace().clone())
             .unwrap();
@@ -4508,7 +4508,7 @@ mod tests {
         let app_state = init_keymap_test(cx);
         let project = Project::test(app_state.fs.clone(), [], cx).await;
         let window =
-            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+            cx.add_window(|window, cx| WindowRoot::test_new(project.clone(), window, cx));
         let workspace = window
             .read_with(cx, |mw, _| mw.workspace().clone())
             .unwrap();
@@ -4630,7 +4630,7 @@ mod tests {
         let app_state = init_keymap_test(cx);
         let project = Project::test(app_state.fs.clone(), [], cx).await;
         let window =
-            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+            cx.add_window(|window, cx| WindowRoot::test_new(project.clone(), window, cx));
         let workspace = window
             .read_with(cx, |mw, _| mw.workspace().clone())
             .unwrap();
@@ -4927,7 +4927,7 @@ mod tests {
         cx.update(init);
 
         let project = Project::test(app_state.fs.clone(), [], cx).await;
-        let _window = cx.add_window(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let _window = cx.add_window(|window, cx| WindowRoot::test_new(project, window, cx));
 
         cx.update(|cx| {
             cx.dispatch_action(&OpenDefaultSettings);
@@ -4936,7 +4936,7 @@ mod tests {
 
         assert_eq!(cx.read(|cx| cx.windows().len()), 1);
 
-        let multi_workspace = cx.windows()[0].downcast::<MultiWorkspace>().unwrap();
+        let multi_workspace = cx.windows()[0].downcast::<WindowRoot>().unwrap();
         let active_editor = multi_workspace
             .update(cx, |multi_workspace, _, cx| {
                 multi_workspace
@@ -5177,7 +5177,7 @@ mod tests {
 
         // 6. Create workspace and trigger the actual function that causes the bug
         let window =
-            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+            cx.add_window(|window, cx| WindowRoot::test_new(project.clone(), window, cx));
         let workspace = window
             .read_with(cx, |mw, _| mw.workspace().clone())
             .unwrap();
@@ -5221,7 +5221,7 @@ mod tests {
         let app_state = init_test(cx);
         cx.update(init);
         let project = Project::test(app_state.fs.clone(), [], cx).await;
-        let _window = cx.add_window(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let _window = cx.add_window(|window, cx| WindowRoot::test_new(project, window, cx));
 
         cx.run_until_parked();
 
@@ -5257,19 +5257,19 @@ mod tests {
         let project_a = Project::test(app_state.fs.clone(), [path!("/dir").as_ref()], cx).await;
         let window_a = cx.add_window({
             let project = project_a.clone();
-            |window, cx| MultiWorkspace::test_new(project, window, cx)
+            |window, cx| WindowRoot::test_new(project, window, cx)
         });
 
         let project_b = Project::test(app_state.fs.clone(), [path!("/dir").as_ref()], cx).await;
         let window_b = cx.add_window({
             let project = project_b.clone();
-            |window, cx| MultiWorkspace::test_new(project, window, cx)
+            |window, cx| WindowRoot::test_new(project, window, cx)
         });
 
         let project_c = Project::test(app_state.fs.clone(), [path!("/dir").as_ref()], cx).await;
         let window_c = cx.add_window({
             let project = project_c.clone();
-            |window, cx| MultiWorkspace::test_new(project, window, cx)
+            |window, cx| WindowRoot::test_new(project, window, cx)
         });
 
         for window in [window_a, window_b, window_c] {
@@ -5335,7 +5335,7 @@ mod tests {
 
         let window = cx.add_window({
             let project = project1.clone();
-            |window, cx| MultiWorkspace::test_new(project, window, cx)
+            |window, cx| WindowRoot::test_new(project, window, cx)
         });
 
         cx.run_until_parked();
@@ -5534,7 +5534,7 @@ mod tests {
         let project1 = Project::test(app_state.fs.clone(), [path!("/dir1").as_ref()], cx).await;
         let window1 = cx.add_window({
             let project = project1.clone();
-            |window, cx| MultiWorkspace::test_new(project, window, cx)
+            |window, cx| WindowRoot::test_new(project, window, cx)
         });
 
         cx.run_until_parked();
@@ -5560,7 +5560,7 @@ mod tests {
         let project3 = Project::test(app_state.fs.clone(), [path!("/dir3").as_ref()], cx).await;
         let window2 = cx.add_window({
             let project = project3.clone();
-            |window, cx| MultiWorkspace::test_new(project, window, cx)
+            |window, cx| WindowRoot::test_new(project, window, cx)
         });
 
         cx.run_until_parked();
@@ -5911,10 +5911,10 @@ mod tests {
         cx.run_until_parked();
 
         // --- Verify the restored windows ---
-        let restored_windows: Vec<WindowHandle<MultiWorkspace>> = cx.read(|cx| {
+        let restored_windows: Vec<WindowHandle<WindowRoot>> = cx.read(|cx| {
             cx.windows()
                 .into_iter()
-                .filter_map(|window| window.downcast::<MultiWorkspace>())
+                .filter_map(|window| window.downcast::<WindowRoot>())
                 .collect()
         });
 

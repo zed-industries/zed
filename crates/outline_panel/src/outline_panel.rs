@@ -5394,7 +5394,7 @@ mod tests {
     use serde_json::json;
     use smol::stream::StreamExt as _;
     use util::path;
-    use workspace::{MultiWorkspace, OpenOptions, OpenVisible, ToolbarItemView};
+    use workspace::{WindowRoot, OpenOptions, OpenVisible, ToolbarItemView};
 
     use super::*;
 
@@ -6791,9 +6791,9 @@ outline: struct OutlineEntryExcerpt
     async fn add_outline_panel(
         project: &Entity<Project>,
         cx: &mut TestAppContext,
-    ) -> (WindowHandle<MultiWorkspace>, Entity<Workspace>) {
+    ) -> (WindowHandle<WindowRoot>, Entity<Workspace>) {
         let window =
-            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+            cx.add_window(|window, cx| WindowRoot::test_new(project.clone(), window, cx));
         let workspace = window
             .read_with(cx, |mw, _| mw.workspace().clone())
             .unwrap();

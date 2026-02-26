@@ -287,7 +287,7 @@ mod tests {
     use serde_json::json;
     use settings::Settings;
     use theme::{self, ThemeSettings};
-    use workspace::{self, AppState, MultiWorkspace};
+    use workspace::{self, AppState, WindowRoot};
     use zed_actions::settings_profile_selector;
 
     async fn init_test(
@@ -320,7 +320,7 @@ mod tests {
 
         let fs = FakeFs::new(cx.executor());
         let project = Project::test(fs, ["/test".as_ref()], cx).await;
-        let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let window = cx.add_window(|window, cx| WindowRoot::test_new(project, window, cx));
         let cx = VisualTestContext::from_window(*window, cx).into_mut();
         let workspace = window
             .read_with(cx, |mw, _| mw.workspace().clone())

@@ -95,7 +95,7 @@ impl<T: Sidebar> SidebarHandle for Entity<T> {
     }
 }
 
-pub struct MultiWorkspace {
+pub struct WindowRoot {
     window_id: WindowId,
     workspaces: Vec<Entity<Workspace>>,
     active_workspace_index: usize,
@@ -108,9 +108,9 @@ pub struct MultiWorkspace {
     _subscriptions: Vec<Subscription>,
 }
 
-impl MultiWorkspace {
+impl WindowRoot {
     pub fn new(workspace: Entity<Workspace>, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let release_subscription = cx.on_release(|this: &mut MultiWorkspace, _cx| {
+        let release_subscription = cx.on_release(|this: &mut WindowRoot, _cx| {
             if let Some(task) = this._serialize_task.take() {
                 task.detach();
             }
@@ -546,7 +546,7 @@ impl MultiWorkspace {
                         this.remove_workspace(index, window, cx);
                     }
                     this.workspace().update(cx, |workspace, cx| {
-                        let id = NotificationId::unique::<MultiWorkspace>();
+                        let id = NotificationId::unique::<WindowRoot>();
                         workspace.show_toast(
                             Toast::new(id, format!("Failed to create workspace: {error}")),
                             cx,
@@ -620,7 +620,7 @@ impl MultiWorkspace {
     }
 }
 
-impl Render for MultiWorkspace {
+impl Render for WindowRoot {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let multi_workspace_enabled = self.multi_workspace_enabled(cx);
 

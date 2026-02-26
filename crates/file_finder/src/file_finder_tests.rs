@@ -10,7 +10,7 @@ use serde_json::json;
 use settings::SettingsStore;
 use util::{path, rel_path::rel_path};
 use workspace::{
-    AppState, CloseActiveItem, MultiWorkspace, OpenOptions, ToggleFileFinder, Workspace, open_paths,
+    AppState, CloseActiveItem, WindowRoot, OpenOptions, ToggleFileFinder, Workspace, open_paths,
 };
 
 #[ctor::ctor]
@@ -1112,7 +1112,7 @@ async fn test_history_items_uniqueness_for_multiple_worktree(cx: &mut TestAppCon
     .await;
 
     let (multi_workspace, cx) =
-        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        cx.add_window_view(|window, cx| WindowRoot::test_new(project, window, cx));
     let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
     let (worktree_id1, worktree_id2) = cx.read(|cx| {
         let worktrees = workspace.read(cx).worktrees(cx).collect::<Vec<_>>();
@@ -1212,7 +1212,7 @@ async fn test_create_file_for_multiple_worktrees(cx: &mut TestAppContext) {
     .await;
 
     let (multi_workspace, cx) =
-        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        cx.add_window_view(|window, cx| WindowRoot::test_new(project, window, cx));
     let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
     let (_worktree_id1, worktree_id2) = cx.read(|cx| {
         let worktrees = workspace.read(cx).worktrees(cx).collect::<Vec<_>>();
@@ -1285,7 +1285,7 @@ async fn test_create_file_focused_file_does_not_belong_to_available_worktrees(
     .await;
 
     let (multi_workspace, cx) =
-        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        cx.add_window_view(|window, cx| WindowRoot::test_new(project, window, cx));
     let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
     let (worktree_id_a, worktree_id_b) = cx.read(|cx| {
@@ -1376,7 +1376,7 @@ async fn test_create_file_no_focused_with_multiple_worktrees(cx: &mut TestAppCon
     .await;
 
     let (multi_workspace, cx) =
-        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        cx.add_window_view(|window, cx| WindowRoot::test_new(project, window, cx));
     let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
     let (_worktree_id1, worktree_id2) = cx.read(|cx| {
         let worktrees = workspace.read(cx).worktrees(cx).collect::<Vec<_>>();
@@ -1430,7 +1430,7 @@ async fn test_path_distance_ordering(cx: &mut TestAppContext) {
 
     let project = Project::test(app_state.fs.clone(), [path!("/root").as_ref()], cx).await;
     let (multi_workspace, cx) =
-        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        cx.add_window_view(|window, cx| WindowRoot::test_new(project, window, cx));
     let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
     let worktree_id = cx.read(|cx| {
@@ -1521,7 +1521,7 @@ async fn test_query_history(cx: &mut gpui::TestAppContext) {
 
     let project = Project::test(app_state.fs.clone(), [path!("/src").as_ref()], cx).await;
     let (multi_workspace, cx) =
-        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        cx.add_window_view(|window, cx| WindowRoot::test_new(project, window, cx));
     let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
     let worktree_id = cx.read(|cx| {
         let worktrees = workspace.read(cx).worktrees(cx).collect::<Vec<_>>();
@@ -1665,7 +1665,7 @@ async fn test_history_match_positions(cx: &mut gpui::TestAppContext) {
 
     let project = Project::test(app_state.fs.clone(), [path!("/src").as_ref()], cx).await;
     let (multi_workspace, cx) =
-        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        cx.add_window_view(|window, cx| WindowRoot::test_new(project, window, cx));
     let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
     workspace.update_in(cx, |_workspace, window, cx| window.focused(cx));
@@ -1733,7 +1733,7 @@ async fn test_history_labels_do_not_include_worktree_root_name(cx: &mut gpui::Te
 
     let project = Project::test(app_state.fs.clone(), [path!("/my_project").as_ref()], cx).await;
     let (multi_workspace, cx) =
-        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        cx.add_window_view(|window, cx| WindowRoot::test_new(project, window, cx));
     let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
     open_close_queried_buffer("fir", 1, "first.rs", &workspace, cx).await;
@@ -1833,7 +1833,7 @@ async fn test_history_labels_include_worktree_root_name_when_hide_root_false(
 
     let project = Project::test(app_state.fs.clone(), [path!("/my_project").as_ref()], cx).await;
     let (multi_workspace, cx) =
-        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        cx.add_window_view(|window, cx| WindowRoot::test_new(project, window, cx));
     let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
     open_close_queried_buffer("fir", 1, "first.rs", &workspace, cx).await;
@@ -1908,7 +1908,7 @@ async fn test_history_labels_include_worktree_root_name_when_hide_root_true_and_
     )
     .await;
     let (multi_workspace, cx) =
-        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        cx.add_window_view(|window, cx| WindowRoot::test_new(project, window, cx));
     let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
     open_close_queried_buffer("fir", 1, "first.rs", &workspace, cx).await;
@@ -2007,7 +2007,7 @@ async fn test_external_files_history(cx: &mut gpui::TestAppContext) {
     cx.background_executor.run_until_parked();
 
     let (multi_workspace, cx) =
-        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        cx.add_window_view(|window, cx| WindowRoot::test_new(project, window, cx));
     let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
     let worktree_id = cx.read(|cx| {
         let worktrees = workspace.read(cx).worktrees(cx).collect::<Vec<_>>();
@@ -2108,7 +2108,7 @@ async fn test_toggle_panel_new_selections(cx: &mut gpui::TestAppContext) {
 
     let project = Project::test(app_state.fs.clone(), [path!("/src").as_ref()], cx).await;
     let (multi_workspace, cx) =
-        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        cx.add_window_view(|window, cx| WindowRoot::test_new(project, window, cx));
     let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
     // generate some history to select from
@@ -2166,7 +2166,7 @@ async fn test_search_preserves_history_items(cx: &mut gpui::TestAppContext) {
 
     let project = Project::test(app_state.fs.clone(), [path!("/src").as_ref()], cx).await;
     let (multi_workspace, cx) =
-        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        cx.add_window_view(|window, cx| WindowRoot::test_new(project, window, cx));
     let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
     let worktree_id = cx.read(|cx| {
         let worktrees = workspace.read(cx).worktrees(cx).collect::<Vec<_>>();
@@ -2274,7 +2274,7 @@ async fn test_search_sorts_history_items(cx: &mut gpui::TestAppContext) {
 
     let project = Project::test(app_state.fs.clone(), [path!("/root").as_ref()], cx).await;
     let (multi_workspace, cx) =
-        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        cx.add_window_view(|window, cx| WindowRoot::test_new(project, window, cx));
     let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
     // generate some history to select from
     open_close_queried_buffer("1", 1, "1_qw", &workspace, cx).await;
@@ -2330,7 +2330,7 @@ async fn test_select_current_open_file_when_no_history(cx: &mut gpui::TestAppCon
 
     let project = Project::test(app_state.fs.clone(), [path!("/root").as_ref()], cx).await;
     let (multi_workspace, cx) =
-        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        cx.add_window_view(|window, cx| WindowRoot::test_new(project, window, cx));
     let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
     // Open new buffer
     open_queried_buffer("1", 1, "1_qw", &workspace, cx).await;
@@ -2366,7 +2366,7 @@ async fn test_keep_opened_file_on_top_of_search_results_and_select_next_one(
 
     let project = Project::test(app_state.fs.clone(), [path!("/src").as_ref()], cx).await;
     let (multi_workspace, cx) =
-        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        cx.add_window_view(|window, cx| WindowRoot::test_new(project, window, cx));
     let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
     open_close_queried_buffer("bar", 1, "bar.rs", &workspace, cx).await;
@@ -2476,7 +2476,7 @@ async fn test_setting_auto_select_first_and_select_active_file(cx: &mut TestAppC
 
     let project = Project::test(app_state.fs.clone(), [path!("/src").as_ref()], cx).await;
     let (multi_workspace, cx) =
-        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        cx.add_window_view(|window, cx| WindowRoot::test_new(project, window, cx));
     let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
     open_close_queried_buffer("bar", 1, "bar.rs", &workspace, cx).await;
@@ -2534,7 +2534,7 @@ async fn test_non_separate_history_items(cx: &mut TestAppContext) {
 
     let project = Project::test(app_state.fs.clone(), [path!("/src").as_ref()], cx).await;
     let (multi_workspace, cx) =
-        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        cx.add_window_view(|window, cx| WindowRoot::test_new(project, window, cx));
     let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
     open_close_queried_buffer("bar", 1, "bar.rs", &workspace, cx).await;
@@ -2631,7 +2631,7 @@ async fn test_history_items_shown_in_order_of_open(cx: &mut TestAppContext) {
 
     let project = Project::test(app_state.fs.clone(), [path!("/test").as_ref()], cx).await;
     let (multi_workspace, cx) =
-        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        cx.add_window_view(|window, cx| WindowRoot::test_new(project, window, cx));
     let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
     open_queried_buffer("1", 1, "1.txt", &workspace, cx).await;
@@ -2691,7 +2691,7 @@ async fn test_selected_history_item_stays_selected_on_worktree_updated(cx: &mut 
 
     let project = Project::test(app_state.fs.clone(), [path!("/test").as_ref()], cx).await;
     let (multi_workspace, cx) =
-        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        cx.add_window_view(|window, cx| WindowRoot::test_new(project, window, cx));
     let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
     open_close_queried_buffer("1", 1, "1.txt", &workspace, cx).await;
@@ -2754,7 +2754,7 @@ async fn test_history_items_vs_very_good_external_match(cx: &mut gpui::TestAppCo
 
     let project = Project::test(app_state.fs.clone(), [path!("/src").as_ref()], cx).await;
     let (multi_workspace, cx) =
-        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        cx.add_window_view(|window, cx| WindowRoot::test_new(project, window, cx));
     let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
     // generate some history to select from
     open_close_queried_buffer("fir", 1, "first.rs", &workspace, cx).await;
@@ -2801,7 +2801,7 @@ async fn test_nonexistent_history_items_not_shown(cx: &mut gpui::TestAppContext)
 
     let project = Project::test(app_state.fs.clone(), [path!("/src").as_ref()], cx).await;
     let (multi_workspace, cx) =
-        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx)); // generate some history to select from
+        cx.add_window_view(|window, cx| WindowRoot::test_new(project, window, cx)); // generate some history to select from
     let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
     open_close_queried_buffer("fir", 1, "first.rs", &workspace, cx).await;
     open_close_queried_buffer("non", 1, "nonexistent.rs", &workspace, cx).await;
@@ -2851,7 +2851,7 @@ async fn test_search_results_refreshed_on_worktree_updates(cx: &mut gpui::TestAp
 
     let project = Project::test(app_state.fs.clone(), ["/src".as_ref()], cx).await;
     let (multi_workspace, cx) =
-        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        cx.add_window_view(|window, cx| WindowRoot::test_new(project.clone(), window, cx));
     let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
     // Initial state
@@ -2925,7 +2925,7 @@ async fn test_search_results_refreshed_on_standalone_file_creation(cx: &mut gpui
     let project = Project::test(app_state.fs.clone(), ["/src".as_ref()], cx).await;
     let window = cx.add_window({
         let project = project.clone();
-        |window, cx| MultiWorkspace::test_new(project, window, cx)
+        |window, cx| WindowRoot::test_new(project, window, cx)
     });
     let cx = VisualTestContext::from_window(*window, cx).into_mut();
     let workspace = window
@@ -2985,7 +2985,7 @@ async fn test_search_results_refreshed_on_adding_and_removing_worktrees(
 
     let project = Project::test(app_state.fs.clone(), ["/test/project_1".as_ref()], cx).await;
     let (multi_workspace, cx) =
-        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        cx.add_window_view(|window, cx| WindowRoot::test_new(project.clone(), window, cx));
     let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
     let worktree_1_id = project.update(cx, |project, cx| {
         let worktree = project.worktrees(cx).last().expect("worktree not found");
@@ -3077,7 +3077,7 @@ async fn test_history_items_uniqueness_for_multiple_worktree_open_all_files(
     .await;
 
     let (multi_workspace, cx) =
-        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        cx.add_window_view(|window, cx| WindowRoot::test_new(project, window, cx));
     let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
     let (worktree_id1, worktree_id2) = cx.read(|cx| {
         let worktrees = workspace.read(cx).worktrees(cx).collect::<Vec<_>>();
@@ -3203,7 +3203,7 @@ async fn test_selected_match_stays_selected_after_matches_refreshed(cx: &mut gpu
 
     let project = Project::test(app_state.fs.clone(), ["/src".as_ref()], cx).await;
     let (multi_workspace, cx) =
-        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        cx.add_window_view(|window, cx| WindowRoot::test_new(project.clone(), window, cx));
     let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
     // Initial state
@@ -3263,7 +3263,7 @@ async fn test_first_match_selected_if_previous_one_is_not_in_the_match_list(
 
     let project = Project::test(app_state.fs.clone(), ["/src".as_ref()], cx).await;
     let (multi_workspace, cx) =
-        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        cx.add_window_view(|window, cx| WindowRoot::test_new(project.clone(), window, cx));
     let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
     // Initial state
@@ -3303,7 +3303,7 @@ async fn test_keeps_file_finder_open_after_modifier_keys_release(cx: &mut gpui::
 
     let project = Project::test(app_state.fs.clone(), [path!("/test").as_ref()], cx).await;
     let (multi_workspace, cx) =
-        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        cx.add_window_view(|window, cx| WindowRoot::test_new(project, window, cx));
     let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
     open_queried_buffer("1", 1, "1.txt", &workspace, cx).await;
@@ -3333,7 +3333,7 @@ async fn test_opens_file_on_modifier_keys_release(cx: &mut gpui::TestAppContext)
 
     let project = Project::test(app_state.fs.clone(), [path!("/test").as_ref()], cx).await;
     let (multi_workspace, cx) =
-        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        cx.add_window_view(|window, cx| WindowRoot::test_new(project, window, cx));
     let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
     open_queried_buffer("1", 1, "1.txt", &workspace, cx).await;
@@ -3375,7 +3375,7 @@ async fn test_switches_between_release_norelease_modes_on_forward_nav(
 
     let project = Project::test(app_state.fs.clone(), [path!("/test").as_ref()], cx).await;
     let (multi_workspace, cx) =
-        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        cx.add_window_view(|window, cx| WindowRoot::test_new(project, window, cx));
     let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
     open_queried_buffer("1", 1, "1.txt", &workspace, cx).await;
@@ -3433,7 +3433,7 @@ async fn test_switches_between_release_norelease_modes_on_backward_nav(
 
     let project = Project::test(app_state.fs.clone(), [path!("/test").as_ref()], cx).await;
     let (multi_workspace, cx) =
-        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        cx.add_window_view(|window, cx| WindowRoot::test_new(project, window, cx));
     let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
     open_queried_buffer("1", 1, "1.txt", &workspace, cx).await;
@@ -3490,7 +3490,7 @@ async fn test_extending_modifiers_does_not_confirm_selection(cx: &mut gpui::Test
 
     let project = Project::test(app_state.fs.clone(), [path!("/test").as_ref()], cx).await;
     let (multi_workspace, cx) =
-        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        cx.add_window_view(|window, cx| WindowRoot::test_new(project, window, cx));
     let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
     open_queried_buffer("1", 1, "1.txt", &workspace, cx).await;
@@ -3523,7 +3523,7 @@ async fn test_repeat_toggle_action(cx: &mut gpui::TestAppContext) {
 
     let project = Project::test(app_state.fs.clone(), ["/test".as_ref()], cx).await;
     let (multi_workspace, cx) =
-        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        cx.add_window_view(|window, cx| WindowRoot::test_new(project, window, cx));
     let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
     cx.dispatch_action(ToggleFileFinder::default());
@@ -3644,7 +3644,7 @@ fn build_find_picker(
     &mut VisualTestContext,
 ) {
     let (multi_workspace, cx) =
-        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        cx.add_window_view(|window, cx| WindowRoot::test_new(project, window, cx));
     let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
     let picker = open_file_picker(&workspace, cx);
     (picker, workspace, cx)
@@ -3884,7 +3884,7 @@ async fn test_clear_navigation_history(cx: &mut TestAppContext) {
 
     let project = Project::test(app_state.fs.clone(), [path!("/src").as_ref()], cx).await;
     let (multi_workspace, cx) =
-        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        cx.add_window_view(|window, cx| WindowRoot::test_new(project, window, cx));
     let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
     workspace.update_in(cx, |_workspace, window, cx| window.focused(cx));

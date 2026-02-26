@@ -2043,7 +2043,7 @@ fn restore_serialized_buffer_contents(
 mod tests {
     use crate::editor_tests::init_test;
     use fs::Fs;
-    use workspace::MultiWorkspace;
+    use workspace::WindowRoot;
 
     use super::*;
     use fs::MTime;
@@ -2099,7 +2099,7 @@ mod tests {
         {
             let project = Project::test(fs.clone(), [path!("/file.rs").as_ref()], cx).await;
             let (multi_workspace, cx) = cx.add_window_view(|window, cx| {
-                MultiWorkspace::test_new(project.clone(), window, cx)
+                WindowRoot::test_new(project.clone(), window, cx)
             });
             let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
             let workspace_id = workspace::WORKSPACE_DB.next_id().await.unwrap();
@@ -2138,7 +2138,7 @@ mod tests {
         {
             let project = Project::test(fs.clone(), [path!("/file.rs").as_ref()], cx).await;
             let (multi_workspace, cx) = cx.add_window_view(|window, cx| {
-                MultiWorkspace::test_new(project.clone(), window, cx)
+                WindowRoot::test_new(project.clone(), window, cx)
             });
             let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
@@ -2178,7 +2178,7 @@ mod tests {
             });
 
             let (multi_workspace, cx) = cx.add_window_view(|window, cx| {
-                MultiWorkspace::test_new(project.clone(), window, cx)
+                WindowRoot::test_new(project.clone(), window, cx)
             });
             let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
@@ -2216,7 +2216,7 @@ mod tests {
         {
             let project = Project::test(fs.clone(), [path!("/file.rs").as_ref()], cx).await;
             let (multi_workspace, cx) = cx.add_window_view(|window, cx| {
-                MultiWorkspace::test_new(project.clone(), window, cx)
+                WindowRoot::test_new(project.clone(), window, cx)
             });
             let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
@@ -2248,7 +2248,7 @@ mod tests {
         {
             let project = Project::test(fs.clone(), [path!("/file.rs").as_ref()], cx).await;
             let (multi_workspace, cx) = cx.add_window_view(|window, cx| {
-                MultiWorkspace::test_new(project.clone(), window, cx)
+                WindowRoot::test_new(project.clone(), window, cx)
             });
             let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
@@ -2290,7 +2290,7 @@ mod tests {
             // Create an empty project with no worktrees
             let project = Project::test(fs.clone(), [], cx).await;
             let (multi_workspace, cx) = cx.add_window_view(|window, cx| {
-                MultiWorkspace::test_new(project.clone(), window, cx)
+                WindowRoot::test_new(project.clone(), window, cx)
             });
             let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 

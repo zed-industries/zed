@@ -24,7 +24,7 @@ use theme::ThemeSettings;
 use ui::{Divider, ListItem, ListItemSpacing, ListSubHeader, Tooltip, prelude::*};
 use ui_input::ErasedEditor;
 use util::{ResultExt, TryFutureExt};
-use workspace::{MultiWorkspace, Workspace, WorkspaceSettings, client_side_decorations};
+use workspace::{WindowRoot, Workspace, WorkspaceSettings, client_side_decorations};
 use zed_actions::assistant::InlineAssist;
 
 use prompt_store::*;
@@ -968,7 +968,7 @@ impl RulesLibrary {
                 .assist(rule_editor, initial_prompt, window, cx);
         } else {
             for window in cx.windows() {
-                if let Some(multi_workspace) = window.downcast::<MultiWorkspace>() {
+                if let Some(multi_workspace) = window.downcast::<WindowRoot>() {
                     let panel = multi_workspace
                         .update(cx, |multi_workspace, window, cx| {
                             window.activate_window();

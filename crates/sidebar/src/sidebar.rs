@@ -28,8 +28,8 @@ use ui::{
 use ui_input::ErasedEditor;
 use util::ResultExt as _;
 use workspace::{
-    FocusWorkspaceSidebar, MultiWorkspace, NewWorkspaceInWindow, PathList,
-    Sidebar as WorkspaceSidebar, SidebarEvent, ToggleWorkspaceSidebar, Workspace,
+    FocusWorkspaceSidebar, NewWorkspaceInWindow, PathList, Sidebar as WorkspaceSidebar,
+    SidebarEvent, ToggleWorkspaceSidebar, WindowRoot, Workspace,
 };
 
 /*
@@ -311,7 +311,7 @@ impl ActiveProjects {
 }
 
 struct ActiveProjectsDelegate {
-    multi_workspace: Entity<MultiWorkspace>,
+    window_root: Entity<WindowRoot>,
     /// The primary list of things shown in the sidebar.
     active_projects: ActiveProjects,
     /// Flat view of all project entries in group order, for Picker indexing.
@@ -324,7 +324,7 @@ struct ActiveProjectsDelegate {
 
 impl ActiveProjectsDelegate {
     fn new(
-        multi_workspace: Entity<MultiWorkspace>,
+        multi_workspace: Entity<WindowRoot>,
         workspaces: &[Entity<Workspace>],
         active_workspace: &Entity<Workspace>,
         cx: &mut App,
@@ -337,7 +337,7 @@ impl ActiveProjectsDelegate {
             .unwrap_or(0);
 
         Self {
-            multi_workspace,
+            window_root: multi_workspace,
             active_projects,
             flat_entries,
             selected_index,
@@ -396,8 +396,8 @@ impl PickerDelegate for ActiveProjectsDelegate {
             return;
         };
         let workspace = entry.read(cx).workspace.clone();
-        self.multi_workspace.update(cx, |multi_workspace, cx| {
-            multi_workspace.activate(workspace, cx);
+        self.window_root.update(cx, |window_root, cx| {
+            window_root.activate(workspace, cx);
         });
     }
 
@@ -454,7 +454,7 @@ impl PickerDelegate for ActiveProjectsDelegate {
 }
 
 pub struct Sidebar {
-    multi_workspace: Entity<MultiWorkspace>,
+    window_root: Entity<WindowRoot>,
     width: Pixels,
     picker: Entity<Picker<ActiveProjectsDelegate>>,
     _subscription: Subscription,
@@ -472,7 +472,7 @@ impl EventEmitter<SidebarEvent> for Sidebar {}
 
 impl Sidebar {
     pub fn new(
-        multi_workspace: Entity<MultiWorkspace>,
+        window_root: Entity<WindowRoot>,
         workspaces: &[Entity<Workspace>],
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -482,7 +482,7 @@ impl Sidebar {
             .expect("must have at least one workspace")
             .clone();
         let delegate =
-            ActiveProjectsDelegate::new(multi_workspace.clone(), workspaces, &active_workspace, cx);
+            ActiveProjectsDelegate::new(window_root.clone(), workspaces, &active_workspace, cx);
         let picker = cx.new(|cx| {
             Picker::list(delegate, window, cx)
                 .max_height(None)
@@ -491,7 +491,7 @@ impl Sidebar {
         });
 
         let subscription = cx.observe_in(
-            &multi_workspace,
+            &window_root,
             window,
             |this, _multi_workspace, window, cx| {
                 this.update_entries(window, cx);
@@ -507,7 +507,7 @@ impl Sidebar {
         });
 
         let mut this = Self {
-            multi_workspace,
+            window_root,
             width: DEFAULT_WIDTH,
             picker,
             _subscription: subscription,
@@ -556,10 +556,10 @@ impl Sidebar {
     /// Reconciles the sidebar's displayed entries with the current state of all
     /// workspaces and their agent threads.
     fn update_entries(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let multi_workspace = self.multi_workspace.clone();
+        let window_root = self.window_root.clone();
         cx.defer_in(window, move |this, window, cx| {
             let (workspaces, active_workspace) = {
-                let mw = multi_workspace.read(cx);
+                let mw = window_root.read(cx);
                 (mw.workspaces().to_vec(), mw.workspace().clone())
             };
 
@@ -759,8 +759,8 @@ fn sidebar_header(
                     Tooltip::for_action("New Workspace", &NewWorkspaceInWindow, cx)
                 })
                 .on_click(cx.listener(|this, _, window, cx| {
-                    this.multi_workspace.update(cx, |multi_workspace, cx| {
-                        multi_workspace.create_workspace(window, cx);
+                    this.window_root.update(cx, |window_root, cx| {
+                        window_root.create_workspace(window, cx);
                     });
                 })),
         )
@@ -786,7 +786,7 @@ mod tests {
 
     fn set_thread_info_and_refresh(
         sidebar: &Entity<Sidebar>,
-        multi_workspace: &Entity<MultiWorkspace>,
+        window_root: &Entity<WindowRoot>,
         index: usize,
         title: &str,
         status: AgentThreadStatus,
@@ -795,7 +795,7 @@ mod tests {
         sidebar.update_in(cx, |s, _window, _cx| {
             s.set_test_thread_info(index, SharedString::from(title.to_string()), status);
         });
-        multi_workspace.update_in(cx, |_, _window, cx| cx.notify());
+        window_root.update_in(cx, |_, _window, cx| cx.notify());
         cx.run_until_parked();
     }
 
@@ -810,25 +810,25 @@ mod tests {
         cx.update(|cx| <dyn Fs>::set_global(fs.clone(), cx));
         let project = project::Project::test(fs, [], cx).await;
 
-        let (multi_workspace, cx) =
-            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let (window_root, cx) =
+            cx.add_window_view(|window, cx| WindowRoot::test_new(project, window, cx));
 
-        let sidebar = multi_workspace.update_in(cx, |mw, window, cx| {
+        let sidebar = window_root.update_in(cx, |mw, window, cx| {
             let mw_handle = cx.entity();
             let workspaces = mw.workspaces().to_vec();
             cx.new(|cx| Sidebar::new(mw_handle, &workspaces, window, cx))
         });
-        multi_workspace.update_in(cx, |mw, window, cx| {
+        window_root.update_in(cx, |mw, window, cx| {
             mw.register_sidebar(sidebar.clone(), window, cx);
         });
         cx.run_until_parked();
 
         // Create a second workspace and switch to it so workspace 0 is background.
-        multi_workspace.update_in(cx, |mw, window, cx| {
+        window_root.update_in(cx, |mw, window, cx| {
             mw.create_workspace(window, cx);
         });
         cx.run_until_parked();
-        multi_workspace.update_in(cx, |mw, window, cx| {
+        window_root.update_in(cx, |mw, window, cx| {
             mw.activate_index(1, window, cx);
         });
         cx.run_until_parked();
@@ -840,7 +840,7 @@ mod tests {
 
         set_thread_info_and_refresh(
             &sidebar,
-            &multi_workspace,
+            &window_root,
             0,
             "Test Thread",
             AgentThreadStatus::Running,
@@ -854,7 +854,7 @@ mod tests {
 
         set_thread_info_and_refresh(
             &sidebar,
-            &multi_workspace,
+            &window_root,
             0,
             "Test Thread",
             AgentThreadStatus::Completed,
@@ -875,7 +875,7 @@ mod tests {
         let project = project::Project::test(fs, [], cx).await;
 
         let (multi_workspace, cx) =
-            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+            cx.add_window_view(|window, cx| WindowRoot::test_new(project, window, cx));
 
         let sidebar = multi_workspace.update_in(cx, |mw, window, cx| {
             let mw_handle = cx.entity();
@@ -920,7 +920,7 @@ mod tests {
         let project = project::Project::test(fs, [], cx).await;
 
         let (multi_workspace, cx) =
-            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+            cx.add_window_view(|window, cx| WindowRoot::test_new(project, window, cx));
 
         let sidebar = multi_workspace.update_in(cx, |mw, window, cx| {
             let mw_handle = cx.entity();

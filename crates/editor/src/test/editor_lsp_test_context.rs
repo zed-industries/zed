@@ -22,7 +22,7 @@ use language::{
 use lsp::{notification, request};
 use project::Project;
 use smol::stream::StreamExt;
-use workspace::{AppState, MultiWorkspace, Workspace, WorkspaceHandle};
+use workspace::{AppState, WindowRoot, Workspace, WorkspaceHandle};
 
 use super::editor_test_context::{AssertionContextManager, EditorTestContext};
 
@@ -96,7 +96,7 @@ impl EditorLspTestContext {
             .await;
 
         let window =
-            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+            cx.add_window(|window, cx| WindowRoot::test_new(project.clone(), window, cx));
 
         let workspace = window.root(cx).unwrap();
 

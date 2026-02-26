@@ -669,7 +669,7 @@ async fn test_remote_server_debugger(
 
     let workspace_window = cx_a
         .window_handle()
-        .downcast::<workspace::MultiWorkspace>()
+        .downcast::<workspace::WindowRoot>()
         .unwrap();
 
     let session = debugger_ui::tests::start_debug_session(&workspace_window, cx_a, |_| {}).unwrap();
@@ -782,7 +782,7 @@ async fn test_slow_adapter_startup_retries(
 
     let workspace_window = cx_a
         .window_handle()
-        .downcast::<workspace::MultiWorkspace>()
+        .downcast::<workspace::WindowRoot>()
         .unwrap();
 
     let count = Arc::new(AtomicUsize::new(0));

@@ -422,7 +422,7 @@ mod tests {
     use serde_json::json;
     use util::{path, rel_path::rel_path};
     use workspace::{
-        CloseActiveItem, MoveItemToPaneInDirection, MultiWorkspace, OpenOptions,
+        CloseActiveItem, MoveItemToPaneInDirection, WindowRoot, OpenOptions,
         item::{Item as _, SaveOptions},
     };
 
@@ -461,7 +461,7 @@ mod tests {
 
         let project = Project::test(fs, [path!("/a").as_ref()], cx).await;
         let (multi_workspace, cx) =
-            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+            cx.add_window_view(|window, cx| WindowRoot::test_new(project.clone(), window, cx));
         let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
         let language_registry = project.read_with(cx, |project, _| project.languages().clone());

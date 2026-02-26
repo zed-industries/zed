@@ -45,7 +45,7 @@ use std::{
     },
 };
 use util::path;
-use workspace::{MultiWorkspace, Workspace, WorkspaceStore};
+use workspace::{WindowRoot, Workspace, WorkspaceStore};
 
 use livekit_client::test::TestServer as LivekitTestServer;
 
@@ -886,7 +886,7 @@ impl TestClient {
         let window = cx.add_window(|window, cx| {
             window.activate_window();
             let workspace = cx.new(|cx| Workspace::new(None, project, app_state, window, cx));
-            MultiWorkspace::new(workspace, window, cx)
+            WindowRoot::new(workspace, window, cx)
         });
         let cx = VisualTestContext::from_window(*window, cx).into_mut();
         cx.run_until_parked();
@@ -905,7 +905,7 @@ impl TestClient {
         let window = cx.add_window(|window, cx| {
             window.activate_window();
             let workspace = cx.new(|cx| Workspace::new(None, project, app_state, window, cx));
-            MultiWorkspace::new(workspace, window, cx)
+            WindowRoot::new(workspace, window, cx)
         });
         let cx = VisualTestContext::from_window(*window, cx).into_mut();
         let workspace = window
@@ -921,7 +921,7 @@ impl TestClient {
         let window = cx.update(|cx| {
             cx.active_window()
                 .unwrap()
-                .downcast::<MultiWorkspace>()
+                .downcast::<WindowRoot>()
                 .unwrap()
         });
 
@@ -941,7 +941,7 @@ pub fn open_channel_notes(
     let window = cx.update(|_, cx| {
         cx.active_window()
             .unwrap()
-            .downcast::<MultiWorkspace>()
+            .downcast::<WindowRoot>()
             .unwrap()
     });
     let entity = window

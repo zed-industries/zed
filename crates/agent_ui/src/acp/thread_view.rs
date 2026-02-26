@@ -55,7 +55,7 @@ use ui::{
 use util::{ResultExt, size::format_file_size, time::duration_alt_display};
 use util::{debug_panic, defer};
 use workspace::{
-    CollaboratorId, MultiWorkspace, NewTerminal, Toast, Workspace, notifications::NotificationId,
+    CollaboratorId, WindowRoot, NewTerminal, Toast, Workspace, notifications::NotificationId,
 };
 use zed_actions::agent::{Chat, ToggleModelSelector};
 use zed_actions::assistant::OpenRulesLibrary;
@@ -2298,7 +2298,7 @@ impl AcpServerView {
         self.show_notification(caption, icon, window, cx);
     }
 
-    fn agent_panel_visible(&self, multi_workspace: &Entity<MultiWorkspace>, cx: &App) -> bool {
+    fn agent_panel_visible(&self, multi_workspace: &Entity<WindowRoot>, cx: &App) -> bool {
         let Some(workspace) = self.workspace.upgrade() else {
             return false;
         };
@@ -2311,7 +2311,7 @@ impl AcpServerView {
             return false;
         }
 
-        if let Some(multi_workspace) = window.root::<MultiWorkspace>().flatten() {
+        if let Some(multi_workspace) = window.root::<WindowRoot>().flatten() {
             multi_workspace.read(cx).is_sidebar_open()
                 || self.agent_panel_visible(&multi_workspace, cx)
         } else {
@@ -2324,7 +2324,7 @@ impl AcpServerView {
     fn play_notification_sound(&self, window: &Window, cx: &mut App) {
         let settings = AgentSettings::get_global(cx);
         let visible = window.is_window_active()
-            && if let Some(mw) = window.root::<MultiWorkspace>().flatten() {
+            && if let Some(mw) = window.root::<WindowRoot>().flatten() {
                 self.agent_panel_visible(&mw, cx)
             } else {
                 self.workspace
@@ -2412,7 +2412,7 @@ impl AcpServerView {
                 .push(cx.subscribe_in(&pop_up, window, {
                     |this, _, event, window, cx| match event {
                         AgentNotificationEvent::Accepted => {
-                            let Some(handle) = window.window_handle().downcast::<MultiWorkspace>()
+                            let Some(handle) = window.window_handle().downcast::<WindowRoot>()
                             else {
                                 log::error!("root view should be a MultiWorkspace");
                                 return;
@@ -2728,7 +2728,7 @@ pub(crate) mod tests {
     use std::path::{Path, PathBuf};
     use std::rc::Rc;
     use std::sync::Arc;
-    use workspace::{Item, MultiWorkspace};
+    use workspace::{Item, WindowRoot};
 
     use crate::agent_panel;
 
@@ -2803,7 +2803,7 @@ pub(crate) mod tests {
         let fs = FakeFs::new(cx.executor());
         let project = Project::test(fs, [], cx).await;
         let (multi_workspace, cx) =
-            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+            cx.add_window_view(|window, cx| WindowRoot::test_new(project.clone(), window, cx));
         let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
         let thread_store = cx.update(|_window, cx| cx.new(|cx| ThreadStore::new(cx)));
@@ -2876,7 +2876,7 @@ pub(crate) mod tests {
         let fs = FakeFs::new(cx.executor());
         let project = Project::test(fs, [], cx).await;
         let (multi_workspace, cx) =
-            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+            cx.add_window_view(|window, cx| WindowRoot::test_new(project.clone(), window, cx));
         let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
         let thread_store = cx.update(|_window, cx| cx.new(|cx| ThreadStore::new(cx)));
@@ -2924,7 +2924,7 @@ pub(crate) mod tests {
         .await;
         let project = Project::test(fs, [Path::new("/project")], cx).await;
         let (multi_workspace, cx) =
-            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+            cx.add_window_view(|window, cx| WindowRoot::test_new(project.clone(), window, cx));
         let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
         let connection = CwdCapturingConnection::new();
@@ -2976,7 +2976,7 @@ pub(crate) mod tests {
         .await;
         let project = Project::test(fs, [Path::new("/project")], cx).await;
         let (multi_workspace, cx) =
-            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+            cx.add_window_view(|window, cx| WindowRoot::test_new(project.clone(), window, cx));
         let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
         let connection = CwdCapturingConnection::new();
@@ -3028,7 +3028,7 @@ pub(crate) mod tests {
         .await;
         let project = Project::test(fs, [Path::new("/project")], cx).await;
         let (multi_workspace, cx) =
-            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+            cx.add_window_view(|window, cx| WindowRoot::test_new(project.clone(), window, cx));
         let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
         let connection = CwdCapturingConnection::new();
@@ -3282,7 +3282,7 @@ pub(crate) mod tests {
 
         // Create a MultiWorkspace window with one workspace
         let multi_workspace_handle =
-            cx.add_window(|window, cx| MultiWorkspace::test_new(project1.clone(), window, cx));
+            cx.add_window(|window, cx| WindowRoot::test_new(project1.clone(), window, cx));
 
         // Get workspace 1 (the initial workspace)
         let workspace1 = multi_workspace_handle
@@ -3486,7 +3486,7 @@ pub(crate) mod tests {
         let fs = FakeFs::new(cx.executor());
         let project = Project::test(fs, [], cx).await;
         let (multi_workspace, cx) =
-            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+            cx.add_window_view(|window, cx| WindowRoot::test_new(project.clone(), window, cx));
         let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
         let thread_store = cx.update(|_window, cx| cx.new(|cx| ThreadStore::new(cx)));
@@ -4098,7 +4098,7 @@ pub(crate) mod tests {
         .await;
         let project = Project::test(fs, [Path::new("/project")], cx).await;
         let (multi_workspace, cx) =
-            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+            cx.add_window_view(|window, cx| WindowRoot::test_new(project.clone(), window, cx));
         let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
         let thread_store = cx.update(|_window, cx| cx.new(|cx| ThreadStore::new(cx)));

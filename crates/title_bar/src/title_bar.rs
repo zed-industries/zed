@@ -45,7 +45,7 @@ use ui::{
 use update_version::UpdateVersion;
 use util::ResultExt;
 use workspace::{
-    MultiWorkspace, ToggleWorkspaceSidebar, ToggleWorktreeSecurity, Workspace,
+    WindowRoot, ToggleWorkspaceSidebar, ToggleWorktreeSecurity, Workspace,
     notifications::NotifyResultExt,
 };
 use zed_actions::OpenRemote;
@@ -357,7 +357,7 @@ impl TitleBar {
             let platform_titlebar = platform_titlebar.clone();
             let window_handle = window.window_handle();
             cx.spawn(async move |this: WeakEntity<TitleBar>, cx| {
-                let Some(multi_workspace_handle) = window_handle.downcast::<MultiWorkspace>()
+                let Some(multi_workspace_handle) = window_handle.downcast::<WindowRoot>()
                 else {
                     return;
                 };

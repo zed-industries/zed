@@ -373,7 +373,7 @@ mod tests {
     use std::path::PathBuf;
     use unindent::unindent;
     use util::path;
-    use workspace::MultiWorkspace;
+    use workspace::WindowRoot;
 
     fn init_test(cx: &mut TestAppContext) {
         cx.update(|cx| {
@@ -400,7 +400,7 @@ mod tests {
         let project = Project::test(fs.clone(), [path!("/test").as_ref()], cx).await;
 
         let (multi_workspace, cx) =
-            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+            cx.add_window_view(|window, cx| WindowRoot::test_new(project.clone(), window, cx));
         let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
         let diff_view = workspace
@@ -535,7 +535,7 @@ mod tests {
         let project = Project::test(fs.clone(), ["/test".as_ref()], cx).await;
 
         let (multi_workspace, cx) =
-            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+            cx.add_window_view(|window, cx| WindowRoot::test_new(project.clone(), window, cx));
         let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
         let diff_view = workspace

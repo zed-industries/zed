@@ -36,7 +36,7 @@ use ui::{
 use util::ResultExt;
 use util::rel_path::RelPath;
 use workspace::searchable::Direction;
-use workspace::{MultiWorkspace, Workspace, WorkspaceDb, WorkspaceId};
+use workspace::{WindowRoot, Workspace, WorkspaceDb, WorkspaceId};
 
 #[derive(Clone, Copy, Default, Debug, PartialEq, Serialize, Deserialize)]
 pub enum Mode {
@@ -729,7 +729,7 @@ impl VimGlobals {
                 });
                 GlobalCommandPaletteInterceptor::set(cx, command_interceptor);
                 for window in cx.windows() {
-                    if let Some(multi_workspace) = window.downcast::<MultiWorkspace>() {
+                    if let Some(multi_workspace) = window.downcast::<WindowRoot>() {
                         multi_workspace
                             .update(cx, |multi_workspace, _, cx| {
                                 for workspace in multi_workspace.workspaces() {

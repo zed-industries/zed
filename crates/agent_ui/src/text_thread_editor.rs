@@ -3173,7 +3173,7 @@ mod tests {
     use text::OffsetRangeExt;
     use unindent::Unindent;
     use util::path;
-    use workspace::MultiWorkspace;
+    use workspace::WindowRoot;
 
     #[gpui::test]
     async fn test_copy_paste_whole_message(cx: &mut TestAppContext) {
@@ -3344,7 +3344,7 @@ mod tests {
 
         let project = Project::test(fs.clone(), [path!("/test").as_ref()], cx).await;
         let window_handle =
-            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+            cx.add_window(|window, cx| WindowRoot::test_new(project.clone(), window, cx));
         let workspace = window_handle
             .read_with(cx, |mw, _| mw.workspace().clone())
             .unwrap();
