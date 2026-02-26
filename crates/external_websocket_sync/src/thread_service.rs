@@ -5,11 +5,10 @@
 
 use anyhow::Result;
 use acp_thread::{AcpThread, AcpThreadEvent};
-use action_log::ActionLog;
 use agent::ThreadStore;
 use acp_thread::AgentSessionInfo;
-use agent_client_protocol::{ContentBlock, PromptCapabilities, SessionId, TextContent};
-use gpui::{App, Entity, EventEmitter, WeakEntity, prelude::*};
+use agent_client_protocol::{ContentBlock, TextContent};
+use gpui::{App, Entity, WeakEntity};
 use parking_lot::RwLock;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -18,8 +17,6 @@ use fs::Fs;
 use project::Project;
 use tokio::sync::mpsc;
 use util::ResultExt;
-use watch;
-
 use settings::Settings as _;
 use crate::{ExternalAgent, ThreadCreationRequest, ThreadOpenRequest, SyncEvent};
 
@@ -554,13 +551,13 @@ fn create_new_thread_sync(
     );
 
     // Connect to get AgentConnection
-    let connection_task = server.connect(None, delegate, cx);
+    let connection_task = server.connect(delegate, cx);
 
     // Spawn async task to complete the connection and create the thread
     let request_clone = request.clone();
     let project_clone = project.clone();
     cx.spawn(async move |cx| {
-        let (connection, _spawn_task) = connection_task
+        let (connection, _spawn_task): (std::rc::Rc<dyn acp_thread::AgentConnection>, _) = connection_task
             .await
             .log_err()
             .ok_or_else(|| anyhow::anyhow!("Failed to connect to agent"))?;
@@ -949,7 +946,7 @@ async fn load_thread_from_agent(
             None,
             None,
         );
-        let connection_task = server.connect(None, delegate, cx);
+        let connection_task = server.connect(delegate, cx);
         // Use ZED_WORK_DIR for consistency with session storage
         let cwd = std::env::var("ZED_WORK_DIR")
             .ok()
@@ -1132,7 +1129,7 @@ fn open_existing_thread_sync(
     );
 
     // Connect to get AgentConnection
-    let connection_task = server.connect(None, delegate, cx);
+    let connection_task = server.connect(delegate, cx);
 
     // Use ZED_WORK_DIR for consistency with session storage
     let cwd = std::env::var("ZED_WORK_DIR")
