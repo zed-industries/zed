@@ -23,7 +23,7 @@ use zed_actions::agent::OpenSettings;
 
 use crate::ui::{HoldForDefault, ModelSelectorFooter, ModelSelectorHeader, ModelSelectorListItem};
 
-pub type AcpModelSelector = Picker<AcpModelPickerDelegate>;
+pub type ModelSelector = Picker<ModelPickerDelegate>;
 
 pub fn acp_model_selector(
     selector: Rc<dyn AgentModelSelector>,
@@ -31,26 +31,25 @@ pub fn acp_model_selector(
     fs: Arc<dyn Fs>,
     focus_handle: FocusHandle,
     window: &mut Window,
-    cx: &mut Context<AcpModelSelector>,
-) -> AcpModelSelector {
-    let delegate =
-        AcpModelPickerDelegate::new(selector, agent_server, fs, focus_handle, window, cx);
+    cx: &mut Context<ModelSelector>,
+) -> ModelSelector {
+    let delegate = ModelPickerDelegate::new(selector, agent_server, fs, focus_handle, window, cx);
     Picker::list(delegate, window, cx)
         .show_scrollbar(true)
         .width(rems(20.))
         .max_height(Some(rems(20.).into()))
 }
 
-enum AcpModelPickerEntry {
+enum ModelPickerEntry {
     Separator(SharedString),
     Model(AgentModelInfo, bool),
 }
 
-pub struct AcpModelPickerDelegate {
+pub struct ModelPickerDelegate {
     selector: Rc<dyn AgentModelSelector>,
     agent_server: Rc<dyn AgentServer>,
     fs: Arc<dyn Fs>,
-    filtered_entries: Vec<AcpModelPickerEntry>,
+    filtered_entries: Vec<ModelPickerEntry>,
     models: Option<AgentModelList>,
     selected_index: usize,
     selected_description: Option<(usize, SharedString, bool)>,
@@ -61,21 +60,21 @@ pub struct AcpModelPickerDelegate {
     focus_handle: FocusHandle,
 }
 
-impl AcpModelPickerDelegate {
+impl ModelPickerDelegate {
     fn new(
         selector: Rc<dyn AgentModelSelector>,
         agent_server: Rc<dyn AgentServer>,
         fs: Arc<dyn Fs>,
         focus_handle: FocusHandle,
         window: &mut Window,
-        cx: &mut Context<AcpModelSelector>,
+        cx: &mut Context<ModelSelector>,
     ) -> Self {
         let rx = selector.watch(cx);
         let refresh_models_task = {
             cx.spawn_in(window, {
                 async move |this, cx| {
                     async fn refresh(
-                        this: &WeakEntity<Picker<AcpModelPickerDelegate>>,
+                        this: &WeakEntity<Picker<ModelPickerDelegate>>,
                         cx: &mut AsyncWindowContext,
                     ) -> Result<()> {
                         let (models_task, selected_model_task) = this.update(cx, |this, cx| {
@@ -188,7 +187,7 @@ impl AcpModelPickerDelegate {
 
         // Keep the picker selection aligned with the newly-selected model
         if let Some(new_index) = self.filtered_entries.iter().position(|entry| {
-            matches!(entry, AcpModelPickerEntry::Model(model_info, _) if self.selected_model.as_ref().is_some_and(|selected| model_info.id == selected.id))
+            matches!(entry, ModelPickerEntry::Model(model_info, _) if self.selected_model.as_ref().is_some_and(|selected| model_info.id == selected.id))
         }) {
             self.set_selected_index(new_index, window, cx);
         } else {
@@ -197,7 +196,7 @@ impl AcpModelPickerDelegate {
     }
 }
 
-impl PickerDelegate for AcpModelPickerDelegate {
+impl PickerDelegate for ModelPickerDelegate {
     type ListItem = AnyElement;
 
     fn match_count(&self) -> usize {
@@ -220,8 +219,8 @@ impl PickerDelegate for AcpModelPickerDelegate {
         _cx: &mut Context<Picker<Self>>,
     ) -> bool {
         match self.filtered_entries.get(ix) {
-            Some(AcpModelPickerEntry::Model(_, _)) => true,
-            Some(AcpModelPickerEntry::Separator(_)) | None => false,
+            Some(ModelPickerEntry::Model(_, _)) => true,
+            Some(ModelPickerEntry::Separator(_)) | None => false,
         }
     }
 
@@ -261,7 +260,7 @@ impl PickerDelegate for AcpModelPickerDelegate {
                     .as_ref()
                     .and_then(|selected| {
                         this.delegate.filtered_entries.iter().position(|entry| {
-                            if let AcpModelPickerEntry::Model(model_info, _) = entry {
+                            if let ModelPickerEntry::Model(model_info, _) = entry {
                                 model_info.id == selected.id
                             } else {
                                 false
@@ -277,7 +276,7 @@ impl PickerDelegate for AcpModelPickerDelegate {
     }
 
     fn confirm(&mut self, _secondary: bool, window: &mut Window, cx: &mut Context<Picker<Self>>) {
-        if let Some(AcpModelPickerEntry::Model(model_info, _)) =
+        if let Some(ModelPickerEntry::Model(model_info, _)) =
             self.filtered_entries.get(self.selected_index)
         {
             if window.modifiers().secondary() {
@@ -320,10 +319,10 @@ impl PickerDelegate for AcpModelPickerDelegate {
         cx: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
         match self.filtered_entries.get(ix)? {
-            AcpModelPickerEntry::Separator(title) => {
+            ModelPickerEntry::Separator(title) => {
                 Some(ModelSelectorHeader::new(title, ix > 1).into_any_element())
             }
-            AcpModelPickerEntry::Model(model_info, is_favorite) => {
+            ModelPickerEntry::Model(model_info, is_favorite) => {
                 let is_selected = Some(model_info) == self.selected_model.as_ref();
                 let default_model = self.agent_server.default_model(cx);
                 let is_default = default_model.as_ref() == Some(&model_info.id);
@@ -434,7 +433,7 @@ impl PickerDelegate for AcpModelPickerDelegate {
 fn info_list_to_picker_entries(
     model_list: AgentModelList,
     favorites: &HashSet<ModelId>,
-) -> Vec<AcpModelPickerEntry> {
+) -> Vec<ModelPickerEntry> {
     let mut entries = Vec::new();
 
     let all_models: Vec<_> = match &model_list {
@@ -450,28 +449,28 @@ fn info_list_to_picker_entries(
 
     let has_favorites = !favorite_models.is_empty();
     if has_favorites {
-        entries.push(AcpModelPickerEntry::Separator("Favorite".into()));
+        entries.push(ModelPickerEntry::Separator("Favorite".into()));
         for model in favorite_models {
-            entries.push(AcpModelPickerEntry::Model((*model).clone(), true));
+            entries.push(ModelPickerEntry::Model((*model).clone(), true));
         }
     }
 
     match model_list {
         AgentModelList::Flat(list) => {
             if has_favorites {
-                entries.push(AcpModelPickerEntry::Separator("All".into()));
+                entries.push(ModelPickerEntry::Separator("All".into()));
             }
             for model in list {
                 let is_favorite = favorites.contains(&model.id);
-                entries.push(AcpModelPickerEntry::Model(model, is_favorite));
+                entries.push(ModelPickerEntry::Model(model, is_favorite));
             }
         }
         AgentModelList::Grouped(index_map) => {
             for (group_name, models) in index_map {
-                entries.push(AcpModelPickerEntry::Separator(group_name.0));
+                entries.push(ModelPickerEntry::Separator(group_name.0));
                 for model in models {
                     let is_favorite = favorites.contains(&model.id);
-                    entries.push(AcpModelPickerEntry::Model(model, is_favorite));
+                    entries.push(ModelPickerEntry::Model(model, is_favorite));
                 }
             }
         }
@@ -608,22 +607,22 @@ mod tests {
             .collect()
     }
 
-    fn get_entry_model_ids(entries: &[AcpModelPickerEntry]) -> Vec<&str> {
+    fn get_entry_model_ids(entries: &[ModelPickerEntry]) -> Vec<&str> {
         entries
             .iter()
             .filter_map(|entry| match entry {
-                AcpModelPickerEntry::Model(info, _) => Some(info.id.0.as_ref()),
+                ModelPickerEntry::Model(info, _) => Some(info.id.0.as_ref()),
                 _ => None,
             })
             .collect()
     }
 
-    fn get_entry_labels(entries: &[AcpModelPickerEntry]) -> Vec<&str> {
+    fn get_entry_labels(entries: &[ModelPickerEntry]) -> Vec<&str> {
         entries
             .iter()
             .map(|entry| match entry {
-                AcpModelPickerEntry::Model(info, _) => info.id.0.as_ref(),
-                AcpModelPickerEntry::Separator(s) => &s,
+                ModelPickerEntry::Model(info, _) => info.id.0.as_ref(),
+                ModelPickerEntry::Separator(s) => &s,
             })
             .collect()
     }
@@ -671,7 +670,7 @@ mod tests {
 
         assert!(matches!(
             entries.first(),
-            Some(AcpModelPickerEntry::Separator(s)) if s == "Favorite"
+            Some(ModelPickerEntry::Separator(s)) if s == "Favorite"
         ));
 
         let model_ids = get_entry_model_ids(&entries);
@@ -687,7 +686,7 @@ mod tests {
 
         assert!(matches!(
             entries.first(),
-            Some(AcpModelPickerEntry::Separator(s)) if s == "zed"
+            Some(ModelPickerEntry::Separator(s)) if s == "zed"
         ));
     }
 
@@ -702,7 +701,7 @@ mod tests {
         let entries = info_list_to_picker_entries(models, &favorites);
 
         for entry in &entries {
-            if let AcpModelPickerEntry::Model(info, is_favorite) = entry {
+            if let ModelPickerEntry::Model(info, is_favorite) = entry {
                 if info.id.0.as_ref() == "zed/claude" {
                     assert!(is_favorite, "zed/claude should be a favorite");
                 } else {
@@ -789,12 +788,12 @@ mod tests {
 
         assert!(matches!(
             entries.first(),
-            Some(AcpModelPickerEntry::Separator(s)) if s == "Favorite"
+            Some(ModelPickerEntry::Separator(s)) if s == "Favorite"
         ));
 
         assert!(entries.iter().any(|e| matches!(
             e,
-            AcpModelPickerEntry::Separator(s) if s == "All"
+            ModelPickerEntry::Separator(s) if s == "All"
         )));
     }
 
@@ -838,7 +837,7 @@ mod tests {
         let entries = info_list_to_picker_entries(models, &favorites);
 
         for entry in &entries {
-            if let AcpModelPickerEntry::Model(info, is_favorite) = entry {
+            if let ModelPickerEntry::Model(info, is_favorite) = entry {
                 if info.id.0.as_ref() == "favorite-model" {
                     assert!(*is_favorite, "favorite-model should have is_favorite=true");
                 } else if info.id.0.as_ref() == "regular-model" {

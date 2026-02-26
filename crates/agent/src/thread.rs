@@ -605,7 +605,7 @@ pub trait TerminalHandle {
 
 pub trait SubagentHandle {
     fn id(&self) -> acp::SessionId;
-    fn wait_for_output(&self, cx: &AsyncApp) -> Task<Result<String>>;
+    fn run_turn(&self, message: String, cx: &AsyncApp) -> Task<Result<String>>;
 }
 
 pub trait ThreadEnvironment {
@@ -617,19 +617,11 @@ pub trait ThreadEnvironment {
         cx: &mut AsyncApp,
     ) -> Task<Result<Rc<dyn TerminalHandle>>>;
 
-    fn create_subagent(
-        &self,
-        parent_thread: Entity<Thread>,
-        label: String,
-        initial_prompt: String,
-        cx: &mut App,
-    ) -> Result<Rc<dyn SubagentHandle>>;
+    fn create_subagent(&self, label: String, cx: &mut App) -> Result<Rc<dyn SubagentHandle>>;
 
     fn resume_subagent(
         &self,
-        _parent_thread: Entity<Thread>,
         _session_id: acp::SessionId,
-        _follow_up_prompt: String,
         _cx: &mut App,
     ) -> Result<Rc<dyn SubagentHandle>> {
         Err(anyhow::anyhow!(
@@ -1376,7 +1368,7 @@ impl Thread {
         self.add_tool(WebSearchTool);
 
         if cx.has_flag::<SubagentsFeatureFlag>() && self.depth() < MAX_SUBAGENT_DEPTH {
-            self.add_tool(SpawnAgentTool::new(cx.weak_entity(), environment));
+            self.add_tool(SpawnAgentTool::new(environment));
         }
     }
 

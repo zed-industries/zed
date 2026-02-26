@@ -356,9 +356,18 @@ fn start_server(
 
             let (mut stdin_msg_tx, mut stdin_msg_rx) = mpsc::unbounded::<Envelope>();
             cx.background_spawn(async move {
-                while let Ok(msg) = read_message(&mut stdin_stream, &mut input_buffer).await {
-                    if (stdin_msg_tx.send(msg).await).is_err() {
-                        break;
+                loop {
+                    match read_message(&mut stdin_stream, &mut input_buffer).await {
+                        Ok(msg) => {
+                            if (stdin_msg_tx.send(msg).await).is_err() {
+                                log::info!("stdin message channel closed, stopping stdin reader");
+                                break;
+                            }
+                        }
+                        Err(error) => {
+                            log::warn!("stdin read failed: {error:?}");
+                            break;
+                        }
                     }
                 }
             }).detach();

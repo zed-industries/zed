@@ -167,7 +167,7 @@ impl SubagentHandle for FakeSubagentHandle {
         self.session_id.clone()
     }
 
-    fn wait_for_output(&self, cx: &AsyncApp) -> Task<Result<String>> {
+    fn run_turn(&self, _message: String, cx: &AsyncApp) -> Task<Result<String>> {
         let task = self.wait_for_summary_task.clone();
         cx.background_spawn(async move { Ok(task.await) })
     }
@@ -203,13 +203,7 @@ impl crate::ThreadEnvironment for FakeThreadEnvironment {
         Task::ready(Ok(handle as Rc<dyn crate::TerminalHandle>))
     }
 
-    fn create_subagent(
-        &self,
-        _parent_thread: Entity<Thread>,
-        _label: String,
-        _initial_prompt: String,
-        _cx: &mut App,
-    ) -> Result<Rc<dyn SubagentHandle>> {
+    fn create_subagent(&self, _label: String, _cx: &mut App) -> Result<Rc<dyn SubagentHandle>> {
         Ok(self
             .subagent_handle
             .clone()
@@ -248,13 +242,7 @@ impl crate::ThreadEnvironment for MultiTerminalEnvironment {
         Task::ready(Ok(handle as Rc<dyn crate::TerminalHandle>))
     }
 
-    fn create_subagent(
-        &self,
-        _parent_thread: Entity<Thread>,
-        _label: String,
-        _initial_prompt: String,
-        _cx: &mut App,
-    ) -> Result<Rc<dyn SubagentHandle>> {
+    fn create_subagent(&self, _label: String, _cx: &mut App) -> Result<Rc<dyn SubagentHandle>> {
         unimplemented!()
     }
 }
