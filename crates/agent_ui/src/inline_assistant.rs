@@ -7,7 +7,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 use uuid::Uuid;
 
-use crate::acp::AcpThreadHistory;
+use crate::ThreadHistory;
 use crate::context::load_context;
 use crate::mention_set::MentionSet;
 use crate::{
@@ -487,7 +487,7 @@ impl InlineAssistant {
         project: WeakEntity<Project>,
         thread_store: Entity<ThreadStore>,
         prompt_store: Option<Entity<PromptStore>>,
-        history: WeakEntity<AcpThreadHistory>,
+        history: WeakEntity<ThreadHistory>,
         initial_prompt: Option<String>,
         window: &mut Window,
         codegen_ranges: &[Range<Anchor>],
@@ -626,7 +626,7 @@ impl InlineAssistant {
         project: WeakEntity<Project>,
         thread_store: Entity<ThreadStore>,
         prompt_store: Option<Entity<PromptStore>>,
-        history: WeakEntity<AcpThreadHistory>,
+        history: WeakEntity<ThreadHistory>,
         initial_prompt: Option<String>,
         window: &mut Window,
         cx: &mut App,
@@ -671,7 +671,7 @@ impl InlineAssistant {
         workspace: Entity<Workspace>,
         thread_store: Entity<ThreadStore>,
         prompt_store: Option<Entity<PromptStore>>,
-        history: WeakEntity<AcpThreadHistory>,
+        history: WeakEntity<ThreadHistory>,
         window: &mut Window,
         cx: &mut App,
     ) -> InlineAssistId {
@@ -2154,7 +2154,7 @@ pub mod test {
             });
 
             let thread_store = cx.new(|cx| ThreadStore::new(cx));
-            let history = cx.new(|cx| crate::acp::AcpThreadHistory::new(None, window, cx));
+            let history = cx.new(|cx| crate::ThreadHistory::new(None, window, cx));
 
             // Add editor to workspace
             workspace.update(cx, |workspace, cx| {

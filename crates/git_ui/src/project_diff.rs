@@ -97,7 +97,6 @@ impl ProjectDiff {
     pub(crate) fn register(workspace: &mut Workspace, cx: &mut Context<Workspace>) {
         workspace.register_action(Self::deploy);
         workspace.register_action(Self::deploy_branch_diff);
-        workspace.register_action(Self::deploy_review_diff);
         workspace.register_action(|workspace, _: &Add, window, cx| {
             Self::deploy(workspace, &Diff, window, cx);
         });
@@ -148,25 +147,13 @@ impl ProjectDiff {
             .detach_and_notify_err(workspace_weak, window, cx);
     }
 
-    fn deploy_review_diff(
-        workspace: &mut Workspace,
-        _: &ReviewDiff,
-        window: &mut Window,
-        cx: &mut Context<Workspace>,
-    ) {
-        let Some(project_diff) = workspace
-            .items_of_type::<Self>(cx)
-            .find(|item| matches!(item.read(cx).diff_base(cx), DiffBase::Merge { .. }))
-        else {
-            return;
-        };
-
-        let diff_base = project_diff.read(cx).diff_base(cx).clone();
+    fn review_diff(&mut self, _: &ReviewDiff, window: &mut Window, cx: &mut Context<Self>) {
+        let diff_base = self.diff_base(cx).clone();
         let DiffBase::Merge { base_ref } = diff_base else {
             return;
         };
 
-        let Some(repo) = project_diff.read(cx).branch_diff.read(cx).repo().cloned() else {
+        let Some(repo) = self.branch_diff.read(cx).repo().cloned() else {
             return;
         };
 
@@ -179,26 +166,31 @@ impl ProjectDiff {
             )
         });
 
-        let workspace_handle = cx.entity();
-        let workspace_weak = workspace_handle.downgrade();
+        let workspace = self.workspace.clone();
+
         window
-            .spawn(cx, async move |cx| {
-                let diff_text = diff_receiver.await??;
+            .spawn(cx, {
+                let workspace = workspace.clone();
+                async move |cx| {
+                    let diff_text = diff_receiver.await??;
 
-                workspace_handle.update_in(cx, |_workspace, window, cx| {
-                    window.dispatch_action(
-                        ReviewBranchDiff {
-                            diff_text: diff_text.into(),
-                            base_ref: base_ref.to_string().into(),
-                        }
-                        .boxed_clone(),
-                        cx,
-                    );
-                })?;
+                    if let Some(workspace) = workspace.upgrade() {
+                        workspace.update_in(cx, |_workspace, window, cx| {
+                            window.dispatch_action(
+                                ReviewBranchDiff {
+                                    diff_text: diff_text.into(),
+                                    base_ref: base_ref.to_string().into(),
+                                }
+                                .boxed_clone(),
+                                cx,
+                            );
+                        })?;
+                    }
 
-                anyhow::Ok(())
+                    anyhow::Ok(())
+                }
             })
-            .detach_and_notify_err(workspace_weak, window, cx);
+            .detach_and_notify_err(workspace, window, cx);
     }
 
     pub fn deploy_at(
@@ -1139,10 +1131,14 @@ impl Item for ProjectDiff {
 impl Render for ProjectDiff {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let is_empty = self.multibuffer.read(cx).is_empty();
+        let is_branch_diff_view = matches!(self.diff_base(cx), DiffBase::Merge { .. });
 
         div()
             .track_focus(&self.focus_handle)
             .key_context(if is_empty { "EmptyPane" } else { "GitDiff" })
+            .when(is_branch_diff_view, |this| {
+                this.on_action(cx.listener(Self::review_diff))
+            })
             .bg(cx.theme().colors().editor_background)
             .flex()
             .items_center()

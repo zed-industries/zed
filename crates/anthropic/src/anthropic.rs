@@ -906,11 +906,17 @@ pub struct ImageSource {
     pub data: String,
 }
 
+fn is_false(value: &bool) -> bool {
+    !value
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Tool {
     pub name: String,
     pub description: String,
     pub input_schema: serde_json::Value,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub eager_input_streaming: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

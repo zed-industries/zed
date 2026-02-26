@@ -53,11 +53,10 @@ pub async fn run_prediction(
         );
     };
 
-    run_context_retrieval(example, app_state.clone(), example_progress, cx.clone()).await?;
-
     if let PredictionProvider::Teacher(backend) | PredictionProvider::TeacherNonBatching(backend) =
         provider
     {
+        run_context_retrieval(example, app_state.clone(), example_progress, cx.clone()).await?;
         run_format_prompt(
             example,
             &FormatPromptArgs { provider },
@@ -81,6 +80,7 @@ pub async fn run_prediction(
     }
 
     run_load_project(example, app_state.clone(), example_progress, cx.clone()).await?;
+    run_context_retrieval(example, app_state.clone(), example_progress, cx.clone()).await?;
 
     let step_progress = example_progress.start(Step::Predict);
 

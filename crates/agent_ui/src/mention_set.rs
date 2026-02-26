@@ -547,9 +547,9 @@ impl MentionSet {
             None,
             None,
         );
-        let connection = server.connect(None, delegate, cx);
+        let connection = server.connect(delegate, cx);
         cx.spawn(async move |_, cx| {
-            let (agent, _) = connection.await?;
+            let agent = connection.await?;
             let agent = agent.downcast::<agent::NativeAgentConnection>().unwrap();
             let summary = agent
                 .0

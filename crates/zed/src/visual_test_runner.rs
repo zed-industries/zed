@@ -1945,11 +1945,10 @@ impl AgentServer for StubAgentServer {
 
     fn connect(
         &self,
-        _root_dir: Option<&Path>,
         _delegate: AgentServerDelegate,
         _cx: &mut App,
-    ) -> gpui::Task<gpui::Result<(Rc<dyn AgentConnection>, Option<task::SpawnInTerminal>)>> {
-        gpui::Task::ready(Ok((Rc::new(self.connection.clone()), None)))
+    ) -> gpui::Task<gpui::Result<Rc<dyn AgentConnection>>> {
+        gpui::Task::ready(Ok(Rc::new(self.connection.clone())))
     }
 
     fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
@@ -1963,7 +1962,7 @@ fn run_agent_thread_view_test(
     cx: &mut VisualTestAppContext,
     update_baseline: bool,
 ) -> Result<TestResult> {
-    use agent::AgentTool;
+    use agent::{AgentTool, ToolInput};
     use agent_ui::AgentPanel;
 
     // Create a temporary directory with the test image
@@ -2048,7 +2047,10 @@ fn run_agent_thread_view_test(
         start_line: None,
         end_line: None,
     };
-    let run_task = cx.update(|cx| tool.clone().run(input, event_stream, cx));
+    let run_task = cx.update(|cx| {
+        tool.clone()
+            .run(ToolInput::resolved(input), event_stream, cx)
+    });
 
     cx.background_executor.allow_parking();
     let run_result = cx.foreground_executor.block_test(run_task);

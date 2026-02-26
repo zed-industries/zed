@@ -370,6 +370,7 @@ pub fn into_anthropic_count_tokens_request(
                 name: tool.name,
                 description: tool.description,
                 input_schema: tool.input_schema,
+                eager_input_streaming: tool.use_input_streaming,
             })
             .collect(),
         tool_choice: request.tool_choice.map(|choice| match choice {
@@ -713,6 +714,7 @@ pub fn into_anthropic(
                 name: tool.name,
                 description: tool.description,
                 input_schema: tool.input_schema,
+                eager_input_streaming: tool.use_input_streaming,
             })
             .collect(),
         tool_choice: request.tool_choice.map(|choice| match choice {

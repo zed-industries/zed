@@ -39,6 +39,7 @@ use zeta_prompt::ZetaFormat;
 
 use reqwest_client::ReqwestClient;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use std::env;
 use std::fmt::Display;
 use std::fs::{File, OpenOptions};
 use std::hash::{Hash, Hasher};
@@ -294,6 +295,9 @@ struct EvalArgs {
     /// Path to write summary scores as JSON
     #[clap(long)]
     summary_json: Option<PathBuf>,
+    /// Print all individual example lines (default: up to 20)
+    #[clap(long)]
+    verbose: bool,
 }
 
 #[derive(Clone, Copy, Default, Debug, PartialEq, Eq, Hash)]
@@ -684,21 +688,6 @@ async fn load_examples(
     } else {
         let max_rows_per_timestamp = remaining_limit_for_snowflake.unwrap_or(5000);
 
-        if !captured_after_timestamps.is_empty() {
-            captured_after_timestamps.sort();
-
-            let mut captured_examples = pull_examples::fetch_captured_examples_after(
-                http_client.clone(),
-                &captured_after_timestamps,
-                max_rows_per_timestamp,
-                remaining_offset,
-                background_executor.clone(),
-                Some(MIN_CAPTURE_VERSION),
-            )
-            .await?;
-            examples.append(&mut captured_examples);
-        }
-
         if !rejected_after_timestamps.is_empty() {
             rejected_after_timestamps.sort();
 
@@ -912,8 +901,18 @@ fn main() {
         }
 
         Command::Synthesize(synth_args) => {
-            let Some(output_dir) = args.output else {
-                panic!("output dir is required");
+            let output_dir = if let Some(output_dir) = args.output {
+                output_dir
+            } else {
+                let default_output_dir = env::current_dir()
+                    .unwrap()
+                    .join("crates/edit_prediction_cli/evals-generated");
+                if default_output_dir.parent().unwrap().exists() {
+                    std::fs::create_dir(&default_output_dir).ok();
+                    default_output_dir
+                } else {
+                    panic!("output dir is required");
+                }
             };
             let config = SynthesizeConfig {
                 repo_urls: synth_args.repos.clone(),
@@ -1253,7 +1252,7 @@ fn main() {
                 match &command {
                     Command::Eval(args) => {
                         let examples = finished_examples.lock().unwrap();
-                        score::print_report(&examples);
+                        score::print_report(&examples, args.verbose);
                         if let Some(summary_path) = &args.summary_json {
                             score::write_summary_json(&examples, summary_path)?;
                         }

@@ -60,7 +60,7 @@ use settings::WorktreeId;
 use smol::future::yield_now;
 use std::{
     cmp::Ordering,
-    collections::{BTreeSet, HashSet, VecDeque},
+    collections::{BTreeSet, HashSet, VecDeque, hash_map::Entry},
     future::Future,
     mem,
     ops::Range,
@@ -296,6 +296,19 @@ enum GraphCommitHandlerState {
     Closed,
 }
 
+pub struct InitialGitGraphData {
+    fetch_task: Task<()>,
+    pub error: Option<SharedString>,
+    pub commit_data: Vec<Arc<InitialGraphCommitData>>,
+    pub commit_oid_to_index: HashMap<Oid, usize>,
+}
+
+pub struct GraphDataResponse<'a> {
+    pub commits: &'a [Arc<InitialGraphCommitData>],
+    pub is_loading: bool,
+    pub error: Option<SharedString>,
+}
+
 pub struct Repository {
     this: WeakEntity<Self>,
     snapshot: RepositorySnapshot,
@@ -311,13 +324,7 @@ pub struct Repository {
     askpass_delegates: Arc<Mutex<HashMap<u64, AskPassDelegate>>>,
     latest_askpass_id: u64,
     repository_state: Shared<Task<Result<RepositoryState, String>>>,
-    pub initial_graph_data: HashMap<
-        (LogOrder, LogSource),
-        (
-            Task<Result<(), SharedString>>,
-            Vec<Arc<InitialGraphCommitData>>,
-        ),
-    >,
+    initial_graph_data: HashMap<(LogSource, LogOrder), InitialGitGraphData>,
     graph_commit_data_handler: GraphCommitHandlerState,
     commit_data: HashMap<Oid, CommitDataState>,
 }
@@ -391,13 +398,20 @@ pub enum RepositoryState {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub enum GitGraphEvent {
+    CountUpdated(usize),
+    FullyLoaded,
+    LoadingError,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RepositoryEvent {
     StatusesChanged,
     MergeHeadsChanged,
     BranchChanged,
     StashEntriesChanged,
     PendingOpsChanged { pending_ops: SumTree<PendingOps> },
-    GitGraphCountUpdated((LogOrder, LogSource), usize),
+    GraphEvent((LogSource, LogOrder), GitGraphEvent),
 }
 
 #[derive(Clone, Debug)]
@@ -529,6 +543,7 @@ impl GitStore {
         client.add_entity_request_handler(Self::handle_askpass);
         client.add_entity_request_handler(Self::handle_check_for_pushed_commits);
         client.add_entity_request_handler(Self::handle_git_diff);
+        client.add_entity_request_handler(Self::handle_git_diff_stat);
         client.add_entity_request_handler(Self::handle_tree_diff);
         client.add_entity_request_handler(Self::handle_get_blob_content);
         client.add_entity_request_handler(Self::handle_open_unstaged_diff);
@@ -2684,6 +2699,45 @@ impl GitStore {
         Ok(proto::GitDiffResponse { diff })
     }
 
+    async fn handle_git_diff_stat(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::GitDiffStat>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::GitDiffStatResponse> {
+        let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
+        let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
+        let diff_type = match envelope.payload.diff_type() {
+            proto::git_diff_stat::DiffType::HeadToIndex => DiffType::HeadToIndex,
+            proto::git_diff_stat::DiffType::HeadToWorktree => DiffType::HeadToWorktree,
+            proto::git_diff_stat::DiffType::MergeBase => {
+                let base_ref = envelope
+                    .payload
+                    .merge_base_ref
+                    .ok_or_else(|| anyhow!("merge_base_ref is required for MergeBase diff type"))?;
+                DiffType::MergeBase {
+                    base_ref: base_ref.into(),
+                }
+            }
+        };
+
+        let stats = repository_handle
+            .update(&mut cx, |repository_handle, cx| {
+                repository_handle.diff_stat(diff_type, cx)
+            })
+            .await??;
+
+        let entries = stats
+            .into_iter()
+            .map(|(path, stat)| proto::GitDiffStatEntry {
+                path: path.to_proto(),
+                added: stat.added,
+                deleted: stat.deleted,
+            })
+            .collect();
+
+        Ok(proto::GitDiffStatResponse { entries })
+    }
+
     async fn handle_tree_diff(
         this: Entity<Self>,
         request: TypedEnvelope<proto::GetTreeDiff>,
@@ -4364,47 +4418,82 @@ impl Repository {
         })
     }
 
+    pub fn get_graph_data(
+        &self,
+        log_source: LogSource,
+        log_order: LogOrder,
+    ) -> Option<&InitialGitGraphData> {
+        self.initial_graph_data.get(&(log_source, log_order))
+    }
+
     pub fn graph_data(
         &mut self,
         log_source: LogSource,
         log_order: LogOrder,
         range: Range<usize>,
         cx: &mut Context<Self>,
-    ) -> (&[Arc<InitialGraphCommitData>], bool) {
-        let (loading_task, initial_commit_data) = self
+    ) -> GraphDataResponse<'_> {
+        let initial_commit_data = self
             .initial_graph_data
-            .entry((log_order, log_source.clone()))
+            .entry((log_source.clone(), log_order))
             .or_insert_with(|| {
                 let state = self.repository_state.clone();
                 let log_source = log_source.clone();
-                (
-                    cx.spawn(async move |repository, cx| {
-                        let state = state.await;
-                        match state {
-                            Ok(RepositoryState::Local(LocalRepositoryState {
-                                backend, ..
-                            })) => {
-                                Self::local_git_graph_data(
-                                    repository, backend, log_source, log_order, cx,
-                                )
-                                .await
-                            }
-                            Ok(RepositoryState::Remote(_)) => {
-                                Err("Git graph is not supported for collab yet".into())
-                            }
-                            Err(e) => Err(SharedString::from(e)),
+
+                let fetch_task = cx.spawn(async move |repository, cx| {
+                    let state = state.await;
+                    let result = match state {
+                        Ok(RepositoryState::Local(LocalRepositoryState { backend, .. })) => {
+                            Self::local_git_graph_data(
+                                repository.clone(),
+                                backend,
+                                log_source.clone(),
+                                log_order,
+                                cx,
+                            )
+                            .await
                         }
-                    }),
-                    vec![],
-                )
+                        Ok(RepositoryState::Remote(_)) => {
+                            Err("Git graph is not supported for collab yet".into())
+                        }
+                        Err(e) => Err(SharedString::from(e)),
+                    };
+
+                    if let Err(fetch_task_error) = result {
+                        repository
+                            .update(cx, |repository, _| {
+                                if let Some(data) = repository
+                                    .initial_graph_data
+                                    .get_mut(&(log_source, log_order))
+                                {
+                                    data.error = Some(fetch_task_error);
+                                } else {
+                                    debug_panic!(
+                                        "This task would be dropped if this entry doesn't exist"
+                                    );
+                                }
+                            })
+                            .ok();
+                    }
+                });
+
+                InitialGitGraphData {
+                    fetch_task,
+                    error: None,
+                    commit_data: Vec::new(),
+                    commit_oid_to_index: HashMap::default(),
+                }
             });
 
-        let max_start = initial_commit_data.len().saturating_sub(1);
-        let max_end = initial_commit_data.len();
-        (
-            &initial_commit_data[range.start.min(max_start)..range.end.min(max_end)],
-            !loading_task.is_ready(),
-        )
+        let max_start = initial_commit_data.commit_data.len().saturating_sub(1);
+        let max_end = initial_commit_data.commit_data.len();
+
+        GraphDataResponse {
+            commits: &initial_commit_data.commit_data
+                [range.start.min(max_start)..range.end.min(max_end)],
+            is_loading: !initial_commit_data.fetch_task.is_ready(),
+            error: initial_commit_data.error.clone(),
+        }
     }
 
     async fn local_git_graph_data(
@@ -4427,32 +4516,38 @@ impl Repository {
             }
         });
 
-        let graph_data_key = (log_order, log_source.clone());
+        let graph_data_key = (log_source, log_order);
 
         while let Ok(initial_graph_commit_data) = request_rx.recv().await {
             this.update(cx, |repository, cx| {
                 let graph_data = repository
                     .initial_graph_data
-                    .get_mut(&graph_data_key)
-                    .map(|(_, graph_data)| graph_data);
-                debug_assert!(
-                    graph_data.is_some(),
-                    "This task should be dropped if data doesn't exist"
-                );
+                    .entry(graph_data_key.clone())
+                    .and_modify(|graph_data| {
+                        for commit_data in initial_graph_commit_data {
+                            graph_data
+                                .commit_oid_to_index
+                                .insert(commit_data.sha, graph_data.commit_data.len());
+                            graph_data.commit_data.push(commit_data);
 
-                if let Some(graph_data) = graph_data {
-                    graph_data.extend(initial_graph_commit_data);
-                    cx.emit(RepositoryEvent::GitGraphCountUpdated(
-                        graph_data_key.clone(),
-                        graph_data.len(),
-                    ));
+                            cx.emit(RepositoryEvent::GraphEvent(
+                                graph_data_key.clone(),
+                                GitGraphEvent::CountUpdated(graph_data.commit_data.len()),
+                            ));
+                        }
+                    });
+
+                match &graph_data {
+                    Entry::Occupied(_) => {}
+                    Entry::Vacant(_) => {
+                        debug_panic!("This task should be dropped if data doesn't exist");
+                    }
                 }
             })
             .ok();
         }
 
         task.await?;
-
         Ok(())
     }
 
@@ -5685,6 +5780,63 @@ impl Repository {
                         .await?;
 
                     Ok(response.diff)
+                }
+            }
+        })
+    }
+
+    /// Fetches per-line diff statistics (additions/deletions) via `git diff --numstat`.
+    pub fn diff_stat(
+        &mut self,
+        diff_type: DiffType,
+        _cx: &App,
+    ) -> oneshot::Receiver<
+        Result<collections::HashMap<git::repository::RepoPath, git::status::DiffStat>>,
+    > {
+        let id = self.id;
+        self.send_job(None, move |repo, _cx| async move {
+            match repo {
+                RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
+                    backend.diff_stat(diff_type).await
+                }
+                RepositoryState::Remote(RemoteRepositoryState { project_id, client }) => {
+                    let (proto_diff_type, merge_base_ref) = match &diff_type {
+                        DiffType::HeadToIndex => {
+                            (proto::git_diff_stat::DiffType::HeadToIndex.into(), None)
+                        }
+                        DiffType::HeadToWorktree => {
+                            (proto::git_diff_stat::DiffType::HeadToWorktree.into(), None)
+                        }
+                        DiffType::MergeBase { base_ref } => (
+                            proto::git_diff_stat::DiffType::MergeBase.into(),
+                            Some(base_ref.to_string()),
+                        ),
+                    };
+                    let response = client
+                        .request(proto::GitDiffStat {
+                            project_id: project_id.0,
+                            repository_id: id.to_proto(),
+                            diff_type: proto_diff_type,
+                            merge_base_ref,
+                        })
+                        .await?;
+
+                    let stats = response
+                        .entries
+                        .into_iter()
+                        .filter_map(|entry| {
+                            let path = RepoPath::from_proto(&entry.path).log_err()?;
+                            Some((
+                                path,
+                                git::status::DiffStat {
+                                    added: entry.added,
+                                    deleted: entry.deleted,
+                                },
+                            ))
+                        })
+                        .collect();
+
+                    Ok(stats)
                 }
             }
         })
