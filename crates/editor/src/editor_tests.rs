@@ -26344,6 +26344,357 @@ async fn test_hide_mouse_context_menu_on_modal_opened(cx: &mut TestAppContext) {
     });
 }
 
+#[gpui::test]
+async fn test_run_selection_unix_command_actions_open_modal(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let fs = FakeFs::new(cx.executor());
+    let project = Project::test(fs, [], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    let buffer = cx.update(|cx| MultiBuffer::build_simple("hello world", cx));
+    let cx = &mut VisualTestContext::from_window(*window, cx);
+    let editor = cx.new_window_entity(|window, cx| {
+        Editor::new(
+            EditorMode::full(),
+            buffer,
+            Some(project.clone()),
+            window,
+            cx,
+        )
+    });
+    workspace.update_in(cx, |workspace, window, cx| {
+        workspace.add_item_to_active_pane(Box::new(editor.clone()), None, true, window, cx);
+    });
+
+    let assert_modal_visible = |workspace: &Entity<workspace::Workspace>, cx: &VisualTestContext| {
+        workspace.read_with(cx, |workspace, cx| {
+            assert!(
+                workspace
+                    .active_modal::<crate::unix_command::UnixCommandModal>(cx)
+                    .is_some(),
+                "unix command modal should be visible",
+            );
+        });
+    };
+
+    editor.update_in(cx, |editor, window, cx| {
+        editor.run_selection_command_copy_output(&RunSelectionCommandCopyOutput, window, cx);
+    });
+    assert_modal_visible(&workspace, cx);
+    workspace.update_in(cx, |workspace, window, cx| {
+        assert!(workspace.hide_modal(window, cx));
+    });
+
+    editor.update_in(cx, |editor, window, cx| {
+        editor.run_selection_command_new_document(&RunSelectionCommandNewDocument, window, cx);
+    });
+    assert_modal_visible(&workspace, cx);
+    workspace.update_in(cx, |workspace, window, cx| {
+        assert!(workspace.hide_modal(window, cx));
+    });
+
+    editor.update_in(cx, |editor, window, cx| {
+        editor
+            .run_selection_command_replace_selection(&RunSelectionCommandReplaceSelection, window, cx);
+    });
+    assert_modal_visible(&workspace, cx);
+}
+
+#[gpui::test]
+async fn test_unix_command_confirm_input_does_not_panic(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let fs = FakeFs::new(cx.executor());
+    let project = Project::test(fs, [], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    let buffer = cx.update(|cx| MultiBuffer::build_simple("hello world", cx));
+    let cx = &mut VisualTestContext::from_window(*window, cx);
+    let editor = cx.new_window_entity(|window, cx| {
+        Editor::new(
+            EditorMode::full(),
+            buffer,
+            Some(project.clone()),
+            window,
+            cx,
+        )
+    });
+    workspace.update_in(cx, |workspace, window, cx| {
+        workspace.add_item_to_active_pane(Box::new(editor.clone()), None, true, window, cx);
+    });
+
+    editor.update_in(cx, |editor, window, cx| {
+        editor.run_selection_command_copy_output(&RunSelectionCommandCopyOutput, window, cx);
+    });
+
+    workspace.read_with(cx, |workspace, cx| {
+        assert!(
+            workspace
+                .active_modal::<crate::unix_command::UnixCommandModal>(cx)
+                .is_some(),
+            "unix command modal should be visible",
+        );
+    });
+
+    cx.dispatch_action(picker::ConfirmInput { secondary: false });
+
+    workspace.read_with(cx, |workspace, cx| {
+        assert!(
+            workspace
+                .active_modal::<crate::unix_command::UnixCommandModal>(cx)
+                .is_some(),
+            "modal should remain open for empty command",
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_unix_command_stop_requests_cancellation_for_running_modal(
+    cx: &mut TestAppContext,
+) {
+    init_test(cx, |_| {});
+
+    let fs = FakeFs::new(cx.executor());
+    let project = Project::test(fs, [], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    let buffer = cx.update(|cx| MultiBuffer::build_simple("hello world", cx));
+    let cx = &mut VisualTestContext::from_window(*window, cx);
+    let editor = cx.new_window_entity(|window, cx| {
+        Editor::new(
+            EditorMode::full(),
+            buffer,
+            Some(project.clone()),
+            window,
+            cx,
+        )
+    });
+    workspace.update_in(cx, |workspace, window, cx| {
+        workspace.add_item_to_active_pane(Box::new(editor.clone()), None, true, window, cx);
+    });
+
+    editor.update_in(cx, |editor, window, cx| {
+        editor.run_selection_command_copy_output(&RunSelectionCommandCopyOutput, window, cx);
+    });
+
+    let modal = workspace
+        .read_with(cx, |workspace, cx| {
+            workspace.active_modal::<crate::unix_command::UnixCommandModal>(cx)
+        })
+        .expect("unix command modal should be visible");
+
+    let cancel_requested = modal.update(cx, |modal, cx| modal.seed_running_state_for_test(cx));
+
+    modal.read_with(cx, |modal, cx| {
+        assert!(modal.is_running_for_test(cx));
+    });
+
+    modal.update(cx, |modal, cx| {
+        modal.stop_for_test(cx);
+    });
+
+    assert!(cancel_requested.load(std::sync::atomic::Ordering::Relaxed));
+}
+
+#[gpui::test]
+async fn test_unix_command_modal_running_state_is_visible(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let fs = FakeFs::new(cx.executor());
+    let project = Project::test(fs, [], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    let buffer = cx.update(|cx| MultiBuffer::build_simple("hello world", cx));
+    let cx = &mut VisualTestContext::from_window(*window, cx);
+    let editor = cx.new_window_entity(|window, cx| {
+        Editor::new(
+            EditorMode::full(),
+            buffer,
+            Some(project.clone()),
+            window,
+            cx,
+        )
+    });
+    workspace.update_in(cx, |workspace, window, cx| {
+        workspace.add_item_to_active_pane(Box::new(editor.clone()), None, true, window, cx);
+    });
+
+    editor.update_in(cx, |editor, window, cx| {
+        editor.run_selection_command_copy_output(&RunSelectionCommandCopyOutput, window, cx);
+    });
+
+    let modal = workspace
+        .read_with(cx, |workspace, cx| {
+            workspace.active_modal::<crate::unix_command::UnixCommandModal>(cx)
+        })
+        .expect("unix command modal should be visible");
+
+    modal.update(cx, |modal, cx| {
+        modal.seed_running_state_for_test(cx);
+    });
+
+    modal.read_with(cx, |modal, cx| {
+        assert!(modal.is_running_for_test(cx));
+    });
+}
+
+#[gpui::test]
+async fn test_unix_command_hide_can_dismiss_while_running(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let fs = FakeFs::new(cx.executor());
+    let project = Project::test(fs, [], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    let buffer = cx.update(|cx| MultiBuffer::build_simple("hello world", cx));
+    let cx = &mut VisualTestContext::from_window(*window, cx);
+    let editor = cx.new_window_entity(|window, cx| {
+        Editor::new(
+            EditorMode::full(),
+            buffer,
+            Some(project.clone()),
+            window,
+            cx,
+        )
+    });
+    workspace.update_in(cx, |workspace, window, cx| {
+        workspace.add_item_to_active_pane(Box::new(editor.clone()), None, true, window, cx);
+    });
+
+    editor.update_in(cx, |editor, window, cx| {
+        editor.run_selection_command_copy_output(&RunSelectionCommandCopyOutput, window, cx);
+    });
+
+    let modal = workspace
+        .read_with(cx, |workspace, cx| {
+            workspace.active_modal::<crate::unix_command::UnixCommandModal>(cx)
+        })
+        .expect("unix command modal should be visible");
+
+    modal.update(cx, |modal, cx| {
+        modal.seed_running_state_for_test(cx);
+    });
+
+    workspace.update_in(cx, |workspace, window, cx| {
+        assert!(workspace.hide_modal(window, cx));
+    });
+
+    workspace.read_with(cx, |workspace, cx| {
+        assert!(
+            workspace
+                .active_modal::<crate::unix_command::UnixCommandModal>(cx)
+                .is_none(),
+            "modal should be dismissible while command runs",
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_unix_command_stop_without_running_is_noop(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let fs = FakeFs::new(cx.executor());
+    let project = Project::test(fs, [], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    let buffer = cx.update(|cx| MultiBuffer::build_simple("hello world", cx));
+    let cx = &mut VisualTestContext::from_window(*window, cx);
+    let editor = cx.new_window_entity(|window, cx| {
+        Editor::new(
+            EditorMode::full(),
+            buffer,
+            Some(project.clone()),
+            window,
+            cx,
+        )
+    });
+    workspace.update_in(cx, |workspace, window, cx| {
+        workspace.add_item_to_active_pane(Box::new(editor.clone()), None, true, window, cx);
+    });
+
+    editor.update_in(cx, |editor, window, cx| {
+        editor.run_selection_command_copy_output(&RunSelectionCommandCopyOutput, window, cx);
+    });
+
+    let modal = workspace
+        .read_with(cx, |workspace, cx| {
+            workspace.active_modal::<crate::unix_command::UnixCommandModal>(cx)
+        })
+        .expect("unix command modal should be visible");
+
+    modal.read_with(cx, |modal, cx| {
+        assert!(!modal.is_running_for_test(cx));
+    });
+
+    modal.update(cx, |modal, cx| {
+        modal.stop_for_test(cx);
+    });
+
+    modal.read_with(cx, |modal, cx| {
+        assert!(!modal.is_running_for_test(cx));
+    });
+}
+
+#[gpui::test]
+async fn test_unix_command_stop_is_idempotent(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let fs = FakeFs::new(cx.executor());
+    let project = Project::test(fs, [], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    let buffer = cx.update(|cx| MultiBuffer::build_simple("hello world", cx));
+    let cx = &mut VisualTestContext::from_window(*window, cx);
+    let editor = cx.new_window_entity(|window, cx| {
+        Editor::new(
+            EditorMode::full(),
+            buffer,
+            Some(project.clone()),
+            window,
+            cx,
+        )
+    });
+    workspace.update_in(cx, |workspace, window, cx| {
+        workspace.add_item_to_active_pane(Box::new(editor.clone()), None, true, window, cx);
+    });
+
+    editor.update_in(cx, |editor, window, cx| {
+        editor.run_selection_command_copy_output(&RunSelectionCommandCopyOutput, window, cx);
+    });
+
+    let modal = workspace
+        .read_with(cx, |workspace, cx| {
+            workspace.active_modal::<crate::unix_command::UnixCommandModal>(cx)
+        })
+        .expect("unix command modal should be visible");
+
+    let cancel_requested = modal.update(cx, |modal, cx| modal.seed_running_state_for_test(cx));
+
+    modal.update(cx, |modal, cx| {
+        modal.stop_for_test(cx);
+    });
+    modal.update(cx, |modal, cx| {
+        modal.stop_for_test(cx);
+    });
+
+    assert!(cancel_requested.load(std::sync::atomic::Ordering::Relaxed));
+}
+
 fn set_linked_edit_ranges(
     opening: (Point, Point),
     closing: (Point, Point),

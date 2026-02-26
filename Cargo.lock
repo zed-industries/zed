@@ -5415,6 +5415,7 @@ dependencies = [
  "multi_buffer",
  "ordered-float 2.10.1",
  "parking_lot",
+ "picker",
  "pretty_assertions",
  "project",
  "rand 0.9.2",

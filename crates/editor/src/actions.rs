@@ -701,6 +701,15 @@ actions!(
         ReverseLines,
         /// Reloads the file from disk.
         ReloadFile,
+        /// Runs a unix command on selected text and copies output to the clipboard.
+        #[action(name = "Filter Selection Through Command (Copy Output)")]
+        RunSelectionCommandCopyOutput,
+        /// Runs a unix command on selected text and opens output in a new document.
+        #[action(name = "Filter Selection Through Command (New Document)")]
+        RunSelectionCommandNewDocument,
+        /// Runs a unix command on selected text and replaces the selected text with output.
+        #[action(name = "Filter Selection Through Command (Replace Selection)")]
+        RunSelectionCommandReplaceSelection,
         /// Rewraps text to fit within the preferred line length.
         Rewrap,
         /// Rotates selections or lines backward.

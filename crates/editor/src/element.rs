@@ -639,6 +639,9 @@ impl EditorElement {
         register_action(editor, window, Editor::open_active_item_in_terminal);
         register_action(editor, window, Editor::reload_file);
         register_action(editor, window, Editor::spawn_nearest_task);
+        register_action(editor, window, Editor::run_selection_command_copy_output);
+        register_action(editor, window, Editor::run_selection_command_new_document);
+        register_action(editor, window, Editor::run_selection_command_replace_selection);
         register_action(editor, window, Editor::insert_uuid_v4);
         register_action(editor, window, Editor::insert_uuid_v7);
         register_action(editor, window, Editor::open_selections_in_multibuffer);

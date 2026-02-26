@@ -50,6 +50,7 @@ mod edit_prediction_tests;
 #[cfg(test)]
 mod editor_tests;
 mod signature_help;
+mod unix_command;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test;
 
@@ -108,6 +109,7 @@ use editor_settings::{GoToDefinitionFallback, Minimap as MinimapSettings};
 use element::{AcceptEditPredictionBinding, LineWithInvisibles, PositionMap, layout_line};
 use futures::{
     FutureExt,
+    channel::oneshot,
     future::{self, Shared, join},
 };
 use fuzzy::{StringMatch, StringMatchCandidate};
@@ -184,6 +186,7 @@ use settings::{
     update_settings_file,
 };
 use smallvec::{SmallVec, smallvec};
+use smol::io::{AsyncReadExt, AsyncWriteExt};
 use snippet::Snippet;
 use std::{
     any::{Any, TypeId},
@@ -200,7 +203,7 @@ use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
-use task::{ResolvedTask, RunnableTag, TaskTemplate, TaskVariables};
+use task::{ResolvedTask, RunnableTag, TaskContext, TaskTemplate, TaskVariables};
 use text::{BufferId, FromAnchor, OffsetUtf16, Rope, ToOffset as _, ToPoint as _};
 use theme::{
     AccentColors, ActiveTheme, GlobalTheme, PlayerColor, StatusColors, SyntaxTheme, Theme,
@@ -9147,6 +9150,204 @@ impl Editor {
                 task_store.task_context_for_location(captured_task_variables, location, cx)
             })
         })
+    }
+
+    pub fn run_selection_command_copy_output(
+        &mut self,
+        _: &RunSelectionCommandCopyOutput,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.open_unix_command_modal(unix_command::UnixCommandOutputMode::CopyOutput, window, cx);
+    }
+
+    pub fn run_selection_command_new_document(
+        &mut self,
+        _: &RunSelectionCommandNewDocument,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.open_unix_command_modal(unix_command::UnixCommandOutputMode::NewDocument, window, cx);
+    }
+
+    pub fn run_selection_command_replace_selection(
+        &mut self,
+        _: &RunSelectionCommandReplaceSelection,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.open_unix_command_modal(
+            unix_command::UnixCommandOutputMode::ReplaceSelection,
+            window,
+            cx,
+        );
+    }
+
+    fn open_unix_command_modal(&mut self, mode: unix_command::UnixCommandOutputMode, window: &mut Window, cx: &mut Context<Self>) {
+        let Some((workspace, _)) = self.workspace.clone() else {
+            return;
+        };
+        let editor = cx.entity().downgrade();
+        let _ = workspace.update(cx, |workspace, cx| {
+            workspace.toggle_modal(window, cx, |window, cx| {
+                unix_command::UnixCommandModal::new(editor.clone(), mode, window, cx)
+            });
+        });
+    }
+
+    pub(crate) fn execute_selection_unix_command(
+        &mut self,
+        command: String,
+        mode: unix_command::UnixCommandOutputMode,
+        timeout: Duration,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<unix_command::UnixCommandExecution> {
+        let Some((workspace, _)) = self.workspace.clone() else {
+            return None;
+        };
+        let Some(project) = self.project.clone() else {
+            return None;
+        };
+
+        let command = command.trim().to_string();
+        if command.is_empty() {
+            return None;
+        }
+
+        let task_context = self.task_context(window, cx);
+        let Some((input_text, selection_range)) = self.unix_command_input(window, cx) else {
+            return None;
+        };
+
+        let cancel_requested = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let command_cancel_requested = cancel_requested.clone();
+        let (completion_tx, completion_rx) = oneshot::channel::<bool>();
+
+        cx.spawn_in(window, async move |editor, cx| {
+            let Some(task_context) = task_context.await else {
+                let _ = completion_tx.send(false);
+                return;
+            };
+
+            let process_task =
+                project.update(cx, |project, cx| project.exec_in_shell_for_pipe(command.clone(), cx));
+
+            let output = run_piped_unix_command(
+                process_task,
+                input_text,
+                task_context,
+                timeout,
+                command_cancel_requested,
+            )
+            .await;
+
+            let output = match output {
+                Ok(output) => output,
+                Err(error) => {
+                    workspace
+                        .update_in(cx, |workspace, _, cx| {
+                            struct UnixCommandFailed;
+
+                            let message = if error.to_string().contains("command canceled") {
+                                "Command stopped".to_string()
+                            } else {
+                                format!("Command failed: {error}")
+                            };
+
+                            workspace.show_toast(
+                                Toast::new(
+                                    NotificationId::unique::<UnixCommandFailed>(),
+                                    message,
+                                ),
+                                cx,
+                            )
+                        })
+                        .ok();
+                    let _ = completion_tx.send(false);
+                    return;
+                }
+            };
+
+            match mode {
+                unix_command::UnixCommandOutputMode::CopyOutput => {
+                    editor
+                        .update(cx, |_, cx| {
+                            cx.write_to_clipboard(ClipboardItem::new_string(output));
+                        })
+                        .ok();
+                }
+                unix_command::UnixCommandOutputMode::NewDocument => {
+                    let new_editor = workspace
+                        .update_in(cx, |workspace, window, cx| {
+                            Editor::new_in_workspace(workspace, window, cx)
+                        })
+                        .ok();
+                    let Some(new_editor) = new_editor else {
+                        let _ = completion_tx.send(false);
+                        return;
+                    };
+                    let new_editor = match new_editor.await {
+                        Ok(editor) => editor,
+                        Err(_) => {
+                            let _ = completion_tx.send(false);
+                            return;
+                        }
+                    };
+
+                    new_editor
+                        .update_in(cx, |editor, window, cx| {
+                            editor.set_text(output, window, cx);
+                        })
+                        .ok();
+                }
+                unix_command::UnixCommandOutputMode::ReplaceSelection => {
+                    editor
+                        .update_in(cx, |editor, window, cx| {
+                            editor.transact(window, cx, |editor, _, cx| {
+                                editor.edit(vec![(selection_range, output)], cx);
+                            });
+                        })
+                        .ok();
+                }
+            }
+
+            let _ = completion_tx.send(true);
+        })
+        .detach();
+
+        Some(unix_command::UnixCommandExecution {
+            cancel_requested,
+            completion: completion_rx,
+        })
+    }
+
+    fn unix_command_input(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<(String, Range<Anchor>)> {
+        let selection = self.selections.newest_adjusted(&self.display_snapshot(cx));
+        let selection_range = selection.range();
+        let snapshot = self.snapshot(window, cx);
+        let buffer_snapshot = snapshot.display_snapshot.buffer_snapshot();
+
+        if selection_range.is_empty() {
+            let row = selection_range.start.row;
+            let line_range = Point::new(row, 0)
+                ..Point::new(row, buffer_snapshot.line_len(MultiBufferRow(row)));
+            let text = buffer_snapshot.text_for_range(line_range.clone()).collect();
+            let start = buffer_snapshot.anchor_after(line_range.start);
+            let end = buffer_snapshot.anchor_after(line_range.end);
+            Some((text, start..end))
+        } else {
+            let text = buffer_snapshot
+                .text_for_range(selection_range.clone())
+                .collect();
+            let start = buffer_snapshot.anchor_after(selection_range.start);
+            let end = buffer_snapshot.anchor_after(selection_range.end);
+            Some((text, start..end))
+        }
     }
 
     pub fn spawn_nearest_task(
@@ -26368,6 +26569,116 @@ fn char_len_with_expanded_tabs(offset: usize, text: &str, tab_size: NonZeroU32) 
 mod tests {
     use super::*;
 
+    #[cfg(not(windows))]
+    fn build_shell_command(command: &str) -> smol::process::Command {
+        let mut shell_command = smol::process::Command::new("sh");
+        shell_command.arg("-c").arg(command);
+        shell_command
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn test_run_piped_unix_command_returns_stdout() {
+        smol::block_on(async {
+            let output = run_piped_unix_command(
+                Task::ready(Ok(build_shell_command("cat"))),
+                "hello world".to_string(),
+                TaskContext::default(),
+                Duration::from_secs(1),
+                Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            )
+            .await
+            .unwrap();
+
+            assert_eq!(output, "hello world");
+        });
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn test_run_piped_unix_command_times_out() {
+        smol::block_on(async {
+            let started_at = Instant::now();
+            let result = run_piped_unix_command(
+                Task::ready(Ok(build_shell_command("sleep 1; cat"))),
+                "hello world".to_string(),
+                TaskContext::default(),
+                Duration::from_millis(50),
+                Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            )
+            .await;
+
+            assert!(result.is_err());
+            assert!(
+                result
+                    .as_ref()
+                    .err()
+                    .is_some_and(|error| error.to_string().contains("command timed out")),
+                "unexpected error: {result:?}"
+            );
+            assert!(started_at.elapsed() < Duration::from_secs(1));
+        });
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn test_run_piped_unix_command_can_be_canceled() {
+        smol::block_on(async {
+            let started_at = Instant::now();
+            let cancel_requested = Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let cancel_requested_for_task = cancel_requested.clone();
+
+            let result_task = smol::spawn(async move {
+                run_piped_unix_command(
+                    Task::ready(Ok(build_shell_command("sleep 1; cat"))),
+                    "hello world".to_string(),
+                    TaskContext::default(),
+                    Duration::from_secs(5),
+                    cancel_requested_for_task,
+                )
+                .await
+            });
+
+            smol::Timer::after(Duration::from_millis(25)).await;
+            cancel_requested.store(true, std::sync::atomic::Ordering::Relaxed);
+
+            let result = result_task.await;
+            assert!(result.is_err());
+            assert!(
+                result
+                    .as_ref()
+                    .err()
+                    .is_some_and(|error| error.to_string().contains("command canceled")),
+                "unexpected error: {result:?}"
+            );
+            assert!(started_at.elapsed() < Duration::from_secs(1));
+        });
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn test_run_piped_unix_command_non_zero_exit_uses_stderr() {
+        smol::block_on(async {
+            let result = run_piped_unix_command(
+                Task::ready(Ok(build_shell_command("echo error-msg >&2; exit 7"))),
+                "hello world".to_string(),
+                TaskContext::default(),
+                Duration::from_secs(1),
+                Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            )
+            .await;
+
+            assert!(result.is_err());
+            assert!(
+                result
+                    .as_ref()
+                    .err()
+                    .is_some_and(|error| error.to_string().contains("error-msg")),
+                "unexpected error: {result:?}"
+            );
+        });
+    }
+
     #[test]
     fn test_string_size_with_expanded_tabs() {
         let nz = |val| NonZeroU32::new(val).unwrap();
@@ -27886,6 +28197,79 @@ impl EditorSnapshot {
             })
             .collect()
     }
+}
+
+async fn run_piped_unix_command(
+    process_task: Task<Result<smol::process::Command>>,
+    input_text: String,
+    task_context: TaskContext,
+    timeout: Duration,
+    cancel_requested: Arc<std::sync::atomic::AtomicBool>,
+) -> anyhow::Result<String> {
+    let mut shell_command = process_task.await?;
+
+    if let Some(cwd) = task_context.cwd {
+        shell_command.current_dir(cwd);
+    }
+    if !task_context.project_env.is_empty() {
+        shell_command.envs(task_context.project_env);
+    }
+
+    let mut child = shell_command
+        .stdin(smol::process::Stdio::piped())
+        .stdout(smol::process::Stdio::piped())
+        .stderr(smol::process::Stdio::piped())
+        .spawn()?;
+
+    let mut stdin = child.stdin.take().context("failed to acquire stdin")?;
+    stdin.write_all(input_text.as_bytes()).await?;
+    stdin.flush().await?;
+    drop(stdin);
+
+    let mut stdout = child.stdout.take().context("failed to acquire stdout")?;
+    let mut stderr = child.stderr.take().context("failed to acquire stderr")?;
+
+    let stdout_task = smol::spawn(async move {
+        let mut stdout_bytes = Vec::new();
+        stdout.read_to_end(&mut stdout_bytes).await?;
+        anyhow::Ok(stdout_bytes)
+    });
+    let stderr_task = smol::spawn(async move {
+        let mut stderr_bytes = Vec::new();
+        stderr.read_to_end(&mut stderr_bytes).await?;
+        anyhow::Ok(stderr_bytes)
+    });
+
+    let started_at = Instant::now();
+    let exit_status = loop {
+        if let Some(exit_status) = child.try_status()? {
+            break exit_status;
+        }
+
+        if cancel_requested.load(std::sync::atomic::Ordering::Relaxed) {
+            child.kill().ok();
+            let _ = child.status().await;
+            anyhow::bail!("command canceled");
+        }
+
+        if started_at.elapsed() >= timeout {
+            child.kill().ok();
+            let _ = child.status().await;
+            anyhow::bail!("command timed out after {:.1}s", timeout.as_secs_f32());
+        }
+
+        smol::Timer::after(Duration::from_millis(10)).await;
+    };
+
+    let stdout = stdout_task.await?;
+    let stderr = stderr_task.await?;
+
+    anyhow::ensure!(
+        exit_status.success(),
+        String::from_utf8_lossy(&stderr).to_string()
+    );
+
+    Ok(String::from_utf8_lossy(&stdout).into_owned())
 }
 
 pub fn column_pixels(style: &EditorStyle, column: usize, window: &Window) -> Pixels {
