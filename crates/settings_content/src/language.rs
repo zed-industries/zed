@@ -902,10 +902,13 @@ pub enum FormatOnSave {
     /// Files should not be formatted on save.
     Off,
     /// Only lines modified since the last commit are formatted on save.
-    /// Requires source control. If no SCM diff is available, formatting is skipped.
+    /// Requires source control and LSP range formatting support.
+    /// If no git diff is available or if the LSP doesn't support
+    /// range formatting, formatting is skipped.
     Modifications,
     /// Only lines modified since the last commit are formatted on save.
-    /// If no SCM diff is available (e.g. untracked file), falls back to formatting the whole file.
+    /// Requires LSP range formatting support. If no git diff is
+    /// available (e.g., untracked file), falls back to formatting the whole file.
     ModificationsIfAvailable,
 }
 

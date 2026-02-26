@@ -2277,6 +2277,10 @@ impl LocalLspStore {
             range_formatting_provider,
             Some(OneOf::Left(true) | OneOf::Right(_))
         ) {
+            zlog::debug!(
+                logger => "Skipping range formatting - LSP {} does not support document_range_formatting_provider",
+                language_server.name()
+            );
             return Ok(Vec::new());
         }
 
