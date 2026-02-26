@@ -1876,7 +1876,7 @@ mod tests {
 
     use super::*;
     use editor::{
-        DisplayPoint, Editor, ExcerptRange, MultiBuffer, SearchSettings, SelectionEffects,
+        DisplayPoint, Editor, MultiBuffer, PathKey, SearchSettings, SelectionEffects,
         display_map::DisplayRow, test::editor_test_context::EditorTestContext,
     };
     use gpui::{Hsla, TestAppContext, UpdateGlobal, VisualTestContext};
@@ -1934,14 +1934,18 @@ mod tests {
             let mut buffer = MultiBuffer::new(language::Capability::ReadWrite);
 
             //[ExcerptRange::new(Point::new(0, 0)..Point::new(2, 0))]
-            buffer.push_excerpts(
+            buffer.set_excerpts_for_path(
+                PathKey::sorted(0),
                 buffer1,
-                [ExcerptRange::new(Point::new(0, 0)..Point::new(3, 0))],
+                [Point::new(0, 0)..Point::new(3, 0)],
+                0,
                 cx,
             );
-            buffer.push_excerpts(
+            buffer.set_excerpts_for_path(
+                PathKey::sorted(1),
                 buffer2,
-                [ExcerptRange::new(Point::new(0, 0)..Point::new(1, 0))],
+                [Point::new(0, 0)..Point::new(1, 0)],
+                0,
                 cx,
             );
 

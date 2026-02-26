@@ -4640,7 +4640,6 @@ dependencies = [
  "sysinfo 0.37.2",
  "task",
  "tasks_ui",
- "telemetry",
  "terminal_view",
  "text",
  "theme",
