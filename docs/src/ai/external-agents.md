@@ -41,19 +41,6 @@ If you'd like to bind this to a keyboard shortcut, you can do so by editing your
 The first time you create a Gemini CLI thread, Zed will install [@google/gemini-cli](https://github.com/google-gemini/gemini-cli).
 This installation is only available to Zed and is kept up to date as you use the agent.
 
-By default, Zed will use this managed version of Gemini CLI even if you have it installed globally.
-However, you can configure it to use a version in your `PATH` by adding this to your settings:
-
-```json [settings]
-{
-  "agent_servers": {
-    "gemini": {
-      "ignore_system_version": false
-    }
-  }
-}
-```
-
 #### Authentication
 
 After you have Gemini CLI running, you'll be prompted to choose your authentication method.
@@ -120,7 +107,8 @@ If you want to override the executable used by the adapter, you can set the `CLA
 ```json
 {
   "agent_servers": {
-    "claude": {
+    "claude-acp": {
+      "type": "registry",
       "env": {
         "CLAUDE_CODE_EXECUTABLE": "/path/to/alternate-claude-code-executable"
       }
