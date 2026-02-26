@@ -279,6 +279,7 @@ impl JsonSchema for LanguageModelProviderSetting {
                 {
                     "type": "string",
                     "enum": [
+                        "ai_gateway",
                         "amazon-bedrock",
                         "anthropic",
                         "copilot_chat",
