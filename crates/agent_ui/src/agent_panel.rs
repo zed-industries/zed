@@ -26,11 +26,10 @@ use zed_actions::agent::{OpenClaudeAgentOnboardingModal, ReauthenticateAgent, Re
 
 use crate::ui::{AcpOnboardingModal, ClaudeCodeOnboardingModal};
 use crate::{
-    AddContextServer, AgentDiffPane, CopyThreadToClipboard, Follow, InlineAssistant,
-    LoadThreadFromClipboard, NewTextThread, NewThread, OpenActiveThreadAsMarkdown, OpenAgentDiff,
-    OpenHistory, ResetTrialEndUpsell, ResetTrialUpsell, ToggleNavigationMenu, ToggleNewThreadMenu,
-    ToggleOptionsMenu,
-    acp::AcpServerView,
+    AddContextServer, AgentDiffPane, ConnectionView, CopyThreadToClipboard, Follow,
+    InlineAssistant, LoadThreadFromClipboard, NewTextThread, NewThread, OpenActiveThreadAsMarkdown,
+    OpenAgentDiff, OpenHistory, ResetTrialEndUpsell, ResetTrialUpsell, ToggleNavigationMenu,
+    ToggleNewThreadMenu, ToggleOptionsMenu,
     agent_configuration::{AgentConfiguration, AssistantConfigurationEvent},
     slash_command::SlashCommandCompletionProvider,
     text_thread_editor::{AgentPanelDelegate, TextThreadEditor, make_lsp_adapter_delegate},
@@ -40,11 +39,10 @@ use crate::{
     AgentInitialContent, ExternalAgent, NewExternalAgentThread, NewNativeAgentThreadFromSummary,
 };
 use crate::{
-    ExpandMessageEditor,
-    acp::{AcpThreadHistory, ThreadHistoryEvent},
+    ExpandMessageEditor, ThreadHistory, ThreadHistoryEvent,
     text_thread_history::{TextThreadHistory, TextThreadHistoryEvent},
 };
-use crate::{ManageProfiles, acp::thread_view::AcpThreadView};
+use crate::{ManageProfiles, connection_view::ThreadView};
 use agent_settings::AgentSettings;
 use ai_onboarding::AgentPanelOnboarding;
 use anyhow::{Result, anyhow};
@@ -341,7 +339,7 @@ enum HistoryKind {
 enum ActiveView {
     Uninitialized,
     AgentThread {
-        server_view: Entity<AcpServerView>,
+        server_view: Entity<ConnectionView>,
     },
     TextThread {
         text_thread_editor: Entity<TextThreadEditor>,
@@ -504,7 +502,7 @@ pub struct AgentPanel {
     project: Entity<Project>,
     fs: Arc<dyn Fs>,
     language_registry: Arc<LanguageRegistry>,
-    acp_history: Entity<AcpThreadHistory>,
+    acp_history: Entity<ThreadHistory>,
     text_thread_history: Entity<TextThreadHistory>,
     thread_store: Entity<ThreadStore>,
     text_thread_store: Entity<assistant_text_thread::TextThreadStore>,
@@ -679,7 +677,7 @@ impl AgentPanel {
             cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
 
         let thread_store = ThreadStore::global(cx);
-        let acp_history = cx.new(|cx| AcpThreadHistory::new(None, window, cx));
+        let acp_history = cx.new(|cx| ThreadHistory::new(None, window, cx));
         let text_thread_history =
             cx.new(|cx| TextThreadHistory::new(text_thread_store.clone(), window, cx));
         cx.subscribe_in(
@@ -863,7 +861,7 @@ impl AgentPanel {
         &self.thread_store
     }
 
-    pub fn history(&self) -> &Entity<AcpThreadHistory> {
+    pub fn history(&self) -> &Entity<ThreadHistory> {
         &self.acp_history
     }
 
@@ -903,7 +901,7 @@ impl AgentPanel {
             .unwrap_or(false)
     }
 
-    pub(crate) fn active_thread_view(&self) -> Option<&Entity<AcpServerView>> {
+    pub(crate) fn active_thread_view(&self) -> Option<&Entity<ConnectionView>> {
         match &self.active_view {
             ActiveView::AgentThread { server_view, .. } => Some(server_view),
             ActiveView::Uninitialized
@@ -1546,14 +1544,14 @@ impl AgentPanel {
         }
     }
 
-    pub fn as_active_server_view(&self) -> Option<&Entity<AcpServerView>> {
+    pub fn as_active_server_view(&self) -> Option<&Entity<ConnectionView>> {
         match &self.active_view {
             ActiveView::AgentThread { server_view } => Some(server_view),
             _ => None,
         }
     }
 
-    pub fn as_active_thread_view(&self, cx: &App) -> Option<Entity<AcpThreadView>> {
+    pub fn as_active_thread_view(&self, cx: &App) -> Option<Entity<ThreadView>> {
         let server_view = self.as_active_server_view()?;
         server_view.read(cx).active_thread().cloned()
     }
@@ -1855,7 +1853,7 @@ impl AgentPanel {
             .then(|| self.thread_store.clone());
 
         let server_view = cx.new(|cx| {
-            crate::acp::AcpServerView::new(
+            crate::ConnectionView::new(
                 server,
                 resume_thread,
                 initial_content,
@@ -2128,7 +2126,7 @@ impl AgentPanel {
             .into_any()
     }
 
-    fn handle_regenerate_thread_title(thread_view: Entity<AcpServerView>, cx: &mut App) {
+    fn handle_regenerate_thread_title(thread_view: Entity<ConnectionView>, cx: &mut App) {
         thread_view.update(cx, |thread_view, cx| {
             if let Some(thread) = thread_view.as_native_thread(cx) {
                 thread.update(cx, |thread, cx| {
@@ -3467,7 +3465,7 @@ impl AgentPanel {
     ///
     /// This is a test-only accessor that exposes the private `active_thread_view()`
     /// method for test assertions. Not compiled into production builds.
-    pub fn active_thread_view_for_tests(&self) -> Option<&Entity<AcpServerView>> {
+    pub fn active_thread_view_for_tests(&self) -> Option<&Entity<ConnectionView>> {
         self.active_thread_view()
     }
 }
@@ -3475,7 +3473,7 @@ impl AgentPanel {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::acp::thread_view::tests::{StubAgentServer, init_test};
+    use crate::connection_view::tests::{StubAgentServer, init_test};
     use assistant_text_thread::TextThreadStore;
     use feature_flags::FeatureFlagAppExt;
     use fs::FakeFs;
