@@ -6485,10 +6485,33 @@ impl ThreadView {
             })
             .collect();
 
+        let parent_thread = self.thread.read(cx);
+        let mut started_subagent_count = 0usize;
+        let mut turn_has_our_call = false;
+        for entry in parent_thread.entries().iter() {
+            match entry {
+                AgentThreadEntry::UserMessage(_) => {
+                    if turn_has_our_call {
+                        break;
+                    }
+                    started_subagent_count = 0;
+                    turn_has_our_call = false;
+                }
+                AgentThreadEntry::ToolCall(tc)
+                    if tc.is_subagent() && !matches!(tc.status, ToolCallStatus::Pending) =>
+                {
+                    started_subagent_count += 1;
+                    if tc.id == tool_call.id {
+                        turn_has_our_call = true;
+                    }
+                }
+                _ => {}
+            }
+        }
+
         div()
             .relative()
             .w_full()
-            .h_56()
             .border_t_1()
             .when(is_canceled_or_failed, |this| this.border_dashed())
             .border_color(self.tool_card_border_color(cx))
@@ -6501,7 +6524,9 @@ impl ThreadView {
                     .pb_1()
                     .children(rendered_entries),
             )
-            .child(overlay)
+            .when(started_subagent_count > 1, |this| {
+                this.h_56().child(overlay)
+            })
             .into_any_element()
     }
 
