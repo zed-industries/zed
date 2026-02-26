@@ -5580,7 +5580,11 @@ impl EditorElement {
                     continue;
                 }
                 let row_ix = display_row_range.start.0.saturating_sub(row_range.start.0);
-                if row_infos[row_ix as usize].diff_status.is_none() {
+                if row_infos
+                    .get(row_ix as usize)
+                    .and_then(|row_info| row_info.diff_status)
+                    .is_none()
+                {
                     continue;
                 }
                 if highlighted_rows
