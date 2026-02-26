@@ -1832,14 +1832,6 @@ impl AgentPanel {
                 window,
                 cx,
             ),
-            AgentType::Gemini => self.external_thread(
-                Some(crate::ExternalAgent::Gemini),
-                None,
-                None,
-                focus,
-                window,
-                cx,
-            ),
             AgentType::Custom { name } => self.external_thread(
                 Some(crate::ExternalAgent::Custom { name }),
                 None,
