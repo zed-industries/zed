@@ -658,6 +658,7 @@ pub(crate) enum BackgroundTag {
     Solid = 0,
     LinearGradient = 1,
     PatternSlash = 2,
+    Checkerboard = 3,
 }
 
 /// A color space for color interpolation.
@@ -711,6 +712,11 @@ impl std::fmt::Debug for Background {
                 "PatternSlash({:?}, {})",
                 self.solid, self.gradient_angle_or_pattern_height
             ),
+            BackgroundTag::Checkerboard => write!(
+                f,
+                "Checkerboard({:?}, {})",
+                self.solid, self.gradient_angle_or_pattern_height
+            ),
         }
     }
 }
@@ -739,6 +745,16 @@ pub fn pattern_slash(color: impl Into<Hsla>, width: f32, interval: f32) -> Backg
         tag: BackgroundTag::PatternSlash,
         solid: color.into(),
         gradient_angle_or_pattern_height: height,
+        ..Default::default()
+    }
+}
+
+/// Creates a checkerboard pattern background
+pub fn checkerboard(color: impl Into<Hsla>, size: f32) -> Background {
+    Background {
+        tag: BackgroundTag::Checkerboard,
+        solid: color.into(),
+        gradient_angle_or_pattern_height: size,
         ..Default::default()
     }
 }
@@ -829,6 +845,7 @@ impl Background {
             BackgroundTag::Solid => self.solid.is_transparent(),
             BackgroundTag::LinearGradient => self.colors.iter().all(|c| c.color.is_transparent()),
             BackgroundTag::PatternSlash => self.solid.is_transparent(),
+            BackgroundTag::Checkerboard => self.solid.is_transparent(),
         }
     }
 }
