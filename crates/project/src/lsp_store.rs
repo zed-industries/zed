@@ -11406,6 +11406,15 @@ impl LspStore {
 
                 let buffer_id = buffer.remote_id();
                 if local.registered_buffers.contains_key(&buffer_id) {
+                    let abs_path = file.abs_path(cx);
+                    let uri = match lsp::Uri::from_file_path(&abs_path) {
+                        Ok(uri) => uri,
+                        Err(()) => {
+                            log::error!("failed to convert path to URI: {:?}", abs_path);
+                            continue;
+                        }
+                    };
+
                     let versions = local
                         .buffer_snapshots
                         .entry(buffer_id)
@@ -11427,14 +11436,13 @@ impl LspStore {
                     let snapshot = versions.last().unwrap();
                     let version = snapshot.version;
                     let initial_snapshot = &snapshot.snapshot;
-                    let uri = lsp::Uri::from_file_path(file.abs_path(cx)).unwrap();
                     language_server.register_buffer(
                         uri,
                         adapter.language_id(&language.name()),
                         version,
                         initial_snapshot.text(),
                     );
-                    buffer_paths_registered.push((buffer_id, file.abs_path(cx)));
+                    buffer_paths_registered.push((buffer_id, abs_path));
                     local
                         .buffers_opened_in_servers
                         .entry(buffer_id)

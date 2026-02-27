@@ -229,6 +229,22 @@ pub struct IndentGuideSettings {
     pub background_coloring: settings::IndentGuideBackgroundColoring,
 }
 
+impl IndentGuideSettings {
+    /// Returns the clamped line width in pixels for an indent guide based on
+    /// whether it is active, or `None` when line coloring is disabled.
+    pub fn visible_line_width(&self, active: bool) -> Option<u32> {
+        if self.coloring == settings::IndentGuideColoring::Disabled {
+            return None;
+        }
+        let width = if active {
+            self.active_line_width
+        } else {
+            self.line_width
+        };
+        Some(width.clamp(1, 10))
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct LanguageTaskSettings {
     /// Extra task variables to set for a particular language.

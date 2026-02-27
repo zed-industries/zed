@@ -51,5 +51,6 @@
 (character_class
   [
     "^" @operator.regex
-    (class_range "-" @operator.regex)
+    (class_range
+      "-" @operator.regex)
   ])

@@ -1,5 +1,5 @@
 use crate::SendImmediately;
-use crate::acp::AcpThreadHistory;
+use crate::ThreadHistory;
 use crate::{
     ChatWithFollow,
     completion_provider::{
@@ -107,7 +107,7 @@ impl MessageEditor {
         workspace: WeakEntity<Workspace>,
         project: WeakEntity<Project>,
         thread_store: Option<Entity<ThreadStore>>,
-        history: WeakEntity<AcpThreadHistory>,
+        history: WeakEntity<ThreadHistory>,
         prompt_store: Option<Entity<PromptStore>>,
         prompt_capabilities: Rc<RefCell<acp::PromptCapabilities>>,
         available_commands: Rc<RefCell<Vec<acp::AvailableCommand>>>,
@@ -1494,11 +1494,11 @@ mod tests {
     use util::{path, paths::PathStyle, rel_path::rel_path};
     use workspace::{AppState, Item, MultiWorkspace};
 
-    use crate::acp::{
-        message_editor::{Mention, MessageEditor, parse_mention_links},
-        thread_view::tests::init_test,
-    };
     use crate::completion_provider::{PromptCompletionProviderDelegate, PromptContextType};
+    use crate::{
+        connection_view::tests::init_test,
+        message_editor::{Mention, MessageEditor, parse_mention_links},
+    };
 
     #[test]
     fn test_parse_mention_links() {
@@ -1605,8 +1605,8 @@ mod tests {
         let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
         let thread_store = None;
-        let history = cx
-            .update(|window, cx| cx.new(|cx| crate::acp::AcpThreadHistory::new(None, window, cx)));
+        let history =
+            cx.update(|window, cx| cx.new(|cx| crate::ThreadHistory::new(None, window, cx)));
 
         let message_editor = cx.update(|window, cx| {
             cx.new(|cx| {
@@ -1719,8 +1719,8 @@ mod tests {
         let (multi_workspace, cx) =
             cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
         let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
-        let history = cx
-            .update(|window, cx| cx.new(|cx| crate::acp::AcpThreadHistory::new(None, window, cx)));
+        let history =
+            cx.update(|window, cx| cx.new(|cx| crate::ThreadHistory::new(None, window, cx)));
         let workspace_handle = workspace.downgrade();
         let message_editor = workspace.update_in(cx, |_, window, cx| {
             cx.new(|cx| {
@@ -1875,8 +1875,8 @@ mod tests {
         let mut cx = VisualTestContext::from_window(window.into(), cx);
 
         let thread_store = None;
-        let history = cx
-            .update(|window, cx| cx.new(|cx| crate::acp::AcpThreadHistory::new(None, window, cx)));
+        let history =
+            cx.update(|window, cx| cx.new(|cx| crate::ThreadHistory::new(None, window, cx)));
         let prompt_capabilities = Rc::new(RefCell::new(acp::PromptCapabilities::default()));
         let available_commands = Rc::new(RefCell::new(vec![
             acp::AvailableCommand::new("quick-math", "2 + 2 = 4 - 1 = 3"),
@@ -2110,8 +2110,8 @@ mod tests {
         }
 
         let thread_store = cx.new(|cx| ThreadStore::new(cx));
-        let history = cx
-            .update(|window, cx| cx.new(|cx| crate::acp::AcpThreadHistory::new(None, window, cx)));
+        let history =
+            cx.update(|window, cx| cx.new(|cx| crate::ThreadHistory::new(None, window, cx)));
         let prompt_capabilities = Rc::new(RefCell::new(acp::PromptCapabilities::default()));
 
         let (message_editor, editor) = workspace.update_in(&mut cx, |workspace, window, cx| {
@@ -2606,8 +2606,8 @@ mod tests {
         let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
         let thread_store = Some(cx.new(|cx| ThreadStore::new(cx)));
-        let history = cx
-            .update(|window, cx| cx.new(|cx| crate::acp::AcpThreadHistory::new(None, window, cx)));
+        let history =
+            cx.update(|window, cx| cx.new(|cx| crate::ThreadHistory::new(None, window, cx)));
 
         let message_editor = cx.update(|window, cx| {
             cx.new(|cx| {
@@ -2707,8 +2707,8 @@ mod tests {
         let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
         let thread_store = Some(cx.new(|cx| ThreadStore::new(cx)));
-        let history = cx
-            .update(|window, cx| cx.new(|cx| crate::acp::AcpThreadHistory::new(None, window, cx)));
+        let history =
+            cx.update(|window, cx| cx.new(|cx| crate::ThreadHistory::new(None, window, cx)));
 
         // Create a thread metadata to insert as summary
         let thread_metadata = AgentSessionInfo {
@@ -2789,8 +2789,8 @@ mod tests {
         let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
         let thread_store = None;
-        let history = cx
-            .update(|window, cx| cx.new(|cx| crate::acp::AcpThreadHistory::new(None, window, cx)));
+        let history =
+            cx.update(|window, cx| cx.new(|cx| crate::ThreadHistory::new(None, window, cx)));
 
         let thread_metadata = AgentSessionInfo {
             session_id: acp::SessionId::new("thread-123"),
@@ -2849,8 +2849,8 @@ mod tests {
         let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
         let thread_store = None;
-        let history = cx
-            .update(|window, cx| cx.new(|cx| crate::acp::AcpThreadHistory::new(None, window, cx)));
+        let history =
+            cx.update(|window, cx| cx.new(|cx| crate::ThreadHistory::new(None, window, cx)));
 
         let message_editor = cx.update(|window, cx| {
             cx.new(|cx| {
@@ -2904,8 +2904,8 @@ mod tests {
         let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
         let thread_store = Some(cx.new(|cx| ThreadStore::new(cx)));
-        let history = cx
-            .update(|window, cx| cx.new(|cx| crate::acp::AcpThreadHistory::new(None, window, cx)));
+        let history =
+            cx.update(|window, cx| cx.new(|cx| crate::ThreadHistory::new(None, window, cx)));
 
         let message_editor = cx.update(|window, cx| {
             cx.new(|cx| {
@@ -2960,8 +2960,8 @@ mod tests {
         let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
         let thread_store = Some(cx.new(|cx| ThreadStore::new(cx)));
-        let history = cx
-            .update(|window, cx| cx.new(|cx| crate::acp::AcpThreadHistory::new(None, window, cx)));
+        let history =
+            cx.update(|window, cx| cx.new(|cx| crate::ThreadHistory::new(None, window, cx)));
 
         let message_editor = cx.update(|window, cx| {
             cx.new(|cx| {
@@ -3025,8 +3025,8 @@ mod tests {
         let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
         let thread_store = Some(cx.new(|cx| ThreadStore::new(cx)));
-        let history = cx
-            .update(|window, cx| cx.new(|cx| crate::acp::AcpThreadHistory::new(None, window, cx)));
+        let history =
+            cx.update(|window, cx| cx.new(|cx| crate::ThreadHistory::new(None, window, cx)));
 
         let (message_editor, editor) = workspace.update_in(cx, |workspace, window, cx| {
             let workspace_handle = cx.weak_entity();
@@ -3185,8 +3185,8 @@ mod tests {
         });
 
         let thread_store = Some(cx.new(|cx| ThreadStore::new(cx)));
-        let history = cx
-            .update(|window, cx| cx.new(|cx| crate::acp::AcpThreadHistory::new(None, window, cx)));
+        let history =
+            cx.update(|window, cx| cx.new(|cx| crate::ThreadHistory::new(None, window, cx)));
 
         // Create a new `MessageEditor`. The `EditorMode::full()` has to be used
         // to ensure we have a fixed viewport, so we can eventually actually
@@ -3306,8 +3306,8 @@ mod tests {
         let mut cx = VisualTestContext::from_window(window.into(), cx);
 
         let thread_store = cx.new(|cx| ThreadStore::new(cx));
-        let history = cx
-            .update(|window, cx| cx.new(|cx| crate::acp::AcpThreadHistory::new(None, window, cx)));
+        let history =
+            cx.update(|window, cx| cx.new(|cx| crate::ThreadHistory::new(None, window, cx)));
 
         let (message_editor, editor) = workspace.update_in(&mut cx, |workspace, window, cx| {
             let workspace_handle = cx.weak_entity();
@@ -3389,8 +3389,8 @@ mod tests {
         let mut cx = VisualTestContext::from_window(window.into(), cx);
 
         let thread_store = cx.new(|cx| ThreadStore::new(cx));
-        let history = cx
-            .update(|window, cx| cx.new(|cx| crate::acp::AcpThreadHistory::new(None, window, cx)));
+        let history =
+            cx.update(|window, cx| cx.new(|cx| crate::ThreadHistory::new(None, window, cx)));
 
         let (message_editor, editor) = workspace.update_in(&mut cx, |workspace, window, cx| {
             let workspace_handle = cx.weak_entity();

@@ -41,6 +41,7 @@ impl EditPredictionResult {
         buffer_snapshotted_at: Instant,
         response_received_at: Instant,
         inputs: ZetaPromptInput,
+        model_version: Option<String>,
         cx: &mut AsyncApp,
     ) -> Self {
         if edits.is_empty() {
@@ -79,6 +80,7 @@ impl EditPredictionResult {
                 buffer: edited_buffer.clone(),
                 buffer_snapshotted_at,
                 response_received_at,
+                model_version,
             }),
         }
     }
@@ -95,6 +97,7 @@ pub struct EditPrediction {
     pub buffer_snapshotted_at: Instant,
     pub response_received_at: Instant,
     pub inputs: zeta_prompt::ZetaPromptInput,
+    pub model_version: Option<String>,
 }
 
 impl EditPrediction {
@@ -150,6 +153,7 @@ mod tests {
             snapshot: cx.read(|cx| buffer.read(cx).snapshot()),
             buffer: buffer.clone(),
             edit_preview,
+            model_version: None,
             inputs: ZetaPromptInput {
                 events: vec![],
                 related_files: vec![],

@@ -290,6 +290,7 @@ impl JsonSchema for LanguageModelProviderSetting {
                         "openai",
                         "openrouter",
                         "vercel",
+                        "vercel_ai_gateway",
                         "x_ai",
                         "zed.dev"
                     ]
@@ -316,73 +317,21 @@ impl From<&str> for LanguageModelProviderSetting {
 
 #[with_fallible_options]
 #[derive(Default, PartialEq, Deserialize, Serialize, Clone, JsonSchema, MergeFrom, Debug)]
-pub struct AllAgentServersSettings {
-    pub gemini: Option<BuiltinAgentServerSettings>,
-    pub claude: Option<BuiltinAgentServerSettings>,
-    pub codex: Option<BuiltinAgentServerSettings>,
+#[serde(transparent)]
+pub struct AllAgentServersSettings(pub HashMap<String, CustomAgentServerSettings>);
 
-    /// Custom agent servers configured by the user
-    #[serde(flatten)]
-    pub custom: HashMap<String, CustomAgentServerSettings>,
+impl std::ops::Deref for AllAgentServersSettings {
+    type Target = HashMap<String, CustomAgentServerSettings>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
 }
 
-#[with_fallible_options]
-#[derive(Default, Deserialize, Serialize, Clone, JsonSchema, MergeFrom, Debug, PartialEq)]
-pub struct BuiltinAgentServerSettings {
-    /// Absolute path to a binary to be used when launching this agent.
-    ///
-    /// This can be used to run a specific binary without automatic downloads or searching `$PATH`.
-    #[serde(rename = "command")]
-    pub path: Option<PathBuf>,
-    /// If a binary is specified in `command`, it will be passed these arguments.
-    pub args: Option<Vec<String>>,
-    /// If a binary is specified in `command`, it will be passed these environment variables.
-    pub env: Option<HashMap<String, String>>,
-    /// Whether to skip searching `$PATH` for an agent server binary when
-    /// launching this agent.
-    ///
-    /// This has no effect if a `command` is specified. Otherwise, when this is
-    /// `false`, Zed will search `$PATH` for an agent server binary and, if one
-    /// is found, use it for threads with this agent. If no agent binary is
-    /// found on `$PATH`, Zed will automatically install and use its own binary.
-    /// When this is `true`, Zed will not search `$PATH`, and will always use
-    /// its own binary.
-    ///
-    /// Default: true
-    pub ignore_system_version: Option<bool>,
-    /// The default mode to use for this agent.
-    ///
-    /// Note: Not only all agents support modes.
-    ///
-    /// Default: None
-    pub default_mode: Option<String>,
-    /// The default model to use for this agent.
-    ///
-    /// This should be the model ID as reported by the agent.
-    ///
-    /// Default: None
-    pub default_model: Option<String>,
-    /// The favorite models for this agent.
-    ///
-    /// These are the model IDs as reported by the agent.
-    ///
-    /// Default: []
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub favorite_models: Vec<String>,
-    /// Default values for session config options.
-    ///
-    /// This is a map from config option ID to value ID.
-    ///
-    /// Default: {}
-    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
-    pub default_config_options: HashMap<String, String>,
-    /// Favorited values for session config options.
-    ///
-    /// This is a map from config option ID to a list of favorited value IDs.
-    ///
-    /// Default: {}
-    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
-    pub favorite_config_option_values: HashMap<String, Vec<String>>,
+impl std::ops::DerefMut for AllAgentServersSettings {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
 }
 
 #[with_fallible_options]
