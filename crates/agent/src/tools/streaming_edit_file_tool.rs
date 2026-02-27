@@ -4,7 +4,10 @@ use super::save_file_tool::SaveFileTool;
 use super::tool_edit_parser::{ToolEditEvent, ToolEditParser};
 use crate::{
     AgentTool, Thread, ToolCallEventStream, ToolInput,
-    edit_agent::streaming_fuzzy_matcher::StreamingFuzzyMatcher,
+    edit_agent::{
+        reindent::{Reindenter, compute_indent_delta},
+        streaming_fuzzy_matcher::StreamingFuzzyMatcher,
+    },
 };
 use acp_thread::Diff;
 use agent_client_protocol::{self as acp, ToolCallLocation, ToolCallUpdateFields};
@@ -19,13 +22,11 @@ use project::lsp_store::{FormatTrigger, LspFormatTarget};
 use project::{AgentLocation, Project, ProjectPath};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use std::cmp;
-use std::iter;
 use std::ops::Range;
 use std::path::PathBuf;
 use std::sync::Arc;
 use streaming_diff::{CharOperation, StreamingDiff};
-use text::{LineIndent, ToOffset as _};
+use text::ToOffset as _;
 use ui::SharedString;
 use util::rel_path::RelPath;
 use util::{Deferred, ResultExt};
@@ -445,114 +446,10 @@ impl EditPipeline {
     }
 }
 
-/// Synchronous re-indentation adapter. Buffers incomplete lines and applies
-/// an `IndentDelta` to each line's leading whitespace before emitting it.
-struct Reindenter {
-    delta: IndentDelta,
-    buffer: String,
-    in_leading_whitespace: bool,
-}
-
-impl Reindenter {
-    fn new(delta: IndentDelta) -> Self {
-        Self {
-            delta,
-            buffer: String::new(),
-            in_leading_whitespace: true,
-        }
-    }
-
-    /// Feed a chunk of new_text and return the re-indented portion that is
-    /// ready to emit. Incomplete trailing lines are buffered internally.
-    fn push(&mut self, chunk: &str) -> String {
-        self.buffer.push_str(chunk);
-        self.drain(false)
-    }
-
-    /// Flush any remaining buffered content (call when done=true).
-    fn finish(&mut self) -> String {
-        self.drain(true)
-    }
-
-    fn drain(&mut self, is_final: bool) -> String {
-        let mut indented = String::new();
-        let mut start_ix = 0;
-        let mut newlines = self.buffer.match_indices('\n');
-        loop {
-            let (line_end, is_pending_line) = match newlines.next() {
-                Some((ix, _)) => (ix, false),
-                None => (self.buffer.len(), true),
-            };
-            let line = &self.buffer[start_ix..line_end];
-
-            if self.in_leading_whitespace {
-                if let Some(non_ws_ix) = line.find(|c| self.delta.character() != c) {
-                    let new_indent_len =
-                        cmp::max(0, non_ws_ix as isize + self.delta.len()) as usize;
-                    indented.extend(iter::repeat(self.delta.character()).take(new_indent_len));
-                    indented.push_str(&line[non_ws_ix..]);
-                    self.in_leading_whitespace = false;
-                } else if is_pending_line && !is_final {
-                    break;
-                } else {
-                    indented.push_str(line);
-                }
-            } else {
-                indented.push_str(line);
-            }
-
-            if is_pending_line {
-                start_ix = line_end;
-                break;
-            } else {
-                self.in_leading_whitespace = true;
-                indented.push('\n');
-                start_ix = line_end + 1;
-            }
-        }
-        self.buffer.replace_range(..start_ix, "");
-        if is_final {
-            indented.push_str(&self.buffer);
-            self.buffer.clear();
-        }
-        indented
-    }
-}
-
-#[derive(Copy, Clone, Debug)]
-enum IndentDelta {
-    Spaces(isize),
-    Tabs(isize),
-}
-
-impl IndentDelta {
-    fn character(&self) -> char {
-        match self {
-            IndentDelta::Spaces(_) => ' ',
-            IndentDelta::Tabs(_) => '\t',
-        }
-    }
-
-    fn len(&self) -> isize {
-        match self {
-            IndentDelta::Spaces(n) => *n,
-            IndentDelta::Tabs(n) => *n,
-        }
-    }
-}
-
-fn compute_indent_delta(buffer_indent: LineIndent, query_indent: LineIndent) -> IndentDelta {
-    if buffer_indent.tabs > 0 {
-        IndentDelta::Tabs(buffer_indent.tabs as isize - query_indent.tabs as isize)
-    } else {
-        IndentDelta::Spaces(buffer_indent.spaces as isize - query_indent.spaces as isize)
-    }
-}
-
 /// Compute the `LineIndent` of the first line in a set of query lines.
-fn query_first_line_indent(query_lines: &[String]) -> LineIndent {
+fn query_first_line_indent(query_lines: &[String]) -> text::LineIndent {
     let first_line = query_lines.first().map(|s| s.as_str()).unwrap_or("");
-    LineIndent::from_iter(first_line.chars())
+    text::LineIndent::from_iter(first_line.chars())
 }
 
 impl EditSession {
