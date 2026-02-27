@@ -11,6 +11,7 @@ mod cherry_pick;
 mod compare_perf;
 mod danger;
 mod deploy_collab;
+mod deploy_docs;
 mod extension_bump;
 mod extension_tests;
 mod extension_workflow_rollout;
@@ -135,6 +136,7 @@ pub fn run_workflows(_: GenerateWorkflowArgs) -> Result<()> {
         WorkflowFile::zed(compare_perf::compare_perf),
         WorkflowFile::zed(danger::danger),
         WorkflowFile::zed(deploy_collab::deploy_collab),
+        WorkflowFile::zed(deploy_docs::deploy_docs),
         WorkflowFile::zed(extension_bump::extension_bump),
         WorkflowFile::zed(extension_tests::extension_tests),
         WorkflowFile::zed(extension_workflow_rollout::extension_workflow_rollout),

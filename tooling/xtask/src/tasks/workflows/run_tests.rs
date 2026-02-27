@@ -10,6 +10,7 @@ use crate::tasks::workflows::{
 };
 
 use super::{
+    deploy_docs,
     runners::{self, Platform},
     steps::{self, FluentBuilder, NamedJob, named, release_job},
 };
@@ -52,7 +53,7 @@ pub(crate) fn run_tests() -> Workflow {
         should_run_tests.guard(check_workspace_binaries()),
         should_run_tests.guard(check_wasm()),
         should_run_tests.guard(check_dependencies()), // could be more specific here?
-        should_check_docs.guard(check_docs()),
+        should_check_docs.guard(deploy_docs::check_docs()),
         should_check_licences.guard(check_licenses()),
         should_check_scripts.guard(check_scripts()),
     ];
@@ -541,54 +542,6 @@ fn check_licenses() -> NamedJob {
             .add_step(steps::cache_rust_dependencies_namespace())
             .add_step(steps::script("./script/check-licenses"))
             .add_step(steps::script("./script/generate-licenses")),
-    )
-}
-
-fn check_docs() -> NamedJob {
-    fn lychee_link_check(dir: &str) -> Step<Use> {
-        named::uses(
-            "lycheeverse",
-            "lychee-action",
-            "82202e5e9c2f4ef1a55a3d02563e1cb6041e5332",
-        ) // v2.4.1
-        .add_with(("args", format!("--no-progress --exclude '^http' '{dir}'")))
-        .add_with(("fail", true))
-        .add_with(("jobSummary", false))
-    }
-
-    fn install_mdbook() -> Step<Use> {
-        named::uses(
-            "peaceiris",
-            "actions-mdbook",
-            "ee69d230fe19748b7abf22df32acaa93833fad08", // v2
-        )
-        .with(("mdbook-version", "0.4.37"))
-    }
-
-    fn build_docs() -> Step<Run> {
-        named::bash(indoc::indoc! {r#"
-            mkdir -p target/deploy
-            mdbook build ./docs --dest-dir=../target/deploy/docs/
-        "#})
-    }
-
-    named::job(
-        release_job(&[])
-            .runs_on(runners::LINUX_LARGE)
-            .add_step(steps::checkout_repo())
-            .add_step(steps::setup_cargo_config(Platform::Linux))
-            // todo(ci): un-inline build_docs/action.yml here
-            .add_step(steps::cache_rust_dependencies_namespace())
-            .add_step(
-                lychee_link_check("./docs/src/**/*"), // check markdown links
-            )
-            .map(steps::install_linux_dependencies)
-            .add_step(steps::script("./script/generate-action-metadata"))
-            .add_step(install_mdbook())
-            .add_step(build_docs())
-            .add_step(
-                lychee_link_check("target/deploy/docs"), // check links in generated html
-            ),
     )
 }
 
