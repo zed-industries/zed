@@ -431,6 +431,7 @@ impl Server {
             .add_message_handler(broadcast_project_message_from_host::<proto::BreakpointsForFile>)
             .add_request_handler(forward_mutating_project_request::<proto::OpenCommitMessageBuffer>)
             .add_request_handler(forward_mutating_project_request::<proto::GitDiff>)
+            .add_request_handler(forward_read_only_project_request::<proto::GitDiffStat>)
             .add_request_handler(forward_mutating_project_request::<proto::GetTreeDiff>)
             .add_request_handler(forward_mutating_project_request::<proto::GetBlobContent>)
             .add_request_handler(forward_mutating_project_request::<proto::GitCreateBranch>)

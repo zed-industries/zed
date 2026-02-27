@@ -5820,7 +5820,6 @@ impl Repository {
                             merge_base_ref,
                         })
                         .await?;
-
                     let stats = response
                         .entries
                         .into_iter()

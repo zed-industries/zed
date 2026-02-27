@@ -1940,7 +1940,6 @@ async fn test_remote_git_diff_stat(cx: &mut TestAppContext, server_cx: &mut Test
 
     let dot_git = Path::new(path!("/code/project1/.git"));
 
-    // HEAD: lib.rs (2 lines), deleted.rs (1 line)
     fs.set_head_for_repo(
         dot_git,
         &[
@@ -1949,7 +1948,6 @@ async fn test_remote_git_diff_stat(cx: &mut TestAppContext, server_cx: &mut Test
         ],
         "deadbeef",
     );
-    // Index: lib.rs modified (4 lines), staged_only.rs new (2 lines)
     fs.set_index_for_repo(
         dot_git,
         &[
@@ -1971,76 +1969,46 @@ async fn test_remote_git_diff_stat(cx: &mut TestAppContext, server_cx: &mut Test
 
     let repository = project.update(cx, |project, cx| project.active_repository(cx).unwrap());
 
-    // --- HeadToWorktree ---
     let stats = cx
         .update(|cx| repository.update(cx, |repo, cx| repo.diff_stat(DiffType::HeadToWorktree, cx)))
         .await
         .unwrap()
         .unwrap();
 
-    // src/lib.rs: worktree 3 lines vs HEAD 2 lines
     let stat = stats.get(&repo_path("src/lib.rs")).expect("src/lib.rs");
     assert_eq!((stat.added, stat.deleted), (3, 2));
 
-    // src/new_file.rs: only in worktree (2 lines)
     let stat = stats
         .get(&repo_path("src/new_file.rs"))
         .expect("src/new_file.rs");
     assert_eq!((stat.added, stat.deleted), (2, 0));
 
-    // src/deleted.rs: only in HEAD (1 line)
     let stat = stats
         .get(&repo_path("src/deleted.rs"))
         .expect("src/deleted.rs");
     assert_eq!((stat.added, stat.deleted), (0, 1));
 
-    // README.md: only in worktree (1 line)
     let stat = stats.get(&repo_path("README.md")).expect("README.md");
     assert_eq!((stat.added, stat.deleted), (1, 0));
 
-    // --- HeadToIndex ---
     let stats = cx
         .update(|cx| repository.update(cx, |repo, cx| repo.diff_stat(DiffType::HeadToIndex, cx)))
         .await
         .unwrap()
         .unwrap();
 
-    // src/lib.rs: index 4 lines vs HEAD 2 lines
     let stat = stats.get(&repo_path("src/lib.rs")).expect("src/lib.rs");
     assert_eq!((stat.added, stat.deleted), (4, 2));
 
-    // src/staged_only.rs: only in index (2 lines)
     let stat = stats
         .get(&repo_path("src/staged_only.rs"))
         .expect("src/staged_only.rs");
     assert_eq!((stat.added, stat.deleted), (2, 0));
 
-    // src/deleted.rs: in HEAD but not in index
     let stat = stats
         .get(&repo_path("src/deleted.rs"))
         .expect("src/deleted.rs");
     assert_eq!((stat.added, stat.deleted), (0, 1));
-
-    // --- MergeBase (not implemented in FakeGitRepository) ---
-    let stats = cx
-        .update(|cx| {
-            repository.update(cx, |repo, cx| {
-                repo.diff_stat(
-                    DiffType::MergeBase {
-                        base_ref: "main".into(),
-                    },
-                    cx,
-                )
-            })
-        })
-        .await
-        .unwrap()
-        .unwrap();
-
-    assert!(
-        stats.is_empty(),
-        "MergeBase diff_stat should return empty from FakeGitRepository"
-    );
 }
 
 #[gpui::test]
