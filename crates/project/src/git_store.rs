@@ -6374,40 +6374,76 @@ impl Repository {
                 }
 
                 let stash_entries = backend.stash_entries().await?;
-                let changed_path_statuses = cx
-                    .background_spawn(async move {
-                        let mut changed_paths =
-                            changed_paths.into_iter().flatten().collect::<BTreeSet<_>>();
-                        let statuses = backend
-                            .status(&changed_paths.iter().cloned().collect::<Vec<_>>())
-                            .await?;
-                        let mut changed_path_statuses = Vec::new();
-                        let prev_statuses = prev_snapshot.statuses_by_path.clone();
-                        let mut cursor = prev_statuses.cursor::<PathProgress>(());
+                let backend_for_diff_stats = backend.clone();
+                let changed_path_statuses_task = cx.background_spawn(async move {
+                    let mut changed_paths =
+                        changed_paths.into_iter().flatten().collect::<BTreeSet<_>>();
+                    let statuses = backend
+                        .status(&changed_paths.iter().cloned().collect::<Vec<_>>())
+                        .await?;
+                    let mut changed_path_statuses = Vec::new();
+                    let prev_statuses = prev_snapshot.statuses_by_path.clone();
+                    let mut cursor = prev_statuses.cursor::<PathProgress>(());
 
-                        for (repo_path, status) in &*statuses.entries {
-                            changed_paths.remove(repo_path);
-                            if cursor.seek_forward(&PathTarget::Path(repo_path), Bias::Left)
-                                && cursor.item().is_some_and(|entry| entry.status == *status)
-                            {
-                                continue;
-                            }
+                    for (repo_path, status) in &*statuses.entries {
+                        changed_paths.remove(repo_path);
+                        if cursor.seek_forward(&PathTarget::Path(repo_path), Bias::Left)
+                            && cursor.item().is_some_and(|entry| entry.status == *status)
+                        {
+                            continue;
+                        }
 
-                            changed_path_statuses.push(Edit::Insert(StatusEntry {
-                                repo_path: repo_path.clone(),
-                                status: *status,
-                            }));
+                        changed_path_statuses.push(Edit::Insert(StatusEntry {
+                            repo_path: repo_path.clone(),
+                            status: *status,
+                        }));
+                    }
+                    let mut cursor = prev_statuses.cursor::<PathProgress>(());
+                    for path in changed_paths.into_iter() {
+                        if cursor.seek_forward(&PathTarget::Path(&path), Bias::Left) {
+                            changed_path_statuses
+                                .push(Edit::Remove(PathKey(path.as_ref().clone())));
                         }
-                        let mut cursor = prev_statuses.cursor::<PathProgress>(());
-                        for path in changed_paths.into_iter() {
-                            if cursor.seek_forward(&PathTarget::Path(&path), Bias::Left) {
-                                changed_path_statuses
-                                    .push(Edit::Remove(PathKey(path.as_ref().clone())));
-                            }
+                    }
+                    anyhow::Ok(changed_path_statuses)
+                });
+
+                let changed_diff_stats_task = cx.background_spawn(async move {
+                    let diff_stats = backend_for_diff_stats.diff_stat(&[]).await?;
+                    let mut changed_diff_stats = Vec::new();
+                    let prev_diff_stats = prev_snapshot.diff_stats_by_path.clone();
+                    let mut cursor = prev_diff_stats.cursor::<PathProgress>(());
+
+                    for (repo_path, diff_stat) in &*diff_stats.entries {
+                        if cursor.seek_forward(&PathTarget::Path(repo_path), Bias::Left)
+                            && cursor
+                                .item()
+                                .is_some_and(|entry| entry.diff_stat == *diff_stat)
+                        {
+                            continue;
                         }
-                        anyhow::Ok(changed_path_statuses)
-                    })
-                    .await?;
+
+                        changed_diff_stats.push(Edit::Insert(DiffStatEntry {
+                            repo_path: repo_path.clone(),
+                            diff_stat: *diff_stat,
+                        }));
+                    }
+
+                    let current_paths: std::collections::HashSet<&RepoPath> =
+                        diff_stats.entries.iter().map(|(p, _)| p).collect();
+                    for entry in prev_diff_stats.iter() {
+                        if !current_paths.contains(&entry.repo_path) {
+                            changed_diff_stats
+                                .push(Edit::Remove(PathKey(entry.repo_path.as_ref().clone())));
+                        }
+                    }
+
+                    anyhow::Ok(changed_diff_stats)
+                });
+
+                let (changed_path_statuses, changed_diff_stats) =
+                    futures::future::try_join(changed_path_statuses_task, changed_diff_stats_task)
+                        .await?;
 
                 this.update(&mut cx, |this, cx| {
                     if this.snapshot.stash_entries != stash_entries {
@@ -6415,12 +6451,21 @@ impl Repository {
                         this.snapshot.stash_entries = stash_entries;
                     }
 
+                    if !changed_path_statuses.is_empty() || !changed_diff_stats.is_empty() {
+                        this.snapshot.scan_id += 1;
+                    }
+
                     if !changed_path_statuses.is_empty() {
                         cx.emit(RepositoryEvent::StatusesChanged);
                         this.snapshot
                             .statuses_by_path
                             .edit(changed_path_statuses, ());
-                        this.snapshot.scan_id += 1;
+                    }
+
+                    if !changed_diff_stats.is_empty() {
+                        this.snapshot
+                            .diff_stats_by_path
+                            .edit(changed_diff_stats, ());
                     }
 
                     if let Some(updates_tx) = updates_tx {
@@ -6754,6 +6799,7 @@ async fn compute_snapshot(
     let mut events = Vec::new();
     let branches = backend.branches().await?;
     let branch = branches.into_iter().find(|branch| branch.is_head);
+    // todo! handle status and diff stats at the same time
     let statuses = backend
         .status(&[RepoPath::from_rel_path(
             &RelPath::new(".".as_ref(), PathStyle::local()).unwrap(),
@@ -6795,7 +6841,17 @@ async fn compute_snapshot(
     let remote_origin_url = backend.remote_url("origin").await;
     let remote_upstream_url = backend.remote_url("upstream").await;
 
-    let diff_stats_by_path = Default::default();
+    let diff_stats = backend.diff_stat(&[]).await?;
+    let diff_stats_by_path = SumTree::from_iter(
+        diff_stats
+            .entries
+            .iter()
+            .map(|(repo_path, diff_stat)| DiffStatEntry {
+                repo_path: repo_path.clone(),
+                diff_stat: *diff_stat,
+            }),
+        (),
+    );
 
     let snapshot = RepositorySnapshot {
         id,
