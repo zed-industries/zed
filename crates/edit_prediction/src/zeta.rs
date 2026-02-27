@@ -64,6 +64,11 @@ pub fn request_prediction_with_zeta(
 
     let client = store.client.clone();
     let llm_token = store.llm_token.clone();
+    let organization_id = store
+        .user_store
+        .read(cx)
+        .current_organization()
+        .map(|organization| organization.id.clone());
     let app_version = AppVersion::global(cx);
 
     let request_task = cx.background_spawn({
@@ -197,6 +202,7 @@ pub fn request_prediction_with_zeta(
                         client,
                         None,
                         llm_token,
+                        organization_id,
                         app_version,
                     )
                     .await?;
@@ -215,6 +221,7 @@ pub fn request_prediction_with_zeta(
                         prompt_input.clone(),
                         client,
                         llm_token,
+                        organization_id,
                         app_version,
                         trigger,
                     )
@@ -475,6 +482,11 @@ pub(crate) fn edit_prediction_accepted(
     let require_auth = custom_accept_url.is_none();
     let client = store.client.clone();
     let llm_token = store.llm_token.clone();
+    let organization_id = store
+        .user_store
+        .read(cx)
+        .current_organization()
+        .map(|organization| organization.id.clone());
     let app_version = AppVersion::global(cx);
 
     cx.background_spawn(async move {
@@ -499,6 +511,7 @@ pub(crate) fn edit_prediction_accepted(
             },
             client,
             llm_token,
+            organization_id,
             app_version,
             require_auth,
         )
