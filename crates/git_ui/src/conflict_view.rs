@@ -11,7 +11,8 @@ use gpui::{
 };
 use language::{Anchor, Buffer, BufferId};
 use project::{
-    ConflictRegion, ConflictSet, ConflictSetUpdate, ProjectItem as _, git_store::GitStoreEvent,
+    ConflictRegion, ConflictSet, ConflictSetUpdate, ProjectItem as _,
+    git_store::{GitStoreEvent, RepositoryEvent},
 };
 use settings::Settings;
 use std::{ops::Range, sync::Arc};
@@ -534,16 +535,23 @@ pub(crate) fn register_conflict_notification(
     let git_store = workspace.project().read(cx).git_store().clone();
 
     cx.subscribe(&git_store, |workspace, _git_store, event, cx| {
-        if !AgentSettings::get_global(cx).enabled
-            || !matches!(event, GitStoreEvent::ConflictsUpdated)
-        {
+        dbg!(&event);
+        let conflicts_changed = matches!(
+            event,
+            GitStoreEvent::ConflictsUpdated
+                | GitStoreEvent::RepositoryUpdated(_, RepositoryEvent::MergeHeadsChanged, _)
+        );
+        if !AgentSettings::get_global(cx).enabled || !conflicts_changed {
             return;
         }
+        dbg!("conflicts updated");
 
         let paths = collect_conflicted_file_paths(workspace, cx);
         let notification_id = merge_conflict_notification_id();
 
+        dbg!(&paths);
         if paths.is_empty() {
+            dbg!("dismissing");
             workspace.dismiss_notification(&notification_id, cx);
         } else {
             let file_count = paths.len();
