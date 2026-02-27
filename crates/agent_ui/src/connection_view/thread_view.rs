@@ -1,3 +1,4 @@
+use acp_thread::ContentBlock;
 use cloud_api_types::{SubmitAgentThreadFeedbackBody, SubmitAgentThreadFeedbackCommentsBody};
 use editor::actions::OpenExcerpts;
 use gpui::{Corner, List};
@@ -6360,10 +6361,18 @@ impl ThreadView {
             tool_call.status,
             ToolCallStatus::Pending | ToolCallStatus::InProgress
         );
+
         let is_canceled_or_failed = matches!(
             tool_call.status,
             ToolCallStatus::Canceled | ToolCallStatus::Failed | ToolCallStatus::Rejected
         );
+
+        let is_subagent_stopped = tool_call.content.iter().any(|c| match c {
+            ToolCallContent::ContentBlock(ContentBlock::Markdown { markdown }) => {
+                markdown.read(cx).source() == "User cancelled"
+            }
+            _ => false,
+        });
 
         let thread_title = thread
             .as_ref()
@@ -6382,7 +6391,7 @@ impl ThreadView {
         } else if is_canceled_or_failed {
             "Subagent Canceled".into()
         } else {
-            "Spawning agent…".into()
+            "Spawning Agent…".into()
         };
 
         let card_header_id = format!("subagent-header-{}", entry_ix);
@@ -6391,6 +6400,11 @@ impl ThreadView {
         let icon = h_flex().w_4().justify_center().child(if is_running {
             SpinnerLabel::new()
                 .size(LabelSize::Small)
+                .into_any_element()
+        } else if is_subagent_stopped {
+            Icon::new(IconName::Circle)
+                .size(IconSize::Small)
+                .color(Color::Disabled)
                 .into_any_element()
         } else if is_canceled_or_failed {
             Icon::new(IconName::Close)
@@ -6575,7 +6589,7 @@ impl ThreadView {
                                 .justify_center()
                                 .border_t_1()
                                 .when(is_canceled_or_failed, |this| this.border_dashed())
-                                .border_color(cx.theme().colors().border_variant)
+                                .border_color(self.tool_card_border_color(cx))
                                 .hover(|s| s.bg(cx.theme().colors().element_hover))
                                 .child(
                                     Icon::new(IconName::Maximize)
@@ -6656,8 +6670,7 @@ impl ThreadView {
             })
             .collect();
 
-        let error_message =
-            self.subagent_error_message(subagent_view, &tool_call.status, tool_call, cx);
+        let error_message = self.subagent_error_message(&tool_call.status, tool_call, cx);
 
         let parent_thread = self.thread.read(cx);
         let mut started_subagent_count = 0usize;
@@ -6716,37 +6729,31 @@ impl ThreadView {
 
     fn subagent_error_message(
         &self,
-        subagent_view: &ThreadView,
         status: &ToolCallStatus,
         tool_call: &ToolCall,
         cx: &App,
     ) -> Option<SharedString> {
-        if matches!(status, ToolCallStatus::Canceled | ToolCallStatus::Rejected) {
-            return None;
-        }
-
-        subagent_view
-            .thread_error
-            .as_ref()
-            .and_then(|e| match e {
-                ThreadError::Refusal => Some("The agent refused to respond to this prompt.".into()),
-                ThreadError::Other { message, .. } => Some(message.clone()),
-                ThreadError::PaymentRequired | ThreadError::AuthenticationRequired(_) => None,
-            })
-            .or_else(|| {
-                tool_call.content.iter().find_map(|content| {
-                    if let ToolCallContent::ContentBlock(block) = content {
-                        if let acp_thread::ContentBlock::Markdown { markdown } = block {
-                            let source = markdown.read(cx).source().to_string();
-                            if !source.is_empty() {
+        if matches!(status, ToolCallStatus::Failed) {
+            tool_call.content.iter().find_map(|content| {
+                if let ToolCallContent::ContentBlock(block) = content {
+                    if let acp_thread::ContentBlock::Markdown { markdown } = block {
+                        let source = markdown.read(cx).source().to_string();
+                        if !source.is_empty() {
+                            if source == "User cancelled" {
+                                return None;
+                            } else {
                                 return Some(SharedString::from(source));
                             }
                         }
                     }
-                    None
-                })
+                }
+                None
             })
+        } else {
+            None
+        }
     }
+
     fn render_rules_item(&self, cx: &Context<Self>) -> Option<AnyElement> {
         let project_context = self
             .as_native_thread(cx)?
