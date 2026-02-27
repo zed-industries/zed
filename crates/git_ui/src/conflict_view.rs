@@ -1,3 +1,4 @@
+use agent_settings::AgentSettings;
 use collections::{HashMap, HashSet};
 use editor::{
     ConflictsOurs, ConflictsOursMarker, ConflictsOuter, ConflictsTheirs, ConflictsTheirsMarker,
@@ -12,6 +13,7 @@ use language::{Anchor, Buffer, BufferId};
 use project::{
     ConflictRegion, ConflictSet, ConflictSetUpdate, ProjectItem as _, git_store::GitStoreEvent,
 };
+use settings::Settings;
 use std::{ops::Range, sync::Arc};
 use ui::{ActiveTheme, Divider, Element as _, Styled, Window, prelude::*};
 use util::{ResultExt as _, debug_panic, maybe};
@@ -377,6 +379,8 @@ fn render_conflict_buttons(
     editor: WeakEntity<Editor>,
     cx: &mut BlockContext,
 ) -> AnyElement {
+    let is_ai_enabled = AgentSettings::get_global(cx).enabled(cx);
+
     h_flex()
         .id(cx.block_id)
         .h(cx.line_height)
@@ -444,52 +448,53 @@ fn render_conflict_buttons(
                     }
                 }),
         )
-        .child(Divider::vertical())
-        .child(
-            Button::new("resolve-with-agent", "Resolve with Agent")
-                .label_size(LabelSize::Small)
-                .icon(IconName::ZedAssistant)
-                .icon_position(IconPosition::Start)
-                .icon_size(IconSize::Small)
-                .icon_color(Color::Muted)
-                .on_click({
-                    let conflict = conflict.clone();
-                    move |_, window, cx| {
-                        let content = editor
-                            .update(cx, |editor, cx| {
-                                let multibuffer = editor.buffer().read(cx);
-                                let buffer_id = conflict.ours.end.buffer_id?;
-                                let buffer = multibuffer.buffer(buffer_id)?;
-                                let buffer_read = buffer.read(cx);
-                                let snapshot = buffer_read.snapshot();
-                                let conflict_text = snapshot
-                                    .text_for_range(conflict.range.clone())
-                                    .collect::<String>();
-                                let file_path = buffer_read
-                                    .file()
-                                    .and_then(|file| file.as_local())
-                                    .map(|f| f.abs_path(cx).to_string_lossy().to_string())
-                                    .unwrap_or_default();
-                                Some(ConflictContent {
-                                    file_path,
-                                    conflict_text,
-                                    ours_branch_name: conflict.ours_branch_name.to_string(),
-                                    theirs_branch_name: conflict.theirs_branch_name.to_string(),
+        .when(is_ai_enabled, |this| {
+            this.child(Divider::vertical()).child(
+                Button::new("resolve-with-agent", "Resolve with Agent")
+                    .label_size(LabelSize::Small)
+                    .icon(IconName::ZedAssistant)
+                    .icon_position(IconPosition::Start)
+                    .icon_size(IconSize::Small)
+                    .icon_color(Color::Muted)
+                    .on_click({
+                        let conflict = conflict.clone();
+                        move |_, window, cx| {
+                            let content = editor
+                                .update(cx, |editor, cx| {
+                                    let multibuffer = editor.buffer().read(cx);
+                                    let buffer_id = conflict.ours.end.buffer_id?;
+                                    let buffer = multibuffer.buffer(buffer_id)?;
+                                    let buffer_read = buffer.read(cx);
+                                    let snapshot = buffer_read.snapshot();
+                                    let conflict_text = snapshot
+                                        .text_for_range(conflict.range.clone())
+                                        .collect::<String>();
+                                    let file_path = buffer_read
+                                        .file()
+                                        .and_then(|file| file.as_local())
+                                        .map(|f| f.abs_path(cx).to_string_lossy().to_string())
+                                        .unwrap_or_default();
+                                    Some(ConflictContent {
+                                        file_path,
+                                        conflict_text,
+                                        ours_branch_name: conflict.ours_branch_name.to_string(),
+                                        theirs_branch_name: conflict.theirs_branch_name.to_string(),
+                                    })
                                 })
-                            })
-                            .ok()
-                            .flatten();
-                        if let Some(content) = content {
-                            window.dispatch_action(
-                                Box::new(ResolveConflictsWithAgent {
-                                    conflicts: vec![content],
-                                }),
-                                cx,
-                            );
+                                .ok()
+                                .flatten();
+                            if let Some(content) = content {
+                                window.dispatch_action(
+                                    Box::new(ResolveConflictsWithAgent {
+                                        conflicts: vec![content],
+                                    }),
+                                    cx,
+                                );
+                            }
                         }
-                    }
-                }),
-        )
+                    }),
+            )
+        })
         .into_any()
 }
 
@@ -529,7 +534,9 @@ pub(crate) fn register_conflict_notification(
     let git_store = workspace.project().read(cx).git_store().clone();
 
     cx.subscribe(&git_store, |workspace, _git_store, event, cx| {
-        if !matches!(event, GitStoreEvent::ConflictsUpdated) {
+        if !AgentSettings::get_global(cx).enabled
+            || !matches!(event, GitStoreEvent::ConflictsUpdated)
+        {
             return;
         }
 
