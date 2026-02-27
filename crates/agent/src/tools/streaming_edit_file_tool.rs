@@ -74,8 +74,7 @@ pub struct StreamingEditFileToolInput {
     pub path: String,
 
     /// The mode of operation on the file. Possible values:
-    /// - 'create': Create a new file if it doesn't exist. Requires 'content' field.
-    /// - 'overwrite': Replace the entire contents of an existing file. Requires 'content' field.
+    /// - 'write': Replace the entire contents of an the file. If the file doesn't exist, it will be created. Requires 'content' field.
     /// - 'edit': Make granular edits to an existing file. Requires 'edits' field.
     ///
     /// When a file already exists or you just created it, prefer editing it as opposed to recreating it from scratch.
@@ -472,14 +471,13 @@ impl Reindenter {
 
     /// Flush any remaining buffered content (call when done=true).
     fn finish(&mut self) -> String {
-        let result = self.drain(true);
-        result
+        self.drain(true)
     }
 
     fn drain(&mut self, is_final: bool) -> String {
         let mut indented = String::new();
         let mut start_ix = 0;
-        let mut newlines = self.buffer.match_indices('\n').peekable();
+        let mut newlines = self.buffer.match_indices('\n');
         loop {
             let (line_end, is_pending_line) = match newlines.next() {
                 Some((ix, _)) => (ix, false),
@@ -805,14 +803,7 @@ impl EditSession {
             }
             StreamingEditFileMode::Edit => {
                 if let Some(edits) = partial.edits {
-                    let partial_edits: Vec<PartialEdit> = edits
-                        .iter()
-                        .map(|e| PartialEdit {
-                            old_text: e.old_text.clone(),
-                            new_text: e.new_text.clone(),
-                        })
-                        .collect();
-                    let events = self.parser.push_edits(&partial_edits);
+                    let events = self.parser.push_edits(&edits);
                     Self::process_events(
                         &events,
                         &self.buffer,
@@ -1239,7 +1230,7 @@ fn resolve_path(
             if let Some(path) = project.find_project_path(&path, cx)
                 && let Some(entry) = project.entry_for_path(&path, cx)
             {
-                anyhow::ensure!(entry.is_file(), "Can't create file: path is a directory");
+                anyhow::ensure!(entry.is_file(), "Can't write to file: path is a directory");
                 return Ok(path);
             }
 
