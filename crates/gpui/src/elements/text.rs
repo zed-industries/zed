@@ -6,6 +6,7 @@ use crate::{
     WrappedLineLayout, register_tooltip_mouse_handlers, set_tooltip_on_window,
 };
 use anyhow::Context as _;
+use gpui_util::ResultExt;
 use itertools::Itertools;
 use smallvec::SmallVec;
 use std::{
@@ -16,7 +17,6 @@ use std::{
     rc::Rc,
     sync::Arc,
 };
-use util::ResultExt;
 
 impl Element for &'static str {
     type RequestLayoutState = TextLayout;

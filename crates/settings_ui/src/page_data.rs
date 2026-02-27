@@ -3154,7 +3154,7 @@ fn search_and_files_page() -> SettingsPage {
         ]
     }
 
-    fn file_finder_section() -> [SettingsPageItem; 6] {
+    fn file_finder_section() -> [SettingsPageItem; 5] {
         [
             SettingsPageItem::SectionHeader("File Finder"),
             // todo: null by default
@@ -3237,24 +3237,6 @@ fn search_and_files_page() -> SettingsPage {
                             .file_finder
                             .get_or_insert_default()
                             .skip_focus_for_active_in_search = value;
-                    },
-                }),
-                metadata: None,
-                files: USER,
-            }),
-            SettingsPageItem::SettingItem(SettingItem {
-                title: "Git Status",
-                description: "Show the Git status in the file finder.",
-                field: Box::new(SettingField {
-                    json_path: Some("file_finder.git_status"),
-                    pick: |settings_content| {
-                        settings_content.file_finder.as_ref()?.git_status.as_ref()
-                    },
-                    write: |settings_content, value| {
-                        settings_content
-                            .file_finder
-                            .get_or_insert_default()
-                            .git_status = value;
                     },
                 }),
                 metadata: None,
@@ -5039,7 +5021,7 @@ fn panels_page() -> SettingsPage {
         ]
     }
 
-    fn git_panel_section() -> [SettingsPageItem; 10] {
+    fn git_panel_section() -> [SettingsPageItem; 11] {
         [
             SettingsPageItem::SectionHeader("Git Panel"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -5176,6 +5158,24 @@ fn panels_page() -> SettingsPage {
                     },
                     write: |settings_content, value| {
                         settings_content.git_panel.get_or_insert_default().tree_view = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Diff Stats",
+                description: "Whether to show the addition/deletion change count next to each file in the Git panel.",
+                field: Box::new(SettingField {
+                    json_path: Some("git_panel.diff_stats"),
+                    pick: |settings_content| {
+                        settings_content.git_panel.as_ref()?.diff_stats.as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .git_panel
+                            .get_or_insert_default()
+                            .diff_stats = value;
                     },
                 }),
                 metadata: None,

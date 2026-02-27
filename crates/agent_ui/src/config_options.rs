@@ -49,7 +49,7 @@ impl ConfigOptionsView {
             if let Some(mut rx) = rx {
                 while let Ok(()) = rx.recv().await {
                     this.update_in(cx, |this, window, cx| {
-                        this.refresh_selectors_if_needed(window, cx);
+                        this.rebuild_selectors(window, cx);
                         cx.notify();
                     })
                     .log_err();
@@ -184,15 +184,10 @@ impl ConfigOptionsView {
             .collect()
     }
 
-    fn refresh_selectors_if_needed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let current_ids = Self::config_option_ids(&self.config_options);
-        if current_ids != self.config_option_ids {
-            self.config_option_ids = current_ids;
-            self.rebuild_selectors(window, cx);
-        }
-    }
-
     fn rebuild_selectors(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        // Config option updates can mutate option values for existing IDs (for example,
+        // reasoning levels after a model switch). Rebuild to refresh cached picker entries.
+        self.config_option_ids = Self::config_option_ids(&self.config_options);
         self.selectors = Self::build_selectors(
             &self.config_options,
             &self.agent_server,
