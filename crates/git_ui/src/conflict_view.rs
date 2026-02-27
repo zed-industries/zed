@@ -19,7 +19,9 @@ use workspace::{
     Workspace,
     notifications::{NotificationId, simple_message_notification::MessageNotification},
 };
-use zed_actions::agent::{ConflictContent, ResolveConflictsWithAgent};
+use zed_actions::agent::{
+    ConflictContent, ResolveConflictedFilesWithAgent, ResolveConflictsWithAgent,
+};
 
 pub(crate) struct ConflictAddon {
     buffers: HashMap<BufferId, BufferConflicts>,
@@ -465,7 +467,8 @@ fn render_conflict_buttons(
                                     .collect::<String>();
                                 let file_path = buffer_read
                                     .file()
-                                    .map(|f| f.path().as_std_path().to_string_lossy().to_string())
+                                    .and_then(|file| file.as_local())
+                                    .map(|f| f.abs_path(cx).to_string_lossy().to_string())
                                     .unwrap_or_default();
                                 Some(ConflictContent {
                                     file_path,
@@ -480,7 +483,6 @@ fn render_conflict_buttons(
                             window.dispatch_action(
                                 Box::new(ResolveConflictsWithAgent {
                                     conflicts: vec![content],
-                                    conflicted_file_paths: vec![],
                                 }),
                                 cx,
                             );
@@ -554,8 +556,7 @@ pub(crate) fn register_conflict_notification(
                             let paths = paths.clone();
                             move |window, cx| {
                                 window.dispatch_action(
-                                    Box::new(ResolveConflictsWithAgent {
-                                        conflicts: vec![],
+                                    Box::new(ResolveConflictedFilesWithAgent {
                                         conflicted_file_paths: paths.clone(),
                                     }),
                                     cx,

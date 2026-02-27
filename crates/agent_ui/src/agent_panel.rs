@@ -1,6 +1,6 @@
 use std::{
     ops::Range,
-    path::Path,
+    path::{Path, PathBuf},
     rc::Rc,
     sync::{
         Arc,
@@ -13,6 +13,7 @@ use acp_thread::{AcpThread, AgentSessionInfo, MentionUri};
 use agent::{ContextServerRegistry, SharedThread, ThreadStore};
 use agent_client_protocol as acp;
 use agent_servers::AgentServer;
+use collections::HashSet;
 use db::kvp::{Dismissable, KEY_VALUE_STORE};
 use itertools::Itertools;
 use project::{
@@ -24,7 +25,7 @@ use settings::{LanguageModelProviderSetting, LanguageModelSelection};
 
 use zed_actions::agent::{
     ConflictContent, OpenClaudeAgentOnboardingModal, ReauthenticateAgent,
-    ResolveConflictsWithAgent, ReviewBranchDiff,
+    ResolveConflictedFilesWithAgent, ResolveConflictsWithAgent, ReviewBranchDiff,
 };
 
 use crate::ui::{AcpOnboardingModal, ClaudeCodeOnboardingModal};
@@ -334,10 +335,32 @@ pub fn init(cx: &mut App) {
                             return;
                         };
 
-                        let content_blocks = build_conflict_resolution_prompt(
-                            &action.conflicts,
-                            &action.conflicted_file_paths,
-                        );
+                        let content_blocks = build_conflict_resolution_prompt(&action.conflicts);
+
+                        workspace.focus_panel::<AgentPanel>(window, cx);
+
+                        panel.update(cx, |panel, cx| {
+                            panel.external_thread(
+                                None,
+                                None,
+                                Some(AgentInitialContent::ContentBlock {
+                                    blocks: content_blocks,
+                                    auto_submit: true,
+                                }),
+                                window,
+                                cx,
+                            );
+                        });
+                    },
+                )
+                .register_action(
+                    |workspace, action: &ResolveConflictedFilesWithAgent, window, cx| {
+                        let Some(panel) = workspace.panel::<AgentPanel>(cx) else {
+                            return;
+                        };
+
+                        let content_blocks =
+                            build_conflicted_files_resolution_prompt(&action.conflicted_file_paths);
 
                         workspace.focus_panel::<AgentPanel>(window, cx);
 
@@ -372,95 +395,88 @@ fn conflict_resource_block(conflict: &ConflictContent) -> acp::ContentBlock {
     ))
 }
 
-fn build_conflict_resolution_prompt(
-    conflicts: &[ConflictContent],
-    conflicted_file_paths: &[String],
-) -> Vec<acp::ContentBlock> {
+fn build_conflict_resolution_prompt(conflicts: &[ConflictContent]) -> Vec<acp::ContentBlock> {
+    if conflicts.is_empty() {
+        return Vec::new();
+    }
+
     let mut blocks = Vec::new();
 
-    let instruction = match (conflicts.len(), conflicted_file_paths.len()) {
-        (0, 0) => String::new(),
-        (1, 0) => {
-            let conflict = &conflicts[0];
-            format!(
-                "Please resolve the following merge conflict in `{}`.\n\n\
-                 The conflict is between branch `{}` (ours) and `{}` (theirs).\n\n\
-                 Analyze both versions carefully and resolve the conflict by editing \
-                 the file directly. Choose the resolution that best preserves the intent \
-                 of both changes, or combine them if appropriate.",
-                conflict.file_path, conflict.ours_branch_name, conflict.theirs_branch_name,
-            )
-        }
-        (n, 0) if n > 0 => {
-            let unique_files: std::collections::HashSet<&str> =
-                conflicts.iter().map(|c| c.file_path.as_str()).collect();
-            let ours = &conflicts[0].ours_branch_name;
-            let theirs = &conflicts[0].theirs_branch_name;
-            format!(
-                "Please resolve all {n} merge conflicts below.\n\n\
-                 The conflicts are between branch `{ours}` (ours) and `{theirs}` (theirs).\n\n\
-                 For each conflict, analyze both versions carefully and resolve them \
-                 by editing the file{} directly. Choose resolutions that best preserve \
-                 the intent of both changes, or combine them if appropriate.",
-                if unique_files.len() > 1 { "s" } else { "" },
-            )
-        }
-        (0, _) => {
-            let file_list = conflicted_file_paths
-                .iter()
-                .map(|p| format!("- `{p}`"))
-                .collect::<Vec<_>>()
-                .join("\n");
-            format!(
-                "The following files have unresolved merge conflicts. Please open each \
-                 file, find the conflict markers (`<<<<<<<` / `=======` / `>>>>>>>`), \
-                 and resolve every conflict by editing the files directly.\n\n\
-                 Choose resolutions that best preserve the intent of both changes, \
-                 or combine them if appropriate.\n\n\
-                 Files with conflicts:\n{file_list}",
-            )
-        }
-        _ => {
-            let mut prompt = String::new();
-            if let Some(first) = conflicts.first() {
-                prompt.push_str(&format!(
-                    "Please resolve these merge conflicts between branch `{}` (ours) \
-                     and `{}` (theirs).\n\n\
-                     Analyze both versions carefully and resolve them by editing the \
-                     files directly. Choose resolutions that best preserve the intent \
-                     of both changes, or combine them if appropriate.",
-                    first.ours_branch_name, first.theirs_branch_name,
-                ));
-            }
-            if !conflicted_file_paths.is_empty() {
-                let file_list = conflicted_file_paths
-                    .iter()
-                    .map(|p| format!("- `{p}`"))
-                    .collect::<Vec<_>>()
-                    .join("\n");
-                prompt.push_str(&format!(
-                    "\n\nThe following files also have unresolved merge conflicts. \
-                     Please open each file, find the conflict markers, and resolve \
-                     every conflict:\n{file_list}",
-                ));
-            }
-            prompt
-        }
+    let instruction = if conflicts.len() == 1 {
+        let conflict = &conflicts[0];
+        indoc::formatdoc!(
+            "Please resolve the following merge conflict in `{path}`.
+
+             The conflict is between branch `{ours}` (ours) and `{theirs}` (theirs).
+
+             Analyze both versions carefully and resolve the conflict by editing \
+             the file directly. Choose the resolution that best preserves the intent \
+             of both changes, or combine them if appropriate.",
+            path = conflict.file_path,
+            ours = conflict.ours_branch_name,
+            theirs = conflict.theirs_branch_name,
+        )
+    } else {
+        let n = conflicts.len();
+        let unique_files: HashSet<&str> = conflicts.iter().map(|c| c.file_path.as_str()).collect();
+        let ours = &conflicts[0].ours_branch_name;
+        let theirs = &conflicts[0].theirs_branch_name;
+        indoc::formatdoc!(
+            "Please resolve all {n} merge conflicts below.
+
+             The conflicts are between branch `{ours}` (ours) and `{theirs}` (theirs).
+
+             For each conflict, analyze both versions carefully and resolve them \
+             by editing the file{suffix} directly. Choose resolutions that best preserve \
+             the intent of both changes, or combine them if appropriate.",
+            suffix = if unique_files.len() > 1 { "s" } else { "" },
+        )
     };
 
-    if !instruction.is_empty() {
-        let mut text = instruction;
-        if !conflicts.is_empty() {
-            text.push_str("\n\n");
-        }
-        blocks.push(acp::ContentBlock::Text(acp::TextContent::new(text)));
-    }
+    let mut text = instruction;
+    text.push_str("\n\n");
+    blocks.push(acp::ContentBlock::Text(acp::TextContent::new(text)));
 
     for conflict in conflicts {
         blocks.push(conflict_resource_block(conflict));
     }
 
     blocks
+}
+
+fn build_conflicted_files_resolution_prompt(
+    conflicted_file_paths: &[String],
+) -> Vec<acp::ContentBlock> {
+    if conflicted_file_paths.is_empty() {
+        return Vec::new();
+    }
+
+    let file_list = conflicted_file_paths
+        .iter()
+        .map(|p| {
+            format!(
+                "- {}",
+                MentionUri::File {
+                    abs_path: PathBuf::from(p)
+                }
+                .to_uri()
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    let instruction = indoc::formatdoc!(
+        "The following files have unresolved merge conflicts. Please open each \
+         file, find the conflict markers (`<<<<<<<` / `=======` / `>>>>>>>`), \
+         and resolve every conflict by editing the files directly.
+
+         Choose resolutions that best preserve the intent of both changes, \
+         or combine them if appropriate.
+
+         Files with conflicts:
+         {file_list}",
+    );
+
+    vec![acp::ContentBlock::Text(acp::TextContent::new(instruction))]
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -3829,7 +3845,7 @@ mod tests {
             theirs_branch_name: "feature".to_string(),
         }];
 
-        let blocks = build_conflict_resolution_prompt(&conflicts, &[]);
+        let blocks = build_conflict_resolution_prompt(&conflicts);
         // 1 Text instruction + 1 Resource for the conflict
         assert_eq!(blocks.len(), 2, "expected 1 text + 1 resource block");
 
@@ -3885,7 +3901,7 @@ mod tests {
             },
         ];
 
-        let blocks = build_conflict_resolution_prompt(&conflicts, &[]);
+        let blocks = build_conflict_resolution_prompt(&conflicts);
         // 1 Text instruction + 2 Resource blocks
         assert_eq!(blocks.len(), 3, "expected 1 text + 2 resource blocks");
 
@@ -3937,7 +3953,7 @@ mod tests {
             },
         ];
 
-        let blocks = build_conflict_resolution_prompt(&conflicts, &[]);
+        let blocks = build_conflict_resolution_prompt(&conflicts);
         // 1 Text instruction + 2 Resource blocks
         assert_eq!(blocks.len(), 3, "expected 1 text + 2 resource blocks");
 
@@ -3960,14 +3976,14 @@ mod tests {
     }
 
     #[test]
-    fn test_build_conflict_resolution_prompt_file_paths_only() {
+    fn test_build_conflicted_files_resolution_prompt_file_paths_only() {
         let file_paths = vec![
             "src/main.rs".to_string(),
             "src/lib.rs".to_string(),
             "tests/integration.rs".to_string(),
         ];
 
-        let blocks = build_conflict_resolution_prompt(&[], &file_paths);
+        let blocks = build_conflicted_files_resolution_prompt(&file_paths);
         // Only 1 Text block (no Resource blocks since there's no inline conflict text)
         assert_eq!(blocks.len(), 1, "expected 1 text block only");
 
@@ -3986,51 +4002,21 @@ mod tests {
     }
 
     #[test]
-    fn test_build_conflict_resolution_prompt_mixed_mode() {
-        let conflicts = vec![ConflictContent {
-            file_path: "src/main.rs".to_string(),
-            conflict_text: "<<<<<<< HEAD\nold\n=======\nnew\n>>>>>>> branch".to_string(),
-            ours_branch_name: "HEAD".to_string(),
-            theirs_branch_name: "branch".to_string(),
-        }];
-        let file_paths = vec!["src/other.rs".to_string()];
-
-        let blocks = build_conflict_resolution_prompt(&conflicts, &file_paths);
-        // 1 Text instruction + 1 Resource for the inline conflict
-        assert_eq!(blocks.len(), 2, "expected 1 text + 1 resource block");
-
-        let text = expect_text_block(&blocks[0]);
+    fn test_build_conflict_resolution_prompt_empty_conflicts() {
+        let blocks = build_conflict_resolution_prompt(&[]);
         assert!(
-            text.contains("`HEAD` (ours)"),
-            "mixed mode should mention ours branch"
-        );
-        assert!(
-            text.contains("`branch` (theirs)"),
-            "mixed mode should mention theirs branch"
-        );
-        assert!(
-            text.contains("src/other.rs"),
-            "file-path-only file should appear in text instruction"
-        );
-
-        let (resource_text, resource_uri) = expect_resource_block(&blocks[1]);
-        assert!(
-            resource_text.contains("<<<<<<< HEAD"),
-            "resource should contain the conflict text"
-        );
-        assert!(
-            resource_uri.contains("main.rs"),
-            "resource URI should reference the inline conflict file"
+            blocks.is_empty(),
+            "empty conflicts should produce no blocks, got {} blocks",
+            blocks.len()
         );
     }
 
     #[test]
-    fn test_build_conflict_resolution_prompt_empty_inputs() {
-        let blocks = build_conflict_resolution_prompt(&[], &[]);
-        // No instruction text and no resource blocks
+    fn test_build_conflicted_files_resolution_prompt_empty_paths() {
+        let blocks = build_conflicted_files_resolution_prompt(&[]);
         assert!(
             blocks.is_empty(),
-            "empty inputs should produce no blocks, got {} blocks",
+            "empty paths should produce no blocks, got {} blocks",
             blocks.len()
         );
     }

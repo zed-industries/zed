@@ -479,22 +479,21 @@ pub mod agent {
         pub theirs_branch_name: String,
     }
 
-    /// Opens a new agent thread to resolve merge conflicts.
-    ///
-    /// Supports two modes:
-    /// - Specific conflicts: `conflicts` contains pre-extracted conflict text
-    ///   (used by per-conflict and per-file buttons where the buffer is already open).
-    /// - Project-wide: `conflicted_file_paths` lists paths the agent should open and resolve
-    ///   (used when not all conflicted buffers are loaded in memory).
+    /// Opens a new agent thread to resolve specific merge conflicts.
     #[derive(Clone, PartialEq, Deserialize, JsonSchema, Action)]
     #[action(namespace = agent)]
     #[serde(deny_unknown_fields)]
     pub struct ResolveConflictsWithAgent {
         /// Individual conflicts with their full text.
-        #[serde(default)]
         pub conflicts: Vec<ConflictContent>,
+    }
+
+    /// Opens a new agent thread to resolve merge conflicts in the given file paths.
+    #[derive(Clone, PartialEq, Deserialize, JsonSchema, Action)]
+    #[action(namespace = agent)]
+    #[serde(deny_unknown_fields)]
+    pub struct ResolveConflictedFilesWithAgent {
         /// File paths with unresolved conflicts (for project-wide resolution).
-        #[serde(default)]
         pub conflicted_file_paths: Vec<String>,
     }
 }
