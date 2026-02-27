@@ -107,8 +107,8 @@ pub struct WgpuRenderer {
     instance_buffer: wgpu::Buffer,
     instance_buffer_capacity: u64,
     storage_buffer_alignment: u64,
-    path_intermediate_texture: wgpu::Texture,
-    path_intermediate_view: wgpu::TextureView,
+    path_intermediate_texture: Option<wgpu::Texture>,
+    path_intermediate_view: Option<wgpu::TextureView>,
     path_msaa_texture: Option<wgpu::Texture>,
     path_msaa_view: Option<wgpu::TextureView>,
     rendering_params: RenderingParameters,
@@ -272,23 +272,6 @@ impl WgpuRenderer {
             mapped_at_creation: false,
         });
 
-        let (path_intermediate_texture, path_intermediate_view) = Self::create_path_intermediate(
-            &device,
-            surface_format,
-            config.size.width.0 as u32,
-            config.size.height.0 as u32,
-        );
-
-        let (path_msaa_texture, path_msaa_view) = Self::create_msaa_if_needed(
-            &device,
-            surface_format,
-            config.size.width.0 as u32,
-            config.size.height.0 as u32,
-            rendering_params.path_sample_count,
-        )
-        .map(|(t, v)| (Some(t), Some(v)))
-        .unwrap_or((None, None));
-
         let globals_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("globals_bind_group"),
             layout: &bind_group_layouts.globals,
@@ -354,10 +337,12 @@ impl WgpuRenderer {
             instance_buffer,
             instance_buffer_capacity: initial_instance_buffer_capacity,
             storage_buffer_alignment,
-            path_intermediate_texture,
-            path_intermediate_view,
-            path_msaa_texture,
-            path_msaa_view,
+            // Defer intermediate texture creation to first draw call via ensure_intermediate_textures().
+            // This avoids panics when the device/surface is in an invalid state during initialization.
+            path_intermediate_texture: None,
+            path_intermediate_view: None,
+            path_msaa_texture: None,
+            path_msaa_view: None,
             rendering_params,
             dual_source_blending,
             adapter_info,
@@ -786,7 +771,9 @@ impl WgpuRenderer {
             }
 
             // Destroy old textures before allocating new ones to avoid GPU memory spikes
-            self.path_intermediate_texture.destroy();
+            if let Some(ref texture) = self.path_intermediate_texture {
+                texture.destroy();
+            }
             if let Some(ref texture) = self.path_msaa_texture {
                 texture.destroy();
             }
@@ -795,28 +782,44 @@ impl WgpuRenderer {
             self.surface_config.height = height.max(1);
             self.surface.configure(&self.device, &self.surface_config);
 
-            let (path_intermediate_texture, path_intermediate_view) =
-                Self::create_path_intermediate(
-                    &self.device,
-                    self.surface_config.format,
-                    self.surface_config.width,
-                    self.surface_config.height,
-                );
-            self.path_intermediate_texture = path_intermediate_texture;
-            self.path_intermediate_view = path_intermediate_view;
+            // Invalidate intermediate textures - they will be lazily recreated
+            // in draw() after we confirm the surface is healthy. This avoids
+            // panics when the device/surface is in an invalid state during resize.
+            self.path_intermediate_texture = None;
+            self.path_intermediate_view = None;
+            self.path_msaa_texture = None;
+            self.path_msaa_view = None;
+        }
+    }
 
-            let (path_msaa_texture, path_msaa_view) = Self::create_msaa_if_needed(
+    fn ensure_intermediate_textures(&mut self) {
+        if self.path_intermediate_texture.is_some() {
+            return;
+        }
+
+        let (path_intermediate_texture, path_intermediate_view) = {
+            let (t, v) = Self::create_path_intermediate(
                 &self.device,
                 self.surface_config.format,
                 self.surface_config.width,
                 self.surface_config.height,
-                self.rendering_params.path_sample_count,
-            )
-            .map(|(t, v)| (Some(t), Some(v)))
-            .unwrap_or((None, None));
-            self.path_msaa_texture = path_msaa_texture;
-            self.path_msaa_view = path_msaa_view;
-        }
+            );
+            (Some(t), Some(v))
+        };
+        self.path_intermediate_texture = path_intermediate_texture;
+        self.path_intermediate_view = path_intermediate_view;
+
+        let (path_msaa_texture, path_msaa_view) = Self::create_msaa_if_needed(
+            &self.device,
+            self.surface_config.format,
+            self.surface_config.width,
+            self.surface_config.height,
+            self.rendering_params.path_sample_count,
+        )
+        .map(|(t, v)| (Some(t), Some(v)))
+        .unwrap_or((None, None));
+        self.path_msaa_texture = path_msaa_texture;
+        self.path_msaa_view = path_msaa_view;
     }
 
     pub fn update_transparency(&mut self, transparent: bool) {
@@ -875,6 +878,10 @@ impl WgpuRenderer {
                 return;
             }
         };
+
+        // Now that we know the surface is healthy, ensure intermediate textures exist
+        self.ensure_intermediate_textures();
+
         let frame_view = frame
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
@@ -1264,11 +1271,15 @@ impl WgpuRenderer {
             vec![PathSprite { bounds }]
         };
 
+        let Some(path_intermediate_view) = self.path_intermediate_view.as_ref() else {
+            return true;
+        };
+
         let sprite_data = unsafe { Self::instance_bytes(&sprites) };
         self.draw_instances_with_texture(
             sprite_data,
             sprites.len() as u32,
-            &self.path_intermediate_view,
+            path_intermediate_view,
             &self.pipelines.paths,
             instance_offset,
             pass,
@@ -1312,10 +1323,14 @@ impl WgpuRenderer {
             }],
         });
 
+        let Some(path_intermediate_view) = self.path_intermediate_view.as_ref() else {
+            return true;
+        };
+
         let (target_view, resolve_target) = if let Some(ref msaa_view) = self.path_msaa_view {
-            (msaa_view, Some(&self.path_intermediate_view))
+            (msaa_view, Some(path_intermediate_view))
         } else {
-            (&self.path_intermediate_view, None)
+            (path_intermediate_view, None)
         };
 
         {
