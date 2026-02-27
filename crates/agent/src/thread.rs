@@ -771,9 +771,9 @@ impl ToolPermissionContext {
                     });
                     return acp_thread::PermissionOptions::DropdownWithPatterns {
                         choices,
-                        command_patterns: all_patterns
+                        patterns: all_patterns
                             .into_iter()
-                            .map(|(pattern, display)| acp_thread::CommandPattern {
+                            .map(|(pattern, display)| acp_thread::PermissionPattern {
                                 pattern,
                                 display_name: display,
                             })

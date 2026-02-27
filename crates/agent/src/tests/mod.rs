@@ -1215,7 +1215,7 @@ fn test_permission_options_terminal_pipeline_produces_dropdown_with_patterns() {
 
     let PermissionOptions::DropdownWithPatterns {
         choices,
-        command_patterns,
+        patterns,
         tool_name,
     } = permission_options
     else {
@@ -1234,21 +1234,15 @@ fn test_permission_options_terminal_pipeline_produces_dropdown_with_patterns() {
     assert!(labels.contains(&"Only this time"));
 
     // Should have per-command patterns for cargo and tail
-    assert_eq!(command_patterns.len(), 2);
-    let pattern_names: Vec<&str> = command_patterns
-        .iter()
-        .map(|cp| cp.display_name.as_str())
-        .collect();
+    assert_eq!(patterns.len(), 2);
+    let pattern_names: Vec<&str> = patterns.iter().map(|cp| cp.display_name.as_str()).collect();
     assert!(pattern_names.contains(&"cargo"));
     assert!(pattern_names.contains(&"tail"));
 
     // Verify patterns are valid regex patterns
-    let patterns: Vec<&str> = command_patterns
-        .iter()
-        .map(|cp| cp.pattern.as_str())
-        .collect();
-    assert!(patterns.contains(&"^cargo\\b"));
-    assert!(patterns.contains(&"^tail\\b"));
+    let regex_patterns: Vec<&str> = patterns.iter().map(|cp| cp.pattern.as_str()).collect();
+    assert!(regex_patterns.contains(&"^cargo\\b"));
+    assert!(regex_patterns.contains(&"^tail\\b"));
 }
 
 #[test]
@@ -1274,20 +1268,14 @@ fn test_permission_options_terminal_pipeline_deduplicates_commands() {
     )
     .build_permission_options();
 
-    let PermissionOptions::DropdownWithPatterns {
-        command_patterns, ..
-    } = permission_options
-    else {
+    let PermissionOptions::DropdownWithPatterns { patterns, .. } = permission_options else {
         // If both greps deduplicate to a single pattern, it should be a regular Dropdown
         // since there's only 1 unique command
         return;
     };
 
     // If we get DropdownWithPatterns, verify no duplicates
-    let names: Vec<&str> = command_patterns
-        .iter()
-        .map(|cp| cp.display_name.as_str())
-        .collect();
+    let names: Vec<&str> = patterns.iter().map(|cp| cp.display_name.as_str()).collect();
     let unique_count = names.len();
     let deduped: std::collections::HashSet<&&str> = names.iter().collect();
     assert_eq!(
@@ -1305,17 +1293,11 @@ fn test_permission_options_terminal_pipeline_with_chaining() {
     )
     .build_permission_options();
 
-    let PermissionOptions::DropdownWithPatterns {
-        command_patterns, ..
-    } = permission_options
-    else {
+    let PermissionOptions::DropdownWithPatterns { patterns, .. } = permission_options else {
         panic!("Expected DropdownWithPatterns for chained pipeline command");
     };
 
-    let pattern_names: Vec<&str> = command_patterns
-        .iter()
-        .map(|cp| cp.display_name.as_str())
-        .collect();
+    let pattern_names: Vec<&str> = patterns.iter().map(|cp| cp.display_name.as_str()).collect();
     assert!(pattern_names.contains(&"npm"));
     assert!(pattern_names.contains(&"tail"));
     // npm should be deduplicated even though it appears twice

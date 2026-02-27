@@ -445,8 +445,13 @@ impl PermissionOptionChoice {
     }
 }
 
+/// Pairs a tool's permission pattern with its display name
+///
+/// For example, a pattern of `^cargo\\s+build(\\s|$)` would display as `cargo
+/// build`. It's handy to keep these together rather than trying to derive
+/// one from the other.
 #[derive(Debug, Clone)]
-pub struct CommandPattern {
+pub struct PermissionPattern {
     pub pattern: String,
     pub display_name: String,
 }
@@ -457,7 +462,7 @@ pub enum PermissionOptions {
     Dropdown(Vec<PermissionOptionChoice>),
     DropdownWithPatterns {
         choices: Vec<PermissionOptionChoice>,
-        command_patterns: Vec<CommandPattern>,
+        patterns: Vec<PermissionPattern>,
         tool_name: String,
     },
 }
