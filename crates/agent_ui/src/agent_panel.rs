@@ -3857,28 +3857,48 @@ mod tests {
         }];
 
         let blocks = build_conflict_resolution_prompt(&conflicts);
-        // 1 Text instruction + 1 Resource for the conflict
-        assert_eq!(blocks.len(), 2, "expected 1 text + 1 resource block");
-
-        let text = expect_text_block(&blocks[0]);
-        assert!(
-            text.contains("src/main.rs"),
-            "prompt should mention the file path"
+        // 2 Text blocks + 1 ResourceLink + 1 Resource for the conflict
+        assert_eq!(
+            blocks.len(),
+            4,
+            "expected 2 text + 1 resource link + 1 resource block"
         );
+
+        let intro_text = expect_text_block(&blocks[0]);
         assert!(
-            text.contains("`HEAD` (ours)"),
+            intro_text.contains("Please resolve the following merge conflict in"),
+            "prompt should include single-conflict intro text"
+        );
+
+        match &blocks[1] {
+            acp::ContentBlock::ResourceLink(link) => {
+                assert!(
+                    link.uri.contains("file://"),
+                    "resource link URI should use file scheme"
+                );
+                assert!(
+                    link.uri.contains("main.rs"),
+                    "resource link URI should reference file path"
+                );
+            }
+            other => panic!("expected ResourceLink block, got {:?}", other),
+        }
+
+        let body_text = expect_text_block(&blocks[2]);
+        assert!(
+            body_text.contains("`HEAD` (ours)"),
             "prompt should mention ours branch"
         );
         assert!(
-            text.contains("`feature` (theirs)"),
+            body_text.contains("`feature` (theirs)"),
             "prompt should mention theirs branch"
         );
         assert!(
-            text.contains("editing the file directly"),
+            body_text.contains("editing the file directly"),
             "prompt should instruct the agent to edit the file"
         );
 
-        let (resource_text, resource_uri) = expect_resource_block(&blocks[1]);
+        let (resource_text, resource_uri) = expect_resource_block(&blocks[3]);
         assert!(
             resource_text.contains("<<<<<<< HEAD"),
             "resource should contain the conflict text"
@@ -3995,8 +4015,12 @@ mod tests {
         ];
 
         let blocks = build_conflicted_files_resolution_prompt(&file_paths);
-        // Only 1 Text block (no Resource blocks since there's no inline conflict text)
-        assert_eq!(blocks.len(), 1, "expected 1 text block only");
+        // 1 instruction Text block + (ResourceLink + newline Text) per file
+        assert_eq!(
+            blocks.len(),
+            1 + (file_paths.len() * 2),
+            "expected instruction text plus resource links and separators"
+        );
 
         let text = expect_text_block(&blocks[0]);
         assert!(
@@ -4007,8 +4031,33 @@ mod tests {
             text.contains("conflict markers"),
             "prompt should mention conflict markers"
         );
-        for path in &file_paths {
-            assert!(text.contains(path), "prompt should list file path: {path}");
+
+        for (index, path) in file_paths.iter().enumerate() {
+            let link_index = 1 + (index * 2);
+            let newline_index = link_index + 1;
+
+            match &blocks[link_index] {
+                acp::ContentBlock::ResourceLink(link) => {
+                    assert!(
+                        link.uri.contains("file://"),
+                        "resource link URI should use file scheme"
+                    );
+                    assert!(
+                        link.uri.contains(path),
+                        "resource link URI should reference file path: {path}"
+                    );
+                }
+                other => panic!(
+                    "expected ResourceLink block at index {}, got {:?}",
+                    link_index, other
+                ),
+            }
+
+            let separator = expect_text_block(&blocks[newline_index]);
+            assert_eq!(
+                separator, "\n",
+                "expected newline separator after each file"
+            );
         }
     }
 
