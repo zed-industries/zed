@@ -173,7 +173,7 @@ impl AgentRegistryPage {
             .global::<SettingsStore>()
             .get::<AllAgentServersSettings>(None);
         self.installed_statuses.clear();
-        for (id, settings) in &settings.custom {
+        for (id, settings) in settings.iter() {
             let status = match settings {
                 CustomAgentServerSettings::Registry { .. } => {
                     RegistryInstallStatus::InstalledRegistry
@@ -583,7 +583,7 @@ impl AgentRegistryPage {
                         let agent_id = agent_id.clone();
                         update_settings_file(fs.clone(), cx, move |settings, _| {
                             let agent_servers = settings.agent_servers.get_or_insert_default();
-                            agent_servers.custom.entry(agent_id).or_insert_with(|| {
+                            agent_servers.entry(agent_id).or_insert_with(|| {
                                 settings::CustomAgentServerSettings::Registry {
                                     default_mode: None,
                                     default_model: None,
@@ -607,13 +607,13 @@ impl AgentRegistryPage {
                             let Some(agent_servers) = settings.agent_servers.as_mut() else {
                                 return;
                             };
-                            if let Some(entry) = agent_servers.custom.get(agent_id.as_str())
+                            if let Some(entry) = agent_servers.get(agent_id.as_str())
                                 && matches!(
                                     entry,
                                     settings::CustomAgentServerSettings::Registry { .. }
                                 )
                             {
-                                agent_servers.custom.remove(agent_id.as_str());
+                                agent_servers.remove(agent_id.as_str());
                             }
                         });
                     })

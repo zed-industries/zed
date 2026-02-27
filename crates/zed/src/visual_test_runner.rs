@@ -1947,8 +1947,8 @@ impl AgentServer for StubAgentServer {
         &self,
         _delegate: AgentServerDelegate,
         _cx: &mut App,
-    ) -> gpui::Task<gpui::Result<(Rc<dyn AgentConnection>, Option<task::SpawnInTerminal>)>> {
-        gpui::Task::ready(Ok((Rc::new(self.connection.clone()), None)))
+    ) -> gpui::Task<gpui::Result<Rc<dyn AgentConnection>>> {
+        gpui::Task::ready(Ok(Rc::new(self.connection.clone())))
     }
 
     fn into_any(self: Rc<Self>) -> Rc<dyn Any> {

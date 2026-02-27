@@ -1,3 +1,5 @@
+#![cfg_attr(target_family = "wasm", no_main)]
+
 use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -146,9 +148,7 @@ impl Render for ImageShowcase {
 
 actions!(image, [Quit]);
 
-fn main() {
-    env_logger::init();
-
+fn run_example() {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
 
     application()
@@ -192,4 +192,17 @@ fn main() {
             })
             .unwrap();
         });
+}
+
+#[cfg(not(target_family = "wasm"))]
+fn main() {
+    env_logger::init();
+    run_example();
+}
+
+#[cfg(target_family = "wasm")]
+#[wasm_bindgen::prelude::wasm_bindgen(start)]
+pub fn start() {
+    gpui_platform::web_init();
+    run_example();
 }

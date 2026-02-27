@@ -265,6 +265,10 @@ impl<P: Debug> Debug for BlockProperties<P> {
 pub enum BlockStyle {
     Fixed,
     Flex,
+    /// Like `Flex` but doesn't use the gutter:
+    /// - block content scrolls with buffer content
+    /// - doesn't paint in gutter
+    Spacer,
     Sticky,
 }
 
@@ -272,6 +276,7 @@ pub enum BlockStyle {
 pub struct EditorMargins {
     pub gutter: GutterDimensions,
     pub right: Pixels,
+    pub extended_right: Pixels,
 }
 
 #[derive(gpui::AppContext, gpui::VisualContext)]
@@ -289,6 +294,7 @@ pub struct BlockContext<'a, 'b> {
     pub height: u32,
     pub selected: bool,
     pub editor_style: &'b EditorStyle,
+    pub indent_guide_padding: Pixels,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Ord, PartialOrd, Hash)]
@@ -393,8 +399,8 @@ impl Block {
             Block::Custom(block) => block.style,
             Block::ExcerptBoundary { .. }
             | Block::FoldedBuffer { .. }
-            | Block::BufferHeader { .. }
-            | Block::Spacer { .. } => BlockStyle::Sticky,
+            | Block::BufferHeader { .. } => BlockStyle::Sticky,
+            Block::Spacer { .. } => BlockStyle::Spacer,
         }
     }
 
@@ -1702,12 +1708,13 @@ pub(crate) fn balancing_block(
     Some(BlockProperties {
         placement: their_placement,
         height: my_block.height,
-        style: BlockStyle::Sticky,
+        style: BlockStyle::Spacer,
         render: Arc::new(move |cx| {
             crate::EditorElement::render_spacer_block(
                 cx.block_id,
                 cx.height,
                 cx.line_height,
+                cx.indent_guide_padding,
                 cx.window,
                 cx.app,
             )
@@ -2845,8 +2852,8 @@ mod tests {
     use buffer_diff::BufferDiff;
     use gpui::{App, AppContext as _, Element, div, font, px};
     use itertools::Itertools;
-    use language::{Buffer, Capability};
-    use multi_buffer::{ExcerptRange, MultiBuffer};
+    use language::{Buffer, Capability, Point};
+    use multi_buffer::{MultiBuffer, PathKey};
     use rand::prelude::*;
     use settings::SettingsStore;
     use std::env;
@@ -3056,27 +3063,32 @@ mod tests {
         let buffer2 = cx.new(|cx| Buffer::local("Buffer 2", cx));
         let buffer3 = cx.new(|cx| Buffer::local("Buffer 3", cx));
 
-        let mut excerpt_ids = Vec::new();
         let multi_buffer = cx.new(|cx| {
             let mut multi_buffer = MultiBuffer::new(Capability::ReadWrite);
-            excerpt_ids.extend(multi_buffer.push_excerpts(
+            multi_buffer.set_excerpts_for_path(
+                PathKey::sorted(0),
                 buffer1.clone(),
-                [ExcerptRange::new(0..buffer1.read(cx).len())],
+                [Point::zero()..buffer1.read(cx).max_point()],
+                0,
                 cx,
-            ));
-            excerpt_ids.extend(multi_buffer.push_excerpts(
+            );
+            multi_buffer.set_excerpts_for_path(
+                PathKey::sorted(1),
                 buffer2.clone(),
-                [ExcerptRange::new(0..buffer2.read(cx).len())],
+                [Point::zero()..buffer2.read(cx).max_point()],
+                0,
                 cx,
-            ));
-            excerpt_ids.extend(multi_buffer.push_excerpts(
+            );
+            multi_buffer.set_excerpts_for_path(
+                PathKey::sorted(2),
                 buffer3.clone(),
-                [ExcerptRange::new(0..buffer3.read(cx).len())],
+                [Point::zero()..buffer3.read(cx).max_point()],
+                0,
                 cx,
-            ));
-
+            );
             multi_buffer
         });
+        let excerpt_ids = multi_buffer.read_with(cx, |mb, _| mb.excerpt_ids());
 
         let font = test_font();
         let font_size = px(14.);
@@ -3403,30 +3415,32 @@ mod tests {
     fn test_custom_blocks_inside_buffer_folds(cx: &mut gpui::TestAppContext) {
         cx.update(init_test);
 
-        let text = "111\n222\n333\n444\n555\n666";
+        let text = "111\n\n222\n\n333\n\n444\n\n555\n\n666";
 
         let buffer = cx.update(|cx| {
-            MultiBuffer::build_multi(
+            let multibuffer = MultiBuffer::build_multi(
                 [
                     (text, vec![Point::new(0, 0)..Point::new(0, 3)]),
                     (
                         text,
                         vec![
-                            Point::new(1, 0)..Point::new(1, 3),
                             Point::new(2, 0)..Point::new(2, 3),
-                            Point::new(3, 0)..Point::new(3, 3),
+                            Point::new(4, 0)..Point::new(4, 3),
+                            Point::new(6, 0)..Point::new(6, 3),
                         ],
                     ),
                     (
                         text,
                         vec![
-                            Point::new(4, 0)..Point::new(4, 3),
-                            Point::new(5, 0)..Point::new(5, 3),
+                            Point::new(8, 0)..Point::new(8, 3),
+                            Point::new(10, 0)..Point::new(10, 3),
                         ],
                     ),
                 ],
                 cx,
-            )
+            );
+            assert_eq!(multibuffer.read(cx).excerpt_ids().len(), 6);
+            multibuffer
         });
         let buffer_snapshot = cx.update(|cx| buffer.read(cx).snapshot(cx));
         let buffer_ids = buffer_snapshot
@@ -3462,16 +3476,16 @@ mod tests {
                 Some(0),
                 None,
                 None,
-                Some(1),
-                None,
                 Some(2),
-                None,
-                Some(3),
-                None,
                 None,
                 Some(4),
                 None,
-                Some(5),
+                Some(6),
+                None,
+                None,
+                Some(8),
+                None,
+                Some(10),
             ]
         );
 
@@ -3533,19 +3547,19 @@ mod tests {
                 None,
                 None,
                 None,
-                Some(1),
-                None,
-                None,
                 Some(2),
-                None,
-                Some(3),
-                None,
-                None,
                 None,
                 None,
                 Some(4),
                 None,
-                Some(5),
+                Some(6),
+                None,
+                None,
+                None,
+                None,
+                Some(8),
+                None,
+                Some(10),
                 None,
             ]
         );
@@ -3601,19 +3615,19 @@ mod tests {
                 None,
                 None,
                 None,
-                Some(1),
-                None,
-                None,
                 Some(2),
-                None,
-                Some(3),
-                None,
-                None,
                 None,
                 None,
                 Some(4),
                 None,
-                Some(5),
+                Some(6),
+                None,
+                None,
+                None,
+                None,
+                Some(8),
+                None,
+                Some(10),
                 None,
             ]
         );
@@ -3664,9 +3678,9 @@ mod tests {
                 None,
                 None,
                 None,
-                Some(4),
+                Some(8),
                 None,
-                Some(5),
+                Some(10),
                 None,
             ]
         );
@@ -3720,9 +3734,9 @@ mod tests {
                 None,
                 None,
                 None,
-                Some(4),
+                Some(8),
                 None,
-                Some(5),
+                Some(10),
                 None,
             ]
         );
@@ -4590,9 +4604,10 @@ mod tests {
 
         let lhs_multibuffer = cx.new(|cx| {
             let mut mb = MultiBuffer::new(Capability::ReadWrite);
-            mb.push_excerpts(
+            mb.set_excerpts_for_buffer(
                 lhs_buffer.clone(),
-                [ExcerptRange::new(text::Anchor::MIN..text::Anchor::MAX)],
+                [Point::zero()..lhs_buffer.read(cx).max_point()],
+                0,
                 cx,
             );
             mb.add_inverted_diff(diff.clone(), rhs_buffer.clone(), cx);
@@ -4600,9 +4615,10 @@ mod tests {
         });
         let rhs_multibuffer = cx.new(|cx| {
             let mut mb = MultiBuffer::new(Capability::ReadWrite);
-            mb.push_excerpts(
+            mb.set_excerpts_for_buffer(
                 rhs_buffer.clone(),
-                [ExcerptRange::new(text::Anchor::MIN..text::Anchor::MAX)],
+                [Point::zero()..rhs_buffer.read(cx).max_point()],
+                0,
                 cx,
             );
             mb.add_diff(diff.clone(), cx);

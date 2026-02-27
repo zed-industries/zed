@@ -1033,6 +1033,9 @@ pub struct ThemeColorsContent {
     /// Background color for Vim Visual Block mode indicator.
     #[serde(rename = "vim.visual_block.background")]
     pub vim_visual_block_background: Option<String>,
+    /// Background color for Vim yank highlight.
+    #[serde(rename = "vim.yank.background")]
+    pub vim_yank_background: Option<String>,
     /// Background color for Vim Helix Normal mode indicator.
     #[serde(rename = "vim.helix_normal.background")]
     pub vim_helix_normal_background: Option<String>,

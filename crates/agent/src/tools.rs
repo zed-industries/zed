@@ -17,6 +17,7 @@ mod save_file_tool;
 mod spawn_agent_tool;
 mod streaming_edit_file_tool;
 mod terminal_tool;
+mod tool_edit_parser;
 mod tool_permissions;
 mod web_search_tool;
 

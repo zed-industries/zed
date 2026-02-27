@@ -5,6 +5,7 @@ use gpui::{
     PolychromeSprite, PrimitiveBatch, Quad, ScaledPixels, Scene, Shadow, Size, SubpixelSprite,
     Underline, get_gamma_correction_ratios,
 };
+#[cfg(not(target_family = "wasm"))]
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use std::num::NonZeroU64;
 use std::sync::Arc;
@@ -105,6 +106,7 @@ pub struct WgpuRenderer {
     path_globals_bind_group: wgpu::BindGroup,
     instance_buffer: wgpu::Buffer,
     instance_buffer_capacity: u64,
+    max_buffer_size: u64,
     storage_buffer_alignment: u64,
     path_intermediate_texture: wgpu::Texture,
     path_intermediate_view: wgpu::TextureView,
@@ -123,6 +125,7 @@ impl WgpuRenderer {
     /// # Safety
     /// The caller must ensure that the window handle remains valid for the lifetime
     /// of the returned renderer.
+    #[cfg(not(target_family = "wasm"))]
     pub fn new<W: HasWindowHandle + HasDisplayHandle>(
         gpu_context: &mut Option<WgpuContext>,
         window: &W,
@@ -165,6 +168,27 @@ impl WgpuRenderer {
             None => gpu_context.insert(WgpuContext::new(instance, &surface)?),
         };
 
+        Self::new_with_surface(context, surface, config)
+    }
+
+    #[cfg(target_family = "wasm")]
+    pub fn new_from_canvas(
+        context: &WgpuContext,
+        canvas: &web_sys::HtmlCanvasElement,
+        config: WgpuSurfaceConfig,
+    ) -> anyhow::Result<Self> {
+        let surface = context
+            .instance
+            .create_surface(wgpu::SurfaceTarget::Canvas(canvas.clone()))
+            .map_err(|e| anyhow::anyhow!("Failed to create surface: {e}"))?;
+        Self::new_with_surface(context, surface, config)
+    }
+
+    pub fn new_with_surface(
+        context: &WgpuContext,
+        surface: wgpu::Surface<'static>,
+        config: WgpuSurfaceConfig,
+    ) -> anyhow::Result<Self> {
         let surface_caps = surface.get_capabilities(&context.adapter);
         let preferred_formats = [
             wgpu::TextureFormat::Bgra8Unorm,
@@ -262,6 +286,7 @@ impl WgpuRenderer {
             mapped_at_creation: false,
         });
 
+        let max_buffer_size = device.limits().max_buffer_size;
         let storage_buffer_alignment = device.limits().min_storage_buffer_offset_alignment as u64;
         let initial_instance_buffer_capacity = 2 * 1024 * 1024;
         let instance_buffer = device.create_buffer(&wgpu::BufferDescriptor {
@@ -352,6 +377,7 @@ impl WgpuRenderer {
             path_globals_bind_group,
             instance_buffer,
             instance_buffer_capacity: initial_instance_buffer_capacity,
+            max_buffer_size,
             storage_buffer_alignment,
             path_intermediate_texture,
             path_intermediate_view,
@@ -497,11 +523,24 @@ impl WgpuRenderer {
         path_sample_count: u32,
         dual_source_blending: bool,
     ) -> WgpuPipelines {
-        let shader_source = include_str!("shaders.wgsl");
+        let base_shader_source = include_str!("shaders.wgsl");
         let shader_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("gpui_shaders"),
-            source: wgpu::ShaderSource::Wgsl(shader_source.into()),
+            source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(base_shader_source)),
         });
+
+        let subpixel_shader_source = include_str!("shaders_subpixel.wgsl");
+        let subpixel_shader_module = if dual_source_blending {
+            let combined = format!(
+                "enable dual_source_blending;\n{base_shader_source}\n{subpixel_shader_source}"
+            );
+            Some(device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("gpui_subpixel_shaders"),
+                source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Owned(combined)),
+            }))
+        } else {
+            None
+        };
 
         let blend_mode = match alpha_mode {
             wgpu::CompositeAlphaMode::PreMultiplied => {
@@ -523,7 +562,8 @@ impl WgpuRenderer {
                                data_layout: &wgpu::BindGroupLayout,
                                topology: wgpu::PrimitiveTopology,
                                color_targets: &[Option<wgpu::ColorTargetState>],
-                               sample_count: u32| {
+                               sample_count: u32,
+                               module: &wgpu::ShaderModule| {
             let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some(&format!("{name}_layout")),
                 bind_group_layouts: &[globals_layout, data_layout],
@@ -534,13 +574,13 @@ impl WgpuRenderer {
                 label: Some(name),
                 layout: Some(&pipeline_layout),
                 vertex: wgpu::VertexState {
-                    module: &shader_module,
+                    module,
                     entry_point: Some(vs_entry),
                     buffers: &[],
                     compilation_options: wgpu::PipelineCompilationOptions::default(),
                 },
                 fragment: Some(wgpu::FragmentState {
-                    module: &shader_module,
+                    module,
                     entry_point: Some(fs_entry),
                     targets: color_targets,
                     compilation_options: wgpu::PipelineCompilationOptions::default(),
@@ -574,6 +614,7 @@ impl WgpuRenderer {
             wgpu::PrimitiveTopology::TriangleStrip,
             &[Some(color_target.clone())],
             1,
+            &shader_module,
         );
 
         let shadows = create_pipeline(
@@ -585,6 +626,7 @@ impl WgpuRenderer {
             wgpu::PrimitiveTopology::TriangleStrip,
             &[Some(color_target.clone())],
             1,
+            &shader_module,
         );
 
         let path_rasterization = create_pipeline(
@@ -600,6 +642,7 @@ impl WgpuRenderer {
                 write_mask: wgpu::ColorWrites::ALL,
             })],
             path_sample_count,
+            &shader_module,
         );
 
         let paths_blend = wgpu::BlendState {
@@ -628,6 +671,7 @@ impl WgpuRenderer {
                 write_mask: wgpu::ColorWrites::ALL,
             })],
             1,
+            &shader_module,
         );
 
         let underlines = create_pipeline(
@@ -639,6 +683,7 @@ impl WgpuRenderer {
             wgpu::PrimitiveTopology::TriangleStrip,
             &[Some(color_target.clone())],
             1,
+            &shader_module,
         );
 
         let mono_sprites = create_pipeline(
@@ -650,9 +695,10 @@ impl WgpuRenderer {
             wgpu::PrimitiveTopology::TriangleStrip,
             &[Some(color_target.clone())],
             1,
+            &shader_module,
         );
 
-        let subpixel_sprites = if dual_source_blending {
+        let subpixel_sprites = if let Some(subpixel_module) = &subpixel_shader_module {
             let subpixel_blend = wgpu::BlendState {
                 color: wgpu::BlendComponent {
                     src_factor: wgpu::BlendFactor::Src1,
@@ -679,6 +725,7 @@ impl WgpuRenderer {
                     write_mask: wgpu::ColorWrites::COLOR,
                 })],
                 1,
+                subpixel_module,
             ))
         } else {
             None
@@ -693,6 +740,7 @@ impl WgpuRenderer {
             wgpu::PrimitiveTopology::TriangleStrip,
             &[Some(color_target.clone())],
             1,
+            &shader_module,
         );
 
         let surfaces = create_pipeline(
@@ -704,6 +752,7 @@ impl WgpuRenderer {
             wgpu::PrimitiveTopology::TriangleStrip,
             &[Some(color_target)],
             1,
+            &shader_module,
         );
 
         WgpuPipelines {
@@ -835,6 +884,10 @@ impl WgpuRenderer {
 
     pub fn sprite_atlas(&self) -> &Arc<WgpuAtlas> {
         &self.atlas
+    }
+
+    pub fn supports_dual_source_blending(&self) -> bool {
+        self.dual_source_blending
     }
 
     pub fn gpu_specs(&self) -> GpuSpecs {
@@ -1020,7 +1073,7 @@ impl WgpuRenderer {
 
             if overflow {
                 drop(encoder);
-                if self.instance_buffer_capacity >= 256 * 1024 * 1024 {
+                if self.instance_buffer_capacity >= self.max_buffer_size {
                     log::error!(
                         "instance buffer size grew too large: {}",
                         self.instance_buffer_capacity
@@ -1329,7 +1382,7 @@ impl WgpuRenderer {
     }
 
     fn grow_instance_buffer(&mut self) {
-        let new_capacity = self.instance_buffer_capacity * 2;
+        let new_capacity = (self.instance_buffer_capacity * 2).min(self.max_buffer_size);
         log::info!("increased instance buffer size to {}", new_capacity);
         self.instance_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("instance_buffer"),
