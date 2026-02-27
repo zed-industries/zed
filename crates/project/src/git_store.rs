@@ -249,17 +249,6 @@ impl sum_tree::KeyedItem for StatusEntry {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct RepositoryId(pub u64);
 
-// when we see a path as conflicted, we store the merge heads for which it was conflicted
-// don't update those merge heads as long as the status is still conflicted
-// on every scan, if one of those paths is now not conflicted, check if the merge heads have changed since the stored merge heads,
-// and if they have, clear it
-//
-// sequence:
-//
-// 0. two conflicts
-// 1. heads changed, still have conflicts
-// 2. heads haven't changed but not no conflicts
-
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct MergeDetails {
     pub merge_heads_by_conflicted_path: TreeMap<RepoPath, Vec<Option<SharedString>>>,
