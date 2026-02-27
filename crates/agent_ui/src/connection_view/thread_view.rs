@@ -7522,12 +7522,7 @@ pub(crate) fn open_link(
     }
 }
 
-fn open_relative_path(
-    raw: &str,
-    workspace: Entity<Workspace>,
-    window: &mut Window,
-    cx: &mut App,
-) {
+fn open_relative_path(raw: &str, workspace: Entity<Workspace>, window: &mut Window, cx: &mut App) {
     // Strip an optional trailing `:line` or `:line:col` suffix (e.g. "src/main.rs:42").
     let (file_part, line_number) = if let Some(colon_pos) = raw.rfind(':') {
         let suffix = &raw[colon_pos + 1..];
@@ -7542,8 +7537,7 @@ fn open_relative_path(
 
     let path = std::path::Path::new(file_part);
     let project = workspace.read(cx).project().clone();
-    let Some(project_path) =
-        project.update(cx, |project, cx| project.find_project_path(path, cx))
+    let Some(project_path) = project.update(cx, |project, cx| project.find_project_path(path, cx))
     else {
         return;
     };
