@@ -141,6 +141,7 @@ pub fn request_prediction(
                 output.buffer_snapshotted_at,
                 output.response_received_at,
                 output.inputs,
+                None,
                 cx,
             )
             .await,

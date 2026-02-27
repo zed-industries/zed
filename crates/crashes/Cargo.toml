@@ -6,6 +6,7 @@ edition.workspace = true
 license = "GPL-3.0-or-later"
 
 [dependencies]
+anyhow.workspace = true
 bincode.workspace = true
 cfg-if.workspace = true
 crash-handler.workspace = true

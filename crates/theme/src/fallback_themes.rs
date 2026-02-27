@@ -257,6 +257,7 @@ pub(crate) fn zed_default_dark() -> Theme {
                 vim_visual_background: SystemColors::default().transparent,
                 vim_visual_line_background: SystemColors::default().transparent,
                 vim_visual_block_background: SystemColors::default().transparent,
+                vim_yank_background: hsla(207.8 / 360., 81. / 100., 66. / 100., 0.2),
                 vim_helix_normal_background: SystemColors::default().transparent,
                 vim_helix_select_background: SystemColors::default().transparent,
                 vim_normal_foreground: SystemColors::default().transparent,

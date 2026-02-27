@@ -85,46 +85,79 @@ async fn wait_for_language_servers_to_start(
 ) -> anyhow::Result<()> {
     let lsp_store = project.read_with(cx, |project, _| project.lsp_store());
 
-    let (language_server_ids, mut starting_language_server_ids) =
-        buffer.update(cx, |buffer, cx| {
-            lsp_store.update(cx, |lsp_store, cx| {
-                let ids = lsp_store.language_servers_for_local_buffer(buffer, cx);
-                let starting_ids = ids
-                    .iter()
-                    .copied()
-                    .filter(|id| !lsp_store.language_server_statuses.contains_key(&id))
-                    .collect::<HashSet<_>>();
-                (ids, starting_ids)
-            })
+    // Determine which servers exist for this buffer, and which are still starting.
+    let mut servers_pending_start = HashSet::default();
+    let mut servers_pending_diagnostics = HashSet::default();
+    buffer.update(cx, |buffer, cx| {
+        lsp_store.update(cx, |lsp_store, cx| {
+            let ids = lsp_store.language_servers_for_local_buffer(buffer, cx);
+            for &id in &ids {
+                match lsp_store.language_server_statuses.get(&id) {
+                    None => {
+                        servers_pending_start.insert(id);
+                        servers_pending_diagnostics.insert(id);
+                    }
+                    Some(status) if status.has_pending_diagnostic_updates => {
+                        servers_pending_diagnostics.insert(id);
+                    }
+                    Some(_) => {}
+                }
+            }
         });
+    });
 
-    step_progress.set_substatus(format!("waiting for {} LSPs", language_server_ids.len()));
+    step_progress.set_substatus(format!(
+        "waiting for {} LSPs",
+        servers_pending_diagnostics.len()
+    ));
 
-    let timeout_duration = if starting_language_server_ids.is_empty() {
+    let timeout_duration = if servers_pending_start.is_empty() {
         Duration::from_secs(30)
     } else {
         Duration::from_secs(60 * 5)
     };
-
     let timeout = cx.background_executor().timer(timeout_duration).shared();
 
-    let (mut tx, mut rx) = mpsc::channel(language_server_ids.len());
-    let added_subscription = cx.subscribe(project, {
+    let (mut started_tx, mut started_rx) = mpsc::channel(servers_pending_start.len().max(1));
+    let (mut diag_tx, mut diag_rx) = mpsc::channel(servers_pending_diagnostics.len().max(1));
+    let subscriptions = [cx.subscribe(&lsp_store, {
         let step_progress = step_progress.clone();
-        move |_, event, _| match event {
-            project::Event::LanguageServerAdded(language_server_id, name, _) => {
+        move |lsp_store, event, cx| match event {
+            project::LspStoreEvent::LanguageServerAdded(id, name, _) => {
                 step_progress.set_substatus(format!("LSP started: {}", name));
-                tx.try_send(*language_server_id).ok();
+                started_tx.try_send(*id).ok();
+            }
+            project::LspStoreEvent::DiskBasedDiagnosticsFinished { language_server_id } => {
+                let name = lsp_store
+                    .read(cx)
+                    .language_server_adapter_for_id(*language_server_id)
+                    .unwrap()
+                    .name();
+                step_progress.set_substatus(format!("LSP idle: {}", name));
+                diag_tx.try_send(*language_server_id).ok();
+            }
+            project::LspStoreEvent::LanguageServerUpdate {
+                message:
+                    client::proto::update_language_server::Variant::WorkProgress(
+                        client::proto::LspWorkProgress {
+                            message: Some(message),
+                            ..
+                        },
+                    ),
+                ..
+            } => {
+                step_progress.set_substatus(message.clone());
             }
             _ => {}
         }
-    });
+    })];
 
-    while !starting_language_server_ids.is_empty() {
+    // Phase 1: wait for all servers to start.
+    while !servers_pending_start.is_empty() {
         futures::select! {
-            language_server_id = rx.next() => {
-                if let Some(id) = language_server_id {
-                    starting_language_server_ids.remove(&id);
+            id = started_rx.next() => {
+                if let Some(id) = id {
+                    servers_pending_start.remove(&id);
                 }
             },
             _ = timeout.clone().fuse() => {
@@ -133,67 +166,17 @@ async fn wait_for_language_servers_to_start(
         }
     }
 
-    drop(added_subscription);
-
-    let (mut tx, mut rx) = mpsc::channel(language_server_ids.len());
-    let subscriptions = [
-        cx.subscribe(&lsp_store, {
-            let step_progress = step_progress.clone();
-            move |_, event, _| {
-                if let project::LspStoreEvent::LanguageServerUpdate {
-                    message:
-                        client::proto::update_language_server::Variant::WorkProgress(
-                            client::proto::LspWorkProgress {
-                                message: Some(message),
-                                ..
-                            },
-                        ),
-                    ..
-                } = event
-                {
-                    step_progress.set_substatus(message.clone());
-                }
-            }
-        }),
-        cx.subscribe(project, {
-            let step_progress = step_progress.clone();
-            let lsp_store = lsp_store.clone();
-            move |_, event, cx| match event {
-                project::Event::DiskBasedDiagnosticsFinished { language_server_id } => {
-                    let lsp_store = lsp_store.read(cx);
-                    let name = lsp_store
-                        .language_server_adapter_for_id(*language_server_id)
-                        .unwrap()
-                        .name();
-                    step_progress.set_substatus(format!("LSP idle: {}", name));
-                    tx.try_send(*language_server_id).ok();
-                }
-                _ => {}
-            }
-        }),
-    ];
-
+    // Save the buffer so the server sees the current content and kicks off diagnostics.
     project
         .update(cx, |project, cx| project.save_buffer(buffer.clone(), cx))
         .await?;
 
-    let mut pending_language_server_ids = lsp_store.read_with(cx, |lsp_store, _| {
-        language_server_ids
-            .iter()
-            .copied()
-            .filter(|id| {
-                lsp_store
-                    .language_server_statuses
-                    .get(id)
-                    .is_some_and(|status| status.has_pending_diagnostic_updates)
-            })
-            .collect::<HashSet<_>>()
-    });
-    while !pending_language_server_ids.is_empty() {
+    // Phase 2: wait for all servers to finish their diagnostic pass.
+    while !servers_pending_diagnostics.is_empty() {
         futures::select! {
-            language_server_id = rx.next() => {
-                if let Some(id) = language_server_id {
-                    pending_language_server_ids.remove(&id);
+            id = diag_rx.next() => {
+                if let Some(id) = id {
+                    servers_pending_diagnostics.remove(&id);
                 }
             },
             _ = timeout.clone().fuse() => {

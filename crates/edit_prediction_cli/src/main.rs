@@ -39,6 +39,7 @@ use zeta_prompt::ZetaFormat;
 
 use reqwest_client::ReqwestClient;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use std::env;
 use std::fmt::Display;
 use std::fs::{File, OpenOptions};
 use std::hash::{Hash, Hasher};
@@ -900,8 +901,18 @@ fn main() {
         }
 
         Command::Synthesize(synth_args) => {
-            let Some(output_dir) = args.output else {
-                panic!("output dir is required");
+            let output_dir = if let Some(output_dir) = args.output {
+                output_dir
+            } else {
+                let default_output_dir = env::current_dir()
+                    .unwrap()
+                    .join("crates/edit_prediction_cli/evals-generated");
+                if default_output_dir.parent().unwrap().exists() {
+                    std::fs::create_dir(&default_output_dir).ok();
+                    default_output_dir
+                } else {
+                    panic!("output dir is required");
+                }
             };
             let config = SynthesizeConfig {
                 repo_urls: synth_args.repos.clone(),

@@ -1,6 +1,6 @@
 use std::{cell::RefCell, ops::Range, rc::Rc};
 
-use super::thread_history::AcpThreadHistory;
+use super::thread_history::ThreadHistory;
 use acp_thread::{AcpThread, AgentThreadEntry};
 use agent::ThreadStore;
 use agent_client_protocol::{self as acp, ToolCallId};
@@ -19,13 +19,13 @@ use theme::ThemeSettings;
 use ui::{Context, TextSize};
 use workspace::Workspace;
 
-use crate::acp::message_editor::{MessageEditor, MessageEditorEvent};
+use crate::message_editor::{MessageEditor, MessageEditorEvent};
 
 pub struct EntryViewState {
     workspace: WeakEntity<Workspace>,
     project: WeakEntity<Project>,
     thread_store: Option<Entity<ThreadStore>>,
-    history: WeakEntity<AcpThreadHistory>,
+    history: WeakEntity<ThreadHistory>,
     prompt_store: Option<Entity<PromptStore>>,
     entries: Vec<Entry>,
     prompt_capabilities: Rc<RefCell<acp::PromptCapabilities>>,
@@ -38,7 +38,7 @@ impl EntryViewState {
         workspace: WeakEntity<Workspace>,
         project: WeakEntity<Project>,
         thread_store: Option<Entity<ThreadStore>>,
-        history: WeakEntity<AcpThreadHistory>,
+        history: WeakEntity<ThreadHistory>,
         prompt_store: Option<Entity<PromptStore>>,
         prompt_capabilities: Rc<RefCell<acp::PromptCapabilities>>,
         available_commands: Rc<RefCell<Vec<acp::AvailableCommand>>>,
@@ -412,7 +412,7 @@ mod tests {
     use fs::FakeFs;
     use gpui::{AppContext as _, TestAppContext};
 
-    use crate::acp::entry_view_state::EntryViewState;
+    use crate::entry_view_state::EntryViewState;
     use multi_buffer::MultiBufferRow;
     use pretty_assertions::assert_matches;
     use project::Project;
@@ -459,8 +459,8 @@ mod tests {
         });
 
         let thread_store = None;
-        let history = cx
-            .update(|window, cx| cx.new(|cx| crate::acp::AcpThreadHistory::new(None, window, cx)));
+        let history =
+            cx.update(|window, cx| cx.new(|cx| crate::ThreadHistory::new(None, window, cx)));
 
         let view_state = cx.new(|_cx| {
             EntryViewState::new(
