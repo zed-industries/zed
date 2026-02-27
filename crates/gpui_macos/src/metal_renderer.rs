@@ -110,10 +110,12 @@ impl InstanceBufferPool {
 
 pub(crate) struct MetalRenderer {
     device: metal::Device,
-    layer: metal::MetalLayer,
+    layer: Option<metal::MetalLayer>,
     is_apple_gpu: bool,
     is_unified_memory: bool,
     presents_with_transaction: bool,
+    /// For headless rendering, tracks whether output should be opaque
+    opaque: bool,
     command_queue: CommandQueue,
     paths_rasterization_pipeline_state: metal::RenderPipelineState,
     path_sprites_pipeline_state: metal::RenderPipelineState,
@@ -328,6 +330,7 @@ impl MetalRenderer {
             presents_with_transaction: false,
             is_apple_gpu,
             is_unified_memory,
+            opaque,
             command_queue,
             paths_rasterization_pipeline_state,
             path_sprites_pipeline_state,
@@ -639,7 +642,10 @@ impl MetalRenderer {
         let target_texture = self.device.new_texture(&texture_descriptor);
 
         loop {
-            let mut instance_buffer = self.instance_buffer_pool.lock().acquire(&self.device);
+            let mut instance_buffer = self
+                .instance_buffer_pool
+                .lock()
+                .acquire(&self.device, self.is_unified_memory);
 
             let command_buffer =
                 self.draw_primitives_to_texture(scene, &mut instance_buffer, &target_texture, size);

@@ -149,37 +149,6 @@ impl TestApp {
         self.read(|cx| f(entity.read(cx), cx))
     }
 
-    /// Open a test window with specific dimensions.
-    pub fn open_window_sized<V: Render + 'static>(
-        &mut self,
-        window_size: Size<Pixels>,
-        build_view: impl FnOnce(&mut Window, &mut Context<V>) -> V,
-    ) -> TestAppWindow<V> {
-        let bounds = Bounds {
-            origin: Point::default(),
-            size: window_size,
-        };
-        let handle = self.update(|cx| {
-            cx.open_window(
-                WindowOptions {
-                    window_bounds: Some(WindowBounds::Windowed(bounds)),
-                    focus: false,
-                    show: false,
-                    ..Default::default()
-                },
-                |window, cx| cx.new(|cx| build_view(window, cx)),
-            )
-            .unwrap()
-        });
-
-        TestAppWindow {
-            handle,
-            app: self.app.clone(),
-            platform: self.platform.clone(),
-            background_executor: self.background_executor.clone(),
-        }
-    }
-
     /// Open a test window with the given root view, using maximized bounds.
     pub fn open_window<V: Render + 'static>(
         &mut self,
