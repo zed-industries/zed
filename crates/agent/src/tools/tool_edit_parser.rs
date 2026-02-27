@@ -260,16 +260,16 @@ mod tests {
     fn test_single_edit_streamed_incrementally() {
         let mut parser = ToolEditParser::default();
 
-        // old_text arrives in chunks: "hel" → "hello w" → "hello world"
+        // old_text arrives in chunks: "hell" → "hello w" → "hello world"
         let events = parser.push_edits(&[PartialEdit {
-            old_text: Some("hel".into()),
+            old_text: Some("hell".into()),
             new_text: None,
         }]);
         assert_eq!(
             events.as_slice(),
             &[ToolEditEvent::OldTextChunk {
                 edit_index: 0,
-                chunk: "hel".into(),
+                chunk: "hell".into(),
                 done: false,
             }]
         );
