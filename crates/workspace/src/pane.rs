@@ -3696,7 +3696,7 @@ impl Pane {
     ) {
         if ix == self.active_item_index
             && let Some(active_item) = self.active_item()
-            && active_item.handle_drop(dragged_tab, window, cx)
+            && active_item.handle_drop(self, dragged_tab, window, cx)
         {
             return;
         }
@@ -3852,7 +3852,7 @@ impl Pane {
         cx: &mut Context<Self>,
     ) {
         if let Some(active_item) = self.active_item()
-            && active_item.handle_drop(dragged_selection, window, cx)
+            && active_item.handle_drop(self, dragged_selection, window, cx)
         {
             return;
         }
@@ -3879,7 +3879,7 @@ impl Pane {
         cx: &mut Context<Self>,
     ) {
         if let Some(active_item) = self.active_item()
-            && active_item.handle_drop(project_entry_id, window, cx)
+            && active_item.handle_drop(self, project_entry_id, window, cx)
         {
             return;
         }
@@ -3962,7 +3962,7 @@ impl Pane {
         cx: &mut Context<Self>,
     ) {
         if let Some(active_item) = self.active_item()
-            && active_item.handle_drop(paths, window, cx)
+            && active_item.handle_drop(self, paths, window, cx)
         {
             return;
         }

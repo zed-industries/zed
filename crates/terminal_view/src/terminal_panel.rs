@@ -1,4 +1,4 @@
-use std::{cmp, ops::ControlFlow, path::PathBuf, process::ExitStatus, sync::Arc, time::Duration};
+use std::{cmp, path::PathBuf, process::ExitStatus, sync::Arc, time::Duration};
 
 use crate::{
     TerminalView, default_working_directory,
@@ -34,7 +34,7 @@ use workspace::{
     SwapPaneLeft, SwapPaneRight, SwapPaneUp, ToggleZoom, Workspace,
     dock::{DockPosition, Panel, PanelEvent, PanelHandle},
     item::SerializableItem,
-    move_active_item, move_item, pane,
+    move_active_item, pane,
 };
 
 use anyhow::{Result, anyhow};
@@ -133,7 +133,11 @@ impl TerminalPanel {
         }
     }
 
-    fn apply_tab_bar_buttons(&self, terminal_pane: &Entity<Pane>, cx: &mut Context<Self>) {
+    pub(crate) fn apply_tab_bar_buttons(
+        &self,
+        terminal_pane: &Entity<Pane>,
+        cx: &mut Context<Self>,
+    ) {
         let assistant_tab_bar_button = self.assistant_tab_bar_button.clone();
         terminal_pane.update(cx, |pane, cx| {
             pane.set_render_tab_bar_buttons(cx, move |pane, window, cx| {
@@ -1242,90 +1246,6 @@ pub fn new_terminal_pane(
         let breadcrumbs = cx.new(|_| Breadcrumbs::new());
         toolbar.update(cx, |toolbar, cx| {
             toolbar.add_item(breadcrumbs, window, cx);
-        });
-
-        let drop_closure_project = project.downgrade();
-        let drop_closure_terminal_panel = terminal_panel.downgrade();
-        pane.set_custom_drop_handle(cx, move |pane, dropped_item, window, cx| {
-            let Some(project) = drop_closure_project.upgrade() else {
-                return ControlFlow::Break(());
-            };
-            if let Some(tab) = dropped_item.downcast_ref::<DraggedTab>() {
-                let this_pane = cx.entity();
-                let item = if tab.pane == this_pane {
-                    pane.item_for_index(tab.ix)
-                } else {
-                    tab.pane.read(cx).item_for_index(tab.ix)
-                };
-                if let Some(item) = item {
-                    if item.downcast::<TerminalView>().is_some() {
-                        let source = tab.pane.clone();
-                        let item_id_to_move = item.item_id();
-
-                        // If no split direction, let the regular pane drop handler take care of it
-                        let Some(split_direction) = pane.drag_split_direction() else {
-                            return ControlFlow::Continue(());
-                        };
-
-                        // Gather data synchronously before deferring
-                        let is_zoomed = drop_closure_terminal_panel
-                            .upgrade()
-                            .map(|terminal_panel| {
-                                let terminal_panel = terminal_panel.read(cx);
-                                if terminal_panel.active_pane == this_pane {
-                                    pane.is_zoomed()
-                                } else {
-                                    terminal_panel.active_pane.read(cx).is_zoomed()
-                                }
-                            })
-                            .unwrap_or(false);
-
-                        let workspace = workspace.clone();
-                        let terminal_panel = drop_closure_terminal_panel.clone();
-
-                        // Defer the split operation to avoid re-entrancy panic.
-                        // The pane may be the one currently being updated, so we cannot
-                        // call mark_positions (via split) synchronously.
-                        cx.spawn_in(window, async move |_, cx| {
-                            cx.update(|window, cx| {
-                                let Ok(new_pane) =
-                                    terminal_panel.update(cx, |terminal_panel, cx| {
-                                        let new_pane = new_terminal_pane(
-                                            workspace, project, is_zoomed, window, cx,
-                                        );
-                                        terminal_panel.apply_tab_bar_buttons(&new_pane, cx);
-                                        terminal_panel.center.split(
-                                            &this_pane,
-                                            &new_pane,
-                                            split_direction,
-                                            cx,
-                                        );
-                                        new_pane
-                                    })
-                                else {
-                                    return;
-                                };
-
-                                move_item(
-                                    &source,
-                                    &new_pane,
-                                    item_id_to_move,
-                                    new_pane.read(cx).active_item_index(),
-                                    true,
-                                    window,
-                                    cx,
-                                );
-                            })
-                            .ok();
-                        })
-                        .detach();
-
-                        return ControlFlow::Break(());
-                    }
-                }
-            }
-
-            ControlFlow::Continue(())
         });
 
         pane

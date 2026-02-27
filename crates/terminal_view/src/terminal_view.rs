@@ -52,7 +52,7 @@ use ui::{
 };
 use util::ResultExt;
 use workspace::{
-    CloseActiveItem, DraggedSelection, DraggedTab, NewCenterTerminal, NewTerminal,
+    CloseActiveItem, DraggedSelection, DraggedTab, NewCenterTerminal, NewTerminal, Pane,
     ToolbarItemLocation, Workspace, WorkspaceId, delete_unloaded_items,
     item::{
         BreadcrumbText, Item, ItemEvent, SerializableItem, TabContentParams, TabTooltipContent,
@@ -1423,7 +1423,13 @@ impl Item for TerminalView {
         None
     }
 
-    fn handle_drop(&self, dropped: &dyn Any, window: &mut Window, cx: &mut App) -> bool {
+    fn handle_drop(
+        &self,
+        active_pane: &Pane,
+        dropped: &dyn Any,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> bool {
         let Some(project) = self.project.upgrade() else {
             return false;
         };
@@ -1437,15 +1443,101 @@ impl Item for TerminalView {
 
             return false;
         } else if let Some(tab) = dropped.downcast_ref::<DraggedTab>() {
-            if tab.item.downcast::<TerminalView>().is_some() {
+            let Some(self_handle) = self.self_handle.upgrade() else {
                 return false;
-            }
+            };
 
-            if let Some(project_path) = tab.item.project_path(cx)
-                && let Some(path) = project.read(cx).absolute_path(&project_path, cx)
-            {
-                self.add_paths_to_terminal(&[path], window, cx);
+            let Some(workspace) = self.workspace.upgrade() else {
+                return false;
+            };
+
+            let Some(this_pane) = workspace.read(cx).pane_for(&self_handle) else {
+                return false;
+            };
+
+            let item = if tab.pane == this_pane {
+                active_pane.item_for_index(tab.ix)
+            } else {
+                tab.pane.read(cx).item_for_index(tab.ix)
+            };
+
+            let Some(item) = item else {
+                return false;
+            };
+
+            if item.downcast::<TerminalView>().is_some() {
+                let Some(split_direction) = active_pane.drag_split_direction() else {
+                    return false;
+                };
+
+                let Some(terminal_panel) = workspace.read(cx).panel::<TerminalPanel>(cx) else {
+                    return false;
+                };
+
+                if !terminal_panel.read(cx).center.panes().contains(&&this_pane) {
+                    return false;
+                }
+
+                let source = tab.pane.clone();
+                let item_id_to_move = item.item_id();
+                let is_zoomed = {
+                    let terminal_panel = terminal_panel.read(cx);
+                    if terminal_panel.active_pane == this_pane {
+                        active_pane.is_zoomed()
+                    } else {
+                        terminal_panel.active_pane.read(cx).is_zoomed()
+                    }
+                };
+
+                let project = project.clone();
+                let workspace = workspace.downgrade();
+                let terminal_panel = terminal_panel.downgrade();
+
+                window
+                    .spawn(cx, async move |cx| {
+                        cx.update(|window, cx| {
+                            let Ok(new_pane) = terminal_panel.update(cx, |terminal_panel, cx| {
+                                let new_pane = terminal_panel::new_terminal_pane(
+                                    workspace, project, is_zoomed, window, cx,
+                                );
+                                terminal_panel.apply_tab_bar_buttons(&new_pane, cx);
+                                terminal_panel.center.split(
+                                    &this_pane,
+                                    &new_pane,
+                                    split_direction,
+                                    cx,
+                                )?;
+                                anyhow::Ok(new_pane)
+                            }) else {
+                                return;
+                            };
+
+                            let Some(new_pane) = new_pane.log_err() else {
+                                return;
+                            };
+
+                            workspace::move_item(
+                                &source,
+                                &new_pane,
+                                item_id_to_move,
+                                new_pane.read(cx).active_item_index(),
+                                true,
+                                window,
+                                cx,
+                            );
+                        })
+                        .ok();
+                    })
+                    .detach();
+
                 return true;
+            } else {
+                if let Some(project_path) = item.project_path(cx)
+                    && let Some(path) = project.read(cx).absolute_path(&project_path, cx)
+                {
+                    self.add_paths_to_terminal(&[path], window, cx);
+                    return true;
+                }
             }
 
             return false;
