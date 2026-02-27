@@ -1,8 +1,7 @@
 use scheduler::Instant;
 use std::{
     cell::LazyCell,
-    collections::HashMap,
-    collections::VecDeque,
+    collections::{HashMap, VecDeque},
     hash::{DefaultHasher, Hash, Hasher},
     sync::Arc,
     thread::ThreadId,
