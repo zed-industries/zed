@@ -6362,17 +6362,18 @@ impl ThreadView {
             ToolCallStatus::Pending | ToolCallStatus::InProgress
         );
 
-        let is_canceled_or_failed = matches!(
+        let is_failed = matches!(
             tool_call.status,
-            ToolCallStatus::Canceled | ToolCallStatus::Failed | ToolCallStatus::Rejected
+            ToolCallStatus::Failed | ToolCallStatus::Rejected
         );
 
-        let is_subagent_stopped = tool_call.content.iter().any(|c| match c {
-            ToolCallContent::ContentBlock(ContentBlock::Markdown { markdown }) => {
-                markdown.read(cx).source() == "User cancelled"
-            }
-            _ => false,
-        });
+        let is_cancelled = matches!(tool_call.status, ToolCallStatus::Canceled)
+            || tool_call.content.iter().any(|c| match c {
+                ToolCallContent::ContentBlock(ContentBlock::Markdown { markdown }) => {
+                    markdown.read(cx).source() == "User canceled"
+                }
+                _ => false,
+            });
 
         let thread_title = thread
             .as_ref()
@@ -6382,36 +6383,49 @@ impl ThreadView {
         let has_tool_call_label = !tool_call_label.is_empty();
 
         let has_title = thread_title.is_some() || has_tool_call_label;
-        let has_no_title_or_canceled = !has_title || is_canceled_or_failed;
+        let has_no_title_or_canceled = !has_title || is_failed || is_cancelled;
 
         let title: SharedString = if let Some(thread_title) = thread_title {
             thread_title
         } else if !tool_call_label.is_empty() {
             tool_call_label.into()
-        } else if is_canceled_or_failed {
+        } else if is_cancelled {
             "Subagent Canceled".into()
+        } else if is_failed {
+            "Subagent Failed".into()
         } else {
             "Spawning Agent…".into()
         };
 
         let card_header_id = format!("subagent-header-{}", entry_ix);
+        let status_icon = format!("status-icon-{}", entry_ix);
         let diff_stat_id = format!("subagent-diff-{}", entry_ix);
 
         let icon = h_flex().w_4().justify_center().child(if is_running {
             SpinnerLabel::new()
                 .size(LabelSize::Small)
                 .into_any_element()
-        } else if is_subagent_stopped {
-            Icon::new(IconName::Circle)
-                .size(IconSize::Small)
-                .color(Color::Custom(
-                    cx.theme().colors().icon_disabled.opacity(0.5),
-                ))
+        } else if is_cancelled {
+            div()
+                .id(status_icon)
+                .child(
+                    Icon::new(IconName::Circle)
+                        .size(IconSize::Small)
+                        .color(Color::Custom(
+                            cx.theme().colors().icon_disabled.opacity(0.5),
+                        )),
+                )
+                .tooltip(Tooltip::text("Subagent Cancelled"))
                 .into_any_element()
-        } else if is_canceled_or_failed {
-            Icon::new(IconName::Close)
-                .size(IconSize::Small)
-                .color(Color::Error)
+        } else if is_failed {
+            div()
+                .id(status_icon)
+                .child(
+                    Icon::new(IconName::Close)
+                        .size(IconSize::Small)
+                        .color(Color::Error),
+                )
+                .tooltip(Tooltip::text("Subagent Failed"))
                 .into_any_element()
         } else {
             Icon::new(IconName::Check)
@@ -6600,7 +6614,7 @@ impl ThreadView {
                                 .w_full()
                                 .justify_center()
                                 .border_t_1()
-                                .when(is_canceled_or_failed, |this| this.border_dashed())
+                                .when(is_failed, |this| this.border_dashed())
                                 .border_color(self.tool_card_border_color(cx))
                                 .hover(|s| s.bg(cx.theme().colors().element_hover))
                                 .child(
@@ -6742,7 +6756,7 @@ impl ThreadView {
                     if let acp_thread::ContentBlock::Markdown { markdown } = block {
                         let source = markdown.read(cx).source().to_string();
                         if !source.is_empty() {
-                            if source == "User cancelled" {
+                            if source == "User canceled" {
                                 return None;
                             } else {
                                 return Some(SharedString::from(source));

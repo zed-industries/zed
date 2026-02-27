@@ -143,7 +143,7 @@ impl AgentTool for SpawnAgentTool {
                 Err(e) => {
                     let error = e.to_string();
                     // workaround for now because the agent loop will always mark this as ToolCallStatus::Failed
-                    let cancelled = error == "User cancelled";
+                    let canceled = error == "User canceled";
                     event_stream.update_fields(acp::ToolCallUpdateFields::new().content(vec![
                         acp::ToolCallContent::Content(acp::Content::new(error.clone()).meta(
                             acp::Meta::from_iter([("cancelled".into(), cancelled.into())]),
