@@ -142,6 +142,8 @@ pub struct PredictEditsResponse {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AcceptEditPredictionBody {
     pub request_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_version: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -160,6 +162,8 @@ pub struct EditPredictionRejection {
     #[serde(default)]
     pub reason: EditPredictionRejectReason,
     pub was_shown: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_version: Option<String>,
 }
 
 #[derive(Default, Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
