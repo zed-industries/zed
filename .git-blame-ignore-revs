@@ -34,3 +34,7 @@ ffdda588b41f7d9d270ffe76cab116f828ad545e
 # 2024-07-24 docs: Format docs
 # https://github.com/zed-industries/zed/pull/15352
 3a44a59f8ec114ac1ba22f7da1652717ef7e4e5c
+
+# 2026-02-27 Format Tree-sitter query files
+# https://github.com/zed-industries/zed/pull/50138
+5ed538f49c54ca464bb9d1e59446060a3a925668
