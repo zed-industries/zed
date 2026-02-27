@@ -1,4 +1,6 @@
-use crate::{ExcerptSummary, MultiBufferDimension, MultiBufferOffset, MultiBufferOffsetUtf16};
+use crate::{
+    ExcerptSummary, MultiBufferDimension, MultiBufferOffset, MultiBufferOffsetUtf16, PathKeyIndex,
+};
 
 use super::{MultiBufferSnapshot, ToOffset, ToPoint};
 use language::Point;
@@ -30,6 +32,9 @@ pub enum Anchor {
         /// the offset.
         bias: Bias,
         buffer_id: BufferId,
+        /// Refers to the path key that the buffer had when this anchor was created,
+        /// so that ordering is stable when the path key for a buffer changes
+        path: PathKeyIndex,
         /// When present, indicates this anchor points into deleted text within an
         /// expanded diff hunk. The anchor references a position in the diff base
         /// (original) text rather than the current buffer text. This is used when
@@ -97,11 +102,12 @@ impl Anchor {
         self
     }
 
-    pub fn text(text_anchor: text::Anchor) -> Self {
+    pub fn text(path: PathKeyIndex, text_anchor: text::Anchor) -> Self {
         let Some(buffer_id) = text_anchor.buffer_id else {
             panic!("text_anchor must have a buffer_id");
         };
         Self::Text {
+            path,
             diff_base_anchor: None,
             timestamp: text_anchor.timestamp(),
             buffer_id,
@@ -110,8 +116,8 @@ impl Anchor {
         }
     }
 
-    pub fn range_in_buffer(range: Range<text::Anchor>) -> Range<Self> {
-        Self::text(range.start)..Self::text(range.end)
+    pub fn range_in_buffer(path: PathKeyIndex, range: Range<text::Anchor>) -> Range<Self> {
+        Self::text(path, range.start)..Self::text(path, range.end)
     }
 
     pub fn min() -> Self {
@@ -131,25 +137,35 @@ impl Anchor {
     }
 
     pub fn cmp(&self, other: &Anchor, snapshot: &MultiBufferSnapshot) -> Ordering {
-        let (self_text_anchor, other_text_anchor) = match (self, other) {
+        let (self_text_anchor, self_path, other_text_anchor, other_path) = match (self, other) {
             (Anchor::Min, Anchor::Min) => return Ordering::Equal,
             (Anchor::Max, Anchor::Max) => return Ordering::Equal,
             (Anchor::Min, _) => return Ordering::Less,
             (Anchor::Max, _) => return Ordering::Greater,
             (_, Anchor::Max) => return Ordering::Less,
             (_, Anchor::Min) => return Ordering::Greater,
-            (Anchor::Text { .. }, Anchor::Text { .. }) => {
-                (self.text_anchor().unwrap(), other.text_anchor().unwrap())
-            }
+            (
+                Anchor::Text {
+                    path: self_path, ..
+                },
+                Anchor::Text {
+                    path: other_path, ..
+                },
+            ) => (
+                self.text_anchor().unwrap(),
+                self_path,
+                other.text_anchor().unwrap(),
+                other_path,
+            ),
         };
         let self_buffer_id = self_text_anchor.buffer_id.unwrap();
         let other_buffer_id = other_text_anchor.buffer_id.unwrap();
 
-        let Some(self_path_key) = snapshot.path_keys.get(&self_buffer_id) else {
-            panic!("path key was never set for buffer_id")
+        let Some(self_path_key) = snapshot.path_keys_by_index.get(&self_path) else {
+            panic!("anchor's path was never added to multibuffer")
         };
-        let Some(other_path_key) = snapshot.path_keys.get(&other_buffer_id) else {
-            panic!("path key was never set for buffer_id")
+        let Some(other_path_key) = snapshot.path_keys_by_index.get(&other_path) else {
+            panic!("anchor's path was never added to multibuffer")
         };
 
         if self_path_key.cmp(other_path_key) != Ordering::Equal {
@@ -158,6 +174,7 @@ impl Anchor {
 
         // in the case that you removed the buffer contianing self,
         // and added the buffer containing other with the same path key
+        // (ordering is arbitrary but consistent)
         if self_buffer_id != other_buffer_id {
             return self_buffer_id.cmp(&other_buffer_id);
         }
@@ -208,7 +225,10 @@ impl Anchor {
             Anchor::Min => *self,
             Anchor::Max => snapshot.anchor_before(snapshot.max_point()),
             Anchor::Text {
-                bias, buffer_id, ..
+                path,
+                bias,
+                buffer_id,
+                ..
             } => {
                 if *bias == Bias::Left {
                     return *self;
@@ -217,7 +237,7 @@ impl Anchor {
                     return *self;
                 };
                 let text_anchor = self.text_anchor().unwrap().bias_left(&buffer);
-                let ret = Self::text(text_anchor);
+                let ret = Self::text(*path, text_anchor);
                 if let Some(diff_base_anchor) = self.diff_base_anchor() {
                     if let Some(diff) = snapshot.diffs.get(&buffer_id)
                         && diff_base_anchor.is_valid(&diff.base_text())
@@ -238,7 +258,10 @@ impl Anchor {
             Anchor::Min => *self,
             Anchor::Max => snapshot.anchor_after(Point::zero()),
             Anchor::Text {
-                bias, buffer_id, ..
+                path,
+                bias,
+                buffer_id,
+                ..
             } => {
                 if *bias == Bias::Right {
                     return *self;
@@ -247,7 +270,7 @@ impl Anchor {
                     return *self;
                 };
                 let text_anchor = self.text_anchor().unwrap().bias_right(&buffer);
-                let ret = Self::text(text_anchor);
+                let ret = Self::text(*path, text_anchor);
                 if let Some(diff_base_anchor) = self.diff_base_anchor() {
                     if let Some(diff) = snapshot.diffs.get(&buffer_id)
                         && diff_base_anchor.is_valid(&diff.base_text())

@@ -16,8 +16,9 @@ use util::rel_path::RelPath;
 use ztracing::instrument;
 
 use crate::{
-    Anchor, BufferState, DiffChangeKind, Event, Excerpt, ExcerptRange, ExcerptSummary,
-    ExpandExcerptDirection, MultiBuffer, MultiBufferOffset, build_excerpt_ranges,
+    Anchor, BufferState, DiffChangeKind, Event, Excerpt, ExcerptOffset, ExcerptRange,
+    ExcerptSummary, ExpandExcerptDirection, MultiBuffer, MultiBufferOffset, PathKeyIndex,
+    build_excerpt_ranges,
 };
 
 #[derive(PartialEq, Eq, Ord, PartialOrd, Clone, Hash, Debug)]
@@ -210,33 +211,38 @@ impl MultiBuffer {
         let mut cursor = snapshot.excerpts.cursor::<ExcerptSummary>(());
         let mut sorted_anchors = sorted_anchors.into_iter().peekable();
         while let Some(anchor) = sorted_anchors.next() {
-            let Some(buffer) = self.buffer_for_anchor(anchor, cx) else {
+            let Some(path) = snapshot.path_for_anchor(anchor) else {
+                continue;
+            };
+            let Some(buffer) = self.buffer_for_path(&path, cx) else {
                 continue;
             };
             let buffer_snapshot = buffer.read(cx).snapshot();
-            let Some(path) = snapshot.path_key_for_anchor(anchor) else {
-                continue;
-            };
 
             let mut expanded_ranges = Vec::new();
-            cursor.seek(&path, Bias::Left);
-            while let Some(anchor) = sorted_anchors.next() {
+            // Move to the first excerpt for this path
+            cursor.seek_forward(&path, Bias::Left);
+            while let Some(anchor) = sorted_anchors.peek().copied()
+                && snapshot.path_for_anchor(anchor).as_ref() == Some(&path)
+            {
+                sorted_anchors.next();
                 let Some(target) = snapshot.anchor_seek_target(anchor) else {
                     continue;
                 };
-                // Add ranges for non-expanded excerpts before the next expanded excerpt (or after the last one)
+                // Move to the next excerpt to be expanded, and push unchanged ranges for intervening excerpts
                 expanded_ranges.extend(
                     cursor
                         .slice(&target, Bias::Left)
                         .iter()
                         .map(|excerpt| excerpt.range.clone()),
                 );
-                if snapshot.path_key_for_anchor(anchor) != Some(path.clone()) {
-                    break;
-                }
                 let Some(excerpt) = cursor.item() else {
                     continue;
                 };
+                if excerpt.path_key != path {
+                    continue;
+                }
+                // Expand the range for this excerpt
                 let mut context = excerpt.range.context.to_point(&buffer_snapshot);
                 match direction {
                     ExpandExcerptDirection::Up => {
@@ -261,7 +267,17 @@ impl MultiBuffer {
                     context,
                     primary: excerpt.range.primary.clone(),
                 });
+                cursor.next();
             }
+
+            // Add unchanged ranges for this path after the last expanded excerpt
+            while let Some(excerpt) = cursor.item()
+                && excerpt.path_key == path
+            {
+                expanded_ranges.push(excerpt.range.clone());
+                cursor.next();
+            }
+
             let mut merged_ranges: Vec<ExcerptRange<text::Anchor>> = Vec::new();
             for range in expanded_ranges {
                 if let Some(last_range) = merged_ranges.last_mut()
@@ -312,9 +328,9 @@ impl MultiBuffer {
             if let Some(old_path_key) = self
                 .snapshot(cx)
                 .path_for_buffer(buffer_snapshot.remote_id())
-                && old_path_key != path_key
+                && old_path_key != &path_key
             {
-                self.remove_excerpts_for_path(old_path_key, cx);
+                self.remove_excerpts_for_path(old_path_key.clone(), cx);
             }
 
             return false;
@@ -345,14 +361,31 @@ impl MultiBuffer {
         let mut snapshot = self.snapshot.get_mut();
         let mut cursor = snapshot
             .excerpts
-            .cursor::<Dimensions<PathKey, MultiBufferOffset>>(());
+            .cursor::<Dimensions<PathKey, ExcerptOffset>>(());
         let mut new_excerpts = SumTree::new(());
 
         let to_insert = to_insert.iter().peekable();
         let mut patch = Patch::empty();
         let mut added_new_excerpt = false;
 
-        let old_path_key = snapshot.path_keys.insert_or_replace(buffer_id, path_key);
+        let path_key_index = snapshot
+            .path_keys_by_index
+            .iter()
+            // todo!() perf? (but ExcerptIdMapping was doing this)
+            .find(|(_, existing_path)| existing_path == &&path_key)
+            .map(|(index, _)| *index)
+            .unwrap_or_else(|| {
+                let index = snapshot
+                    .path_keys_by_index
+                    .last()
+                    .map(|(index, _)| PathKeyIndex(index.0 + 1))
+                    .unwrap_or(PathKeyIndex(0));
+                snapshot.path_keys_by_index.insert(index, path_key.clone());
+                index
+            });
+        let old_path_key = snapshot
+            .path_keys_by_buffer
+            .insert_or_replace(buffer_id, path_key);
         // handle the case where the buffer's path key has changed by
         // removing any old excerpts for the buffer
         if let Some(old_path_key) = old_path_key
@@ -364,7 +397,7 @@ impl MultiBuffer {
             let after = cursor.position.1;
             patch.push(Edit {
                 old: before..after,
-                new: new_excerpts.summary().text.len..new_excerpts.summary().text.len,
+                new: new_excerpts.summary().len()..new_excerpts.summary().len(),
             });
         }
 
@@ -381,7 +414,7 @@ impl MultiBuffer {
             let after = cursor.position.1;
             patch.push(Edit {
                 old: before..after,
-                new: new_excerpts.summary().text.len..new_excerpts.summary().text.len,
+                new: new_excerpts.summary().len()..new_excerpts.summary().len(),
             });
         }
 
@@ -393,7 +426,7 @@ impl MultiBuffer {
             let Some(next_excerpt) = to_insert.peek() else {
                 break;
             };
-            if &excerpt.range == next_excerpt {
+            if &&excerpt.range == next_excerpt {
                 new_excerpts.push(excerpt.clone(), ());
                 to_insert.next();
                 cursor.next();
@@ -407,17 +440,20 @@ impl MultiBuffer {
                 .cmp(&next_excerpt.context.start, &buffer_snapshot)
                 .is_le()
             {
+                // remove old excerpt
                 let before = cursor.position.1;
                 cursor.next();
                 let after = cursor.position.1;
                 patch.push(Edit {
                     old: before..after,
-                    new: new_excerpts.summary().text.len..new_excerpts.summary().text.len,
+                    new: new_excerpts.summary().len()..new_excerpts.summary().len(),
                 });
             } else {
+                // insert new excerpt
                 let before = new_excerpts.summary().text.len;
                 let next_excerpt = to_insert.next().unwrap();
                 added_new_excerpt = true;
+                let before = new_excerpts.summary().len();
                 new_excerpts.push(
                     Excerpt::new(
                         path_key.clone(),
@@ -427,9 +463,10 @@ impl MultiBuffer {
                     ),
                     (),
                 );
+                let after = new_excerpts.summary().len();
                 patch.push(Edit {
                     old: cursor.position.1..cursor.position.1,
-                    new: new_excerpts.summary().text.len..new_excerpts.summary().text.len,
+                    new: before..after,
                 });
             }
         }
@@ -440,7 +477,7 @@ impl MultiBuffer {
         let after = cursor.position.1;
         patch.push(Edit {
             old: before..after,
-            new: new_excerpts.summary().text.len..new_excerpts.summary().text.len,
+            new: new_excerpts.summary().len()..new_excerpts.summary().len(),
         });
 
         // handle the case where the buffer's path key has changed by
@@ -454,7 +491,7 @@ impl MultiBuffer {
             let after = cursor.position.1;
             patch.push(Edit {
                 old: before..after,
-                new: new_excerpts.summary().text.len..new_excerpts.summary().text.len,
+                new: new_excerpts.summary().len()..new_excerpts.summary().len(),
             });
         }
 

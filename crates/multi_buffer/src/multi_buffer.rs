@@ -89,6 +89,9 @@ pub struct MultiBuffer {
     buffer_changed_since_sync: Rc<Cell<bool>>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct PathKeyIndex(u64);
+
 pub struct ExcerptInfo {
     path_key: PathKey,
     buffer_id: BufferId,
@@ -610,7 +613,8 @@ impl DiffState {
 #[derive(Clone, Default)]
 pub struct MultiBufferSnapshot {
     excerpts: SumTree<Excerpt>,
-    path_keys: TreeMap<BufferId, PathKey>,
+    path_keys_by_buffer: TreeMap<BufferId, PathKey>,
+    path_keys_by_index: TreeMap<PathKeyIndex, PathKey>,
     diffs: TreeMap<BufferId, DiffStateSnapshot>,
     diff_transforms: SumTree<DiffTransform>,
     non_text_state_update_count: usize,
@@ -795,6 +799,10 @@ impl ExcerptSummary {
             text: MBTextSummary::default(),
             count: 0,
         }
+    }
+
+    pub fn len(&self) -> ExcerptOffset {
+        ExcerptDimension(self.text.len)
     }
 }
 
@@ -1727,7 +1735,7 @@ impl MultiBuffer {
             show_deleted_hunks: _,
             use_extended_diff_range: _,
             show_headers: _,
-            path_keys: _,
+            path_keys_by_buffer: _,
         } = self.snapshot.get_mut();
         let start = ExcerptDimension(MultiBufferOffset::ZERO);
         let prev_len = ExcerptDimension(excerpts.summary().text.len);
@@ -1764,7 +1772,7 @@ impl MultiBuffer {
     ) -> Vec<ExcerptRange<text::Anchor>> {
         let mut excerpts = Vec::new();
         let snapshot = self.read(cx);
-        let Some(path_key) = snapshot.path_keys.get(&buffer_id).cloned() else {
+        let Some(path_key) = snapshot.path_keys_by_buffer.get(&buffer_id).cloned() else {
             return excerpts;
         };
 
@@ -1790,7 +1798,7 @@ impl MultiBuffer {
             .cursor::<Dimensions<ExcerptPoint, OutputDimension<Point>>>(());
         diff_transforms.next();
         let mut result = Vec::new();
-        let Some(path_key) = snapshot.path_keys.get(&buffer_id) else {
+        let Some(path_key) = snapshot.path_keys_by_buffer.get(&buffer_id) else {
             return result;
         };
 
@@ -6598,11 +6606,19 @@ impl MultiBufferSnapshot {
     }
 
     pub fn path_for_buffer(&self, buffer_id: BufferId) -> Option<&PathKey> {
-        self.path_keys.get(&buffer_id)
+        self.path_keys_by_buffer.get(&buffer_id)
     }
 
     pub fn buffer_for_id(&self, id: BufferId) -> Option<&BufferSnapshot> {
-        self.buffer_for_path(self.path_keys.get(&id)?)
+        self.buffer_for_path(self.path_keys_by_buffer.get(&id)?)
+    }
+
+    pub fn path_for_anchor(&self, anchor: Anchor) -> Option<PathKey> {
+        match anchor {
+            Anchor::Min => Some(self.excerpts.first()?.path_key.clone()),
+            Anchor::Max => Some(self.excerpts.last()?.path_key.clone()),
+            Anchor::Text { path, .. } => self.path_keys_by_index.get(&path).cloned(),
+        }
     }
 
     pub fn range_for_excerpt(&self, excerpt_id: ExcerptId) -> Option<Range<Point>> {
@@ -6835,10 +6851,6 @@ impl MultiBufferSnapshot {
             }
         }
         excerpt_edits
-    }
-
-    fn path_key_for_anchor(&self, anchor: Anchor) -> Option<PathKey> {
-        todo!()
     }
 }
 
@@ -7689,7 +7701,7 @@ where
     }
 }
 
-#[derive(Copy, Clone, PartialOrd, Ord, Eq, PartialEq, Debug)]
+#[derive(Copy, Clone, PartialOrd, Ord, Eq, PartialEq, Debug, Default)]
 struct ExcerptDimension<T>(T);
 
 impl<T: PartialEq> PartialEq<T> for ExcerptDimension<T> {
