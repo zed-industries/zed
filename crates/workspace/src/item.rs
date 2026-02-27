@@ -1131,7 +1131,7 @@ impl<T: Item> ItemHandle for Entity<T> {
         })
     }
 
-    /// Called when the containing pane receives a drop.
+    /// Called when the containing pane receives a drop on the item or the item's tab.
     /// Returns `true` if the item handled it and the pane should skip its default drop behavior.
     fn handle_drop(
         &self,
