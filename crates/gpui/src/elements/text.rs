@@ -945,4 +945,39 @@ mod tests {
         let _ = div().child(Cow::Borrowed("Cow"));
         let _ = div().child(SharedString::from("SharedString"));
     }
+
+    #[test]
+    fn test_with_runs_tolerates_non_char_boundary() {
+        use crate::{Font, StyledText, TextRun, black};
+
+        // "é" is 2 bytes (0xC3 0xA9). A run of len=1 splits the character.
+        let text = "é";
+        let run = TextRun {
+            len: 1,
+            font: Font::default(),
+            color: black(),
+            background_color: None,
+            underline: None,
+            strikethrough: None,
+        };
+        // Should not panic.
+        let _ = StyledText::new(text).with_runs(vec![run]);
+    }
+
+    #[test]
+    fn test_with_runs_tolerates_runs_exceeding_text_length() {
+        use crate::{Font, StyledText, TextRun, black};
+
+        let text = "hi";
+        let run = TextRun {
+            len: 10,
+            font: Font::default(),
+            color: black(),
+            background_color: None,
+            underline: None,
+            strikethrough: None,
+        };
+        // Should not panic.
+        let _ = StyledText::new(text).with_runs(vec![run]);
+    }
 }
