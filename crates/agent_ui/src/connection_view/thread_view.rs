@@ -6404,7 +6404,9 @@ impl ThreadView {
         } else if is_subagent_stopped {
             Icon::new(IconName::Circle)
                 .size(IconSize::Small)
-                .color(Color::Disabled)
+                .color(Color::Custom(
+                    cx.theme().colors().icon_disabled.opacity(0.5),
+                ))
                 .into_any_element()
         } else if is_canceled_or_failed {
             Icon::new(IconName::Close)
@@ -6635,6 +6637,30 @@ impl ThreadView {
     ) -> impl IntoElement {
         const MAX_PREVIEW_ENTRIES: usize = 8;
 
+        let parent_thread = self.thread.read(cx);
+        let mut started_subagent_count = 0usize;
+        let mut turn_has_our_call = false;
+        for entry in parent_thread.entries().iter() {
+            match entry {
+                AgentThreadEntry::UserMessage(_) => {
+                    if turn_has_our_call {
+                        break;
+                    }
+                    started_subagent_count = 0;
+                    turn_has_our_call = false;
+                }
+                AgentThreadEntry::ToolCall(tc)
+                    if tc.is_subagent() && !matches!(tc.status, ToolCallStatus::Pending) =>
+                {
+                    started_subagent_count += 1;
+                    if tc.id == tool_call.id {
+                        turn_has_our_call = true;
+                    }
+                }
+                _ => {}
+            }
+        }
+
         let subagent_view = thread_view.read(cx);
         let session_id = subagent_view.thread.read(cx).session_id().clone();
 
@@ -6659,7 +6685,11 @@ impl ThreadView {
 
         let entries = subagent_view.thread.read(cx).entries();
         let total_entries = entries.len();
-        let start_ix = total_entries.saturating_sub(MAX_PREVIEW_ENTRIES);
+        let start_ix = if started_subagent_count > 1 {
+            total_entries.saturating_sub(MAX_PREVIEW_ENTRIES)
+        } else {
+            0
+        };
 
         let scroll_handle = self
             .subagent_scroll_handles
@@ -6679,30 +6709,6 @@ impl ThreadView {
                 subagent_view.render_entry(actual_ix, total_entries + 1, entry, window, cx)
             })
             .collect();
-
-        let parent_thread = self.thread.read(cx);
-        let mut started_subagent_count = 0usize;
-        let mut turn_has_our_call = false;
-        for entry in parent_thread.entries().iter() {
-            match entry {
-                AgentThreadEntry::UserMessage(_) => {
-                    if turn_has_our_call {
-                        break;
-                    }
-                    started_subagent_count = 0;
-                    turn_has_our_call = false;
-                }
-                AgentThreadEntry::ToolCall(tc)
-                    if tc.is_subagent() && !matches!(tc.status, ToolCallStatus::Pending) =>
-                {
-                    started_subagent_count += 1;
-                    if tc.id == tool_call.id {
-                        turn_has_our_call = true;
-                    }
-                }
-                _ => {}
-            }
-        }
 
         v_flex()
             .w_full()
