@@ -296,9 +296,9 @@ fn check_style() -> NamedJob {
         named::bash(formatdoc!(
             r#"tar -xf {TS_QUERY_LS_FILE}
             ./ts_query_ls format --check . || {{
-                echo "Found unformatted queries, please format them with ts_query_ls.
-                For easy use, install the Tree-sitter query extension:
-                zed://extension/tree-sitter-query"
+                echo "Found unformatted queries, please format them with ts_query_ls."
+                echo "For easy use, install the Tree-sitter query extension:"
+                echo "zed://extension/tree-sitter-query"
                 false
             }}"#
         ))
