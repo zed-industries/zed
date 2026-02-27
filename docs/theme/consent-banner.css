@@ -277,3 +277,15 @@
     transparent
   );
 }
+
+#c15t-manage-consent-btn {
+  appearance: none;
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+}
+
+#c15t-manage-consent-btn:hover {
+  text-decoration-color: var(--link-line-decoration-hover);
+}
