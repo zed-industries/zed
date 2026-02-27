@@ -269,6 +269,7 @@ pub fn tests_pass(jobs: &[NamedJob]) -> NamedJob {
 }
 
 const TS_QUERY_LS_FILE: &str = "ts_query_ls-x86_64-unknown-linux-gnu.tar.gz";
+const CI_TS_QUERY_RELEASE: &str = "tags/v3.15.1";
 
 fn check_style() -> NamedJob {
     fn check_for_typos() -> Step<Use> {
@@ -287,7 +288,7 @@ fn check_style() -> NamedJob {
             "aa37ae5c44d3c9820bc12fe675e8670ecd93bd1c",
         ) // v1.1.1
         .add_with(("repo", "ribru17/ts_query_ls"))
-        .add_with(("version", "tags/v3.15.1"))
+        .add_with(("version", CI_TS_QUERY_RELEASE))
         .add_with(("file", TS_QUERY_LS_FILE))
     }
 
