@@ -13,6 +13,9 @@ document.addEventListener("DOMContentLoaded", () => {
     mode: "c15t",
     backendURL: consentInstance,
     consentCategories: ["necessary", "measurement"],
+    storageConfig: {
+      crossSubdomain: true,
+    },
     scripts: [
       {
         id: "amplitude",
