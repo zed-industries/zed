@@ -768,7 +768,7 @@ wasmtime = { version = "33", default-features = false, features = [
 wasmtime-wasi = "33"
 wax = "0.7"
 which = "6.0.0"
-wasm-bindgen = "0.2.104"
+wasm-bindgen = "0.2.113"
 web-time = "1.1.0"
 wgpu = "28.0"
 windows-core = "0.61"
