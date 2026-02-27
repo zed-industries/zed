@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize, de::Error as _};
 use settings_macros::{MergeFrom, with_fallible_options};
 use std::sync::Arc;
 
-use crate::{DocumentFoldingRanges, ExtendingVec, SemanticTokens, merge_from};
+use crate::{DocumentFoldingRanges, DocumentSymbols, ExtendingVec, SemanticTokens, merge_from};
 
 /// The state of the modifier keys at some point in time
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema, MergeFrom)]
@@ -85,6 +85,7 @@ pub enum EditPredictionProvider {
     Zed,
     Codestral,
     Ollama,
+    OpenAiCompatibleApi,
     Sweep,
     Mercury,
     Experimental(&'static str),
@@ -106,6 +107,7 @@ impl<'de> Deserialize<'de> for EditPredictionProvider {
             Zed,
             Codestral,
             Ollama,
+            OpenAiCompatibleApi,
             Sweep,
             Mercury,
             Experimental(String),
@@ -118,6 +120,7 @@ impl<'de> Deserialize<'de> for EditPredictionProvider {
             Content::Zed => EditPredictionProvider::Zed,
             Content::Codestral => EditPredictionProvider::Codestral,
             Content::Ollama => EditPredictionProvider::Ollama,
+            Content::OpenAiCompatibleApi => EditPredictionProvider::OpenAiCompatibleApi,
             Content::Sweep => EditPredictionProvider::Sweep,
             Content::Mercury => EditPredictionProvider::Mercury,
             Content::Experimental(name)
@@ -146,6 +149,7 @@ impl EditPredictionProvider {
             | EditPredictionProvider::Supermaven
             | EditPredictionProvider::Codestral
             | EditPredictionProvider::Ollama
+            | EditPredictionProvider::OpenAiCompatibleApi
             | EditPredictionProvider::Sweep
             | EditPredictionProvider::Mercury
             | EditPredictionProvider::Experimental(_) => false,
@@ -165,6 +169,7 @@ impl EditPredictionProvider {
             ) => Some("Zeta2"),
             EditPredictionProvider::None | EditPredictionProvider::Experimental(_) => None,
             EditPredictionProvider::Ollama => Some("Ollama"),
+            EditPredictionProvider::OpenAiCompatibleApi => Some("OpenAI-Compatible API"),
         }
     }
 }
@@ -190,11 +195,63 @@ pub struct EditPredictionSettingsContent {
     pub sweep: Option<SweepSettingsContent>,
     /// Settings specific to Ollama.
     pub ollama: Option<OllamaEditPredictionSettingsContent>,
+    /// Settings specific to using custom OpenAI-compatible servers for edit prediction.
+    pub open_ai_compatible_api: Option<CustomEditPredictionProviderSettingsContent>,
     /// Whether edit predictions are enabled in the assistant prompt editor.
     /// This has no effect if globally disabled.
     pub enabled_in_text_threads: Option<bool>,
     /// The directory where manually captured edit prediction examples are stored.
     pub examples_dir: Option<Arc<Path>>,
+}
+
+#[with_fallible_options]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq)]
+pub struct CustomEditPredictionProviderSettingsContent {
+    /// Api URL to use for completions.
+    ///
+    /// Default: ""
+    pub api_url: Option<String>,
+    /// The prompt format to use for completions. Set to `""` to have the format be derived from the model name.
+    ///
+    /// Default: ""
+    pub prompt_format: Option<EditPredictionPromptFormat>,
+    /// The name of the model.
+    ///
+    /// Default: ""
+    pub model: Option<String>,
+    /// Maximum tokens to generate for FIM models.
+    /// This setting does not apply to sweep models.
+    ///
+    /// Default: 256
+    pub max_output_tokens: Option<u32>,
+}
+
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    Default,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum EditPredictionPromptFormat {
+    #[default]
+    Infer,
+    Zeta,
+    CodeLlama,
+    StarCoder,
+    DeepseekCoder,
+    Qwen,
+    CodeGemma,
+    Codestral,
+    Glm,
 }
 
 #[with_fallible_options]
@@ -287,6 +344,11 @@ pub struct OllamaEditPredictionSettingsContent {
     ///
     /// Default: "http://localhost:11434"
     pub api_url: Option<String>,
+
+    /// The prompt format to use for completions. Set to `""` to have the format be derived from the model name.
+    ///
+    /// Default: ""
+    pub prompt_format: Option<EditPredictionPromptFormat>,
 }
 
 /// The mode in which edit predictions should be displayed.
@@ -438,6 +500,14 @@ pub struct LanguageSettingsContent {
     ///
     /// Default: "off"
     pub document_folding_ranges: Option<DocumentFoldingRanges>,
+    /// Controls the source of document symbols used for outlines and breadcrumbs.
+    ///
+    /// Options:
+    /// - "off": Use tree-sitter queries to compute document symbols (default).
+    /// - "on": Use the language server's `textDocument/documentSymbol` LSP response. When enabled, tree-sitter is not used for document symbols.
+    ///
+    /// Default: "off"
+    pub document_symbols: Option<DocumentSymbols>,
     /// Controls where the `editor::Rewrap` action is allowed for this language.
     ///
     /// Note: This setting has no effect in Vim mode, as rewrap is already

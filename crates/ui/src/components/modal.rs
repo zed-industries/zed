@@ -77,7 +77,6 @@ impl RenderOnce for Modal {
                     .w_full()
                     .flex_1()
                     .gap(DynamicSpacing::Base08.rems(cx))
-                    .when(self.footer.is_some(), |this| this.pb_4())
                     .when_some(
                         self.container_scroll_handler,
                         |this, container_scroll_handle| {
@@ -366,15 +365,21 @@ impl RenderOnce for Section {
                         .border_1()
                         .border_color(cx.theme().colors().border)
                         .bg(section_bg)
-                        .py(DynamicSpacing::Base06.rems(cx))
-                        .gap_y(DynamicSpacing::Base04.rems(cx))
-                        .child(div().flex().flex_1().size_full().children(self.children)),
+                        .child(
+                            div()
+                                .flex()
+                                .flex_1()
+                                .pb_2()
+                                .size_full()
+                                .children(self.children),
+                        ),
                 )
         } else {
             v_flex()
                 .w_full()
                 .flex_1()
                 .gap_y(DynamicSpacing::Base04.rems(cx))
+                .pb_2()
                 .when(self.padded, |this| {
                     this.px(DynamicSpacing::Base06.rems(cx) + DynamicSpacing::Base06.rems(cx))
                 })

@@ -1,0 +1,62 @@
+[package]
+name = "gpui_macos"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+license = "Apache-2.0"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/gpui_macos.rs"
+
+[features]
+default = ["gpui/default"]
+test-support = ["gpui/test-support"]
+runtime_shaders = []
+font-kit = ["dep:font-kit"]
+screen-capture = ["gpui/screen-capture"]
+
+[dependencies]
+gpui.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+anyhow.workspace = true
+async-task = "4.7"
+block = "0.1"
+cocoa.workspace = true
+collections.workspace = true
+core-foundation.workspace = true
+core-foundation-sys.workspace = true
+core-graphics = "0.24"
+core-text = "21"
+core-video.workspace = true
+ctor.workspace = true
+derive_more.workspace = true
+etagere = "0.2"
+# WARNING: If you change this, you must also publish a new version of zed-font-kit to crates.io
+font-kit = { git = "https://github.com/zed-industries/font-kit", rev = "110523127440aefb11ce0cf280ae7c5071337ec5", package = "zed-font-kit", version = "0.14.1-zed", optional = true }
+foreign-types = "0.5"
+futures.workspace = true
+image.workspace = true
+itertools.workspace = true
+libc.workspace = true
+log.workspace = true
+mach2.workspace = true
+media.workspace = true
+metal.workspace = true
+objc.workspace = true
+parking_lot.workspace = true
+pathfinder_geometry = "0.5"
+raw-window-handle = "0.6"
+semver.workspace = true
+smallvec.workspace = true
+strum.workspace = true
+util.workspace = true
+uuid.workspace = true
+
+[target.'cfg(target_os = "macos")'.build-dependencies]
+bindgen = "0.71"
+cbindgen = { version = "0.28.0", default-features = false }
+gpui.workspace = true

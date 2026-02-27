@@ -45,6 +45,8 @@ use workspace::{
 actions!(
     collab_panel,
     [
+        /// Toggles the collab panel.
+        Toggle,
         /// Toggles focus on the collaboration panel.
         ToggleFocus,
         /// Removes the selected channel or contact.
@@ -91,6 +93,11 @@ pub fn init(cx: &mut App) {
                         }
                     });
                 })
+            }
+        });
+        workspace.register_action(|workspace, _: &Toggle, window, cx| {
+            if !workspace.toggle_panel_focus::<CollabPanel>(window, cx) {
+                workspace.close_panel::<CollabPanel>(window, cx);
             }
         });
         workspace.register_action(|_, _: &OpenChannelNotes, window, cx| {
@@ -229,6 +236,7 @@ pub struct CollabPanel {
     subscriptions: Vec<Subscription>,
     collapsed_sections: Vec<Section>,
     collapsed_channels: Vec<ChannelId>,
+    filter_active_channels: bool,
     workspace: WeakEntity<Workspace>,
 }
 
@@ -361,6 +369,7 @@ impl CollabPanel {
                 match_candidates: Vec::default(),
                 collapsed_sections: vec![Section::Offline],
                 collapsed_channels: Vec::default(),
+                filter_active_channels: false,
                 workspace: workspace.weak_handle(),
                 client: workspace.app_state().client.clone(),
             };
@@ -681,13 +690,23 @@ impl CollabPanel {
 
             channels.retain(|chan| channel_ids_of_matches_or_parents.contains(&chan.id));
 
+            if self.filter_active_channels {
+                let active_channel_ids_or_ancestors: HashSet<_> = channel_store
+                    .ordered_channels()
+                    .map(|(_, channel)| channel)
+                    .filter(|channel| !channel_store.channel_participants(channel.id).is_empty())
+                    .flat_map(|channel| channel.parent_path.iter().copied().chain(Some(channel.id)))
+                    .collect();
+                channels.retain(|channel| active_channel_ids_or_ancestors.contains(&channel.id));
+            }
+
             if let Some(state) = &self.channel_editing_state
                 && matches!(state, ChannelEditingState::Create { location: None, .. })
             {
                 self.entries.push(ListEntry::ChannelEditor { depth: 0 });
             }
 
-            let should_respect_collapse = query.is_empty();
+            let should_respect_collapse = query.is_empty() && !self.filter_active_channels;
             let mut collapse_depth = None;
 
             for (idx, channel) in channels.into_iter().enumerate() {
@@ -2305,6 +2324,12 @@ impl CollabPanel {
 
     fn render_signed_out(&mut self, cx: &mut Context<Self>) -> Div {
         let collab_blurb = "Work with your team in realtime with collaborative editing, voice, shared notes and more.";
+        let is_signing_in = self.client.status().borrow().is_signing_in();
+        let button_label = if is_signing_in {
+            "Signing in…"
+        } else {
+            "Sign in"
+        };
 
         v_flex()
             .gap_6()
@@ -2314,12 +2339,13 @@ impl CollabPanel {
                 v_flex()
                     .gap_2()
                     .child(
-                        Button::new("sign_in", "Sign in")
+                        Button::new("sign_in", button_label)
                             .icon_color(Color::Muted)
                             .icon(IconName::Github)
                             .icon_position(IconPosition::Start)
                             .style(ButtonStyle::Filled)
                             .full_width()
+                            .disabled(is_signing_in)
                             .on_click(cx.listener(|this, _, window, cx| {
                                 let client = this.client.clone();
                                 let workspace = this.workspace.clone();
@@ -2561,12 +2587,36 @@ impl CollabPanel {
                     .tooltip(Tooltip::text("Search for new contact"))
                     .into_any_element(),
             ),
-            Section::Channels => Some(
-                IconButton::new("add-channel", IconName::Plus)
-                    .on_click(cx.listener(|this, _, window, cx| this.new_root_channel(window, cx)))
-                    .tooltip(Tooltip::text("Create a channel"))
-                    .into_any_element(),
-            ),
+            Section::Channels => {
+                Some(
+                    h_flex()
+                        .gap_1()
+                        .child(
+                            IconButton::new("filter-active-channels", IconName::ListFilter)
+                                .toggle_state(self.filter_active_channels)
+                                .when(!self.filter_active_channels, |button| {
+                                    button.visible_on_hover("section-header")
+                                })
+                                .on_click(cx.listener(|this, _, _window, cx| {
+                                    this.filter_active_channels = !this.filter_active_channels;
+                                    this.update_entries(true, cx);
+                                }))
+                                .tooltip(Tooltip::text(if self.filter_active_channels {
+                                    "Show All Channels"
+                                } else {
+                                    "Show Active Channels"
+                                })),
+                        )
+                        .child(
+                            IconButton::new("add-channel", IconName::Plus)
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.new_root_channel(window, cx)
+                                }))
+                                .tooltip(Tooltip::text("Create a channel")),
+                        )
+                        .into_any_element(),
+                )
+            }
             _ => None,
         };
 
@@ -3064,6 +3114,8 @@ fn render_participant_name_and_handle(user: &User) -> impl IntoElement {
 
 impl Render for CollabPanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let status = *self.client.status().borrow();
+
         v_flex()
             .key_context(self.dispatch_context(window, cx))
             .on_action(cx.listener(CollabPanel::cancel))
@@ -3082,7 +3134,7 @@ impl Render for CollabPanel {
             .on_action(cx.listener(CollabPanel::move_channel_down))
             .track_focus(&self.focus_handle)
             .size_full()
-            .child(if !self.client.status().borrow().is_or_was_connected() {
+            .child(if !status.is_or_was_connected() || status.is_signing_in() {
                 self.render_signed_out(cx)
             } else {
                 self.render_signed_in(window, cx)

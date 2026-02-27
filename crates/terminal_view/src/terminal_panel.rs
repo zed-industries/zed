@@ -397,10 +397,7 @@ impl TerminalPanel {
                             };
                             panel
                                 .update_in(cx, |panel, window, cx| {
-                                    panel
-                                        .center
-                                        .split(&pane, &new_pane, direction, cx)
-                                        .log_err();
+                                    panel.center.split(&pane, &new_pane, direction, cx);
                                     window.focus(&new_pane.focus_handle(cx), cx);
                                 })
                                 .ok();
@@ -424,7 +421,7 @@ impl TerminalPanel {
                         new_pane.update(cx, |pane, cx| {
                             pane.add_item(item, true, true, None, window, cx);
                         });
-                        self.center.split(&pane, &new_pane, direction, cx).log_err();
+                        self.center.split(&pane, &new_pane, direction, cx);
                         window.focus(&new_pane.focus_handle(cx), cx);
                     }
                 };
@@ -1303,14 +1300,10 @@ pub fn new_terminal_pane(
                                             &new_pane,
                                             split_direction,
                                             cx,
-                                        )?;
-                                        anyhow::Ok(new_pane)
+                                        );
+                                        new_pane
                                     })
                                 else {
-                                    return;
-                                };
-
-                                let Some(new_pane) = new_pane.log_err() else {
                                     return;
                                 };
 
@@ -1569,15 +1562,12 @@ impl Render for TerminalPanel {
                                     _ = terminal_panel.update_in(
                                         cx,
                                         |terminal_panel, window, cx| {
-                                            terminal_panel
-                                                .center
-                                                .split(
-                                                    &terminal_panel.active_pane,
-                                                    &new_pane,
-                                                    SplitDirection::Right,
-                                                    cx,
-                                                )
-                                                .log_err();
+                                            terminal_panel.center.split(
+                                                &terminal_panel.active_pane,
+                                                &new_pane,
+                                                SplitDirection::Right,
+                                                cx,
+                                            );
                                             let new_pane = new_pane.read(cx);
                                             window.focus(&new_pane.focus_handle(cx), cx);
                                         },
@@ -1847,6 +1837,7 @@ mod tests {
     use pretty_assertions::assert_eq;
     use project::FakeFs;
     use settings::SettingsStore;
+    use workspace::MultiWorkspace;
 
     #[test]
     fn test_prepare_empty_task() {
@@ -1878,13 +1869,14 @@ mod tests {
 
         let fs = FakeFs::new(cx.executor());
         let project = Project::test(fs, [], cx).await;
-        let workspace = cx.add_window(|window, cx| Workspace::test_new(project, window, cx));
+        let window_handle =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project, window, cx));
 
-        let (window_handle, terminal_panel) = workspace
-            .update(cx, |workspace, window, cx| {
-                let window_handle = window.window_handle();
-                let terminal_panel = cx.new(|cx| TerminalPanel::new(workspace, window, cx));
-                (window_handle, terminal_panel)
+        let terminal_panel = window_handle
+            .update(cx, |multi_workspace, window, cx| {
+                multi_workspace.workspace().update(cx, |workspace, cx| {
+                    cx.new(|cx| TerminalPanel::new(workspace, window, cx))
+                })
             })
             .unwrap();
 
@@ -1963,13 +1955,14 @@ mod tests {
 
         let fs = FakeFs::new(cx.executor());
         let project = Project::test(fs, [], cx).await;
-        let workspace = cx.add_window(|window, cx| Workspace::test_new(project, window, cx));
+        let window_handle =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project, window, cx));
 
-        let (window_handle, terminal_panel) = workspace
-            .update(cx, |workspace, window, cx| {
-                let window_handle = window.window_handle();
-                let terminal_panel = cx.new(|cx| TerminalPanel::new(workspace, window, cx));
-                (window_handle, terminal_panel)
+        let terminal_panel = window_handle
+            .update(cx, |multi_workspace, window, cx| {
+                multi_workspace.workspace().update(cx, |workspace, cx| {
+                    cx.new(|cx| TerminalPanel::new(workspace, window, cx))
+                })
             })
             .unwrap();
 
@@ -2006,13 +1999,14 @@ mod tests {
 
         let fs = FakeFs::new(cx.executor());
         let project = Project::test(fs, [], cx).await;
-        let workspace = cx.add_window(|window, cx| Workspace::test_new(project, window, cx));
+        let window_handle =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project, window, cx));
 
-        let (window_handle, terminal_panel) = workspace
-            .update(cx, |workspace, window, cx| {
-                let window_handle = window.window_handle();
-                let terminal_panel = cx.new(|cx| TerminalPanel::new(workspace, window, cx));
-                (window_handle, terminal_panel)
+        let terminal_panel = window_handle
+            .update(cx, |multi_workspace, window, cx| {
+                multi_workspace.workspace().update(cx, |workspace, cx| {
+                    cx.new(|cx| TerminalPanel::new(workspace, window, cx))
+                })
             })
             .unwrap();
 

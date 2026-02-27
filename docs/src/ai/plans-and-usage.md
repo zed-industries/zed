@@ -1,3 +1,8 @@
+---
+title: Plans and Usage - Zed AI
+description: Understand Zed's AI plans, token-based usage metering, spend limits, and trial details.
+---
+
 # Plans and Usage
 
 ## Available Plans {#plans}

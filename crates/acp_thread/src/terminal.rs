@@ -167,6 +167,12 @@ impl Terminal {
         &self.command
     }
 
+    pub fn update_command_label(&self, label: &str, cx: &mut App) {
+        self.command.update(cx, |command, cx| {
+            command.replace(format!("```\n{}\n```", label), cx);
+        });
+    }
+
     pub fn working_dir(&self) -> &Option<PathBuf> {
         &self.working_dir
     }

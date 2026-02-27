@@ -4,7 +4,6 @@ mod legacy_thread;
 mod native_agent_server;
 pub mod outline;
 mod pattern_extraction;
-mod shell_parser;
 mod templates;
 #[cfg(test)]
 mod tests;
@@ -17,6 +16,7 @@ use context_server::ContextServerId;
 pub use db::*;
 pub use native_agent_server::NativeAgentServer;
 pub use pattern_extraction::*;
+pub use shell_command_parser::extract_commands;
 pub use templates::*;
 pub use thread::*;
 pub use thread_store::*;
@@ -25,7 +25,7 @@ pub use tools::*;
 
 use acp_thread::{
     AcpThread, AgentModelSelector, AgentSessionInfo, AgentSessionList, AgentSessionListRequest,
-    AgentSessionListResponse, UserMessageId,
+    AgentSessionListResponse, TokenUsageRatio, UserMessageId,
 };
 use agent_client_protocol as acp;
 use anyhow::{Context as _, Result, anyhow};
@@ -34,7 +34,7 @@ use collections::{HashMap, HashSet, IndexMap};
 use fs::Fs;
 use futures::channel::{mpsc, oneshot};
 use futures::future::Shared;
-use futures::{StreamExt, future};
+use futures::{FutureExt as _, StreamExt as _, future};
 use gpui::{
     App, AppContext, AsyncApp, Context, Entity, SharedString, Subscription, Task, WeakEntity,
 };
@@ -51,6 +51,7 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
 use util::ResultExt;
+use util::path_list::PathList;
 use util::rel_path::RelPath;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -68,7 +69,7 @@ struct Session {
     /// The internal thread that processes messages
     thread: Entity<Thread>,
     /// The ACP thread that handles protocol communication
-    acp_thread: WeakEntity<acp_thread::AcpThread>,
+    acp_thread: Entity<acp_thread::AcpThread>,
     pending_save: Task<()>,
     _subscriptions: Vec<Subscription>,
 }
@@ -166,6 +167,7 @@ impl LanguageModels {
                 IconOrSvg::Icon(name) => acp_thread::AgentModelIcon::Named(name),
             }),
             is_latest: model.is_latest(),
+            cost: model.model_cost_info().map(|cost| cost.to_shared_string()),
         }
     }
 
@@ -346,12 +348,14 @@ impl NativeAgent {
 
         let thread = thread_handle.read(cx);
         let session_id = thread.id().clone();
+        let parent_session_id = thread.parent_thread_id();
         let title = thread.title();
         let project = thread.project.clone();
         let action_log = thread.action_log.clone();
         let prompt_capabilities_rx = thread.prompt_capabilities_rx.clone();
         let acp_thread = cx.new(|cx| {
             acp_thread::AcpThread::new(
+                parent_session_id,
                 title,
                 connection,
                 project.clone(),
@@ -365,20 +369,21 @@ impl NativeAgent {
         let registry = LanguageModelRegistry::read_global(cx);
         let summarization_model = registry.thread_summary_model().map(|c| c.model);
 
+        let weak = cx.weak_entity();
+        let weak_thread = thread_handle.downgrade();
         thread_handle.update(cx, |thread, cx| {
             thread.set_summarization_model(summarization_model, cx);
             thread.add_default_tools(
-                Rc::new(AcpThreadEnvironment {
+                Rc::new(NativeThreadEnvironment {
                     acp_thread: acp_thread.downgrade(),
+                    thread: weak_thread,
+                    agent: weak,
                 }) as _,
                 cx,
             )
         });
 
         let subscriptions = vec![
-            cx.observe_release(&acp_thread, |this, acp_thread, _cx| {
-                this.sessions.remove(acp_thread.session_id());
-            }),
             cx.subscribe(&thread_handle, Self::handle_thread_title_updated),
             cx.subscribe(&thread_handle, Self::handle_thread_token_usage_updated),
             cx.observe(&thread_handle, move |this, thread, cx| {
@@ -390,7 +395,7 @@ impl NativeAgent {
             session_id,
             Session {
                 thread: thread_handle,
-                acp_thread: acp_thread.downgrade(),
+                acp_thread: acp_thread.clone(),
                 _subscriptions: subscriptions,
                 pending_save: Task::ready(()),
             },
@@ -581,7 +586,7 @@ impl NativeAgent {
             return;
         };
         let thread = thread.downgrade();
-        let acp_thread = session.acp_thread.clone();
+        let acp_thread = session.acp_thread.downgrade();
         cx.spawn(async move |_, cx| {
             let title = thread.read_with(cx, |thread, _| thread.title())?;
             let task = acp_thread.update(cx, |acp_thread, cx| acp_thread.set_title(title, cx))?;
@@ -599,12 +604,9 @@ impl NativeAgent {
         let Some(session) = self.sessions.get(thread.read(cx).id()) else {
             return;
         };
-        session
-            .acp_thread
-            .update(cx, |acp_thread, cx| {
-                acp_thread.update_token_usage(usage.0.clone(), cx);
-            })
-            .ok();
+        session.acp_thread.update(cx, |acp_thread, cx| {
+            acp_thread.update_token_usage(usage.0.clone(), cx);
+        });
     }
 
     fn handle_project_event(
@@ -690,18 +692,16 @@ impl NativeAgent {
     fn update_available_commands(&self, cx: &mut Context<Self>) {
         let available_commands = self.build_available_commands(cx);
         for session in self.sessions.values() {
-            if let Some(acp_thread) = session.acp_thread.upgrade() {
-                acp_thread.update(cx, |thread, cx| {
-                    thread
-                        .handle_session_update(
-                            acp::SessionUpdate::AvailableCommandsUpdate(
-                                acp::AvailableCommandsUpdate::new(available_commands.clone()),
-                            ),
-                            cx,
-                        )
-                        .log_err();
-                });
-            }
+            session.acp_thread.update(cx, |thread, cx| {
+                thread
+                    .handle_session_update(
+                        acp::SessionUpdate::AvailableCommandsUpdate(
+                            acp::AvailableCommandsUpdate::new(available_commands.clone()),
+                        ),
+                        cx,
+                    )
+                    .log_err();
+            });
         }
     }
 
@@ -797,6 +797,10 @@ impl NativeAgent {
         id: acp::SessionId,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<AcpThread>>> {
+        if let Some(session) = self.sessions.get(&id) {
+            return Task::ready(Ok(session.acp_thread.clone()));
+        }
+
         let task = self.load_thread(id, cx);
         cx.spawn(async move |this, cx| {
             let thread = task.await?;
@@ -845,13 +849,26 @@ impl NativeAgent {
         let Some(session) = self.sessions.get_mut(&id) else {
             return;
         };
+
+        let folder_paths = PathList::new(
+            &self
+                .project
+                .read(cx)
+                .visible_worktrees(cx)
+                .map(|worktree| worktree.read(cx).abs_path().to_path_buf())
+                .collect::<Vec<_>>(),
+        );
+
         let thread_store = self.thread_store.clone();
         session.pending_save = cx.spawn(async move |_, cx| {
             let Some(database) = database_future.await.map_err(|err| anyhow!(err)).log_err() else {
                 return;
             };
             let db_thread = db_thread.await;
-            database.save_thread(id, db_thread).await.log_err();
+            database
+                .save_thread(id, db_thread, folder_paths)
+                .await
+                .log_err();
             thread_store.update(cx, |store, cx| store.reload(cx));
         });
     }
@@ -907,7 +924,7 @@ impl NativeAgent {
                                 true,
                                 cx,
                             );
-                        })?;
+                        });
 
                         thread.update(cx, |thread, cx| {
                             thread.push_acp_user_block(id, [block], path_style, cx);
@@ -921,7 +938,7 @@ impl NativeAgent {
                                 true,
                                 cx,
                             );
-                        })?;
+                        });
 
                         thread.update(cx, |thread, cx| {
                             thread.push_acp_agent_block(block, cx);
@@ -942,7 +959,11 @@ impl NativeAgent {
             })?;
 
             cx.update(|cx| {
-                NativeAgentConnection::handle_thread_events(response_stream, acp_thread, cx)
+                NativeAgentConnection::handle_thread_events(
+                    response_stream,
+                    acp_thread.downgrade(),
+                    cx,
+                )
             })
             .await
         })
@@ -987,7 +1008,7 @@ impl NativeAgentConnection {
             Ok(stream) => stream,
             Err(err) => return Task::ready(Err(err)),
         };
-        Self::handle_thread_events(response_stream, acp_thread, cx)
+        Self::handle_thread_events(response_stream, acp_thread.downgrade(), cx)
     }
 
     fn handle_thread_events(
@@ -1031,9 +1052,7 @@ impl NativeAgentConnection {
                                 context: _,
                             }) => {
                                 let outcome_task = acp_thread.update(cx, |thread, cx| {
-                                    thread.request_tool_call_authorization(
-                                        tool_call, options, true, cx,
-                                    )
+                                    thread.request_tool_call_authorization(tool_call, options, cx)
                                 })??;
                                 cx.background_spawn(async move {
                                     if let acp::RequestPermissionOutcome::Selected(
@@ -1057,6 +1076,11 @@ impl NativeAgentConnection {
                                 acp_thread.update(cx, |thread, cx| {
                                     thread.update_tool_call(update, cx)
                                 })??;
+                            }
+                            ThreadEvent::SubagentSpawned(session_id) => {
+                                acp_thread.update(cx, |thread, cx| {
+                                    thread.subagent_spawned(session_id, cx);
+                                })?;
                             }
                             ThreadEvent::Retry(status) => {
                                 acp_thread.update(cx, |thread, cx| {
@@ -1223,7 +1247,7 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
         "zed".into()
     }
 
-    fn new_thread(
+    fn new_session(
         self: Rc<Self>,
         project: Entity<Project>,
         cwd: &Path,
@@ -1235,7 +1259,7 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
             .update(cx, |agent, cx| agent.new_session(project, cx))))
     }
 
-    fn supports_load_session(&self, _cx: &App) -> bool {
+    fn supports_load_session(&self) -> bool {
         true
     }
 
@@ -1248,6 +1272,17 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
     ) -> Task<Result<Entity<acp_thread::AcpThread>>> {
         self.0
             .update(cx, |agent, cx| agent.open_thread(session.session_id, cx))
+    }
+
+    fn supports_close_session(&self) -> bool {
+        true
+    }
+
+    fn close_session(&self, session_id: &acp::SessionId, cx: &mut App) -> Task<Result<()>> {
+        self.0.update(cx, |agent, _cx| {
+            agent.sessions.remove(session_id);
+        });
+        Task::ready(Ok(()))
     }
 
     fn auth_methods(&self) -> &[acp::AuthMethod] {
@@ -1346,8 +1381,8 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
     fn cancel(&self, session_id: &acp::SessionId, cx: &mut App) {
         log::info!("Cancelling on session: {}", session_id);
         self.0.update(cx, |agent, cx| {
-            if let Some(agent) = agent.sessions.get(session_id) {
-                agent
+            if let Some(session) = agent.sessions.get(session_id) {
+                session
                     .thread
                     .update(cx, |thread, cx| thread.cancel(cx))
                     .detach();
@@ -1364,7 +1399,7 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
             agent.sessions.get(session_id).map(|session| {
                 Rc::new(NativeAgentSessionTruncate {
                     thread: session.thread.clone(),
-                    acp_thread: session.acp_thread.clone(),
+                    acp_thread: session.acp_thread.downgrade(),
                 }) as _
             })
         })
@@ -1373,12 +1408,19 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
     fn set_title(
         &self,
         session_id: &acp::SessionId,
-        _cx: &App,
+        cx: &App,
     ) -> Option<Rc<dyn acp_thread::AgentSessionSetTitle>> {
-        Some(Rc::new(NativeAgentSessionSetTitle {
-            connection: self.clone(),
-            session_id: session_id.clone(),
-        }) as _)
+        self.0.read_with(cx, |agent, _cx| {
+            agent
+                .sessions
+                .get(session_id)
+                .filter(|s| !s.thread.read(cx).is_subagent())
+                .map(|session| {
+                    Rc::new(NativeAgentSessionSetTitle {
+                        thread: session.thread.clone(),
+                    }) as _
+                })
+        })
     }
 
     fn session_list(&self, cx: &mut App) -> Option<Rc<dyn AgentSessionList>> {
@@ -1537,26 +1579,92 @@ impl acp_thread::AgentSessionRetry for NativeAgentSessionRetry {
 }
 
 struct NativeAgentSessionSetTitle {
-    connection: NativeAgentConnection,
-    session_id: acp::SessionId,
+    thread: Entity<Thread>,
 }
 
 impl acp_thread::AgentSessionSetTitle for NativeAgentSessionSetTitle {
     fn run(&self, title: SharedString, cx: &mut App) -> Task<Result<()>> {
-        let Some(session) = self.connection.0.read(cx).sessions.get(&self.session_id) else {
-            return Task::ready(Err(anyhow!("session not found")));
-        };
-        let thread = session.thread.clone();
-        thread.update(cx, |thread, cx| thread.set_title(title, cx));
+        self.thread
+            .update(cx, |thread, cx| thread.set_title(title, cx));
         Task::ready(Ok(()))
     }
 }
 
-pub struct AcpThreadEnvironment {
+pub struct NativeThreadEnvironment {
+    agent: WeakEntity<NativeAgent>,
+    thread: WeakEntity<Thread>,
     acp_thread: WeakEntity<AcpThread>,
 }
 
-impl ThreadEnvironment for AcpThreadEnvironment {
+impl NativeThreadEnvironment {
+    pub(crate) fn create_subagent_thread(
+        &self,
+        label: String,
+        cx: &mut App,
+    ) -> Result<Rc<dyn SubagentHandle>> {
+        let Some(parent_thread_entity) = self.thread.upgrade() else {
+            anyhow::bail!("Parent thread no longer exists".to_string());
+        };
+        let parent_thread = parent_thread_entity.read(cx);
+        let current_depth = parent_thread.depth();
+
+        if current_depth >= MAX_SUBAGENT_DEPTH {
+            return Err(anyhow!(
+                "Maximum subagent depth ({}) reached",
+                MAX_SUBAGENT_DEPTH
+            ));
+        }
+
+        let subagent_thread: Entity<Thread> = cx.new(|cx| {
+            let mut thread = Thread::new_subagent(&parent_thread_entity, cx);
+            thread.set_title(label.into(), cx);
+            thread
+        });
+
+        let session_id = subagent_thread.read(cx).id().clone();
+
+        let acp_thread = self.agent.update(cx, |agent, cx| {
+            agent.register_session(subagent_thread.clone(), cx)
+        })?;
+
+        self.prompt_subagent(session_id, subagent_thread, acp_thread)
+    }
+
+    pub(crate) fn resume_subagent_thread(
+        &self,
+        session_id: acp::SessionId,
+        cx: &mut App,
+    ) -> Result<Rc<dyn SubagentHandle>> {
+        let (subagent_thread, acp_thread) = self.agent.update(cx, |agent, _cx| {
+            let session = agent
+                .sessions
+                .get(&session_id)
+                .ok_or_else(|| anyhow!("No subagent session found with id {session_id}"))?;
+            anyhow::Ok((session.thread.clone(), session.acp_thread.clone()))
+        })??;
+
+        self.prompt_subagent(session_id, subagent_thread, acp_thread)
+    }
+
+    fn prompt_subagent(
+        &self,
+        session_id: acp::SessionId,
+        subagent_thread: Entity<Thread>,
+        acp_thread: Entity<acp_thread::AcpThread>,
+    ) -> Result<Rc<dyn SubagentHandle>> {
+        let Some(parent_thread_entity) = self.thread.upgrade() else {
+            anyhow::bail!("Parent thread no longer exists".to_string());
+        };
+        Ok(Rc::new(NativeSubagentHandle::new(
+            session_id,
+            subagent_thread,
+            acp_thread,
+            parent_thread_entity,
+        )) as _)
+    }
+}
+
+impl ThreadEnvironment for NativeThreadEnvironment {
     fn create_terminal(
         &self,
         command: String,
@@ -1587,6 +1695,152 @@ impl ThreadEnvironment for AcpThreadEnvironment {
             };
 
             Ok(Rc::new(handle) as _)
+        })
+    }
+
+    fn create_subagent(&self, label: String, cx: &mut App) -> Result<Rc<dyn SubagentHandle>> {
+        self.create_subagent_thread(label, cx)
+    }
+
+    fn resume_subagent(
+        &self,
+        session_id: acp::SessionId,
+        cx: &mut App,
+    ) -> Result<Rc<dyn SubagentHandle>> {
+        self.resume_subagent_thread(session_id, cx)
+    }
+}
+
+#[derive(Debug, Clone)]
+enum SubagentPromptResult {
+    Completed,
+    Cancelled,
+    ContextWindowWarning,
+    Error(String),
+}
+
+pub struct NativeSubagentHandle {
+    session_id: acp::SessionId,
+    parent_thread: WeakEntity<Thread>,
+    subagent_thread: Entity<Thread>,
+    acp_thread: Entity<acp_thread::AcpThread>,
+}
+
+impl NativeSubagentHandle {
+    fn new(
+        session_id: acp::SessionId,
+        subagent_thread: Entity<Thread>,
+        acp_thread: Entity<acp_thread::AcpThread>,
+        parent_thread_entity: Entity<Thread>,
+    ) -> Self {
+        NativeSubagentHandle {
+            session_id,
+            subagent_thread,
+            parent_thread: parent_thread_entity.downgrade(),
+            acp_thread,
+        }
+    }
+}
+
+impl SubagentHandle for NativeSubagentHandle {
+    fn id(&self) -> acp::SessionId {
+        self.session_id.clone()
+    }
+
+    fn send(&self, message: String, cx: &AsyncApp) -> Task<Result<String>> {
+        let thread = self.subagent_thread.clone();
+        let acp_thread = self.acp_thread.clone();
+        let subagent_session_id = self.session_id.clone();
+        let parent_thread = self.parent_thread.clone();
+
+        cx.spawn(async move |cx| {
+            let (task, _subscription) = cx.update(|cx| {
+                let ratio_before_prompt = thread
+                    .read(cx)
+                    .latest_token_usage()
+                    .map(|usage| usage.ratio());
+
+                parent_thread
+                    .update(cx, |parent_thread, _cx| {
+                        parent_thread.register_running_subagent(thread.downgrade())
+                    })
+                    .ok();
+
+                let task = acp_thread.update(cx, |acp_thread, cx| {
+                    acp_thread.send(vec![message.into()], cx)
+                });
+
+                let (token_limit_tx, token_limit_rx) = oneshot::channel::<()>();
+                let mut token_limit_tx = Some(token_limit_tx);
+
+                let subscription = cx.subscribe(
+                    &thread,
+                    move |_thread, event: &TokenUsageUpdated, _cx| {
+                        if let Some(usage) = &event.0 {
+                            let old_ratio = ratio_before_prompt
+                                .clone()
+                                .unwrap_or(TokenUsageRatio::Normal);
+                            let new_ratio = usage.ratio();
+                            if old_ratio == TokenUsageRatio::Normal
+                                && new_ratio == TokenUsageRatio::Warning
+                            {
+                                if let Some(tx) = token_limit_tx.take() {
+                                    tx.send(()).ok();
+                                }
+                            }
+                        }
+                    },
+                );
+
+                let wait_for_prompt = cx
+                    .background_spawn(async move {
+                        futures::select! {
+                            response = task.fuse() => match response {
+                                Ok(Some(response)) => {
+                                    match response.stop_reason {
+                                        acp::StopReason::Cancelled => SubagentPromptResult::Cancelled,
+                                        acp::StopReason::MaxTokens => SubagentPromptResult::Error("The agent reached the maximum number of tokens.".into()),
+                                        acp::StopReason::MaxTurnRequests => SubagentPromptResult::Error("The agent reached the maximum number of allowed requests between user turns. Try prompting again.".into()),
+                                        acp::StopReason::Refusal => SubagentPromptResult::Error("The agent refused to process that prompt. Try again.".into()),
+                                        acp::StopReason::EndTurn | _ => SubagentPromptResult::Completed,
+                                    }
+                                }
+                                Ok(None) => SubagentPromptResult::Error("No response from the agent. You can try messaging again.".into()),
+                                Err(error) => SubagentPromptResult::Error(error.to_string()),
+                            },
+                            _ = token_limit_rx.fuse() => SubagentPromptResult::ContextWindowWarning,
+                        }
+                    });
+
+                (wait_for_prompt, subscription)
+            });
+
+            let result = match task.await {
+                SubagentPromptResult::Completed => thread.read_with(cx, |thread, _cx| {
+                    thread
+                        .last_message()
+                        .map(|m| m.to_markdown())
+                        .context("No response from subagent")
+                }),
+                SubagentPromptResult::Cancelled => Err(anyhow!("User cancelled")),
+                SubagentPromptResult::Error(message) => Err(anyhow!("{message}")),
+                SubagentPromptResult::ContextWindowWarning => {
+                    thread.update(cx, |thread, cx| thread.cancel(cx)).await;
+                    Err(anyhow!(
+                        "The agent is nearing the end of its context window and has been \
+                         stopped. You can prompt the thread again to have the agent wrap up \
+                         or hand off its work."
+                    ))
+                }
+            };
+
+            parent_thread
+                .update(cx, |parent_thread, cx| {
+                    parent_thread.unregister_running_subagent(&subagent_session_id, cx)
+                })
+                .ok();
+
+            result
         })
     }
 }
@@ -1731,7 +1985,7 @@ mod internal_tests {
         // Create a thread/session
         let acp_thread = cx
             .update(|cx| {
-                Rc::new(connection.clone()).new_thread(project.clone(), Path::new("/a"), cx)
+                Rc::new(connection.clone()).new_session(project.clone(), Path::new("/a"), cx)
             })
             .await
             .unwrap();
@@ -1763,6 +2017,7 @@ mod internal_tests {
                         ui::IconName::ZedAssistant
                     )),
                     is_latest: false,
+                    cost: None,
                 }]
             )])
         );
@@ -1809,7 +2064,7 @@ mod internal_tests {
         // Create a thread/session
         let acp_thread = cx
             .update(|cx| {
-                Rc::new(connection.clone()).new_thread(project.clone(), Path::new("/a"), cx)
+                Rc::new(connection.clone()).new_session(project.clone(), Path::new("/a"), cx)
             })
             .await
             .unwrap();
@@ -1909,7 +2164,7 @@ mod internal_tests {
 
         let acp_thread = cx
             .update(|cx| {
-                Rc::new(connection.clone()).new_thread(project.clone(), Path::new("/a"), cx)
+                Rc::new(connection.clone()).new_session(project.clone(), Path::new("/a"), cx)
             })
             .await
             .unwrap();
@@ -2025,7 +2280,7 @@ mod internal_tests {
             .update(|cx| {
                 connection
                     .clone()
-                    .new_thread(project.clone(), Path::new("/a"), cx)
+                    .new_session(project.clone(), Path::new("/a"), cx)
             })
             .await
             .unwrap();
@@ -2058,11 +2313,12 @@ mod internal_tests {
         send.await.unwrap();
         cx.run_until_parked();
 
-        // Drop the thread so it can be reloaded from disk.
-        cx.update(|_| {
-            drop(thread);
-            drop(acp_thread);
-        });
+        // Close the session so it can be reloaded from disk.
+        cx.update(|cx| connection.clone().close_session(&session_id, cx))
+            .await
+            .unwrap();
+        drop(thread);
+        drop(acp_thread);
         agent.read_with(cx, |agent, _| {
             assert!(agent.sessions.is_empty());
         });
@@ -2131,7 +2387,7 @@ mod internal_tests {
             .update(|cx| {
                 connection
                     .clone()
-                    .new_thread(project.clone(), Path::new("/a"), cx)
+                    .new_session(project.clone(), Path::new("/a"), cx)
             })
             .await
             .unwrap();
@@ -2164,11 +2420,12 @@ mod internal_tests {
         send.await.unwrap();
         cx.run_until_parked();
 
-        // Drop the thread so it can be reloaded from disk.
-        cx.update(|_| {
-            drop(thread);
-            drop(acp_thread);
-        });
+        // Close the session so it can be reloaded from disk.
+        cx.update(|cx| connection.clone().close_session(&session_id, cx))
+            .await
+            .unwrap();
+        drop(thread);
+        drop(acp_thread);
         agent.read_with(cx, |agent, _| {
             assert!(agent.sessions.is_empty());
         });
@@ -2226,7 +2483,7 @@ mod internal_tests {
             .update(|cx| {
                 connection
                     .clone()
-                    .new_thread(project.clone(), Path::new(""), cx)
+                    .new_session(project.clone(), Path::new(""), cx)
             })
             .await
             .unwrap();
@@ -2295,11 +2552,12 @@ mod internal_tests {
 
         cx.run_until_parked();
 
-        // Drop the ACP thread, which should cause the session to be dropped as well.
-        cx.update(|_| {
-            drop(thread);
-            drop(acp_thread);
-        });
+        // Close the session so it can be reloaded from disk.
+        cx.update(|cx| connection.clone().close_session(&session_id, cx))
+            .await
+            .unwrap();
+        drop(thread);
+        drop(acp_thread);
         agent.read_with(cx, |agent, _| {
             assert_eq!(agent.sessions.keys().cloned().collect::<Vec<_>>(), []);
         });

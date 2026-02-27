@@ -851,6 +851,7 @@ message LspQuery {
     InlayHints inlay_hints = 14;
     SemanticTokens semantic_tokens = 16;
     GetFoldingRanges get_folding_ranges = 17;
+    GetDocumentSymbols get_document_symbols = 18;
   }
 }
 
@@ -876,6 +877,7 @@ message LspResponse {
     InlayHintsResponse inlay_hints_response = 13;
     SemanticTokensResponse semantic_tokens_response = 14;
     GetFoldingRangesResponse get_folding_ranges_response = 15;
+    GetDocumentSymbolsResponse get_document_symbols_response = 16;
   }
   uint64 server_id = 7;
 }

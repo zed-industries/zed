@@ -253,3 +253,44 @@ impl OutputContent for JsonView {
         Some(buffer)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_json_view_from_value_root_expanded() {
+        let view = JsonView::from_value(serde_json::json!({"key": "value"})).unwrap();
+        assert!(
+            view.is_expanded("root"),
+            "root should be expanded by default"
+        );
+    }
+
+    #[test]
+    fn test_json_view_is_expanded_unknown_path() {
+        let view = JsonView::from_value(serde_json::json!({"key": "value"})).unwrap();
+        assert!(
+            !view.is_expanded("root.key"),
+            "non-root paths should not be expanded by default"
+        );
+        assert!(
+            !view.is_expanded("nonexistent"),
+            "unknown paths should not be expanded"
+        );
+    }
+
+    #[gpui::test]
+    fn test_json_view_toggle_path(cx: &mut gpui::App) {
+        let view =
+            cx.new(|_cx| JsonView::from_value(serde_json::json!({"nested": {"a": 1}})).unwrap());
+
+        view.update(cx, |view, cx| {
+            assert!(!view.is_expanded("root.nested"));
+            view.toggle_path("root.nested", cx);
+            assert!(view.is_expanded("root.nested"));
+            view.toggle_path("root.nested", cx);
+            assert!(!view.is_expanded("root.nested"));
+        });
+    }
+}

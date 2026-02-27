@@ -141,7 +141,7 @@ impl SvgPreviewView {
         buffer: &Entity<MultiBuffer>,
         cx: &App,
     ) -> Option<usize> {
-        let buffer_id = buffer.entity_id();
+        let buffer_id = buffer.read(cx).as_singleton()?.entity_id();
         pane.items_of_type::<SvgPreviewView>()
             .find(|view| {
                 view.read(cx)
@@ -337,5 +337,5 @@ impl Item for SvgPreviewView {
         Some("svg preview: open")
     }
 
-    fn to_item_events(_event: &Self::Event, _f: impl FnMut(workspace::item::ItemEvent)) {}
+    fn to_item_events(_event: &Self::Event, _f: &mut dyn FnMut(workspace::item::ItemEvent)) {}
 }

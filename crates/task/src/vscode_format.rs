@@ -13,15 +13,44 @@ struct TaskOptions {
     env: HashMap<String, String>,
 }
 
-#[derive(Clone, Debug, Deserialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
+#[derive(Clone, Debug, PartialEq)]
 struct VsCodeTaskDefinition {
     label: String,
-    #[serde(flatten)]
     command: Option<Command>,
-    #[serde(flatten)]
     other_attributes: HashMap<String, serde_json_lenient::Value>,
     options: Option<TaskOptions>,
+}
+
+impl<'de> serde::Deserialize<'de> for VsCodeTaskDefinition {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        struct TaskHelper {
+            #[serde(default)]
+            label: Option<String>,
+            #[serde(flatten)]
+            command: Option<Command>,
+            #[serde(flatten)]
+            other_attributes: HashMap<String, serde_json_lenient::Value>,
+            options: Option<TaskOptions>,
+        }
+
+        let helper = TaskHelper::deserialize(deserializer)?;
+
+        let label = helper
+            .label
+            .unwrap_or_else(|| generate_label(&helper.command));
+
+        Ok(VsCodeTaskDefinition {
+            label,
+            command: helper.command,
+            other_attributes: helper.other_attributes,
+            options: helper.options,
+        })
+    }
 }
 
 #[derive(Clone, Deserialize, PartialEq, Debug)]
@@ -39,6 +68,21 @@ enum Command {
     Gulp {
         task: String,
     },
+}
+
+fn generate_label(command: &Option<Command>) -> String {
+    match command {
+        Some(Command::Npm { script }) => format!("npm: {}", script),
+        Some(Command::Gulp { task }) => format!("gulp: {}", task),
+        Some(Command::Shell { command, .. }) => {
+            if command.trim().is_empty() {
+                "shell".to_string()
+            } else {
+                command.clone()
+            }
+        }
+        None => "Untitled Task".to_string(),
+    }
 }
 
 impl VsCodeTaskDefinition {
@@ -128,7 +172,7 @@ mod tests {
         vscode_format::{Command, VsCodeTaskDefinition},
     };
 
-    use super::EnvVariableReplacer;
+    use super::{EnvVariableReplacer, generate_label};
 
     fn compare_without_other_attributes(lhs: VsCodeTaskDefinition, rhs: VsCodeTaskDefinition) {
         assert_eq!(
@@ -357,5 +401,63 @@ mod tests {
         ];
         let tasks: TaskTemplates = vscode_definitions.try_into().unwrap();
         assert_eq!(tasks.0, expected);
+    }
+
+    #[test]
+    fn can_deserialize_tasks_without_labels() {
+        const TASKS_WITHOUT_LABELS: &str = include_str!("../test_data/tasks-without-labels.json");
+        let vscode_definitions: VsCodeTaskFile =
+            serde_json_lenient::from_str(TASKS_WITHOUT_LABELS).unwrap();
+
+        assert_eq!(vscode_definitions.tasks.len(), 4);
+        assert_eq!(vscode_definitions.tasks[0].label, "npm: start");
+        assert_eq!(vscode_definitions.tasks[1].label, "Explicit Label");
+        assert_eq!(vscode_definitions.tasks[2].label, "gulp: build");
+        assert_eq!(vscode_definitions.tasks[3].label, "echo hello");
+    }
+
+    #[test]
+    fn test_generate_label() {
+        assert_eq!(
+            generate_label(&Some(Command::Npm {
+                script: "start".to_string()
+            })),
+            "npm: start"
+        );
+        assert_eq!(
+            generate_label(&Some(Command::Gulp {
+                task: "build".to_string()
+            })),
+            "gulp: build"
+        );
+        assert_eq!(
+            generate_label(&Some(Command::Shell {
+                command: "echo hello".to_string(),
+                args: vec![]
+            })),
+            "echo hello"
+        );
+        assert_eq!(
+            generate_label(&Some(Command::Shell {
+                command: "cargo build --release".to_string(),
+                args: vec![]
+            })),
+            "cargo build --release"
+        );
+        assert_eq!(
+            generate_label(&Some(Command::Shell {
+                command: "  ".to_string(),
+                args: vec![]
+            })),
+            "shell"
+        );
+        assert_eq!(
+            generate_label(&Some(Command::Shell {
+                command: "".to_string(),
+                args: vec![]
+            })),
+            "shell"
+        );
+        assert_eq!(generate_label(&None), "Untitled Task");
     }
 }

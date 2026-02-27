@@ -242,14 +242,13 @@ impl TestServer {
         });
 
         let client_name = name.to_string();
-        let mut client = cx.update(|cx| Client::new(clock, http.clone(), cx));
+        let client = cx.update(|cx| Client::new(clock, http.clone(), cx));
         let server = self.server.clone();
         let db = self.app_state.db.clone();
         let connection_killers = self.connection_killers.clone();
         let forbid_connections = self.forbid_connections.clone();
 
-        Arc::get_mut(&mut client)
-            .unwrap()
+        client
             .set_id(user_id.to_proto())
             .override_authenticate(move |cx| {
                 cx.spawn(async move |_| {
@@ -564,6 +563,7 @@ impl TestServer {
     ) -> Arc<AppState> {
         Arc::new(AppState {
             db: test_db.db().clone(),
+            http_client: None,
             livekit_client: Some(Arc::new(livekit_test_server.create_api_client())),
             blob_store_client: None,
             executor,
@@ -573,14 +573,9 @@ impl TestServer {
                 database_url: "".into(),
                 database_max_connections: 0,
                 api_token: "".into(),
-                invite_link_prefix: "".into(),
                 livekit_server: None,
                 livekit_key: None,
                 livekit_secret: None,
-                llm_database_url: None,
-                llm_database_max_connections: None,
-                llm_database_migrations_path: None,
-                llm_api_secret: None,
                 rust_log: None,
                 log_json: None,
                 zed_environment: "test".into(),
@@ -589,19 +584,8 @@ impl TestServer {
                 blob_store_access_key: None,
                 blob_store_secret_key: None,
                 blob_store_bucket: None,
-                openai_api_key: None,
-                google_ai_api_key: None,
-                anthropic_api_key: None,
-                anthropic_staff_api_key: None,
-                llm_closed_beta_model_name: None,
-                prediction_api_url: None,
-                prediction_api_key: None,
-                prediction_model: None,
                 zed_client_checksum_seed: None,
-                auto_join_channel_id: None,
-                migrations_path: None,
                 seed_path: None,
-                supermaven_admin_api_key: None,
                 kinesis_region: None,
                 kinesis_stream: None,
                 kinesis_access_key: None,
@@ -902,7 +886,7 @@ impl TestClient {
         let window = cx.add_window(|window, cx| {
             window.activate_window();
             let workspace = cx.new(|cx| Workspace::new(None, project, app_state, window, cx));
-            MultiWorkspace::new(workspace, cx)
+            MultiWorkspace::new(workspace, window, cx)
         });
         let cx = VisualTestContext::from_window(*window, cx).into_mut();
         cx.run_until_parked();
@@ -921,7 +905,7 @@ impl TestClient {
         let window = cx.add_window(|window, cx| {
             window.activate_window();
             let workspace = cx.new(|cx| Workspace::new(None, project, app_state, window, cx));
-            MultiWorkspace::new(workspace, cx)
+            MultiWorkspace::new(workspace, window, cx)
         });
         let cx = VisualTestContext::from_window(*window, cx).into_mut();
         let workspace = window

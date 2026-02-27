@@ -149,7 +149,8 @@ impl MentionSet {
             } => self.confirm_mention_for_diagnostics(include_errors, include_warnings, cx),
             MentionUri::PastedImage
             | MentionUri::Selection { .. }
-            | MentionUri::TerminalSelection { .. } => {
+            | MentionUri::TerminalSelection { .. }
+            | MentionUri::GitDiff { .. } => {
                 Task::ready(Err(anyhow!("Unsupported mention URI type for paste")))
             }
         }
@@ -289,6 +290,10 @@ impl MentionSet {
             MentionUri::TerminalSelection { .. } => {
                 debug_panic!("unexpected terminal URI");
                 Task::ready(Err(anyhow!("unexpected terminal URI")))
+            }
+            MentionUri::GitDiff { .. } => {
+                debug_panic!("unexpected git diff URI");
+                Task::ready(Err(anyhow!("unexpected git diff URI")))
             }
         };
         let task = cx
@@ -542,9 +547,9 @@ impl MentionSet {
             None,
             None,
         );
-        let connection = server.connect(None, delegate, cx);
+        let connection = server.connect(delegate, cx);
         cx.spawn(async move |_, cx| {
-            let (agent, _) = connection.await?;
+            let agent = connection.await?;
             let agent = agent.downcast::<agent::NativeAgentConnection>().unwrap();
             let summary = agent
                 .0
@@ -661,18 +666,13 @@ pub(crate) async fn insert_images_as_context(
                 let (excerpt_id, _, buffer_snapshot) =
                     snapshot.buffer_snapshot().as_singleton().unwrap();
 
-                let text_anchor = buffer_snapshot.anchor_before(buffer_snapshot.len());
+                let cursor_anchor = editor.selections.newest_anchor().start.text_anchor;
+                let text_anchor = cursor_anchor.bias_left(&buffer_snapshot);
                 let multibuffer_anchor = snapshot
                     .buffer_snapshot()
-                    .anchor_in_excerpt(*excerpt_id, text_anchor);
-                editor.edit(
-                    [(
-                        multi_buffer::Anchor::max()..multi_buffer::Anchor::max(),
-                        format!("{replacement_text} "),
-                    )],
-                    cx,
-                );
-                (*excerpt_id, text_anchor, multibuffer_anchor)
+                    .anchor_in_excerpt(excerpt_id, text_anchor);
+                editor.insert(&format!("{replacement_text} "), window, cx);
+                (excerpt_id, text_anchor, multibuffer_anchor)
             })
             .ok()
         else {

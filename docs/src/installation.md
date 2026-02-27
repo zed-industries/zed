@@ -1,3 +1,8 @@
+---
+title: Install Zed - macOS, Linux, Windows
+description: Download and install Zed on macOS, Linux, or Windows. Includes Homebrew, direct download, and package manager options.
+---
+
 # Installing Zed
 
 ## Download Zed

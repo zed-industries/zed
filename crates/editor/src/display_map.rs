@@ -92,7 +92,7 @@ pub use inlay_map::{InlayOffset, InlayPoint};
 pub use invisibles::{is_invisible, replacement};
 pub use wrap_map::{WrapPoint, WrapRow, WrapSnapshot};
 
-use collections::{HashMap, HashSet, IndexSet, hash_map};
+use collections::{HashMap, HashSet, IndexSet};
 use gpui::{
     App, Context, Entity, EntityId, Font, HighlightStyle, LineLayout, Pixels, UnderlineStyle,
     WeakEntity,
@@ -105,13 +105,15 @@ use multi_buffer::{
 use project::project_settings::DiagnosticSeverity;
 use project::{InlayId, lsp_store::LspFoldingRange, lsp_store::TokenType};
 use serde::Deserialize;
+use smallvec::SmallVec;
 use sum_tree::{Bias, TreeMap};
-use text::{BufferId, LineIndent, Patch};
+use text::{BufferId, LineIndent, Patch, ToOffset as _};
 use ui::{SharedString, px};
 use unicode_segmentation::UnicodeSegmentation;
 use ztracing::instrument;
 
 use std::cell::RefCell;
+use std::collections::hash_map::Entry;
 use std::{
     any::TypeId,
     borrow::Cow,
@@ -174,9 +176,9 @@ pub trait ToDisplayPoint {
     fn to_display_point(&self, map: &DisplaySnapshot) -> DisplayPoint;
 }
 
-type TextHighlights = TreeMap<HighlightKey, Arc<(HighlightStyle, Vec<Range<Anchor>>)>>;
+type TextHighlights = Arc<HashMap<HighlightKey, Arc<(HighlightStyle, Vec<Range<Anchor>>)>>>;
 type SemanticTokensHighlights =
-    TreeMap<BufferId, (Arc<[SemanticTokenHighlight]>, Arc<HighlightStyleInterner>)>;
+    Arc<HashMap<BufferId, (Arc<[SemanticTokenHighlight]>, Arc<HighlightStyleInterner>)>>;
 type InlayHighlights = TreeMap<HighlightKey, TreeMap<InlayId, (HighlightStyle, InlayHighlight)>>;
 
 #[derive(Debug)]
@@ -357,6 +359,19 @@ impl Companion {
         }
     }
 
+    #[cfg(test)]
+    pub(crate) fn excerpt_mappings(
+        &self,
+    ) -> (
+        &HashMap<ExcerptId, ExcerptId>,
+        &HashMap<ExcerptId, ExcerptId>,
+    ) {
+        (
+            &self.lhs_excerpt_to_rhs_excerpt,
+            &self.rhs_excerpt_to_lhs_excerpt,
+        )
+    }
+
     fn buffer_to_companion_buffer(&self, display_map_id: EntityId) -> &HashMap<BufferId, BufferId> {
         if self.is_rhs(display_map_id) {
             &self.rhs_buffer_to_lhs_buffer
@@ -464,7 +479,7 @@ impl DisplayMap {
             diagnostics_max_severity,
             text_highlights: Default::default(),
             inlay_highlights: Default::default(),
-            semantic_token_highlights: TreeMap::default(),
+            semantic_token_highlights: Default::default(),
             clip_at_line_ends: false,
             masked: false,
             companion: None,
@@ -472,7 +487,6 @@ impl DisplayMap {
         }
     }
 
-    // TODO(split-diff) figure out how to free the LHS from having to build a block map before this is called
     pub(crate) fn set_companion(
         &mut self,
         companion: Option<(Entity<DisplayMap>, Entity<Companion>)>,
@@ -485,62 +499,90 @@ impl DisplayMap {
             let Some((_, companion)) = self.companion.take() else {
                 return;
             };
-            let (snapshot, edits) = self.sync_through_wrap(cx);
-            let edits = edits.compose([text::Edit {
-                old: WrapRow(0)..snapshot.max_point().row(),
-                new: WrapRow(0)..snapshot.max_point().row(),
+            assert_eq!(self.entity_id, companion.read(cx).rhs_display_map_id);
+            let (snapshot, _edits) = self.sync_through_wrap(cx);
+            let edits = Patch::new(vec![text::Edit {
+                old: WrapRow(0)
+                    ..self.block_map.wrap_snapshot.borrow().max_point().row() + WrapRow(1),
+                new: WrapRow(0)..snapshot.max_point().row() + WrapRow(1),
             }]);
-            self.block_map.write(snapshot, edits, None).remove(
-                companion
+            self.block_map.deferred_edits.set(edits);
+            self.block_map.retain_blocks_raw(&mut |block| {
+                if companion
                     .read(cx)
                     .lhs_custom_block_to_balancing_block
                     .borrow()
                     .values()
-                    .copied()
-                    .collect(),
-            );
+                    .any(|id| *id == block.id)
+                {
+                    return false;
+                }
+                true
+            });
             return;
         };
         assert_eq!(self.entity_id, companion.read(cx).rhs_display_map_id);
 
-        let snapshot = self.unfold_intersecting([Anchor::min()..Anchor::max()], true, cx);
+        // Note, throwing away the wrap edits because we defer spacer computation to the first render.
+        let snapshot = {
+            let edits = self.buffer_subscription.consume();
+            let snapshot = self.buffer.read(cx).snapshot(cx);
+            let tab_size = Self::tab_size(&self.buffer, cx);
+            let (snapshot, edits) = self.inlay_map.sync(snapshot, edits.into_inner());
+            let (mut writer, snapshot, edits) = self.fold_map.write(snapshot, edits);
+            let (snapshot, edits) = self.tab_map.sync(snapshot, edits, tab_size);
+            let (_snapshot, _edits) = self
+                .wrap_map
+                .update(cx, |wrap_map, cx| wrap_map.sync(snapshot, edits, cx));
 
-        let (companion_wrap_snapshot, companion_wrap_edits) =
+            let (snapshot, edits) =
+                writer.unfold_intersecting([Anchor::min()..Anchor::max()], true);
+            let (snapshot, edits) = self.tab_map.sync(snapshot, edits, tab_size);
+            let (snapshot, _edits) = self
+                .wrap_map
+                .update(cx, |wrap_map, cx| wrap_map.sync(snapshot, edits, cx));
+
+            self.block_map.retain_blocks_raw(&mut |block| {
+                !matches!(block.placement, BlockPlacement::Replace(_))
+            });
+            snapshot
+        };
+
+        let (companion_wrap_snapshot, _companion_wrap_edits) =
             companion_display_map.update(cx, |dm, cx| dm.sync_through_wrap(cx));
 
-        let edits = Patch::new(
-            [text::Edit {
-                old: WrapRow(0)..snapshot.max_point().row(),
-                new: WrapRow(0)..snapshot.max_point().row(),
-            }]
-            .into_iter()
-            .collect(),
-        );
+        let edits = Patch::new(vec![text::Edit {
+            old: WrapRow(0)..self.block_map.wrap_snapshot.borrow().max_point().row() + WrapRow(1),
+            new: WrapRow(0)..snapshot.max_point().row() + WrapRow(1),
+        }]);
+        self.block_map.deferred_edits.set(edits);
 
-        let reader = self.block_map.read(
-            snapshot.clone(),
-            edits.clone(),
-            Some(CompanionView::new(
-                self.entity_id,
-                &companion_wrap_snapshot,
-                &companion_wrap_edits,
-                companion.read(cx),
-            )),
-        );
+        let all_blocks: Vec<_> = self.block_map.blocks_raw().map(Clone::clone).collect();
 
         companion_display_map.update(cx, |companion_display_map, cx| {
+            // Sync folded buffers from RHS to LHS. Also clean up stale
+            // entries: the block map doesn't remove buffers from
+            // `folded_buffers` when they leave the multibuffer, so we
+            // unfold any RHS buffers whose companion mapping is missing.
+            let mut buffers_to_unfold = Vec::new();
             for my_buffer in self.folded_buffers() {
-                let their_buffer = companion
-                    .read(cx)
-                    .rhs_buffer_to_lhs_buffer
-                    .get(my_buffer)
-                    .unwrap();
+                let their_buffer = companion.read(cx).rhs_buffer_to_lhs_buffer.get(my_buffer);
+
+                let Some(their_buffer) = their_buffer else {
+                    buffers_to_unfold.push(*my_buffer);
+                    continue;
+                };
+
                 companion_display_map
                     .block_map
                     .folded_buffers
                     .insert(*their_buffer);
             }
-            for block in reader.blocks {
+            for buffer_id in buffers_to_unfold {
+                self.block_map.folded_buffers.remove(&buffer_id);
+            }
+
+            for block in all_blocks {
                 let Some(their_block) = block_map::balancing_block(
                     &block.properties(),
                     snapshot.buffer(),
@@ -560,16 +602,21 @@ impl DisplayMap {
                         .insert(block.id, their_id);
                 });
             }
-            companion_display_map.block_map.read(
-                companion_wrap_snapshot,
-                companion_wrap_edits,
-                Some(CompanionView::new(
-                    companion_display_map.entity_id,
-                    &snapshot,
-                    &edits,
-                    companion.read(cx),
-                )),
-            );
+            let companion_edits = Patch::new(vec![text::Edit {
+                old: WrapRow(0)
+                    ..companion_display_map
+                        .block_map
+                        .wrap_snapshot
+                        .borrow()
+                        .max_point()
+                        .row()
+                        + WrapRow(1),
+                new: WrapRow(0)..companion_wrap_snapshot.max_point().row() + WrapRow(1),
+            }]);
+            companion_display_map
+                .block_map
+                .deferred_edits
+                .set(companion_edits);
             companion_display_map.companion = Some((this, companion.clone()));
         });
 
@@ -758,9 +805,10 @@ impl DisplayMap {
         let (snapshot, edits) = self.inlay_map.sync(buffer_snapshot.clone(), edits);
         let (mut fold_map, snapshot, edits) = self.fold_map.write(snapshot, edits);
         let (snapshot, edits) = self.tab_map.sync(snapshot, edits, tab_size);
-        let (_snapshot, _edits) = self
+        let (snapshot, edits) = self
             .wrap_map
             .update(cx, |map, cx| map.sync(snapshot, edits, cx));
+        self.block_map.read(snapshot, edits, None);
 
         let inline = creases.iter().filter_map(|crease| {
             if let Crease::Inline {
@@ -1039,8 +1087,7 @@ impl DisplayMap {
 
     /// Removes all LSP folding-range creases for a single buffer.
     pub(super) fn clear_lsp_folding_ranges(&mut self, buffer_id: BufferId, cx: &mut Context<Self>) {
-        if let hash_map::Entry::Occupied(entry) = self.lsp_folding_crease_ids.entry(buffer_id) {
-            let old_ids = entry.remove();
+        if let Some(old_ids) = self.lsp_folding_crease_ids.remove(&buffer_id) {
             let snapshot = self.buffer.read(cx).snapshot(cx);
             self.crease_map.remove(old_ids, &snapshot);
         }
@@ -1174,28 +1221,31 @@ impl DisplayMap {
     pub fn highlight_text(
         &mut self,
         key: HighlightKey,
-        ranges: Vec<Range<Anchor>>,
+        mut ranges: Vec<Range<Anchor>>,
         style: HighlightStyle,
         merge: bool,
         cx: &App,
     ) {
         let multi_buffer_snapshot = self.buffer.read(cx).snapshot(cx);
-        let to_insert = match self.text_highlights.remove(&key).filter(|_| merge) {
-            Some(previous) => {
-                let mut merged_ranges = previous.1.clone();
-                for new_range in ranges {
-                    let i = merged_ranges
-                        .binary_search_by(|probe| {
-                            probe.start.cmp(&new_range.start, &multi_buffer_snapshot)
-                        })
-                        .unwrap_or_else(|i| i);
-                    merged_ranges.insert(i, new_range);
+        match Arc::make_mut(&mut self.text_highlights).entry(key) {
+            Entry::Occupied(mut slot) => match Arc::get_mut(slot.get_mut()) {
+                Some((_, previous_ranges)) if merge => {
+                    previous_ranges.extend(ranges);
+                    previous_ranges.sort_by(|a, b| a.start.cmp(&b.start, &multi_buffer_snapshot));
                 }
-                Arc::new((style, merged_ranges))
-            }
-            None => Arc::new((style, ranges)),
-        };
-        self.text_highlights.insert(key, to_insert);
+                Some((previous_style, previous_ranges)) => {
+                    *previous_style = style;
+                    *previous_ranges = ranges;
+                }
+                None if merge => {
+                    ranges.extend(slot.get().1.iter().cloned());
+                    ranges.sort_by(|a, b| a.start.cmp(&b.start, &multi_buffer_snapshot));
+                    slot.insert(Arc::new((style, ranges)));
+                }
+                None => _ = slot.insert(Arc::new((style, ranges))),
+            },
+            Entry::Vacant(slot) => _ = slot.insert(Arc::new((style, ranges))),
+        }
     }
 
     #[instrument(skip_all)]
@@ -1242,14 +1292,16 @@ impl DisplayMap {
     }
 
     pub fn clear_highlights(&mut self, key: HighlightKey) -> bool {
-        let mut cleared = self.text_highlights.remove(&key).is_some();
+        let mut cleared = Arc::make_mut(&mut self.text_highlights)
+            .remove(&key)
+            .is_some();
         cleared |= self.inlay_highlights.remove(&key).is_some();
         cleared
     }
 
-    pub fn clear_highlights_with(&mut self, mut f: impl FnMut(&HighlightKey) -> bool) -> bool {
+    pub fn clear_highlights_with(&mut self, f: &mut dyn FnMut(&HighlightKey) -> bool) -> bool {
         let mut cleared = false;
-        self.text_highlights.retain(|k, _| {
+        Arc::make_mut(&mut self.text_highlights).retain(|k, _| {
             let b = !f(k);
             cleared |= b;
             b
@@ -1402,7 +1454,7 @@ impl DisplayMap {
     }
 
     pub fn invalidate_semantic_highlights(&mut self, buffer_id: BufferId) {
-        self.semantic_token_highlights.remove(&buffer_id);
+        Arc::make_mut(&mut self.semantic_token_highlights).remove(&buffer_id);
     }
 }
 
@@ -1694,6 +1746,38 @@ impl DisplaySnapshot {
         DisplayPoint(block_point)
     }
 
+    /// Converts a buffer offset range into one or more `DisplayPoint` ranges
+    /// that cover only actual buffer text, excluding any inlay hint text that
+    /// falls within the range.
+    pub fn isomorphic_display_point_ranges_for_buffer_range(
+        &self,
+        range: Range<MultiBufferOffset>,
+    ) -> SmallVec<[Range<DisplayPoint>; 1]> {
+        let inlay_snapshot = self.inlay_snapshot();
+        inlay_snapshot
+            .buffer_offset_to_inlay_ranges(range)
+            .map(|inlay_range| {
+                let inlay_point_to_display_point = |inlay_point: InlayPoint, bias: Bias| {
+                    let fold_point = self.fold_snapshot().to_fold_point(inlay_point, bias);
+                    let tab_point = self.tab_snapshot().fold_point_to_tab_point(fold_point);
+                    let wrap_point = self.wrap_snapshot().tab_point_to_wrap_point(tab_point);
+                    let block_point = self.block_snapshot.to_block_point(wrap_point);
+                    DisplayPoint(block_point)
+                };
+
+                let start = inlay_point_to_display_point(
+                    inlay_snapshot.to_point(inlay_range.start),
+                    Bias::Left,
+                );
+                let end = inlay_point_to_display_point(
+                    inlay_snapshot.to_point(inlay_range.end),
+                    Bias::Left,
+                );
+                start..end
+            })
+            .collect()
+    }
+
     pub fn display_point_to_point(&self, point: DisplayPoint, bias: Bias) -> Point {
         self.inlay_snapshot()
             .to_buffer_point(self.display_point_to_inlay_point(point, bias))
@@ -1878,6 +1962,97 @@ impl DisplaySnapshot {
             }
             .highlight_invisibles(editor_style)
         })
+    }
+
+    /// Returns combined highlight styles (tree-sitter syntax + semantic tokens)
+    /// for a byte range within the specified buffer.
+    /// Returned ranges are 0-based relative to `buffer_range.start`.
+    pub(super) fn combined_highlights(
+        &self,
+        buffer_id: BufferId,
+        buffer_range: Range<usize>,
+        syntax_theme: &theme::SyntaxTheme,
+    ) -> Vec<(Range<usize>, HighlightStyle)> {
+        let multibuffer = self.buffer_snapshot();
+
+        let multibuffer_range = multibuffer
+            .excerpts()
+            .find_map(|(excerpt_id, buffer, range)| {
+                if buffer.remote_id() != buffer_id {
+                    return None;
+                }
+                let context_start = range.context.start.to_offset(buffer);
+                let context_end = range.context.end.to_offset(buffer);
+                if buffer_range.start < context_start || buffer_range.end > context_end {
+                    return None;
+                }
+                let start_anchor = buffer.anchor_before(buffer_range.start);
+                let end_anchor = buffer.anchor_after(buffer_range.end);
+                let mb_range =
+                    multibuffer.anchor_range_in_excerpt(excerpt_id, start_anchor..end_anchor)?;
+                Some(mb_range.start.to_offset(multibuffer)..mb_range.end.to_offset(multibuffer))
+            });
+
+        let Some(multibuffer_range) = multibuffer_range else {
+            // Range is outside all excerpts (e.g. symbol name not in a
+            // multi-buffer excerpt). Fall back to buffer-level syntax highlights.
+            let buffer_snapshot = multibuffer.excerpts().find_map(|(_, buffer, _)| {
+                (buffer.remote_id() == buffer_id).then(|| buffer.clone())
+            });
+            let Some(buffer_snapshot) = buffer_snapshot else {
+                return Vec::new();
+            };
+            let mut highlights = Vec::new();
+            let mut offset = 0usize;
+            for chunk in buffer_snapshot.chunks(buffer_range, true) {
+                let chunk_len = chunk.text.len();
+                if chunk_len == 0 {
+                    continue;
+                }
+                if let Some(style) = chunk
+                    .syntax_highlight_id
+                    .and_then(|id| id.style(syntax_theme))
+                {
+                    highlights.push((offset..offset + chunk_len, style));
+                }
+                offset += chunk_len;
+            }
+            return highlights;
+        };
+
+        let chunks = custom_highlights::CustomHighlightsChunks::new(
+            multibuffer_range,
+            true,
+            None,
+            Some(&self.semantic_token_highlights),
+            multibuffer,
+        );
+
+        let mut highlights = Vec::new();
+        let mut offset = 0usize;
+        for chunk in chunks {
+            let chunk_len = chunk.text.len();
+            if chunk_len == 0 {
+                continue;
+            }
+
+            let syntax_style = chunk
+                .syntax_highlight_id
+                .and_then(|id| id.style(syntax_theme));
+            let overlay_style = chunk.highlight_style;
+
+            let combined = match (syntax_style, overlay_style) {
+                (Some(syntax), Some(overlay)) => Some(syntax.highlight(overlay)),
+                (some @ Some(_), None) | (None, some @ Some(_)) => some,
+                (None, None) => None,
+            };
+
+            if let Some(style) = combined {
+                highlights.push((offset..offset + chunk_len, style));
+            }
+            offset += chunk_len;
+        }
+        highlights
     }
 
     #[instrument(skip_all)]
@@ -2232,7 +2407,7 @@ impl DisplaySnapshot {
     #[instrument(skip_all)]
     pub fn all_text_highlight_ranges(
         &self,
-        f: impl Fn(&HighlightKey) -> bool,
+        f: &dyn Fn(&HighlightKey) -> bool,
     ) -> Vec<(gpui::Hsla, Range<Point>)> {
         use itertools::Itertools;
 
@@ -2491,7 +2666,7 @@ pub mod tests {
         log::info!("wrap width: {:?}", wrap_width);
 
         cx.update(|cx| {
-            init_test(cx, |s| {
+            init_test(cx, &|s| {
                 s.project.all_languages.defaults.tab_size = NonZeroU32::new(tab_size)
             });
         });
@@ -2746,7 +2921,7 @@ pub mod tests {
         cx.background_executor
             .set_block_on_ticks(usize::MAX..=usize::MAX);
         cx.update(|cx| {
-            init_test(cx, |_| {});
+            init_test(cx, &|_| {});
         });
 
         let mut cx = crate::test::editor_test_context::EditorTestContext::new(cx).await;
@@ -2866,7 +3041,7 @@ pub mod tests {
 
     #[gpui::test]
     fn test_text_chunks(cx: &mut gpui::App) {
-        init_test(cx, |_| {});
+        init_test(cx, &|_| {});
 
         let text = sample_text(6, 6, 'a');
         let buffer = MultiBuffer::build_simple(&text, cx);
@@ -2927,7 +3102,7 @@ pub mod tests {
 
     #[gpui::test]
     fn test_inlays_with_newlines_after_blocks(cx: &mut gpui::TestAppContext) {
-        cx.update(|cx| init_test(cx, |_| {}));
+        cx.update(|cx| init_test(cx, &|_| {}));
 
         let buffer = cx.new(|cx| Buffer::local("a", cx));
         let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
@@ -3024,7 +3199,7 @@ pub mod tests {
         language.set_theme(&theme);
 
         cx.update(|cx| {
-            init_test(cx, |s| {
+            init_test(cx, &|s| {
                 s.project.all_languages.defaults.tab_size = Some(2.try_into().unwrap())
             })
         });
@@ -3129,7 +3304,7 @@ pub mod tests {
         );
         language.set_theme(&theme);
 
-        cx.update(|cx| init_test(cx, |_| {}));
+        cx.update(|cx| init_test(cx, &|_| {}));
 
         let buffer = cx.new(|cx| Buffer::local(text, cx).with_language(language, cx));
         cx.condition(&buffer, |buf, _| !buf.is_parsing()).await;
@@ -3214,7 +3389,7 @@ pub mod tests {
         "#
         .unindent();
 
-        cx.update(|cx| init_test(cx, |_| {}));
+        cx.update(|cx| init_test(cx, &|_| {}));
 
         let buffer = cx.new(|cx| Buffer::local(text, cx));
 
@@ -3327,7 +3502,7 @@ pub mod tests {
         cx.background_executor
             .set_block_on_ticks(usize::MAX..=usize::MAX);
 
-        cx.update(|cx| init_test(cx, |_| {}));
+        cx.update(|cx| init_test(cx, &|_| {}));
 
         let buffer = cx.update(|cx| MultiBuffer::build_simple("abcde\nfghij\nklmno\npqrst", cx));
         let buffer_snapshot = buffer.read_with(cx, |buffer, cx| buffer.snapshot(cx));
@@ -3464,7 +3639,7 @@ pub mod tests {
         );
         language.set_theme(&theme);
 
-        cx.update(|cx| init_test(cx, |_| {}));
+        cx.update(|cx| init_test(cx, &|_| {}));
 
         let buffer = cx.new(|cx| Buffer::local(text, cx).with_language(language, cx));
         cx.condition(&buffer, |buf, _| !buf.is_parsing()).await;
@@ -3525,7 +3700,7 @@ pub mod tests {
 
     #[gpui::test]
     async fn test_chunks_with_text_highlights(cx: &mut gpui::TestAppContext) {
-        cx.update(|cx| init_test(cx, |_| {}));
+        cx.update(|cx| init_test(cx, &|_| {}));
 
         let theme =
             SyntaxTheme::new_test(vec![("operator", Hsla::red()), ("string", Hsla::green())]);
@@ -3612,7 +3787,7 @@ pub mod tests {
 
     #[gpui::test]
     fn test_clip_point(cx: &mut gpui::App) {
-        init_test(cx, |_| {});
+        init_test(cx, &|_| {});
 
         fn assert(text: &str, shift_right: bool, bias: Bias, cx: &mut gpui::App) {
             let (unmarked_snapshot, mut markers) = marked_display_snapshot(text, cx);
@@ -3662,7 +3837,7 @@ pub mod tests {
 
     #[gpui::test]
     fn test_clip_at_line_ends(cx: &mut gpui::App) {
-        init_test(cx, |_| {});
+        init_test(cx, &|_| {});
 
         fn assert(text: &str, cx: &mut gpui::App) {
             let (mut unmarked_snapshot, markers) = marked_display_snapshot(text, cx);
@@ -3681,7 +3856,7 @@ pub mod tests {
 
     #[gpui::test]
     fn test_creases(cx: &mut gpui::App) {
-        init_test(cx, |_| {});
+        init_test(cx, &|_| {});
 
         let text = "aaa\nbbb\nccc\nddd\neee\nfff\nggg\nhhh\niii\njjj\nkkk\nlll";
         let buffer = MultiBuffer::build_simple(text, cx);
@@ -3718,7 +3893,7 @@ pub mod tests {
 
     #[gpui::test]
     fn test_tabs_with_multibyte_chars(cx: &mut gpui::App) {
-        init_test(cx, |_| {});
+        init_test(cx, &|_| {});
 
         let text = "✅\t\tα\nβ\t\n🏀β\t\tγ";
         let buffer = MultiBuffer::build_simple(text, cx);
@@ -3796,7 +3971,7 @@ pub mod tests {
 
     #[gpui::test]
     fn test_max_point(cx: &mut gpui::App) {
-        init_test(cx, |_| {});
+        init_test(cx, &|_| {});
 
         let buffer = MultiBuffer::build_simple("aaa\n\t\tbbb", cx);
         let font_size = px(14.0);
@@ -3856,7 +4031,7 @@ pub mod tests {
         chunks
     }
 
-    fn init_test(cx: &mut App, f: impl Fn(&mut SettingsContent)) {
+    fn init_test(cx: &mut App, f: &dyn Fn(&mut SettingsContent)) {
         let settings = SettingsStore::test(cx);
         cx.set_global(settings);
         crate::init(cx);
@@ -3864,5 +4039,89 @@ pub mod tests {
         cx.update_global::<SettingsStore, _>(|store, cx| {
             store.update_user_settings(cx, f);
         });
+    }
+
+    #[gpui::test]
+    fn test_isomorphic_display_point_ranges_for_buffer_range(cx: &mut gpui::TestAppContext) {
+        cx.update(|cx| init_test(cx, &|_| {}));
+
+        let buffer = cx.new(|cx| Buffer::local("let x = 5;\n", cx));
+        let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+        let buffer_snapshot = buffer.read_with(cx, |buffer, cx| buffer.snapshot(cx));
+
+        let font_size = px(14.0);
+        let map = cx.new(|cx| {
+            DisplayMap::new(
+                buffer.clone(),
+                font("Helvetica"),
+                font_size,
+                None,
+                1,
+                1,
+                FoldPlaceholder::test(),
+                DiagnosticSeverity::Warning,
+                cx,
+            )
+        });
+
+        // Without inlays, a buffer range maps to a single display range.
+        let snapshot = map.update(cx, |map, cx| map.snapshot(cx));
+        let ranges = snapshot.isomorphic_display_point_ranges_for_buffer_range(
+            MultiBufferOffset(4)..MultiBufferOffset(9),
+        );
+        assert_eq!(ranges.len(), 1);
+        // "x = 5" is columns 4..9 with no inlays shifting anything.
+        assert_eq!(ranges[0].start, DisplayPoint::new(DisplayRow(0), 4));
+        assert_eq!(ranges[0].end, DisplayPoint::new(DisplayRow(0), 9));
+
+        // Insert a 4-char inlay hint ": i32" at buffer offset 5 (after "x").
+        map.update(cx, |map, cx| {
+            map.splice_inlays(
+                &[],
+                vec![Inlay::mock_hint(
+                    0,
+                    buffer_snapshot.anchor_after(MultiBufferOffset(5)),
+                    ": i32",
+                )],
+                cx,
+            );
+        });
+        let snapshot = map.update(cx, |map, cx| map.snapshot(cx));
+        assert_eq!(snapshot.text(), "let x: i32 = 5;\n");
+
+        // A buffer range [4..9] ("x = 5") now spans across the inlay.
+        // It should be split into two display ranges that skip the inlay text.
+        let ranges = snapshot.isomorphic_display_point_ranges_for_buffer_range(
+            MultiBufferOffset(4)..MultiBufferOffset(9),
+        );
+        assert_eq!(
+            ranges.len(),
+            2,
+            "expected the range to be split around the inlay, got: {:?}",
+            ranges,
+        );
+        // First sub-range: buffer [4, 5) → "x" at display columns 4..5
+        assert_eq!(ranges[0].start, DisplayPoint::new(DisplayRow(0), 4));
+        assert_eq!(ranges[0].end, DisplayPoint::new(DisplayRow(0), 5));
+        // Second sub-range: buffer [5, 9) → " = 5" at display columns 10..14
+        // (shifted right by the 5-char ": i32" inlay)
+        assert_eq!(ranges[1].start, DisplayPoint::new(DisplayRow(0), 10));
+        assert_eq!(ranges[1].end, DisplayPoint::new(DisplayRow(0), 14));
+
+        // A range entirely before the inlay is not split.
+        let ranges = snapshot.isomorphic_display_point_ranges_for_buffer_range(
+            MultiBufferOffset(0)..MultiBufferOffset(5),
+        );
+        assert_eq!(ranges.len(), 1);
+        assert_eq!(ranges[0].start, DisplayPoint::new(DisplayRow(0), 0));
+        assert_eq!(ranges[0].end, DisplayPoint::new(DisplayRow(0), 5));
+
+        // A range entirely after the inlay is not split.
+        let ranges = snapshot.isomorphic_display_point_ranges_for_buffer_range(
+            MultiBufferOffset(5)..MultiBufferOffset(9),
+        );
+        assert_eq!(ranges.len(), 1);
+        assert_eq!(ranges[0].start, DisplayPoint::new(DisplayRow(0), 10));
+        assert_eq!(ranges[0].end, DisplayPoint::new(DisplayRow(0), 14));
     }
 }

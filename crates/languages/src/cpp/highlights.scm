@@ -1,13 +1,15 @@
 (identifier) @variable
+
 (field_identifier) @property
+
 (namespace_identifier) @namespace
 
 (concept_definition
-    name: (identifier) @concept)
+  name: (identifier) @concept)
 
 (requires_clause
-    constraint: (template_type
-        name: (type_identifier) @concept))
+  constraint: (template_type
+    name: (type_identifier) @concept))
 
 (module_name
   (identifier) @module)
@@ -83,25 +85,42 @@
 (operator_name
   "<=>" @operator.spaceship)
 
-(destructor_name (identifier) @function)
+(destructor_name
+  (identifier) @function)
 
 ((namespace_identifier) @type
- (#match? @type "^[A-Z]"))
+  (#match? @type "^[A-Z]"))
 
 (auto) @type
+
 (type_identifier) @type
+
 type: (primitive_type) @type.builtin
+
 (sized_type_specifier) @type.builtin
 
+; GNU __attribute__
+(attribute_specifier) @attribute
+
+(attribute_specifier
+  (argument_list
+    (identifier) @attribute))
+
+; C++11 [[attributes]]
 (attribute
-    name: (identifier) @attribute)
+  prefix: (identifier) @attribute)
+
+(attribute
+  name: (identifier) @attribute)
 
 ((identifier) @constant.builtin
- (#match? @constant.builtin "^_*[A-Z][A-Z\\d_]*$"))
+  (#match? @constant.builtin "^_*[A-Z][A-Z\\d_]*$"))
 
 (statement_identifier) @label
+
 (this) @variable.builtin
-("static_assert") @function.builtin
+
+"static_assert" @function.builtin
 
 [
   "alignas"
@@ -177,7 +196,7 @@ type: (primitive_type) @type.builtin
   "#ifndef"
   "#include"
   (preproc_directive)
-] @keyword.directive
+] @preproc
 
 (comment) @comment
 
@@ -188,7 +207,7 @@ type: (primitive_type) @type.builtin
 
 [
   (null)
-  ("nullptr")
+  "nullptr"
 ] @constant.builtin
 
 (number_literal) @number
@@ -276,5 +295,8 @@ type: (primitive_type) @type.builtin
 (binary_expression
   operator: "<=>" @operator.spaceship)
 
-(conditional_expression ":" @operator)
-(user_defined_literal (literal_suffix) @operator)
+(conditional_expression
+  ":" @operator)
+
+(user_defined_literal
+  (literal_suffix) @operator)
