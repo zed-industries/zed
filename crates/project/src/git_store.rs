@@ -3701,7 +3701,7 @@ impl MergeDetails {
         &mut self,
         backend: &Arc<dyn GitRepository>,
         current_conflicted_paths: Vec<RepoPath>,
-    ) -> Result<()> {
+    ) -> Result<bool> {
         log::debug!("load merge details");
         self.message = backend.merge_message().await.map(SharedString::from);
         let heads = backend
@@ -3719,9 +3719,12 @@ impl MergeDetails {
             .map(|opt| opt.map(SharedString::from))
             .collect::<Vec<_>>();
 
+        let mut conflicts_changed = false;
+
         // Record the merge state for newly conflicted paths
         for path in &current_conflicted_paths {
             if self.merge_heads_by_conflicted_path.get(&path).is_none() {
+                conflicts_changed = true;
                 self.merge_heads_by_conflicted_path
                     .insert(path.clone(), heads.clone());
             }
@@ -3730,10 +3733,14 @@ impl MergeDetails {
         // Clear state for paths that are no longer conflicted and for which the merge heads have changed
         self.merge_heads_by_conflicted_path
             .retain(|path, old_merge_heads| {
-                current_conflicted_paths.contains(path) || old_merge_heads == &heads
+                let keep = current_conflicted_paths.contains(path) || old_merge_heads == &heads;
+                if !keep {
+                    conflicts_changed = true;
+                }
+                keep
             });
 
-        Ok(())
+        Ok(conflicts_changed)
     }
 }
 
@@ -6008,12 +6015,15 @@ impl Repository {
 
         // We don't store any merge head state for downstream projects; the upstream
         // will track it and we will just get the updated conflicts
-        self.snapshot.merge.merge_heads_by_conflicted_path = TreeMap::from_ordered_entries(
+        let new_merge_heads = TreeMap::from_ordered_entries(
             update
                 .current_merge_conflicts
                 .into_iter()
                 .filter_map(|path| Some((RepoPath::from_proto(&path).ok()?, vec![]))),
         );
+        let conflicts_changed =
+            self.snapshot.merge.merge_heads_by_conflicted_path != new_merge_heads;
+        self.snapshot.merge.merge_heads_by_conflicted_path = new_merge_heads;
         self.snapshot.merge.message = update.merge_message.map(SharedString::from);
         let new_stash_entries = GitStash {
             entries: update
@@ -6046,7 +6056,7 @@ impl Repository {
                     }),
             )
             .collect::<Vec<_>>();
-        if !edits.is_empty() {
+        if conflicts_changed || !edits.is_empty() {
             cx.emit(RepositoryEvent::StatusesChanged);
         }
         self.snapshot.statuses_by_path.edit(edits, ());
@@ -6764,10 +6774,10 @@ async fn compute_snapshot(
         (),
     );
     let mut merge_details = prev_snapshot.merge;
-    merge_details.update(&backend, conflicted_paths).await?;
+    let conflicts_changed = merge_details.update(&backend, conflicted_paths).await?;
     log::debug!("new merge details: {merge_details:?}");
 
-    if statuses_by_path != prev_snapshot.statuses_by_path {
+    if conflicts_changed || statuses_by_path != prev_snapshot.statuses_by_path {
         events.push(RepositoryEvent::StatusesChanged)
     }
 
