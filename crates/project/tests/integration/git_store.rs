@@ -336,7 +336,7 @@ mod conflict_set_tests {
                     second_head: UnmergedStatusCode::Updated,
                 },
             );
-            // Cause the repository to emit MergeHeadsChanged.
+            // Cause the repository to update cached conflicts
             state.refs.insert("MERGE_HEAD".into(), "123".into())
         })
         .unwrap();

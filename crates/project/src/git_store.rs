@@ -417,7 +417,6 @@ pub enum GitGraphEvent {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RepositoryEvent {
     StatusesChanged,
-    MergeHeadsChanged,
     BranchChanged,
     StashEntriesChanged,
     PendingOpsChanged { pending_ops: SumTree<PendingOps> },
@@ -3790,7 +3789,7 @@ impl Repository {
             .shared();
 
         cx.subscribe_self(move |this, event: &RepositoryEvent, _| match event {
-            RepositoryEvent::BranchChanged | RepositoryEvent::MergeHeadsChanged => {
+            RepositoryEvent::BranchChanged => {
                 if this.scan_id > 1 {
                     this.initial_graph_data.clear();
                 }
