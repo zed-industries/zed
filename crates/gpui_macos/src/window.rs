@@ -2551,19 +2551,20 @@ fn send_file_drop_event(
     window_state: Arc<Mutex<MacWindowState>>,
     file_drop_event: FileDropEvent,
 ) -> bool {
-    let mut window_state = window_state.lock();
-    let window_event_callback = window_state.event_callback.as_mut();
-    if let Some(callback) = window_event_callback {
-        let external_files_dragged = match file_drop_event {
-            FileDropEvent::Entered { .. } => Some(true),
-            FileDropEvent::Exited => Some(false),
-            _ => None,
-        };
+    let external_files_dragged = match file_drop_event {
+        FileDropEvent::Entered { .. } => Some(true),
+        FileDropEvent::Exited => Some(false),
+        _ => None,
+    };
 
+    let mut lock = window_state.lock();
+    if let Some(mut callback) = lock.event_callback.take() {
+        drop(lock);
         callback(PlatformInput::FileDrop(file_drop_event));
-
+        let mut lock = window_state.lock();
+        lock.event_callback = Some(callback);
         if let Some(external_files_dragged) = external_files_dragged {
-            window_state.external_files_dragged = external_files_dragged;
+            lock.external_files_dragged = external_files_dragged;
         }
         true
     } else {

@@ -897,7 +897,8 @@ async fn test_empty_prediction(cx: &mut TestAppContext) {
         &[EditPredictionRejection {
             request_id: id,
             reason: EditPredictionRejectReason::Empty,
-            was_shown: false
+            was_shown: false,
+            model_version: None,
         }]
     );
 }
@@ -957,7 +958,8 @@ async fn test_interpolated_empty(cx: &mut TestAppContext) {
         &[EditPredictionRejection {
             request_id: id,
             reason: EditPredictionRejectReason::InterpolatedEmpty,
-            was_shown: false
+            was_shown: false,
+            model_version: None,
         }]
     );
 }
@@ -1049,7 +1051,8 @@ async fn test_replace_current(cx: &mut TestAppContext) {
         &[EditPredictionRejection {
             request_id: first_id,
             reason: EditPredictionRejectReason::Replaced,
-            was_shown: false
+            was_shown: false,
+            model_version: None,
         }]
     );
 }
@@ -1143,7 +1146,8 @@ async fn test_current_preferred(cx: &mut TestAppContext) {
         &[EditPredictionRejection {
             request_id: second_id,
             reason: EditPredictionRejectReason::CurrentPreferred,
-            was_shown: false
+            was_shown: false,
+            model_version: None,
         }]
     );
 }
@@ -1234,7 +1238,8 @@ async fn test_cancel_earlier_pending_requests(cx: &mut TestAppContext) {
         &[EditPredictionRejection {
             request_id: first_id,
             reason: EditPredictionRejectReason::Canceled,
-            was_shown: false
+            was_shown: false,
+            model_version: None,
         }]
     );
 }
@@ -1364,12 +1369,14 @@ async fn test_cancel_second_on_third_request(cx: &mut TestAppContext) {
             EditPredictionRejection {
                 request_id: cancelled_id,
                 reason: EditPredictionRejectReason::Canceled,
-                was_shown: false
+                was_shown: false,
+                model_version: None,
             },
             EditPredictionRejection {
                 request_id: first_id,
                 reason: EditPredictionRejectReason::Replaced,
-                was_shown: false
+                was_shown: false,
+                model_version: None,
             }
         ]
     );
@@ -1485,12 +1492,14 @@ async fn test_rejections_flushing(cx: &mut TestAppContext) {
             EditPredictionId("test-1".into()),
             EditPredictionRejectReason::Discarded,
             false,
+            None,
             cx,
         );
         ep_store.reject_prediction(
             EditPredictionId("test-2".into()),
             EditPredictionRejectReason::Canceled,
             true,
+            None,
             cx,
         );
     });
@@ -1508,7 +1517,8 @@ async fn test_rejections_flushing(cx: &mut TestAppContext) {
         EditPredictionRejection {
             request_id: "test-1".to_string(),
             reason: EditPredictionRejectReason::Discarded,
-            was_shown: false
+            was_shown: false,
+            model_version: None,
         }
     );
     assert_eq!(
@@ -1516,7 +1526,8 @@ async fn test_rejections_flushing(cx: &mut TestAppContext) {
         EditPredictionRejection {
             request_id: "test-2".to_string(),
             reason: EditPredictionRejectReason::Canceled,
-            was_shown: true
+            was_shown: true,
+            model_version: None,
         }
     );
 
@@ -1527,6 +1538,7 @@ async fn test_rejections_flushing(cx: &mut TestAppContext) {
                 EditPredictionId(format!("batch-{}", i).into()),
                 EditPredictionRejectReason::Discarded,
                 false,
+                None,
                 cx,
             );
         }
@@ -1558,6 +1570,7 @@ async fn test_rejections_flushing(cx: &mut TestAppContext) {
             EditPredictionId("retry-1".into()),
             EditPredictionRejectReason::Discarded,
             false,
+            None,
             cx,
         );
     });
@@ -1577,6 +1590,7 @@ async fn test_rejections_flushing(cx: &mut TestAppContext) {
             EditPredictionId("retry-2".into()),
             EditPredictionRejectReason::Discarded,
             false,
+            None,
             cx,
         );
     });
@@ -1700,6 +1714,7 @@ fn model_response(request: &PredictEditsV3Request, diff_to_apply: &str) -> Predi
         request_id: Uuid::new_v4().to_string(),
         editable_range,
         output: new_excerpt,
+        model_version: None,
     }
 }
 
@@ -1708,6 +1723,7 @@ fn empty_response() -> PredictEditsV3Response {
         request_id: Uuid::new_v4().to_string(),
         editable_range: 0..0,
         output: String::new(),
+        model_version: None,
     }
 }
 
@@ -1837,6 +1853,7 @@ async fn test_edit_prediction_basic_interpolation(cx: &mut TestAppContext) {
         },
         buffer_snapshotted_at: Instant::now(),
         response_received_at: Instant::now(),
+        model_version: None,
     };
 
     cx.update(|cx| {
@@ -2034,6 +2051,7 @@ async fn test_edit_prediction_no_spurious_trailing_newline(cx: &mut TestAppConte
         request_id: Uuid::new_v4().to_string(),
         output: "hello world\n".to_string(),
         editable_range: 0..excerpt_length,
+        model_version: None,
     };
     respond_tx.send(response).unwrap();
 
@@ -2138,6 +2156,7 @@ async fn make_test_ep_store(
                                     request_id: format!("request-{next_request_id}"),
                                     editable_range: 0..req.input.cursor_excerpt.len(),
                                     output: completion_response.lock().clone(),
+                                    model_version: None,
                                 })
                                 .unwrap()
                                 .into(),

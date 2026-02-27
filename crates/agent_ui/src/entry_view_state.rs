@@ -1,11 +1,11 @@
 use std::{cell::RefCell, ops::Range, rc::Rc};
 
-use super::thread_history::AcpThreadHistory;
+use super::thread_history::ThreadHistory;
 use acp_thread::{AcpThread, AgentThreadEntry};
 use agent::ThreadStore;
 use agent_client_protocol::{self as acp, ToolCallId};
 use collections::HashMap;
-use editor::{Editor, EditorMode, MinimapVisibility, SizingBehavior};
+use editor::{Editor, EditorEvent, EditorMode, MinimapVisibility, SizingBehavior};
 use gpui::{
     AnyEntity, App, AppContext as _, Entity, EntityId, EventEmitter, FocusHandle, Focusable,
     ScrollHandle, SharedString, TextStyleRefinement, WeakEntity, Window,
@@ -13,19 +13,20 @@ use gpui::{
 use language::language_settings::SoftWrap;
 use project::Project;
 use prompt_store::PromptStore;
+use rope::Point;
 use settings::Settings as _;
 use terminal_view::TerminalView;
 use theme::ThemeSettings;
 use ui::{Context, TextSize};
 use workspace::Workspace;
 
-use crate::acp::message_editor::{MessageEditor, MessageEditorEvent};
+use crate::message_editor::{MessageEditor, MessageEditorEvent};
 
 pub struct EntryViewState {
     workspace: WeakEntity<Workspace>,
     project: WeakEntity<Project>,
     thread_store: Option<Entity<ThreadStore>>,
-    history: WeakEntity<AcpThreadHistory>,
+    history: WeakEntity<ThreadHistory>,
     prompt_store: Option<Entity<PromptStore>>,
     entries: Vec<Entry>,
     prompt_capabilities: Rc<RefCell<acp::PromptCapabilities>>,
@@ -38,7 +39,7 @@ impl EntryViewState {
         workspace: WeakEntity<Workspace>,
         project: WeakEntity<Project>,
         thread_store: Option<Entity<ThreadStore>>,
-        history: WeakEntity<AcpThreadHistory>,
+        history: WeakEntity<ThreadHistory>,
         prompt_store: Option<Entity<PromptStore>>,
         prompt_capabilities: Rc<RefCell<acp::PromptCapabilities>>,
         available_commands: Rc<RefCell<Vec<acp::AvailableCommand>>>,
@@ -168,12 +169,48 @@ impl EntryViewState {
 
                 for diff in diffs {
                     views.entry(diff.entity_id()).or_insert_with(|| {
-                        let element = create_editor_diff(diff.clone(), window, cx).into_any();
+                        let editor = create_editor_diff(diff.clone(), window, cx);
+                        cx.subscribe(&editor, {
+                            let diff = diff.clone();
+                            let entry_index = index;
+                            move |_this, _editor, event: &EditorEvent, cx| {
+                                if let EditorEvent::OpenExcerptsRequested {
+                                    selections_by_buffer,
+                                    split,
+                                } = event
+                                {
+                                    let multibuffer = diff.read(cx).multibuffer();
+                                    if let Some((buffer_id, (ranges, _))) =
+                                        selections_by_buffer.iter().next()
+                                    {
+                                        if let Some(buffer) =
+                                            multibuffer.read(cx).buffer(*buffer_id)
+                                        {
+                                            if let Some(range) = ranges.first() {
+                                                let point =
+                                                    buffer.read(cx).offset_to_point(range.start.0);
+                                                if let Some(path) = diff.read(cx).file_path(cx) {
+                                                    cx.emit(EntryViewEvent {
+                                                        entry_index,
+                                                        view_event: ViewEvent::OpenDiffLocation {
+                                                            path,
+                                                            position: point,
+                                                            split: *split,
+                                                        },
+                                                    });
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        })
+                        .detach();
                         cx.emit(EntryViewEvent {
                             entry_index: index,
                             view_event: ViewEvent::NewDiff(id.clone()),
                         });
-                        element
+                        editor.into_any()
                     });
                 }
             }
@@ -242,6 +279,11 @@ pub enum ViewEvent {
     NewTerminal(ToolCallId),
     TerminalMovedToBackground(ToolCallId),
     MessageEditorEvent(Entity<MessageEditor>, MessageEditorEvent),
+    OpenDiffLocation {
+        path: String,
+        position: Point,
+        split: bool,
+    },
 }
 
 #[derive(Default, Debug)]
@@ -379,6 +421,7 @@ fn create_editor_diff(
         editor.scroll_manager.set_forbid_vertical_scroll(true);
         editor.set_show_indent_guides(false, cx);
         editor.set_read_only(true);
+        editor.set_delegate_open_excerpts(true);
         editor.set_show_breakpoints(false, cx);
         editor.set_show_code_actions(false, cx);
         editor.set_show_git_diff_gutter(false, cx);
@@ -412,7 +455,7 @@ mod tests {
     use fs::FakeFs;
     use gpui::{AppContext as _, TestAppContext};
 
-    use crate::acp::entry_view_state::EntryViewState;
+    use crate::entry_view_state::EntryViewState;
     use multi_buffer::MultiBufferRow;
     use pretty_assertions::assert_matches;
     use project::Project;
@@ -459,8 +502,8 @@ mod tests {
         });
 
         let thread_store = None;
-        let history = cx
-            .update(|window, cx| cx.new(|cx| crate::acp::AcpThreadHistory::new(None, window, cx)));
+        let history =
+            cx.update(|window, cx| cx.new(|cx| crate::ThreadHistory::new(None, window, cx)));
 
         let view_state = cx.new(|_cx| {
             EntryViewState::new(

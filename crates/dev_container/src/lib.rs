@@ -300,14 +300,20 @@ impl PickerDelegate for TemplatePickerDelegate {
     ) {
         let fun = &mut self.on_confirm;
 
+        if self.matching_indices.is_empty() {
+            return;
+        }
         self.stateful_modal
             .update(cx, |modal, cx| {
-                fun(
-                    self.candidate_templates[self.matching_indices[self.selected_index]].clone(),
-                    modal,
-                    window,
-                    cx,
-                );
+                let Some(confirmed_entry) = self
+                    .matching_indices
+                    .get(self.selected_index)
+                    .and_then(|ix| self.candidate_templates.get(*ix))
+                else {
+                    log::error!("Selected index not in range of known matches");
+                    return;
+                };
+                fun(confirmed_entry.clone(), modal, window, cx);
             })
             .ok();
     }
@@ -476,7 +482,17 @@ impl PickerDelegate for FeaturePickerDelegate {
                 })
                 .ok();
         } else {
-            let current = &mut self.candidate_features[self.matching_indices[self.selected_index]];
+            if self.matching_indices.is_empty() {
+                return;
+            }
+            let Some(current) = self
+                .matching_indices
+                .get(self.selected_index)
+                .and_then(|ix| self.candidate_features.get_mut(*ix))
+            else {
+                log::error!("Selected index not in range of matches");
+                return;
+            };
             current.toggle_state = match current.toggle_state {
                 ToggleState::Selected => {
                     self.template_entry

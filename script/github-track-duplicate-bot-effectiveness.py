@@ -24,6 +24,7 @@ import functools
 import os
 import re
 import sys
+from datetime import datetime, timezone
 
 import requests
 
@@ -39,6 +40,22 @@ BOT_START_DATE = "2026-02-18"
 NEEDS_TRIAGE_LABEL = "state:needs triage"
 DEFAULT_PROJECT_NUMBER = 76
 VALID_CLOSED_AS_VALUES = {"duplicate", "not_planned", "completed"}
+# Add a new tuple when you deploy a new version of the bot that you want to
+# keep track of (e.g. the prompt gets a rewrite or the model gets swapped).
+# Newest first, please. The datetime is for the deployment time (merge to maain).
+BOT_VERSION_TIMELINE = [
+    ("v2", datetime(2026, 2, 26, 14, 9, tzinfo=timezone.utc)),
+    ("v1", datetime(2026, 2, 18, tzinfo=timezone.utc)),
+]
+
+
+def bot_version_for_time(date_string):
+    """Return the bot version that was active at the given ISO 8601 timestamp."""
+    timestamp = datetime.fromisoformat(date_string.replace("Z", "+00:00"))
+    for version, deployed in BOT_VERSION_TIMELINE:
+        if timestamp >= deployed:
+            return version
+    return BOT_VERSION_TIMELINE[-1][0]
 
 
 def github_api_get(path, params=None):
@@ -78,10 +95,10 @@ def fetch_issue(issue_number):
     }
 
 
-def get_bot_duplicate_comment(issue_number):
-    """Get the bot's duplicate-detection comment body from an issue.
+def get_bot_comment_with_time(issue_number):
+    """Get the bot's duplicate-detection comment and its timestamp from an issue.
 
-    Returns the comment body if found, else None.
+    Returns {"body": str, "created_at": str} if found, else None.
     """
     comments_path = f"/repos/{REPO_OWNER}/{REPO_NAME}/issues/{issue_number}/comments"
     page = 1
@@ -90,7 +107,7 @@ def get_bot_duplicate_comment(issue_number):
             author = (comment.get("user") or {}).get("login", "")
             body = comment.get("body", "")
             if author == BOT_LOGIN and body.startswith(BOT_COMMENT_PREFIX):
-                return body
+                return {"body": body, "created_at": comment.get("created_at", "")}
         page += 1
     return None
 
@@ -100,8 +117,8 @@ def parse_suggested_issues(comment_body):
     return [int(match) for match in re.findall(r"^- #(\d+)", comment_body, re.MULTILINE)]
 
 
-def github_api_graphql(query, variables=None):
-    """Execute a GitHub GraphQL query. Raises on errors."""
+def github_api_graphql(query, variables=None, partial_errors_ok=False):
+    """Execute a GitHub GraphQL query. Raises on errors unless partial_errors_ok is set."""
     response = requests.post(
         GRAPHQL_URL,
         headers=GITHUB_HEADERS,
@@ -110,43 +127,51 @@ def github_api_graphql(query, variables=None):
     response.raise_for_status()
     data = response.json()
     if "errors" in data:
-        raise RuntimeError(f"GraphQL errors: {data['errors']}")
+        if not partial_errors_ok or "data" not in data:
+            raise RuntimeError(f"GraphQL errors: {data['errors']}")
+        print(f"  GraphQL partial errors (ignored): {data['errors']}")
     return data["data"]
 
 
-def get_closed_as_duplicate_of(issue_number):
-    """Get the issue number this issue was closed as a duplicate of.
+def find_canonical_among(duplicate_number, candidates):
+    """Check if any candidate issue has duplicate_number marked as a duplicate.
 
-    Uses the timeline to find the most recent MarkedAsDuplicateEvent.
-    Returns the original issue number, or None.
+    The MarkedAsDuplicateEvent lives on the canonical issue's timeline, not the
+    duplicate's. So to find which canonical issue our duplicate was closed against,
+    we check each candidate's timeline for a MarkedAsDuplicateEvent whose
+    `duplicate` field matches our issue.
 
-    Note: not all "closed as duplicate" issues have a MarkedAsDuplicateEvent.
-    If the closer used the "Close as duplicate" button without separately
-    marking the duplicate relationship, no event is created and this returns
-    None. The caller handles this by flagging the item for manual review.
+    Returns the matching canonical issue number, or None.
     """
+    if not candidates:
+        return None
+
     data = github_api_graphql(
         """
-        query($owner: String!, $repo: String!, $number: Int!) {
+        query($owner: String!, $repo: String!, $numbers: [Int!]!) {
           repository(owner: $owner, name: $repo) {
-            issue(number: $number) {
-              timelineItems(last: 10, itemTypes: [MARKED_AS_DUPLICATE_EVENT]) {
-                nodes {
-                  ... on MarkedAsDuplicateEvent {
-                    canonical { ... on Issue { number } }
-                  }
-                }
-              }
-            }
+            PLACEHOLDER
           }
         }
-        """,
-        {"owner": REPO_OWNER, "repo": REPO_NAME, "number": issue_number},
+        """.replace("PLACEHOLDER", "\n            ".join(
+            f'issue_{number}: issue(number: {number}) {{'
+            f' timelineItems(last: 50, itemTypes: [MARKED_AS_DUPLICATE_EVENT]) {{'
+            f' nodes {{ ... on MarkedAsDuplicateEvent {{ duplicate {{ ... on Issue {{ number }} }} }} }} }} }}'
+            for number in candidates
+        )),
+        {"owner": REPO_OWNER, "repo": REPO_NAME, "numbers": list(candidates)},
+        partial_errors_ok=True,
     )
-    nodes = data["repository"]["issue"]["timelineItems"]["nodes"]
-    for node in reversed(nodes):
-        if original := (node.get("canonical") or {}).get("number"):
-            return original
+
+    repo = data["repository"]
+    for candidate in candidates:
+        issue_data = repo.get(f"issue_{candidate}")
+        if not issue_data:
+            continue
+        for node in issue_data["timelineItems"]["nodes"]:
+            dup_number = (node.get("duplicate") or {}).get("number")
+            if dup_number == duplicate_number:
+                return candidate
     return None
 
 
@@ -261,7 +286,7 @@ def set_field_value(item_id, field_name, value):
     )
 
 
-def add_or_update_project_item(issue_node_id, outcome, closed_as=None, status="Auto-classified", notes=None):
+def add_or_update_project_item(issue_node_id, outcome, closed_as=None, status="Auto-classified", notes=None, bot_comment_time=None):
     """Add an issue to the project board (or update it if already there), setting field values."""
     item_id = find_project_item(issue_node_id)
     if item_id:
@@ -278,6 +303,9 @@ def add_or_update_project_item(issue_node_id, outcome, closed_as=None, status="A
 
     if notes:
         set_field_value(item_id, "Notes", notes)
+
+    if bot_comment_time:
+        set_field_value(item_id, "Bot version", bot_version_for_time(bot_comment_time))
 
     return item_id
 
@@ -296,14 +324,14 @@ def classify_closed(issue_number, closer_login, state_reason):
         print(f"  Skipping: author '{author}' is a staff member")
         return
 
-    bot_comment = get_bot_duplicate_comment(issue_number)
+    bot_comment = get_bot_comment_with_time(issue_number)
     bot_commented = bot_comment is not None
     print(f"  Bot commented: {bot_commented}")
 
     closer_is_author = closer_login == author
 
     if bot_commented and closer_is_author:
-        classify_as_success(issue, state_reason)
+        classify_as_success(issue, bot_comment, state_reason)
     elif bot_commented and not closer_is_author:
         # Only authors, staff, and triagers can close issues, so
         # a non-author closer is always someone with elevated permissions.
@@ -314,7 +342,7 @@ def classify_closed(issue_number, closer_login, state_reason):
         print("  Skipping: no bot comment and not closed as duplicate")
 
 
-def classify_as_success(issue, state_reason):
+def classify_as_success(issue, bot_comment, state_reason):
     """Author closed their own issue after the bot commented."""
     if state_reason == "duplicate":
         status = "Auto-classified"
@@ -334,6 +362,7 @@ def classify_as_success(issue, state_reason):
         closed_as=state_reason,
         status=status,
         notes=notes,
+        bot_comment_time=bot_comment["created_at"],
     )
 
 
@@ -350,39 +379,40 @@ def classify_non_author_closed(issue, bot_comment, state_reason):
             closed_as=state_reason,
             status="Needs review",
             notes=notes,
+            bot_comment_time=bot_comment["created_at"],
         )
 
 
 def classify_as_assist(issue, bot_comment):
     """Staff member closed as duplicate after the bot commented. Check if the dup matches."""
-    suggested = parse_suggested_issues(bot_comment)
+    suggested = parse_suggested_issues(bot_comment["body"])
+    if not suggested:
+        print("  -> Assist, needs review (could not parse bot suggestions)")
+        add_or_update_project_item(
+            issue["node_id"], outcome="Assist", closed_as="duplicate",
+            status="Needs review", notes="Could not parse bot suggestions",
+            bot_comment_time=bot_comment["created_at"])
+        return
+
     original = None
     try:
-        original = get_closed_as_duplicate_of(issue["number"])
+        original = find_canonical_among(issue["number"], suggested)
     except (requests.RequestException, RuntimeError) as error:
-        print(f"  Warning: failed to get the original-for the duplicate issue: {error}")
+        print(f"  Warning: failed to query candidate timelines: {error}")
 
-    if original and suggested:
-        if original in suggested:
-            status = "Auto-classified"
-            notes = None
-            print(f"  -> Assist (original #{original} matches bot suggestion)")
-        else:
-            status = "Needs review"
-            suggested_str = ", ".join(f"#{number}" for number in suggested)
-            notes = f"Bot suggested {suggested_str}; closed as dup of #{original}"
-            print(f"  -> Possible Assist, needs review ({notes})")
+    if original:
+        status = "Auto-classified"
+        notes = None
+        print(f"  -> Assist (original #{original} matches bot suggestion)")
     else:
-        # couldn't determine original or no suggestions parsed
         status = "Needs review"
-        if not original:
-            notes = "Could not determine original issue from timeline"
-        else:
-            notes = f"Closed as dup of #{original}; could not parse bot suggestions"
+        suggested_str = ", ".join(f"#{number}" for number in suggested)
+        notes = f"Bot suggested {suggested_str}; none matched as canonical"
         print(f"  -> Possible Assist, needs review ({notes})")
 
     add_or_update_project_item(
-        issue["node_id"], outcome="Assist", closed_as="duplicate", status=status, notes=notes)
+        issue["node_id"], outcome="Assist", closed_as="duplicate", status=status, notes=notes,
+        bot_comment_time=bot_comment["created_at"])
 
 
 def classify_as_missed_opportunity(issue):
@@ -419,16 +449,18 @@ def classify_open():
                 f"type is {type_name}" if type_name not in ("Bug", "Crash")
                 else f"author {author} is staff" if is_staff_member(author)
                 else "already on the board" if find_project_item(node_id)
-                else "no bot duplicate comment found" if not get_bot_duplicate_comment(number)
+                else "no bot duplicate comment found" if not (bot_comment := get_bot_comment_with_time(number))
                 else None
             )
+
             if skip_reason:
                 print(f"  #{number}: skipping, {skip_reason}")
                 skipped += 1
                 continue
 
             print(f"  #{number}: adding as Noise")
-            add_or_update_project_item(node_id, outcome="Noise", status="Auto-classified")
+            add_or_update_project_item(node_id, outcome="Noise", status="Auto-classified",
+                                       bot_comment_time=bot_comment["created_at"])
             added += 1
         except Exception as error:  # broad catch: one issue failing shouldn't stop the sweep
             print(f"  #{number}: error processing issue, skipping: {error}")

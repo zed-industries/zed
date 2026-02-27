@@ -1,4 +1,4 @@
-use crate::acp::AcpServerView;
+use crate::ConnectionView;
 use crate::{AgentPanel, RemoveHistory, RemoveSelectedThread};
 use acp_thread::{AgentSessionInfo, AgentSessionList, AgentSessionListRequest, SessionListUpdate};
 use agent_client_protocol as acp;
@@ -41,7 +41,7 @@ fn format_relative_time(timestamp: DateTime<Utc>) -> String {
     }
 }
 
-pub struct AcpThreadHistory {
+pub struct ThreadHistory {
     session_list: Option<Rc<dyn AgentSessionList>>,
     sessions: Vec<AgentSessionInfo>,
     scroll_handle: UniformListScrollHandle,
@@ -86,9 +86,9 @@ pub enum ThreadHistoryEvent {
     DeleteAllRequested,
 }
 
-impl EventEmitter<ThreadHistoryEvent> for AcpThreadHistory {}
+impl EventEmitter<ThreadHistoryEvent> for ThreadHistory {}
 
-impl AcpThreadHistory {
+impl ThreadHistory {
     pub fn new(
         session_list: Option<Rc<dyn AgentSessionList>>,
         window: &mut Window,
@@ -740,13 +740,13 @@ impl AcpThreadHistory {
     }
 }
 
-impl Focusable for AcpThreadHistory {
+impl Focusable for ThreadHistory {
     fn focus_handle(&self, cx: &App) -> FocusHandle {
         self.search_editor.focus_handle(cx)
     }
 }
 
-impl Render for AcpThreadHistory {
+impl Render for ThreadHistory {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let has_no_history = self.is_empty();
 
@@ -880,17 +880,17 @@ impl Render for AcpThreadHistory {
 }
 
 #[derive(IntoElement)]
-pub struct AcpHistoryEntryElement {
+pub struct HistoryEntryElement {
     entry: AgentSessionInfo,
-    thread_view: WeakEntity<AcpServerView>,
+    thread_view: WeakEntity<ConnectionView>,
     selected: bool,
     hovered: bool,
     supports_delete: bool,
     on_hover: Box<dyn Fn(&bool, &mut Window, &mut App) + 'static>,
 }
 
-impl AcpHistoryEntryElement {
-    pub fn new(entry: AgentSessionInfo, thread_view: WeakEntity<AcpServerView>) -> Self {
+impl HistoryEntryElement {
+    pub fn new(entry: AgentSessionInfo, thread_view: WeakEntity<ConnectionView>) -> Self {
         Self {
             entry,
             thread_view,
@@ -917,7 +917,7 @@ impl AcpHistoryEntryElement {
     }
 }
 
-impl RenderOnce for AcpHistoryEntryElement {
+impl RenderOnce for HistoryEntryElement {
     fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
         let id = ElementId::Name(self.entry.session_id.0.clone().into());
         let title = thread_title(&self.entry).clone();
@@ -1249,7 +1249,7 @@ mod tests {
         ));
 
         let (history, cx) = cx.add_window_view(|window, cx| {
-            AcpThreadHistory::new(Some(session_list.clone()), window, cx)
+            ThreadHistory::new(Some(session_list.clone()), window, cx)
         });
         cx.run_until_parked();
 
@@ -1273,7 +1273,7 @@ mod tests {
         ));
 
         let (history, cx) = cx.add_window_view(|window, cx| {
-            AcpThreadHistory::new(Some(session_list.clone()), window, cx)
+            ThreadHistory::new(Some(session_list.clone()), window, cx)
         });
         cx.run_until_parked();
         session_list.clear_requested_cursors();
@@ -1310,7 +1310,7 @@ mod tests {
         ));
 
         let (history, cx) = cx.add_window_view(|window, cx| {
-            AcpThreadHistory::new(Some(session_list.clone()), window, cx)
+            ThreadHistory::new(Some(session_list.clone()), window, cx)
         });
         cx.run_until_parked();
 
@@ -1343,7 +1343,7 @@ mod tests {
         ));
 
         let (history, cx) = cx.add_window_view(|window, cx| {
-            AcpThreadHistory::new(Some(session_list.clone()), window, cx)
+            ThreadHistory::new(Some(session_list.clone()), window, cx)
         });
         cx.run_until_parked();
 
@@ -1374,7 +1374,7 @@ mod tests {
         ));
 
         let (history, cx) = cx.add_window_view(|window, cx| {
-            AcpThreadHistory::new(Some(session_list.clone()), window, cx)
+            ThreadHistory::new(Some(session_list.clone()), window, cx)
         });
         cx.run_until_parked();
 
@@ -1419,7 +1419,7 @@ mod tests {
         );
 
         let (history, cx) = cx.add_window_view(|window, cx| {
-            AcpThreadHistory::new(Some(session_list.clone()), window, cx)
+            ThreadHistory::new(Some(session_list.clone()), window, cx)
         });
         cx.run_until_parked();
         session_list.clear_requested_cursors();
@@ -1451,7 +1451,7 @@ mod tests {
         let session_list = Rc::new(TestSessionList::new(sessions));
 
         let (history, cx) = cx.add_window_view(|window, cx| {
-            AcpThreadHistory::new(Some(session_list.clone()), window, cx)
+            ThreadHistory::new(Some(session_list.clone()), window, cx)
         });
         cx.run_until_parked();
 
@@ -1487,7 +1487,7 @@ mod tests {
         let session_list = Rc::new(TestSessionList::new(sessions));
 
         let (history, cx) = cx.add_window_view(|window, cx| {
-            AcpThreadHistory::new(Some(session_list.clone()), window, cx)
+            ThreadHistory::new(Some(session_list.clone()), window, cx)
         });
         cx.run_until_parked();
 
@@ -1520,7 +1520,7 @@ mod tests {
         let session_list = Rc::new(TestSessionList::new(sessions));
 
         let (history, cx) = cx.add_window_view(|window, cx| {
-            AcpThreadHistory::new(Some(session_list.clone()), window, cx)
+            ThreadHistory::new(Some(session_list.clone()), window, cx)
         });
         cx.run_until_parked();
 
@@ -1556,7 +1556,7 @@ mod tests {
         let session_list = Rc::new(TestSessionList::new(sessions));
 
         let (history, cx) = cx.add_window_view(|window, cx| {
-            AcpThreadHistory::new(Some(session_list.clone()), window, cx)
+            ThreadHistory::new(Some(session_list.clone()), window, cx)
         });
         cx.run_until_parked();
 
@@ -1596,7 +1596,7 @@ mod tests {
         let session_list = Rc::new(TestSessionList::new(sessions));
 
         let (history, cx) = cx.add_window_view(|window, cx| {
-            AcpThreadHistory::new(Some(session_list.clone()), window, cx)
+            ThreadHistory::new(Some(session_list.clone()), window, cx)
         });
         cx.run_until_parked();
 
@@ -1633,7 +1633,7 @@ mod tests {
         let session_list = Rc::new(TestSessionList::new(sessions));
 
         let (history, cx) = cx.add_window_view(|window, cx| {
-            AcpThreadHistory::new(Some(session_list.clone()), window, cx)
+            ThreadHistory::new(Some(session_list.clone()), window, cx)
         });
         cx.run_until_parked();
 

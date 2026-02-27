@@ -519,8 +519,6 @@ Note: Dirty files (files with unsaved changes) will not be automatically closed 
 - `"unified"`: Show changes inline with added and deleted lines stacked vertically
 - `"split"`: Display old and new versions side by side in separate panes (default)
 
-> **Changed in Preview (v0.225).** Values renamed from `"stacked"`/`"side_by_side"` to `"unified"`/`"split"`.
-
 See [Git documentation](../git.md#diff-view-styles) for more details.
 
 ## Disable AI
@@ -2773,8 +2771,6 @@ The following settings can be overridden for each specific language:
 These values take in the same options as the root-level settings with the same name.
 
 ### Document Symbols
-
-> **Preview:** This feature is available in Zed Preview. It will be included in the next Stable release.
 
 - Description: Controls the source of document symbols used for outlines and breadcrumbs.
 - Setting: `document_symbols`
@@ -5139,8 +5135,6 @@ See the [debugger page](../debugger.md) for more information about debugging sup
 - `scrollbar`: When to show the scrollbar in the git panel
 
 ## Git Worktree Directory
-
-> **Preview:** This feature is available in Zed Preview. It will be included in the next Stable release.
 
 - Description: Directory where git worktrees are created, relative to the repository working directory.
 - Setting: `git.worktree_directory`
