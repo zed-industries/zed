@@ -324,7 +324,7 @@ impl MultiBuffer {
         cx: &mut Context<Self>,
     ) -> bool {
         if to_insert.len() == 0 {
-            self.remove_excerpts_for_path(path_key, cx);
+            self.remove_excerpts_for_path(path_key.clone(), cx);
             if let Some(old_path_key) = self
                 .snapshot(cx)
                 .path_for_buffer(buffer_snapshot.remote_id())
@@ -364,7 +364,7 @@ impl MultiBuffer {
             .cursor::<Dimensions<PathKey, ExcerptOffset>>(());
         let mut new_excerpts = SumTree::new(());
 
-        let to_insert = to_insert.iter().peekable();
+        let mut to_insert = to_insert.iter().peekable();
         let mut patch = Patch::empty();
         let mut added_new_excerpt = false;
 
@@ -373,27 +373,27 @@ impl MultiBuffer {
             .iter()
             // todo!() perf? (but ExcerptIdMapping was doing this)
             .find(|(_, existing_path)| existing_path == &&path_key)
-            .map(|(index, _)| *index)
-            .unwrap_or_else(|| {
-                let index = snapshot
-                    .path_keys_by_index
-                    .last()
-                    .map(|(index, _)| PathKeyIndex(index.0 + 1))
-                    .unwrap_or(PathKeyIndex(0));
-                snapshot.path_keys_by_index.insert(index, path_key.clone());
-                index
-            });
+            .map(|(index, _)| *index);
+        let path_key_index = path_key_index.unwrap_or_else(|| {
+            let index = snapshot
+                .path_keys_by_index
+                .last()
+                .map(|(index, _)| PathKeyIndex(index.0 + 1))
+                .unwrap_or(PathKeyIndex(0));
+            snapshot.path_keys_by_index.insert(index, path_key.clone());
+            index
+        });
         let old_path_key = snapshot
             .path_keys_by_buffer
-            .insert_or_replace(buffer_id, path_key);
+            .insert_or_replace(buffer_id, path_key.clone());
         // handle the case where the buffer's path key has changed by
         // removing any old excerpts for the buffer
-        if let Some(old_path_key) = old_path_key
-            && old_path_key < path_key
+        if let Some(old_path_key) = &old_path_key
+            && old_path_key < &path_key
         {
-            new_excerpts.append(cursor.slice(&old_path_key, Bias::Left), ());
+            new_excerpts.append(cursor.slice(old_path_key, Bias::Left), ());
             let before = cursor.position.1;
-            cursor.seek_forward(&old_path_key, Bias::Right);
+            cursor.seek_forward(old_path_key, Bias::Right);
             let after = cursor.position.1;
             patch.push(Edit {
                 old: before..after,
@@ -450,7 +450,6 @@ impl MultiBuffer {
                 });
             } else {
                 // insert new excerpt
-                let before = new_excerpts.summary().text.len;
                 let next_excerpt = to_insert.next().unwrap();
                 added_new_excerpt = true;
                 let before = new_excerpts.summary().len();
@@ -482,12 +481,12 @@ impl MultiBuffer {
 
         // handle the case where the buffer's path key has changed by
         // removing any old excerpts for the buffer
-        if let Some(old_path_key) = old_path_key
-            && old_path_key > path_key
+        if let Some(old_path_key) = &old_path_key
+            && old_path_key > &path_key
         {
-            new_excerpts.append(cursor.slice(&old_path_key, Bias::Left), ());
+            new_excerpts.append(cursor.slice(old_path_key, Bias::Left), ());
             let before = cursor.position.1;
-            cursor.seek_forward(&old_path_key, Bias::Right);
+            cursor.seek_forward(old_path_key, Bias::Right);
             let after = cursor.position.1;
             patch.push(Edit {
                 old: before..after,
@@ -498,6 +497,11 @@ impl MultiBuffer {
         let suffix = cursor.suffix();
         let changed_trailing_excerpt = suffix.is_empty();
         new_excerpts.append(suffix, ());
+        let new_ranges = snapshot
+            .excerpt_ranges_for_path(&path_key)
+            .map(|range| range.context)
+            .collect();
+        drop(cursor);
         snapshot.excerpts = new_excerpts;
         if changed_trailing_excerpt {
             snapshot.trailing_excerpt_update_count += 1;
@@ -517,8 +521,8 @@ impl MultiBuffer {
         });
         cx.emit(Event::BufferUpdated {
             buffer,
-            path_key,
-            ranges: new,
+            path_key: path_key.clone(),
+            ranges: new_ranges,
         });
         cx.notify();
 
@@ -531,7 +535,7 @@ impl MultiBuffer {
         let mut snapshot = self.snapshot.get_mut();
         let mut cursor = snapshot
             .excerpts
-            .cursor::<Dimensions<PathKey, MultiBufferOffset>>(());
+            .cursor::<Dimensions<PathKey, ExcerptOffset>>(());
         let mut new_excerpts = SumTree::new(());
 
         if let Some(old_path_key) = old_path_key
@@ -543,7 +547,7 @@ impl MultiBuffer {
             let after = cursor.position.1;
             patch.push(Edit {
                 old: before..after,
-                new: new_excerpts.summary().text.len..new_excerpts.summary().text.len,
+                new: new_excerpts.summary().len()..new_excerpts.summary().len(),
             });
         }
 
@@ -580,10 +584,11 @@ impl MultiBuffer {
         cx.emit(Event::Edited {
             edited_buffer: None,
         });
+        // todo!() is this right? different event?
         cx.emit(Event::BufferUpdated {
             buffer,
-            path_key,
-            ranges: new,
+            path_key: path.clone(),
+            ranges: Vec::new(),
         });
         cx.notify();
     }

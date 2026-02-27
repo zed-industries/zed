@@ -6852,6 +6852,13 @@ impl MultiBufferSnapshot {
         }
         excerpt_edits
     }
+
+    fn excerpt_ranges_for_path(
+        &self,
+        path_key: &PathKey,
+    ) -> impl Iterator<Item = ExcerptRange<text::Anchor>> {
+        todo!()
+    }
 }
 
 #[cfg(any(test, feature = "test-support"))]
