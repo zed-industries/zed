@@ -22,11 +22,9 @@ use project::lsp_store::{FormatTrigger, LspFormatTarget};
 use project::{AgentLocation, Project, ProjectPath};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use std::ops::Range;
 use std::path::PathBuf;
 use std::sync::Arc;
 use streaming_diff::{CharOperation, StreamingDiff};
-use text::ToOffset as _;
 use ui::SharedString;
 use util::rel_path::RelPath;
 use util::{Deferred, ResultExt};
@@ -408,11 +406,8 @@ enum EditPipelineEntry {
         edit_cursor: usize,
         reindenter: Reindenter,
         original_snapshot: text::BufferSnapshot,
-        applied_range: Range<text::Anchor>,
     },
-    Done {
-        applied_range: Range<text::Anchor>,
-    },
+    Done,
 }
 
 impl EditPipeline {
@@ -421,14 +416,6 @@ impl EditPipeline {
             edits: Vec::new(),
             content_written: false,
         }
-    }
-
-    fn applied_ranges(&self) -> impl Iterator<Item = &Range<text::Anchor>> {
-        self.edits.iter().filter_map(|entry| match entry {
-            EditPipelineEntry::StreamingNewText { applied_range, .. }
-            | EditPipelineEntry::Done { applied_range } => Some(applied_range),
-            _ => None,
-        })
     }
 
     fn ensure_resolving_old_text(
@@ -819,32 +806,11 @@ impl EditSession {
 
                     let range = matches.into_iter().next().expect("checked len above");
 
-                    let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot());
-                    for previous_range in pipeline.applied_ranges() {
-                        let previous_start = previous_range.start.to_offset(&snapshot);
-                        let previous_end = previous_range.end.to_offset(&snapshot);
-                        if range.start < previous_end && previous_start < range.end {
-                            let earlier_start_line =
-                                snapshot.offset_to_point(previous_start).row + 1;
-                            let earlier_end_line = snapshot.offset_to_point(previous_end).row + 1;
-                            let later_start_line = snapshot.offset_to_point(range.start).row + 1;
-                            let later_end_line = snapshot.offset_to_point(range.end).row + 1;
-                            return Err(StreamingEditFileToolOutput::error(format!(
-                                "Conflicting edit ranges detected: lines {}-{} \
-                                     conflicts with lines {}-{}. Conflicting edit \
-                                     ranges are not allowed, as they would overwrite \
-                                     each other.",
-                                earlier_start_line,
-                                earlier_end_line,
-                                later_start_line,
-                                later_end_line,
-                            )));
-                        }
-                    }
-
                     let anchor_range = buffer
                         .read_with(cx, |buffer, _cx| buffer.anchor_range_between(range.clone()));
                     diff.update(cx, |diff, cx| diff.reveal_range(anchor_range, cx));
+
+                    let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot());
 
                     let line = snapshot.offset_to_point(range.start).row;
                     event_stream.update_fields(
@@ -865,16 +831,12 @@ impl EditSession {
                     let old_text_in_buffer =
                         snapshot.text_for_range(range.clone()).collect::<String>();
 
-                    let pre_edit_anchor_range = buffer
-                        .read_with(cx, |buffer, _cx| buffer.anchor_range_between(range.clone()));
-
                     let text_snapshot = buffer.read_with(cx, |buffer, _cx| buffer.text_snapshot());
                     pipeline.edits[*edit_index] = EditPipelineEntry::StreamingNewText {
                         streaming_diff: StreamingDiff::new(old_text_in_buffer),
                         edit_cursor: range.start,
                         reindenter: Reindenter::new(indent_delta),
                         original_snapshot: text_snapshot,
-                        applied_range: pre_edit_anchor_range,
                     };
 
                     cx.update(|cx| {
@@ -941,22 +903,14 @@ impl EditSession {
                         continue;
                     }
 
-                    let EditPipelineEntry::StreamingNewText { applied_range, .. } =
-                        &pipeline.edits[*edit_index]
-                    else {
-                        continue;
-                    };
-                    let applied_range = applied_range.clone();
-
                     let EditPipelineEntry::StreamingNewText {
                         mut streaming_diff,
                         mut edit_cursor,
                         mut reindenter,
                         original_snapshot,
-                        ..
                     } = std::mem::replace(
                         &mut pipeline.edits[*edit_index],
-                        EditPipelineEntry::Done { applied_range },
+                        EditPipelineEntry::Done,
                     )
                     else {
                         continue;
@@ -1342,7 +1296,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_streaming_edit_multiple_nonoverlapping_edits(cx: &mut TestAppContext) {
+    async fn test_streaming_edit_multiple_edits(cx: &mut TestAppContext) {
         init_test(cx);
 
         let fs = project::FakeFs::new(cx.executor());
@@ -1653,80 +1607,6 @@ mod tests {
             error.contains("Could not find matching text"),
             "Expected error containing 'Could not find matching text' but got: {error}"
         );
-    }
-
-    #[gpui::test]
-    async fn test_streaming_edit_overlapping_edits_out_of_order(cx: &mut TestAppContext) {
-        init_test(cx);
-
-        let fs = project::FakeFs::new(cx.executor());
-        // Multi-line file so the line-based fuzzy matcher can resolve each edit.
-        fs.insert_tree(
-            "/root",
-            json!({
-                "file.txt": "line 1\nline 2\nline 3\nline 4\nline 5\n"
-            }),
-        )
-        .await;
-        let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
-        let language_registry = project.read_with(cx, |project, _cx| project.languages().clone());
-        let context_server_registry =
-            cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
-        let model = Arc::new(FakeLanguageModel::default());
-        let thread = cx.new(|cx| {
-            crate::Thread::new(
-                project.clone(),
-                cx.new(|_cx| ProjectContext::default()),
-                context_server_registry,
-                Templates::new(),
-                Some(model),
-                cx,
-            )
-        });
-
-        // Edit A spans lines 3-4, edit B spans lines 2-3. They overlap on
-        // "line 3" and are given in descending file order. With sequential
-        // application, edit A runs first (replacing "line 3\nline 4" with
-        // "SECOND"), then edit B resolves against the modified buffer. Since
-        // "line 3" no longer exists, the fuzzy matcher finds the best match
-        // for "line 2\nline 3" in the new buffer and applies it.
-        let result = cx
-            .update(|cx| {
-                let input = StreamingEditFileToolInput {
-                    display_description: "Overlapping edits".into(),
-                    path: "root/file.txt".into(),
-                    mode: StreamingEditFileMode::Edit,
-                    content: None,
-                    edits: Some(vec![
-                        Edit {
-                            old_text: "line 3\nline 4".into(),
-                            new_text: "SECOND".into(),
-                        },
-                        Edit {
-                            old_text: "line 2\nline 3".into(),
-                            new_text: "FIRST".into(),
-                        },
-                    ]),
-                };
-                Arc::new(StreamingEditFileTool::new(
-                    project,
-                    thread.downgrade(),
-                    language_registry,
-                ))
-                .run(
-                    ToolInput::resolved(input),
-                    ToolCallEventStream::test().0,
-                    cx,
-                )
-            })
-            .await;
-
-        // Sequential application means the edits don't conflict — edit A
-        // modifies the buffer before edit B resolves against it.
-        let StreamingEditFileToolOutput::Success { new_text, .. } = result.unwrap() else {
-            panic!("expected success");
-        };
-        assert_eq!(new_text, "FIRST\nSECOND\nline 5\n");
     }
 
     #[gpui::test]
@@ -2508,82 +2388,6 @@ mod tests {
         assert!(
             error.contains("Could not find matching text for edit at index 1"),
             "Expected error about edit 1 failing, got: {error}"
-        );
-    }
-
-    #[gpui::test]
-    async fn test_streaming_overlapping_edits_detected_naturally(cx: &mut TestAppContext) {
-        init_test(cx);
-
-        let fs = project::FakeFs::new(cx.executor());
-        fs.insert_tree(
-            "/root",
-            json!({
-                "file.txt": "line 1\nline 2\nline 3\n"
-            }),
-        )
-        .await;
-        let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
-        let language_registry = project.read_with(cx, |project, _cx| project.languages().clone());
-        let context_server_registry =
-            cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
-        let model = Arc::new(FakeLanguageModel::default());
-        let thread = cx.new(|cx| {
-            crate::Thread::new(
-                project.clone(),
-                cx.new(|_cx| ProjectContext::default()),
-                context_server_registry,
-                Templates::new(),
-                Some(model),
-                cx,
-            )
-        });
-
-        let (sender, input) = ToolInput::<StreamingEditFileToolInput>::test();
-        let (event_stream, _receiver) = ToolCallEventStream::test();
-
-        let tool = Arc::new(StreamingEditFileTool::new(
-            project.clone(),
-            thread.downgrade(),
-            language_registry,
-        ));
-
-        let task = cx.update(|cx| tool.run(input, event_stream, cx));
-
-        // Setup
-        sender.send_partial(json!({
-            "display_description": "Overlapping edits",
-            "path": "root/file.txt",
-            "mode": "edit"
-        }));
-        cx.run_until_parked();
-
-        // Edit 1 targets "line 1\nline 2" and replaces it.
-        // Edit 2 targets "line 2\nline 3" — but after edit 1 is applied,
-        // "line 2" has been removed so this should fail to match.
-        // Edit 3 exists to make edit 2 "complete" during streaming.
-        sender.send_partial(json!({
-            "display_description": "Overlapping edits",
-            "path": "root/file.txt",
-            "mode": "edit",
-            "edits": [
-                {"old_text": "line 1\nline 2", "new_text": "REPLACED"},
-                {"old_text": "line 2\nline 3", "new_text": "ALSO REPLACED"},
-                {"old_text": "line 3", "new_text": "DUMMY"}
-            ]
-        }));
-        cx.run_until_parked();
-
-        // Edit 1 was applied, edit 2 should fail since "line 2" no longer exists
-        drop(sender);
-
-        let result = task.await;
-        let StreamingEditFileToolOutput::Error { error } = result.unwrap_err() else {
-            panic!("expected error");
-        };
-        assert!(
-            error.contains("Could not find matching text for edit at index 1"),
-            "Expected overlapping edit to fail naturally, got: {error}"
         );
     }
 
@@ -4488,15 +4292,14 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_streaming_overlapping_edits_detected_early(cx: &mut TestAppContext) {
+    async fn test_streaming_overlapping_edits_resolved_sequentially(cx: &mut TestAppContext) {
         init_test(cx);
 
         let fs = project::FakeFs::new(cx.executor());
-        // The file content is crafted so that edit 1's replacement still
-        // contains the old_text of edit 2 as a contiguous substring.
-        // Without early overlap detection, edit 2 would silently match
-        // inside the already-modified region and corrupt the file instead
-        // of producing a clear "Conflicting edit ranges" error.
+        // Edit 1's replacement introduces text that contains edit 2's
+        // old_text as a substring. Because edits resolve sequentially
+        // against the current buffer, edit 2 finds a unique match in
+        // the modified buffer and succeeds.
         fs.insert_tree(
             "/root",
             json!({
@@ -4539,17 +4342,10 @@ mod tests {
         }));
         cx.run_until_parked();
 
-        // Edit 1 targets "bbb\nccc" (lines 2-3) and replaces it with
-        // text that preserves "ccc\nddd" as a contiguous substring in the
-        // buffer — so edit 2's old_text will still match after edit 1 is
-        // applied.
-        //
-        // Edit 2 targets "ccc\nddd" (lines 3-4), overlapping with edit 1 on
-        // line 3 ("ccc"). After edit 1 runs, the buffer becomes:
-        //   "aaa\nXXX\nccc\nddd\nddd\neee\n"
-        // and "ccc\nddd" is still present, so edit 2 would silently
-        // succeed without early overlap detection.
-        //
+        // Edit 1 replaces "bbb\nccc" with "XXX\nccc\nddd", so the
+        // buffer becomes "aaa\nXXX\nccc\nddd\nddd\neee\n".
+        // Edit 2's old_text "ccc\nddd" matches the first occurrence
+        // in the modified buffer and replaces it with "ZZZ".
         // Edit 3 exists only to mark edit 2 as "complete" during streaming.
         sender.send_partial(json!({
             "display_description": "Overlapping edits",
@@ -4576,19 +4372,10 @@ mod tests {
         }));
 
         let result = task.await;
-        match result {
-            Err(StreamingEditFileToolOutput::Error { error })
-                if error.contains("Conflicting edit ranges") => {}
-            Err(StreamingEditFileToolOutput::Error { error }) => {
-                panic!("Expected 'Conflicting edit ranges' error, got different error: {error}");
-            }
-            Ok(output) => {
-                panic!("Expected 'Conflicting edit ranges' error, but got success: {output}");
-            }
-            Err(other) => {
-                panic!("Expected 'Conflicting edit ranges' error, got unexpected output: {other}");
-            }
-        }
+        let StreamingEditFileToolOutput::Success { new_text, .. } = result.unwrap() else {
+            panic!("expected success");
+        };
+        assert_eq!(new_text, "aaa\nXXX\nZZZ\nddd\nDUMMY\n");
     }
 
     #[gpui::test]
