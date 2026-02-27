@@ -125,7 +125,7 @@ pub fn request_prediction_with_zeta(
 
             log::trace!("Sending edit prediction request");
 
-            let (request_id, output_text, usage) = if let Some(custom_settings) =
+            let (request_id, output_text, model_version, usage) = if let Some(custom_settings) =
                 &custom_server_settings
             {
                 let max_tokens = custom_settings.max_output_tokens * 4;
@@ -158,7 +158,7 @@ pub fn request_prediction_with_zeta(
                     let request_id = EditPredictionId(request_id.into());
                     let output_text = zeta1::clean_zeta1_model_output(&response_text);
 
-                    (request_id, output_text, None)
+                    (request_id, output_text, None, None)
                 } else {
                     let prompt = format_zeta_prompt(&prompt_input, zeta_version);
                     let prefill = get_prefill(&prompt_input, zeta_version);
@@ -188,7 +188,7 @@ pub fn request_prediction_with_zeta(
                         Some(clean_zeta2_model_output(&output, zeta_version).to_string())
                     };
 
-                    (request_id, output_text, None)
+                    (request_id, output_text, None, None)
                 }
             } else if let Some(config) = &raw_config {
                 let prompt = format_zeta_prompt(&prompt_input, config.format);
@@ -225,7 +225,7 @@ pub fn request_prediction_with_zeta(
                     clean_zeta2_model_output(&output, config.format).to_string()
                 });
 
-                (request_id, output_text, usage)
+                (request_id, output_text, None, usage)
             } else {
                 // Use V3 endpoint - server handles model/version selection and suffix stripping
                 let (response, usage) = EditPredictionStore::send_v3_request(
@@ -244,8 +244,9 @@ pub fn request_prediction_with_zeta(
                     Some(response.output)
                 };
                 editable_range_in_excerpt = response.editable_range;
+                let model_version = response.model_version;
 
-                (request_id, output_text, usage)
+                (request_id, output_text, model_version, usage)
             };
 
             let received_response_at = Instant::now();
@@ -253,7 +254,7 @@ pub fn request_prediction_with_zeta(
             log::trace!("Got edit prediction response");
 
             let Some(mut output_text) = output_text else {
-                return Ok((Some((request_id, None)), usage));
+                return Ok((Some((request_id, None, model_version)), usage));
             };
 
             // Client-side cursor marker processing (applies to both raw and v3 responses)
@@ -311,6 +312,7 @@ pub fn request_prediction_with_zeta(
                         full_context_offset_range,
                         editable_range_in_buffer,
                     )),
+                    model_version,
                 )),
                 usage,
             ))
@@ -318,7 +320,7 @@ pub fn request_prediction_with_zeta(
     });
 
     cx.spawn(async move |this, cx| {
-        let Some((id, prediction)) =
+        let Some((id, prediction, model_version)) =
             EditPredictionStore::handle_api_response(&this, request_task.await, cx)?
         else {
             return Ok(None);
@@ -392,6 +394,7 @@ pub fn request_prediction_with_zeta(
                 buffer_snapshotted_at,
                 received_response_at,
                 inputs,
+                model_version,
                 cx,
             )
             .await,
@@ -521,6 +524,7 @@ pub(crate) fn edit_prediction_accepted(
     }
 
     let request_id = current_prediction.prediction.id.to_string();
+    let model_version = current_prediction.prediction.model_version;
     let require_auth = custom_accept_url.is_none();
     let client = store.client.clone();
     let llm_token = store.llm_token.clone();
@@ -540,6 +544,7 @@ pub(crate) fn edit_prediction_accepted(
                 let req = builder.uri(url.as_ref()).body(
                     serde_json::to_string(&AcceptEditPredictionBody {
                         request_id: request_id.clone(),
+                        model_version: model_version.clone(),
                     })?
                     .into(),
                 );

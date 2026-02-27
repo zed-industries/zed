@@ -2129,7 +2129,7 @@ async fn test_remote_external_agent_server(
             .map(|name| name.to_string())
             .collect::<Vec<_>>()
     });
-    pretty_assertions::assert_eq!(names, ["codex", "gemini", "claude"]);
+    pretty_assertions::assert_eq!(names, Vec::<String>::new());
     server_cx.update_global::<SettingsStore, _>(|settings_store, cx| {
         settings_store
             .set_server_settings(
@@ -2160,8 +2160,8 @@ async fn test_remote_external_agent_server(
             .map(|name| name.to_string())
             .collect::<Vec<_>>()
     });
-    pretty_assertions::assert_eq!(names, ["gemini", "codex", "claude", "foo"]);
-    let (command, login) = project
+    pretty_assertions::assert_eq!(names, ["foo"]);
+    let command = project
         .update(cx, |project, cx| {
             project.agent_server_store().update(cx, |store, cx| {
                 store
@@ -2183,12 +2183,12 @@ async fn test_remote_external_agent_server(
             path: "mock".into(),
             args: vec!["foo-cli".into(), "--flag".into()],
             env: Some(HashMap::from_iter([
+                ("NO_BROWSER".into(), "1".into()),
                 ("VAR".into(), "val".into()),
                 ("OTHER_VAR".into(), "other-val".into())
             ]))
         }
     );
-    assert!(login.is_none());
 }
 
 pub async fn init_test(

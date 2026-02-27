@@ -7,20 +7,20 @@ use gpui::{Entity, FocusHandle};
 use picker::popover_menu::PickerPopoverMenu;
 use ui::{ButtonLike, PopoverMenuHandle, TintColor, Tooltip, prelude::*};
 
-use crate::acp::{AcpModelSelector, model_selector::acp_model_selector};
 use crate::ui::ModelSelectorTooltip;
+use crate::{ModelSelector, model_selector::acp_model_selector};
 
-pub struct AcpModelSelectorPopover {
-    selector: Entity<AcpModelSelector>,
-    menu_handle: PopoverMenuHandle<AcpModelSelector>,
+pub struct ModelSelectorPopover {
+    selector: Entity<ModelSelector>,
+    menu_handle: PopoverMenuHandle<ModelSelector>,
 }
 
-impl AcpModelSelectorPopover {
+impl ModelSelectorPopover {
     pub(crate) fn new(
         selector: Rc<dyn AgentModelSelector>,
         agent_server: Rc<dyn agent_servers::AgentServer>,
         fs: Arc<dyn Fs>,
-        menu_handle: PopoverMenuHandle<AcpModelSelector>,
+        menu_handle: PopoverMenuHandle<ModelSelector>,
         focus_handle: FocusHandle,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -48,7 +48,7 @@ impl AcpModelSelectorPopover {
     }
 }
 
-impl Render for AcpModelSelectorPopover {
+impl Render for ModelSelectorPopover {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let selector = self.selector.read(cx);
         let model = selector.delegate.active_model();

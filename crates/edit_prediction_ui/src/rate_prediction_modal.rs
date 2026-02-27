@@ -1,6 +1,6 @@
 use buffer_diff::BufferDiff;
 use edit_prediction::{EditPrediction, EditPredictionRating, EditPredictionStore};
-use editor::{Editor, ExcerptRange, Inlay, MultiBuffer};
+use editor::{Editor, Inlay, MultiBuffer};
 use feature_flags::FeatureFlag;
 use gpui::{
     App, BorderStyle, DismissEvent, EdgesRefinement, Entity, EventEmitter, FocusHandle, Focusable,
@@ -359,16 +359,9 @@ impl RatePredictionsModal {
                 editor.disable_header_for_buffer(new_buffer_id, cx);
                 let excerpt_id = editor.buffer().update(cx, |multibuffer, cx| {
                     multibuffer.clear(cx);
-                    let excerpt_ids = multibuffer.push_excerpts(
-                        new_buffer,
-                        vec![ExcerptRange {
-                            context: start..end,
-                            primary: start..end,
-                        }],
-                        cx,
-                    );
+                    multibuffer.set_excerpts_for_buffer(new_buffer, [start..end], 0, cx);
                     multibuffer.add_diff(diff, cx);
-                    excerpt_ids.into_iter().next()
+                    multibuffer.excerpt_ids().into_iter().next()
                 });
 
                 if let Some((excerpt_id, cursor_position)) =
