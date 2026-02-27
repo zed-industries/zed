@@ -3,9 +3,9 @@ use crate::{
     BackgroundExecutor, BorrowAppContext, Bounds, Capslock, ClipboardItem, DrawPhase, Drawable,
     Element, Empty, EventEmitter, ForegroundExecutor, Global, InputEvent, Keystroke, Modifiers,
     ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels,
-    Platform, Point, Render, Result, Size, Task, TestDispatcher, TestPlatform, TestWindow,
-    TestScreenCaptureSource, TextSystem, VisualContext, Window, WindowBounds, WindowHandle,
-    WindowOptions, app::GpuiMode,
+    Platform, Point, Render, Result, Size, Task, TestDispatcher, TestPlatform,
+    TestScreenCaptureSource, TestWindow, TextSystem, VisualContext, Window, WindowBounds,
+    WindowHandle, WindowOptions, app::GpuiMode,
 };
 use anyhow::{anyhow, bail};
 use futures::{Stream, StreamExt, channel::oneshot};
@@ -144,6 +144,48 @@ impl TestAppContext {
         }
     }
 
+    /// Creates a `TestAppContext` with a custom text system and asset source.
+    ///
+    /// This is useful for tests that need real text shaping (e.g. with
+    /// `gpui_windows::platform_text_system()`) and custom embedded assets.
+    pub fn build_custom(
+        dispatcher: TestDispatcher,
+        fn_name: Option<&'static str>,
+        text_system: Arc<dyn crate::PlatformTextSystem>,
+        asset_source: Arc<dyn crate::AssetSource>,
+    ) -> Self {
+        let arc_dispatcher = Arc::new(dispatcher.clone());
+        let background_executor = BackgroundExecutor::new(arc_dispatcher.clone());
+        let foreground_executor = ForegroundExecutor::new(arc_dispatcher);
+        let platform = TestPlatform::with_text_system(
+            background_executor.clone(),
+            foreground_executor.clone(),
+            text_system,
+        );
+        #[cfg(not(target_family = "wasm"))]
+        let http_client = http_client::FakeHttpClient::with_404_response();
+        let text_system = Arc::new(TextSystem::new(platform.text_system()));
+
+        let app = App::new_app(
+            platform.clone(),
+            asset_source,
+            #[cfg(not(target_family = "wasm"))]
+            http_client,
+        );
+        app.borrow_mut().mode = GpuiMode::test();
+
+        Self {
+            app,
+            background_executor,
+            foreground_executor,
+            dispatcher,
+            test_platform: platform,
+            text_system,
+            fn_name,
+            on_quit: Rc::new(RefCell::new(Vec::default())),
+        }
+    }
+
     /// Skip all drawing operations for the duration of this test.
     pub fn skip_drawing(&mut self) {
         self.app.borrow_mut().mode = GpuiMode::Test { skip_drawing: true };
@@ -231,6 +273,33 @@ impl TestAppContext {
         cx.open_window(
             WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
+                ..Default::default()
+            },
+            |window, cx| cx.new(|cx| build_window(window, cx)),
+        )
+        .unwrap()
+    }
+
+    /// Opens a new window with a specific size.
+    ///
+    /// Unlike `add_window` which uses maximized bounds, this allows controlling
+    /// the window dimensions, which is important for layout-sensitive tests.
+    pub fn open_window<F, V>(
+        &mut self,
+        window_size: Size<Pixels>,
+        build_window: F,
+    ) -> WindowHandle<V>
+    where
+        F: FnOnce(&mut Window, &mut Context<V>) -> V,
+        V: 'static + Render,
+    {
+        let mut cx = self.app.borrow_mut();
+        cx.open_window(
+            WindowOptions {
+                window_bounds: Some(WindowBounds::Windowed(Bounds {
+                    origin: Point::default(),
+                    size: window_size,
+                })),
                 ..Default::default()
             },
             |window, cx| cx.new(|cx| build_window(window, cx)),
