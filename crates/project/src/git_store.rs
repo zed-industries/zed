@@ -36,8 +36,8 @@ use git::{
     },
     stash::{GitStash, StashEntry},
     status::{
-        DiffTreeType, FileStatus, GitSummary, StatusCode, TrackedStatus, TreeDiff, TreeDiffStatus,
-        UnmergedStatus, UnmergedStatusCode,
+        DiffStat, DiffTreeType, FileStatus, GitSummary, StatusCode, TrackedStatus, TreeDiff,
+        TreeDiffStatus, UnmergedStatus, UnmergedStatusCode,
     },
 };
 use gpui::{
@@ -246,6 +246,31 @@ impl sum_tree::KeyedItem for StatusEntry {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DiffStatEntry {
+    pub repo_path: RepoPath,
+    pub diff_stat: DiffStat,
+}
+
+impl sum_tree::Item for DiffStatEntry {
+    type Summary = PathSummary<DiffStat>;
+
+    fn summary(&self, _: <Self::Summary as sum_tree::Summary>::Context<'_>) -> Self::Summary {
+        PathSummary {
+            max_path: self.repo_path.as_ref().clone(),
+            item_summary: self.diff_stat,
+        }
+    }
+}
+
+impl sum_tree::KeyedItem for DiffStatEntry {
+    type Key = PathKey;
+
+    fn key(&self) -> Self::Key {
+        PathKey(self.repo_path.as_ref().clone())
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct RepositoryId(pub u64);
 
@@ -266,6 +291,7 @@ pub enum CommitDataState {
 pub struct RepositorySnapshot {
     pub id: RepositoryId,
     pub statuses_by_path: SumTree<StatusEntry>,
+    pub diff_stats_by_path: SumTree<DiffStatEntry>,
     pub work_directory_abs_path: Arc<Path>,
     pub path_style: PathStyle,
     pub branch: Option<Branch>,
@@ -2722,12 +2748,13 @@ impl GitStore {
 
         let stats = repository_handle
             .update(&mut cx, |repository_handle, cx| {
-                repository_handle.diff_stat(diff_type, cx)
+                repository_handle.diff_stat(diff_type, &[], cx)
             })
             .await??;
 
         let entries = stats
-            .into_iter()
+            .entries
+            .iter()
             .map(|(path, stat)| proto::GitDiffStatEntry {
                 path: path.to_proto(),
                 added: stat.added,
@@ -3487,6 +3514,7 @@ impl RepositorySnapshot {
         Self {
             id,
             statuses_by_path: Default::default(),
+            diff_stats_by_path: Default::default(),
             work_directory_abs_path,
             branch: None,
             head_commit: None,
@@ -5789,15 +5817,15 @@ impl Repository {
     pub fn diff_stat(
         &mut self,
         diff_type: DiffType,
+        path_prefixes: &[RepoPath],
         _cx: &App,
-    ) -> oneshot::Receiver<
-        Result<collections::HashMap<git::repository::RepoPath, git::status::DiffStat>>,
-    > {
+    ) -> oneshot::Receiver<Result<git::status::GitDiffStat>> {
         let id = self.id;
+        let path_prefixes = path_prefixes.to_vec();
         self.send_job(None, move |repo, _cx| async move {
             match repo {
                 RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
-                    backend.diff_stat(diff_type).await
+                    backend.diff_stat(diff_type, &path_prefixes).await
                 }
                 RepositoryState::Remote(RemoteRepositoryState { project_id, client }) => {
                     let (proto_diff_type, merge_base_ref) = match &diff_type {
@@ -5820,7 +5848,7 @@ impl Repository {
                             merge_base_ref,
                         })
                         .await?;
-                    let stats = response
+                    let entries: Arc<[(RepoPath, git::status::DiffStat)]> = response
                         .entries
                         .into_iter()
                         .filter_map(|entry| {
@@ -5835,7 +5863,7 @@ impl Repository {
                         })
                         .collect();
 
-                    Ok(stats)
+                    Ok(git::status::GitDiffStat { entries })
                 }
             }
         })
@@ -6749,6 +6777,7 @@ async fn compute_snapshot(
     prev_snapshot: RepositorySnapshot,
     backend: Arc<dyn GitRepository>,
 ) -> Result<(RepositorySnapshot, Vec<RepositoryEvent>)> {
+    let first_now = std::time::Instant::now();
     let mut events = Vec::new();
     let branches = backend.branches().await?;
     let branch = branches.into_iter().find(|branch| branch.is_head);
@@ -6793,9 +6822,12 @@ async fn compute_snapshot(
     let remote_origin_url = backend.remote_url("origin").await;
     let remote_upstream_url = backend.remote_url("upstream").await;
 
+    let diff_stats_by_path = Default::default();
+
     let snapshot = RepositorySnapshot {
         id,
         statuses_by_path,
+        diff_stats_by_path,
         work_directory_abs_path,
         path_style: prev_snapshot.path_style,
         scan_id: prev_snapshot.scan_id + 1,
@@ -6806,6 +6838,8 @@ async fn compute_snapshot(
         remote_upstream_url,
         stash_entries,
     };
+
+    dbg!("Time generate snapshot: {}", first_now.elapsed());
 
     Ok((snapshot, events))
 }

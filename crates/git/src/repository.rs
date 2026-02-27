@@ -901,7 +901,8 @@ pub trait GitRepository: Send + Sync {
     fn diff_stat(
         &self,
         diff: DiffType,
-    ) -> BoxFuture<'_, Result<HashMap<RepoPath, crate::status::DiffStat>>>;
+        path_prefixes: &[RepoPath],
+    ) -> BoxFuture<'_, Result<crate::status::GitDiffStat>>;
 
     /// Creates a checkpoint for the repository.
     fn checkpoint(&self) -> BoxFuture<'static, Result<GitRepositoryCheckpoint>>;
@@ -2039,41 +2040,48 @@ impl GitRepository for RealGitRepository {
     fn diff_stat(
         &self,
         diff: DiffType,
-    ) -> BoxFuture<'_, Result<HashMap<RepoPath, crate::status::DiffStat>>> {
+        path_prefixes: &[RepoPath],
+    ) -> BoxFuture<'_, Result<crate::status::GitDiffStat>> {
         let working_directory = self.working_directory();
         let git_binary_path = self.any_git_binary_path.clone();
+        let path_prefixes = path_prefixes.to_vec();
         self.executor
             .spawn(async move {
                 let working_directory = working_directory?;
-                let output = match diff {
+                let mut args = match &diff {
                     DiffType::HeadToIndex => {
-                        new_command(&git_binary_path)
-                            .current_dir(&working_directory)
-                            .args(["diff", "--numstat", "--staged"])
-                            .output()
-                            .await?
+                        vec![
+                            "diff".to_owned(),
+                            "--numstat".to_owned(),
+                            "--staged".to_owned(),
+                        ]
                     }
                     DiffType::HeadToWorktree => {
-                        new_command(&git_binary_path)
-                            .current_dir(&working_directory)
-                            .args(["diff", "--numstat"])
-                            .output()
-                            .await?
+                        vec!["diff".to_owned(), "--numstat".to_owned()]
                     }
                     DiffType::MergeBase { base_ref } => {
-                        new_command(&git_binary_path)
-                            .current_dir(&working_directory)
-                            .args([
-                                "diff",
-                                "--numstat",
-                                "--merge-base",
-                                base_ref.as_ref(),
-                                "HEAD",
-                            ])
-                            .output()
-                            .await?
+                        vec![
+                            "diff".to_owned(),
+                            "--numstat".to_owned(),
+                            "--merge-base".to_owned(),
+                            base_ref.to_string(),
+                            "HEAD".to_owned(),
+                        ]
                     }
                 };
+                if !path_prefixes.is_empty() {
+                    args.push("--".to_owned());
+                    args.extend(
+                        path_prefixes
+                            .iter()
+                            .map(|p| p.as_std_path().to_string_lossy().into_owned()),
+                    );
+                }
+                let output = new_command(&git_binary_path)
+                    .current_dir(&working_directory)
+                    .args(&args)
+                    .output()
+                    .await?;
 
                 anyhow::ensure!(
                     output.status.success(),

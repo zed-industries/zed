@@ -1965,49 +1965,55 @@ async fn test_remote_git_diff_stat(cx: &mut TestAppContext, server_cx: &mut Test
         .unwrap();
     cx.run_until_parked();
 
-    let repo_path = |s: &str| git::repository::RepoPath::new(s).unwrap();
-
     let repository = project.update(cx, |project, cx| project.active_repository(cx).unwrap());
 
+    fn lookup_stat<'a>(
+        entries: &'a [(git::repository::RepoPath, git::status::DiffStat)],
+        path: &str,
+    ) -> Option<&'a git::status::DiffStat> {
+        let path = git::repository::RepoPath::new(path).unwrap();
+        entries.iter().find(|(p, _)| p == &path).map(|(_, s)| s)
+    }
+
     let stats = cx
-        .update(|cx| repository.update(cx, |repo, cx| repo.diff_stat(DiffType::HeadToWorktree, cx)))
+        .update(|cx| {
+            repository.update(cx, |repo, cx| {
+                repo.diff_stat(DiffType::HeadToWorktree, &[], cx)
+            })
+        })
         .await
         .unwrap()
         .unwrap();
 
-    let stat = stats.get(&repo_path("src/lib.rs")).expect("src/lib.rs");
+    let stat = lookup_stat(&stats.entries, "src/lib.rs").expect("src/lib.rs");
     assert_eq!((stat.added, stat.deleted), (3, 2));
 
-    let stat = stats
-        .get(&repo_path("src/new_file.rs"))
-        .expect("src/new_file.rs");
+    let stat = lookup_stat(&stats.entries, "src/new_file.rs").expect("src/new_file.rs");
     assert_eq!((stat.added, stat.deleted), (2, 0));
 
-    let stat = stats
-        .get(&repo_path("src/deleted.rs"))
-        .expect("src/deleted.rs");
+    let stat = lookup_stat(&stats.entries, "src/deleted.rs").expect("src/deleted.rs");
     assert_eq!((stat.added, stat.deleted), (0, 1));
 
-    let stat = stats.get(&repo_path("README.md")).expect("README.md");
+    let stat = lookup_stat(&stats.entries, "README.md").expect("README.md");
     assert_eq!((stat.added, stat.deleted), (1, 0));
 
     let stats = cx
-        .update(|cx| repository.update(cx, |repo, cx| repo.diff_stat(DiffType::HeadToIndex, cx)))
+        .update(|cx| {
+            repository.update(cx, |repo, cx| {
+                repo.diff_stat(DiffType::HeadToIndex, &[], cx)
+            })
+        })
         .await
         .unwrap()
         .unwrap();
 
-    let stat = stats.get(&repo_path("src/lib.rs")).expect("src/lib.rs");
+    let stat = lookup_stat(&stats.entries, "src/lib.rs").expect("src/lib.rs");
     assert_eq!((stat.added, stat.deleted), (4, 2));
 
-    let stat = stats
-        .get(&repo_path("src/staged_only.rs"))
-        .expect("src/staged_only.rs");
+    let stat = lookup_stat(&stats.entries, "src/staged_only.rs").expect("src/staged_only.rs");
     assert_eq!((stat.added, stat.deleted), (2, 0));
 
-    let stat = stats
-        .get(&repo_path("src/deleted.rs"))
-        .expect("src/deleted.rs");
+    let stat = lookup_stat(&stats.entries, "src/deleted.rs").expect("src/deleted.rs");
     assert_eq!((stat.added, stat.deleted), (0, 1));
 }
 
