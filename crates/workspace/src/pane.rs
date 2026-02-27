@@ -2863,8 +2863,10 @@ impl Pane {
                         return;
                     }
 
-                    pane.close_item_by_id(item_id, SaveIntent::Close, window, cx)
-                        .detach_and_log_err(cx);
+                    if !is_pinned {
+                        pane.close_item_by_id(item_id, SaveIntent::Close, window, cx)
+                            .detach_and_log_err(cx);
+                    }
                 }),
             )
             .on_drag(
