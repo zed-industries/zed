@@ -1,6 +1,6 @@
-use crate::{AgentToolOutput, AnyAgentTool, ToolCallEventStream};
+use crate::{AgentToolOutput, AnyAgentTool, ToolCallEventStream, ToolInput};
 use agent_client_protocol::ToolKind;
-use anyhow::{Result, anyhow};
+use anyhow::Result;
 use collections::{BTreeMap, HashMap};
 use context_server::{ContextServerId, client::NotificationSubscription};
 use futures::FutureExt as _;
@@ -329,28 +329,29 @@ impl AnyAgentTool for ContextServerTool {
 
     fn run(
         self: Arc<Self>,
-        input: serde_json::Value,
+        input: ToolInput<serde_json::Value>,
         event_stream: ToolCallEventStream,
         cx: &mut App,
-    ) -> Task<Result<AgentToolOutput>> {
+    ) -> Task<Result<AgentToolOutput, AgentToolOutput>> {
         let Some(server) = self.store.read(cx).get_running_server(&self.server_id) else {
-            return Task::ready(Err(anyhow!("Context server not found")));
+            return Task::ready(Err(AgentToolOutput::from_error("Context server not found")));
         };
         let tool_name = self.tool.name.clone();
         let tool_id = mcp_tool_id(&self.server_id.0, &self.tool.name);
         let display_name = self.tool.name.clone();
-        let authorize = event_stream.authorize_third_party_tool(
-            self.initial_title(input.clone(), cx),
-            tool_id,
-            display_name,
-            cx,
-        );
+        let initial_title = self.initial_title(serde_json::Value::Null, cx);
+        let authorize =
+            event_stream.authorize_third_party_tool(initial_title, tool_id, display_name, cx);
 
         cx.spawn(async move |_cx| {
-            authorize.await?;
+            let input = input.recv().await.map_err(|e| {
+                AgentToolOutput::from_error(format!("Failed to receive tool input: {e}"))
+            })?;
+
+            authorize.await.map_err(|e| AgentToolOutput::from_error(e.to_string()))?;
 
             let Some(protocol) = server.client() else {
-                anyhow::bail!("Context server not initialized");
+                return Err(AgentToolOutput::from_error("Context server not initialized"));
             };
 
             let arguments = if let serde_json::Value::Object(map) = input {
@@ -374,16 +375,16 @@ impl AnyAgentTool for ContextServerTool {
             );
 
             let response = futures::select! {
-                response = request.fuse() => response?,
+                response = request.fuse() => response.map_err(|e| AgentToolOutput::from_error(e.to_string()))?,
                 _ = event_stream.cancelled_by_user().fuse() => {
-                    anyhow::bail!("MCP tool cancelled by user");
+                    return Err(AgentToolOutput::from_error("MCP tool cancelled by user"));
                 }
             };
 
             if response.is_error == Some(true) {
                 let error_message: String =
                     response.content.iter().filter_map(|c| c.text()).collect();
-                anyhow::bail!(error_message);
+                return Err(AgentToolOutput::from_error(error_message));
             }
 
             let mut result = String::new();

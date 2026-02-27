@@ -81,6 +81,7 @@ pub struct EditAgent {
     project: Entity<Project>,
     templates: Arc<Templates>,
     edit_format: EditFormat,
+    thinking_allowed: bool,
 }
 
 impl EditAgent {
@@ -90,6 +91,7 @@ impl EditAgent {
         action_log: Entity<ActionLog>,
         templates: Arc<Templates>,
         edit_format: EditFormat,
+        allow_thinking: bool,
     ) -> Self {
         EditAgent {
             model,
@@ -97,6 +99,7 @@ impl EditAgent {
             action_log,
             templates,
             edit_format,
+            thinking_allowed: allow_thinking,
         }
     }
 
@@ -163,54 +166,67 @@ impl EditAgent {
         output_events_tx: mpsc::UnboundedSender<EditAgentOutputEvent>,
         cx: &mut AsyncApp,
     ) -> Result<()> {
-        cx.update(|cx| {
-            buffer.update(cx, |buffer, cx| buffer.set_text("", cx));
-            self.action_log.update(cx, |log, cx| {
-                log.buffer_edited(buffer.clone(), cx);
-            });
+        let buffer_id = cx.update(|cx| {
+            let buffer_id = buffer.read(cx).remote_id();
             self.project.update(cx, |project, cx| {
                 project.set_agent_location(
                     Some(AgentLocation {
                         buffer: buffer.downgrade(),
-                        position: language::Anchor::max_for_buffer(buffer.read(cx).remote_id()),
+                        position: language::Anchor::min_for_buffer(buffer_id),
                     }),
                     cx,
                 )
             });
-            output_events_tx
-                .unbounded_send(EditAgentOutputEvent::Edited(
-                    Anchor::min_max_range_for_buffer(buffer.read(cx).remote_id()),
-                ))
-                .ok();
+            buffer_id
         });
 
+        let send_edit_event = || {
+            output_events_tx
+                .unbounded_send(EditAgentOutputEvent::Edited(
+                    Anchor::min_max_range_for_buffer(buffer_id),
+                ))
+                .ok()
+        };
+        let set_agent_location = |cx: &mut _| {
+            self.project.update(cx, |project, cx| {
+                project.set_agent_location(
+                    Some(AgentLocation {
+                        buffer: buffer.downgrade(),
+                        position: language::Anchor::max_for_buffer(buffer_id),
+                    }),
+                    cx,
+                )
+            })
+        };
+        let mut first_chunk = true;
         while let Some(event) = parse_rx.next().await {
             match event? {
                 CreateFileParserEvent::NewTextChunk { chunk } => {
-                    let buffer_id = cx.update(|cx| {
-                        buffer.update(cx, |buffer, cx| buffer.append(chunk, cx));
+                    cx.update(|cx| {
+                        buffer.update(cx, |buffer, cx| {
+                            if mem::take(&mut first_chunk) {
+                                buffer.set_text(chunk, cx)
+                            } else {
+                                buffer.append(chunk, cx)
+                            }
+                        });
                         self.action_log
                             .update(cx, |log, cx| log.buffer_edited(buffer.clone(), cx));
-                        self.project.update(cx, |project, cx| {
-                            project.set_agent_location(
-                                Some(AgentLocation {
-                                    buffer: buffer.downgrade(),
-                                    position: language::Anchor::max_for_buffer(
-                                        buffer.read(cx).remote_id(),
-                                    ),
-                                }),
-                                cx,
-                            )
-                        });
-                        buffer.read(cx).remote_id()
+                        set_agent_location(cx);
                     });
-                    output_events_tx
-                        .unbounded_send(EditAgentOutputEvent::Edited(
-                            Anchor::min_max_range_for_buffer(buffer_id),
-                        ))
-                        .ok();
+                    send_edit_event();
                 }
             }
+        }
+
+        if first_chunk {
+            cx.update(|cx| {
+                buffer.update(cx, |buffer, cx| buffer.set_text("", cx));
+                self.action_log
+                    .update(cx, |log, cx| log.buffer_edited(buffer.clone(), cx));
+                set_agent_location(cx);
+            });
+            send_edit_event();
         }
 
         Ok(())
@@ -731,8 +747,9 @@ impl EditAgent {
             tools,
             stop: Vec::new(),
             temperature: None,
-            thinking_allowed: true,
+            thinking_allowed: self.thinking_allowed,
             thinking_effort: None,
+            speed: None,
         };
 
         Ok(self.model.stream_completion_text(request, cx).await?.stream)
@@ -1191,19 +1208,16 @@ mod tests {
         );
 
         cx.run_until_parked();
-        assert_matches!(
-            drain_events(&mut events).as_slice(),
-            [EditAgentOutputEvent::Edited(_)]
-        );
+        assert_eq!(drain_events(&mut events).as_slice(), []);
         assert_eq!(
             buffer.read_with(cx, |buffer, _| buffer.snapshot().text()),
-            ""
+            "abc\ndef\nghi"
         );
         assert_eq!(
             project.read_with(cx, |project, _| project.agent_location()),
             Some(AgentLocation {
                 buffer: buffer.downgrade(),
-                position: language::Anchor::max_for_buffer(
+                position: language::Anchor::min_for_buffer(
                     cx.update(|cx| buffer.read(cx).remote_id())
                 ),
             })
@@ -1284,6 +1298,32 @@ mod tests {
                     cx.update(|cx| buffer.read(cx).remote_id())
                 ),
             })
+        );
+    }
+
+    #[gpui::test]
+    async fn test_overwrite_no_content(cx: &mut TestAppContext) {
+        let agent = init_test(cx).await;
+        let buffer = cx.new(|cx| Buffer::local("abc\ndef\nghi", cx));
+        let (chunks_tx, chunks_rx) = mpsc::unbounded::<&str>();
+        let (apply, mut events) = agent.overwrite_with_chunks(
+            buffer.clone(),
+            chunks_rx.map(|chunk| Ok(chunk.to_string())),
+            &mut cx.to_async(),
+        );
+
+        drop(chunks_tx);
+        cx.run_until_parked();
+
+        let result = apply.await;
+        assert!(result.is_ok(),);
+        assert_matches!(
+            drain_events(&mut events).as_slice(),
+            [EditAgentOutputEvent::Edited { .. }]
+        );
+        assert_eq!(
+            buffer.read_with(cx, |buffer, _| buffer.snapshot().text()),
+            ""
         );
     }
 
@@ -1407,6 +1447,10 @@ mod tests {
     }
 
     async fn init_test(cx: &mut TestAppContext) -> EditAgent {
+        init_test_with_thinking(cx, true).await
+    }
+
+    async fn init_test_with_thinking(cx: &mut TestAppContext, thinking_allowed: bool) -> EditAgent {
         cx.update(settings::init);
 
         let project = Project::test(FakeFs::new(cx.executor()), [], cx).await;
@@ -1418,6 +1462,7 @@ mod tests {
             action_log,
             Templates::new(),
             EditFormat::XmlTags,
+            thinking_allowed,
         )
     }
 
@@ -1491,6 +1536,45 @@ mod tests {
             events.contains(&EditAgentOutputEvent::AmbiguousEditRange(ambiguous_ranges)),
             "Should emit AmbiguousEditRange for non-unique text"
         );
+    }
+
+    #[gpui::test]
+    async fn test_thinking_allowed_forwarded_to_request(cx: &mut TestAppContext) {
+        let agent = init_test_with_thinking(cx, false).await;
+        let buffer = cx.new(|cx| Buffer::local("hello\n", cx));
+        let (_apply, _events) = agent.edit(
+            buffer.clone(),
+            String::new(),
+            &LanguageModelRequest::default(),
+            &mut cx.to_async(),
+        );
+        cx.run_until_parked();
+
+        let pending = agent.model.as_fake().pending_completions();
+        assert_eq!(pending.len(), 1);
+        assert!(
+            !pending[0].thinking_allowed,
+            "Expected thinking_allowed to be false when EditAgent is constructed with allow_thinking=false"
+        );
+        agent.model.as_fake().end_last_completion_stream();
+
+        let agent = init_test_with_thinking(cx, true).await;
+        let buffer = cx.new(|cx| Buffer::local("hello\n", cx));
+        let (_apply, _events) = agent.edit(
+            buffer,
+            String::new(),
+            &LanguageModelRequest::default(),
+            &mut cx.to_async(),
+        );
+        cx.run_until_parked();
+
+        let pending = agent.model.as_fake().pending_completions();
+        assert_eq!(pending.len(), 1);
+        assert!(
+            pending[0].thinking_allowed,
+            "Expected thinking_allowed to be true when EditAgent is constructed with allow_thinking=true"
+        );
+        agent.model.as_fake().end_last_completion_stream();
     }
 
     fn drain_events(

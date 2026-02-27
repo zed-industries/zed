@@ -424,7 +424,9 @@ pub mod settings_profile_selector {
 }
 
 pub mod agent {
-    use gpui::actions;
+    use gpui::{Action, SharedString, actions};
+    use schemars::JsonSchema;
+    use serde::Deserialize;
 
     actions!(
         agent,
@@ -456,6 +458,17 @@ pub mod agent {
             PasteRaw,
         ]
     );
+
+    /// Opens a new agent thread with the provided branch diff for review.
+    #[derive(Clone, PartialEq, Deserialize, JsonSchema, Action)]
+    #[action(namespace = agent)]
+    #[serde(deny_unknown_fields)]
+    pub struct ReviewBranchDiff {
+        /// The full text of the diff to review.
+        pub diff_text: SharedString,
+        /// The base ref that the diff was computed against (e.g. "main").
+        pub base_ref: SharedString,
+    }
 }
 
 pub mod assistant {
@@ -626,15 +639,19 @@ actions!(
     ]
 );
 
-actions!(
-    debug_panel,
-    [
-        /// Toggles the debug panel.
-        Toggle,
-        /// Toggles focus on the debug panel.
-        ToggleFocus
-    ]
-);
+pub mod debug_panel {
+    use gpui::actions;
+    actions!(
+        debug_panel,
+        [
+            /// Toggles the debug panel.
+            Toggle,
+            /// Toggles focus on the debug panel.
+            ToggleFocus
+        ]
+    );
+}
+
 actions!(
     debugger,
     [
@@ -718,4 +735,18 @@ pub mod preview {
             ]
         );
     }
+}
+
+pub mod notebook {
+    use gpui::actions;
+
+    actions!(
+        notebook,
+        [
+            /// Move to down in cells
+            NotebookMoveDown,
+            /// Move to up in cells
+            NotebookMoveUp,
+        ]
+    );
 }

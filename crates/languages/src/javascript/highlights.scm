@@ -120,14 +120,14 @@
 
 ; Special identifiers
 ;
+(type_identifier) @type
+(predefined_type) @type.builtin
+
 (class_declaration
   (type_identifier) @type.class)
 
 (extends_clause
   value: (identifier) @type.class)
-
-(type_identifier) @type
-(predefined_type) @type.builtin
 
 ([
   (identifier)
@@ -360,3 +360,4 @@
 (jsx_self_closing_element (["<" "/>"]) @punctuation.bracket.jsx)
 (jsx_attribute "=" @punctuation.delimiter.jsx)
 (jsx_text) @text.jsx
+(html_character_reference) @string.special

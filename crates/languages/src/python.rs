@@ -112,6 +112,8 @@ impl FromStr for TestRunner {
 /// Decided to ignore Pyright's sortText() completely and to manually sort all entries
 fn process_pyright_completions(items: &mut [lsp::CompletionItem]) {
     for item in items {
+        let is_named_argument = item.label.ends_with('=');
+
         let is_dunder = item.label.starts_with("__") && item.label.ends_with("__");
 
         let visibility_priority = if is_dunder {
@@ -124,23 +126,35 @@ fn process_pyright_completions(items: &mut [lsp::CompletionItem]) {
             '0' // public
         };
 
+        let is_external = item
+            .detail
+            .as_ref()
+            .is_some_and(|detail| detail == "Auto-import");
+
+        let source_priority = if is_external { '1' } else { '0' };
+
         // Kind priority within same visibility level
         let kind_priority = match item.kind {
-            Some(lsp::CompletionItemKind::ENUM_MEMBER) => '0',
-            Some(lsp::CompletionItemKind::FIELD) => '1',
-            Some(lsp::CompletionItemKind::PROPERTY) => '2',
-            Some(lsp::CompletionItemKind::VARIABLE) => '3',
-            Some(lsp::CompletionItemKind::CONSTANT) => '4',
-            Some(lsp::CompletionItemKind::METHOD) => '5',
-            Some(lsp::CompletionItemKind::FUNCTION) => '5',
-            Some(lsp::CompletionItemKind::CLASS) => '6',
-            Some(lsp::CompletionItemKind::MODULE) => '7',
-            _ => '8',
+            Some(lsp::CompletionItemKind::KEYWORD) => '0',
+            Some(lsp::CompletionItemKind::ENUM_MEMBER) => '1',
+            Some(lsp::CompletionItemKind::FIELD) => '2',
+            Some(lsp::CompletionItemKind::PROPERTY) => '3',
+            Some(lsp::CompletionItemKind::VARIABLE) => '4',
+            Some(lsp::CompletionItemKind::CONSTANT) => '5',
+            Some(lsp::CompletionItemKind::METHOD) => '6',
+            Some(lsp::CompletionItemKind::FUNCTION) => '6',
+            Some(lsp::CompletionItemKind::CLASS) => '7',
+            Some(lsp::CompletionItemKind::MODULE) => '8',
+
+            _ => 'z',
         };
 
+        // Named arguments get higher priority
+        let argument_priority = if is_named_argument { '0' } else { '1' };
+
         item.sort_text = Some(format!(
-            "{}{}{}",
-            visibility_priority, kind_priority, item.label
+            "{}{}{}{}{}",
+            argument_priority, source_priority, visibility_priority, kind_priority, item.label
         ));
     }
 }
@@ -1689,7 +1703,14 @@ impl LspAdapter for PyLspAdapter {
         Self::SERVER_NAME
     }
 
-    async fn process_completions(&self, _items: &mut [lsp::CompletionItem]) {}
+    async fn process_completions(&self, items: &mut [lsp::CompletionItem]) {
+        for item in items {
+            let is_named_argument = item.label.ends_with('=');
+            let priority = if is_named_argument { '0' } else { '1' };
+            let sort_text = item.sort_text.take().unwrap_or_else(|| item.label.clone());
+            item.sort_text = Some(format!("{}{}", priority, sort_text));
+        }
+    }
 
     async fn label_for_completion(
         &self,

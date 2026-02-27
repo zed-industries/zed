@@ -739,6 +739,10 @@ pub struct ProjectPanelSettingsContent {
     ///
     /// Default: directories_first
     pub sort_mode: Option<ProjectPanelSortMode>,
+    /// Whether to show error and warning count badges next to file names in the project panel.
+    ///
+    /// Default: true
+    pub diagnostic_badges: Option<bool>,
 }
 
 #[derive(

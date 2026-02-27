@@ -5,7 +5,7 @@ use git::blame::BlameEntry;
 use git::repository::CommitSummary;
 use git::{GitRemote, commit::ParsedCommitMessage};
 use gpui::{
-    App, Asset, Element, Entity, MouseButton, ParentElement, Render, ScrollHandle,
+    AbsoluteLength, App, Asset, Element, Entity, MouseButton, ParentElement, Render, ScrollHandle,
     StatefulInteractiveElement, WeakEntity, prelude::*,
 };
 use markdown::{Markdown, MarkdownElement};
@@ -30,7 +30,7 @@ pub struct CommitAvatar<'a> {
     sha: &'a SharedString,
     author_email: Option<SharedString>,
     remote: Option<&'a GitRemote>,
-    size: Option<IconSize>,
+    size: Option<AbsoluteLength>,
 }
 
 impl<'a> CommitAvatar<'a> {
@@ -59,21 +59,38 @@ impl<'a> CommitAvatar<'a> {
         }
     }
 
-    pub fn size(mut self, size: IconSize) -> Self {
-        self.size = Some(size);
+    pub fn size(mut self, size: impl Into<AbsoluteLength>) -> Self {
+        self.size = Some(size.into());
         self
     }
 
     pub fn render(&'a self, window: &mut Window, cx: &mut App) -> AnyElement {
+        let border_color = cx.theme().colors().border_variant;
+        let border_width = px(1.);
+
         match self.avatar(window, cx) {
-            // Loading or no avatar found
-            None => Icon::new(IconName::Person)
-                .color(Color::Muted)
-                .when_some(self.size, |this, size| this.size(size))
-                .into_any_element(),
-            // Found
+            None => {
+                let container_size = self
+                    .size
+                    .map(|s| s.to_pixels(window.rem_size()) + border_width * 2.);
+
+                h_flex()
+                    .when_some(container_size, |this, size| this.size(size))
+                    .justify_center()
+                    .rounded_full()
+                    .border(border_width)
+                    .border_color(border_color)
+                    .bg(cx.theme().colors().element_disabled)
+                    .child(
+                        Icon::new(IconName::Person)
+                            .color(Color::Muted)
+                            .size(IconSize::Small),
+                    )
+                    .into_any_element()
+            }
             Some(avatar) => avatar
-                .when_some(self.size, |this, size| this.size(size.rems()))
+                .when_some(self.size, |this, size| this.size(size))
+                .border_color(border_color)
                 .into_any_element(),
         }
     }

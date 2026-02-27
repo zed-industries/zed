@@ -1,0 +1,12 @@
+[package]
+name = "gpui_util"
+version = "0.1.0"
+publish.workspace = true
+edition.workspace = true
+
+[dependencies]
+log.workspace = true
+anyhow.workspace = true
+
+[lints]
+workspace = true

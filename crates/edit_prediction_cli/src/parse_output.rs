@@ -133,20 +133,18 @@ fn parse_zeta2_output(
     }
 
     let old_text_trimmed = old_text.trim_end_matches('\n');
-    let (editable_region_offset, _) = prompt_inputs
-        .content
+    let excerpt = prompt_inputs.cursor_excerpt.as_ref();
+    let (editable_region_offset, _) = excerpt
         .match_indices(old_text_trimmed)
-        .min_by_key(|(index, _)| index.abs_diff(prompt_inputs.cursor_offset))
+        .min_by_key(|(index, _)| index.abs_diff(prompt_inputs.cursor_offset_in_excerpt))
         .with_context(|| {
             format!(
                 "could not find editable region in content.\nLooking for:\n{}\n\nIn content:\n{}",
-                old_text_trimmed, &prompt_inputs.content
+                old_text_trimmed, excerpt
             )
         })?;
 
-    let editable_region_start_line = prompt_inputs.content[..editable_region_offset]
-        .matches('\n')
-        .count();
+    let editable_region_start_line = excerpt[..editable_region_offset].matches('\n').count();
 
     // Use full context so cursor offset (relative to editable region start) aligns with diff content
     let editable_region_lines = old_text_normalized.lines().count() as u32;
@@ -170,7 +168,7 @@ fn parse_zeta2_output(
             &example.spec.cursor_path,
             editable_region_cursor_offset,
             &new_text,
-            &prompt_inputs.content,
+            excerpt,
             editable_region_offset,
             editable_region_start_line,
         )
