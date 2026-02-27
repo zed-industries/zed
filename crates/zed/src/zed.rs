@@ -5809,7 +5809,15 @@ mod tests {
         //   Window B: workspace for dir3
         let (window_a, _) = cx
             .update(|cx| {
-                Workspace::new_local(vec![dir1.into()], app_state.clone(), None, None, None, cx)
+                Workspace::new_local(
+                    vec![dir1.into()],
+                    app_state.clone(),
+                    None,
+                    None,
+                    None,
+                    true,
+                    cx,
+                )
             })
             .await
             .expect("failed to open first workspace");
@@ -5825,7 +5833,15 @@ mod tests {
 
         let (window_b, _) = cx
             .update(|cx| {
-                Workspace::new_local(vec![dir3.into()], app_state.clone(), None, None, None, cx)
+                Workspace::new_local(
+                    vec![dir3.into()],
+                    app_state.clone(),
+                    None,
+                    None,
+                    None,
+                    true,
+                    cx,
+                )
             })
             .await
             .expect("failed to open third workspace");
