@@ -27,7 +27,6 @@ use collections::{FxHashMap, FxHashSet, HashMap, VecDeque};
 pub use context::*;
 pub use entity_map::*;
 use gpui_util::{ResultExt, debug_panic};
-#[cfg(not(target_family = "wasm"))]
 use http_client::{HttpClient, Url};
 use smallvec::SmallVec;
 #[cfg(any(test, feature = "test-support"))]
@@ -139,7 +138,6 @@ impl Application {
         Self(App::new_app(
             platform,
             Arc::new(()),
-            #[cfg(not(target_family = "wasm"))]
             Arc::new(NullHttpClient),
         ))
     }
@@ -155,7 +153,6 @@ impl Application {
     }
 
     /// Sets the HTTP client for the application.
-    #[cfg(not(target_family = "wasm"))]
     pub fn with_http_client(self, http_client: Arc<dyn HttpClient>) -> Self {
         let mut context_lock = self.0.borrow_mut();
         context_lock.http_client = http_client;
@@ -585,7 +582,6 @@ pub struct App {
     pub(crate) loading_assets: FxHashMap<(TypeId, u64), Box<dyn Any>>,
     asset_source: Arc<dyn AssetSource>,
     pub(crate) svg_renderer: SvgRenderer,
-    #[cfg(not(target_family = "wasm"))]
     http_client: Arc<dyn HttpClient>,
     pub(crate) globals_by_type: FxHashMap<TypeId, Box<dyn Any>>,
     pub(crate) entities: EntityMap,
@@ -642,7 +638,7 @@ impl App {
     pub(crate) fn new_app(
         platform: Rc<dyn Platform>,
         asset_source: Arc<dyn AssetSource>,
-        #[cfg(not(target_family = "wasm"))] http_client: Arc<dyn HttpClient>,
+        http_client: Arc<dyn HttpClient>,
     ) -> Rc<AppCell> {
         let background_executor = platform.background_executor();
         let foreground_executor = platform.foreground_executor();
@@ -672,7 +668,6 @@ impl App {
                 svg_renderer: SvgRenderer::new(asset_source.clone()),
                 loading_assets: Default::default(),
                 asset_source,
-                #[cfg(not(target_family = "wasm"))]
                 http_client,
                 globals_by_type: FxHashMap::default(),
                 entities,
@@ -1281,13 +1276,11 @@ impl App {
     }
 
     /// Returns the HTTP client for the application.
-    #[cfg(not(target_family = "wasm"))]
     pub fn http_client(&self) -> Arc<dyn HttpClient> {
         self.http_client.clone()
     }
 
     /// Sets the HTTP client for the application.
-    #[cfg(not(target_family = "wasm"))]
     pub fn set_http_client(&mut self, new_client: Arc<dyn HttpClient>) {
         self.http_client = new_client;
     }
@@ -2512,10 +2505,8 @@ pub struct KeystrokeEvent {
     pub context_stack: Vec<KeyContext>,
 }
 
-#[cfg(not(target_family = "wasm"))]
 struct NullHttpClient;
 
-#[cfg(not(target_family = "wasm"))]
 impl HttpClient for NullHttpClient {
     fn send(
         &self,

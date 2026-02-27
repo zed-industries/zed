@@ -594,7 +594,6 @@ impl Asset for ImageAssetLoader {
         source: Self::Source,
         cx: &mut App,
     ) -> impl Future<Output = Self::Output> + Send + 'static {
-        #[cfg(not(target_family = "wasm"))]
         let client = cx.http_client();
         // TODO: Can we make SVGs always rescale?
         // let scale_factor = cx.scale_factor();
@@ -603,7 +602,6 @@ impl Asset for ImageAssetLoader {
         async move {
             let bytes = match source.clone() {
                 Resource::Path(uri) => fs::read(uri.as_ref())?,
-                #[cfg(not(target_family = "wasm"))]
                 Resource::Uri(uri) => {
                     use anyhow::Context as _;
                     use futures::AsyncReadExt as _;
@@ -625,12 +623,6 @@ impl Asset for ImageAssetLoader {
                         });
                     }
                     body
-                }
-                #[cfg(target_family = "wasm")]
-                Resource::Uri(_) => {
-                    return Err(ImageCacheError::Other(Arc::new(anyhow::anyhow!(
-                        "Uri resources are not supported on wasm"
-                    ))));
                 }
                 Resource::Embedded(path) => {
                     let data = asset_source.load(&path).ok().flatten();
@@ -722,7 +714,6 @@ pub enum ImageCacheError {
     #[error("IO error: {0}")]
     Io(Arc<std::io::Error>),
     /// An error that occurred while processing an image.
-    #[cfg(not(target_family = "wasm"))]
     #[error("unexpected http status for {uri}: {status}, body: {body}")]
     BadStatus {
         /// The URI of the image.
