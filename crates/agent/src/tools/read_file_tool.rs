@@ -1,5 +1,6 @@
 use action_log::ActionLog;
 use agent_client_protocol::{self as acp, ToolCallUpdateFields};
+use agent_settings::AgentSettings;
 use anyhow::{Context as _, Result, anyhow};
 use futures::FutureExt as _;
 use gpui::{App, Entity, SharedString, Task, WeakEntity};
@@ -298,9 +299,12 @@ impl AgentTool for ReadFileTool {
                 Ok(result.into())
             } else {
                 // No line ranges specified, so check file size to see if it's too big.
+                let auto_outline_threshold =
+                    cx.update(|cx| AgentSettings::get_global(cx).auto_outline_threshold);
                 let buffer_content = outline::get_buffer_content_or_outline(
                     buffer.clone(),
                     Some(&abs_path.to_string_lossy()),
+                    auto_outline_threshold,
                     cx,
                 )
                 .await.map_err(tool_content_err)?;

@@ -18,16 +18,17 @@ pub struct BufferContent {
 }
 
 /// Returns either the full content of a buffer or its outline, depending on size.
-/// For files larger than AUTO_OUTLINE_SIZE, returns an outline with a header.
+/// For files larger than `auto_outline_threshold`, returns an outline with a header.
 /// For smaller files, returns the full content.
 pub async fn get_buffer_content_or_outline(
     buffer: Entity<Buffer>,
     path: Option<&str>,
+    auto_outline_threshold: usize,
     cx: &AsyncApp,
 ) -> Result<BufferContent> {
     let file_size = buffer.read_with(cx, |buffer, _| buffer.text().len());
 
-    if file_size > AUTO_OUTLINE_SIZE {
+    if file_size > auto_outline_threshold {
         // For large files, use outline instead of full content
         // Wait until the buffer has been fully parsed, so we can read its outline
         buffer
@@ -186,7 +187,9 @@ mod tests {
         buffer.update(cx, |buffer, cx| buffer.set_text(content, cx));
 
         let result = cx
-            .spawn(|cx| async move { get_buffer_content_or_outline(buffer, None, &cx).await })
+            .spawn(|cx| async move {
+                get_buffer_content_or_outline(buffer, None, AUTO_OUTLINE_SIZE, &cx).await
+            })
             .await
             .unwrap();
 
