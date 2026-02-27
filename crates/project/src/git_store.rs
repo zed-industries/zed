@@ -1424,7 +1424,7 @@ impl GitStore {
         event: &RepositoryEvent,
         cx: &mut Context<Self>,
     ) {
-        dbg!(&event);
+        &event;
         let id = repo.read(cx).id;
         let repo_snapshot = repo.read(cx).snapshot.clone();
         for (buffer_id, diff) in self.diffs.iter() {
@@ -1437,7 +1437,7 @@ impl GitStore {
                         let conflict_status_changed =
                             conflict_set.update(cx, |conflict_set, cx| {
                                 let has_conflict = repo_snapshot.has_conflict(&repo_path);
-                                dbg!(has_conflict);
+                                has_conflict;
                                 conflict_set.set_has_conflict(has_conflict, cx)
                             })?;
                         if conflict_status_changed {
@@ -3707,16 +3707,16 @@ impl MergeDetails {
             .into_iter()
             .map(|opt| opt.map(SharedString::from))
             .collect::<Vec<_>>();
-        dbg!(&heads);
+        &heads;
         let merge_heads_changed = heads != prev_snapshot.merge.heads;
-        dbg!(merge_heads_changed);
+        merge_heads_changed;
         let current_conflicted_paths = TreeSet::from_ordered_entries(
             status
                 .iter()
                 .filter(|entry| entry.status.is_conflicted())
                 .map(|entry| entry.repo_path.clone()),
         );
-        dbg!(&current_conflicted_paths);
+        &current_conflicted_paths;
         let conflicted_paths = if merge_heads_changed {
             // It can happen that we run a scan while a lengthy merge is in progress
             // that will eventually result in conflicts, but before those conflicts
@@ -3727,7 +3727,7 @@ impl MergeDetails {
                 && !prev_snapshot.merge.heads.iter().any(Option::is_some)
                 && current_conflicted_paths.is_empty()
             {
-                dbg!("not updating merge heads because no conflicts found");
+                "not updating merge heads because no conflicts found";
                 log::debug!("not updating merge heads because no conflicts found");
                 return Ok((
                     MergeDetails {
@@ -3740,7 +3740,7 @@ impl MergeDetails {
 
             current_conflicted_paths
         } else {
-            dbg!("using previous conflicted paths");
+            "using previous conflicted paths";
             prev_snapshot.merge.conflicted_paths.clone()
         };
         let details = MergeDetails {
@@ -6160,7 +6160,7 @@ impl Repository {
                     .await?;
                 this.update(&mut cx, |this, cx| {
                     this.snapshot = snapshot.clone();
-                    dbg!(&snapshot.merge.conflicted_paths);
+                    &snapshot.merge.conflicted_paths;
                     this.clear_pending_ops(cx);
                     for event in events {
                         cx.emit(event);

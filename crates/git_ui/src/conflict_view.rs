@@ -535,7 +535,7 @@ pub(crate) fn register_conflict_notification(
     let git_store = workspace.project().read(cx).git_store().clone();
 
     cx.subscribe(&git_store, |workspace, _git_store, event, cx| {
-        dbg!(&event);
+        &event;
         let conflicts_changed = matches!(
             event,
             GitStoreEvent::ConflictsUpdated
@@ -544,14 +544,14 @@ pub(crate) fn register_conflict_notification(
         if !AgentSettings::get_global(cx).enabled || !conflicts_changed {
             return;
         }
-        dbg!("conflicts updated");
+        "conflicts updated";
 
         let paths = collect_conflicted_file_paths(workspace, cx);
         let notification_id = merge_conflict_notification_id();
 
-        dbg!(&paths);
+        &paths;
         if paths.is_empty() {
-            dbg!("dismissing");
+            "dismissing";
             workspace.dismiss_notification(&notification_id, cx);
         } else {
             let file_count = paths.len();
