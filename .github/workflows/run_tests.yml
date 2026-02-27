@@ -139,6 +139,21 @@ jobs:
       uses: crate-ci/typos@2d0ce569feab1f8752f1dde43cc2f2aa53236e06
       with:
         config: ./typos.toml
+    - name: run_tests::check_style::fetch_ts_query_ls
+      uses: dsaltares/fetch-gh-release-asset@aa37ae5c44d3c9820bc12fe675e8670ecd93bd1c
+      with:
+        repo: ribru17/ts_query_ls
+        version: tags/v3.15.1
+        file: ts_query_ls-x86_64-unknown-linux-gnu.tar.gz
+    - name: run_tests::check_style::run_ts_query_ls
+      run: |-
+        tar -xf ts_query_ls-x86_64-unknown-linux-gnu.tar.gz
+        ./ts_query_ls format --check . || {
+            echo "Found unformatted queries, please format them with ts_query_ls."
+            echo "For easy use, install the Tree-sitter query extension:"
+            echo "zed://extension/tree-sitter-query"
+            false
+        }
     timeout-minutes: 60
   clippy_windows:
     needs:
