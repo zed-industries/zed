@@ -182,7 +182,7 @@ impl Conversation {
             | AcpThreadEvent::EntriesRemoved(_)
             | AcpThreadEvent::Retry(_)
             | AcpThreadEvent::SubagentSpawned(_)
-            | AcpThreadEvent::Stopped
+            | AcpThreadEvent::Stopped(_)
             | AcpThreadEvent::Error
             | AcpThreadEvent::LoadError(_)
             | AcpThreadEvent::PromptCapabilitiesUpdated
@@ -1190,13 +1190,18 @@ impl ConnectionView {
                     });
                 }
             }
-            AcpThreadEvent::Stopped => {
+            AcpThreadEvent::Stopped(stop_reason) => {
                 if let Some(active) = self.thread_view(&thread_id) {
                     active.update(cx, |active, _cx| {
                         active.thread_retry_status.take();
                     });
                 }
                 if is_subagent {
+                    if *stop_reason == acp::StopReason::EndTurn {
+                        thread.update(cx, |thread, cx| {
+                            thread.mark_as_subagent_output(cx);
+                        });
+                    }
                     return;
                 }
 

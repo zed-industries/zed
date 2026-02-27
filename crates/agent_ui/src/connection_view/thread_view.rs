@@ -3711,6 +3711,7 @@ impl ThreadView {
             AgentThreadEntry::AssistantMessage(AssistantMessage {
                 chunks,
                 indented: _,
+                is_subagent_output: _,
             }) => {
                 let mut is_blank = true;
                 let is_last = entry_ix + 1 == total_entries;
@@ -3781,6 +3782,42 @@ impl ThreadView {
                     cx,
                 )
                 .into_any(),
+        };
+
+        let is_subagent_output = self.is_subagent()
+            && matches!(entry, AgentThreadEntry::AssistantMessage(msg) if msg.is_subagent_output);
+
+        let primary = if is_subagent_output {
+            v_flex()
+                .w_full()
+                .child(
+                    h_flex()
+                        .id("subagent_output")
+                        .px_5()
+                        .py_1()
+                        .gap_2()
+                        .child(Divider::horizontal())
+                        .child(
+                            h_flex()
+                                .gap_1()
+                                .child(
+                                    Icon::new(IconName::ForwardArrowUp)
+                                        .color(Color::Muted)
+                                        .size(IconSize::Small),
+                                )
+                                .child(
+                                    Label::new("Subagent Output")
+                                        .size(LabelSize::Custom(self.tool_name_font_size()))
+                                        .color(Color::Muted),
+                                ),
+                        )
+                        .child(Divider::horizontal())
+                        .tooltip(Tooltip::text("Everything below this line was sent as output from this subagent to the main agent.")),
+                )
+                .child(primary)
+                .into_any_element()
+        } else {
+            primary
         };
 
         let primary = if is_indented {
@@ -6397,12 +6434,9 @@ impl ThreadView {
                     let session_id = thread.read(cx).session_id().clone();
                     this.when(is_expanded, |this| {
                         this.child(self.render_subagent_expanded_content(
-                            active_session_id,
-                            entry_ix,
                             thread_view,
                             is_running,
                             tool_call,
-                            focus_handle,
                             window,
                             cx,
                         ))
@@ -6442,12 +6476,9 @@ impl ThreadView {
 
     fn render_subagent_expanded_content(
         &self,
-        active_session_id: &acp::SessionId,
-        entry_ix: usize,
         thread_view: &Entity<ThreadView>,
         is_running: bool,
         tool_call: &ToolCall,
-        focus_handle: &FocusHandle,
         window: &Window,
         cx: &Context<Self>,
     ) -> impl IntoElement {
@@ -6456,103 +6487,139 @@ impl ThreadView {
         let subagent_view = thread_view.read(cx);
         let session_id = subagent_view.thread.read(cx).session_id().clone();
 
-        let base_container = || {
-            div()
-                .id(format!("subagent-content-{}", session_id))
-                .relative()
-                .w_full()
-                .h_56()
-                .border_t_1()
-                .border_color(self.tool_card_border_color(cx))
-                .overflow_hidden()
-        };
+        let is_canceled_or_failed = matches!(
+            tool_call.status,
+            ToolCallStatus::Canceled | ToolCallStatus::Failed | ToolCallStatus::Rejected
+        );
 
         let editor_bg = cx.theme().colors().editor_background;
-        let overlay = || {
+        let overlay = {
             div()
                 .absolute()
                 .inset_0()
                 .size_full()
                 .bg(linear_gradient(
                     180.,
-                    linear_color_stop(editor_bg, 0.),
+                    linear_color_stop(editor_bg.opacity(0.5), 0.),
                     linear_color_stop(editor_bg.opacity(0.), 0.1),
                 ))
                 .block_mouse_except_scroll()
         };
 
-        let show_thread_entries = is_running || tool_call.content.is_empty();
+        let entries = subagent_view.thread.read(cx).entries();
+        let total_entries = entries.len();
+        let start_ix = total_entries.saturating_sub(MAX_PREVIEW_ENTRIES);
 
-        if show_thread_entries {
-            let scroll_handle = self
-                .subagent_scroll_handles
-                .borrow_mut()
-                .entry(session_id.clone())
-                .or_default()
-                .clone();
-            if is_running {
-                scroll_handle.scroll_to_bottom();
-            }
-
-            let entries = subagent_view.thread.read(cx).entries();
-            let total_entries = entries.len();
-            let start_ix = total_entries.saturating_sub(MAX_PREVIEW_ENTRIES);
-
-            let rendered_entries: Vec<AnyElement> = entries[start_ix..]
-                .iter()
-                .enumerate()
-                .map(|(i, entry)| {
-                    let actual_ix = start_ix + i;
-                    subagent_view.render_entry(actual_ix, total_entries + 1, entry, window, cx)
-                })
-                .collect();
-
-            base_container()
-                .child(
-                    div()
-                        .id(format!("subagent-entries-{}", session_id))
-                        .size_full()
-                        .track_scroll(&scroll_handle)
-                        .pb_1()
-                        .children(rendered_entries),
-                )
-                .child(overlay())
-                .into_any_element()
-        } else {
-            base_container()
-                .child(
-                    v_flex()
-                        .id(format!("subagent-done-content-{}", session_id))
-                        .size_full()
-                        .justify_end()
-                        .children(tool_call.content.iter().enumerate().map(
-                            |(content_ix, content)| {
-                                div().p_2().child(self.render_tool_call_content(
-                                    active_session_id,
-                                    entry_ix,
-                                    content,
-                                    content_ix,
-                                    tool_call,
-                                    true,
-                                    false,
-                                    matches!(
-                                        tool_call.status,
-                                        ToolCallStatus::Failed
-                                            | ToolCallStatus::Rejected
-                                            | ToolCallStatus::Canceled
-                                    ),
-                                    focus_handle,
-                                    window,
-                                    cx,
-                                ))
-                            },
-                        )),
-                )
-                .child(overlay())
-                .into_any_element()
+        let scroll_handle = self
+            .subagent_scroll_handles
+            .borrow_mut()
+            .entry(session_id.clone())
+            .or_default()
+            .clone();
+        if is_running {
+            scroll_handle.scroll_to_bottom();
         }
+
+        let rendered_entries: Vec<AnyElement> = entries[start_ix..]
+            .iter()
+            .enumerate()
+            .map(|(i, entry)| {
+                let actual_ix = start_ix + i;
+                subagent_view.render_entry(actual_ix, total_entries + 1, entry, window, cx)
+            })
+            .collect();
+
+        let error_message =
+            self.subagent_error_message(subagent_view, &tool_call.status, tool_call, cx);
+
+        let parent_thread = self.thread.read(cx);
+        let mut started_subagent_count = 0usize;
+        let mut turn_has_our_call = false;
+        for entry in parent_thread.entries().iter() {
+            match entry {
+                AgentThreadEntry::UserMessage(_) => {
+                    if turn_has_our_call {
+                        break;
+                    }
+                    started_subagent_count = 0;
+                    turn_has_our_call = false;
+                }
+                AgentThreadEntry::ToolCall(tc)
+                    if tc.is_subagent() && !matches!(tc.status, ToolCallStatus::Pending) =>
+                {
+                    started_subagent_count += 1;
+                    if tc.id == tool_call.id {
+                        turn_has_our_call = true;
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        v_flex()
+            .relative()
+            .w_full()
+            .border_t_1()
+            .when(is_canceled_or_failed, |this| this.border_dashed())
+            .border_color(self.tool_card_border_color(cx))
+            .overflow_hidden()
+            .child(
+                div()
+                    .id(format!("subagent-entries-{}", session_id))
+                    .flex_1()
+                    .min_h_0()
+                    .pb_1()
+                    .overflow_hidden()
+                    .track_scroll(&scroll_handle)
+                    .children(rendered_entries),
+            )
+            .when_some(error_message, |this, message| {
+                this.child(
+                    Callout::new()
+                        .severity(Severity::Error)
+                        .icon(IconName::XCircle)
+                        .title(message),
+                )
+            })
+            .when(started_subagent_count > 1, |this| {
+                this.h_56().child(overlay)
+            })
+            .into_any_element()
     }
 
+    fn subagent_error_message(
+        &self,
+        subagent_view: &ThreadView,
+        status: &ToolCallStatus,
+        tool_call: &ToolCall,
+        cx: &App,
+    ) -> Option<SharedString> {
+        if matches!(status, ToolCallStatus::Canceled | ToolCallStatus::Rejected) {
+            return None;
+        }
+
+        subagent_view
+            .thread_error
+            .as_ref()
+            .and_then(|e| match e {
+                ThreadError::Refusal => Some("The agent refused to respond to this prompt.".into()),
+                ThreadError::Other { message, .. } => Some(message.clone()),
+                ThreadError::PaymentRequired | ThreadError::AuthenticationRequired(_) => None,
+            })
+            .or_else(|| {
+                tool_call.content.iter().find_map(|content| {
+                    if let ToolCallContent::ContentBlock(block) = content {
+                        if let acp_thread::ContentBlock::Markdown { markdown } = block {
+                            let source = markdown.read(cx).source().to_string();
+                            if !source.is_empty() {
+                                return Some(SharedString::from(source));
+                            }
+                        }
+                    }
+                    None
+                })
+            })
+    }
     fn render_rules_item(&self, cx: &Context<Self>) -> Option<AnyElement> {
         let project_context = self
             .as_native_thread(cx)?
