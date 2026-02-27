@@ -318,7 +318,6 @@ pub fn request_prediction_with_zeta(
         }
     });
 
-    let store = cx.entity().clone();
     cx.spawn(async move |this, cx| {
         let Some((id, prediction, model_version)) =
             EditPredictionStore::handle_api_response(&this, request_task.await, cx)?
@@ -343,8 +342,8 @@ pub fn request_prediction_with_zeta(
         };
 
         if can_collect_data {
-            store.update(cx, |store, cx| {
-                store.enqueue_settled_prediction(
+            this.update(cx, |this, cx| {
+                this.enqueue_settled_prediction(
                     id.clone(),
                     &project,
                     &edited_buffer,
@@ -352,7 +351,8 @@ pub fn request_prediction_with_zeta(
                     editable_range_in_buffer,
                     cx,
                 );
-            });
+            })
+            .ok();
         }
 
         Ok(Some(
