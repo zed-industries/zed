@@ -120,6 +120,7 @@
 ; Special identifiers
 ;
 (type_identifier) @type
+
 (predefined_type) @type.builtin
 
 (class_declaration
