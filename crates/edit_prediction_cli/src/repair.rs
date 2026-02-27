@@ -79,7 +79,7 @@ pub struct RepairArgs {
 
 fn model_for_backend(backend: BatchProvider) -> &'static str {
     match backend {
-        BatchProvider::Anthropic => "claude-sonnet-4-5",
+        BatchProvider::Anthropic => "claude-sonnet-4-6",
         BatchProvider::Openai => "gpt-5.2",
     }
 }

@@ -639,15 +639,19 @@ actions!(
     ]
 );
 
-actions!(
-    debug_panel,
-    [
-        /// Toggles the debug panel.
-        Toggle,
-        /// Toggles focus on the debug panel.
-        ToggleFocus
-    ]
-);
+pub mod debug_panel {
+    use gpui::actions;
+    actions!(
+        debug_panel,
+        [
+            /// Toggles the debug panel.
+            Toggle,
+            /// Toggles focus on the debug panel.
+            ToggleFocus
+        ]
+    );
+}
+
 actions!(
     debugger,
     [
@@ -731,4 +735,18 @@ pub mod preview {
             ]
         );
     }
+}
+
+pub mod notebook {
+    use gpui::actions;
+
+    actions!(
+        notebook,
+        [
+            /// Move to down in cells
+            NotebookMoveDown,
+            /// Move to up in cells
+            NotebookMoveUp,
+        ]
+    );
 }

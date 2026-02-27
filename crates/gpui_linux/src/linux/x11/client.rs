@@ -49,10 +49,9 @@ use super::{
 };
 
 use crate::linux::{
-    DEFAULT_CURSOR_ICON_NAME, LinuxClient, ResultExt as _, capslock_from_xkb,
-    cursor_style_to_icon_names, get_xkb_compose_state, is_within_click_distance,
-    keystroke_from_xkb, keystroke_underlying_dead_key, log_cursor_icon_warning, modifiers_from_xkb,
-    open_uri_internal,
+    DEFAULT_CURSOR_ICON_NAME, LinuxClient, capslock_from_xkb, cursor_style_to_icon_names,
+    get_xkb_compose_state, is_within_click_distance, keystroke_from_xkb,
+    keystroke_underlying_dead_key, log_cursor_icon_warning, modifiers_from_xkb, open_uri_internal,
     platform::{DOUBLE_CLICK_INTERVAL, SCROLL_LINES},
     reveal_path_internal,
     xdg_desktop_portal::{Event as XDPEvent, XDPEventSource},
@@ -178,7 +177,7 @@ pub struct X11ClientState {
     pub(crate) last_location: Point<Pixels>,
     pub(crate) current_count: usize,
 
-    pub(crate) gpu_context: WgpuContext,
+    pub(crate) gpu_context: Option<WgpuContext>,
 
     pub(crate) scale_factor: f32,
 
@@ -421,8 +420,6 @@ impl X11Client {
             .to_string();
         let keyboard_layout = LinuxKeyboardLayout::new(layout_name.into());
 
-        let gpu_context = WgpuContext::new().notify_err("Unable to init GPU context");
-
         let resource_database = x11rb::resource_manager::new_from_default(&xcb_connection)
             .context("Failed to create resource database")?;
         let scale_factor = get_scale_factor(&xcb_connection, &resource_database, x_root_index);
@@ -492,7 +489,7 @@ impl X11Client {
             last_mouse_button: None,
             last_location: Point::new(px(0.0), px(0.0)),
             current_count: 0,
-            gpu_context,
+            gpu_context: None,
             scale_factor,
 
             xkb_context,
@@ -1511,19 +1508,25 @@ impl LinuxClient for X11Client {
             .generate_id()
             .context("X11: Failed to generate window ID")?;
 
+        let xcb_connection = state.xcb_connection.clone();
+        let client_side_decorations_supported = state.client_side_decorations_supported;
+        let x_root_index = state.x_root_index;
+        let atoms = state.atoms;
+        let scale_factor = state.scale_factor;
+        let appearance = state.common.appearance;
         let window = X11Window::new(
             handle,
             X11ClientStatePtr(Rc::downgrade(&self.0)),
             state.common.foreground_executor.clone(),
-            &state.gpu_context,
+            &mut state.gpu_context,
             params,
-            &state.xcb_connection,
-            state.client_side_decorations_supported,
-            state.x_root_index,
+            &xcb_connection,
+            client_side_decorations_supported,
+            x_root_index,
             x_window,
-            &state.atoms,
-            state.scale_factor,
-            state.common.appearance,
+            &atoms,
+            scale_factor,
+            appearance,
             parent_window,
         )?;
         check_reply(

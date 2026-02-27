@@ -29,7 +29,8 @@ use language_model::{
     LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelId,
     LanguageModelProviderName, LanguageModelRegistry, LanguageModelRequest,
     LanguageModelRequestMessage, LanguageModelToolResult, LanguageModelToolSchemaFormat,
-    LanguageModelToolUse, MessageContent, Role, StopReason, fake_provider::FakeLanguageModel,
+    LanguageModelToolUse, MessageContent, Role, StopReason, TokenUsage,
+    fake_provider::FakeLanguageModel,
 };
 use pretty_assertions::assert_eq;
 use project::{
@@ -166,7 +167,7 @@ impl SubagentHandle for FakeSubagentHandle {
         self.session_id.clone()
     }
 
-    fn wait_for_output(&self, cx: &AsyncApp) -> Task<Result<String>> {
+    fn send(&self, _message: String, cx: &AsyncApp) -> Task<Result<String>> {
         let task = self.wait_for_summary_task.clone();
         cx.background_spawn(async move { Ok(task.await) })
     }
@@ -202,14 +203,7 @@ impl crate::ThreadEnvironment for FakeThreadEnvironment {
         Task::ready(Ok(handle as Rc<dyn crate::TerminalHandle>))
     }
 
-    fn create_subagent(
-        &self,
-        _parent_thread: Entity<Thread>,
-        _label: String,
-        _initial_prompt: String,
-        _timeout_ms: Option<Duration>,
-        _cx: &mut App,
-    ) -> Result<Rc<dyn SubagentHandle>> {
+    fn create_subagent(&self, _label: String, _cx: &mut App) -> Result<Rc<dyn SubagentHandle>> {
         Ok(self
             .subagent_handle
             .clone()
@@ -248,14 +242,7 @@ impl crate::ThreadEnvironment for MultiTerminalEnvironment {
         Task::ready(Ok(handle as Rc<dyn crate::TerminalHandle>))
     }
 
-    fn create_subagent(
-        &self,
-        _parent_thread: Entity<Thread>,
-        _label: String,
-        _initial_prompt: String,
-        _timeout: Option<Duration>,
-        _cx: &mut App,
-    ) -> Result<Rc<dyn SubagentHandle>> {
+    fn create_subagent(&self, _label: String, _cx: &mut App) -> Result<Rc<dyn SubagentHandle>> {
         unimplemented!()
     }
 }
@@ -311,11 +298,11 @@ async fn test_terminal_tool_timeout_kills_handle(cx: &mut TestAppContext) {
 
     let task = cx.update(|cx| {
         tool.run(
-            crate::TerminalToolInput {
+            ToolInput::resolved(crate::TerminalToolInput {
                 command: "sleep 1000".to_string(),
                 cd: ".".to_string(),
                 timeout_ms: Some(5),
-            },
+            }),
             event_stream,
             cx,
         )
@@ -331,7 +318,7 @@ async fn test_terminal_tool_timeout_kills_handle(cx: &mut TestAppContext) {
         "expected tool call update to include terminal content"
     );
 
-    let mut task_future: Pin<Box<Fuse<Task<Result<String>>>>> = Box::pin(task.fuse());
+    let mut task_future: Pin<Box<Fuse<Task<Result<String, String>>>>> = Box::pin(task.fuse());
 
     let deadline = std::time::Instant::now() + Duration::from_millis(500);
     loop {
@@ -378,11 +365,11 @@ async fn test_terminal_tool_without_timeout_does_not_kill_handle(cx: &mut TestAp
 
     let _task = cx.update(|cx| {
         tool.run(
-            crate::TerminalToolInput {
+            ToolInput::resolved(crate::TerminalToolInput {
                 command: "sleep 1000".to_string(),
                 cd: ".".to_string(),
                 timeout_ms: None,
-            },
+            }),
             event_stream,
             cx,
         )
@@ -3992,11 +3979,11 @@ async fn test_terminal_tool_permission_rules(cx: &mut TestAppContext) {
 
         let task = cx.update(|cx| {
             tool.run(
-                crate::TerminalToolInput {
+                ToolInput::resolved(crate::TerminalToolInput {
                     command: "rm -rf /".to_string(),
                     cd: ".".to_string(),
                     timeout_ms: None,
-                },
+                }),
                 event_stream,
                 cx,
             )
@@ -4007,7 +3994,7 @@ async fn test_terminal_tool_permission_rules(cx: &mut TestAppContext) {
             result.is_err(),
             "expected command to be blocked by deny rule"
         );
-        let err_msg = result.unwrap_err().to_string().to_lowercase();
+        let err_msg = result.unwrap_err().to_lowercase();
         assert!(
             err_msg.contains("blocked"),
             "error should mention the command was blocked"
@@ -4044,11 +4031,11 @@ async fn test_terminal_tool_permission_rules(cx: &mut TestAppContext) {
 
         let task = cx.update(|cx| {
             tool.run(
-                crate::TerminalToolInput {
+                ToolInput::resolved(crate::TerminalToolInput {
                     command: "echo hello".to_string(),
                     cd: ".".to_string(),
                     timeout_ms: None,
-                },
+                }),
                 event_stream,
                 cx,
             )
@@ -4102,11 +4089,11 @@ async fn test_terminal_tool_permission_rules(cx: &mut TestAppContext) {
 
         let _task = cx.update(|cx| {
             tool.run(
-                crate::TerminalToolInput {
+                ToolInput::resolved(crate::TerminalToolInput {
                     command: "sudo rm file".to_string(),
                     cd: ".".to_string(),
                     timeout_ms: None,
-                },
+                }),
                 event_stream,
                 cx,
             )
@@ -4149,11 +4136,11 @@ async fn test_terminal_tool_permission_rules(cx: &mut TestAppContext) {
 
         let task = cx.update(|cx| {
             tool.run(
-                crate::TerminalToolInput {
+                ToolInput::resolved(crate::TerminalToolInput {
                     command: "echo hello".to_string(),
                     cd: ".".to_string(),
                     timeout_ms: None,
-                },
+                }),
                 event_stream,
                 cx,
             )
@@ -4165,7 +4152,7 @@ async fn test_terminal_tool_permission_rules(cx: &mut TestAppContext) {
             result.is_err(),
             "expected command to be blocked by tool-specific deny default"
         );
-        let err_msg = result.unwrap_err().to_string().to_lowercase();
+        let err_msg = result.unwrap_err().to_lowercase();
         assert!(
             err_msg.contains("disabled"),
             "error should mention the tool is disabled, got: {err_msg}"
@@ -4230,14 +4217,14 @@ async fn test_subagent_tool_call_end_to_end(cx: &mut TestAppContext) {
     let send = acp_thread.update(cx, |thread, cx| thread.send_raw("Prompt", cx));
     cx.run_until_parked();
     model.send_last_completion_stream_text_chunk("spawning subagent");
-    let subagent_tool_input = SubagentToolInput {
+    let subagent_tool_input = SpawnAgentToolInput {
         label: "label".to_string(),
-        prompt: "subagent task prompt".to_string(),
-        timeout: None,
+        message: "subagent task prompt".to_string(),
+        session_id: None,
     };
     let subagent_tool_use = LanguageModelToolUse {
         id: "subagent_1".into(),
-        name: SubagentTool::NAME.into(),
+        name: SpawnAgentTool::NAME.into(),
         raw_input: serde_json::to_string(&subagent_tool_input).unwrap(),
         input: serde_json::to_value(&subagent_tool_input).unwrap(),
         is_input_complete: true,
@@ -4293,33 +4280,26 @@ async fn test_subagent_tool_call_end_to_end(cx: &mut TestAppContext) {
 
     assert_eq!(
         acp_thread.read_with(cx, |thread, cx| thread.to_markdown(cx)),
-        format!(
-            indoc! {r#"
-                ## User
+        indoc! {r#"
+            ## User
 
-                Prompt
+            Prompt
 
-                ## Assistant
+            ## Assistant
 
-                spawning subagent
+            spawning subagent
 
-                **Tool Call: label**
-                Status: Completed
+            **Tool Call: label**
+            Status: Completed
 
-                ```json
-                {{
-                  "session_id": "{}",
-                  "output": "subagent task response\n"
-                }}
-                ```
+            subagent task response
 
-                ## Assistant
 
-                Response
+            ## Assistant
 
-            "#},
-            subagent_session_id
-        )
+            Response
+
+        "#},
     );
 }
 
@@ -4380,14 +4360,14 @@ async fn test_subagent_tool_call_cancellation_during_task_prompt(cx: &mut TestAp
     let send = acp_thread.update(cx, |thread, cx| thread.send_raw("Prompt", cx));
     cx.run_until_parked();
     model.send_last_completion_stream_text_chunk("spawning subagent");
-    let subagent_tool_input = SubagentToolInput {
+    let subagent_tool_input = SpawnAgentToolInput {
         label: "label".to_string(),
-        prompt: "subagent task prompt".to_string(),
-        timeout: None,
+        message: "subagent task prompt".to_string(),
+        session_id: None,
     };
     let subagent_tool_use = LanguageModelToolUse {
         id: "subagent_1".into(),
-        name: SubagentTool::NAME.into(),
+        name: SpawnAgentTool::NAME.into(),
         raw_input: serde_json::to_string(&subagent_tool_input).unwrap(),
         input: serde_json::to_value(&subagent_tool_input).unwrap(),
         is_input_complete: true,
@@ -4461,6 +4441,193 @@ async fn test_subagent_tool_call_cancellation_during_task_prompt(cx: &mut TestAp
 }
 
 #[gpui::test]
+async fn test_subagent_tool_resume_session(cx: &mut TestAppContext) {
+    init_test(cx);
+    cx.update(|cx| {
+        LanguageModelRegistry::test(cx);
+    });
+    cx.update(|cx| {
+        cx.update_flags(true, vec!["subagents".to_string()]);
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/",
+        json!({
+            "a": {
+                "b.md": "Lorem"
+            }
+        }),
+    )
+    .await;
+    let project = Project::test(fs.clone(), [path!("/a").as_ref()], cx).await;
+    let thread_store = cx.new(|cx| ThreadStore::new(cx));
+    let agent = NativeAgent::new(
+        project.clone(),
+        thread_store.clone(),
+        Templates::new(),
+        None,
+        fs.clone(),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+    let connection = Rc::new(NativeAgentConnection(agent.clone()));
+
+    let acp_thread = cx
+        .update(|cx| {
+            connection
+                .clone()
+                .new_session(project.clone(), Path::new(""), cx)
+        })
+        .await
+        .unwrap();
+    let session_id = acp_thread.read_with(cx, |thread, _| thread.session_id().clone());
+    let thread = agent.read_with(cx, |agent, _| {
+        agent.sessions.get(&session_id).unwrap().thread.clone()
+    });
+    let model = Arc::new(FakeLanguageModel::default());
+
+    thread.update(cx, |thread, cx| {
+        thread.set_model(model.clone(), cx);
+    });
+    cx.run_until_parked();
+
+    // === First turn: create subagent ===
+    let send = acp_thread.update(cx, |thread, cx| thread.send_raw("First prompt", cx));
+    cx.run_until_parked();
+    model.send_last_completion_stream_text_chunk("spawning subagent");
+    let subagent_tool_input = SpawnAgentToolInput {
+        label: "initial task".to_string(),
+        message: "do the first task".to_string(),
+        session_id: None,
+    };
+    let subagent_tool_use = LanguageModelToolUse {
+        id: "subagent_1".into(),
+        name: SpawnAgentTool::NAME.into(),
+        raw_input: serde_json::to_string(&subagent_tool_input).unwrap(),
+        input: serde_json::to_value(&subagent_tool_input).unwrap(),
+        is_input_complete: true,
+        thought_signature: None,
+    };
+    model.send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(
+        subagent_tool_use,
+    ));
+    model.end_last_completion_stream();
+
+    cx.run_until_parked();
+
+    let subagent_session_id = thread.read_with(cx, |thread, cx| {
+        thread
+            .running_subagent_ids(cx)
+            .get(0)
+            .expect("subagent thread should be running")
+            .clone()
+    });
+
+    let subagent_acp_thread = agent.read_with(cx, |agent, _cx| {
+        agent
+            .sessions
+            .get(&subagent_session_id)
+            .expect("subagent session should exist")
+            .acp_thread
+            .clone()
+    });
+
+    // Subagent responds
+    model.send_last_completion_stream_text_chunk("first task response");
+    model.end_last_completion_stream();
+
+    cx.run_until_parked();
+
+    // Parent model responds to complete first turn
+    model.send_last_completion_stream_text_chunk("First response");
+    model.end_last_completion_stream();
+
+    send.await.unwrap();
+
+    // Verify subagent is no longer running
+    thread.read_with(cx, |thread, cx| {
+        assert!(
+            thread.running_subagent_ids(cx).is_empty(),
+            "subagent should not be running after completion"
+        );
+    });
+
+    // === Second turn: resume subagent with session_id ===
+    let send2 = acp_thread.update(cx, |thread, cx| thread.send_raw("Follow up", cx));
+    cx.run_until_parked();
+    model.send_last_completion_stream_text_chunk("resuming subagent");
+    let resume_tool_input = SpawnAgentToolInput {
+        label: "follow-up task".to_string(),
+        message: "do the follow-up task".to_string(),
+        session_id: Some(subagent_session_id.clone()),
+    };
+    let resume_tool_use = LanguageModelToolUse {
+        id: "subagent_2".into(),
+        name: SpawnAgentTool::NAME.into(),
+        raw_input: serde_json::to_string(&resume_tool_input).unwrap(),
+        input: serde_json::to_value(&resume_tool_input).unwrap(),
+        is_input_complete: true,
+        thought_signature: None,
+    };
+    model.send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(resume_tool_use));
+    model.end_last_completion_stream();
+
+    cx.run_until_parked();
+
+    // Subagent should be running again with the same session
+    thread.read_with(cx, |thread, cx| {
+        let running = thread.running_subagent_ids(cx);
+        assert_eq!(running.len(), 1, "subagent should be running");
+        assert_eq!(running[0], subagent_session_id, "should be same session");
+    });
+
+    // Subagent responds to follow-up
+    model.send_last_completion_stream_text_chunk("follow-up task response");
+    model.end_last_completion_stream();
+
+    cx.run_until_parked();
+
+    // Parent model responds to complete second turn
+    model.send_last_completion_stream_text_chunk("Second response");
+    model.end_last_completion_stream();
+
+    send2.await.unwrap();
+
+    // Verify subagent is no longer running
+    thread.read_with(cx, |thread, cx| {
+        assert!(
+            thread.running_subagent_ids(cx).is_empty(),
+            "subagent should not be running after resume completion"
+        );
+    });
+
+    // Verify the subagent's acp thread has both conversation turns
+    assert_eq!(
+        subagent_acp_thread.read_with(cx, |thread, cx| thread.to_markdown(cx)),
+        indoc! {"
+            ## User
+
+            do the first task
+
+            ## Assistant
+
+            first task response
+
+            ## User
+
+            do the follow-up task
+
+            ## Assistant
+
+            follow-up task response
+
+        "}
+    );
+}
+
+#[gpui::test]
 async fn test_subagent_tool_is_present_when_feature_flag_enabled(cx: &mut TestAppContext) {
     init_test(cx);
 
@@ -4496,7 +4663,7 @@ async fn test_subagent_tool_is_present_when_feature_flag_enabled(cx: &mut TestAp
 
     thread.read_with(cx, |thread, _| {
         assert!(
-            thread.has_registered_tool(SubagentTool::NAME),
+            thread.has_registered_tool(SpawnAgentTool::NAME),
             "subagent tool should be present when feature flag is enabled"
         );
     });
@@ -4589,7 +4756,7 @@ async fn test_max_subagent_depth_prevents_tool_registration(cx: &mut TestAppCont
     deep_subagent_thread.read_with(cx, |thread, _| {
         assert_eq!(thread.depth(), MAX_SUBAGENT_DEPTH);
         assert!(
-            !thread.has_registered_tool(SubagentTool::NAME),
+            !thread.has_registered_tool(SpawnAgentTool::NAME),
             "subagent tool should not be present at max depth"
         );
     });
@@ -4653,86 +4820,430 @@ async fn test_parent_cancel_stops_subagent(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_subagent_tool_includes_cancellation_notice_when_timeout_is_exceeded(
-    cx: &mut TestAppContext,
-) {
+async fn test_subagent_context_window_warning(cx: &mut TestAppContext) {
     init_test(cx);
-
-    always_allow_tools(cx);
-
+    cx.update(|cx| {
+        LanguageModelRegistry::test(cx);
+    });
     cx.update(|cx| {
         cx.update_flags(true, vec!["subagents".to_string()]);
     });
 
     let fs = FakeFs::new(cx.executor());
-    fs.insert_tree(path!("/test"), json!({})).await;
-    let project = Project::test(fs.clone(), [path!("/test").as_ref()], cx).await;
-    let project_context = cx.new(|_cx| ProjectContext::default());
-    let context_server_store = project.read_with(cx, |project, _| project.context_server_store());
-    let context_server_registry =
-        cx.new(|cx| ContextServerRegistry::new(context_server_store.clone(), cx));
-    cx.update(LanguageModelRegistry::test);
-    let model = Arc::new(FakeLanguageModel::default());
+    fs.insert_tree(
+        "/",
+        json!({
+            "a": {
+                "b.md": "Lorem"
+            }
+        }),
+    )
+    .await;
+    let project = Project::test(fs.clone(), [path!("/a").as_ref()], cx).await;
     let thread_store = cx.new(|cx| ThreadStore::new(cx));
-    let native_agent = NativeAgent::new(
+    let agent = NativeAgent::new(
         project.clone(),
-        thread_store,
+        thread_store.clone(),
         Templates::new(),
         None,
-        fs,
+        fs.clone(),
         &mut cx.to_async(),
     )
     .await
     .unwrap();
-    let parent_thread = cx.new(|cx| {
-        Thread::new(
-            project.clone(),
-            project_context,
-            context_server_registry,
-            Templates::new(),
-            Some(model.clone()),
-            cx,
-        )
-    });
+    let connection = Rc::new(NativeAgentConnection(agent.clone()));
 
-    let subagent_handle = cx
+    let acp_thread = cx
         .update(|cx| {
-            NativeThreadEnvironment::create_subagent_thread(
-                native_agent.downgrade(),
-                parent_thread.clone(),
-                "some title".to_string(),
-                "task prompt".to_string(),
-                Some(Duration::from_secs(1)),
-                cx,
-            )
+            connection
+                .clone()
+                .new_session(project.clone(), Path::new(""), cx)
         })
-        .expect("Failed to create subagent");
+        .await
+        .unwrap();
+    let session_id = acp_thread.read_with(cx, |thread, _| thread.session_id().clone());
+    let thread = agent.read_with(cx, |agent, _| {
+        agent.sessions.get(&session_id).unwrap().thread.clone()
+    });
+    let model = Arc::new(FakeLanguageModel::default());
 
-    let summary_task = subagent_handle.wait_for_output(&cx.to_async());
-
+    thread.update(cx, |thread, cx| {
+        thread.set_model(model.clone(), cx);
+    });
     cx.run_until_parked();
 
-    {
-        let messages = model.pending_completions().last().unwrap().messages.clone();
-        // Ensure that model received a system prompt
-        assert_eq!(messages[0].role, Role::System);
-        // Ensure that model received a task prompt
-        assert_eq!(
-            messages[1].content,
-            vec![MessageContent::Text("task prompt".to_string())]
-        );
-    }
-
-    // Don't complete the initial model stream — let the timeout expire instead.
-    cx.executor().advance_clock(Duration::from_secs(2));
+    // Start the parent turn
+    let send = acp_thread.update(cx, |thread, cx| thread.send_raw("Prompt", cx));
     cx.run_until_parked();
-
+    model.send_last_completion_stream_text_chunk("spawning subagent");
+    let subagent_tool_input = SpawnAgentToolInput {
+        label: "label".to_string(),
+        message: "subagent task prompt".to_string(),
+        session_id: None,
+    };
+    let subagent_tool_use = LanguageModelToolUse {
+        id: "subagent_1".into(),
+        name: SpawnAgentTool::NAME.into(),
+        raw_input: serde_json::to_string(&subagent_tool_input).unwrap(),
+        input: serde_json::to_value(&subagent_tool_input).unwrap(),
+        is_input_complete: true,
+        thought_signature: None,
+    };
+    model.send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(
+        subagent_tool_use,
+    ));
     model.end_last_completion_stream();
 
-    let error = summary_task.await.unwrap_err();
-    assert_eq!(
-        error.to_string(),
-        "The time to complete the task was exceeded."
+    cx.run_until_parked();
+
+    // Verify subagent is running
+    let subagent_session_id = thread.read_with(cx, |thread, cx| {
+        thread
+            .running_subagent_ids(cx)
+            .get(0)
+            .expect("subagent thread should be running")
+            .clone()
+    });
+
+    // Send a usage update that crosses the warning threshold (80% of 1,000,000)
+    model.send_last_completion_stream_text_chunk("partial work");
+    model.send_last_completion_stream_event(LanguageModelCompletionEvent::UsageUpdate(
+        TokenUsage {
+            input_tokens: 850_000,
+            output_tokens: 0,
+            cache_creation_input_tokens: 0,
+            cache_read_input_tokens: 0,
+        },
+    ));
+
+    cx.run_until_parked();
+
+    // The subagent should no longer be running
+    thread.read_with(cx, |thread, cx| {
+        assert!(
+            thread.running_subagent_ids(cx).is_empty(),
+            "subagent should be stopped after context window warning"
+        );
+    });
+
+    // The parent model should get a new completion request to respond to the tool error
+    model.send_last_completion_stream_text_chunk("Response after warning");
+    model.end_last_completion_stream();
+
+    send.await.unwrap();
+
+    // Verify the parent thread shows the warning error in the tool call
+    let markdown = acp_thread.read_with(cx, |thread, cx| thread.to_markdown(cx));
+    assert!(
+        markdown.contains("nearing the end of its context window"),
+        "tool output should contain context window warning message, got:\n{markdown}"
+    );
+    assert!(
+        markdown.contains("Status: Failed"),
+        "tool call should have Failed status, got:\n{markdown}"
+    );
+
+    // Verify the subagent session still exists (can be resumed)
+    agent.read_with(cx, |agent, _cx| {
+        assert!(
+            agent.sessions.contains_key(&subagent_session_id),
+            "subagent session should still exist for potential resume"
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_subagent_no_context_window_warning_when_already_at_warning(cx: &mut TestAppContext) {
+    init_test(cx);
+    cx.update(|cx| {
+        LanguageModelRegistry::test(cx);
+    });
+    cx.update(|cx| {
+        cx.update_flags(true, vec!["subagents".to_string()]);
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/",
+        json!({
+            "a": {
+                "b.md": "Lorem"
+            }
+        }),
+    )
+    .await;
+    let project = Project::test(fs.clone(), [path!("/a").as_ref()], cx).await;
+    let thread_store = cx.new(|cx| ThreadStore::new(cx));
+    let agent = NativeAgent::new(
+        project.clone(),
+        thread_store.clone(),
+        Templates::new(),
+        None,
+        fs.clone(),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+    let connection = Rc::new(NativeAgentConnection(agent.clone()));
+
+    let acp_thread = cx
+        .update(|cx| {
+            connection
+                .clone()
+                .new_session(project.clone(), Path::new(""), cx)
+        })
+        .await
+        .unwrap();
+    let session_id = acp_thread.read_with(cx, |thread, _| thread.session_id().clone());
+    let thread = agent.read_with(cx, |agent, _| {
+        agent.sessions.get(&session_id).unwrap().thread.clone()
+    });
+    let model = Arc::new(FakeLanguageModel::default());
+
+    thread.update(cx, |thread, cx| {
+        thread.set_model(model.clone(), cx);
+    });
+    cx.run_until_parked();
+
+    // === First turn: create subagent, trigger context window warning ===
+    let send = acp_thread.update(cx, |thread, cx| thread.send_raw("First prompt", cx));
+    cx.run_until_parked();
+    model.send_last_completion_stream_text_chunk("spawning subagent");
+    let subagent_tool_input = SpawnAgentToolInput {
+        label: "initial task".to_string(),
+        message: "do the first task".to_string(),
+        session_id: None,
+    };
+    let subagent_tool_use = LanguageModelToolUse {
+        id: "subagent_1".into(),
+        name: SpawnAgentTool::NAME.into(),
+        raw_input: serde_json::to_string(&subagent_tool_input).unwrap(),
+        input: serde_json::to_value(&subagent_tool_input).unwrap(),
+        is_input_complete: true,
+        thought_signature: None,
+    };
+    model.send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(
+        subagent_tool_use,
+    ));
+    model.end_last_completion_stream();
+
+    cx.run_until_parked();
+
+    let subagent_session_id = thread.read_with(cx, |thread, cx| {
+        thread
+            .running_subagent_ids(cx)
+            .get(0)
+            .expect("subagent thread should be running")
+            .clone()
+    });
+
+    // Subagent sends a usage update that crosses the warning threshold.
+    // This triggers Normal→Warning, stopping the subagent.
+    model.send_last_completion_stream_text_chunk("partial work");
+    model.send_last_completion_stream_event(LanguageModelCompletionEvent::UsageUpdate(
+        TokenUsage {
+            input_tokens: 850_000,
+            output_tokens: 0,
+            cache_creation_input_tokens: 0,
+            cache_read_input_tokens: 0,
+        },
+    ));
+
+    cx.run_until_parked();
+
+    // Verify the first turn was stopped with a context window warning
+    thread.read_with(cx, |thread, cx| {
+        assert!(
+            thread.running_subagent_ids(cx).is_empty(),
+            "subagent should be stopped after context window warning"
+        );
+    });
+
+    // Parent model responds to complete first turn
+    model.send_last_completion_stream_text_chunk("First response");
+    model.end_last_completion_stream();
+
+    send.await.unwrap();
+
+    let markdown = acp_thread.read_with(cx, |thread, cx| thread.to_markdown(cx));
+    assert!(
+        markdown.contains("nearing the end of its context window"),
+        "first turn should have context window warning, got:\n{markdown}"
+    );
+
+    // === Second turn: resume the same subagent (now at Warning level) ===
+    let send2 = acp_thread.update(cx, |thread, cx| thread.send_raw("Follow up", cx));
+    cx.run_until_parked();
+    model.send_last_completion_stream_text_chunk("resuming subagent");
+    let resume_tool_input = SpawnAgentToolInput {
+        label: "follow-up task".to_string(),
+        message: "do the follow-up task".to_string(),
+        session_id: Some(subagent_session_id.clone()),
+    };
+    let resume_tool_use = LanguageModelToolUse {
+        id: "subagent_2".into(),
+        name: SpawnAgentTool::NAME.into(),
+        raw_input: serde_json::to_string(&resume_tool_input).unwrap(),
+        input: serde_json::to_value(&resume_tool_input).unwrap(),
+        is_input_complete: true,
+        thought_signature: None,
+    };
+    model.send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(resume_tool_use));
+    model.end_last_completion_stream();
+
+    cx.run_until_parked();
+
+    // Subagent responds with tokens still at warning level (no worse).
+    // Since ratio_before_prompt was already Warning, this should NOT
+    // trigger the context window warning again.
+    model.send_last_completion_stream_text_chunk("follow-up task response");
+    model.send_last_completion_stream_event(LanguageModelCompletionEvent::UsageUpdate(
+        TokenUsage {
+            input_tokens: 870_000,
+            output_tokens: 0,
+            cache_creation_input_tokens: 0,
+            cache_read_input_tokens: 0,
+        },
+    ));
+    model.end_last_completion_stream();
+
+    cx.run_until_parked();
+
+    // Parent model responds to complete second turn
+    model.send_last_completion_stream_text_chunk("Second response");
+    model.end_last_completion_stream();
+
+    send2.await.unwrap();
+
+    // The resumed subagent should have completed normally since the ratio
+    // didn't transition (it was Warning before and stayed at Warning)
+    let markdown = acp_thread.read_with(cx, |thread, cx| thread.to_markdown(cx));
+    assert!(
+        markdown.contains("follow-up task response"),
+        "resumed subagent should complete normally when already at warning, got:\n{markdown}"
+    );
+    // The second tool call should NOT have a context window warning
+    let second_tool_pos = markdown
+        .find("follow-up task")
+        .expect("should find follow-up tool call");
+    let after_second_tool = &markdown[second_tool_pos..];
+    assert!(
+        !after_second_tool.contains("nearing the end of its context window"),
+        "should NOT contain context window warning for resumed subagent at same level, got:\n{after_second_tool}"
+    );
+}
+
+#[gpui::test]
+async fn test_subagent_error_propagation(cx: &mut TestAppContext) {
+    init_test(cx);
+    cx.update(|cx| {
+        LanguageModelRegistry::test(cx);
+    });
+    cx.update(|cx| {
+        cx.update_flags(true, vec!["subagents".to_string()]);
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/",
+        json!({
+            "a": {
+                "b.md": "Lorem"
+            }
+        }),
+    )
+    .await;
+    let project = Project::test(fs.clone(), [path!("/a").as_ref()], cx).await;
+    let thread_store = cx.new(|cx| ThreadStore::new(cx));
+    let agent = NativeAgent::new(
+        project.clone(),
+        thread_store.clone(),
+        Templates::new(),
+        None,
+        fs.clone(),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+    let connection = Rc::new(NativeAgentConnection(agent.clone()));
+
+    let acp_thread = cx
+        .update(|cx| {
+            connection
+                .clone()
+                .new_session(project.clone(), Path::new(""), cx)
+        })
+        .await
+        .unwrap();
+    let session_id = acp_thread.read_with(cx, |thread, _| thread.session_id().clone());
+    let thread = agent.read_with(cx, |agent, _| {
+        agent.sessions.get(&session_id).unwrap().thread.clone()
+    });
+    let model = Arc::new(FakeLanguageModel::default());
+
+    thread.update(cx, |thread, cx| {
+        thread.set_model(model.clone(), cx);
+    });
+    cx.run_until_parked();
+
+    // Start the parent turn
+    let send = acp_thread.update(cx, |thread, cx| thread.send_raw("Prompt", cx));
+    cx.run_until_parked();
+    model.send_last_completion_stream_text_chunk("spawning subagent");
+    let subagent_tool_input = SpawnAgentToolInput {
+        label: "label".to_string(),
+        message: "subagent task prompt".to_string(),
+        session_id: None,
+    };
+    let subagent_tool_use = LanguageModelToolUse {
+        id: "subagent_1".into(),
+        name: SpawnAgentTool::NAME.into(),
+        raw_input: serde_json::to_string(&subagent_tool_input).unwrap(),
+        input: serde_json::to_value(&subagent_tool_input).unwrap(),
+        is_input_complete: true,
+        thought_signature: None,
+    };
+    model.send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(
+        subagent_tool_use,
+    ));
+    model.end_last_completion_stream();
+
+    cx.run_until_parked();
+
+    // Verify subagent is running
+    thread.read_with(cx, |thread, cx| {
+        assert!(
+            !thread.running_subagent_ids(cx).is_empty(),
+            "subagent should be running"
+        );
+    });
+
+    // The subagent's model returns a non-retryable error
+    model.send_last_completion_stream_error(LanguageModelCompletionError::PromptTooLarge {
+        tokens: None,
+    });
+
+    cx.run_until_parked();
+
+    // The subagent should no longer be running
+    thread.read_with(cx, |thread, cx| {
+        assert!(
+            thread.running_subagent_ids(cx).is_empty(),
+            "subagent should not be running after error"
+        );
+    });
+
+    // The parent model should get a new completion request to respond to the tool error
+    model.send_last_completion_stream_text_chunk("Response after error");
+    model.end_last_completion_stream();
+
+    send.await.unwrap();
+
+    // Verify the parent thread shows the error in the tool call
+    let markdown = acp_thread.read_with(cx, |thread, cx| thread.to_markdown(cx));
+    assert!(
+        markdown.contains("Status: Failed"),
+        "tool call should have Failed status after model error, got:\n{markdown}"
     );
 }
 
@@ -4786,11 +5297,11 @@ async fn test_edit_file_tool_deny_rule_blocks_edit(cx: &mut TestAppContext) {
 
     let task = cx.update(|cx| {
         tool.run(
-            crate::EditFileToolInput {
+            ToolInput::resolved(crate::EditFileToolInput {
                 display_description: "Edit sensitive file".to_string(),
                 path: "root/sensitive_config.txt".into(),
                 mode: crate::EditFileMode::Edit,
-            },
+            }),
             event_stream,
             cx,
         )
@@ -4836,9 +5347,9 @@ async fn test_delete_path_tool_deny_rule_blocks_deletion(cx: &mut TestAppContext
 
     let task = cx.update(|cx| {
         tool.run(
-            crate::DeletePathToolInput {
+            ToolInput::resolved(crate::DeletePathToolInput {
                 path: "root/important_data.txt".to_string(),
-            },
+            }),
             event_stream,
             cx,
         )
@@ -4847,7 +5358,7 @@ async fn test_delete_path_tool_deny_rule_blocks_deletion(cx: &mut TestAppContext
     let result = task.await;
     assert!(result.is_err(), "expected deletion to be blocked");
     assert!(
-        result.unwrap_err().to_string().contains("blocked"),
+        result.unwrap_err().contains("blocked"),
         "error should mention the deletion was blocked"
     );
 }
@@ -4888,10 +5399,10 @@ async fn test_move_path_tool_denies_if_destination_denied(cx: &mut TestAppContex
 
     let task = cx.update(|cx| {
         tool.run(
-            crate::MovePathToolInput {
+            ToolInput::resolved(crate::MovePathToolInput {
                 source_path: "root/safe.txt".to_string(),
                 destination_path: "root/protected/safe.txt".to_string(),
-            },
+            }),
             event_stream,
             cx,
         )
@@ -4903,7 +5414,7 @@ async fn test_move_path_tool_denies_if_destination_denied(cx: &mut TestAppContex
         "expected move to be blocked due to destination path"
     );
     assert!(
-        result.unwrap_err().to_string().contains("blocked"),
+        result.unwrap_err().contains("blocked"),
         "error should mention the move was blocked"
     );
 }
@@ -4944,10 +5455,10 @@ async fn test_move_path_tool_denies_if_source_denied(cx: &mut TestAppContext) {
 
     let task = cx.update(|cx| {
         tool.run(
-            crate::MovePathToolInput {
+            ToolInput::resolved(crate::MovePathToolInput {
                 source_path: "root/secret.txt".to_string(),
                 destination_path: "root/public/not_secret.txt".to_string(),
-            },
+            }),
             event_stream,
             cx,
         )
@@ -4959,7 +5470,7 @@ async fn test_move_path_tool_denies_if_source_denied(cx: &mut TestAppContext) {
         "expected move to be blocked due to source path"
     );
     assert!(
-        result.unwrap_err().to_string().contains("blocked"),
+        result.unwrap_err().contains("blocked"),
         "error should mention the move was blocked"
     );
 }
@@ -5002,10 +5513,10 @@ async fn test_copy_path_tool_deny_rule_blocks_copy(cx: &mut TestAppContext) {
 
     let task = cx.update(|cx| {
         tool.run(
-            crate::CopyPathToolInput {
+            ToolInput::resolved(crate::CopyPathToolInput {
                 source_path: "root/confidential.txt".to_string(),
                 destination_path: "root/dest/copy.txt".to_string(),
-            },
+            }),
             event_stream,
             cx,
         )
@@ -5014,7 +5525,7 @@ async fn test_copy_path_tool_deny_rule_blocks_copy(cx: &mut TestAppContext) {
     let result = task.await;
     assert!(result.is_err(), "expected copy to be blocked");
     assert!(
-        result.unwrap_err().to_string().contains("blocked"),
+        result.unwrap_err().contains("blocked"),
         "error should mention the copy was blocked"
     );
 }
@@ -5057,12 +5568,12 @@ async fn test_save_file_tool_denies_if_any_path_denied(cx: &mut TestAppContext) 
 
     let task = cx.update(|cx| {
         tool.run(
-            crate::SaveFileToolInput {
+            ToolInput::resolved(crate::SaveFileToolInput {
                 paths: vec![
                     std::path::PathBuf::from("root/normal.txt"),
                     std::path::PathBuf::from("root/readonly/config.txt"),
                 ],
-            },
+            }),
             event_stream,
             cx,
         )
@@ -5074,7 +5585,7 @@ async fn test_save_file_tool_denies_if_any_path_denied(cx: &mut TestAppContext) 
         "expected save to be blocked due to denied path"
     );
     assert!(
-        result.unwrap_err().to_string().contains("blocked"),
+        result.unwrap_err().contains("blocked"),
         "error should mention the save was blocked"
     );
 }
@@ -5109,9 +5620,9 @@ async fn test_save_file_tool_respects_deny_rules(cx: &mut TestAppContext) {
 
     let task = cx.update(|cx| {
         tool.run(
-            crate::SaveFileToolInput {
+            ToolInput::resolved(crate::SaveFileToolInput {
                 paths: vec![std::path::PathBuf::from("root/config.secret")],
-            },
+            }),
             event_stream,
             cx,
         )
@@ -5120,7 +5631,7 @@ async fn test_save_file_tool_respects_deny_rules(cx: &mut TestAppContext) {
     let result = task.await;
     assert!(result.is_err(), "expected save to be blocked");
     assert!(
-        result.unwrap_err().to_string().contains("blocked"),
+        result.unwrap_err().contains("blocked"),
         "error should mention the save was blocked"
     );
 }
@@ -5153,14 +5664,19 @@ async fn test_web_search_tool_deny_rule_blocks_search(cx: &mut TestAppContext) {
     let input: crate::WebSearchToolInput =
         serde_json::from_value(json!({"query": "internal.company.com secrets"})).unwrap();
 
-    let task = cx.update(|cx| tool.run(input, event_stream, cx));
+    let task = cx.update(|cx| tool.run(ToolInput::resolved(input), event_stream, cx));
 
     let result = task.await;
     assert!(result.is_err(), "expected search to be blocked");
-    assert!(
-        result.unwrap_err().to_string().contains("blocked"),
-        "error should mention the search was blocked"
-    );
+    match result.unwrap_err() {
+        crate::WebSearchToolOutput::Error { error } => {
+            assert!(
+                error.contains("blocked"),
+                "error should mention the search was blocked"
+            );
+        }
+        other => panic!("expected Error variant, got: {other:?}"),
+    }
 }
 
 #[gpui::test]
@@ -5213,11 +5729,11 @@ async fn test_edit_file_tool_allow_rule_skips_confirmation(cx: &mut TestAppConte
 
     let _task = cx.update(|cx| {
         tool.run(
-            crate::EditFileToolInput {
+            ToolInput::resolved(crate::EditFileToolInput {
                 display_description: "Edit README".to_string(),
                 path: "root/README.md".into(),
                 mode: crate::EditFileMode::Edit,
-            },
+            }),
             event_stream,
             cx,
         )
@@ -5283,11 +5799,11 @@ async fn test_edit_file_tool_allow_still_prompts_for_local_settings(cx: &mut Tes
     let (event_stream, mut rx) = crate::ToolCallEventStream::test();
     let _task = cx.update(|cx| {
         tool.run(
-            crate::EditFileToolInput {
+            ToolInput::resolved(crate::EditFileToolInput {
                 display_description: "Edit local settings".to_string(),
                 path: "root/.zed/settings.json".into(),
                 mode: crate::EditFileMode::Edit,
-            },
+            }),
             event_stream,
             cx,
         )
@@ -5327,12 +5843,12 @@ async fn test_fetch_tool_deny_rule_blocks_url(cx: &mut TestAppContext) {
     let input: crate::FetchToolInput =
         serde_json::from_value(json!({"url": "https://internal.company.com/api"})).unwrap();
 
-    let task = cx.update(|cx| tool.run(input, event_stream, cx));
+    let task = cx.update(|cx| tool.run(ToolInput::resolved(input), event_stream, cx));
 
     let result = task.await;
     assert!(result.is_err(), "expected fetch to be blocked");
     assert!(
-        result.unwrap_err().to_string().contains("blocked"),
+        result.unwrap_err().contains("blocked"),
         "error should mention the fetch was blocked"
     );
 }
@@ -5365,7 +5881,7 @@ async fn test_fetch_tool_allow_rule_skips_confirmation(cx: &mut TestAppContext) 
     let input: crate::FetchToolInput =
         serde_json::from_value(json!({"url": "https://docs.rs/some-crate"})).unwrap();
 
-    let _task = cx.update(|cx| tool.run(input, event_stream, cx));
+    let _task = cx.update(|cx| tool.run(ToolInput::resolved(input), event_stream, cx));
 
     cx.run_until_parked();
 

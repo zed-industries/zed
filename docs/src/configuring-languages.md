@@ -136,6 +136,10 @@ Not all languages in Zed support toolchain discovery and selection, but for thos
 
 ### Configuring Language Servers
 
+> **Changed in Preview (v0.225).** See [release notes](/releases#0.225).
+
+When configuring language servers in your `settings.json`, autocomplete suggestions include all available LSP adapters recognized by Zed, not only those currently active for loaded languages. This helps you discover and configure language servers before opening files that use them.
+
 Many language servers accept custom configuration options. You can set these in the `lsp` section of your `settings.json`:
 
 ```json [settings]

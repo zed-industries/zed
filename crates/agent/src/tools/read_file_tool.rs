@@ -13,11 +13,15 @@ use settings::Settings;
 use std::sync::Arc;
 use util::markdown::MarkdownCodeBlock;
 
+fn tool_content_err(e: impl std::fmt::Display) -> LanguageModelToolResultContent {
+    LanguageModelToolResultContent::from(e.to_string())
+}
+
 use super::tool_permissions::{
     ResolvedProjectPath, authorize_symlink_access, canonicalize_worktree_roots,
     resolve_project_path,
 };
-use crate::{AgentTool, Thread, ToolCallEventStream, outline};
+use crate::{AgentTool, Thread, ToolCallEventStream, ToolInput, outline};
 
 /// Reads the content of the given file in the project.
 ///
@@ -110,14 +114,18 @@ impl AgentTool for ReadFileTool {
 
     fn run(
         self: Arc<Self>,
-        input: Self::Input,
+        input: ToolInput<Self::Input>,
         event_stream: ToolCallEventStream,
         cx: &mut App,
-    ) -> Task<Result<LanguageModelToolResultContent>> {
+    ) -> Task<Result<LanguageModelToolResultContent, LanguageModelToolResultContent>> {
         let project = self.project.clone();
         let thread = self.thread.clone();
         let action_log = self.action_log.clone();
         cx.spawn(async move |cx| {
+            let input = input
+                .recv()
+                .await
+                .map_err(tool_content_err)?;
             let fs = project.read_with(cx, |project, _cx| project.fs().clone());
             let canonical_roots = canonicalize_worktree_roots(&project, &fs, cx).await;
 
@@ -132,7 +140,7 @@ impl AgentTool for ReadFileTool {
                             canonical_target,
                         } => (project_path, Some(canonical_target)),
                     })
-                })?;
+                }).map_err(tool_content_err)?;
 
             let abs_path = project
                 .read_with(cx, |project, cx| {
@@ -140,7 +148,7 @@ impl AgentTool for ReadFileTool {
                 })
                 .ok_or_else(|| {
                     anyhow!("Failed to convert {} to absolute path", &input.path)
-                })?;
+                }).map_err(tool_content_err)?;
 
             // Check settings exclusions synchronously
             project.read_with(cx, |_project, cx| {
@@ -175,7 +183,7 @@ impl AgentTool for ReadFileTool {
                 }
 
                 anyhow::Ok(())
-            })?;
+            }).map_err(tool_content_err)?;
 
             if let Some(canonical_target) = &symlink_canonical_target {
                 let authorize = cx.update(|cx| {
@@ -187,7 +195,7 @@ impl AgentTool for ReadFileTool {
                         cx,
                     )
                 });
-                authorize.await?;
+                authorize.await.map_err(tool_content_err)?;
             }
 
             let file_path = input.path.clone();
@@ -211,7 +219,7 @@ impl AgentTool for ReadFileTool {
                             project.open_image(project_path.clone(), cx)
                         })
                     })
-                    .await?;
+                    .await.map_err(tool_content_err)?;
 
                 let image =
                     image_entity.read_with(cx, |image_item, _| Arc::clone(&image_item.image));
@@ -219,7 +227,8 @@ impl AgentTool for ReadFileTool {
                 let language_model_image = cx
                     .update(|cx| LanguageModelImage::from_image(image, cx))
                     .await
-                    .context("processing image")?;
+                    .context("processing image")
+                    .map_err(tool_content_err)?;
 
                 event_stream.update_fields(ToolCallUpdateFields::new().content(vec![
                     acp::ToolCallContent::Content(acp::Content::new(acp::ContentBlock::Image(
@@ -235,9 +244,9 @@ impl AgentTool for ReadFileTool {
             });
 
             let buffer = futures::select! {
-                result = open_buffer_task.fuse() => result?,
+                result = open_buffer_task.fuse() => result.map_err(tool_content_err)?,
                 _ = event_stream.cancelled_by_user().fuse() => {
-                    anyhow::bail!("File read cancelled by user");
+                    return Err(tool_content_err("File read cancelled by user"));
                 }
             };
             if buffer.read_with(cx, |buffer, _| {
@@ -246,7 +255,7 @@ impl AgentTool for ReadFileTool {
                     .as_ref()
                     .is_none_or(|file| !file.disk_state().exists())
             }) {
-                anyhow::bail!("{file_path} not found");
+                return Err(tool_content_err(format!("{file_path} not found")));
             }
 
             // Record the file read time and mtime
@@ -294,7 +303,7 @@ impl AgentTool for ReadFileTool {
                     Some(&abs_path.to_string_lossy()),
                     cx,
                 )
-                .await?;
+                .await.map_err(tool_content_err)?;
 
                 action_log.update(cx, |log, cx| {
                     log.buffer_read(buffer.clone(), cx);
@@ -393,11 +402,11 @@ mod test {
                     start_line: None,
                     end_line: None,
                 };
-                tool.run(input, event_stream, cx)
+                tool.run(ToolInput::resolved(input), event_stream, cx)
             })
             .await;
         assert_eq!(
-            result.unwrap_err().to_string(),
+            error_text(result.unwrap_err()),
             "root/nonexistent_file.txt not found"
         );
     }
@@ -437,7 +446,11 @@ mod test {
                     start_line: None,
                     end_line: None,
                 };
-                tool.run(input, ToolCallEventStream::test().0, cx)
+                tool.run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
             })
             .await;
         assert_eq!(result.unwrap(), "This is a small file content".into());
@@ -480,7 +493,11 @@ mod test {
                     start_line: None,
                     end_line: None,
                 };
-                tool.clone().run(input, ToolCallEventStream::test().0, cx)
+                tool.clone().run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
             })
             .await
             .unwrap();
@@ -505,7 +522,11 @@ mod test {
                     start_line: None,
                     end_line: None,
                 };
-                tool.run(input, ToolCallEventStream::test().0, cx)
+                tool.run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
             })
             .await
             .unwrap();
@@ -565,7 +586,11 @@ mod test {
                     start_line: Some(2),
                     end_line: Some(4),
                 };
-                tool.run(input, ToolCallEventStream::test().0, cx)
+                tool.run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
             })
             .await;
         assert_eq!(result.unwrap(), "Line 2\nLine 3\nLine 4\n".into());
@@ -608,7 +633,11 @@ mod test {
                     start_line: Some(0),
                     end_line: Some(2),
                 };
-                tool.clone().run(input, ToolCallEventStream::test().0, cx)
+                tool.clone().run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
             })
             .await;
         assert_eq!(result.unwrap(), "Line 1\nLine 2\n".into());
@@ -621,7 +650,11 @@ mod test {
                     start_line: Some(1),
                     end_line: Some(0),
                 };
-                tool.clone().run(input, ToolCallEventStream::test().0, cx)
+                tool.clone().run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
             })
             .await;
         assert_eq!(result.unwrap(), "Line 1\n".into());
@@ -634,10 +667,21 @@ mod test {
                     start_line: Some(3),
                     end_line: Some(2),
                 };
-                tool.clone().run(input, ToolCallEventStream::test().0, cx)
+                tool.clone().run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
             })
             .await;
         assert_eq!(result.unwrap(), "Line 3\n".into());
+    }
+
+    fn error_text(content: LanguageModelToolResultContent) -> String {
+        match content {
+            LanguageModelToolResultContent::Text(text) => text.to_string(),
+            other => panic!("Expected text error, got: {other:?}"),
+        }
     }
 
     fn init_test(cx: &mut TestAppContext) {
@@ -732,7 +776,11 @@ mod test {
                     start_line: None,
                     end_line: None,
                 };
-                tool.clone().run(input, ToolCallEventStream::test().0, cx)
+                tool.clone().run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
             })
             .await;
         assert!(
@@ -748,7 +796,11 @@ mod test {
                     start_line: None,
                     end_line: None,
                 };
-                tool.clone().run(input, ToolCallEventStream::test().0, cx)
+                tool.clone().run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
             })
             .await;
         assert!(
@@ -764,7 +816,11 @@ mod test {
                     start_line: None,
                     end_line: None,
                 };
-                tool.clone().run(input, ToolCallEventStream::test().0, cx)
+                tool.clone().run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
             })
             .await;
         assert!(
@@ -779,7 +835,11 @@ mod test {
                     start_line: None,
                     end_line: None,
                 };
-                tool.clone().run(input, ToolCallEventStream::test().0, cx)
+                tool.clone().run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
             })
             .await;
         assert!(
@@ -795,7 +855,11 @@ mod test {
                     start_line: None,
                     end_line: None,
                 };
-                tool.clone().run(input, ToolCallEventStream::test().0, cx)
+                tool.clone().run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
             })
             .await;
         assert!(
@@ -810,7 +874,11 @@ mod test {
                     start_line: None,
                     end_line: None,
                 };
-                tool.clone().run(input, ToolCallEventStream::test().0, cx)
+                tool.clone().run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
             })
             .await;
         assert!(
@@ -825,7 +893,11 @@ mod test {
                     start_line: None,
                     end_line: None,
                 };
-                tool.clone().run(input, ToolCallEventStream::test().0, cx)
+                tool.clone().run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
             })
             .await;
         assert!(
@@ -841,7 +913,11 @@ mod test {
                     start_line: None,
                     end_line: None,
                 };
-                tool.clone().run(input, ToolCallEventStream::test().0, cx)
+                tool.clone().run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
             })
             .await;
         assert!(result.is_ok(), "Should be able to read normal files");
@@ -855,7 +931,11 @@ mod test {
                     start_line: None,
                     end_line: None,
                 };
-                tool.run(input, ToolCallEventStream::test().0, cx)
+                tool.run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
             })
             .await;
         assert!(
@@ -899,11 +979,11 @@ mod test {
         let (event_stream, mut event_rx) = ToolCallEventStream::test();
         let read_task = cx.update(|cx| {
             tool.run(
-                ReadFileToolInput {
+                ToolInput::resolved(ReadFileToolInput {
                     path: "root/secret.png".to_string(),
                     start_line: None,
                     end_line: None,
-                },
+                }),
                 event_stream,
                 cx,
             )
@@ -1027,7 +1107,11 @@ mod test {
                     start_line: None,
                     end_line: None,
                 };
-                tool.clone().run(input, ToolCallEventStream::test().0, cx)
+                tool.clone().run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
             })
             .await
             .unwrap();
@@ -1045,16 +1129,17 @@ mod test {
                     start_line: None,
                     end_line: None,
                 };
-                tool.clone().run(input, ToolCallEventStream::test().0, cx)
+                tool.clone().run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
             })
             .await;
 
         assert!(result.is_err());
         assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("worktree `private_files` setting"),
+            error_text(result.unwrap_err()).contains("worktree `private_files` setting"),
             "Error should mention worktree private_files setting"
         );
 
@@ -1066,16 +1151,17 @@ mod test {
                     start_line: None,
                     end_line: None,
                 };
-                tool.clone().run(input, ToolCallEventStream::test().0, cx)
+                tool.clone().run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
             })
             .await;
 
         assert!(result.is_err());
         assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("worktree `file_scan_exclusions` setting"),
+            error_text(result.unwrap_err()).contains("worktree `file_scan_exclusions` setting"),
             "Error should mention worktree file_scan_exclusions setting"
         );
 
@@ -1087,7 +1173,11 @@ mod test {
                     start_line: None,
                     end_line: None,
                 };
-                tool.clone().run(input, ToolCallEventStream::test().0, cx)
+                tool.clone().run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
             })
             .await
             .unwrap();
@@ -1105,16 +1195,17 @@ mod test {
                     start_line: None,
                     end_line: None,
                 };
-                tool.clone().run(input, ToolCallEventStream::test().0, cx)
+                tool.clone().run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
             })
             .await;
 
         assert!(result.is_err());
         assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("worktree `private_files` setting"),
+            error_text(result.unwrap_err()).contains("worktree `private_files` setting"),
             "Error should mention worktree private_files setting"
         );
 
@@ -1126,16 +1217,17 @@ mod test {
                     start_line: None,
                     end_line: None,
                 };
-                tool.clone().run(input, ToolCallEventStream::test().0, cx)
+                tool.clone().run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
             })
             .await;
 
         assert!(result.is_err());
         assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("worktree `file_scan_exclusions` setting"),
+            error_text(result.unwrap_err()).contains("worktree `file_scan_exclusions` setting"),
             "Error should mention worktree file_scan_exclusions setting"
         );
 
@@ -1148,16 +1240,17 @@ mod test {
                     start_line: None,
                     end_line: None,
                 };
-                tool.clone().run(input, ToolCallEventStream::test().0, cx)
+                tool.clone().run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
             })
             .await;
 
         assert!(result.is_err());
         assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("worktree `private_files` setting"),
+            error_text(result.unwrap_err()).contains("worktree `private_files` setting"),
             "Config.toml should be blocked by worktree1's private_files setting"
         );
     }
@@ -1213,11 +1306,11 @@ mod test {
         let (event_stream, mut event_rx) = ToolCallEventStream::test();
         let task = cx.update(|cx| {
             tool.clone().run(
-                ReadFileToolInput {
+                ToolInput::resolved(ReadFileToolInput {
                     path: "project/secret_link.txt".to_string(),
                     start_line: None,
                     end_line: None,
-                },
+                }),
                 event_stream,
                 cx,
             )
@@ -1289,11 +1382,11 @@ mod test {
         let (event_stream, mut event_rx) = ToolCallEventStream::test();
         let task = cx.update(|cx| {
             tool.clone().run(
-                ReadFileToolInput {
+                ToolInput::resolved(ReadFileToolInput {
                     path: "project/secret_link.txt".to_string(),
                     start_line: None,
                     end_line: None,
-                },
+                }),
                 event_stream,
                 cx,
             )
@@ -1370,11 +1463,11 @@ mod test {
         let result = cx
             .update(|cx| {
                 tool.clone().run(
-                    ReadFileToolInput {
+                    ToolInput::resolved(ReadFileToolInput {
                         path: "project/secret_link.txt".to_string(),
                         start_line: None,
                         end_line: None,
-                    },
+                    }),
                     event_stream,
                     cx,
                 )
@@ -1385,7 +1478,7 @@ mod test {
             result.is_err(),
             "Expected read_file to fail on private path"
         );
-        let error = result.unwrap_err().to_string();
+        let error = error_text(result.unwrap_err());
         assert!(
             error.contains("private_files"),
             "Expected private-files validation error, got: {error}"

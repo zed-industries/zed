@@ -1106,6 +1106,7 @@ impl RulesLibrary {
                                     temperature: None,
                                     thinking_allowed: true,
                                     thinking_effort: None,
+                                    speed: None,
                                 },
                                 cx,
                             )

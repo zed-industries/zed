@@ -105,13 +105,14 @@ const ZED_PREDICT_DATA_COLLECTION_CHOICE: &str = "zed_predict_data_collection_ch
 const REJECT_REQUEST_DEBOUNCE: Duration = Duration::from_secs(15);
 
 pub struct Zeta2FeatureFlag;
+pub struct EditPredictionJumpsFeatureFlag;
 
 impl FeatureFlag for Zeta2FeatureFlag {
     const NAME: &'static str = "zeta2";
+}
 
-    fn enabled_for_staff() -> bool {
-        true
-    }
+impl FeatureFlag for EditPredictionJumpsFeatureFlag {
+    const NAME: &'static str = "edit_prediction_jumps";
 }
 
 #[derive(Clone)]
@@ -360,6 +361,7 @@ impl ProjectState {
                         prediction_id,
                         EditPredictionRejectReason::Canceled,
                         false,
+                        None,
                         cx,
                     );
                 })
@@ -1035,7 +1037,7 @@ impl EditPredictionStore {
                 }
             }
             project::Event::DiagnosticsUpdated { .. } => {
-                if cx.has_flag::<Zeta2FeatureFlag>() {
+                if cx.has_flag::<EditPredictionJumpsFeatureFlag>() {
                     self.refresh_prediction_from_diagnostics(
                         project,
                         DiagnosticSearchScope::Global,
@@ -1393,7 +1395,14 @@ impl EditPredictionStore {
         if let Some(project_state) = self.projects.get_mut(&project.entity_id()) {
             project_state.pending_predictions.clear();
             if let Some(prediction) = project_state.current_prediction.take() {
-                self.reject_prediction(prediction.prediction.id, reason, prediction.was_shown, cx);
+                let model_version = prediction.prediction.model_version.clone();
+                self.reject_prediction(
+                    prediction.prediction.id,
+                    reason,
+                    prediction.was_shown,
+                    model_version,
+                    cx,
+                );
             }
         };
     }
@@ -1452,6 +1461,7 @@ impl EditPredictionStore {
         prediction_id: EditPredictionId,
         reason: EditPredictionRejectReason,
         was_shown: bool,
+        model_version: Option<String>,
         cx: &App,
     ) {
         match self.edit_prediction_model {
@@ -1466,6 +1476,7 @@ impl EditPredictionStore {
                             request_id: prediction_id.to_string(),
                             reason,
                             was_shown,
+                            model_version,
                         })
                         .log_err();
                 }
@@ -1811,6 +1822,7 @@ impl EditPredictionStore {
                                         new_prediction.prediction.id,
                                         EditPredictionRejectReason::CurrentPreferred,
                                         false,
+                                        new_prediction.prediction.model_version,
                                         cx,
                                     );
                                     None
@@ -1820,7 +1832,13 @@ impl EditPredictionStore {
                             }
                         }
                         Err(reject_reason) => {
-                            this.reject_prediction(prediction_result.id, reject_reason, false, cx);
+                            this.reject_prediction(
+                                prediction_result.id,
+                                reject_reason,
+                                false,
+                                None,
+                                cx,
+                            );
                             None
                         }
                     }
@@ -1985,7 +2003,7 @@ impl EditPredictionStore {
         })
     }
 
-    async fn next_diagnostic_location(
+    pub(crate) async fn next_diagnostic_location(
         active_buffer: Entity<Buffer>,
         active_buffer_snapshot: &BufferSnapshot,
         active_buffer_diagnostic_search_range: Range<Point>,
@@ -1993,7 +2011,13 @@ impl EditPredictionStore {
         project: &Entity<Project>,
         cx: &mut AsyncApp,
     ) -> Result<Option<(Entity<Buffer>, language::Anchor)>> {
-        // find the closest diagnostic to the cursor that wasn't close enough to be included in the last request
+        let collaborator_cursor_rows: Vec<u32> = active_buffer_snapshot
+            .selections_in_range(Anchor::MIN..Anchor::MAX, false)
+            .flat_map(|(_, _, _, selections)| {
+                selections.map(|s| s.head().to_point(active_buffer_snapshot).row)
+            })
+            .collect();
+
         let mut jump_location = active_buffer_snapshot
             .diagnostic_groups(None)
             .into_iter()
@@ -2002,10 +2026,17 @@ impl EditPredictionStore {
                     .range
                     .to_point(&active_buffer_snapshot);
                 if range.overlaps(&active_buffer_diagnostic_search_range) {
-                    None
-                } else {
-                    Some(range.start)
+                    return None;
                 }
+                let near_collaborator = collaborator_cursor_rows.iter().any(|&collab_row| {
+                    range.start.row.abs_diff(collab_row) <= DIAGNOSTIC_LINES_RANGE
+                });
+                let near_local = active_buffer_cursor_point.row.abs_diff(range.start.row)
+                    <= DIAGNOSTIC_LINES_RANGE;
+                if near_collaborator && !near_local {
+                    return None;
+                }
+                Some(range.start)
             })
             .min_by_key(|probe| probe.row.abs_diff(active_buffer_cursor_point.row))
             .map(|position| {
@@ -2025,13 +2056,13 @@ impl EditPredictionStore {
                 })
             });
 
-            let buffer_task = project.update(cx, |project, cx| {
-                let (path, _, _) = project
+            let mut candidates: Vec<(ProjectPath, usize)> = project.read_with(cx, |project, cx| {
+                project
                     .diagnostic_summaries(false, cx)
                     .filter(|(path, _, _)| Some(path) != active_buffer_path.as_ref())
-                    .max_by_key(|(path, _, _)| {
-                        // find the buffer with errors that shares most parent directories
-                        path.path
+                    .map(|(path, _, _)| {
+                        let shared_prefix = path
+                            .path
                             .components()
                             .zip(
                                 active_buffer_path
@@ -2040,24 +2071,42 @@ impl EditPredictionStore {
                                     .unwrap_or_default(),
                             )
                             .take_while(|(a, b)| a == b)
-                            .count()
-                    })?;
-
-                Some(project.open_buffer(path, cx))
+                            .count();
+                        (path, shared_prefix)
+                    })
+                    .collect()
             });
 
-            if let Some(buffer_task) = buffer_task {
-                let closest_buffer = buffer_task.await?;
+            candidates.sort_by(|a, b| b.1.cmp(&a.1));
 
-                jump_location = closest_buffer
-                    .read_with(cx, |buffer, _cx| {
-                        buffer
+            for (path, _) in candidates {
+                let candidate_buffer = project
+                    .update(cx, |project, cx| project.open_buffer(path, cx))
+                    .await?;
+
+                let (has_collaborators, diagnostic_position) =
+                    candidate_buffer.read_with(cx, |buffer, _cx| {
+                        let snapshot = buffer.snapshot();
+                        let has_collaborators = snapshot
+                            .selections_in_range(Anchor::MIN..Anchor::MAX, false)
+                            .next()
+                            .is_some();
+                        let position = buffer
                             .buffer_diagnostics(None)
                             .into_iter()
                             .min_by_key(|entry| entry.diagnostic.severity)
-                            .map(|entry| entry.range.start)
-                    })
-                    .map(|position| (closest_buffer, position));
+                            .map(|entry| entry.range.start);
+                        (has_collaborators, position)
+                    });
+
+                if has_collaborators {
+                    continue;
+                }
+
+                if let Some(position) = diagnostic_position {
+                    jump_location = Some((candidate_buffer, position));
+                    break;
+                }
             }
         }
 
@@ -2181,9 +2230,7 @@ impl EditPredictionStore {
     {
         let http_client = client.http_client();
 
-        let mut token = if let Ok(custom_token) = std::env::var("ZED_PREDICT_EDITS_TOKEN") {
-            Some(custom_token)
-        } else if require_auth {
+        let mut token = if require_auth {
             Some(llm_token.acquire(&client).await?)
         } else {
             llm_token.acquire(&client).await.ok()
