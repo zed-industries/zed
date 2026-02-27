@@ -3841,6 +3841,7 @@ impl ThreadView {
                     entry_ix,
                     tool_call,
                     &self.focus_handle(cx),
+                    false,
                     window,
                     cx,
                 )
@@ -4690,6 +4691,7 @@ impl ThreadView {
         terminal: &Entity<acp_thread::Terminal>,
         tool_call: &ToolCall,
         focus_handle: &FocusHandle,
+        is_subagent: bool,
         window: &Window,
         cx: &Context<Self>,
     ) -> AnyElement {
@@ -4908,12 +4910,14 @@ impl ThreadView {
             .and_then(|entry| entry.terminal(terminal));
 
         v_flex()
-            .my_1p5()
-            .mx_5()
-            .border_1()
-            .when(tool_failed || command_failed, |card| card.border_dashed())
-            .border_color(border_color)
-            .rounded_md()
+            .when(!is_subagent, |this| {
+                this.my_1p5()
+                    .mx_5()
+                    .border_1()
+                    .when(tool_failed || command_failed, |card| card.border_dashed())
+                    .border_color(border_color)
+                    .rounded_md()
+            })
             .overflow_hidden()
             .child(
                 v_flex()
@@ -4990,6 +4994,7 @@ impl ThreadView {
         entry_ix: usize,
         tool_call: &ToolCall,
         focus_handle: &FocusHandle,
+        is_subagent: bool,
         window: &Window,
         cx: &Context<Self>,
     ) -> Div {
@@ -5014,6 +5019,7 @@ impl ThreadView {
                         terminal,
                         tool_call,
                         focus_handle,
+                        is_subagent,
                         window,
                         cx,
                     )
@@ -5024,6 +5030,7 @@ impl ThreadView {
                     entry_ix,
                     tool_call,
                     focus_handle,
+                    is_subagent,
                     window,
                     cx,
                 ))
@@ -5037,6 +5044,7 @@ impl ThreadView {
         entry_ix: usize,
         tool_call: &ToolCall,
         focus_handle: &FocusHandle,
+        is_subagent: bool,
         window: &Window,
         cx: &Context<Self>,
     ) -> Div {
@@ -5257,7 +5265,9 @@ impl ThreadView {
 
         v_flex()
             .map(|this| {
-                if use_card_layout {
+                if is_subagent {
+                    this
+                } else if use_card_layout {
                     this.my_1p5()
                         .rounded_md()
                         .border_1()
@@ -5269,14 +5279,16 @@ impl ThreadView {
                     this.my_1()
                 }
             })
-            .map(|this| {
-                if has_location && !use_card_layout {
-                    this.ml_4()
-                } else {
-                    this.ml_5()
-                }
+            .when(!is_subagent, |this| {
+                this.map(|this| {
+                    if has_location && !use_card_layout {
+                        this.ml_4()
+                    } else {
+                        this.ml_5()
+                    }
+                })
+                .mr_5()
             })
-            .mr_5()
             .map(|this| {
                 if is_terminal_tool {
                     let label_source = tool_call.label.read(cx).source();
@@ -6070,6 +6082,7 @@ impl ThreadView {
                 terminal,
                 tool_call,
                 focus_handle,
+                false,
                 window,
                 cx,
             ),
@@ -6353,6 +6366,15 @@ impl ThreadView {
             .map(|log| log.read(cx).changed_buffers(cx))
             .unwrap_or_default();
 
+        let is_pending_tool_call = thread
+            .as_ref()
+            .and_then(|thread| {
+                self.conversation
+                    .read(cx)
+                    .pending_tool_call(thread.read(cx).session_id(), cx)
+            })
+            .is_some();
+
         let is_expanded = self.expanded_tool_calls.contains(&tool_call.id);
         let files_changed = changed_buffers.len();
         let diff_stats = DiffStats::all_files(&changed_buffers, cx);
@@ -6506,7 +6528,7 @@ impl ThreadView {
                                         )
                                     }),
                             )
-                            .when(!has_no_title_or_canceled, |this| {
+                            .when(!has_no_title_or_canceled && !is_pending_tool_call, |this| {
                                 this.tooltip(move |_, cx| {
                                     Tooltip::with_meta(
                                         title.to_string(),
@@ -6516,7 +6538,7 @@ impl ThreadView {
                                     )
                                 })
                             })
-                            .when(has_expandable_content, |this| {
+                            .when(has_expandable_content && !is_pending_tool_call, |this| {
                                 this.cursor_pointer()
                                     .hover(|s| s.bg(cx.theme().colors().element_hover))
                                     .child(
@@ -6578,14 +6600,16 @@ impl ThreadView {
                     if let Some((entry_ix, tool_call)) =
                         thread.read(cx).tool_call(&subagent_tool_call_id)
                     {
-                        this.child(thread_view.read(cx).render_any_tool_call(
-                            active_session_id,
-                            entry_ix,
-                            tool_call,
-                            focus_handle,
-                            window,
-                            cx,
-                        ))
+                        this.child(Divider::horizontal().color(DividerColor::Border))
+                            .child(thread_view.read(cx).render_any_tool_call(
+                                active_session_id,
+                                entry_ix,
+                                tool_call,
+                                focus_handle,
+                                true,
+                                window,
+                                cx,
+                            ))
                     } else {
                         this
                     }
