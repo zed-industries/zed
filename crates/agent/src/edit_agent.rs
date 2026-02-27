@@ -617,6 +617,7 @@ impl EditAgent {
                 };
 
                 let mut indented_new_text = reindenter.push(&chunk);
+                // This was the last chunk, push all the buffered content as-is.
                 if is_last_chunk {
                     indented_new_text.push_str(&reindenter.finish());
                     done = true;

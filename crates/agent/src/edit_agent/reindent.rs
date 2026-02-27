@@ -72,15 +72,20 @@ impl Reindenter {
             let line = &self.buffer[start_ix..line_end];
 
             if self.in_leading_whitespace {
-                if let Some(non_ws_ix) = line.find(|c| self.delta.character() != c) {
+                if let Some(non_whitespace_ix) = line.find(|c| self.delta.character() != c) {
+                    // We found a non-whitespace character, adjust indentation
+                    // based on the delta.
                     let new_indent_len =
-                        cmp::max(0, non_ws_ix as isize + self.delta.len()) as usize;
+                        cmp::max(0, non_whitespace_ix as isize + self.delta.len()) as usize;
                     indented.extend(iter::repeat(self.delta.character()).take(new_indent_len));
-                    indented.push_str(&line[non_ws_ix..]);
+                    indented.push_str(&line[non_whitespace_ix..]);
                     self.in_leading_whitespace = false;
                 } else if is_pending_line && !is_final {
+                    // We're still in leading whitespace and this line is incomplete.
+                    // Stop processing until we receive more input.
                     break;
                 } else {
+                    // This line is entirely whitespace. Push it without indentation.
                     indented.push_str(line);
                 }
             } else {
