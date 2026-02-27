@@ -854,6 +854,20 @@ impl WgpuRenderer {
                 );
             }
 
+            // Wait for any in-flight GPU work to complete before destroying textures
+            if let Err(e) = self.device.poll(wgpu::PollType::Wait {
+                submission_index: None,
+                timeout: None,
+            }) {
+                warn!("Failed to poll device during resize: {e:?}");
+            }
+
+            // Destroy old textures before allocating new ones to avoid GPU memory spikes
+            self.path_intermediate_texture.destroy();
+            if let Some(ref texture) = self.path_msaa_texture {
+                texture.destroy();
+            }
+
             self.surface_config.width = clamped_width.max(1);
             self.surface_config.height = clamped_height.max(1);
             self.surface.configure(&self.device, &self.surface_config);
