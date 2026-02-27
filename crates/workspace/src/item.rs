@@ -372,6 +372,7 @@ pub trait Item: Focusable + EventEmitter<Self::Event> + Render + Sized {
         &self,
         _active_pane: &Pane,
         _dropped: &dyn Any,
+        _is_pane_target: bool,
         _window: &mut Window,
         _cx: &mut App,
     ) -> bool {
@@ -561,6 +562,7 @@ pub trait ItemHandle: 'static + Send {
         &self,
         active_pane: &Pane,
         dropped: &dyn Any,
+        is_pane_target: bool,
         window: &mut Window,
         cx: &mut App,
     ) -> bool;
@@ -1135,11 +1137,12 @@ impl<T: Item> ItemHandle for Entity<T> {
         &self,
         active_pane: &Pane,
         dropped: &dyn Any,
+        is_pane_target: bool,
         window: &mut Window,
         cx: &mut App,
     ) -> bool {
         self.update(cx, |this, cx| {
-            this.handle_drop(active_pane, dropped, window, cx)
+            this.handle_drop(active_pane, dropped, is_pane_target, window, cx)
         })
     }
 

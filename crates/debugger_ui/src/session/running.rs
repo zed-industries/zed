@@ -467,7 +467,13 @@ pub(crate) fn new_debugger_pane(
                             .on_drop(cx.listener(
                                 move |this, dragged_tab: &DraggedTab, window, cx| {
                                     this.drag_split_direction = None;
-                                    this.handle_tab_drop(dragged_tab, this.items_len(), window, cx)
+                                    this.handle_tab_drop(
+                                        dragged_tab,
+                                        this.items_len(),
+                                        false,
+                                        window,
+                                        cx,
+                                    )
                                 },
                             ))
                             .children(pane.items().enumerate().map(|(ix, item)| {
@@ -517,7 +523,7 @@ pub(crate) fn new_debugger_pane(
                                     .on_drop(cx.listener(
                                         move |this, dragged_tab: &DraggedTab, window, cx| {
                                             this.drag_split_direction = None;
-                                            this.handle_tab_drop(dragged_tab, ix, window, cx)
+                                            this.handle_tab_drop(dragged_tab, ix, false, window, cx)
                                         },
                                     ))
                                     .on_drag(
