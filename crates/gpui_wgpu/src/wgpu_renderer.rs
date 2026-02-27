@@ -820,7 +820,9 @@ impl WgpuRenderer {
             }
 
             // Destroy old textures before allocating new ones to avoid GPU memory spikes
-            self.path_intermediate_texture.destroy();
+            if let Some(ref texture) = self.path_intermediate_texture {
+                texture.destroy();
+            }
             if let Some(ref texture) = self.path_msaa_texture {
                 texture.destroy();
             }
