@@ -516,6 +516,8 @@ pub fn init(cx: &mut App) {
             }
         });
 
+        // TODO!: We should remove this `register_action` call, so that git
+        // graph implementation of file history is used.
         workspace.register_action(|workspace, _: &git::FileHistory, window, cx| {
             // First try to get from project panel if it's focused
             if let Some(panel) = workspace.panel::<ProjectPanel>(cx) {
