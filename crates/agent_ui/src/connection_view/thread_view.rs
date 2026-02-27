@@ -6365,22 +6365,25 @@ impl ThreadView {
             ToolCallStatus::Canceled | ToolCallStatus::Failed | ToolCallStatus::Rejected
         );
 
-        let has_title = thread
-            .as_ref()
-            .is_some_and(|t| !t.read(cx).title().is_empty());
-        let has_no_title_or_canceled = !has_title || is_canceled_or_failed;
-
-        let title = thread
+        let thread_title = thread
             .as_ref()
             .map(|t| t.read(cx).title())
-            .unwrap_or_else(|| {
-                if is_canceled_or_failed {
-                    "Subagent Canceled"
-                } else {
-                    "Spawning Subagent…"
-                }
-                .into()
-            });
+            .filter(|t| !t.is_empty());
+        let tool_call_label = tool_call.label.read(cx).source().to_string();
+        let has_tool_call_label = !tool_call_label.is_empty();
+
+        let has_title = thread_title.is_some() || has_tool_call_label;
+        let has_no_title_or_canceled = !has_title || is_canceled_or_failed;
+
+        let title: SharedString = if let Some(thread_title) = thread_title {
+            thread_title
+        } else if !tool_call_label.is_empty() {
+            tool_call_label.into()
+        } else if is_canceled_or_failed {
+            "Subagent Canceled".into()
+        } else {
+            "Spawning agent…".into()
+        };
 
         let card_header_id = format!("subagent-header-{}", entry_ix);
         let diff_stat_id = format!("subagent-diff-{}", entry_ix);
