@@ -1,5 +1,5 @@
 use gh_workflow::{
-    Concurrency, Container, Event, Expression, Job, Port, PullRequest, Push, Run, Step, Use,
+    Concurrency, Container, Env, Event, Expression, Job, Port, PullRequest, Push, Run, Step, Use,
     Workflow,
 };
 use indexmap::IndexMap;
@@ -14,6 +14,11 @@ use super::{
     runners::{self, Platform},
     steps::{self, FluentBuilder, NamedJob, named, release_job},
 };
+
+fn use_clang(job: Job) -> Job {
+    job.add_env(Env::new("CC", "clang"))
+        .add_env(Env::new("CXX", "clang++"))
+}
 
 pub(crate) fn run_tests() -> Workflow {
     // Specify anything which should potentially skip full test suite in this regex:
@@ -354,7 +359,7 @@ fn check_dependencies() -> NamedJob {
         .with(("license-check", false))
     }
 
-    named::job(
+    named::job(use_clang(
         release_job(&[])
             .runs_on(runners::LINUX_SMALL)
             .add_step(steps::checkout_repo())
@@ -363,7 +368,7 @@ fn check_dependencies() -> NamedJob {
             .add_step(run_cargo_machete())
             .add_step(check_cargo_lock())
             .add_step(check_vulnerable_dependencies()),
-    )
+    ))
 }
 
 fn check_wasm() -> NamedJob {
@@ -399,7 +404,7 @@ fn check_wasm() -> NamedJob {
 }
 
 fn check_workspace_binaries() -> NamedJob {
-    named::job(
+    named::job(use_clang(
         release_job(&[])
             .runs_on(runners::LINUX_LARGE)
             .add_step(steps::checkout_repo())
@@ -411,7 +416,7 @@ fn check_workspace_binaries() -> NamedJob {
             .add_step(steps::script("cargo build --workspace --bins --examples"))
             .add_step(steps::show_sccache_stats(Platform::Linux))
             .add_step(steps::cleanup_cargo_config(Platform::Linux)),
-    )
+    ))
 }
 
 pub(crate) fn clippy(platform: Platform) -> NamedJob {
@@ -420,23 +425,27 @@ pub(crate) fn clippy(platform: Platform) -> NamedJob {
         Platform::Linux => runners::LINUX_DEFAULT,
         Platform::Mac => runners::MAC_DEFAULT,
     };
+    let mut job = release_job(&[])
+        .runs_on(runner)
+        .add_step(steps::checkout_repo())
+        .add_step(steps::setup_cargo_config(platform))
+        .when(
+            platform == Platform::Linux || platform == Platform::Mac,
+            |this| this.add_step(steps::cache_rust_dependencies_namespace()),
+        )
+        .when(
+            platform == Platform::Linux,
+            steps::install_linux_dependencies,
+        )
+        .add_step(steps::setup_sccache(platform))
+        .add_step(steps::clippy(platform))
+        .add_step(steps::show_sccache_stats(platform));
+    if platform == Platform::Linux {
+        job = use_clang(job);
+    }
     NamedJob {
         name: format!("clippy_{platform}"),
-        job: release_job(&[])
-            .runs_on(runner)
-            .add_step(steps::checkout_repo())
-            .add_step(steps::setup_cargo_config(platform))
-            .when(
-                platform == Platform::Linux || platform == Platform::Mac,
-                |this| this.add_step(steps::cache_rust_dependencies_namespace()),
-            )
-            .when(
-                platform == Platform::Linux,
-                steps::install_linux_dependencies,
-            )
-            .add_step(steps::setup_sccache(platform))
-            .add_step(steps::clippy(platform))
-            .add_step(steps::show_sccache_stats(platform)),
+        job,
     }
 }
 
@@ -474,10 +483,12 @@ fn run_platform_tests_impl(platform: Platform, filter_packages: bool) -> NamedJo
             })
             .add_step(steps::checkout_repo())
             .add_step(steps::setup_cargo_config(platform))
-            .when(
-                platform == Platform::Linux || platform == Platform::Mac,
-                |this| this.add_step(steps::cache_rust_dependencies_namespace()),
-            )
+            .when(platform == Platform::Mac, |this| {
+                this.add_step(steps::cache_rust_dependencies_namespace())
+            })
+            .when(platform == Platform::Linux, |this| {
+                use_clang(this.add_step(steps::cache_rust_dependencies_namespace()))
+            })
             .when(
                 platform == Platform::Linux,
                 steps::install_linux_dependencies,
@@ -549,7 +560,7 @@ fn doctests() -> NamedJob {
         .id("run_doctests")
     }
 
-    named::job(
+    named::job(use_clang(
         release_job(&[])
             .runs_on(runners::LINUX_DEFAULT)
             .add_step(steps::checkout_repo())
@@ -560,7 +571,7 @@ fn doctests() -> NamedJob {
             .add_step(run_doctests())
             .add_step(steps::show_sccache_stats(Platform::Linux))
             .add_step(steps::cleanup_cargo_config(Platform::Linux)),
-    )
+    ))
 }
 
 fn check_licenses() -> NamedJob {
@@ -602,7 +613,7 @@ fn check_docs() -> NamedJob {
         "#})
     }
 
-    named::job(
+    named::job(use_clang(
         release_job(&[])
             .runs_on(runners::LINUX_LARGE)
             .add_step(steps::checkout_repo())
@@ -619,7 +630,7 @@ fn check_docs() -> NamedJob {
             .add_step(
                 lychee_link_check("target/deploy/docs"), // check links in generated html
             ),
-    )
+    ))
 }
 
 pub(crate) fn check_scripts() -> NamedJob {
