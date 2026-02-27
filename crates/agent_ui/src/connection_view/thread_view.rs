@@ -6428,6 +6428,8 @@ impl ThreadView {
             "Click to Preview"
         };
 
+        let error_message = self.subagent_error_message(&tool_call.status, tool_call, cx);
+
         v_flex()
             .w_full()
             .rounded_md()
@@ -6581,6 +6583,14 @@ impl ThreadView {
                             window,
                             cx,
                         ))
+                        .when_some(error_message, |this, message| {
+                            this.child(
+                                Callout::new()
+                                    .severity(Severity::Error)
+                                    .icon(IconName::XCircle)
+                                    .title(message),
+                            )
+                        })
                         .child(
                             h_flex()
                                 .id(entry_ix)
@@ -6670,8 +6680,6 @@ impl ThreadView {
             })
             .collect();
 
-        let error_message = self.subagent_error_message(&tool_call.status, tool_call, cx);
-
         let parent_thread = self.thread.read(cx);
         let mut started_subagent_count = 0usize;
         let mut turn_has_our_call = false;
@@ -6697,7 +6705,6 @@ impl ThreadView {
         }
 
         v_flex()
-            .relative()
             .w_full()
             .border_t_1()
             .when(is_canceled_or_failed, |this| this.border_dashed())
@@ -6705,22 +6712,12 @@ impl ThreadView {
             .overflow_hidden()
             .child(
                 div()
-                    .id(format!("subagent-entries-{}", session_id))
-                    .flex_1()
-                    .min_h_0()
                     .pb_1()
-                    .overflow_hidden()
+                    .min_h_0()
+                    .id(format!("subagent-entries-{}", session_id))
                     .track_scroll(&scroll_handle)
                     .children(rendered_entries),
             )
-            .when_some(error_message, |this, message| {
-                this.child(
-                    Callout::new()
-                        .severity(Severity::Error)
-                        .icon(IconName::XCircle)
-                        .title(message),
-                )
-            })
             .when(started_subagent_count > 1, |this| {
                 this.h_56().child(overlay)
             })
