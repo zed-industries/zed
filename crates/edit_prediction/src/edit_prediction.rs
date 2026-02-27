@@ -1822,7 +1822,7 @@ impl EditPredictionStore {
                                         new_prediction.prediction.id,
                                         EditPredictionRejectReason::CurrentPreferred,
                                         false,
-                                        new_prediction.prediction.model_version.clone(),
+                                        new_prediction.prediction.model_version,
                                         cx,
                                     );
                                     None

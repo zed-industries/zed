@@ -524,7 +524,7 @@ pub(crate) fn edit_prediction_accepted(
     }
 
     let request_id = current_prediction.prediction.id.to_string();
-    let model_version = current_prediction.prediction.model_version.clone();
+    let model_version = current_prediction.prediction.model_version;
     let require_auth = custom_accept_url.is_none();
     let client = store.client.clone();
     let llm_token = store.llm_token.clone();
