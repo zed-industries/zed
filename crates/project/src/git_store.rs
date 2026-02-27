@@ -3633,6 +3633,12 @@ impl RepositorySnapshot {
             .cloned()
     }
 
+    pub fn diff_stat_for_path(&self, path: &RepoPath) -> Option<DiffStat> {
+        self.diff_stats_by_path
+            .get(&PathKey(path.as_ref().clone()), ())
+            .map(|entry| entry.diff_stat)
+    }
+
     pub fn abs_path_to_repo_path(&self, abs_path: &Path) -> Option<RepoPath> {
         Self::abs_path_to_repo_path_inner(&self.work_directory_abs_path, abs_path, self.path_style)
     }
@@ -4120,6 +4126,10 @@ impl Repository {
 
     pub fn cached_status(&self) -> impl '_ + Iterator<Item = StatusEntry> {
         self.snapshot.status()
+    }
+
+    pub fn diff_stat_for_path(&self, path: &RepoPath) -> Option<DiffStat> {
+        self.snapshot.diff_stat_for_path(path)
     }
 
     pub fn cached_stash(&self) -> GitStash {
