@@ -60,13 +60,13 @@ pub fn init(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut App) {
 
     cx.on_action(clear_edit_prediction_store_edit_history);
 
-    let mut provider_config = edit_prediction_provider_config_for_settings(cx);
     cx.subscribe(&user_store, {
         let editors = editors.clone();
         let client = client.clone();
 
         move |user_store, event, cx| {
             if let client::user::Event::PrivateUserInfoUpdated = event {
+                let provider_config = edit_prediction_provider_config_for_settings(cx);
                 assign_edit_prediction_providers(
                     &editors,
                     provider_config,
@@ -80,18 +80,39 @@ pub fn init(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut App) {
     .detach();
 
     cx.observe_global::<SettingsStore>({
+        let editors = editors.clone();
+        let client = client.clone();
         let user_store = user_store.clone();
+        let mut previous_config = edit_prediction_provider_config_for_settings(cx);
         move |cx| {
             let new_provider_config = edit_prediction_provider_config_for_settings(cx);
 
-            if new_provider_config != provider_config {
+            if new_provider_config != previous_config {
                 telemetry::event!(
                     "Edit Prediction Provider Changed",
-                    from = provider_config.map(|config| config.name()),
+                    from = previous_config.map(|config| config.name()),
                     to = new_provider_config.map(|config| config.name())
                 );
 
-                provider_config = new_provider_config;
+                previous_config = new_provider_config;
+                assign_edit_prediction_providers(
+                    &editors,
+                    new_provider_config,
+                    &client,
+                    user_store.clone(),
+                    cx,
+                );
+            }
+        }
+    })
+    .detach();
+
+    cx.observe_flag::<Zeta2FeatureFlag, _>({
+        let mut previous_config = edit_prediction_provider_config_for_settings(cx);
+        move |_is_enabled, cx| {
+            let new_provider_config = edit_prediction_provider_config_for_settings(cx);
+            if new_provider_config != previous_config {
+                previous_config = new_provider_config;
                 assign_edit_prediction_providers(
                     &editors,
                     new_provider_config,
@@ -322,5 +343,103 @@ fn assign_edit_prediction_provider(
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use editor::MultiBuffer;
+    use gpui::{BorrowAppContext, TestAppContext};
+    use settings::{EditPredictionProvider, SettingsStore};
+    use workspace::AppState;
+
+    #[gpui::test]
+    async fn test_subscribe_uses_stale_provider_config_after_settings_change(
+        cx: &mut TestAppContext,
+    ) {
+        let app_state = cx.update(|cx| {
+            let app_state = AppState::test(cx);
+            client::init(&app_state.client, cx);
+            language_model::init(app_state.client.clone(), cx);
+            editor::init(cx);
+            app_state
+        });
+
+        // Override the default provider to None so the subscribe closure
+        // captures None at init time. (The test default is Zed/Zeta1, which
+        // is a no-op on project-less editors and would mask the bug.)
+        cx.update(|cx| {
+            cx.update_global::<SettingsStore, _>(|store: &mut SettingsStore, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.project.all_languages.edit_predictions =
+                        Some(settings::EditPredictionSettingsContent {
+                            provider: Some(EditPredictionProvider::None),
+                            ..Default::default()
+                        });
+                });
+            });
+        });
+
+        cx.update(|cx| {
+            init(app_state.client.clone(), app_state.user_store.clone(), cx);
+        });
+
+        // Create an editor in a window so observe_new registers it.
+        let editor = cx.add_window(|window, cx| {
+            let buffer = cx.new(|_cx| MultiBuffer::new(language::Capability::ReadWrite));
+            Editor::new(editor::EditorMode::full(), buffer, None, window, cx)
+        });
+
+        editor
+            .update(cx, |editor, _window, _cx| {
+                assert!(
+                    editor.edit_prediction_provider().is_none(),
+                    "editor should start with no provider when settings = None"
+                );
+            })
+            .unwrap();
+
+        // Change settings to Codestral. The observe_global closure updates its
+        // own copy of provider_config and assigns Codestral to all editors.
+        cx.update(|cx| {
+            cx.update_global::<SettingsStore, _>(|store: &mut SettingsStore, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.project.all_languages.edit_predictions =
+                        Some(settings::EditPredictionSettingsContent {
+                            provider: Some(EditPredictionProvider::Codestral),
+                            ..Default::default()
+                        });
+                });
+            });
+        });
+
+        editor
+            .update(cx, |editor, _window, _cx| {
+                assert!(
+                    editor.edit_prediction_provider().is_some(),
+                    "editor should have a provider after changing settings to Codestral"
+                );
+            })
+            .unwrap();
+
+        // Emit PrivateUserInfoUpdated. The subscribe closure should use the
+        // CURRENT provider config (Codestral), but due to the bug it uses the
+        // stale init-time value (None) and clears the provider.
+        cx.update(|cx| {
+            app_state.user_store.update(cx, |_, cx| {
+                cx.emit(client::user::Event::PrivateUserInfoUpdated);
+            });
+        });
+        cx.run_until_parked();
+
+        editor
+            .update(cx, |editor, _window, _cx| {
+                assert!(
+                    editor.edit_prediction_provider().is_some(),
+                    "BUG: subscribe closure used stale provider_config (None) instead of current (Codestral)"
+                );
+            })
+            .unwrap();
     }
 }

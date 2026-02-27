@@ -105,13 +105,14 @@ const ZED_PREDICT_DATA_COLLECTION_CHOICE: &str = "zed_predict_data_collection_ch
 const REJECT_REQUEST_DEBOUNCE: Duration = Duration::from_secs(15);
 
 pub struct Zeta2FeatureFlag;
+pub struct EditPredictionJumpsFeatureFlag;
 
 impl FeatureFlag for Zeta2FeatureFlag {
     const NAME: &'static str = "zeta2";
+}
 
-    fn enabled_for_staff() -> bool {
-        true
-    }
+impl FeatureFlag for EditPredictionJumpsFeatureFlag {
+    const NAME: &'static str = "edit_prediction_jumps";
 }
 
 #[derive(Clone)]
@@ -360,6 +361,7 @@ impl ProjectState {
                         prediction_id,
                         EditPredictionRejectReason::Canceled,
                         false,
+                        None,
                         cx,
                     );
                 })
@@ -1035,7 +1037,7 @@ impl EditPredictionStore {
                 }
             }
             project::Event::DiagnosticsUpdated { .. } => {
-                if cx.has_flag::<Zeta2FeatureFlag>() {
+                if cx.has_flag::<EditPredictionJumpsFeatureFlag>() {
                     self.refresh_prediction_from_diagnostics(
                         project,
                         DiagnosticSearchScope::Global,
@@ -1393,7 +1395,14 @@ impl EditPredictionStore {
         if let Some(project_state) = self.projects.get_mut(&project.entity_id()) {
             project_state.pending_predictions.clear();
             if let Some(prediction) = project_state.current_prediction.take() {
-                self.reject_prediction(prediction.prediction.id, reason, prediction.was_shown, cx);
+                let model_version = prediction.prediction.model_version.clone();
+                self.reject_prediction(
+                    prediction.prediction.id,
+                    reason,
+                    prediction.was_shown,
+                    model_version,
+                    cx,
+                );
             }
         };
     }
@@ -1452,6 +1461,7 @@ impl EditPredictionStore {
         prediction_id: EditPredictionId,
         reason: EditPredictionRejectReason,
         was_shown: bool,
+        model_version: Option<String>,
         cx: &App,
     ) {
         match self.edit_prediction_model {
@@ -1466,6 +1476,7 @@ impl EditPredictionStore {
                             request_id: prediction_id.to_string(),
                             reason,
                             was_shown,
+                            model_version,
                         })
                         .log_err();
                 }
@@ -1811,6 +1822,7 @@ impl EditPredictionStore {
                                         new_prediction.prediction.id,
                                         EditPredictionRejectReason::CurrentPreferred,
                                         false,
+                                        new_prediction.prediction.model_version,
                                         cx,
                                     );
                                     None
@@ -1820,7 +1832,13 @@ impl EditPredictionStore {
                             }
                         }
                         Err(reject_reason) => {
-                            this.reject_prediction(prediction_result.id, reject_reason, false, cx);
+                            this.reject_prediction(
+                                prediction_result.id,
+                                reject_reason,
+                                false,
+                                None,
+                                cx,
+                            );
                             None
                         }
                     }
@@ -2212,9 +2230,7 @@ impl EditPredictionStore {
     {
         let http_client = client.http_client();
 
-        let mut token = if let Ok(custom_token) = std::env::var("ZED_PREDICT_EDITS_TOKEN") {
-            Some(custom_token)
-        } else if require_auth {
+        let mut token = if require_auth {
             Some(llm_token.acquire(&client).await?)
         } else {
             llm_token.acquire(&client).await.ok()

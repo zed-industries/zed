@@ -799,6 +799,8 @@
     // 3. Show files first, then directories:
     //    "files_first"
     "sort_mode": "directories_first",
+    // Whether to show error and warning count badges next to file names in the project panel.
+    "diagnostic_badges": true,
     // Whether to enable drag-and-drop operations in the project panel.
     "drag_and_drop": true,
     // Whether to hide the root entry when only one folder is open in the window;
@@ -913,6 +915,10 @@
       // Default: inherits editor scrollbar settings
       // "show": null
     },
+    // Whether to show the addition/deletion change count next to each file in the Git panel.
+    //
+    // Default: false
+    "diff_stats": false,
   },
   "message_editor": {
     // Whether to automatically replace emoji shortcodes with emoji characters.
@@ -1265,8 +1271,6 @@
     //
     // Default: true
     "skip_focus_for_active_in_search": true,
-    // Whether to show the git status in the file finder.
-    "git_status": true,
     // Whether to use gitignored files when searching.
     // Only the file Zed had indexed will be used, not necessary all the gitignored files.
     //
@@ -2221,6 +2225,9 @@
     },
     "vercel": {
       "api_url": "https://api.v0.dev/v1",
+    },
+    "vercel_ai_gateway": {
+      "api_url": "https://ai-gateway.vercel.sh/v1",
     },
     "x_ai": {
       "api_url": "https://api.x.ai/v1",

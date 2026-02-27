@@ -15,7 +15,7 @@ use std::{
 };
 
 use crate::{
-    AgentTool, ThreadEnvironment, ToolCallEventStream, ToolPermissionDecision,
+    AgentTool, ThreadEnvironment, ToolCallEventStream, ToolInput, ToolPermissionDecision,
     decide_permission_from_settings,
 };
 
@@ -85,34 +85,45 @@ impl AgentTool for TerminalTool {
 
     fn run(
         self: Arc<Self>,
-        input: Self::Input,
+        input: ToolInput<Self::Input>,
         event_stream: ToolCallEventStream,
         cx: &mut App,
     ) -> Task<Result<Self::Output, Self::Output>> {
-        let working_dir = match working_dir(&input, &self.project, cx) {
-            Ok(dir) => dir,
-            Err(err) => return Task::ready(Err(err.to_string())),
-        };
-
-        let settings = AgentSettings::get_global(cx);
-        let decision = decide_permission_from_settings(
-            Self::NAME,
-            std::slice::from_ref(&input.command),
-            settings,
-        );
-
-        let authorize = match decision {
-            ToolPermissionDecision::Allow => None,
-            ToolPermissionDecision::Deny(reason) => {
-                return Task::ready(Err(reason));
-            }
-            ToolPermissionDecision::Confirm => {
-                let context =
-                    crate::ToolPermissionContext::new(Self::NAME, vec![input.command.clone()]);
-                Some(event_stream.authorize(self.initial_title(Ok(input.clone()), cx), context, cx))
-            }
-        };
         cx.spawn(async move |cx| {
+            let input = input
+                .recv()
+                .await
+                .map_err(|e| format!("Failed to receive tool input: {e}"))?;
+
+            let (working_dir, authorize) = cx.update(|cx| {
+                let working_dir =
+                    working_dir(&input, &self.project, cx).map_err(|err| err.to_string())?;
+
+                let decision = decide_permission_from_settings(
+                    Self::NAME,
+                    std::slice::from_ref(&input.command),
+                    AgentSettings::get_global(cx),
+                );
+
+                let authorize = match decision {
+                    ToolPermissionDecision::Allow => None,
+                    ToolPermissionDecision::Deny(reason) => {
+                        return Err(reason);
+                    }
+                    ToolPermissionDecision::Confirm => {
+                        let context = crate::ToolPermissionContext::new(
+                            Self::NAME,
+                            vec![input.command.clone()],
+                        );
+                        Some(event_stream.authorize(
+                            self.initial_title(Ok(input.clone()), cx),
+                            context,
+                            cx,
+                        ))
+                    }
+                };
+                Ok((working_dir, authorize))
+            })?;
             if let Some(authorize) = authorize {
                 authorize.await.map_err(|e| e.to_string())?;
             }

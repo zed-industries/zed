@@ -2,7 +2,7 @@
 description = "The fast, collaborative code editor."
 edition.workspace = true
 name = "zed"
-version = "0.226.0"
+version = "0.227.0"
 publish.workspace = true
 license = "GPL-3.0-or-later"
 authors = ["Zed Team <hi@zed.dev>"]
@@ -118,11 +118,7 @@ git_hosting_providers.workspace = true
 git_ui.workspace = true
 go_to_line.workspace = true
 system_specs.workspace = true
-gpui = { workspace = true, features = [
-    "wayland",
-    "windows-manifest",
-    "x11",
-] }
+gpui.workspace = true
 gpui_platform = {workspace = true, features=["screen-capture", "font-kit", "wayland", "x11"]}
 image = { workspace = true, optional = true }
 semver = { workspace = true, optional = true }
@@ -232,11 +228,18 @@ zlog_settings.workspace = true
 [target.'cfg(target_os = "windows")'.dependencies]
 etw_tracing.workspace = true
 windows.workspace = true
+gpui = { workspace = true, features = [
+    "windows-manifest",
+] }
 
 [target.'cfg(target_os = "windows")'.build-dependencies]
 winresource = "0.1"
 
 [target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies]
+gpui = { workspace = true, features = [
+    "wayland",
+    "x11",
+] }
 ashpd.workspace = true
 
 [dev-dependencies]
