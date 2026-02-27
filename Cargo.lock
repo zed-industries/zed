@@ -14242,13 +14242,13 @@ dependencies = [
  "bytes 1.11.1",
  "futures 0.3.31",
  "gpui",
+ "gpui_util",
  "http_client",
  "http_client_tls",
  "log",
  "regex",
  "serde",
  "tokio",
- "util",
  "zed-reqwest",
 ]
 
