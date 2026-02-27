@@ -147,9 +147,13 @@ jobs:
         file: ts_query_ls-x86_64-unknown-linux-gnu.tar.gz
     - name: run_tests::check_style::run_ts_query_ls
       run: |-
-        tar -xf ts_query_ls-x86_64-unknown-linux-gnu.tar.gz && ./ts_query_ls format --check . || ( echo "Found unformatted queries, please format them with ts_query_ls.
-        For easy use, install the Tree-sitter query extension:
-        zed://extension/tree-sitter-query" ; false )
+        tar -xf ts_query_ls-x86_64-unknown-linux-gnu.tar.gz
+        ./ts_query_ls format --check . || {
+            echo "Found unformatted queries, please format them with ts_query_ls.
+            For easy use, install the Tree-sitter query extension:
+            zed://extension/tree-sitter-query"
+            false
+        }
     timeout-minutes: 60
   clippy_windows:
     needs:
