@@ -99,14 +99,18 @@ impl WgpuContext {
             );
         }
 
-        let (device, queue) = smol::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-            label: Some("gpui_device"),
-            required_features,
-            required_limits: wgpu::Limits::default(),
-            memory_hints: wgpu::MemoryHints::MemoryUsage,
-            trace: wgpu::Trace::Off,
-            experimental_features: wgpu::ExperimentalFeatures::disabled(),
-        }))
+        let (device, queue) = smol::block_on(
+            adapter.request_device(&wgpu::DeviceDescriptor {
+                label: Some("gpui_device"),
+                required_features,
+                required_limits: wgpu::Limits::downlevel_defaults()
+                    .using_resolution(adapter.limits())
+                    .using_alignment(adapter.limits()),
+                memory_hints: wgpu::MemoryHints::MemoryUsage,
+                trace: wgpu::Trace::Off,
+                experimental_features: wgpu::ExperimentalFeatures::disabled(),
+            }),
+        )
         .map_err(|e| anyhow::anyhow!("Failed to create wgpu device: {e}"))?;
 
         Ok((device, queue, dual_source_blending_available))
