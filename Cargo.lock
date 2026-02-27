@@ -10296,7 +10296,7 @@ dependencies = [
 [[package]]
 name = "mermaid-rs-renderer"
 version = "0.2.0"
-source = "git+https://github.com/zed-industries/mermaid-rs-renderer?branch=fix-font-family-xml-escaping#d91961aa90bc7b0c09c87a13c91d48e2f05c468d"
+source = "git+https://github.com/zed-industries/mermaid-rs-renderer?rev=9d8360d9cea10dc4bc86d7b8012cc6e9656e6cf2#9d8360d9cea10dc4bc86d7b8012cc6e9656e6cf2"
 dependencies = [
  "anyhow",
  "fontdb 0.16.2",
