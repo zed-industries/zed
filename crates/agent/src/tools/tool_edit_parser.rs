@@ -158,7 +158,6 @@ impl ToolEditParser {
 
             let state = &mut self.edit_states[index];
 
-            // Finalize old_text.
             if !state.old_text_done {
                 let start = state.old_text_emitted_len.min(edit.old_text.len());
                 let chunk = edit.old_text[start..].to_string();
@@ -171,7 +170,6 @@ impl ToolEditParser {
                 });
             }
 
-            // Finalize new_text.
             if !state.new_text_done {
                 let start = state.new_text_emitted_len.min(edit.new_text.len());
                 let chunk = edit.new_text[start..].to_string();

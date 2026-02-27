@@ -848,11 +848,6 @@ impl EditSession {
                         });
                     });
                     pipeline.content_written = true;
-
-                    let anchor_range = buffer.read_with(cx, |buffer, _cx| {
-                        buffer.anchor_range_between(0..buffer.len())
-                    });
-                    diff.update(cx, |diff, cx| diff.reveal_range(anchor_range, cx));
                 }
 
                 ToolEditEvent::OldTextChunk {
@@ -1020,12 +1015,6 @@ impl EditSession {
                             log.buffer_edited(buffer.clone(), cx);
                         });
                     }
-
-                    // Update the diff reveal range.
-                    let anchor_range = buffer.read_with(cx, |buffer, _cx| {
-                        buffer.anchor_range_between(0..buffer.len())
-                    });
-                    diff.update(cx, |diff, cx| diff.reveal_range(anchor_range, cx));
                 }
 
                 ToolEditEvent::NewTextChunk {
