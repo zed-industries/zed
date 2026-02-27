@@ -21,6 +21,7 @@ use rpc::{
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{RegisterSetting, SettingsStore};
+use sha2::{Digest, Sha256};
 use task::Shell;
 use util::{ResultExt as _, debug_panic};
 
@@ -1075,12 +1076,10 @@ impl ExternalAgentServer for LocalExtensionArchiveAgent {
 
             // Use URL as version identifier for caching
             // Hash the URL to get a stable directory name
-            use std::collections::hash_map::DefaultHasher;
-            use std::hash::{Hash, Hasher};
-            let mut hasher = DefaultHasher::new();
-            archive_url.hash(&mut hasher);
-            let url_hash = hasher.finish();
-            let version_dir = dir.join(format!("v_{:x}", url_hash));
+            let mut hasher = Sha256::new();
+            hasher.update(archive_url.as_bytes());
+            let url_hash = format!("{:x}", hasher.finalize());
+            let version_dir = dir.join(format!("v_{}", url_hash));
 
             if !fs.is_dir(&version_dir).await {
                 // Determine SHA256 for verification
@@ -1273,12 +1272,10 @@ impl ExternalAgentServer for LocalRegistryArchiveAgent {
 
             let archive_url = &target_config.archive;
 
-            use std::collections::hash_map::DefaultHasher;
-            use std::hash::{Hash, Hasher};
-            let mut hasher = DefaultHasher::new();
-            archive_url.hash(&mut hasher);
-            let url_hash = hasher.finish();
-            let version_dir = dir.join(format!("v_{:x}", url_hash));
+            let mut hasher = Sha256::new();
+            hasher.update(archive_url.as_bytes());
+            let url_hash = format!("{:x}", hasher.finalize());
+            let version_dir = dir.join(format!("v_{}", url_hash));
 
             if !fs.is_dir(&version_dir).await {
                 let sha256 = if let Some(provided_sha) = &target_config.sha256 {
