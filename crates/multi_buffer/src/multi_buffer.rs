@@ -6836,6 +6836,10 @@ impl MultiBufferSnapshot {
         }
         excerpt_edits
     }
+
+    fn path_key_for_anchor(&self, anchor: Anchor) -> Option<PathKey> {
+        todo!()
+    }
 }
 
 #[cfg(any(test, feature = "test-support"))]
@@ -7604,6 +7608,16 @@ impl sum_tree::SeekTarget<'_, ExcerptSummary, ExcerptSummary> for AnchorSeekTarg
             } => Ord::cmp(path_key, &cursor_location.path_key)
                 .then_with(|| anchor.cmp(&cursor_location.max_anchor, snapshot)),
         }
+    }
+}
+
+impl sum_tree::SeekTarget<'_, ExcerptSummary, ExcerptSummary> for PathKey {
+    fn cmp(
+        &self,
+        cursor_location: &ExcerptSummary,
+        _cx: <ExcerptSummary as sum_tree::Summary>::Context<'_>,
+    ) -> cmp::Ordering {
+        todo!()
     }
 }
 

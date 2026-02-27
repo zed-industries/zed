@@ -16,15 +16,9 @@ use util::rel_path::RelPath;
 use ztracing::instrument;
 
 use crate::{
-    Anchor, BufferState, DiffChangeKind, Event, Excerpt, ExcerptRange, ExpandExcerptDirection,
-    MultiBuffer, MultiBufferOffset, build_excerpt_ranges,
+    Anchor, BufferState, DiffChangeKind, Event, Excerpt, ExcerptRange, ExcerptSummary,
+    ExpandExcerptDirection, MultiBuffer, MultiBufferOffset, build_excerpt_ranges,
 };
-
-#[derive(Debug, Clone)]
-pub struct PathExcerptInsertResult {
-    pub excerpt_ids: Vec<ExcerptId>,
-    pub added_new_excerpt: bool,
-}
 
 #[derive(PartialEq, Eq, Ord, PartialOrd, Clone, Hash, Debug)]
 pub struct PathKey {
@@ -205,89 +199,84 @@ impl MultiBuffer {
 
     pub(super) fn expand_excerpts_with_paths(
         &mut self,
-        ids: impl IntoIterator<Item = ExcerptId>,
+        anchors: impl IntoIterator<Item = Anchor>,
         line_count: u32,
         direction: ExpandExcerptDirection,
         cx: &mut Context<Self>,
     ) {
-        let mut sorted_ids: Vec<ExcerptId> = ids.into_iter().collect();
-        sorted_ids.sort_by(|a, b| {
-            let path_a = self.paths_by_excerpt.get(a);
-            let path_b = self.paths_by_excerpt.get(b);
-            path_a.cmp(&path_b)
-        });
-        let grouped = sorted_ids
-            .into_iter()
-            .chunk_by(|id| self.paths_by_excerpt.get(id).cloned())
-            .into_iter()
-            .filter_map(|(k, v)| Some((k?, v.into_iter().collect::<Vec<_>>())))
-            .collect::<Vec<_>>();
         let snapshot = self.snapshot(cx);
-
-        for (path, ids) in grouped.into_iter() {
-            let Some(excerpt_ids) = self.excerpts_by_path.get(&path) else {
+        let mut sorted_anchors = anchors.into_iter().collect::<Vec<_>>();
+        sorted_anchors.sort_by(|a, b| a.cmp(b, &snapshot));
+        let mut cursor = snapshot.excerpts.cursor::<ExcerptSummary>(());
+        let mut sorted_anchors = sorted_anchors.into_iter().peekable();
+        while let Some(anchor) = sorted_anchors.next() {
+            let Some(buffer) = self.buffer_for_anchor(anchor, cx) else {
+                continue;
+            };
+            let buffer_snapshot = buffer.read(cx).snapshot();
+            let Some(path) = snapshot.path_key_for_anchor(anchor) else {
                 continue;
             };
 
-            let ids_to_expand = HashSet::from_iter(ids);
-            let mut excerpt_id_ = None;
-            let expanded_ranges = excerpt_ids.iter().filter_map(|excerpt_id| {
-                let excerpt = snapshot.excerpt(*excerpt_id)?;
-                let excerpt_id = excerpt.id;
-                if excerpt_id_.is_none() {
-                    excerpt_id_ = Some(excerpt_id);
+            let mut expanded_ranges = Vec::new();
+            cursor.seek(&path, Bias::Left);
+            while let Some(anchor) = sorted_anchors.next() {
+                let Some(target) = snapshot.anchor_seek_target(anchor) else {
+                    continue;
+                };
+                // Add ranges for non-expanded excerpts before the next expanded excerpt (or after the last one)
+                expanded_ranges.extend(
+                    cursor
+                        .slice(&target, Bias::Left)
+                        .iter()
+                        .map(|excerpt| excerpt.range.clone()),
+                );
+                if snapshot.path_key_for_anchor(anchor) != Some(path.clone()) {
+                    break;
                 }
-
-                let mut context = excerpt.range.context.to_point(&excerpt.buffer);
-                if ids_to_expand.contains(&excerpt_id) {
-                    match direction {
-                        ExpandExcerptDirection::Up => {
-                            context.start.row = context.start.row.saturating_sub(line_count);
-                            context.start.column = 0;
-                        }
-                        ExpandExcerptDirection::Down => {
-                            context.end.row =
-                                (context.end.row + line_count).min(excerpt.buffer.max_point().row);
-                            context.end.column = excerpt.buffer.line_len(context.end.row);
-                        }
-                        ExpandExcerptDirection::UpAndDown => {
-                            context.start.row = context.start.row.saturating_sub(line_count);
-                            context.start.column = 0;
-                            context.end.row =
-                                (context.end.row + line_count).min(excerpt.buffer.max_point().row);
-                            context.end.column = excerpt.buffer.line_len(context.end.row);
-                        }
+                let Some(excerpt) = cursor.item() else {
+                    continue;
+                };
+                let mut context = excerpt.range.context.to_point(&buffer_snapshot);
+                match direction {
+                    ExpandExcerptDirection::Up => {
+                        context.start.row = context.start.row.saturating_sub(line_count);
+                        context.start.column = 0;
+                    }
+                    ExpandExcerptDirection::Down => {
+                        context.end.row =
+                            (context.end.row + line_count).min(excerpt.buffer.max_point().row);
+                        context.end.column = excerpt.buffer.line_len(context.end.row);
+                    }
+                    ExpandExcerptDirection::UpAndDown => {
+                        context.start.row = context.start.row.saturating_sub(line_count);
+                        context.start.column = 0;
+                        context.end.row =
+                            (context.end.row + line_count).min(excerpt.buffer.max_point().row);
+                        context.end.column = excerpt.buffer.line_len(context.end.row);
                     }
                 }
-
-                Some(ExcerptRange {
+                let context = excerpt.buffer.anchor_range_around(context);
+                expanded_ranges.push(ExcerptRange {
                     context,
-                    primary: excerpt.range.primary.to_point(&excerpt.buffer),
-                })
-            });
-            let mut merged_ranges: Vec<ExcerptRange<Point>> = Vec::new();
+                    primary: excerpt.range.primary.clone(),
+                });
+            }
+            let mut merged_ranges: Vec<ExcerptRange<text::Anchor>> = Vec::new();
             for range in expanded_ranges {
                 if let Some(last_range) = merged_ranges.last_mut()
-                    && last_range.context.end >= range.context.start
+                    && last_range
+                        .context
+                        .end
+                        .cmp(&range.context.start, &buffer_snapshot)
+                        .is_ge()
                 {
                     last_range.context.end = range.context.end;
                     continue;
                 }
                 merged_ranges.push(range)
             }
-            let Some(excerpt_id) = excerpt_id_ else {
-                continue;
-            };
-            let Some(buffer_id) = &snapshot.buffer_id_for_excerpt(excerpt_id) else {
-                continue;
-            };
-
-            let Some(buffer) = self.buffers.get(buffer_id).map(|b| b.buffer.clone()) else {
-                continue;
-            };
-
-            let buffer_snapshot = buffer.read(cx).snapshot();
-            self.update_path_excerpts(path.clone(), buffer, &buffer_snapshot, merged_ranges, cx);
+            self.update_path_excerpts(path.clone(), buffer, &buffer_snapshot, &merged_ranges, cx);
         }
     }
 
