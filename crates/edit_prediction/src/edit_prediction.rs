@@ -1490,7 +1490,8 @@ impl EditPredictionStore {
                                 {
                                     oldest_edited_at = Some(pending_prediction.last_edit_at);
                                 }
-                                return true;
+
+                                true
                             });
                     }
                 }
