@@ -428,7 +428,6 @@ impl EditPipeline {
     fn ensure_resolving_old_text(
         &mut self,
         edit_index: usize,
-        reset: bool,
         buffer: &Entity<Buffer>,
         cx: &mut AsyncApp,
     ) {
@@ -437,13 +436,6 @@ impl EditPipeline {
             self.edits.push(EditPipelineEntry::ResolvingOldText {
                 matcher: StreamingFuzzyMatcher::new(snapshot),
             });
-        }
-
-        if reset {
-            let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.text_snapshot());
-            self.edits[edit_index] = EditPipelineEntry::ResolvingOldText {
-                matcher: StreamingFuzzyMatcher::new(snapshot),
-            };
         }
     }
 }
@@ -843,16 +835,15 @@ impl EditSession {
     ) -> Result<(), StreamingEditFileToolOutput> {
         for event in events {
             match event {
-                ToolEditEvent::ContentChunk { chunk, reset } => {
+                ToolEditEvent::ContentChunk { chunk } => {
                     cx.update(|cx| {
                         buffer.update(cx, |buffer, cx| {
-                            let insert_at =
-                                if *reset || (!pipeline.content_written && buffer.len() > 0) {
-                                    0..buffer.len()
-                                } else {
-                                    let len = buffer.len();
-                                    len..len
-                                };
+                            let insert_at = if !pipeline.content_written && buffer.len() > 0 {
+                                0..buffer.len()
+                            } else {
+                                let len = buffer.len();
+                                len..len
+                            };
                             buffer.edit([(insert_at, chunk.as_str())], None, cx);
                         });
                     });
@@ -868,9 +859,8 @@ impl EditSession {
                     edit_index,
                     chunk,
                     done: false,
-                    reset,
                 } => {
-                    pipeline.ensure_resolving_old_text(*edit_index, *reset, buffer, cx);
+                    pipeline.ensure_resolving_old_text(*edit_index, buffer, cx);
 
                     if let EditPipelineEntry::ResolvingOldText { matcher } =
                         &mut pipeline.edits[*edit_index]
@@ -890,9 +880,8 @@ impl EditSession {
                     edit_index,
                     chunk,
                     done: true,
-                    reset,
                 } => {
-                    pipeline.ensure_resolving_old_text(*edit_index, *reset, buffer, cx);
+                    pipeline.ensure_resolving_old_text(*edit_index, buffer, cx);
 
                     let EditPipelineEntry::ResolvingOldText { matcher } =
                         &mut pipeline.edits[*edit_index]

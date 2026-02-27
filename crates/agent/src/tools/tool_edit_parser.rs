@@ -8,16 +8,8 @@ pub enum ToolEditEvent {
     /// A chunk of `old_text` for an edit operation.
     OldTextChunk {
         edit_index: usize,
-        /// The new text to append (or the full text from the start if `reset`
-        /// is true).
         chunk: String,
         done: bool,
-        /// When `true`, indicates that previously emitted chunks for this
-        /// edit's old_text were partially corrupted (e.g. by the partial JSON
-        /// fixer mangling an incomplete escape sequence).  The consumer must
-        /// discard any accumulated state and treat `chunk` as the complete
-        /// old_text seen so far.
-        reset: bool,
     },
     /// A chunk of `new_text` for an edit operation.
     NewTextChunk {
@@ -26,22 +18,14 @@ pub enum ToolEditEvent {
         done: bool,
     },
     /// A chunk of content for write/overwrite mode.
-    ContentChunk {
-        chunk: String,
-        /// When `true`, the consumer must replace all previously written
-        /// content with `chunk` (which contains the full corrected content
-        /// from the start).  See `OldTextChunk::reset` for background.
-        reset: bool,
-    },
+    ContentChunk { chunk: String },
 }
 
 /// Tracks the streaming state of a single edit to detect deltas.
 #[derive(Default, Debug)]
 struct EditStreamState {
-    last_old_text: String,
     old_text_emitted_len: usize,
     old_text_done: bool,
-    last_new_text: String,
     new_text_emitted_len: usize,
     new_text_done: bool,
 }
@@ -56,17 +40,14 @@ struct EditStreamState {
 ///
 /// Because partial JSON comes through a fixer (`partial-json-fixer`) that
 /// closes incomplete escape sequences, a string can temporarily contain wrong
-/// trailing characters (e.g. a literal `\` instead of `\n`).  On the next
-/// partial the fixer corrects the escape, so the string may appear to *shrink*
-/// or change its suffix.  We handle this by storing the full previous text and
-/// computing the common prefix byte-by-byte; only the stable prefix is
-/// considered "emitted", and when a retroactive correction is detected the
-/// event carries a `reset` flag so the downstream consumer can discard stale
-/// state.
+/// trailing characters (e.g. a literal `\` instead of `\n`).  We handle this
+/// by holding back trailing backslash characters in non-finalized chunks: if
+/// a partial string ends with `\` (0x5C), that byte is not emitted until the
+/// next partial confirms or corrects it.  This avoids feeding corrupted bytes
+/// to downstream consumers.
 #[derive(Default, Debug)]
 pub struct ToolEditParser {
     edit_states: Vec<EditStreamState>,
-    last_content: String,
     content_emitted_len: usize,
 }
 
@@ -94,48 +75,28 @@ impl ToolEditParser {
             if let Some(old_text) = &partial.old_text
                 && !state.old_text_done
             {
-                let common_prefix_len = common_prefix_len(&state.last_old_text, old_text);
-                let needs_reset = common_prefix_len < state.old_text_emitted_len;
-
                 if partial.new_text.is_some() {
-                    // new_text appeared, so old_text is done.
-                    let (chunk, reset) = if needs_reset {
-                        (old_text.clone(), true)
-                    } else {
-                        (old_text[state.old_text_emitted_len..].to_string(), false)
-                    };
+                    // new_text appeared, so old_text is done — emit everything.
+                    let start = state.old_text_emitted_len.min(old_text.len());
+                    let chunk = old_text[start..].to_string();
                     state.old_text_done = true;
                     state.old_text_emitted_len = old_text.len();
-                    state.last_old_text = old_text.clone();
                     events.push(ToolEditEvent::OldTextChunk {
                         edit_index: index,
                         chunk,
                         done: true,
-                        reset,
-                    });
-                } else if needs_reset {
-                    // The partial JSON fixer retroactively changed content
-                    // we already emitted. Resend from the start.
-                    state.old_text_emitted_len = old_text.len();
-                    state.last_old_text = old_text.clone();
-                    events.push(ToolEditEvent::OldTextChunk {
-                        edit_index: index,
-                        chunk: old_text.clone(),
-                        done: false,
-                        reset: true,
-                    });
-                } else if old_text.len() > state.old_text_emitted_len {
-                    let chunk = old_text[state.old_text_emitted_len..].to_string();
-                    state.old_text_emitted_len = old_text.len();
-                    state.last_old_text = old_text.clone();
-                    events.push(ToolEditEvent::OldTextChunk {
-                        edit_index: index,
-                        chunk,
-                        done: false,
-                        reset: false,
                     });
                 } else {
-                    state.last_old_text = old_text.clone();
+                    let safe_end = safe_emit_end(old_text);
+                    if safe_end > state.old_text_emitted_len {
+                        let chunk = old_text[state.old_text_emitted_len..safe_end].to_string();
+                        state.old_text_emitted_len = safe_end;
+                        events.push(ToolEditEvent::OldTextChunk {
+                            edit_index: index,
+                            chunk,
+                            done: false,
+                        });
+                    }
                 }
             }
 
@@ -143,28 +104,15 @@ impl ToolEditParser {
             if let Some(new_text) = &partial.new_text
                 && !state.new_text_done
             {
-                let common_prefix_len = common_prefix_len(&state.last_new_text, new_text);
-                let needs_reset = common_prefix_len < state.new_text_emitted_len;
-
-                if needs_reset {
-                    state.new_text_emitted_len = new_text.len();
-                    state.last_new_text = new_text.clone();
-                    events.push(ToolEditEvent::NewTextChunk {
-                        edit_index: index,
-                        chunk: new_text.clone(),
-                        done: false,
-                    });
-                } else if new_text.len() > state.new_text_emitted_len {
-                    let chunk = new_text[state.new_text_emitted_len..].to_string();
-                    state.new_text_emitted_len = new_text.len();
-                    state.last_new_text = new_text.clone();
+                let safe_end = safe_emit_end(new_text);
+                if safe_end > state.new_text_emitted_len {
+                    let chunk = new_text[state.new_text_emitted_len..safe_end].to_string();
+                    state.new_text_emitted_len = safe_end;
                     events.push(ToolEditEvent::NewTextChunk {
                         edit_index: index,
                         chunk,
                         done: false,
                     });
-                } else {
-                    state.last_new_text = new_text.clone();
                 }
             }
         }
@@ -179,24 +127,12 @@ impl ToolEditParser {
     pub fn push_content(&mut self, content: &str) -> SmallVec<[ToolEditEvent; 1]> {
         let mut events = SmallVec::new();
 
-        let common_len = common_prefix_len(&self.last_content, content);
-        let needs_reset = common_len < self.content_emitted_len;
-
-        if needs_reset {
-            self.content_emitted_len = content.len();
-            events.push(ToolEditEvent::ContentChunk {
-                chunk: content.to_string(),
-                reset: true,
-            });
-        } else if content.len() > self.content_emitted_len {
-            let chunk = content[self.content_emitted_len..].to_string();
-            self.content_emitted_len = content.len();
-            events.push(ToolEditEvent::ContentChunk {
-                chunk,
-                reset: false,
-            });
+        let safe_end = safe_emit_end(content);
+        if safe_end > self.content_emitted_len {
+            let chunk = content[self.content_emitted_len..safe_end].to_string();
+            self.content_emitted_len = safe_end;
+            events.push(ToolEditEvent::ContentChunk { chunk });
         }
-        self.last_content = content.to_string();
 
         events
     }
@@ -224,38 +160,23 @@ impl ToolEditParser {
 
             // Finalize old_text.
             if !state.old_text_done {
-                let common_prefix_len = common_prefix_len(&state.last_old_text, &edit.old_text);
-                let needs_reset = common_prefix_len < state.old_text_emitted_len;
-                let (chunk, reset) = if needs_reset {
-                    (edit.old_text.clone(), true)
-                } else {
-                    (
-                        edit.old_text[state.old_text_emitted_len..].to_string(),
-                        false,
-                    )
-                };
+                let start = state.old_text_emitted_len.min(edit.old_text.len());
+                let chunk = edit.old_text[start..].to_string();
                 state.old_text_done = true;
                 state.old_text_emitted_len = edit.old_text.len();
-                state.last_old_text = edit.old_text.clone();
                 events.push(ToolEditEvent::OldTextChunk {
                     edit_index: index,
                     chunk,
                     done: true,
-                    reset,
                 });
             }
 
             // Finalize new_text.
             if !state.new_text_done {
-                let common_prefix_len = common_prefix_len(&state.last_new_text, &edit.new_text);
-                let chunk = if common_prefix_len < state.new_text_emitted_len {
-                    edit.new_text.clone()
-                } else {
-                    edit.new_text[state.new_text_emitted_len..].to_string()
-                };
+                let start = state.new_text_emitted_len.min(edit.new_text.len());
+                let chunk = edit.new_text[start..].to_string();
                 state.new_text_done = true;
                 state.new_text_emitted_len = edit.new_text.len();
-                state.last_new_text = edit.new_text.clone();
                 events.push(ToolEditEvent::NewTextChunk {
                     edit_index: index,
                     chunk,
@@ -271,24 +192,11 @@ impl ToolEditParser {
     pub fn finalize_content(&mut self, content: &str) -> SmallVec<[ToolEditEvent; 1]> {
         let mut events = SmallVec::new();
 
-        let common_len = common_prefix_len(&self.last_content, content);
-        let needs_reset = common_len < self.content_emitted_len;
-
-        if needs_reset {
+        let start = self.content_emitted_len.min(content.len());
+        if content.len() > start {
+            let chunk = content[start..].to_string();
             self.content_emitted_len = content.len();
-            self.last_content = content.to_string();
-            events.push(ToolEditEvent::ContentChunk {
-                chunk: content.to_string(),
-                reset: true,
-            });
-        } else if content.len() > self.content_emitted_len {
-            let chunk = content[self.content_emitted_len..].to_string();
-            self.content_emitted_len = content.len();
-            self.last_content = content.to_string();
-            events.push(ToolEditEvent::ContentChunk {
-                chunk,
-                reset: false,
-            });
+            events.push(ToolEditEvent::ContentChunk { chunk });
         }
 
         events
@@ -316,7 +224,6 @@ impl ToolEditParser {
                 edit_index: previous_index,
                 chunk: String::new(),
                 done: true,
-                reset: false,
             });
         }
 
@@ -334,9 +241,17 @@ impl ToolEditParser {
     }
 }
 
-/// Returns the byte length of the longest common prefix between two strings.
-fn common_prefix_len(a: &str, b: &str) -> usize {
-    a.bytes().zip(b.bytes()).take_while(|(x, y)| x == y).count()
+/// Returns the byte position up to which it is safe to emit from a partial
+/// string.  If the string ends with a backslash (`\`, 0x5C), that byte is
+/// held back because it may be an artifact of the partial JSON fixer closing
+/// an incomplete escape sequence (e.g. turning a half-received `\n` into `\\`).
+/// The next partial will reveal the correct character.
+fn safe_emit_end(text: &str) -> usize {
+    if text.as_bytes().last() == Some(&b'\\') {
+        text.len() - 1
+    } else {
+        text.len()
+    }
 }
 
 #[cfg(test)]
@@ -358,7 +273,6 @@ mod tests {
                 edit_index: 0,
                 chunk: "hel".into(),
                 done: false,
-                reset: false,
             }]
         );
 
@@ -372,7 +286,6 @@ mod tests {
                 edit_index: 0,
                 chunk: "lo w".into(),
                 done: false,
-                reset: false,
             }]
         );
 
@@ -388,7 +301,6 @@ mod tests {
                     edit_index: 0,
                     chunk: "orld".into(),
                     done: true,
-                    reset: false,
                 },
                 ToolEditEvent::NewTextChunk {
                     edit_index: 0,
@@ -442,7 +354,6 @@ mod tests {
                 edit_index: 0,
                 chunk: "first old".into(),
                 done: false,
-                reset: false,
             }]
         );
 
@@ -457,7 +368,6 @@ mod tests {
                     edit_index: 0,
                     chunk: "".into(),
                     done: true,
-                    reset: false,
                 },
                 ToolEditEvent::NewTextChunk {
                     edit_index: 0,
@@ -490,7 +400,6 @@ mod tests {
                     edit_index: 1,
                     chunk: "second".into(),
                     done: false,
-                    reset: false,
                 },
             ]
         );
@@ -513,7 +422,6 @@ mod tests {
                     edit_index: 1,
                     chunk: " old".into(),
                     done: true,
-                    reset: false,
                 },
                 ToolEditEvent::NewTextChunk {
                     edit_index: 1,
@@ -533,7 +441,6 @@ mod tests {
             events.as_slice(),
             &[ToolEditEvent::ContentChunk {
                 chunk: "hello".into(),
-                reset: false,
             }]
         );
 
@@ -542,7 +449,6 @@ mod tests {
             events.as_slice(),
             &[ToolEditEvent::ContentChunk {
                 chunk: " world".into(),
-                reset: false,
             }]
         );
 
@@ -553,10 +459,7 @@ mod tests {
         let events = parser.push_content("hello world!");
         assert_eq!(
             events.as_slice(),
-            &[ToolEditEvent::ContentChunk {
-                chunk: "!".into(),
-                reset: false,
-            }]
+            &[ToolEditEvent::ContentChunk { chunk: "!".into() }]
         );
 
         // Finalize with no additional content
@@ -574,63 +477,55 @@ mod tests {
             events.as_slice(),
             &[ToolEditEvent::ContentChunk {
                 chunk: " content here".into(),
-                reset: false,
             }]
         );
     }
 
     #[test]
-    fn test_content_retroactive_correction_from_json_fixer() {
+    fn test_content_trailing_backslash_held_back() {
         let mut parser = ToolEditParser::default();
 
         // Partial JSON fixer turns incomplete \n into \\ (literal backslash).
+        // The trailing backslash is held back.
         let events = parser.push_content("hello,\\");
         assert_eq!(
             events.as_slice(),
             &[ToolEditEvent::ContentChunk {
-                chunk: "hello,\\".into(),
-                reset: false,
+                chunk: "hello,".into(),
             }]
         );
 
         // Next partial corrects the escape to an actual newline.
-        // Common prefix is "hello," (6 bytes), but we emitted 7 bytes,
-        // so a reset is needed.
+        // The held-back byte was wrong; the correct newline is emitted.
         let events = parser.push_content("hello,\n");
         assert_eq!(
             events.as_slice(),
-            &[ToolEditEvent::ContentChunk {
-                chunk: "hello,\n".into(),
-                reset: true,
-            }]
+            &[ToolEditEvent::ContentChunk { chunk: "\n".into() }]
         );
 
-        // Normal growth after the reset.
+        // Normal growth.
         let events = parser.push_content("hello,\nworld");
         assert_eq!(
             events.as_slice(),
             &[ToolEditEvent::ContentChunk {
                 chunk: "world".into(),
-                reset: false,
             }]
         );
     }
 
     #[test]
-    fn test_content_finalize_with_correction() {
+    fn test_content_finalize_with_trailing_backslash() {
         let mut parser = ToolEditParser::default();
 
-        // Stream a partial with a fixer-corrupted trailing character.
+        // Stream a partial with a fixer-corrupted trailing backslash.
+        // The backslash is held back.
         parser.push_content("abc\\");
 
-        // Finalize corrects it.
+        // Finalize reveals the correct character.
         let events = parser.finalize_content("abc\n");
         assert_eq!(
             events.as_slice(),
-            &[ToolEditEvent::ContentChunk {
-                chunk: "abc\n".into(),
-                reset: true,
-            }]
+            &[ToolEditEvent::ContentChunk { chunk: "\n".into() }]
         );
     }
 
@@ -649,7 +544,6 @@ mod tests {
                     edit_index: 0,
                     chunk: "old".into(),
                     done: true,
-                    reset: false,
                 },
                 ToolEditEvent::NewTextChunk {
                     edit_index: 0,
@@ -681,7 +575,6 @@ mod tests {
                     edit_index: 0,
                     chunk: "first old".into(),
                     done: true,
-                    reset: false,
                 },
                 ToolEditEvent::NewTextChunk {
                     edit_index: 0,
@@ -692,7 +585,6 @@ mod tests {
                     edit_index: 1,
                     chunk: "second old".into(),
                     done: true,
-                    reset: false,
                 },
                 ToolEditEvent::NewTextChunk {
                     edit_index: 1,
@@ -717,7 +609,6 @@ mod tests {
                 edit_index: 0,
                 chunk: "same".into(),
                 done: false,
-                reset: false,
             }]
         );
 
@@ -751,7 +642,6 @@ mod tests {
                 edit_index: 0,
                 chunk: "text".into(),
                 done: false,
-                reset: false,
             }]
         );
     }
@@ -772,7 +662,6 @@ mod tests {
                     edit_index: 0,
                     chunk: "".into(),
                     done: true,
-                    reset: false,
                 },
                 ToolEditEvent::NewTextChunk {
                     edit_index: 0,
@@ -834,7 +723,6 @@ mod tests {
                     edit_index: 2,
                     chunk: "c".into(),
                     done: false,
-                    reset: false,
                 },
             ]
         );
@@ -861,7 +749,6 @@ mod tests {
                     edit_index: 2,
                     chunk: "".into(),
                     done: true,
-                    reset: false,
                 },
                 ToolEditEvent::NewTextChunk {
                     edit_index: 2,
@@ -893,7 +780,6 @@ mod tests {
                     edit_index: 0,
                     chunk: " old text".into(),
                     done: true,
-                    reset: false,
                 },
                 ToolEditEvent::NewTextChunk {
                     edit_index: 0,
@@ -953,44 +839,43 @@ mod tests {
     }
 
     #[test]
-    fn test_old_text_retroactive_correction_from_json_fixer() {
+    fn test_old_text_trailing_backslash_held_back() {
         let mut parser = ToolEditParser::default();
 
-        // Simulates partial-json-fixer producing a literal backslash when the
-        // JSON stream cuts in the middle of an escape sequence like \n.
+        // Partial-json-fixer produces a literal backslash when the JSON stream
+        // cuts in the middle of an escape sequence like \n. The parser holds
+        // back the trailing backslash instead of emitting it.
         let events = parser.push_edits(&[PartialEdit {
             old_text: Some("hello,\\".into()), // fixer closed incomplete \n as \\
             new_text: None,
         }]);
+        // The trailing `\` is held back — only "hello," is emitted.
         assert_eq!(
             events.as_slice(),
             &[ToolEditEvent::OldTextChunk {
                 edit_index: 0,
-                chunk: "hello,\\".into(),
+                chunk: "hello,".into(),
                 done: false,
-                reset: false,
             }]
         );
 
         // Next partial: the fixer corrects the escape to \n.
-        // The string *shrinks* from 7 bytes to 7 bytes but the suffix changed.
+        // The held-back byte was wrong, but we never emitted it. Now the
+        // correct newline at that position is emitted normally.
         let events = parser.push_edits(&[PartialEdit {
-            old_text: Some("hello,\n".into()), // corrected to actual newline
+            old_text: Some("hello,\n".into()),
             new_text: None,
         }]);
-        // The common prefix is "hello," (6 bytes).  We previously emitted 8
-        // bytes, so we need a reset.
         assert_eq!(
             events.as_slice(),
             &[ToolEditEvent::OldTextChunk {
                 edit_index: 0,
-                chunk: "hello,\n".into(),
+                chunk: "\n".into(),
                 done: false,
-                reset: true,
             }]
         );
 
-        // Continue normally after the reset.
+        // Continue normally.
         let events = parser.push_edits(&[PartialEdit {
             old_text: Some("hello,\nworld".into()),
             new_text: None,
@@ -1001,7 +886,6 @@ mod tests {
                 edit_index: 0,
                 chunk: "world".into(),
                 done: false,
-                reset: false,
             }]
         );
     }
@@ -1020,7 +904,6 @@ mod tests {
                 edit_index: 0,
                 chunk: "line1\nline2".into(),
                 done: false,
-                reset: false,
             }]
         );
 
@@ -1035,7 +918,6 @@ mod tests {
                     edit_index: 0,
                     chunk: "\nline3".into(),
                     done: true,
-                    reset: false,
                 },
                 ToolEditEvent::NewTextChunk {
                     edit_index: 0,
