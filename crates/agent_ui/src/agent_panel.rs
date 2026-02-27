@@ -706,17 +706,17 @@ impl AgentPanel {
                             panel.selected_agent = selected_agent;
                         }
                         if let Some(thread_target) = serialized_panel.thread_target.clone() {
+                            let is_worktree_flag_enabled =
+                                cx.has_flag::<AgentGitWorktreesFeatureFlag>();
                             let is_valid = match &thread_target {
                                 ThreadTarget::LocalProject => true,
                                 ThreadTarget::NewWorktree => {
-                                    let project = panel.project.read(cx);
-                                    !project.is_via_collab()
-                                        && !project.repositories(cx).is_empty()
+                                    is_worktree_flag_enabled && {
+                                        let project = panel.project.read(cx);
+                                        !project.is_via_collab() && !project.repositories(cx).is_empty()
+                                    }
                                 }
-                                ThreadTarget::ExistingWorktree { .. } => {
-                                    // Accepted tentatively; validated asynchronously below.
-                                    true
-                                }
+                                ThreadTarget::ExistingWorktree { .. } => is_worktree_flag_enabled,
                             };
                             if is_valid {
                                 panel.thread_target = thread_target;
@@ -4743,6 +4743,100 @@ mod tests {
                 *panel.thread_target(),
                 ThreadTarget::NewWorktree,
                 "thread target should survive serialization round-trip"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_thread_target_deserialization_falls_back_when_worktree_flag_disabled(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        cx.update(|cx| {
+            cx.update_flags(
+                true,
+                vec!["agent-v2".to_string(), "agent-git-worktrees".to_string()],
+            );
+            agent::ThreadStore::init_global(cx);
+            language_model::LanguageModelRegistry::test(cx);
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/project",
+            json!({
+                ".git": {},
+                "src": {
+                    "main.rs": "fn main() {}"
+                }
+            }),
+        )
+        .await;
+        fs.set_branch_name(Path::new("/project/.git"), Some("main"));
+
+        let project = Project::test(fs.clone(), [Path::new("/project")], cx).await;
+
+        let multi_workspace =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+
+        let workspace = multi_workspace
+            .read_with(cx, |multi_workspace, _cx| {
+                multi_workspace.workspace().clone()
+            })
+            .unwrap();
+
+        workspace.update(cx, |workspace, _cx| {
+            workspace.set_random_database_id();
+        });
+
+        let cx = &mut VisualTestContext::from_window(multi_workspace.into(), cx);
+
+        // Wait for the project to discover the git repository.
+        cx.run_until_parked();
+
+        let panel = workspace.update_in(cx, |workspace, window, cx| {
+            let text_thread_store = cx.new(|cx| TextThreadStore::fake(project.clone(), cx));
+            let panel =
+                cx.new(|cx| AgentPanel::new(workspace, text_thread_store, None, window, cx));
+            workspace.add_panel(panel.clone(), window, cx);
+            panel
+        });
+
+        cx.run_until_parked();
+
+        panel.update(cx, |panel, cx| {
+            panel.set_thread_target(&SetThreadTarget::new_worktree(), cx);
+        });
+
+        panel.read_with(cx, |panel, _cx| {
+            assert_eq!(
+                *panel.thread_target(),
+                ThreadTarget::NewWorktree,
+                "thread target should be NewWorktree before reload"
+            );
+        });
+
+        // Let serialization complete.
+        cx.run_until_parked();
+
+        // Disable worktree flag and reload panel from serialized data.
+        cx.update(|_, cx| {
+            cx.update_flags(true, vec!["agent-v2".to_string()]);
+        });
+
+        let prompt_builder = Arc::new(prompt_store::PromptBuilder::new(None).unwrap());
+        let async_cx = cx.update(|window, cx| window.to_async(cx));
+        let loaded_panel =
+            AgentPanel::load(workspace.downgrade(), prompt_builder.clone(), async_cx)
+                .await
+                .expect("panel load should succeed");
+        cx.run_until_parked();
+
+        loaded_panel.read_with(cx, |panel, _cx| {
+            assert_eq!(
+                *panel.thread_target(),
+                ThreadTarget::LocalProject,
+                "thread target should fall back to LocalProject when worktree flag is disabled"
             );
         });
     }
