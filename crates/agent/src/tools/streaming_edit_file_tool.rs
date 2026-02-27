@@ -16,7 +16,7 @@ use language::language_settings::{self, FormatOnSave};
 use language::{Buffer, LanguageRegistry};
 use language_model::LanguageModelToolResultContent;
 use project::lsp_store::{FormatTrigger, LspFormatTarget};
-use project::{Project, ProjectPath};
+use project::{AgentLocation, Project, ProjectPath};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::cmp;
@@ -219,6 +219,12 @@ impl StreamingEditFileTool {
             event_stream,
             cx,
         )
+    }
+
+    fn set_agent_location(&self, buffer: WeakEntity<Buffer>, position: text::Anchor, cx: &mut App) {
+        self.project.update(cx, |project, cx| {
+            project.set_agent_location(Some(AgentLocation { buffer, position }), cx);
+        });
     }
 }
 
@@ -846,6 +852,12 @@ impl EditSession {
                             };
                             buffer.edit([(insert_at, chunk.as_str())], None, cx);
                         });
+                        let buffer_id = buffer.read(cx).remote_id();
+                        tool.set_agent_location(
+                            buffer.downgrade(),
+                            text::Anchor::max_for_buffer(buffer_id),
+                            cx,
+                        );
                     });
                     pipeline.content_written = true;
                 }
@@ -863,9 +875,14 @@ impl EditSession {
                         if !chunk.is_empty() {
                             if let Some(match_range) = matcher.push(chunk, None) {
                                 let anchor_range = buffer.read_with(cx, |buffer, _cx| {
-                                    buffer.anchor_range_between(match_range)
+                                    buffer.anchor_range_between(match_range.clone())
                                 });
                                 diff.update(cx, |diff, cx| diff.reveal_range(anchor_range, cx));
+
+                                cx.update(|cx| {
+                                    let position = buffer.read(cx).anchor_before(match_range.end);
+                                    tool.set_agent_location(buffer.downgrade(), position, cx);
+                                });
                             }
                         }
                     }
@@ -971,6 +988,11 @@ impl EditSession {
                         original_snapshot: text_snapshot,
                         applied_range: pre_edit_anchor_range,
                     };
+
+                    cx.update(|cx| {
+                        let position = buffer.read(cx).anchor_before(range.end);
+                        tool.set_agent_location(buffer.downgrade(), position, cx);
+                    });
                 }
 
                 ToolEditEvent::NewTextChunk {
@@ -1005,6 +1027,11 @@ impl EditSession {
                         edit_cursor,
                         cx,
                     );
+
+                    let position = original_snapshot.anchor_before(*edit_cursor);
+                    cx.update(|cx| {
+                        tool.set_agent_location(buffer.downgrade(), position, cx);
+                    });
 
                     let action_log = tool
                         .thread
@@ -1070,6 +1097,11 @@ impl EditSession {
                         &mut edit_cursor,
                         cx,
                     );
+
+                    let position = original_snapshot.anchor_before(edit_cursor);
+                    cx.update(|cx| {
+                        tool.set_agent_location(buffer.downgrade(), position, cx);
+                    });
 
                     let action_log = tool
                         .thread
