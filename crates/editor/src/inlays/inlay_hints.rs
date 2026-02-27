@@ -22,11 +22,12 @@ use project::{
 };
 use text::{Bias, BufferId};
 use ui::{Context, Window};
-use util::debug_panic;
+use util::{ResultExt, debug_panic};
 
 use super::{Inlay, InlayId};
 use crate::{
     Editor, EditorSnapshot, PointForPosition, ToggleInlayHints, ToggleInlineValues, debounce_value,
+    display_map::InlayOffset,
     hover_links::{InlayHighlight, TriggerPoint, show_link_definition},
     hover_popover::{self, InlayHover},
     inlays::InlaySplice,
@@ -423,13 +424,7 @@ impl Editor {
         let to_remove = self
             .visible_inlay_hints(cx)
             .into_iter()
-            .map(|inlay| {
-                let inlay_id = inlay.id;
-                if let Some(inlay_hints) = &mut self.inlay_hints {
-                    inlay_hints.added_hints.remove(&inlay_id);
-                }
-                inlay_id
-            })
+            .map(|inlay| inlay.id)
             .collect::<Vec<_>>();
         self.splice_inlays(&to_remove, Vec::new(), cx);
     }
@@ -603,15 +598,22 @@ impl Editor {
                 {
                     match cached_hint.resolve_state {
                         ResolveState::Resolved => {
-                            let mut extra_shift_left = 0;
-                            let mut extra_shift_right = 0;
-                            if cached_hint.padding_left {
-                                extra_shift_left += 1;
-                                extra_shift_right += 1;
-                            }
-                            if cached_hint.padding_right {
-                                extra_shift_right += 1;
-                            }
+                            let original_text = cached_hint.text();
+                            let actual_left_padding = if cached_hint.padding_left
+                                && original_text.chars_at(0).next() != Some(' ')
+                            {
+                                1
+                            } else {
+                                0
+                            };
+                            let actual_right_padding = if cached_hint.padding_right
+                                && original_text.reversed_chars_at(original_text.len()).next()
+                                    != Some(' ')
+                            {
+                                1
+                            } else {
+                                0
+                            };
                             match cached_hint.label {
                                 InlayHintLabel::String(_) => {
                                     if let Some(tooltip) = cached_hint.tooltip {
@@ -633,9 +635,9 @@ impl Editor {
                                                 range: InlayHighlight {
                                                     inlay: hovered_hint.id,
                                                     inlay_position: hovered_hint.position,
-                                                    range: extra_shift_left
+                                                    range: actual_left_padding
                                                         ..hovered_hint.text().len()
-                                                            + extra_shift_right,
+                                                            - actual_right_padding,
                                                 },
                                             },
                                             window,
@@ -647,17 +649,17 @@ impl Editor {
                                 InlayHintLabel::LabelParts(label_parts) => {
                                     let hint_start =
                                         snapshot.anchor_to_inlay_offset(hovered_hint.position);
+                                    let content_start =
+                                        InlayOffset(hint_start.0 + actual_left_padding);
                                     if let Some((hovered_hint_part, part_range)) =
                                         hover_popover::find_hovered_hint_part(
                                             label_parts,
-                                            hint_start,
+                                            content_start,
                                             hovered_offset,
                                         )
                                     {
-                                        let highlight_start =
-                                            (part_range.start - hint_start) + extra_shift_left;
-                                        let highlight_end =
-                                            (part_range.end - hint_start) + extra_shift_right;
+                                        let highlight_start = part_range.start - hint_start;
+                                        let highlight_end = part_range.end - hint_start;
                                         let highlight = InlayHighlight {
                                             inlay: hovered_hint.id,
                                             inlay_position: hovered_hint.position,
