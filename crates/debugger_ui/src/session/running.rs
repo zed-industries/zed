@@ -360,7 +360,7 @@ impl Item for SubView {
                 debug_assert!(_previous_subscription.is_none());
                 running
                     .panes
-                    .split(&this_pane, &new_pane, split_direction, cx)?;
+                    .split(&this_pane, &new_pane, split_direction, cx);
                 anyhow::Ok(new_pane)
             });
 

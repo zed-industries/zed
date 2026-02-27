@@ -1510,7 +1510,7 @@ impl Item for TerminalView {
                                     &new_pane,
                                     split_direction,
                                     cx,
-                                )?;
+                                );
                                 anyhow::Ok(new_pane)
                             }) else {
                                 return;
