@@ -92,7 +92,7 @@ pub enum ZetaFormat {
     V0131GitMergeMarkersPrefix,
     V0211Prefill,
     V0211SeedCoder,
-    v0224Hashline,
+    v0226Hashline,
 }
 
 impl std::fmt::Display for ZetaFormat {
@@ -146,7 +146,7 @@ impl ZetaFormat {
                 v0131_git_merge_markers_prefix::special_tokens()
             }
             ZetaFormat::V0211SeedCoder => seed_coder::special_tokens(),
-            ZetaFormat::v0224Hashline => hashline::special_tokens(),
+            ZetaFormat::v0226Hashline => hashline::special_tokens(),
         }
     }
 }
@@ -260,7 +260,7 @@ pub fn excerpt_range_for_format(
         | ZetaFormat::V0131GitMergeMarkersPrefix
         | ZetaFormat::V0211Prefill
         | ZetaFormat::V0211SeedCoder
-        | ZetaFormat::v0224Hashline => (
+        | ZetaFormat::v0226Hashline => (
             ranges.editable_350.clone(),
             ranges.editable_350_context_150.clone(),
         ),
@@ -333,7 +333,7 @@ fn format_zeta_prompt_with_budget(
                 cursor_offset,
             )
         }
-        ZetaFormat::v0224Hashline => hashline::write_cursor_excerpt_section(
+        ZetaFormat::v0226Hashline => hashline::write_cursor_excerpt_section(
             &mut cursor_section,
             path,
             context,
@@ -387,7 +387,7 @@ pub fn get_prefill(input: &ZetaPromptInput, format: ZetaFormat) -> String {
         | ZetaFormat::V0120GitMergeMarkers
         | ZetaFormat::V0131GitMergeMarkersPrefix
         | ZetaFormat::V0211SeedCoder
-        | ZetaFormat::v0224Hashline => String::new(),
+        | ZetaFormat::v0226Hashline => String::new(),
         ZetaFormat::V0211Prefill => {
             let (context, editable_range, _) = resolve_cursor_region(input, format);
             v0211_prefill::get_prefill(context, &editable_range)

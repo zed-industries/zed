@@ -101,7 +101,7 @@ pub fn zeta2_output_for_patch(
         old_editable_region.push('\n');
     }
 
-    if matches!(version, ZetaFormat::v0224Hashline) {
+    if matches!(version, ZetaFormat::v0226Hashline) {
         return hashline::patch_to_edit_commands(&old_editable_region, patch, cursor_offset);
     }
 

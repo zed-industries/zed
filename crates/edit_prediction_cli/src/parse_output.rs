@@ -55,7 +55,7 @@ fn extract_zeta2_current_region(prompt: &str, format: ZetaFormat) -> Result<Stri
         ZetaFormat::V0112MiddleAtEnd => ("<|fim_middle|>current\n", "<|fim_middle|>updated"),
         ZetaFormat::V0113Ordered
         | ZetaFormat::V0114180EditableRegion
-        | ZetaFormat::v0224Hashline => ("<|fim_middle|>current\n", "<|fim_suffix|>"),
+        | ZetaFormat::v0226Hashline => ("<|fim_middle|>current\n", "<|fim_suffix|>"),
         ZetaFormat::V0120GitMergeMarkers
         | ZetaFormat::V0131GitMergeMarkersPrefix
         | ZetaFormat::V0211Prefill => (
@@ -115,7 +115,7 @@ fn parse_zeta2_output(
         ZetaFormat::V0112MiddleAtEnd
         | ZetaFormat::V0113Ordered
         | ZetaFormat::V0114180EditableRegion
-        | ZetaFormat::v0224Hashline => "",
+        | ZetaFormat::v0226Hashline => "",
         ZetaFormat::V0211SeedCoder => zeta_prompt::seed_coder::END_MARKER,
     };
     if !suffix.is_empty() {

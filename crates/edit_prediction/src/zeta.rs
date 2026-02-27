@@ -270,7 +270,7 @@ pub fn request_prediction_with_zeta(
             // the original editable region to produce the full replacement text.
             // This must happen before cursor marker stripping because the cursor
             // marker is embedded inside edit command content.
-            if matches!(zeta_version, ZetaFormat::v0224Hashline)
+            if matches!(zeta_version, ZetaFormat::v0226Hashline)
                 && hashline::output_has_edit_commands(&output_text)
             {
                 output_text = hashline::apply_edit_commands(&old_text, &output_text);
