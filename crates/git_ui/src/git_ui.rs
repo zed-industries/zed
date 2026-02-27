@@ -2,7 +2,6 @@ use anyhow::anyhow;
 use commit_modal::CommitModal;
 use editor::{Editor, actions::DiffClipboardWithSelectionData};
 
-use project::ProjectPath;
 use ui::{
     Headline, HeadlineSize, Icon, IconName, IconSize, IntoElement, ParentElement, Render, Styled,
     StyledExt, div, h_flex, rems, v_flex,

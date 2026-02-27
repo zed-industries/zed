@@ -784,12 +784,12 @@ pub fn init(cx: &mut App) {
             )
             .when_some(active_item_file, move |this, active_file| {
                 this.on_action({
-                    let workspace = workspace.weak_handle().clone();
+                    let workspace = workspace.weak_handle();
 
                     move |_: &git::FileHistory, window, cx| {
                         workspace
                             .update(cx, |workspace, cx| {
-                                dbg!("git graph file history");
+                                "git graph file history";
 
                                 let project = workspace.project().clone();
                                 let workspace_handle = workspace.weak_handle();
@@ -801,7 +801,7 @@ pub fn init(cx: &mut App) {
                                     path: file_path.clone(),
                                 };
 
-                                let Some((repo, repo_path)) = project
+                                let Some((_repo, repo_path)) = project
                                     .read(cx)
                                     .git_store()
                                     .read(cx)
