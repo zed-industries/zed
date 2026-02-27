@@ -34,7 +34,6 @@ use std::{
     any::Any,
     cmp, fmt, mem,
     num::NonZeroUsize,
-    ops::ControlFlow,
     path::PathBuf,
     rc::Rc,
     sync::{
@@ -382,9 +381,6 @@ pub struct Pane {
     project: WeakEntity<Project>,
     pub drag_split_direction: Option<SplitDirection>,
     can_drop_predicate: Option<Arc<dyn Fn(&dyn Any, &mut Window, &mut App) -> bool>>,
-    custom_drop_handle: Option<
-        Arc<dyn Fn(&mut Pane, &dyn Any, &mut Window, &mut Context<Pane>) -> ControlFlow<(), ()>>,
-    >,
     can_split_predicate:
         Option<Arc<dyn Fn(&mut Self, &dyn Any, &mut Window, &mut Context<Self>) -> bool>>,
     can_toggle_zoom: bool,
@@ -567,7 +563,6 @@ impl Pane {
             workspace,
             project: project.downgrade(),
             can_drop_predicate,
-            custom_drop_handle: None,
             can_split_predicate: None,
             can_toggle_zoom: true,
             should_display_tab_bar: Rc::new(|_, cx| TabBarSettings::get_global(cx).show),
@@ -843,15 +838,6 @@ impl Pane {
             ) -> (Option<AnyElement>, Option<AnyElement>),
     {
         self.render_tab_bar_buttons = Rc::new(render);
-        cx.notify();
-    }
-
-    pub fn set_custom_drop_handle<F>(&mut self, cx: &mut Context<Self>, handle: F)
-    where
-        F: 'static
-            + Fn(&mut Pane, &dyn Any, &mut Window, &mut Context<Pane>) -> ControlFlow<(), ()>,
-    {
-        self.custom_drop_handle = Some(Arc::new(handle));
         cx.notify();
     }
 
@@ -3702,12 +3688,6 @@ impl Pane {
             return;
         }
 
-        if let Some(custom_drop_handle) = self.custom_drop_handle.clone()
-            && let ControlFlow::Break(()) = custom_drop_handle(self, dragged_tab, window, cx)
-        {
-            return;
-        }
-
         let mut to_pane = cx.entity();
         let split_direction = self.drag_split_direction;
         let item_id = dragged_tab.item.item_id();
@@ -3858,12 +3838,6 @@ impl Pane {
             return;
         }
 
-        if let Some(custom_drop_handle) = self.custom_drop_handle.clone()
-            && let ControlFlow::Break(()) = custom_drop_handle(self, dragged_selection, window, cx)
-        {
-            return;
-        }
-
         self.handle_project_entry_drop(
             &dragged_selection.active_selection.entry_id,
             dragged_onto,
@@ -3881,12 +3855,6 @@ impl Pane {
     ) {
         if let Some(active_item) = self.active_item()
             && active_item.handle_drop(self, project_entry_id, true, window, cx)
-        {
-            return;
-        }
-
-        if let Some(custom_drop_handle) = self.custom_drop_handle.clone()
-            && let ControlFlow::Break(()) = custom_drop_handle(self, project_entry_id, window, cx)
         {
             return;
         }
@@ -3964,12 +3932,6 @@ impl Pane {
     ) {
         if let Some(active_item) = self.active_item()
             && active_item.handle_drop(self, paths, true, window, cx)
-        {
-            return;
-        }
-
-        if let Some(custom_drop_handle) = self.custom_drop_handle.clone()
-            && let ControlFlow::Break(()) = custom_drop_handle(self, paths, window, cx)
         {
             return;
         }
