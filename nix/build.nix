@@ -24,10 +24,8 @@
   fontconfig,
   freetype,
   git,
-  glib,
   libgit2,
   libglvnd,
-  libva,
   libxkbcommon,
   livekit-libwebrtc,
   nodejs_22,
@@ -163,8 +161,6 @@ let
       ]
       ++ lib.optionals stdenv'.hostPlatform.isLinux [
         alsa-lib
-        glib
-        libva
         libxkbcommon
         wayland
         gpu-lib
