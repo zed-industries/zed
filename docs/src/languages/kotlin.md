@@ -1,3 +1,8 @@
+---
+title: Kotlin
+description: "Configure Kotlin language support in Zed, including language servers, formatting, and debugging."
+---
+
 # Kotlin
 
 Kotlin language support in Zed is provided by the community-maintained [Kotlin extension](https://github.com/zed-extensions/kotlin).

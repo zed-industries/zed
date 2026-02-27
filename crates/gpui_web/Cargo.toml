@@ -1,0 +1,61 @@
+[package]
+name = "gpui_web"
+version = "0.1.0"
+publish.workspace = true
+edition.workspace = true
+license = "Apache-2.0"
+autoexamples = false
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/gpui_web.rs"
+
+[target.'cfg(target_family = "wasm")'.dependencies]
+gpui.workspace = true
+parking_lot = { workspace = true, features = ["nightly"] }
+gpui_wgpu.workspace = true
+anyhow.workspace = true
+futures.workspace = true
+log.workspace = true
+smallvec.workspace = true
+uuid.workspace = true
+wasm-bindgen.workspace = true
+wasm-bindgen-futures = "0.4"
+web-time.workspace = true
+console_error_panic_hook = "0.1.7"
+js-sys = "0.3"
+raw-window-handle = "0.6"
+wasm_thread = { version = "0.3", features = ["es_modules"] }
+web-sys = { version = "0.3", features = [
+    "console",
+    "CssStyleDeclaration",
+    "DataTransfer",
+    "Document",
+    "DomRect",
+    "DragEvent",
+    "Element",
+    "EventTarget",
+    "File",
+    "FileList",
+    "HtmlCanvasElement",
+    "HtmlElement",
+    "HtmlInputElement",
+    "KeyboardEvent",
+    "MediaQueryList",
+    "MediaQueryListEvent",
+    "MouseEvent",
+    "Navigator",
+    "PointerEvent",
+    "ResizeObserver",
+    "ResizeObserverBoxOptions",
+    "ResizeObserverEntry",
+    "ResizeObserverSize",
+    "ResizeObserverOptions",
+    "Screen",
+    "Storage",
+    "VisualViewport",
+    "WheelEvent",
+    "Window",
+] }

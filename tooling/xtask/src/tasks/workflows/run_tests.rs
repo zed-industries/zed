@@ -50,6 +50,7 @@ pub(crate) fn run_tests() -> Workflow {
         should_run_tests.guard(run_platform_tests(Platform::Mac)),
         should_run_tests.guard(doctests()),
         should_run_tests.guard(check_workspace_binaries()),
+        should_run_tests.guard(check_wasm()),
         should_run_tests.guard(check_dependencies()), // could be more specific here?
         should_check_docs.guard(check_docs()),
         should_check_licences.guard(check_licenses()),
@@ -105,6 +106,7 @@ fn orchestrate_impl(rules: &[&PathCondition], include_package_filter: bool) -> N
     let mut script = String::new();
 
     script.push_str(indoc::indoc! {r#"
+        set -euo pipefail
         if [ -z "$GITHUB_BASE_REF" ]; then
           echo "Not in a PR context (i.e., push to main/stable/preview)"
           COMPARE_REV="$(git rev-parse HEAD~1)"
@@ -219,10 +221,7 @@ fn orchestrate_impl(rules: &[&PathCondition], include_package_filter: bool) -> N
         .runs_on(runners::LINUX_SMALL)
         .with_repository_owner_guard()
         .outputs(outputs)
-        .add_step(steps::checkout_repo().add_with((
-            "fetch-depth",
-            "${{ github.ref == 'refs/heads/main' && 2 || 350 }}",
-        )))
+        .add_step(steps::checkout_repo().with_deep_history_on_non_main())
         .add_step(Step::new(step_name.clone()).run(script).id(step_name));
 
     NamedJob { name, job }
@@ -337,6 +336,38 @@ fn check_dependencies() -> NamedJob {
     )
 }
 
+fn check_wasm() -> NamedJob {
+    fn install_nightly_wasm_toolchain() -> Step<Run> {
+        named::bash(
+            "rustup toolchain install nightly --component rust-src --target wasm32-unknown-unknown",
+        )
+    }
+
+    fn cargo_check_wasm() -> Step<Run> {
+        named::bash(concat!(
+            "cargo +nightly -Zbuild-std=std,panic_abort ",
+            "check --target wasm32-unknown-unknown -p gpui_platform",
+        ))
+        .add_env((
+            "CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUSTFLAGS",
+            "-C target-feature=+atomics,+bulk-memory,+mutable-globals",
+        ))
+    }
+
+    named::job(
+        release_job(&[])
+            .runs_on(runners::LINUX_LARGE)
+            .add_step(steps::checkout_repo())
+            .add_step(steps::setup_cargo_config(Platform::Linux))
+            .add_step(steps::cache_rust_dependencies_namespace())
+            .add_step(install_nightly_wasm_toolchain())
+            .add_step(steps::setup_sccache(Platform::Linux))
+            .add_step(cargo_check_wasm())
+            .add_step(steps::show_sccache_stats(Platform::Linux))
+            .add_step(steps::cleanup_cargo_config(Platform::Linux)),
+    )
+}
+
 fn check_workspace_binaries() -> NamedJob {
     named::job(
         release_job(&[])
@@ -442,10 +473,6 @@ fn run_platform_tests_impl(platform: Platform, filter_packages: bool) -> NamedJo
 }
 
 pub(crate) fn check_postgres_and_protobuf_migrations() -> NamedJob {
-    fn remove_untracked_files() -> Step<Run> {
-        named::bash("git clean -df")
-    }
-
     fn ensure_fresh_merge() -> Step<Run> {
         named::bash(indoc::indoc! {r#"
             if [ -z "$GITHUB_BASE_REF" ];
@@ -477,8 +504,7 @@ pub(crate) fn check_postgres_and_protobuf_migrations() -> NamedJob {
             .add_env(("GIT_AUTHOR_EMAIL", "ci@zed.dev"))
             .add_env(("GIT_COMMITTER_NAME", "Protobuf Action"))
             .add_env(("GIT_COMMITTER_EMAIL", "ci@zed.dev"))
-            .add_step(steps::checkout_repo().with(("fetch-depth", 0))) // fetch full history
-            .add_step(remove_untracked_files())
+            .add_step(steps::checkout_repo().with_full_history())
             .add_step(ensure_fresh_merge())
             .add_step(bufbuild_setup_action())
             .add_step(bufbuild_breaking_action()),

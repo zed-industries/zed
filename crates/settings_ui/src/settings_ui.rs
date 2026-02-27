@@ -505,6 +505,7 @@ fn init_renderers(cx: &mut App) {
         .add_basic_renderer::<settings::AlternateScroll>(render_dropdown)
         .add_basic_renderer::<settings::TerminalBlink>(render_dropdown)
         .add_basic_renderer::<settings::CursorShapeContent>(render_dropdown)
+        .add_basic_renderer::<settings::EditPredictionPromptFormat>(render_dropdown)
         .add_basic_renderer::<f32>(render_number_field)
         .add_basic_renderer::<u32>(render_number_field)
         .add_basic_renderer::<u64>(render_number_field)
@@ -1162,7 +1163,9 @@ fn render_settings_item(
         .child(
             v_flex()
                 .relative()
-                .w_3_4()
+                .w_full()
+                .max_w_2_3()
+                .min_w_0()
                 .child(
                     h_flex()
                         .w_full()
@@ -4800,7 +4803,7 @@ pub mod test {
                     cx,
                 )
             });
-            MultiWorkspace::new(workspace, cx)
+            MultiWorkspace::new(workspace, window, cx)
         });
 
         let (_multi_workspace2, cx) = cx.add_window_view(|window, cx| {
@@ -4813,7 +4816,7 @@ pub mod test {
                     cx,
                 )
             });
-            MultiWorkspace::new(workspace, cx)
+            MultiWorkspace::new(workspace, window, cx)
         });
 
         let workspace2_handle = cx.window_handle().downcast::<MultiWorkspace>().unwrap();
@@ -4945,7 +4948,7 @@ pub mod test {
                     cx,
                 )
             });
-            MultiWorkspace::new(workspace, cx)
+            MultiWorkspace::new(workspace, window, cx)
         });
 
         let workspace1_handle = cx.window_handle().downcast::<MultiWorkspace>().unwrap();
@@ -4995,7 +4998,7 @@ pub mod test {
                     cx,
                 )
             });
-            MultiWorkspace::new(workspace, cx)
+            MultiWorkspace::new(workspace, window, cx)
         });
 
         cx.run_until_parked();

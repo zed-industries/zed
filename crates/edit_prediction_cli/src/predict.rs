@@ -53,11 +53,10 @@ pub async fn run_prediction(
         );
     };
 
-    run_context_retrieval(example, app_state.clone(), example_progress, cx.clone()).await?;
-
     if let PredictionProvider::Teacher(backend) | PredictionProvider::TeacherNonBatching(backend) =
         provider
     {
+        run_context_retrieval(example, app_state.clone(), example_progress, cx.clone()).await?;
         run_format_prompt(
             example,
             &FormatPromptArgs { provider },
@@ -81,6 +80,7 @@ pub async fn run_prediction(
     }
 
     run_load_project(example, app_state.clone(), example_progress, cx.clone()).await?;
+    run_context_retrieval(example, app_state.clone(), example_progress, cx.clone()).await?;
 
     let step_progress = example_progress.start(Step::Predict);
 
@@ -293,7 +293,7 @@ async fn predict_teacher(
     step_progress: &crate::progress::StepProgress,
 ) -> anyhow::Result<()> {
     match backend {
-        TeacherBackend::Sonnet45 => {
+        TeacherBackend::Sonnet45 | TeacherBackend::Sonnet46 => {
             predict_anthropic(
                 example,
                 backend,
@@ -483,7 +483,7 @@ async fn predict_openai(
 pub async fn sync_batches(provider: Option<&PredictionProvider>) -> anyhow::Result<()> {
     match provider {
         Some(PredictionProvider::Teacher(backend)) => match backend {
-            TeacherBackend::Sonnet45 => {
+            TeacherBackend::Sonnet45 | TeacherBackend::Sonnet46 => {
                 let llm_client = ANTHROPIC_CLIENT.get_or_init(|| {
                     AnthropicClient::batch(&crate::paths::LLM_CACHE_DB)
                         .expect("Failed to create Anthropic client")

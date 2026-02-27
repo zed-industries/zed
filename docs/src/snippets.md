@@ -11,7 +11,7 @@ The snippets are located in `~/.config/zed/snippets` directory to which you can 
 
 ## Example configuration
 
-```json [settings]
+```json
 {
   // Each snippet must have a name and body, but the prefix and description are optional.
   // The prefix is used to trigger the snippet, but when omitted then the name is used.

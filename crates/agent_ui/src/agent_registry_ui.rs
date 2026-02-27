@@ -55,7 +55,10 @@ fn keywords_by_agent_feature() -> &'static BTreeMap<BuiltInAgent, Vec<&'static s
         OnceLock::new();
     KEYWORDS_BY_FEATURE.get_or_init(|| {
         BTreeMap::from_iter([
-            (BuiltInAgent::Claude, vec!["claude", "claude code"]),
+            (
+                BuiltInAgent::Claude,
+                vec!["claude", "claude code", "claude agent"],
+            ),
             (BuiltInAgent::Codex, vec!["codex", "codex cli"]),
             (BuiltInAgent::Gemini, vec!["gemini", "gemini cli"]),
         ])
@@ -170,7 +173,7 @@ impl AgentRegistryPage {
             .global::<SettingsStore>()
             .get::<AllAgentServersSettings>(None);
         self.installed_statuses.clear();
-        for (id, settings) in &settings.custom {
+        for (id, settings) in settings.iter() {
             let status = match settings {
                 CustomAgentServerSettings::Registry { .. } => {
                     RegistryInstallStatus::InstalledRegistry
@@ -325,8 +328,8 @@ impl AgentRegistryPage {
         for feature in &self.upsells {
             let banner = match feature {
                 BuiltInAgent::Claude => self.render_feature_upsell_banner(
-                    "Claude Code support is built-in to Zed!".into(),
-                    "https://zed.dev/docs/ai/external-agents#claude-code".into(),
+                    "Claude Agent support is built-in to Zed!".into(),
+                    "https://zed.dev/docs/ai/external-agents#claude-agent".into(),
                 ),
                 BuiltInAgent::Codex => self.render_feature_upsell_banner(
                     "Codex CLI support is built-in to Zed!".into(),
@@ -580,7 +583,7 @@ impl AgentRegistryPage {
                         let agent_id = agent_id.clone();
                         update_settings_file(fs.clone(), cx, move |settings, _| {
                             let agent_servers = settings.agent_servers.get_or_insert_default();
-                            agent_servers.custom.entry(agent_id).or_insert_with(|| {
+                            agent_servers.entry(agent_id).or_insert_with(|| {
                                 settings::CustomAgentServerSettings::Registry {
                                     default_mode: None,
                                     default_model: None,
@@ -604,13 +607,13 @@ impl AgentRegistryPage {
                             let Some(agent_servers) = settings.agent_servers.as_mut() else {
                                 return;
                             };
-                            if let Some(entry) = agent_servers.custom.get(agent_id.as_str())
+                            if let Some(entry) = agent_servers.get(agent_id.as_str())
                                 && matches!(
                                     entry,
                                     settings::CustomAgentServerSettings::Registry { .. }
                                 )
                             {
-                                agent_servers.custom.remove(agent_id.as_str());
+                                agent_servers.remove(agent_id.as_str());
                             }
                         });
                     })
@@ -751,7 +754,7 @@ impl Item for AgentRegistryPage {
         false
     }
 
-    fn to_item_events(event: &Self::Event, mut f: impl FnMut(workspace::item::ItemEvent)) {
+    fn to_item_events(event: &Self::Event, f: &mut dyn FnMut(workspace::item::ItemEvent)) {
         f(*event)
     }
 }

@@ -1,0 +1,46 @@
+[package]
+name = "gpui_windows"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+license = "Apache-2.0"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/gpui_windows.rs"
+
+[features]
+default = ["gpui/default"]
+test-support = ["gpui/test-support"]
+screen-capture = ["gpui/screen-capture", "scap"]
+
+[dependencies]
+gpui.workspace = true
+
+[target.'cfg(target_os = "windows")'.dependencies]
+anyhow.workspace = true
+collections.workspace = true
+etagere = "0.2"
+futures.workspace = true
+image.workspace = true
+itertools.workspace = true
+log.workspace = true
+parking_lot.workspace = true
+rand.workspace = true
+raw-window-handle = "0.6"
+smallvec.workspace = true
+util.workspace = true
+uuid.workspace = true
+windows.workspace = true
+windows-core.workspace = true
+windows-numerics = "0.2"
+windows-registry = "0.5"
+
+[target.'cfg(target_os = "windows")'.dependencies.scap]
+workspace = true
+optional = true
+
+[target.'cfg(target_os = "windows")'.build-dependencies]
+windows-registry = "0.5"

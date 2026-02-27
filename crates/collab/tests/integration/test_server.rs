@@ -242,14 +242,13 @@ impl TestServer {
         });
 
         let client_name = name.to_string();
-        let mut client = cx.update(|cx| Client::new(clock, http.clone(), cx));
+        let client = cx.update(|cx| Client::new(clock, http.clone(), cx));
         let server = self.server.clone();
         let db = self.app_state.db.clone();
         let connection_killers = self.connection_killers.clone();
         let forbid_connections = self.forbid_connections.clone();
 
-        Arc::get_mut(&mut client)
-            .unwrap()
+        client
             .set_id(user_id.to_proto())
             .override_authenticate(move |cx| {
                 cx.spawn(async move |_| {
@@ -564,6 +563,7 @@ impl TestServer {
     ) -> Arc<AppState> {
         Arc::new(AppState {
             db: test_db.db().clone(),
+            http_client: None,
             livekit_client: Some(Arc::new(livekit_test_server.create_api_client())),
             blob_store_client: None,
             executor,
@@ -886,7 +886,7 @@ impl TestClient {
         let window = cx.add_window(|window, cx| {
             window.activate_window();
             let workspace = cx.new(|cx| Workspace::new(None, project, app_state, window, cx));
-            MultiWorkspace::new(workspace, cx)
+            MultiWorkspace::new(workspace, window, cx)
         });
         let cx = VisualTestContext::from_window(*window, cx).into_mut();
         cx.run_until_parked();
@@ -905,7 +905,7 @@ impl TestClient {
         let window = cx.add_window(|window, cx| {
             window.activate_window();
             let workspace = cx.new(|cx| Workspace::new(None, project, app_state, window, cx));
-            MultiWorkspace::new(workspace, cx)
+            MultiWorkspace::new(workspace, window, cx)
         });
         let cx = VisualTestContext::from_window(*window, cx).into_mut();
         let workspace = window

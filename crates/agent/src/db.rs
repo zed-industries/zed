@@ -8,6 +8,7 @@ use collections::{HashMap, IndexMap};
 use futures::{FutureExt, future::Shared};
 use gpui::{BackgroundExecutor, Global, Task};
 use indoc::indoc;
+use language_model::Speed;
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use sqlez::{
@@ -17,6 +18,7 @@ use sqlez::{
 };
 use std::sync::Arc;
 use ui::{App, SharedString};
+use util::path_list::PathList;
 use zed_env_vars::ZED_STATELESS;
 
 pub type DbMessage = crate::Message;
@@ -30,6 +32,9 @@ pub struct DbThreadMetadata {
     #[serde(alias = "summary")]
     pub title: SharedString,
     pub updated_at: DateTime<Utc>,
+    /// The workspace folder paths this thread was created against, sorted
+    /// lexicographically. Used for grouping threads by project in the sidebar.
+    pub folder_paths: PathList,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -53,6 +58,12 @@ pub struct DbThread {
     pub imported: bool,
     #[serde(default)]
     pub subagent_context: Option<crate::SubagentContext>,
+    #[serde(default)]
+    pub speed: Option<Speed>,
+    #[serde(default)]
+    pub thinking_enabled: bool,
+    #[serde(default)]
+    pub thinking_effort: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -91,6 +102,9 @@ impl SharedThread {
             profile: None,
             imported: true,
             subagent_context: None,
+            speed: None,
+            thinking_enabled: false,
+            thinking_effort: None,
         }
     }
 
@@ -265,6 +279,9 @@ impl DbThread {
             profile: thread.profile,
             imported: false,
             subagent_context: None,
+            speed: None,
+            thinking_enabled: false,
+            thinking_effort: None,
         })
     }
 }
@@ -369,6 +386,14 @@ impl ThreadsDatabase {
             s().ok();
         }
 
+        if let Ok(mut s) = connection.exec(indoc! {"
+            ALTER TABLE threads ADD COLUMN folder_paths TEXT;
+            ALTER TABLE threads ADD COLUMN folder_paths_order TEXT;
+        "})
+        {
+            s().ok();
+        }
+
         let db = Self {
             executor,
             connection: Arc::new(Mutex::new(connection)),
@@ -381,6 +406,7 @@ impl ThreadsDatabase {
         connection: &Arc<Mutex<Connection>>,
         id: acp::SessionId,
         thread: DbThread,
+        folder_paths: &PathList,
     ) -> Result<()> {
         const COMPRESSION_LEVEL: i32 = 3;
 
@@ -397,6 +423,16 @@ impl ThreadsDatabase {
             .subagent_context
             .as_ref()
             .map(|ctx| ctx.parent_thread_id.0.clone());
+        let serialized_folder_paths = folder_paths.serialize();
+        let (folder_paths_str, folder_paths_order_str): (Option<String>, Option<String>) =
+            if folder_paths.is_empty() {
+                (None, None)
+            } else {
+                (
+                    Some(serialized_folder_paths.paths),
+                    Some(serialized_folder_paths.order),
+                )
+            };
         let json_data = serde_json::to_string(&SerializedThread {
             thread,
             version: DbThread::VERSION,
@@ -408,11 +444,20 @@ impl ThreadsDatabase {
         let data_type = DataType::Zstd;
         let data = compressed;
 
-        let mut insert = connection.exec_bound::<(Arc<str>, Option<Arc<str>>, String, String, DataType, Vec<u8>)>(indoc! {"
-            INSERT OR REPLACE INTO threads (id, parent_id, summary, updated_at, data_type, data) VALUES (?, ?, ?, ?, ?, ?)
+        let mut insert = connection.exec_bound::<(Arc<str>, Option<Arc<str>>, Option<String>, Option<String>, String, String, DataType, Vec<u8>)>(indoc! {"
+            INSERT OR REPLACE INTO threads (id, parent_id, folder_paths, folder_paths_order, summary, updated_at, data_type, data) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         "})?;
 
-        insert((id.0, parent_id, title, updated_at, data_type, data))?;
+        insert((
+            id.0,
+            parent_id,
+            folder_paths_str,
+            folder_paths_order_str,
+            title,
+            updated_at,
+            data_type,
+            data,
+        ))?;
 
         Ok(())
     }
@@ -424,19 +469,28 @@ impl ThreadsDatabase {
             let connection = connection.lock();
 
             let mut select = connection
-                .select_bound::<(), (Arc<str>, Option<Arc<str>>, String, String)>(indoc! {"
-                SELECT id, parent_id, summary, updated_at FROM threads ORDER BY updated_at DESC
+                .select_bound::<(), (Arc<str>, Option<Arc<str>>, Option<String>, Option<String>, String, String)>(indoc! {"
+                SELECT id, parent_id, folder_paths, folder_paths_order, summary, updated_at FROM threads ORDER BY updated_at DESC
             "})?;
 
             let rows = select(())?;
             let mut threads = Vec::new();
 
-            for (id, parent_id, summary, updated_at) in rows {
+            for (id, parent_id, folder_paths, folder_paths_order, summary, updated_at) in rows {
+                let folder_paths = folder_paths
+                    .map(|paths| {
+                        PathList::deserialize(&util::path_list::SerializedPathList {
+                            paths,
+                            order: folder_paths_order.unwrap_or_default(),
+                        })
+                    })
+                    .unwrap_or_default();
                 threads.push(DbThreadMetadata {
                     id: acp::SessionId::new(id),
                     parent_session_id: parent_id.map(acp::SessionId::new),
                     title: summary.into(),
                     updated_at: DateTime::parse_from_rfc3339(&updated_at)?.with_timezone(&Utc),
+                    folder_paths,
                 });
             }
 
@@ -470,11 +524,16 @@ impl ThreadsDatabase {
         })
     }
 
-    pub fn save_thread(&self, id: acp::SessionId, thread: DbThread) -> Task<Result<()>> {
+    pub fn save_thread(
+        &self,
+        id: acp::SessionId,
+        thread: DbThread,
+        folder_paths: PathList,
+    ) -> Task<Result<()>> {
         let connection = self.connection.clone();
 
         self.executor
-            .spawn(async move { Self::save_thread_sync(&connection, id, thread) })
+            .spawn(async move { Self::save_thread_sync(&connection, id, thread, &folder_paths) })
     }
 
     pub fn delete_thread(&self, id: acp::SessionId) -> Task<Result<()>> {
@@ -570,6 +629,9 @@ mod tests {
             profile: None,
             imported: false,
             subagent_context: None,
+            speed: None,
+            thinking_enabled: false,
+            thinking_effort: None,
         }
     }
 
@@ -590,11 +652,11 @@ mod tests {
         );
 
         database
-            .save_thread(older_id.clone(), older_thread)
+            .save_thread(older_id.clone(), older_thread, PathList::default())
             .await
             .unwrap();
         database
-            .save_thread(newer_id.clone(), newer_thread)
+            .save_thread(newer_id.clone(), newer_thread, PathList::default())
             .await
             .unwrap();
 
@@ -619,11 +681,11 @@ mod tests {
         );
 
         database
-            .save_thread(thread_id.clone(), original_thread)
+            .save_thread(thread_id.clone(), original_thread, PathList::default())
             .await
             .unwrap();
         database
-            .save_thread(thread_id.clone(), updated_thread)
+            .save_thread(thread_id.clone(), updated_thread, PathList::default())
             .await
             .unwrap();
 
@@ -670,7 +732,7 @@ mod tests {
         });
 
         database
-            .save_thread(child_id.clone(), child_thread)
+            .save_thread(child_id.clone(), child_thread, PathList::default())
             .await
             .unwrap();
 
@@ -698,7 +760,7 @@ mod tests {
         );
 
         database
-            .save_thread(thread_id.clone(), thread)
+            .save_thread(thread_id.clone(), thread, PathList::default())
             .await
             .unwrap();
 
@@ -712,5 +774,50 @@ mod tests {
             loaded.subagent_context.is_none(),
             "Regular threads should have no subagent_context"
         );
+    }
+
+    #[gpui::test]
+    async fn test_folder_paths_roundtrip(cx: &mut TestAppContext) {
+        let database = ThreadsDatabase::new(cx.executor()).unwrap();
+
+        let thread_id = session_id("folder-thread");
+        let thread = make_thread(
+            "Folder Thread",
+            Utc.with_ymd_and_hms(2024, 6, 15, 12, 0, 0).unwrap(),
+        );
+
+        let folder_paths = PathList::new(&[
+            std::path::PathBuf::from("/home/user/project-a"),
+            std::path::PathBuf::from("/home/user/project-b"),
+        ]);
+
+        database
+            .save_thread(thread_id.clone(), thread, folder_paths.clone())
+            .await
+            .unwrap();
+
+        let threads = database.list_threads().await.unwrap();
+        assert_eq!(threads.len(), 1);
+        assert_eq!(threads[0].folder_paths, folder_paths);
+    }
+
+    #[gpui::test]
+    async fn test_folder_paths_empty_when_not_set(cx: &mut TestAppContext) {
+        let database = ThreadsDatabase::new(cx.executor()).unwrap();
+
+        let thread_id = session_id("no-folder-thread");
+        let thread = make_thread(
+            "No Folder Thread",
+            Utc.with_ymd_and_hms(2024, 6, 15, 12, 0, 0).unwrap(),
+        );
+
+        database
+            .save_thread(thread_id.clone(), thread, PathList::default())
+            .await
+            .unwrap();
+
+        let threads = database.list_threads().await.unwrap();
+        assert_eq!(threads.len(), 1);
+        assert!(threads[0].folder_paths.is_empty());
     }
 }
