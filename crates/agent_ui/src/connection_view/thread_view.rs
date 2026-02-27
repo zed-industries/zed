@@ -1,4 +1,5 @@
 use cloud_api_types::{SubmitAgentThreadFeedbackBody, SubmitAgentThreadFeedbackCommentsBody};
+use editor::actions::OpenExcerpts;
 use gpui::{Corner, List};
 use language_model::{LanguageModelEffortLevel, Speed};
 use settings::update_settings_file;
@@ -578,7 +579,68 @@ impl ThreadView {
             ViewEvent::MessageEditorEvent(_editor, MessageEditorEvent::Cancel) => {
                 self.cancel_editing(&Default::default(), window, cx);
             }
+            ViewEvent::OpenDiffLocation {
+                path,
+                position,
+                split,
+            } => {
+                self.open_diff_location(path, *position, *split, window, cx);
+            }
         }
+    }
+
+    fn open_diff_location(
+        &self,
+        path: &str,
+        position: Point,
+        split: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(project) = self.project.upgrade() else {
+            return;
+        };
+        let Some(project_path) = project.read(cx).find_project_path(path, cx) else {
+            return;
+        };
+
+        let open_task = if split {
+            self.workspace
+                .update(cx, |workspace, cx| {
+                    workspace.split_path(project_path, window, cx)
+                })
+                .log_err()
+        } else {
+            self.workspace
+                .update(cx, |workspace, cx| {
+                    workspace.open_path(project_path, None, true, window, cx)
+                })
+                .log_err()
+        };
+
+        let Some(open_task) = open_task else {
+            return;
+        };
+
+        window
+            .spawn(cx, async move |cx| {
+                let item = open_task.await?;
+                let Some(editor) = item.downcast::<Editor>() else {
+                    return anyhow::Ok(());
+                };
+                editor.update_in(cx, |editor, window, cx| {
+                    editor.change_selections(
+                        SelectionEffects::scroll(Autoscroll::center()),
+                        window,
+                        cx,
+                        |selections| {
+                            selections.select_ranges([position..position]);
+                        },
+                    );
+                })?;
+                anyhow::Ok(())
+            })
+            .detach_and_log_err(cx);
     }
 
     // turns
@@ -4995,14 +5057,20 @@ impl ThreadView {
             matches!(tool_call.kind, acp::ToolKind::Edit) || tool_call.diffs().next().is_some();
 
         let is_cancelled_edit = is_edit && matches!(tool_call.status, ToolCallStatus::Canceled);
-        let has_revealed_diff = tool_call.diffs().next().is_some_and(|diff| {
-            self.entry_view_state
-                .read(cx)
-                .entry(entry_ix)
-                .and_then(|entry| entry.editor_for_diff(diff))
-                .is_some()
-                && diff.read(cx).has_revealed_range(cx)
-        });
+        let (has_revealed_diff, tool_call_output_focus) = tool_call
+            .diffs()
+            .next()
+            .and_then(|diff| {
+                let editor = self
+                    .entry_view_state
+                    .read(cx)
+                    .entry(entry_ix)
+                    .and_then(|entry| entry.editor_for_diff(diff))?;
+                let has_revealed_diff = diff.read(cx).has_revealed_range(cx);
+                let has_focus = editor.read(cx).is_focused(window);
+                Some((has_revealed_diff, has_focus))
+            })
+            .unwrap_or((false, false));
 
         let use_card_layout = needs_confirmation || is_edit || is_terminal_tool;
 
@@ -5211,7 +5279,12 @@ impl ThreadView {
             .map(|this| {
                 if is_terminal_tool {
                     let label_source = tool_call.label.read(cx).source();
-                    this.child(self.render_collapsible_command(true, label_source, &tool_call.id, cx))
+                    this.child(self.render_collapsible_command(
+                        true,
+                        label_source,
+                        &tool_call.id,
+                        cx,
+                    ))
                 } else {
                     this.child(
                         h_flex()
@@ -5235,97 +5308,148 @@ impl ThreadView {
                                 window,
                                 cx,
                             ))
-                            .when(is_collapsible || failed_or_canceled, |this| {
-                                let diff_for_discard =
-                                    if has_revealed_diff && is_cancelled_edit && cx.has_flag::<AgentV2FeatureFlag>() {
-                                        tool_call.diffs().next().cloned()
-                                    } else {
-                                        None
-                                    };
-                                this.child(
-                                    h_flex()
-                                        .px_1()
-                                        .when_some(diff_for_discard.clone(), |this, _| this.pr_0p5())
-                                        .gap_1()
-                                        .when(is_collapsible, |this| {
-                                            this.child(
-                                            Disclosure::new(("expand-output", entry_ix), is_open)
-                                                .opened_icon(IconName::ChevronUp)
-                                                .closed_icon(IconName::ChevronDown)
-                                                .visible_on_hover(&card_header_id)
-                                                .on_click(cx.listener({
-                                                    let id = tool_call.id.clone();
-                                                    move |this: &mut Self, _, _, cx: &mut Context<Self>| {
-                                                                if is_open {
-                                                                    this
-                                                                        .expanded_tool_calls.remove(&id);
-                                                                } else {
-                                                                    this.expanded_tool_calls.insert(id.clone());
-                                                                }
-                                                            cx.notify();
-                                                    }
-                                                })),
-                                        )
-                                        })
-                                        .when(failed_or_canceled, |this| {
-                                            if is_cancelled_edit && !has_revealed_diff {
-                                                this.child(
-                                                    div()
-                                                        .id(entry_ix)
-                                                        .tooltip(Tooltip::text(
-                                                            "Interrupted Edit",
-                                                        ))
-                                                        .child(
-                                                            Icon::new(IconName::XCircle)
-                                                                .color(Color::Muted)
-                                                                .size(IconSize::Small),
-                                                        ),
-                                                )
-                                            } else if is_cancelled_edit {
-                                                this
-                                            } else {
-                                                this.child(
-                                                    Icon::new(IconName::Close)
-                                                        .color(Color::Error)
-                                                        .size(IconSize::Small),
-                                                )
-                                            }
-                                        })
-                                        .when_some(diff_for_discard, |this, diff| {
-                                            let tool_call_id = tool_call.id.clone();
-                                            let is_discarded = self.discarded_partial_edits.contains(&tool_call_id);
-                                            this.when(!is_discarded, |this| {
-                                                this.child(
-                                                    IconButton::new(
-                                                        ("discard-partial-edit", entry_ix),
-                                                        IconName::Undo,
-                                                    )
-                                                    .icon_size(IconSize::Small)
-                                                    .tooltip(move |_, cx| Tooltip::with_meta(
-                                                        "Discard Interrupted Edit",
-                                                        None,
-                                                        "You can discard this interrupted partial edit and restore the original file content.",
-                                                        cx
-                                                    ))
-                                                    .on_click(cx.listener({
-                                                        let tool_call_id = tool_call_id.clone();
-                                                        move |this, _, _window, cx| {
-                                                            let diff_data = diff.read(cx);
-                                                            let base_text = diff_data.base_text().clone();
-                                                            let buffer = diff_data.buffer().clone();
-                                                            buffer.update(cx, |buffer, cx| {
-                                                                buffer.set_text(base_text.as_ref(), cx);
-                                                            });
-                                                            this.discarded_partial_edits.insert(tool_call_id.clone());
-                                                            cx.notify();
-                                                        }
-                                                    })),
-                                                )
-                                            })
-                                        })
+                            .child(
+                                h_flex()
+                                    .gap_0p5()
+                                    .when(is_collapsible || failed_or_canceled, |this| {
+                                        let diff_for_discard = if has_revealed_diff
+                                            && is_cancelled_edit
+                                            && cx.has_flag::<AgentV2FeatureFlag>()
+                                        {
+                                            tool_call.diffs().next().cloned()
+                                        } else {
+                                            None
+                                        };
 
-                                )
-                            }),
+                                        this.child(
+                                            h_flex()
+                                                .px_1()
+                                                .when_some(diff_for_discard.clone(), |this, _| {
+                                                    this.pr_0p5()
+                                                })
+                                                .gap_1()
+                                                .when(is_collapsible, |this| {
+                                                    this.child(
+                                                        Disclosure::new(
+                                                            ("expand-output", entry_ix),
+                                                            is_open,
+                                                        )
+                                                        .opened_icon(IconName::ChevronUp)
+                                                        .closed_icon(IconName::ChevronDown)
+                                                        .visible_on_hover(&card_header_id)
+                                                        .on_click(cx.listener({
+                                                            let id = tool_call.id.clone();
+                                                            move |this: &mut Self,
+                                                                  _,
+                                                                  _,
+                                                                  cx: &mut Context<Self>| {
+                                                                if is_open {
+                                                                    this.expanded_tool_calls
+                                                                        .remove(&id);
+                                                                } else {
+                                                                    this.expanded_tool_calls
+                                                                        .insert(id.clone());
+                                                                }
+                                                                cx.notify();
+                                                            }
+                                                        })),
+                                                    )
+                                                })
+                                                .when(failed_or_canceled, |this| {
+                                                    if is_cancelled_edit && !has_revealed_diff {
+                                                        this.child(
+                                                            div()
+                                                                .id(entry_ix)
+                                                                .tooltip(Tooltip::text(
+                                                                    "Interrupted Edit",
+                                                                ))
+                                                                .child(
+                                                                    Icon::new(IconName::XCircle)
+                                                                        .color(Color::Muted)
+                                                                        .size(IconSize::Small),
+                                                                ),
+                                                        )
+                                                    } else if is_cancelled_edit {
+                                                        this
+                                                    } else {
+                                                        this.child(
+                                                            Icon::new(IconName::Close)
+                                                                .color(Color::Error)
+                                                                .size(IconSize::Small),
+                                                        )
+                                                    }
+                                                })
+                                                .when_some(diff_for_discard, |this, diff| {
+                                                    let tool_call_id = tool_call.id.clone();
+                                                    let is_discarded = self
+                                                        .discarded_partial_edits
+                                                        .contains(&tool_call_id);
+
+                                                    this.when(!is_discarded, |this| {
+                                                        this.child(
+                                                            IconButton::new(
+                                                                ("discard-partial-edit", entry_ix),
+                                                                IconName::Undo,
+                                                            )
+                                                            .icon_size(IconSize::Small)
+                                                            .tooltip(move |_, cx| {
+                                                                Tooltip::with_meta(
+                                                                    "Discard Interrupted Edit",
+                                                                    None,
+                                                                    "You can discard this interrupted partial edit and restore the original file content.",
+                                                                    cx,
+                                                                )
+                                                            })
+                                                            .on_click(cx.listener({
+                                                                let tool_call_id =
+                                                                    tool_call_id.clone();
+                                                                move |this, _, _window, cx| {
+                                                                    let diff_data = diff.read(cx);
+                                                                    let base_text = diff_data
+                                                                        .base_text()
+                                                                        .clone();
+                                                                    let buffer =
+                                                                        diff_data.buffer().clone();
+                                                                    buffer.update(
+                                                                        cx,
+                                                                        |buffer, cx| {
+                                                                            buffer.set_text(
+                                                                                base_text.as_ref(),
+                                                                                cx,
+                                                                            );
+                                                                        },
+                                                                    );
+                                                                    this.discarded_partial_edits
+                                                                        .insert(
+                                                                            tool_call_id.clone(),
+                                                                        );
+                                                                    cx.notify();
+                                                                }
+                                                            })),
+                                                        )
+                                                    })
+                                                }),
+                                        )
+                                    })
+                                    .when(tool_call_output_focus, |this| {
+                                        this.child(
+                                            Button::new("open-file-button", "Open File")
+                                                .label_size(LabelSize::Small)
+                                                .style(ButtonStyle::OutlinedGhost)
+                                                .key_binding(
+                                                    KeyBinding::for_action(&OpenExcerpts, cx)
+                                                        .map(|s| s.size(rems_from_px(12.))),
+                                                )
+                                                .on_click(|_, window, cx| {
+                                                    window.dispatch_action(
+                                                        Box::new(OpenExcerpts),
+                                                        cx,
+                                                    )
+                                                }),
+                                        )
+                                    }),
+                            )
+
                     )
                 }
             })
