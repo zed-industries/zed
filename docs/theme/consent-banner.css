@@ -51,10 +51,14 @@
   flex-direction: column;
 }
 
-#c15t-title {
-  color: var(--full-contrast);
-  font-size: 14px;
-  margin: 0;
+#c15t-banner a {
+  color: var(--links);
+  text-decoration: underline;
+  text-decoration-color: var(--link-line-decoration);
+}
+
+#c15t-banner a:hover {
+  text-decoration-color: var(--link-line-decoration-hover);
 }
 
 #c15t-description {

@@ -71,6 +71,7 @@
         <script async src="https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.1/MathJax.js?config=TeX-AMS-MML_HTMLorMML"></script>
         {{/if}}
         <meta name="amplitude-key" content="#amplitude_key#">
+        <meta name="consent-io-instance" content="#consent_io_instance#">
     </head>
     <body class="no-js">
     <div id="body-container">
@@ -107,6 +108,7 @@
             </button>
             {{/if}}
             <div class="right-container">
+                <button id="c15t-manage-consent-btn">Manage Site Cookies</button>
                 <button id="theme-toggle" class="icon-button" type="button" title="Change Theme" aria-label="Change Theme" aria-haspopup="true" aria-expanded="false" aria-controls="theme-list">
                     <i class="fa fa-paint-brush"></i>
                 </button>
@@ -409,12 +411,10 @@
         {{/if}}
 
         <!-- c15t Consent Banner -->
-        <div id="c15t-banner">
+        <div id="c15t-banner" style="display: none;">
             <div>
-                <p id="c15t-title">We value your privacy</p>
                 <p id="c15t-description">
-                    Zed uses cookies to improve your browsing experience and
-                    analyze site traffic.
+                    Zed uses cookies to improve your experience and for marketing. Read <a href="https://zed.dev/cookie-policy">our cookie policy</a> for more details.
                 </p>
             </div>
             <div id="c15t-configure-section" style="display: none">

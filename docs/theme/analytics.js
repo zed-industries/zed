@@ -1,28 +1,28 @@
 const amplitudeKey = document.querySelector(
   'meta[name="amplitude-key"]',
 )?.content;
+const consentInstance = document.querySelector(
+  'meta[name="consent-io-instance"]',
+)?.content;
 
 document.addEventListener("DOMContentLoaded", () => {
-  const { configureConsentManager, createConsentManagerStore } = window.c15t;
+  if (consentInstance.length === 0) return;
+  const { getOrCreateConsentRuntime } = window.c15t;
 
-  const manager = configureConsentManager({
-    mode: "offline",
-  });
-  const store = createConsentManagerStore(manager, {
-    initialGdprTypes: ["necessary", "measurement"],
-    ignoreGeoLocation: true,
+  const { consentStore } = getOrCreateConsentRuntime({
+    mode: "c15t",
+    backendURL: consentInstance,
+    consentCategories: ["necessary", "measurement"],
     scripts: [
       {
         id: "amplitude",
         src: `https://cdn.amplitude.com/script/${amplitudeKey}.js`,
         category: "measurement",
         onLoad: () => {
-          if (amplitudeKey && amplitudeKey.indexOf("#") === -1) {
-            window.amplitude.init(amplitudeKey, {
-              fetchRemoteConfig: true,
-              autocapture: true,
-            });
-          }
+          window.amplitude.init(amplitudeKey, {
+            fetchRemoteConfig: true,
+            autocapture: true,
+          });
         },
       },
     ],
@@ -32,36 +32,48 @@ document.addEventListener("DOMContentLoaded", () => {
   const configureSection = document.getElementById("c15t-configure-section");
   const configureBtn = document.getElementById("c15t-configure-btn");
   const measurementToggle = document.getElementById("c15t-toggle-measurement");
-  let isConfiguring = false;
 
-  function syncBanner(state) {
-    banner.style.display = state.showPopup ? "block" : "none";
-  }
+  const toggleConfigureMode = () => {
+    const currentConsents = consentStore.getState().consents;
+    measurementToggle.checked = currentConsents
+      ? (currentConsents.measurement ?? false)
+      : false;
+    configureSection.style.display = "flex";
+    configureBtn.innerHTML = "Save";
+    configureBtn.className = "c15t-button secondary";
+    configureBtn.title = "";
+  };
 
-  store.subscribe((state) => syncBanner(state));
-  syncBanner(store.getState());
+  consentStore.subscribe((state) => {
+    const hideBanner = state.activeUI === "none";
+    banner.style.display = hideBanner ? "none" : "block";
+
+    if (state.activeUI === "dialog") {
+      toggleConfigureMode();
+    }
+  });
 
   configureBtn.addEventListener("click", () => {
-    if (isConfiguring) {
-      store.getState().setConsent("measurement", measurementToggle.checked);
+    if (consentStore.getState().activeUI === "dialog") {
+      consentStore
+        .getState()
+        .setConsent("measurement", measurementToggle.checked);
     } else {
-      isConfiguring = true;
-      const currentConsents = store.getState().consents;
-      measurementToggle.checked = currentConsents
-        ? (currentConsents.measurement ?? false)
-        : false;
-      configureSection.style.display = "flex";
-      configureBtn.innerHTML = "Save";
-      configureBtn.className = "c15t-button secondary";
-      configureBtn.title = "";
+      toggleConfigureMode();
     }
   });
 
   document.getElementById("c15t-accept").addEventListener("click", () => {
-    store.getState().setConsent("measurement", true);
+    consentStore.getState().saveConsents("all");
   });
 
   document.getElementById("c15t-decline").addEventListener("click", () => {
-    store.getState().setConsent("measurement", false);
+    consentStore.getState().saveConsents("necessary");
   });
+
+  document
+    .getElementById("c15t-manage-consent-btn")
+    .addEventListener("click", () => {
+      consentStore.getState().setActiveUI("dialog");
+    });
 });
