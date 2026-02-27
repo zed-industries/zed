@@ -211,9 +211,7 @@ impl MultiBuffer {
         let mut cursor = snapshot.excerpts.cursor::<ExcerptSummary>(());
         let mut sorted_anchors = sorted_anchors.into_iter().peekable();
         while let Some(anchor) = sorted_anchors.next() {
-            let Some(path) = snapshot.path_for_anchor(anchor) else {
-                continue;
-            };
+            let path = snapshot.path_for_anchor(anchor);
             let Some(buffer) = self.buffer_for_path(&path, cx) else {
                 continue;
             };
@@ -223,7 +221,7 @@ impl MultiBuffer {
             // Move to the first excerpt for this path
             cursor.seek_forward(&path, Bias::Left);
             while let Some(anchor) = sorted_anchors.peek().copied()
-                && snapshot.path_for_anchor(anchor).as_ref() == Some(&path)
+                && snapshot.path_for_anchor(anchor) == path
             {
                 sorted_anchors.next();
                 let Some(target) = snapshot.anchor_seek_target(anchor) else {

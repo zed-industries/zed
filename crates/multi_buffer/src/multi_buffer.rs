@@ -4957,11 +4957,10 @@ impl MultiBufferSnapshot {
             + Add<MBD::TextDimension, Output = MBD>,
         MBD::TextDimension: Sub<Output = MBD::TextDimension> + Ord,
     {
-        let excerpt_id = self.latest_excerpt_id(anchor.excerpt_id);
-        let locator = self.excerpt_locator_for_id(excerpt_id);
+        let target = self.anchor_seek_target(*anchor);
         let (start, _, mut item) = self
             .excerpts
-            .find::<ExcerptSummary, _>((), locator, Bias::Left);
+            .find::<ExcerptSummary, _>((), &target, Bias::Left);
         let mut start = MBD::from_summary(&start.text);
         if item.is_none() && excerpt_id == ExcerptId::max() {
             item = self.excerpts.last();
@@ -5068,6 +5067,19 @@ impl MultiBufferSnapshot {
     where
         MBD: MultiBufferDimension + Ord + Sub + AddAssign<<MBD as Sub>::Output>,
     {
+        let (text_anchor, diff_base_anchor) = match anchor {
+            Anchor::Min | Anchor::Max => {
+                return self.resolve_summary_for_min_or_max_anchor(
+                    anchor,
+                    excerpt_position,
+                    diff_transforms,
+                );
+            }
+            Anchor::Text {
+                diff_base_anchor, ..
+            } => (anchor.text_anchor().unwrap(), *diff_base_anchor),
+        };
+
         loop {
             let transform_end_position = diff_transforms.end().0;
             let item = diff_transforms.item();
@@ -5075,7 +5087,7 @@ impl MultiBufferSnapshot {
 
             // A right-biased anchor at a transform boundary belongs to the
             // *next* transform, so advance past the current one.
-            if anchor.text_anchor.bias == Bias::Right && at_transform_end {
+            if text_anchor.bias == Bias::Right && at_transform_end {
                 diff_transforms.next();
                 continue;
             }
@@ -5088,7 +5100,7 @@ impl MultiBufferSnapshot {
                     hunk_info,
                     ..
                 }) => {
-                    if let Some(diff_base_anchor) = &anchor.diff_base_anchor
+                    if let Some(diff_base_anchor) = &diff_base_anchor
                         && let Some(base_text) =
                             self.diffs.get(buffer_id).map(|diff| diff.base_text())
                         && diff_base_anchor.is_valid(&base_text)
@@ -5111,8 +5123,7 @@ impl MultiBufferSnapshot {
                             continue;
                         }
                     } else if at_transform_end
-                        && anchor
-                            .text_anchor
+                        && text_anchor
                             .cmp(&hunk_info.hunk_start_anchor, excerpt_buffer)
                             .is_gt()
                     {
@@ -5133,7 +5144,7 @@ impl MultiBufferSnapshot {
                     // On a BufferContent (or no transform). If the anchor
                     // carries a diff_base_anchor it needs a DeletedHunk, so
                     // advance to find one.
-                    if at_transform_end && anchor.diff_base_anchor.is_some() {
+                    if at_transform_end && diff_base_anchor.is_some() {
                         diff_transforms.next();
                         continue;
                     }
@@ -6516,22 +6527,18 @@ impl MultiBufferSnapshot {
         ))
     }
 
-    fn anchor_seek_target(&self, anchor: Anchor) -> Option<AnchorSeekTarget> {
+    fn anchor_seek_target(&self, anchor: Anchor) -> AnchorSeekTarget {
         match anchor {
             Anchor::Min => Some(AnchorSeekTarget::Min),
             Anchor::Max => Some(AnchorSeekTarget::Max),
-            Anchor::Text { buffer_id, .. } => {
-                let Some(path_key) = self.path_for_buffer(buffer_id) else {
-                    return None;
-                };
-                let Some(snapshot) = self.buffer_for_path(path_key) else {
-                    return None;
-                };
+            Anchor::Text { path, .. } => {
+                let path_key = self.path_for_anchor(anchor);
+                let snapshot = self.buffer_for_path(path_key);
 
                 Some(AnchorSeekTarget::Text {
                     path_key: path_key.clone(),
                     anchor: anchor.text_anchor().unwrap(),
-                    snapshot: snapshot.clone(),
+                    snapshot: snapshot.cloned(),
                 })
             }
         }
@@ -6613,11 +6620,15 @@ impl MultiBufferSnapshot {
         self.buffer_for_path(self.path_keys_by_buffer.get(&id)?)
     }
 
-    pub fn path_for_anchor(&self, anchor: Anchor) -> Option<PathKey> {
+    pub fn path_for_anchor(&self, anchor: Anchor) -> PathKey {
         match anchor {
             Anchor::Min => Some(self.excerpts.first()?.path_key.clone()),
             Anchor::Max => Some(self.excerpts.last()?.path_key.clone()),
-            Anchor::Text { path, .. } => self.path_keys_by_index.get(&path).cloned(),
+            Anchor::Text { path, .. } => self
+                .path_keys_by_index
+                .get(&path)
+                .cloned()
+                .expect("path was never added to multibuffer"),
         }
     }
 
@@ -7607,7 +7618,8 @@ enum AnchorSeekTarget {
     Text {
         path_key: PathKey,
         anchor: text::Anchor,
-        snapshot: BufferSnapshot,
+        // None when the buffer no longer exists in the multibuffer
+        snapshot: Option<BufferSnapshot>,
     },
 }
 
@@ -7624,8 +7636,17 @@ impl sum_tree::SeekTarget<'_, ExcerptSummary, ExcerptSummary> for AnchorSeekTarg
                 path_key,
                 anchor,
                 snapshot,
-            } => Ord::cmp(path_key, &cursor_location.path_key)
-                .then_with(|| anchor.cmp(&cursor_location.max_anchor, snapshot)),
+            } => {
+                let path_comparison = Ord::cmp(path_key, &cursor_location.path_key);
+                if path_comparison.is_ne() {
+                    path_comparison
+                } else if let Some(snapshot) = snapshot {
+                    anchor.cmp(&cursor_location.max_anchor, snapshot)
+                } else {
+                    // shouldn't happen because we expect this buffer not to have any excerpts
+                    Ordering::Equal
+                }
+            }
         }
     }
 }
