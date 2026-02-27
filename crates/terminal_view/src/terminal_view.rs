@@ -1979,9 +1979,13 @@ impl SearchableItem for TerminalView {
 }
 
 /// Gets the working directory for the given workspace, respecting the user's settings.
-/// Falls back to the local home directory only for local workspaces.
+/// Falls back to home directory when no project directory is available.
+///
+/// For remote projects, local-only resolution (home dir fallback, shell expansion,
+/// local `is_dir` checks) is skipped -- returning `None` lets the remote shell
+/// open in the remote user's home directory by default.
 pub(crate) fn default_working_directory(workspace: &Workspace, cx: &App) -> Option<PathBuf> {
-    let should_fallback_to_local_home = workspace.project().read(cx).is_local();
+    let is_remote = workspace.project().read(cx).is_remote();
     let directory = match &TerminalSettings::get_global(cx).working_directory {
         WorkingDirectory::CurrentFileDirectory => workspace
             .project()
@@ -1991,16 +1995,17 @@ pub(crate) fn default_working_directory(workspace: &Workspace, cx: &App) -> Opti
         WorkingDirectory::CurrentProjectDirectory => current_project_directory(workspace, cx),
         WorkingDirectory::FirstProjectDirectory => first_project_directory(workspace, cx),
         WorkingDirectory::AlwaysHome => None,
-        WorkingDirectory::Always { directory } => shellexpand::full(directory)
+        WorkingDirectory::Always { directory } if !is_remote => shellexpand::full(directory)
             .ok()
             .map(|dir| Path::new(&dir.to_string()).to_path_buf())
             .filter(|dir| dir.is_dir()),
+        WorkingDirectory::Always { .. } => None,
     };
 
-    if should_fallback_to_local_home {
-        directory.or_else(dirs::home_dir)
-    } else {
+    if is_remote {
         directory
+    } else {
+        directory.or_else(dirs::home_dir)
     }
 }
 
