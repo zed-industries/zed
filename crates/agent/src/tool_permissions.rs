@@ -558,6 +558,7 @@ mod tests {
             cancel_generation_on_terminal_stop: true,
             use_modifier_to_send: true,
             message_editor_min_lines: 1,
+            auto_outline_threshold: 16384,
             tool_permissions,
             show_turn_stats: false,
         }
