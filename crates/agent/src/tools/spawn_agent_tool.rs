@@ -146,7 +146,7 @@ impl AgentTool for SpawnAgentTool {
                     let canceled = error == "User canceled";
                     event_stream.update_fields(acp::ToolCallUpdateFields::new().content(vec![
                         acp::ToolCallContent::Content(acp::Content::new(error.clone()).meta(
-                            acp::Meta::from_iter([("cancelled".into(), cancelled.into())]),
+                            acp::Meta::from_iter([("cancelled".into(), canceled.into())]),
                         )),
                     ]));
                     Err(SpawnAgentToolOutput::Error {
