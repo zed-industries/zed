@@ -46,7 +46,7 @@ use language_model::{
     ConfiguredModel, LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage, Role,
 };
 use menu;
-use multi_buffer::ExcerptInfo;
+use multi_buffer::ExcerptBoundaryInfo;
 use notifications::status_toast::{StatusToast, ToastIcon};
 use panel::{PanelHeader, panel_button, panel_filled_button, panel_icon_button};
 use project::{
@@ -5754,7 +5754,7 @@ impl editor::Addon for GitPanelAddon {
 
     fn render_buffer_header_controls(
         &self,
-        excerpt_info: &ExcerptInfo,
+        excerpt_info: &ExcerptBoundaryInfo,
         window: &Window,
         cx: &App,
     ) -> Option<AnyElement> {

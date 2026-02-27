@@ -11,7 +11,7 @@ use collections::{Bound, HashMap, HashSet};
 use gpui::{AnyElement, App, EntityId, Pixels, Window};
 use language::{Patch, Point};
 use multi_buffer::{
-    Anchor, ExcerptId, ExcerptInfo, MultiBuffer, MultiBufferOffset, MultiBufferPoint,
+    Anchor, ExcerptBoundaryInfo, ExcerptId, MultiBuffer, MultiBufferOffset, MultiBufferPoint,
     MultiBufferRow, MultiBufferSnapshot, RowInfo, ToOffset, ToPoint as _,
 };
 use parking_lot::Mutex;
@@ -339,15 +339,15 @@ struct Transform {
 pub enum Block {
     Custom(Arc<CustomBlock>),
     FoldedBuffer {
-        first_excerpt: ExcerptInfo,
+        first_excerpt: ExcerptBoundaryInfo,
         height: u32,
     },
     ExcerptBoundary {
-        excerpt: ExcerptInfo,
+        excerpt: ExcerptBoundaryInfo,
         height: u32,
     },
     BufferHeader {
-        excerpt: ExcerptInfo,
+        excerpt: ExcerptBoundaryInfo,
         height: u32,
     },
     Spacer {
@@ -2563,7 +2563,7 @@ impl BlockChunks<'_> {
 }
 
 pub struct StickyHeaderExcerpt<'a> {
-    pub excerpt: &'a ExcerptInfo,
+    pub excerpt: &'a ExcerptBoundaryInfo,
 }
 
 impl<'a> Iterator for BlockChunks<'a> {

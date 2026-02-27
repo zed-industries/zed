@@ -150,7 +150,8 @@ use markdown::Markdown;
 use mouse_context_menu::MouseContextMenu;
 use movement::TextLayoutDetails;
 use multi_buffer::{
-    ExcerptInfo, ExpandExcerptDirection, MultiBufferDiffHunk, MultiBufferPoint, MultiBufferRow,
+    ExcerptBoundaryInfo, ExpandExcerptDirection, MultiBufferDiffHunk, MultiBufferPoint,
+    MultiBufferRow,
 };
 use parking_lot::Mutex;
 use persistence::DB;
@@ -892,7 +893,7 @@ pub trait Addon: 'static {
 
     fn render_buffer_header_controls(
         &self,
-        _: &ExcerptInfo,
+        _: &ExcerptBoundaryInfo,
         _: &Window,
         _: &App,
     ) -> Option<AnyElement> {
@@ -5359,7 +5360,7 @@ impl Editor {
             let row = cursor.row;
 
             let point = Point::new(row, 0);
-            let Some((buffer_handle, buffer_point, _)) =
+            let Some((buffer_handle, buffer_point)) =
                 self.buffer.read(cx).point_to_buffer_point(point, cx)
             else {
                 continue;
@@ -8818,7 +8819,7 @@ impl Editor {
                 cx,
             );
             for (breakpoint, state) in breakpoints {
-                let multi_buffer_anchor = Anchor::in_buffer(excerpt_id, breakpoint.position);
+                let multi_buffer_anchor = Anchor::text(excerpt_id, breakpoint.position);
                 let position = multi_buffer_anchor
                     .to_point(&multi_buffer_snapshot)
                     .to_display_point(&snapshot);
@@ -24010,7 +24011,7 @@ impl Editor {
                             .for_each(|hint| {
                                 let inlay = Inlay::debugger(
                                     post_inc(&mut editor.next_inlay_id),
-                                    Anchor::in_buffer(excerpt_id, hint.position),
+                                    Anchor::text(excerpt_id, hint.position),
                                     hint.text(),
                                 );
                                 if !inlay.text().chars().contains(&'\n') {
@@ -24113,7 +24114,7 @@ impl Editor {
                     excerpts: excerpts.clone(),
                 });
             }
-            multi_buffer::Event::ExcerptsRemoved {
+            multi_buffer::Event::BuffersRemoved {
                 ids,
                 removed_buffer_ids,
             } => {
@@ -24137,7 +24138,7 @@ impl Editor {
                     removed_buffer_ids: removed_buffer_ids.clone(),
                 });
             }
-            multi_buffer::Event::ExcerptsEdited {
+            multi_buffer::Event::BuffersEdited {
                 excerpt_ids,
                 buffer_ids,
             } => {
@@ -24496,7 +24497,7 @@ impl Editor {
                 line_offset_from_top,
             }) => {
                 let point = MultiBufferPoint::new(row.0, 0);
-                if let Some((buffer, buffer_point, _)) =
+                if let Some((buffer, buffer_point)) =
                     self.buffer.read(cx).point_to_buffer_point(point, cx)
                 {
                     let buffer_offset = buffer.read(cx).point_to_offset(buffer_point);

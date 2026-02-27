@@ -205,7 +205,7 @@ impl GitBlame {
                     }
                 }
                 multi_buffer::Event::ExcerptsAdded { .. }
-                | multi_buffer::Event::ExcerptsEdited { .. } => git_blame.regenerate_on_edit(cx),
+                | multi_buffer::Event::BuffersEdited { .. } => git_blame.regenerate_on_edit(cx),
                 _ => {}
             },
         );

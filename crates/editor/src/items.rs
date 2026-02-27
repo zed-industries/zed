@@ -575,7 +575,7 @@ fn deserialize_selection(selection: proto::Selection) -> Option<Selection<Anchor
 
 fn deserialize_anchor(anchor: proto::EditorAnchor) -> Option<Anchor> {
     let excerpt_id = ExcerptId::from_proto(anchor.excerpt_id);
-    Some(Anchor::in_buffer(
+    Some(Anchor::text(
         excerpt_id,
         language::proto::deserialize_anchor(anchor.anchor?)?,
     ))
@@ -1459,8 +1459,7 @@ impl ProjectItem for Editor {
                 });
             }
             let (top_row, offset) = restoration_data.scroll_position;
-            let anchor =
-                Anchor::in_buffer(excerpt_id, snapshot.anchor_before(Point::new(top_row, 0)));
+            let anchor = Anchor::text(excerpt_id, snapshot.anchor_before(Point::new(top_row, 0)));
             editor.set_scroll_anchor(ScrollAnchor { anchor, offset }, window, cx);
         }
 

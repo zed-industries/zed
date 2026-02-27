@@ -744,7 +744,7 @@ fn test_excerpt_events(cx: &mut App) {
                     predecessor,
                     excerpts,
                 } => follower.insert_excerpts_with_ids_after(predecessor, buffer, excerpts, cx),
-                Event::ExcerptsRemoved { ids, .. } => follower.remove_excerpts(ids, cx),
+                Event::BuffersRemoved { ids, .. } => follower.remove_excerpts(ids, cx),
                 Event::Edited { .. } => {
                     *follower_edit_event_count.write() += 1;
                 }
@@ -3794,11 +3794,11 @@ async fn test_summaries_for_anchors(cx: &mut TestAppContext) {
         ),
     );
 
-    let anchor_1 = Anchor::in_buffer(ids[0], text::Anchor::MIN);
+    let anchor_1 = Anchor::text(ids[0], text::Anchor::MIN);
     let point_1 = snapshot.summaries_for_anchors::<Point, _>([&anchor_1])[0];
     assert_eq!(point_1, Point::new(0, 0));
 
-    let anchor_2 = Anchor::in_buffer(ids[1], text::Anchor::MIN);
+    let anchor_2 = Anchor::text(ids[1], text::Anchor::MIN);
     let point_2 = snapshot.summaries_for_anchors::<Point, _>([&anchor_2])[0];
     assert_eq!(point_2, Point::new(3, 0));
 }
@@ -5257,8 +5257,8 @@ fn test_cannot_seek_backward_after_excerpt_replacement(cx: &mut TestAppContext) 
         let e_b2 = snapshot.excerpt(e_b2_id).expect("E_B2 should exist");
         let e_b3 = snapshot.excerpt(e_b3_id).expect("E_B3 should exist");
 
-        let anchor_b2 = Anchor::in_buffer(e_b2_id, e_b2.range.context.start);
-        let anchor_b3 = Anchor::in_buffer(e_b3_id, e_b3.range.context.start);
+        let anchor_b2 = Anchor::text(e_b2_id, e_b2.range.context.start);
+        let anchor_b3 = Anchor::text(e_b3_id, e_b3.range.context.start);
         (anchor_b2, anchor_b3)
     });
 

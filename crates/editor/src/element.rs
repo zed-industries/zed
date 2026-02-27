@@ -55,7 +55,7 @@ use itertools::Itertools;
 use language::{IndentGuideSettings, language_settings::ShowWhitespaceSetting};
 use markdown::Markdown;
 use multi_buffer::{
-    Anchor, ExcerptId, ExcerptInfo, ExpandExcerptDirection, ExpandInfo, MultiBufferPoint,
+    Anchor, ExcerptBoundaryInfo, ExcerptId, ExpandExcerptDirection, ExpandInfo, MultiBufferPoint,
     MultiBufferRow, RowInfo,
 };
 
@@ -4183,7 +4183,7 @@ impl EditorElement {
 
     fn render_buffer_header(
         &self,
-        for_excerpt: &ExcerptInfo,
+        for_excerpt: &ExcerptBoundaryInfo,
         is_folded: bool,
         is_selected: bool,
         is_sticky: bool,
@@ -8128,7 +8128,7 @@ pub(crate) fn header_jump_data(
     editor_snapshot: &EditorSnapshot,
     block_row_start: DisplayRow,
     height: u32,
-    first_excerpt: &ExcerptInfo,
+    first_excerpt: &ExcerptBoundaryInfo,
     latest_selection_anchors: &HashMap<BufferId, Anchor>,
 ) -> JumpData {
     let jump_target = if let Some(anchor) = latest_selection_anchors.get(&first_excerpt.buffer_id)
@@ -8195,7 +8195,7 @@ fn header_jump_data_inner(
 
 pub(crate) fn render_buffer_header(
     editor: &Entity<Editor>,
-    for_excerpt: &ExcerptInfo,
+    for_excerpt: &ExcerptBoundaryInfo,
     is_folded: bool,
     is_selected: bool,
     is_sticky: bool,

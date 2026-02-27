@@ -27,6 +27,20 @@ pub struct PathKey {
 }
 
 impl PathKey {
+    pub fn min() -> Self {
+        Self {
+            sort_prefix: None,
+            path: RelPath::empty().into_arc(),
+        }
+    }
+
+    pub fn max() -> Self {
+        Self {
+            sort_prefix: Some(u64::MAX),
+            path: RelPath::empty().into_arc(),
+        }
+    }
+
     pub fn sorted(sort_prefix: u64) -> Self {
         Self {
             sort_prefix: Some(sort_prefix),
@@ -89,7 +103,7 @@ impl MultiBuffer {
         let excerpt_id = self.excerpts_by_path.get(path)?.first()?;
         let snapshot = self.read(cx);
         let excerpt = snapshot.excerpt(*excerpt_id)?;
-        Some(Anchor::in_buffer(excerpt.id, excerpt.range.context.start))
+        Some(Anchor::text(excerpt.id, excerpt.range.context.start))
     }
 
     pub fn set_excerpts_for_buffer(

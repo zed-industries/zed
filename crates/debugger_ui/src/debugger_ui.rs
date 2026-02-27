@@ -299,7 +299,7 @@ pub fn init(cx: &mut App) {
                                     return;
                                 }
                                 maybe!({
-                                    let (buffer, position, _) = editor
+                                    let (buffer, position) = editor
                                         .update(cx, |editor, cx| {
                                             let cursor_point: language::Point = editor
                                                 .selections
