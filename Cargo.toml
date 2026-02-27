@@ -370,7 +370,7 @@ markdown_preview = { path = "crates/markdown_preview" }
 svg_preview = { path = "crates/svg_preview" }
 media = { path = "crates/media" }
 menu = { path = "crates/menu" }
-mermaid-rs-renderer = { git = "https://github.com/zed-industries/mermaid-rs-renderer", branch = "fix-font-family-xml-escaping", default-features = false }
+mermaid-rs-renderer = { git = "https://github.com/zed-industries/mermaid-rs-renderer", rev = "9d8360d9cea10dc4bc86d7b8012cc6e9656e6cf2", default-features = false }
 migrator = { path = "crates/migrator" }
 mistral = { path = "crates/mistral" }
 multi_buffer = { path = "crates/multi_buffer" }
