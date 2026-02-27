@@ -6,6 +6,7 @@ use crate::{
 };
 use gpui::{Context, Point, Window};
 use settings::Settings;
+use text::ToOffset;
 
 impl Editor {
     pub fn next_screen(&mut self, _: &NextScreen, window: &mut Window, cx: &mut Context<Editor>) {
@@ -79,9 +80,16 @@ impl Editor {
         let sticky_headers_len = if EditorSettings::get_global(cx).sticky_scroll.enabled
             && let Some((_, _, buffer_snapshot)) = display_snapshot.buffer_snapshot().as_singleton()
         {
-            let select_head_point = selection_head.to_point(&display_snapshot);
+            let select_head_point =
+                rope::Point::new(selection_head.to_point(&display_snapshot).row, 0);
             buffer_snapshot
                 .outline_items_containing(select_head_point..select_head_point, false, None)
+                .iter()
+                .filter(|outline| {
+                    outline.range.start.offset
+                        < select_head_point.to_offset(&buffer_snapshot) as u32
+                })
+                .collect::<Vec<_>>()
                 .len()
         } else {
             0
