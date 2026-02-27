@@ -366,7 +366,7 @@ pub trait Item: Focusable + EventEmitter<Self::Event> + Render + Sized {
         true
     }
 
-    /// Called when the containing pane receives a drop.
+    /// Called when the containing pane receives a drop on the item or the item's tab.
     /// Returns `true` to consume it and suppress the pane's default drop behavior.
     fn handle_drop(
         &self,
