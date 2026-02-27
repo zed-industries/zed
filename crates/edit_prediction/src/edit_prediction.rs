@@ -40,7 +40,7 @@ use settings::{
 };
 use std::collections::{VecDeque, hash_map};
 use std::env;
-use text::Edit;
+use text::{AnchorRangeExt, Edit};
 use workspace::Workspace;
 use zeta_prompt::{ZetaFormat, ZetaPromptInput};
 
@@ -104,7 +104,6 @@ const LAST_CHANGE_GROUPING_TIME: Duration = Duration::from_secs(1);
 const ZED_PREDICT_DATA_COLLECTION_CHOICE: &str = "zed_predict_data_collection_choice";
 const REJECT_REQUEST_DEBOUNCE: Duration = Duration::from_secs(15);
 const EDIT_PREDICTION_SETTLED_EVENT: &str = "Edit Prediction Settled";
-const EDIT_PREDICTION_SETTLED_TICK: Duration = Duration::from_secs(1);
 const EDIT_PREDICTION_SETTLED_TTL: Duration = Duration::from_secs(60 * 5);
 const EDIT_PREDICTION_SETTLED_QUIESCENCE: Duration = Duration::from_secs(10);
 
@@ -146,9 +145,11 @@ pub struct EditPredictionStore {
     pub mercury: Mercury,
     data_collection_choice: DataCollectionChoice,
     reject_predictions_tx: mpsc::UnboundedSender<EditPredictionRejection>,
-    settled_predictions_tx: mpsc::UnboundedSender<PendingSettledPrediction>,
+    settled_predictions_tx: mpsc::UnboundedSender<Instant>,
     shown_predictions: VecDeque<EditPrediction>,
     rated_predictions: HashSet<EditPredictionId>,
+    #[cfg(test)]
+    settled_event_callback: Option<Box<dyn Fn(EditPredictionId, String)>>,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -489,17 +490,16 @@ impl std::ops::Deref for BufferEditPrediction<'_> {
 
 #[derive(Clone)]
 struct PendingSettledPrediction {
-    request_id: SharedString,
-    buffer: WeakEntity<Buffer>,
+    request_id: EditPredictionId,
     editable_anchor_range: Range<Anchor>,
     enqueued_at: Instant,
     last_edit_at: Instant,
-    last_version: clock::Global,
 }
 
 struct RegisteredBuffer {
     file: Option<Arc<dyn File>>,
     snapshot: TextBufferSnapshot,
+    pending_predictions: Vec<PendingSettledPrediction>,
     last_position: Option<Anchor>,
     _subscriptions: [gpui::Subscription; 2],
 }
@@ -692,8 +692,8 @@ impl EditPredictionStore {
         .detach();
 
         let (settled_predictions_tx, settled_predictions_rx) = mpsc::unbounded();
-        cx.spawn(async move |_this, cx| {
-            Self::run_settled_predictions_worker(settled_predictions_rx, cx).await;
+        cx.spawn(async move |this, cx| {
+            Self::run_settled_predictions_worker(this, settled_predictions_rx, cx).await;
         })
         .detach();
 
@@ -725,6 +725,8 @@ impl EditPredictionStore {
             settled_predictions_tx,
             rated_predictions: Default::default(),
             shown_predictions: Default::default(),
+            #[cfg(test)]
+            settled_event_callback: None,
         };
 
         this
@@ -1113,6 +1115,7 @@ impl EditPredictionStore {
                     snapshot,
                     file,
                     last_position: None,
+                    pending_predictions: Vec::new(),
                     _subscriptions: [
                         cx.subscribe(buffer, {
                             let project = project.downgrade();
@@ -1161,6 +1164,7 @@ impl EditPredictionStore {
         let mut total_inserted = 0usize;
         let mut edit_range: Option<Range<Anchor>> = None;
         let mut last_offset: Option<usize> = None;
+        let now = cx.background_executor().now();
 
         for (edit, anchor_range) in
             new_snapshot.anchored_edits_since::<usize>(&old_snapshot.version)
@@ -1178,6 +1182,12 @@ impl EditPredictionStore {
         let Some(edit_range) = edit_range else {
             return;
         };
+
+        for pending_prediction in &mut registered_buffer.pending_predictions {
+            if edit_range.overlaps(&pending_prediction.editable_anchor_range, &new_snapshot) {
+                pending_prediction.last_edit_at = now;
+            }
+        }
 
         let action_type = match (total_deleted, total_inserted, num_edits) {
             (0, ins, n) if ins == n => UserActionType::InsertChar,
@@ -1205,7 +1215,6 @@ impl EditPredictionStore {
 
         let events = &mut project_state.events;
 
-        let now = cx.background_executor().now();
         if let Some(last_event) = project_state.last_event.as_mut() {
             let is_next_snapshot_of_same_buffer = old_snapshot.remote_id()
                 == last_event.new_snapshot.remote_id()
@@ -1409,97 +1418,112 @@ impl EditPredictionStore {
     }
 
     async fn run_settled_predictions_worker(
-        mut rx: UnboundedReceiver<PendingSettledPrediction>,
+        this: WeakEntity<Self>,
+        mut rx: UnboundedReceiver<Instant>,
         cx: &mut AsyncApp,
     ) {
-        let mut pending = Vec::new();
+        let mut next_wake_time: Option<Instant> = None;
         loop {
-            while let Some(item) = rx.next().now_or_never().flatten() {
-                pending.push(item);
+            let now = cx.background_executor().now();
+            if let Some(wake_time) = next_wake_time.take() {
+                cx.background_executor()
+                    .timer(wake_time.duration_since(now))
+                    .await;
+            } else {
+                let Some(new_enqueue_time) = rx.next().await else {
+                    break;
+                };
+                next_wake_time = Some(new_enqueue_time + EDIT_PREDICTION_SETTLED_QUIESCENCE);
+                while rx.next().now_or_never().flatten().is_some() {}
+                continue;
             }
 
-            let now = Instant::now();
-            pending.retain_mut(|pending_prediction| {
-                let age = now.saturating_duration_since(pending_prediction.enqueued_at);
-                if age >= EDIT_PREDICTION_SETTLED_TTL {
-                    return false;
+            let Some(this) = this.upgrade() else {
+                break;
+            };
+
+            let now = cx.background_executor().now();
+
+            let mut oldest_edited_at = None;
+
+            this.update(cx, |this, _| {
+                for (_, project_state) in this.projects.iter_mut() {
+                    for (_, registered_buffer) in project_state.registered_buffers.iter_mut() {
+                        registered_buffer
+                            .pending_predictions
+                            .retain_mut(|pending_prediction| {
+                                let age =
+                                    now.saturating_duration_since(pending_prediction.enqueued_at);
+                                if age >= EDIT_PREDICTION_SETTLED_TTL {
+                                    return false;
+                                }
+
+                                let quiet_for =
+                                    now.saturating_duration_since(pending_prediction.last_edit_at);
+                                if quiet_for >= EDIT_PREDICTION_SETTLED_QUIESCENCE {
+                                    let settled_editable_region = registered_buffer
+                                        .snapshot
+                                        .text_for_range(
+                                            pending_prediction.editable_anchor_range.clone(),
+                                        )
+                                        .collect::<String>();
+
+                                    #[cfg(test)]
+                                    if let Some(callback) = &this.settled_event_callback {
+                                        callback(
+                                            pending_prediction.request_id.clone(),
+                                            settled_editable_region.clone(),
+                                        );
+                                    }
+
+                                    telemetry::event!(
+                                        EDIT_PREDICTION_SETTLED_EVENT,
+                                        request_id = pending_prediction.request_id.0.clone(),
+                                        settled_editable_region,
+                                    );
+
+                                    return false;
+                                }
+
+                                if oldest_edited_at
+                                    .is_none_or(|t| pending_prediction.last_edit_at < t)
+                                {
+                                    oldest_edited_at = Some(pending_prediction.last_edit_at);
+                                }
+                                return true;
+                            });
+                    }
                 }
-
-                let Some(buffer) = pending_prediction.buffer.upgrade() else {
-                    return false;
-                };
-
-                let has_edits = buffer.read_with(cx, |buffer, _| {
-                    buffer
-                        .anchored_edits_since_in_range::<usize>(
-                            &pending_prediction.last_version,
-                            pending_prediction.editable_anchor_range.clone(),
-                        )
-                        .next()
-                        .is_none()
-                });
-
-                if has_edits {
-                    pending_prediction.last_version =
-                        buffer.read_with(cx, |buffer, _| buffer.version());
-                    pending_prediction.last_edit_at = now;
-                    return true;
-                }
-
-                let quiet_for = now.saturating_duration_since(pending_prediction.last_edit_at);
-                if quiet_for < EDIT_PREDICTION_SETTLED_QUIESCENCE {
-                    return true;
-                }
-
-                let settled_editable_region = buffer.read_with(cx, |buffer, _| {
-                    buffer
-                        .text_for_range(pending_prediction.editable_anchor_range.clone())
-                        .collect::<String>()
-                });
-
-                telemetry::event!(
-                    EDIT_PREDICTION_SETTLED_EVENT,
-                    request_id = pending_prediction.request_id.clone(),
-                    settled_editable_region,
-                );
-                return false;
             });
 
-            if pending.is_empty() {
-                match rx.next().await {
-                    Some(item) => pending.push(item),
-                    None => break,
-                }
-            } else {
-                cx.background_executor()
-                    .timer(EDIT_PREDICTION_SETTLED_TICK)
-                    .await;
-            }
+            next_wake_time = oldest_edited_at.map(|t| t + EDIT_PREDICTION_SETTLED_QUIESCENCE);
         }
     }
 
     pub(crate) fn enqueue_settled_prediction(
-        &self,
-        request_id: SharedString,
+        &mut self,
+        request_id: EditPredictionId,
+        project: &Entity<Project>,
         edited_buffer: &Entity<Buffer>,
         edited_buffer_snapshot: &BufferSnapshot,
         editable_offset_range: Range<usize>,
+        cx: &mut Context<Self>,
     ) {
-        let editable_anchor_range =
-            edited_buffer_snapshot.anchor_range_around(editable_offset_range.clone());
-        let now = Instant::now();
-        let buffer = edited_buffer.downgrade();
-        let last_version = edited_buffer_snapshot.version().clone();
-        self.settled_predictions_tx
-            .unbounded_send(PendingSettledPrediction {
+        let project_state = self.get_or_init_project(project, cx);
+        if let Some(buffer) = project_state
+            .registered_buffers
+            .get_mut(&edited_buffer.entity_id())
+        {
+            let now = cx.background_executor().now();
+            buffer.pending_predictions.push(PendingSettledPrediction {
                 request_id,
-                buffer,
-                editable_anchor_range,
+                editable_anchor_range: edited_buffer_snapshot
+                    .anchor_range_around(editable_offset_range),
                 enqueued_at: now,
                 last_edit_at: now,
-                last_version,
-            })
-            .ok();
+            });
+            self.settled_predictions_tx.unbounded_send(now).ok();
+        }
     }
 
     fn reject_current_prediction(

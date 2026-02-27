@@ -309,7 +309,6 @@ pub fn request_prediction_with_zeta(
                         edits,
                         cursor_position,
                         received_response_at,
-                        full_context_offset_range,
                         editable_range_in_buffer,
                     )),
                     model_version,
@@ -334,7 +333,6 @@ pub fn request_prediction_with_zeta(
             edits,
             cursor_position,
             received_response_at,
-            full_context_offset_range,
             editable_range_in_buffer,
         )) = prediction
         else {
@@ -345,12 +343,14 @@ pub fn request_prediction_with_zeta(
         };
 
         if can_collect_data {
-            store.update(cx, |store, _| {
+            store.update(cx, |store, cx| {
                 store.enqueue_settled_prediction(
-                    id.0.clone(),
+                    id.clone(),
+                    &project,
                     &edited_buffer,
                     &edited_buffer_snapshot,
                     editable_range_in_buffer,
+                    cx,
                 );
             });
         }
