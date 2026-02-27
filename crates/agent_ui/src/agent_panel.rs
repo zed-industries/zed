@@ -402,40 +402,53 @@ fn build_conflict_resolution_prompt(conflicts: &[ConflictContent]) -> Vec<acp::C
 
     let mut blocks = Vec::new();
 
-    let instruction = if conflicts.len() == 1 {
+    if conflicts.len() == 1 {
         let conflict = &conflicts[0];
-        indoc::formatdoc!(
-            "Please resolve the following merge conflict in `{path}`.
 
-             The conflict is between branch `{ours}` (ours) and `{theirs}` (theirs).
+        blocks.push(acp::ContentBlock::Text(acp::TextContent::new(
+            "Please resolve the following merge conflict in ",
+        )));
+        let mention = MentionUri::File {
+            abs_path: PathBuf::from(conflict.file_path.clone()),
+        };
+        blocks.push(acp::ContentBlock::ResourceLink(acp::ResourceLink::new(
+            mention.name(),
+            mention.to_uri(),
+        )));
 
-             Analyze both versions carefully and resolve the conflict by editing \
-             the file directly. Choose the resolution that best preserves the intent \
-             of both changes, or combine them if appropriate.",
-            path = conflict.file_path,
-            ours = conflict.ours_branch_name,
-            theirs = conflict.theirs_branch_name,
-        )
+        blocks.push(acp::ContentBlock::Text(acp::TextContent::new(
+            indoc::formatdoc!(
+                "\nThe conflict is between branch `{ours}` (ours) and `{theirs}` (theirs).
+
+                Analyze both versions carefully and resolve the conflict by editing \
+                the file directly. Choose the resolution that best preserves the intent \
+                of both changes, or combine them if appropriate.
+
+                ",
+                ours = conflict.ours_branch_name,
+                theirs = conflict.theirs_branch_name,
+            ),
+        )));
     } else {
         let n = conflicts.len();
         let unique_files: HashSet<&str> = conflicts.iter().map(|c| c.file_path.as_str()).collect();
         let ours = &conflicts[0].ours_branch_name;
         let theirs = &conflicts[0].theirs_branch_name;
-        indoc::formatdoc!(
-            "Please resolve all {n} merge conflicts below.
+        blocks.push(acp::ContentBlock::Text(acp::TextContent::new(
+            indoc::formatdoc!(
+                "Please resolve all {n} merge conflicts below.
 
-             The conflicts are between branch `{ours}` (ours) and `{theirs}` (theirs).
+                The conflicts are between branch `{ours}` (ours) and `{theirs}` (theirs).
 
-             For each conflict, analyze both versions carefully and resolve them \
-             by editing the file{suffix} directly. Choose resolutions that best preserve \
-             the intent of both changes, or combine them if appropriate.",
-            suffix = if unique_files.len() > 1 { "s" } else { "" },
-        )
-    };
+                For each conflict, analyze both versions carefully and resolve them \
+                by editing the file{suffix} directly. Choose resolutions that best preserve \
+                the intent of both changes, or combine them if appropriate.
 
-    let mut text = instruction;
-    text.push_str("\n\n");
-    blocks.push(acp::ContentBlock::Text(acp::TextContent::new(text)));
+                ",
+                suffix = if unique_files.len() > 1 { "s" } else { "" },
+            ),
+        )));
+    }
 
     for conflict in conflicts {
         blocks.push(conflict_resource_block(conflict));
@@ -451,20 +464,7 @@ fn build_conflicted_files_resolution_prompt(
         return Vec::new();
     }
 
-    let file_list = conflicted_file_paths
-        .iter()
-        .map(|p| {
-            format!(
-                "- {}",
-                MentionUri::File {
-                    abs_path: PathBuf::from(p)
-                }
-                .to_uri()
-            )
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
-    let instruction = indoc::formatdoc!(
+    let instruction = indoc::indoc!(
         "The following files have unresolved merge conflicts. Please open each \
          file, find the conflict markers (`<<<<<<<` / `=======` / `>>>>>>>`), \
          and resolve every conflict by editing the files directly.
@@ -473,10 +473,21 @@ fn build_conflicted_files_resolution_prompt(
          or combine them if appropriate.
 
          Files with conflicts:
-         {file_list}",
+         ",
     );
 
-    vec![acp::ContentBlock::Text(acp::TextContent::new(instruction))]
+    let mut content = vec![acp::ContentBlock::Text(acp::TextContent::new(instruction))];
+    for path in conflicted_file_paths {
+        let mention = MentionUri::File {
+            abs_path: PathBuf::from(path),
+        };
+        content.push(acp::ContentBlock::ResourceLink(acp::ResourceLink::new(
+            mention.name(),
+            mention.to_uri(),
+        )));
+        content.push(acp::ContentBlock::Text(acp::TextContent::new("\n")));
+    }
+    content
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
