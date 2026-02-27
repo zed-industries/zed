@@ -1,4 +1,5 @@
 use collections::{BTreeMap, HashMap};
+use editor::Editor;
 use feature_flags::{FeatureFlagAppExt as _, GitGraphFeatureFlag};
 use git::{
     BuildCommitPermalinkParams, GitHostingProviderRegistry, GitRemote, Oid, ParsedGitRemote,
@@ -17,7 +18,7 @@ use gpui::{
 use language::line_diff;
 use menu::{Cancel, SelectNext, SelectPrevious};
 use project::{
-    Project,
+    Project, ProjectPath,
     git_store::{
         CommitDataState, GitGraphEvent, GitStoreEvent, GraphDataResponse, Repository,
         RepositoryEvent, RepositoryId,
@@ -701,6 +702,13 @@ pub fn init(cx: &mut App) {
 
     cx.observe_new(|workspace: &mut workspace::Workspace, _, _| {
         workspace.register_action_renderer(|div, workspace, _, cx| {
+            let active_item_file = workspace
+                .active_item(cx)
+                .and_then(|item| item.downcast::<Editor>())
+                .and_then(|editor| editor.read(cx).buffer().read(cx).as_singleton())
+                .and_then(|buffer| buffer.read(cx).file())
+                .cloned();
+
             div.when(
                 workspace.project().read(cx).active_repository(cx).is_some()
                     && cx.has_flag::<GitGraphFeatureFlag>(),
@@ -721,7 +729,7 @@ pub fn init(cx: &mut App) {
                                     let project = workspace.project().clone();
                                     let workspace_handle = workspace.weak_handle();
                                     let git_graph = cx.new(|cx| {
-                                        GitGraph::new(project, workspace_handle, window, cx)
+                                        GitGraph::new(project, workspace_handle, None, window, cx)
                                     });
                                     workspace.add_item_to_active_pane(
                                         Box::new(git_graph),
@@ -751,8 +759,13 @@ pub fn init(cx: &mut App) {
                                     let project = workspace.project().clone();
                                     let workspace_handle = workspace.weak_handle();
                                     let git_graph = cx.new(|cx| {
-                                        let mut graph =
-                                            GitGraph::new(project, workspace_handle, window, cx);
+                                        let mut graph = GitGraph::new(
+                                            project,
+                                            workspace_handle,
+                                            None,
+                                            window,
+                                            cx,
+                                        );
                                         graph.select_commit_by_sha(&sha, cx);
                                         graph
                                     });
@@ -769,6 +782,60 @@ pub fn init(cx: &mut App) {
                     )
                 },
             )
+            .when_some(active_item_file, move |this, active_file| {
+                this.on_action({
+                    let workspace = workspace.weak_handle().clone();
+
+                    move |_: &git::FileHistory, window, cx| {
+                        workspace
+                            .update(cx, |workspace, cx| {
+                                dbg!("git graph file history");
+
+                                let project = workspace.project().clone();
+                                let workspace_handle = workspace.weak_handle();
+                                let file_path = active_file.path();
+                                let file_worktree_id = active_file.worktree_id(cx);
+
+                                let project_path = ProjectPath {
+                                    worktree_id: file_worktree_id,
+                                    path: file_path.clone(),
+                                };
+
+                                let Some((repo, repo_path)) = project
+                                    .read(cx)
+                                    .git_store()
+                                    .read(cx)
+                                    .repository_and_path_for_project_path(&project_path, cx)
+                                else {
+                                    return;
+                                };
+
+                                // todo! pass repo id to git graph as well
+                                // let repo_id = repo.read(cx).id;
+
+                                let log_source = LogSource::File(repo_path);
+
+                                let git_graph = cx.new(|cx| {
+                                    GitGraph::new(
+                                        project,
+                                        workspace_handle,
+                                        Some(log_source),
+                                        window,
+                                        cx,
+                                    )
+                                });
+                                workspace.add_item_to_active_pane(
+                                    Box::new(git_graph),
+                                    None,
+                                    true,
+                                    window,
+                                    cx,
+                                );
+                            })
+                            .ok();
+                    }
+                })
+            })
         });
     })
     .detach();
@@ -872,6 +939,7 @@ impl GitGraph {
     pub fn new(
         project: Entity<Project>,
         workspace: WeakEntity<Workspace>,
+        log_source: Option<LogSource>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -882,7 +950,7 @@ impl GitGraph {
         let git_store = project.read(cx).git_store().clone();
         let accent_colors = cx.theme().accents();
         let graph = GraphData::new(accent_colors_count(accent_colors));
-        let log_source = LogSource::default();
+        let log_source = log_source.unwrap_or_default();
         let log_order = LogOrder::default();
 
         cx.subscribe(&git_store, |this, _, event, cx| match event {
@@ -2364,7 +2432,7 @@ impl SerializableItem for GitGraph {
             .ok()
             .is_some_and(|is_open| is_open)
         {
-            let git_graph = cx.new(|cx| GitGraph::new(project, workspace, window, cx));
+            let git_graph = cx.new(|cx| GitGraph::new(project, workspace, None, window, cx));
             Task::ready(Ok(git_graph))
         } else {
             Task::ready(Err(anyhow::anyhow!("No git graph to deserialize")))
@@ -3253,7 +3321,7 @@ mod tests {
         let workspace_weak =
             multi_workspace.read_with(&*cx, |multi, _| multi.workspace().downgrade());
         let git_graph = cx.new_window_entity(|window, cx| {
-            GitGraph::new(project.clone(), workspace_weak, window, cx)
+            GitGraph::new(project.clone(), workspace_weak, None, window, cx)
         });
         cx.run_until_parked();
 
