@@ -43,6 +43,8 @@ Zed's plans offer hosted versions of major LLMs with higher rate limits than dir
 |                        | OpenAI    | Cached Input        | $0.005                       | $0.0055                 |
 | Gemini 3.1 Pro         | Google    | Input               | $2.00                        | $2.20                   |
 |                        | Google    | Output              | $12.00                       | $13.20                  |
+| Gemini 3.1 Pro         | Google    | Input               | $2.00                        | $2.20                   |
+|                        | Google    | Output              | $12.00                       | $13.20                  |
 | Gemini 3 Pro           | Google    | Input               | $2.00                        | $2.20                   |
 |                        | Google    | Output              | $12.00                       | $13.20                  |
 | Gemini 3 Flash         | Google    | Input               | $0.30                        | $0.33                   |
@@ -68,7 +70,7 @@ As of February 19, 2026, Zed Pro serves newer model versions in place of the ret
 - Claude Sonnet 4 → Claude Sonnet 4.5 or Claude Sonnet 4.6
 - Claude Sonnet 3.7 (retired Feb 19) → Claude Sonnet 4.5 or Claude Sonnet 4.6
 - GPT-5.1 and GPT-5 → GPT-5.2 or GPT-5.2 Codex
-- Gemini 2.5 Pro → Gemini 3 Pro
+- Gemini 2.5 Pro → Gemini 3 Pro or Gemini 3.1 Pro
 - Gemini 2.5 Flash → Gemini 3 Flash
 
 ## Usage {#usage}

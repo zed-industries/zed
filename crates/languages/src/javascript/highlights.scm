@@ -120,14 +120,14 @@
 
 ; Special identifiers
 ;
+(type_identifier) @type
+(predefined_type) @type.builtin
+
 (class_declaration
   (type_identifier) @type.class)
 
 (extends_clause
   value: (identifier) @type.class)
-
-(type_identifier) @type
-(predefined_type) @type.builtin
 
 ([
   (identifier)

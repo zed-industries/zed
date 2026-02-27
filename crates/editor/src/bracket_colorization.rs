@@ -169,7 +169,7 @@ mod tests {
     use itertools::Itertools;
     use language::{Capability, markdown_lang};
     use languages::rust_lang;
-    use multi_buffer::{ExcerptRange, MultiBuffer};
+    use multi_buffer::{MultiBuffer, PathKey};
     use pretty_assertions::assert_eq;
     use project::Project;
     use rope::Point;
@@ -1239,32 +1239,34 @@ mod foo «1{
 
         let multi_buffer = cx.new(|cx| {
             let mut multi_buffer = MultiBuffer::new(Capability::ReadWrite);
-            multi_buffer.push_excerpts(
+            multi_buffer.set_excerpts_for_path(
+                PathKey::sorted(0),
                 buffer_2.clone(),
-                [ExcerptRange::new(Point::new(0, 0)..Point::new(1, 0))],
+                [Point::new(0, 0)..Point::new(1, 0)],
+                0,
                 cx,
             );
 
             let excerpt_rows = 5;
             let rest_of_first_except_rows = 3;
-            multi_buffer.push_excerpts(
+            multi_buffer.set_excerpts_for_path(
+                PathKey::sorted(1),
                 buffer_1.clone(),
                 [
-                    ExcerptRange::new(Point::new(0, 0)..Point::new(excerpt_rows, 0)),
-                    ExcerptRange::new(
-                        Point::new(
-                            comment_lines as u32 + excerpt_rows + rest_of_first_except_rows,
+                    Point::new(0, 0)..Point::new(excerpt_rows, 0),
+                    Point::new(
+                        comment_lines as u32 + excerpt_rows + rest_of_first_except_rows,
+                        0,
+                    )
+                        ..Point::new(
+                            comment_lines as u32
+                                + excerpt_rows
+                                + rest_of_first_except_rows
+                                + excerpt_rows,
                             0,
-                        )
-                            ..Point::new(
-                                comment_lines as u32
-                                    + excerpt_rows
-                                    + rest_of_first_except_rows
-                                    + excerpt_rows,
-                                0,
-                            ),
-                    ),
+                        ),
                 ],
+                0,
                 cx,
             );
             multi_buffer
@@ -1291,7 +1293,7 @@ mod foo «1{
         let map: Option«3<Vec«4<«5()5»>4»>3» = None;
         // a
         // b
-
+        // c
 
     fn process_data_2«2()2» «2{
         let other_map: Option«3<Vec«4<«5()5»>4»>3» = None;
@@ -1331,7 +1333,7 @@ mod foo «1{
         let map: Option«3<Vec«4<«5()5»>4»>3» = None;
         // a
         // b
-
+        // c
 
     fn process_data_2«2()2» «2{
         let other_map: Option«3<Vec«4<«5()5»>4»>3» = None;
@@ -1381,7 +1383,7 @@ mod foo «1{
         let map: Option«1<Vec«2<«1()1»>2»>1» = None;
         // a
         // b
-
+        // c
 
     fn process_data_2«2()2» «2{
         let other_map: Option«1<Vec«2<«1()1»>2»>1» = None;

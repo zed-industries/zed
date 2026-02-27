@@ -4,6 +4,7 @@ use log::info;
 use minidumper::{Client, LoopAction, MinidumpBinary};
 use release_channel::{RELEASE_CHANNEL, ReleaseChannel};
 use serde::{Deserialize, Serialize};
+use std::cell::Cell;
 use std::mem;
 
 #[cfg(not(target_os = "windows"))]
@@ -15,7 +16,7 @@ use std::{
     env,
     fs::{self, File},
     io,
-    panic::{self, PanicHookInfo},
+    panic::{self, AssertUnwindSafe, PanicHookInfo},
     path::{Path, PathBuf},
     process::{self},
     sync::{
@@ -25,6 +26,31 @@ use std::{
     thread,
     time::Duration,
 };
+
+thread_local! {
+    static ALLOW_UNWIND: Cell<bool> = const { Cell::new(false) };
+}
+
+/// Catch a panic as an error instead of aborting the process. Unlike plain
+/// `catch_unwind`, this bypasses the crash-reporting panic hook which would
+/// normally abort before unwinding can occur.
+///
+/// **Use sparingly.** Prefer this only for isolating third-party code
+/// that is known to panic, where you want to handle the failure gracefully
+/// instead of crashing.
+pub fn recoverable_panic<T>(closure: impl FnOnce() -> T) -> anyhow::Result<T> {
+    ALLOW_UNWIND.with(|flag| flag.set(true));
+    let result = panic::catch_unwind(AssertUnwindSafe(closure));
+    ALLOW_UNWIND.with(|flag| flag.set(false));
+    result.map_err(|payload| {
+        let message = payload
+            .downcast_ref::<&str>()
+            .map(|s| s.to_string())
+            .or_else(|| payload.downcast_ref::<String>().cloned())
+            .unwrap_or_else(|| "unknown panic".to_string());
+        anyhow::anyhow!("panic: {message}")
+    })
+}
 
 // set once the crash handler has initialized and the client has connected to it
 pub static CRASH_HANDLER: OnceLock<Arc<Client>> = OnceLock::new();
@@ -57,6 +83,9 @@ pub fn init(crash_init: InitCrashHandler, spawn: impl FnOnce(BoxFuture<'static, 
     if !should_install_crash_handler() {
         let old_hook = panic::take_hook();
         panic::set_hook(Box::new(move |info| {
+            if ALLOW_UNWIND.with(|flag| flag.get()) {
+                return;
+            }
             unsafe { env::set_var("RUST_BACKTRACE", "1") };
             old_hook(info);
             // prevent the macOS crash dialog from popping up
@@ -321,6 +350,11 @@ pub fn panic_hook(info: &PanicHookInfo) {
 
     let current_thread = std::thread::current();
     let thread_name = current_thread.name().unwrap_or("<unnamed>");
+
+    if ALLOW_UNWIND.with(|flag| flag.get()) {
+        log::error!("thread '{thread_name}' panicked at {span} (allowing unwind):\n{message}");
+        return;
+    }
 
     // wait 500ms for the crash handler process to start up
     // if it's still not there just write panic info and no minidump
