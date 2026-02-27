@@ -292,3 +292,9 @@ pub(crate) mod m_2026_02_04 {
 
     pub(crate) use settings::migrate_tool_permission_defaults;
 }
+
+pub(crate) mod m_2026_02_25 {
+    mod settings;
+
+    pub(crate) use settings::migrate_builtin_agent_servers_to_registry;
+}

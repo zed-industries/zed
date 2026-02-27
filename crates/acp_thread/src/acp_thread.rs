@@ -102,6 +102,7 @@ impl UserMessage {
 pub struct AssistantMessage {
     pub chunks: Vec<AssistantMessageChunk>,
     pub indented: bool,
+    pub is_subagent_output: bool,
 }
 
 impl AssistantMessage {
@@ -983,7 +984,7 @@ pub enum AcpThreadEvent {
     ToolAuthorizationReceived(acp::ToolCallId),
     Retry(RetryStatus),
     SubagentSpawned(acp::SessionId),
-    Stopped,
+    Stopped(acp::StopReason),
     Error,
     LoadError(LoadError),
     PromptCapabilitiesUpdated,
@@ -1425,6 +1426,7 @@ impl AcpThread {
             && let AgentThreadEntry::AssistantMessage(AssistantMessage {
                 chunks,
                 indented: existing_indented,
+                is_subagent_output: _,
             }) = last_entry
             && *existing_indented == indented
         {
@@ -1456,6 +1458,7 @@ impl AcpThread {
                 AgentThreadEntry::AssistantMessage(AssistantMessage {
                     chunks: vec![chunk],
                     indented,
+                    is_subagent_output: false,
                 }),
                 cx,
             );
@@ -2033,7 +2036,7 @@ impl AcpThread {
                             }
                         }
 
-                        cx.emit(AcpThreadEvent::Stopped);
+                        cx.emit(AcpThreadEvent::Stopped(r.stop_reason));
                         Ok(Some(r))
                     }
                     Err(e) => {
@@ -2548,6 +2551,16 @@ impl AcpThread {
         });
         self.terminals.insert(terminal_id.clone(), entity.clone());
         entity
+    }
+
+    pub fn mark_as_subagent_output(&mut self, cx: &mut Context<Self>) {
+        for entry in self.entries.iter_mut().rev() {
+            if let AgentThreadEntry::AssistantMessage(assistant_message) = entry {
+                assistant_message.is_subagent_output = true;
+                cx.notify();
+                return;
+            }
+        }
     }
 }
 

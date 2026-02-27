@@ -113,6 +113,7 @@ use unicode_segmentation::UnicodeSegmentation;
 use ztracing::instrument;
 
 use std::cell::RefCell;
+use std::collections::hash_map::Entry;
 use std::{
     any::TypeId,
     borrow::Cow,
@@ -175,9 +176,9 @@ pub trait ToDisplayPoint {
     fn to_display_point(&self, map: &DisplaySnapshot) -> DisplayPoint;
 }
 
-type TextHighlights = TreeMap<HighlightKey, Arc<(HighlightStyle, Vec<Range<Anchor>>)>>;
+type TextHighlights = Arc<HashMap<HighlightKey, Arc<(HighlightStyle, Vec<Range<Anchor>>)>>>;
 type SemanticTokensHighlights =
-    TreeMap<BufferId, (Arc<[SemanticTokenHighlight]>, Arc<HighlightStyleInterner>)>;
+    Arc<HashMap<BufferId, (Arc<[SemanticTokenHighlight]>, Arc<HighlightStyleInterner>)>>;
 type InlayHighlights = TreeMap<HighlightKey, TreeMap<InlayId, (HighlightStyle, InlayHighlight)>>;
 
 #[derive(Debug)]
@@ -478,7 +479,7 @@ impl DisplayMap {
             diagnostics_max_severity,
             text_highlights: Default::default(),
             inlay_highlights: Default::default(),
-            semantic_token_highlights: TreeMap::default(),
+            semantic_token_highlights: Default::default(),
             clip_at_line_ends: false,
             masked: false,
             companion: None,
@@ -1226,22 +1227,25 @@ impl DisplayMap {
         cx: &App,
     ) {
         let multi_buffer_snapshot = self.buffer.read(cx).snapshot(cx);
-        let to_insert = match self.text_highlights.remove(&key) {
-            Some(mut previous) if merge => match Arc::get_mut(&mut previous) {
-                Some((_, previous_ranges)) => {
+        match Arc::make_mut(&mut self.text_highlights).entry(key) {
+            Entry::Occupied(mut slot) => match Arc::get_mut(slot.get_mut()) {
+                Some((_, previous_ranges)) if merge => {
                     previous_ranges.extend(ranges);
                     previous_ranges.sort_by(|a, b| a.start.cmp(&b.start, &multi_buffer_snapshot));
-                    previous
                 }
-                None => Arc::new((style, {
-                    ranges.extend(previous.1.iter().cloned());
+                Some((previous_style, previous_ranges)) => {
+                    *previous_style = style;
+                    *previous_ranges = ranges;
+                }
+                None if merge => {
+                    ranges.extend(slot.get().1.iter().cloned());
                     ranges.sort_by(|a, b| a.start.cmp(&b.start, &multi_buffer_snapshot));
-                    ranges
-                })),
+                    slot.insert(Arc::new((style, ranges)));
+                }
+                None => _ = slot.insert(Arc::new((style, ranges))),
             },
-            _ => Arc::new((style, ranges)),
-        };
-        self.text_highlights.insert(key, to_insert);
+            Entry::Vacant(slot) => _ = slot.insert(Arc::new((style, ranges))),
+        }
     }
 
     #[instrument(skip_all)]
@@ -1288,14 +1292,16 @@ impl DisplayMap {
     }
 
     pub fn clear_highlights(&mut self, key: HighlightKey) -> bool {
-        let mut cleared = self.text_highlights.remove(&key).is_some();
+        let mut cleared = Arc::make_mut(&mut self.text_highlights)
+            .remove(&key)
+            .is_some();
         cleared |= self.inlay_highlights.remove(&key).is_some();
         cleared
     }
 
     pub fn clear_highlights_with(&mut self, f: &mut dyn FnMut(&HighlightKey) -> bool) -> bool {
         let mut cleared = false;
-        self.text_highlights.retain(|k, _| {
+        Arc::make_mut(&mut self.text_highlights).retain(|k, _| {
             let b = !f(k);
             cleared |= b;
             b
@@ -1448,7 +1454,7 @@ impl DisplayMap {
     }
 
     pub fn invalidate_semantic_highlights(&mut self, buffer_id: BufferId) {
-        self.semantic_token_highlights.remove(&buffer_id);
+        Arc::make_mut(&mut self.semantic_token_highlights).remove(&buffer_id);
     }
 }
 

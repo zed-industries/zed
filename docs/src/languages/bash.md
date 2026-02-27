@@ -5,8 +5,7 @@ description: "Configure Bash language support in Zed, including language servers
 
 # Bash
 
-Bash language support in Zed is provided by the community-maintained [Basher extension](https://github.com/d1y/bash.zed).
-Report issues to: [https://github.com/d1y/bash.zed/issues](https://github.com/d1y/bash.zed/issues)
+Bash support is available through the [Bash extension](https://github.com/zed-extensions/bash).
 
 - Tree-sitter: [tree-sitter/tree-sitter-bash](https://github.com/tree-sitter/tree-sitter-bash)
 - Language Server: [bash-lsp/bash-language-server](https://github.com/bash-lsp/bash-language-server)

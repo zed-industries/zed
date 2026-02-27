@@ -122,7 +122,10 @@ impl Editor {
         if !self.mode().is_full() || !self.semantic_token_state.enabled() {
             self.invalidate_semantic_tokens(None);
             self.display_map.update(cx, |display_map, _| {
-                display_map.semantic_token_highlights.clear();
+                match Arc::get_mut(&mut display_map.semantic_token_highlights) {
+                    Some(highlights) => highlights.clear(),
+                    None => display_map.semantic_token_highlights = Arc::new(Default::default()),
+                };
             });
             self.semantic_token_state.update_task = Task::ready(());
             cx.notify();
@@ -171,8 +174,8 @@ impl Editor {
             .display_map
             .read(cx)
             .semantic_token_highlights
-            .iter()
-            .map(|(buffer_id, _)| *buffer_id)
+            .keys()
+            .copied()
             .filter(|buffer_id| !buffers_to_query.contains_key(buffer_id))
             .filter(|buffer_id| {
                 !self
@@ -308,7 +311,7 @@ impl Editor {
                                 token_highlights.sort_by(|a, b| {
                                     a.range.start.cmp(&b.range.start, &multi_buffer_snapshot)
                                 });
-                                display_map.semantic_token_highlights.insert(
+                                Arc::make_mut(&mut display_map.semantic_token_highlights).insert(
                                     buffer_id,
                                     (Arc::from(token_highlights), Arc::new(interner)),
                                 );
@@ -464,7 +467,7 @@ mod tests {
     use language::{Language, LanguageConfig, LanguageMatcher};
     use languages::FakeLspAdapter;
     use multi_buffer::{
-        AnchorRangeExt, ExcerptRange, ExpandExcerptDirection, MultiBuffer, MultiBufferOffset,
+        AnchorRangeExt, ExpandExcerptDirection, MultiBuffer, MultiBufferOffset, PathKey,
     };
     use project::Project;
     use rope::Point;
@@ -1160,14 +1163,18 @@ mod tests {
         });
         let multibuffer = cx.new(|cx| {
             let mut multibuffer = MultiBuffer::new(Capability::ReadWrite);
-            multibuffer.push_excerpts(
+            multibuffer.set_excerpts_for_path(
+                PathKey::sorted(0),
                 toml_buffer.clone(),
-                [ExcerptRange::new(Point::new(0, 0)..Point::new(1, 0))],
+                [Point::new(0, 0)..Point::new(0, 4)],
+                0,
                 cx,
             );
-            multibuffer.push_excerpts(
+            multibuffer.set_excerpts_for_path(
+                PathKey::sorted(1),
                 rust_buffer.clone(),
-                [ExcerptRange::new(Point::new(0, 0)..Point::new(1, 0))],
+                [Point::new(0, 0)..Point::new(0, 4)],
+                0,
                 cx,
             );
             multibuffer
@@ -1232,202 +1239,6 @@ mod tests {
                 MultiBufferOffset(12)..MultiBufferOffset(13),
             ]
         );
-    }
-
-    #[gpui::test]
-    async fn lsp_semantic_tokens_multibuffer_shared(cx: &mut TestAppContext) {
-        init_test(cx, |_| {});
-
-        update_test_language_settings(cx, &|language_settings| {
-            language_settings.languages.0.insert(
-                "TOML".into(),
-                LanguageSettingsContent {
-                    semantic_tokens: Some(SemanticTokens::Full),
-                    ..LanguageSettingsContent::default()
-                },
-            );
-        });
-
-        let toml_language = Arc::new(Language::new(
-            LanguageConfig {
-                name: "TOML".into(),
-                matcher: LanguageMatcher {
-                    path_suffixes: vec!["toml".into()],
-                    ..LanguageMatcher::default()
-                },
-                ..LanguageConfig::default()
-            },
-            None,
-        ));
-
-        let toml_legend = lsp::SemanticTokensLegend {
-            token_types: vec!["property".into()],
-            token_modifiers: Vec::new(),
-        };
-
-        let app_state = cx.update(workspace::AppState::test);
-
-        cx.update(|cx| {
-            assets::Assets.load_test_fonts(cx);
-            crate::init(cx);
-            workspace::init(app_state.clone(), cx);
-        });
-
-        let project = Project::test(app_state.fs.clone(), [], cx).await;
-        let language_registry = project.read_with(cx, |project, _| project.languages().clone());
-        let full_counter_toml = Arc::new(AtomicUsize::new(0));
-        let full_counter_toml_clone = full_counter_toml.clone();
-
-        let mut toml_server = language_registry.register_fake_lsp(
-            toml_language.name(),
-            FakeLspAdapter {
-                name: "toml",
-                capabilities: lsp::ServerCapabilities {
-                    semantic_tokens_provider: Some(
-                        lsp::SemanticTokensServerCapabilities::SemanticTokensOptions(
-                            lsp::SemanticTokensOptions {
-                                legend: toml_legend,
-                                full: Some(lsp::SemanticTokensFullOptions::Delta { delta: None }),
-                                ..lsp::SemanticTokensOptions::default()
-                            },
-                        ),
-                    ),
-                    ..lsp::ServerCapabilities::default()
-                },
-                initializer: Some(Box::new({
-                    let full_counter_toml_clone = full_counter_toml_clone.clone();
-                    move |fake_server| {
-                        let full_counter = full_counter_toml_clone.clone();
-                        fake_server
-                            .set_request_handler::<lsp::request::SemanticTokensFullRequest, _, _>(
-                                move |_, _| {
-                                    full_counter.fetch_add(1, atomic::Ordering::Release);
-                                    async move {
-                                        Ok(Some(lsp::SemanticTokensResult::Tokens(
-                                            lsp::SemanticTokens {
-                                                // highlight 'a' as a property
-                                                data: vec![
-                                                    0, // delta_line
-                                                    0, // delta_start
-                                                    1, // length
-                                                    0, // token_type
-                                                    0, // token_modifiers_bitset
-                                                ],
-                                                result_id: Some("a".into()),
-                                            },
-                                        )))
-                                    }
-                                },
-                            );
-                    }
-                })),
-                ..FakeLspAdapter::default()
-            },
-        );
-        language_registry.add(toml_language.clone());
-
-        app_state
-            .fs
-            .as_fake()
-            .insert_tree(
-                EditorLspTestContext::root_path(),
-                json!({
-                    ".git": {},
-                    "dir": {
-                        "foo.toml": "a = 1\nb = 2\n",
-                    }
-                }),
-            )
-            .await;
-
-        let (multi_workspace, cx) =
-            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
-        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
-        project
-            .update(cx, |project, cx| {
-                project.find_or_create_worktree(EditorLspTestContext::root_path(), true, cx)
-            })
-            .await
-            .unwrap();
-        cx.read(|cx| workspace.read(cx).worktree_scans_complete(cx))
-            .await;
-
-        let toml_file = cx.read(|cx| workspace.file_project_paths(cx)[0].clone());
-        let toml_item = workspace
-            .update_in(cx, |workspace, window, cx| {
-                workspace.open_path(toml_file, None, true, window, cx)
-            })
-            .await
-            .expect("Could not open test file");
-
-        let toml_editor = cx.update(|_, cx| {
-            toml_item
-                .act_as::<Editor>(cx)
-                .expect("Opened test file wasn't an editor")
-        });
-        let toml_buffer = cx.read(|cx| {
-            toml_editor
-                .read(cx)
-                .buffer()
-                .read(cx)
-                .as_singleton()
-                .unwrap()
-        });
-        let multibuffer = cx.new(|cx| {
-            let mut multibuffer = MultiBuffer::new(Capability::ReadWrite);
-            multibuffer.push_excerpts(
-                toml_buffer.clone(),
-                [ExcerptRange::new(Point::new(0, 0)..Point::new(2, 0))],
-                cx,
-            );
-            multibuffer.push_excerpts(
-                toml_buffer.clone(),
-                [ExcerptRange::new(Point::new(0, 0)..Point::new(2, 0))],
-                cx,
-            );
-            multibuffer
-        });
-
-        let editor = workspace.update_in(cx, |_, window, cx| {
-            cx.new(|cx| build_editor_with_project(project, multibuffer, window, cx))
-        });
-        editor.update_in(cx, |editor, window, cx| {
-            let nav_history = workspace
-                .read(cx)
-                .active_pane()
-                .read(cx)
-                .nav_history_for_item(&cx.entity());
-            editor.set_nav_history(Some(nav_history));
-            window.focus(&editor.focus_handle(cx), cx)
-        });
-
-        let _toml_server = toml_server.next().await.unwrap();
-
-        // Initial request.
-        cx.executor().advance_clock(Duration::from_millis(200));
-        let task = editor.update_in(cx, |e, _, _| e.semantic_token_state.take_update_task());
-        cx.run_until_parked();
-        task.await;
-        assert_eq!(full_counter_toml.load(atomic::Ordering::Acquire), 1);
-
-        // Edit two parts of the multibuffer, which both map to the same buffer.
-        //
-        // Without debouncing, this grabs semantic tokens 4 times (twice for the
-        // toml editor, and twice for the multibuffer).
-        editor.update_in(cx, |editor, _, cx| {
-            editor.edit([(MultiBufferOffset(0)..MultiBufferOffset(1), "b")], cx);
-            editor.edit([(MultiBufferOffset(12)..MultiBufferOffset(13), "c")], cx);
-        });
-        cx.executor().advance_clock(Duration::from_millis(200));
-        let task = editor.update_in(cx, |e, _, _| e.semantic_token_state.take_update_task());
-        cx.run_until_parked();
-        task.await;
-        assert_eq!(
-            extract_semantic_highlights(&editor, &cx),
-            vec![MultiBufferOffset(0)..MultiBufferOffset(1)]
-        );
-
-        assert_eq!(full_counter_toml.load(atomic::Ordering::Acquire), 2);
     }
 
     fn extract_semantic_highlights(

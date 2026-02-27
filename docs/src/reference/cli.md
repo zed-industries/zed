@@ -71,8 +71,6 @@ zed -n ~/projects/myproject
 
 ### `-a`, `--add`
 
-> **Changed in Preview (v0.225).** See [release notes](/releases#0.225).
-
 Add paths to the currently focused workspace instead of opening a new window. When multiple workspace windows are open, files open in the focused window:
 
 ```sh

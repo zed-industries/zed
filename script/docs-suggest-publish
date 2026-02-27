@@ -7,16 +7,19 @@
 #
 # This script:
 # 1. Reads pending suggestions from the docs/suggestions-pending branch
-# 2. Uses Droid to apply all suggestions directly to docs files
+# 2. Uses Droid to apply suggestions in batches (default 10 per batch)
 # 3. Runs docs formatting
-# 4. Creates a draft PR for human review/merge
-# 5. Optionally resets the suggestions branch after successful PR creation
+# 4. Validates docs build (action references, JSON schemas, links)
+# 5. Creates a draft PR for human review/merge
+# 6. Optionally resets the suggestions branch after successful PR creation
 #
 # Options:
-#   --dry-run       Show what would be done without creating PR
-#   --keep-queue    Don't reset the suggestions branch after PR creation
-#   --model MODEL   Override Droid model used for auto-apply
-#   --verbose       Show detailed progress
+#   --dry-run          Show what would be done without creating PR
+#   --keep-queue       Don't reset the suggestions branch after PR creation
+#   --model MODEL      Override Droid model used for auto-apply
+#   --batch-size N     Suggestions per Droid invocation (default: 10)
+#   --skip-validation  Skip the docs build validation step
+#   --verbose          Show detailed progress
 #
 # Run this as part of the preview release workflow.
 
@@ -25,7 +28,9 @@ set -euo pipefail
 DRY_RUN=false
 KEEP_QUEUE=false
 VERBOSE=false
-MODEL="${DROID_MODEL:-claude-sonnet-4-5-20250929}"
+SKIP_VALIDATION=false
+BATCH_SIZE=10
+MODEL="${DROID_MODEL:-claude-sonnet-4-5-latest}"
 
 SUGGESTIONS_BRANCH="docs/suggestions-pending"
 
@@ -66,8 +71,16 @@ while [[ $# -gt 0 ]]; do
             MODEL="$2"
             shift 2
             ;;
+        --batch-size)
+            BATCH_SIZE="$2"
+            shift 2
+            ;;
+        --skip-validation)
+            SKIP_VALIDATION=true
+            shift
+            ;;
         -h|--help)
-            head -26 "$0" | tail -24
+            head -30 "$0" | tail -28
             exit 0
             ;;
         *)
@@ -132,12 +145,16 @@ if [[ "$DRY_RUN" == "true" ]]; then
     exit 0
 fi
 
-# Ensure clean working state
-if [[ -n "$(git status --porcelain)" ]]; then
+# Ensure clean working state (ignore untracked files with grep -v '??')
+if [[ -n "$(git status --porcelain | grep -v '^??' || true)" ]]; then
     error "Working directory has uncommitted changes. Please commit or stash first."
 fi
 
-for command in git gh jq droid; do
+REQUIRED_COMMANDS=(git gh jq droid)
+if [[ "$SKIP_VALIDATION" != "true" ]]; then
+    REQUIRED_COMMANDS+=(mdbook)
+fi
+for command in "${REQUIRED_COMMANDS[@]}"; do
     if ! command -v "$command" > /dev/null 2>&1; then
         error "Required command not found: $command"
     fi
@@ -157,24 +174,165 @@ git checkout -b "$DOCS_BRANCH" origin/main
 TMPDIR=$(mktemp -d)
 trap 'rm -rf "$TMPDIR"' EXIT
 
-SUGGESTIONS_FILE="$TMPDIR/suggestions.md"
-APPLY_PROMPT_FILE="$TMPDIR/apply-prompt.md"
 APPLY_SUMMARY_FILE="$TMPDIR/apply-summary.md"
+touch "$APPLY_SUMMARY_FILE"
 
-# Combine queued suggestion files into one input
-for file in $(echo "$MANIFEST" | jq -r '.suggestions[].file'); do
-    {
-        echo "## Source: $file"
-        echo ""
-        git show "origin/$SUGGESTIONS_BRANCH:$file" 2>/dev/null || error "Suggestion file missing: $file"
-        echo ""
-        echo "---"
-        echo ""
-    } >> "$SUGGESTIONS_FILE"
-done
+# Collect suggestion files into an array
+SUGGESTION_FILES=()
+while IFS= read -r file; do
+    SUGGESTION_FILES+=("$file")
+done < <(echo "$MANIFEST" | jq -r '.suggestions[].file')
 
-# Build auto-apply prompt
-cat > "$APPLY_PROMPT_FILE" << 'EOF'
+# Determine which PRs are already in the latest stable release.
+# Suggestions queued with --preview may reference features that shipped in stable
+# by the time this script runs, so their Preview callouts should be stripped.
+STABLE_PRS=()
+STABLE_TAG=$(git tag -l 'v*' --sort=-v:refname | grep -v 'pre' | head -1 || true)
+if [[ -n "$STABLE_TAG" ]]; then
+    log "Latest stable release tag: $STABLE_TAG"
+    for file in "${SUGGESTION_FILES[@]}"; do
+        pr_num=$(echo "$MANIFEST" | jq -r --arg f "$file" '.suggestions[] | select(.file == $f) | .pr')
+        # Find the merge commit for this PR
+        merge_sha=$(gh pr view "$pr_num" --json mergeCommit --jq '.mergeCommit.oid' 2>/dev/null || true)
+        if [[ -n "$merge_sha" ]] && git merge-base --is-ancestor "$merge_sha" "$STABLE_TAG" 2>/dev/null; then
+            STABLE_PRS+=("$pr_num")
+            log "PR #$pr_num is in stable ($STABLE_TAG)"
+        fi
+    done
+    if [[ ${#STABLE_PRS[@]} -gt 0 ]]; then
+        echo -e "${YELLOW}Note:${NC} ${#STABLE_PRS[@]} suggestion(s) are for PRs already in stable ($STABLE_TAG)."
+        echo "  Preview callouts will be stripped for: ${STABLE_PRS[*]}"
+        echo ""
+    fi
+else
+    log "No stable release tag found, treating all suggestions as preview-only"
+fi
+
+# Determine which PRs touch code gated behind feature flags.
+# Features behind flags aren't generally available and shouldn't be documented yet.
+FLAGGED_PRS=()
+FLAGS_FILE="$REPO_ROOT/crates/feature_flags/src/flags.rs"
+if [[ -f "$FLAGS_FILE" ]]; then
+    # Extract feature flag struct names (e.g. SubagentsFeatureFlag, GitGraphFeatureFlag)
+    FLAG_NAMES=$(grep -oE 'pub struct \w+FeatureFlag' "$FLAGS_FILE" | awk '{print $3}')
+    if [[ -n "$FLAG_NAMES" ]]; then
+        FLAG_PATTERN=$(echo "$FLAG_NAMES" | tr '\n' '|' | sed 's/|$//')
+        log "Feature flags found: $(echo "$FLAG_NAMES" | tr '\n' ' ')"
+        for file in "${SUGGESTION_FILES[@]}"; do
+            pr_num=$(echo "$MANIFEST" | jq -r --arg f "$file" '.suggestions[] | select(.file == $f) | .pr')
+            # Skip PRs already marked as stable (no need to double-check)
+            is_already_stable=false
+            for stable_pr in "${STABLE_PRS[@]+"${STABLE_PRS[@]}"}"; do
+                if [[ "$stable_pr" == "$pr_num" ]]; then
+                    is_already_stable=true
+                    break
+                fi
+            done
+            if [[ "$is_already_stable" == "true" ]]; then
+                continue
+            fi
+            # Check if the PR diff references any feature flag
+            pr_diff=$(gh pr diff "$pr_num" 2>/dev/null || true)
+            if [[ -n "$pr_diff" ]] && echo "$pr_diff" | grep -qE "$FLAG_PATTERN"; then
+                matched_flags=$(echo "$pr_diff" | grep -oE "$FLAG_PATTERN" | sort -u | tr '\n' ', ' | sed 's/,$//')
+                FLAGGED_PRS+=("$pr_num")
+                log "PR #$pr_num is behind feature flag(s): $matched_flags"
+            fi
+        done
+        if [[ ${#FLAGGED_PRS[@]} -gt 0 ]]; then
+            echo -e "${YELLOW}Note:${NC} ${#FLAGGED_PRS[@]} suggestion(s) are for features behind feature flags."
+            echo "  These will be skipped: ${FLAGGED_PRS[*]}"
+            echo ""
+        fi
+    fi
+else
+    log "Feature flags file not found, skipping flag detection"
+fi
+
+# Split into batches
+TOTAL=${#SUGGESTION_FILES[@]}
+BATCH_COUNT=$(( (TOTAL + BATCH_SIZE - 1) / BATCH_SIZE ))
+
+if [[ "$BATCH_COUNT" -gt 1 ]]; then
+    echo "Processing $TOTAL suggestions in $BATCH_COUNT batches of up to $BATCH_SIZE..."
+else
+    echo "Processing $TOTAL suggestions..."
+fi
+echo ""
+
+for (( batch=0; batch<BATCH_COUNT; batch++ )); do
+    START=$(( batch * BATCH_SIZE ))
+    END=$(( START + BATCH_SIZE ))
+    if [[ "$END" -gt "$TOTAL" ]]; then
+        END=$TOTAL
+    fi
+
+    BATCH_NUM=$(( batch + 1 ))
+    BATCH_SUGGESTIONS_FILE="$TMPDIR/batch-${BATCH_NUM}-suggestions.md"
+    BATCH_PROMPT_FILE="$TMPDIR/batch-${BATCH_NUM}-prompt.md"
+    BATCH_SUMMARY_FILE="$TMPDIR/batch-${BATCH_NUM}-summary.md"
+
+    echo -e "${BLUE}Batch $BATCH_NUM/$BATCH_COUNT${NC} (suggestions $(( START + 1 ))-$END of $TOTAL)"
+
+    # Combine suggestion files for this batch, skipping flagged PRs and annotating stable PRs
+    BATCH_HAS_SUGGESTIONS=false
+    for (( i=START; i<END; i++ )); do
+        file="${SUGGESTION_FILES[$i]}"
+        pr_num=$(echo "$MANIFEST" | jq -r --arg f "$file" '.suggestions[] | select(.file == $f) | .pr')
+
+        # Skip PRs behind feature flags entirely
+        is_flagged=false
+        for flagged_pr in "${FLAGGED_PRS[@]+"${FLAGGED_PRS[@]}"}"; do
+            if [[ "$flagged_pr" == "$pr_num" ]]; then
+                is_flagged=true
+                break
+            fi
+        done
+        if [[ "$is_flagged" == "true" ]]; then
+            log "Skipping PR #$pr_num (behind feature flag)"
+            {
+                echo "### Skipped: PR #$pr_num"
+                echo ""
+                echo "This PR is behind a feature flag and was not applied."
+                echo ""
+            } >> "$APPLY_SUMMARY_FILE"
+            continue
+        fi
+
+        BATCH_HAS_SUGGESTIONS=true
+
+        # Check if PR is already in stable
+        is_stable=false
+        for stable_pr in "${STABLE_PRS[@]+"${STABLE_PRS[@]}"}"; do
+            if [[ "$stable_pr" == "$pr_num" ]]; then
+                is_stable=true
+                break
+            fi
+        done
+        {
+            echo "## Source: $file"
+            if [[ "$is_stable" == "true" ]]; then
+                echo ""
+                echo "> **ALREADY IN STABLE**: PR #$pr_num shipped in $STABLE_TAG."
+                echo "> Do NOT add Preview or Changed-in-Preview callouts for this suggestion."
+                echo "> Apply the documentation content only, without any preview-related callouts."
+            fi
+            echo ""
+            git show "origin/$SUGGESTIONS_BRANCH:$file" 2>/dev/null || error "Suggestion file missing: $file"
+            echo ""
+            echo "---"
+            echo ""
+        } >> "$BATCH_SUGGESTIONS_FILE"
+    done
+
+    # Skip this batch if all its suggestions were flagged
+    if [[ "$BATCH_HAS_SUGGESTIONS" == "false" ]]; then
+        echo -e "  ${YELLOW}Batch $BATCH_NUM skipped (all suggestions behind feature flags)${NC}"
+        continue
+    fi
+
+    # Build auto-apply prompt for this batch
+    cat > "$BATCH_PROMPT_FILE" << 'EOF'
 # Documentation Auto-Apply Request (Preview Release)
 
 Apply all queued documentation suggestions below directly to docs files in this repository.
@@ -201,7 +359,15 @@ Before making edits, read and follow these rule files:
 6. Keep preview callout semantics correct:
    - Additive features: `> **Preview:** ...`
    - Behavior modifications: `> **Changed in Preview (vX.XXX).** ...`
+   - **Exception**: Suggestions marked "ALREADY IN STABLE" must NOT get any preview callouts.
+     These features already shipped in a stable release. Apply the content changes only.
+   - Suggestions for features behind feature flags have been pre-filtered and excluded.
+     If you encounter references to feature-flagged functionality, do not document it.
 7. If a suggestion is too ambiguous to apply safely, skip it and explain why in the summary.
+8. **Do not invent `{#kb}` or `{#action}` references.** Only use action names that already
+   appear in the existing docs files you are editing. If unsure whether an action name is
+   valid, use plain text instead. The docs build validates all action references against
+   the compiled binary and will reject unknown names.
 
 ## Output format (after making edits)
 
@@ -218,12 +384,30 @@ Do not include a patch in the response; apply edits directly to files.
 
 EOF
 
-cat "$SUGGESTIONS_FILE" >> "$APPLY_PROMPT_FILE"
+    cat "$BATCH_SUGGESTIONS_FILE" >> "$BATCH_PROMPT_FILE"
 
-log "Running Droid auto-apply with model: $MODEL"
-droid exec -m "$MODEL" -f "$APPLY_PROMPT_FILE" > "$APPLY_SUMMARY_FILE"
+    log "Running Droid auto-apply (batch $BATCH_NUM) with model: $MODEL"
+    if ! droid exec -m "$MODEL" -f "$BATCH_PROMPT_FILE" --auto high > "$BATCH_SUMMARY_FILE" 2>&1; then
+        echo "Droid exec output (batch $BATCH_NUM):"
+        cat "$BATCH_SUMMARY_FILE"
+        error "Droid exec failed on batch $BATCH_NUM. See output above."
+    fi
 
-if [[ -n "$(git status --porcelain | grep -vE '^.. docs/' || true)" ]]; then
+    # Append batch summary
+    {
+        echo "### Batch $BATCH_NUM"
+        echo ""
+        cat "$BATCH_SUMMARY_FILE"
+        echo ""
+    } >> "$APPLY_SUMMARY_FILE"
+
+    echo -e "  ${GREEN}Batch $BATCH_NUM complete${NC}"
+done
+echo ""
+
+log "All batches completed, checking results..."
+
+if [[ -n "$(git status --porcelain | grep -v '^??' | grep -vE '^.. docs/' || true)" ]]; then
     error "Auto-apply modified non-doc files. Revert and re-run."
 fi
 
@@ -232,10 +416,31 @@ if [[ -z "$(git status --porcelain docs/ | grep '^.. docs/src/' || true)" ]]; th
 fi
 
 log "Running docs formatter"
-./script/prettier
+./script/prettier --write
 
 if [[ -z "$(git status --porcelain docs/ | grep '^.. docs/src/' || true)" ]]; then
     error "No docs/src changes remain after formatting; aborting PR creation."
+fi
+
+# Validate docs build before creating PR
+if [[ "$SKIP_VALIDATION" != "true" ]]; then
+    echo "Validating docs build..."
+    log "Generating action metadata..."
+    if ! ./script/generate-action-metadata > /dev/null 2>&1; then
+        echo -e "${YELLOW}Warning:${NC} Could not generate action metadata (cargo build may have failed)."
+        echo "Skipping docs build validation. CI will still catch errors."
+    else
+        VALIDATION_DIR="$TMPDIR/docs-validation"
+        if ! mdbook build ./docs --dest-dir="$VALIDATION_DIR" 2>"$TMPDIR/validation-errors.txt"; then
+            echo ""
+            echo -e "${RED}Docs build validation failed:${NC}"
+            cat "$TMPDIR/validation-errors.txt"
+            echo ""
+            error "Fix the errors above and re-run, or use --skip-validation to bypass."
+        fi
+        echo -e "${GREEN}Docs build validation passed.${NC}"
+    fi
+    echo ""
 fi
 
 # Build PR body from suggestions
@@ -309,7 +514,7 @@ Release Notes:
 EOF
 
 git add docs/
-git commit -m "docs: auto-apply preview release suggestions
+git commit -m "docs: Auto-apply preview release suggestions
 
 Auto-applied queued documentation suggestions from:
 $(echo "$MANIFEST" | jq -r '.suggestions[] | "- PR #\(.pr)"')
@@ -323,9 +528,8 @@ git push -u origin "$DOCS_BRANCH"
 log "Creating PR..."
 PR_URL=$(gh pr create \
     --draft \
-    --title "docs: auto-apply preview release suggestions" \
-    --body-file "$PR_BODY_FILE" \
-    --label "documentation")
+    --title "docs: Apply preview release suggestions" \
+    --body-file "$PR_BODY_FILE")
 
 echo ""
 echo -e "${GREEN}PR created:${NC} $PR_URL"
@@ -366,6 +570,7 @@ EOF
 
 Previous suggestions published in: $PR_URL"
     
+    # Force push required: replacing the orphan suggestions branch with a clean slate
     git push -f origin "${SUGGESTIONS_BRANCH}-reset:$SUGGESTIONS_BRANCH"
     git checkout "$ORIGINAL_BRANCH"
     git branch -D "${SUGGESTIONS_BRANCH}-reset"
@@ -376,9 +581,6 @@ else
     echo ""
     echo "Suggestions queue kept (--keep-queue). Remember to reset manually after PR is merged."
 fi
-
-# Cleanup
-
 
 echo ""
 echo -e "${GREEN}Done!${NC}"

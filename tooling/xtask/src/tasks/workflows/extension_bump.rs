@@ -191,7 +191,7 @@ fn bump_extension_version(
 
     let job = steps::dependant_job(dependencies)
         .cond(Expression::new(format!(
-            "{DEFAULT_REPOSITORY_OWNER_GUARD} &&\n({force_bump} == 'true' || {version_changed} == 'false')",
+            "{DEFAULT_REPOSITORY_OWNER_GUARD} &&\n({force_bump} == true || {version_changed} == 'false')",
             force_bump = force_bump_output.expr(),
             version_changed = version_changed_output.expr(),
         )))
