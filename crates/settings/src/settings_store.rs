@@ -1718,13 +1718,9 @@ mod tests {
             &mut store,
             r#"{
                 "theme": {
-                    "theme": {
-                        "dynamic": {
-                            "mode": "system",
-                            "light": "One Light",
-                            "dark": "One Dark"
-                        }
-                    }
+                    "mode": "system",
+                    "light": "One Light",
+                    "dark": "One Dark"
                 }
             }"#
             .unindent(),
@@ -1733,13 +1729,9 @@ mod tests {
             },
             r#"{
                 "theme": {
-                    "theme": {
-                        "dynamic": {
-                            "mode": "light",
-                            "light": "One Light",
-                            "dark": "One Dark"
-                        }
-                    }
+                    "mode": "light",
+                    "light": "One Light",
+                    "dark": "One Dark"
                 }
             }"#
             .unindent(),
@@ -1750,13 +1742,9 @@ mod tests {
             &mut store,
             r#"{
                 "theme": {
-                    "theme": {
-                        "dynamic": {
-                            "mode": "light",
-                            "light": "One Light",
-                            "dark": "One Dark"
-                        }
-                    }
+                    "mode": "light",
+                    "light": "One Light",
+                    "dark": "One Dark"
                 }
             }"#
             .unindent(),
@@ -1765,13 +1753,9 @@ mod tests {
             },
             r#"{
                 "theme": {
-                    "theme": {
-                        "dynamic": {
-                            "mode": "dark",
-                            "light": "One Light",
-                            "dark": "One Dark"
-                        }
-                    }
+                    "mode": "dark",
+                    "light": "One Light",
+                    "dark": "One Dark"
                 }
             }"#
             .unindent(),
@@ -1782,13 +1766,9 @@ mod tests {
             &mut store,
             r#"{
                 "theme": {
-                    "theme": {
-                        "dynamic": {
-                            "mode": "dark",
-                            "light": "One Light",
-                            "dark": "One Dark"
-                        }
-                    }
+                    "mode": "dark",
+                    "light": "One Light",
+                    "dark": "One Dark"
                 }
             }"#
             .unindent(),
@@ -1797,13 +1777,9 @@ mod tests {
             },
             r#"{
                 "theme": {
-                    "theme": {
-                        "dynamic": {
-                            "mode": "system",
-                            "light": "One Light",
-                            "dark": "One Dark"
-                        }
-                    }
+                    "mode": "system",
+                    "light": "One Light",
+                    "dark": "One Dark"
                 }
             }"#
             .unindent(),
@@ -1818,11 +1794,7 @@ mod tests {
         check_settings_update(
             &mut store,
             r#"{
-                "theme": {
-                    "theme": {
-                        "static": "One Dark"
-                    }
-                }
+                "theme": "One Dark"
             }"#
             .unindent(),
             |settings| {
@@ -1830,9 +1802,9 @@ mod tests {
             },
             r#"{
                 "theme": {
-                    "theme": {
-                        "static": "One Dark"
-                    }
+                    "mode": "light",
+                    "light": "One Dark",
+                    "dark": "One Dark"
                 }
             }"#
             .unindent(),
@@ -1842,11 +1814,7 @@ mod tests {
         check_settings_update(
             &mut store,
             r#"{
-                "theme": {
-                    "theme": {
-                        "static": "One Dark"
-                    }
-                }
+                "theme": "One Dark"
             }"#
             .unindent(),
             |settings| {
@@ -1854,9 +1822,9 @@ mod tests {
             },
             r#"{
                 "theme": {
-                    "theme": {
-                        "static": "One Dark"
-                    }
+                    "mode": "dark",
+                    "light": "One Dark",
+                    "dark": "One Dark"
                 }
             }"#
             .unindent(),
@@ -1866,11 +1834,7 @@ mod tests {
         check_settings_update(
             &mut store,
             r#"{
-                "theme": {
-                    "theme": {
-                        "static": "One Dark"
-                    }
-                }
+                "theme": "One Dark"
             }"#
             .unindent(),
             |settings| {
@@ -1878,9 +1842,9 @@ mod tests {
             },
             r#"{
                 "theme": {
-                    "theme": {
-                        "static": "One Dark"
-                    }
+                    "mode": "system",
+                    "light": "One Dark",
+                    "dark": "One Dark"
                 }
             }"#
             .unindent(),
