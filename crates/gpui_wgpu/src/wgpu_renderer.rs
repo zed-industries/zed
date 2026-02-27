@@ -106,6 +106,7 @@ pub struct WgpuRenderer {
     path_globals_bind_group: wgpu::BindGroup,
     instance_buffer: wgpu::Buffer,
     instance_buffer_capacity: u64,
+    max_buffer_size: u64,
     storage_buffer_alignment: u64,
     path_intermediate_texture: wgpu::Texture,
     path_intermediate_view: wgpu::TextureView,
@@ -285,6 +286,7 @@ impl WgpuRenderer {
             mapped_at_creation: false,
         });
 
+        let max_buffer_size = device.limits().max_buffer_size;
         let storage_buffer_alignment = device.limits().min_storage_buffer_offset_alignment as u64;
         let initial_instance_buffer_capacity = 2 * 1024 * 1024;
         let instance_buffer = device.create_buffer(&wgpu::BufferDescriptor {
@@ -375,6 +377,7 @@ impl WgpuRenderer {
             path_globals_bind_group,
             instance_buffer,
             instance_buffer_capacity: initial_instance_buffer_capacity,
+            max_buffer_size,
             storage_buffer_alignment,
             path_intermediate_texture,
             path_intermediate_view,
@@ -1070,7 +1073,7 @@ impl WgpuRenderer {
 
             if overflow {
                 drop(encoder);
-                if self.instance_buffer_capacity >= 256 * 1024 * 1024 {
+                if self.instance_buffer_capacity >= self.max_buffer_size {
                     log::error!(
                         "instance buffer size grew too large: {}",
                         self.instance_buffer_capacity
@@ -1379,7 +1382,7 @@ impl WgpuRenderer {
     }
 
     fn grow_instance_buffer(&mut self) {
-        let new_capacity = self.instance_buffer_capacity * 2;
+        let new_capacity = (self.instance_buffer_capacity * 2).min(self.max_buffer_size);
         log::info!("increased instance buffer size to {}", new_capacity);
         self.instance_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("instance_buffer"),
