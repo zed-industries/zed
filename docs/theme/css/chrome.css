@@ -146,6 +146,7 @@ a > .hljs {
   display: flex;
   align-items: center;
   justify-content: center;
+  flex-wrap: wrap;
   gap: 0.5rem;
   padding: 24px 0;
   border-top: 1px dashed var(--border-footer);
@@ -156,6 +157,7 @@ a > .hljs {
   color: var(--links);
   text-decoration: underline;
   text-decoration-color: var(--link-line-decoration);
+  text-wrap-mode: nowrap;
 
   :hover {
     text-decoration-color: var(--link-line-decoration-hover);
