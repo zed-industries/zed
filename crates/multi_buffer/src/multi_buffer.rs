@@ -505,7 +505,6 @@ pub trait ToPoint: 'static + fmt::Debug {
 
 struct BufferState {
     buffer: Entity<Buffer>,
-    path_key: PathKey,
     last_version: RefCell<clock::Global>,
     last_non_text_state_update_count: Cell<usize>,
     _subscriptions: [gpui::Subscription; 2],
@@ -1178,7 +1177,6 @@ impl MultiBuffer {
                 *buffer_id,
                 BufferState {
                     buffer: buffer_state.buffer.clone(),
-                    path_key: buffer_state.path_key.clone(),
                     last_version: buffer_state.last_version.clone(),
                     last_non_text_state_update_count: buffer_state
                         .last_non_text_state_update_count
@@ -7541,6 +7539,20 @@ impl sum_tree::Dimension<'_, ExcerptSummary> for PathKey {
         _cx: <ExcerptSummary as sum_tree::Summary>::Context<'_>,
     ) {
         *self = summary.path_key.clone();
+    }
+}
+
+impl sum_tree::Dimension<'_, ExcerptSummary> for MultiBufferOffset {
+    fn zero(_: <ExcerptSummary as sum_tree::Summary>::Context<'_>) -> Self {
+        MultiBufferOffset::ZERO
+    }
+
+    fn add_summary(
+        &mut self,
+        summary: &'_ ExcerptSummary,
+        _cx: <ExcerptSummary as sum_tree::Summary>::Context<'_>,
+    ) {
+        self += summary.text.len
     }
 }
 

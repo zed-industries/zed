@@ -1193,7 +1193,7 @@ impl SplittableEditor {
                     .collect();
 
                 let groups = lhs.multibuffer.update(cx, |lhs_multibuffer, lhs_cx| {
-                    let lhs_result = lhs_multibuffer.update_path_excerpts(
+                    let lhs_result = lhs_multibuffer.u.pdate_path_excerpts(
                         path,
                         base_text_buffer,
                         &base_text_buffer_snapshot,
