@@ -1,7 +1,8 @@
 use crate::prelude::*;
 use crate::v_flex;
 use gpui::{
-    AnyElement, App, Element, IntoElement, ParentElement, Pixels, RenderOnce, Styled, Window, div,
+    AnyElement, App, Element, InteractiveElement, IntoElement, ParentElement, Pixels, RenderOnce,
+    Role, SharedString, Styled, Window, div,
 };
 use smallvec::SmallVec;
 
@@ -37,30 +38,45 @@ pub const POPOVER_Y_PADDING: Pixels = px(8.);
 /// When one is selected, the theme select control displays the selected theme.
 #[derive(IntoElement)]
 pub struct Popover {
+    id: Option<ElementId>,
+    a11y_label: Option<SharedString>,
     children: SmallVec<[AnyElement; 2]>,
     aside: Option<AnyElement>,
 }
 
 impl RenderOnce for Popover {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
-        div()
-            .flex()
-            .gap_1()
-            .child(
-                v_flex()
-                    .elevation_2(cx)
-                    .py(POPOVER_Y_PADDING / 2.)
-                    .child(div().children(self.children)),
-            )
-            .when_some(self.aside, |this, aside| {
-                this.child(
-                    v_flex()
-                        .elevation_2(cx)
-                        .bg(cx.theme().colors().surface_background)
-                        .px_1()
-                        .child(aside),
-                )
-            })
+        let main_content = v_flex()
+            .elevation_2(cx)
+            .py(POPOVER_Y_PADDING / 2.)
+            .child(div().children(self.children));
+
+        let aside_content = self.aside.map(|aside| {
+            v_flex()
+                .elevation_2(cx)
+                .bg(cx.theme().colors().surface_background)
+                .px_1()
+                .child(aside)
+        });
+
+        if let Some(id) = self.id {
+            div()
+                .flex()
+                .gap_1()
+                .id(id)
+                .role(Role::Dialog)
+                .when_some(self.a11y_label, |this, label| this.aria_label(label))
+                .child(main_content)
+                .when_some(aside_content, |this, aside| this.child(aside))
+                .into_any_element()
+        } else {
+            div()
+                .flex()
+                .gap_1()
+                .child(main_content)
+                .when_some(aside_content, |this, aside| this.child(aside))
+                .into_any_element()
+        }
     }
 }
 
@@ -73,9 +89,21 @@ impl Default for Popover {
 impl Popover {
     pub fn new() -> Self {
         Self {
+            id: None,
+            a11y_label: None,
             children: SmallVec::new(),
             aside: None,
         }
+    }
+
+    pub fn id(mut self, id: impl Into<ElementId>) -> Self {
+        self.id = Some(id.into());
+        self
+    }
+
+    pub fn aria_label(mut self, label: impl Into<SharedString>) -> Self {
+        self.a11y_label = Some(label.into());
+        self
     }
 
     pub fn aside(mut self, aside: impl IntoElement) -> Self

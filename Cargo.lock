@@ -18398,6 +18398,7 @@ dependencies = [
 name = "ui"
 version = "0.1.0"
 dependencies = [
+ "accesskit",
  "chrono",
  "component",
  "documented",

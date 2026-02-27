@@ -1,5 +1,5 @@
 use documented::Documented;
-use gpui::{Hsla, point};
+use gpui::{Hsla, Role, point};
 
 use crate::components::Label;
 use crate::prelude::*;
@@ -66,6 +66,10 @@ impl RenderOnce for ProgressBar {
 
         div()
             .id(self.id.clone())
+            .role(Role::ProgressIndicator)
+            .aria_numeric_value(self.value as f64)
+            .aria_min_numeric_value(0.0)
+            .aria_max_numeric_value(self.max_value as f64)
             .w_full()
             .h_2()
             .p_0p5()

@@ -1159,6 +1159,72 @@ pub trait InteractiveElement: Sized {
         self.interactivity().aria_toggled = Some(toggled);
         self
     }
+
+    /// Set numeric value for range-type elements (scrollbars, progress bars, sliders).
+    fn aria_numeric_value(mut self, value: f64) -> Self {
+        self.interactivity().aria_numeric_value = Some(value);
+        self
+    }
+
+    /// Set minimum numeric value for range-type elements.
+    fn aria_min_numeric_value(mut self, value: f64) -> Self {
+        self.interactivity().aria_min_numeric_value = Some(value);
+        self
+    }
+
+    /// Set maximum numeric value for range-type elements.
+    fn aria_max_numeric_value(mut self, value: f64) -> Self {
+        self.interactivity().aria_max_numeric_value = Some(value);
+        self
+    }
+
+    /// Set the orientation of this element (vertical or horizontal).
+    fn aria_orientation(mut self, orientation: accesskit::Orientation) -> Self {
+        self.interactivity().aria_orientation = Some(orientation);
+        self
+    }
+
+    /// Set the hierarchical level of this element (e.g. for headings, tree items).
+    fn aria_level(mut self, level: usize) -> Self {
+        self.interactivity().aria_level = Some(level);
+        self
+    }
+
+    /// Set position in set for this element (1-based index within a group).
+    fn aria_position_in_set(mut self, position: usize) -> Self {
+        self.interactivity().aria_position_in_set = Some(position);
+        self
+    }
+
+    /// Set size of the set this element belongs to.
+    fn aria_size_of_set(mut self, size: usize) -> Self {
+        self.interactivity().aria_size_of_set = Some(size);
+        self
+    }
+
+    /// Set the row index for cells in a table.
+    fn aria_row_index(mut self, index: usize) -> Self {
+        self.interactivity().aria_row_index = Some(index);
+        self
+    }
+
+    /// Set the column index for cells in a table.
+    fn aria_column_index(mut self, index: usize) -> Self {
+        self.interactivity().aria_column_index = Some(index);
+        self
+    }
+
+    /// Set the total row count for a table.
+    fn aria_row_count(mut self, count: usize) -> Self {
+        self.interactivity().aria_row_count = Some(count);
+        self
+    }
+
+    /// Set the total column count for a table.
+    fn aria_column_count(mut self, count: usize) -> Self {
+        self.interactivity().aria_column_count = Some(count);
+        self
+    }
 }
 
 /// A trait for elements that want to use the standard GPUI interactivity features
@@ -1663,6 +1729,39 @@ impl Element for Div {
         if let Some(toggled) = self.interactivity.aria_toggled {
             node.set_toggled(toggled);
         }
+        if let Some(value) = self.interactivity.aria_numeric_value {
+            node.set_numeric_value(value);
+        }
+        if let Some(value) = self.interactivity.aria_min_numeric_value {
+            node.set_min_numeric_value(value);
+        }
+        if let Some(value) = self.interactivity.aria_max_numeric_value {
+            node.set_max_numeric_value(value);
+        }
+        if let Some(orientation) = self.interactivity.aria_orientation {
+            node.set_orientation(orientation);
+        }
+        if let Some(level) = self.interactivity.aria_level {
+            node.set_level(level);
+        }
+        if let Some(position) = self.interactivity.aria_position_in_set {
+            node.set_position_in_set(position);
+        }
+        if let Some(size) = self.interactivity.aria_size_of_set {
+            node.set_size_of_set(size);
+        }
+        if let Some(index) = self.interactivity.aria_row_index {
+            node.set_row_index(index);
+        }
+        if let Some(index) = self.interactivity.aria_column_index {
+            node.set_column_index(index);
+        }
+        if let Some(count) = self.interactivity.aria_row_count {
+            node.set_row_count(count);
+        }
+        if let Some(count) = self.interactivity.aria_column_count {
+            node.set_column_count(count);
+        }
     }
 }
 
@@ -1737,6 +1836,17 @@ pub struct Interactivity {
     pub(crate) aria_selected: Option<bool>,
     pub(crate) aria_expanded: Option<bool>,
     pub(crate) aria_toggled: Option<accesskit::Toggled>,
+    pub(crate) aria_numeric_value: Option<f64>,
+    pub(crate) aria_min_numeric_value: Option<f64>,
+    pub(crate) aria_max_numeric_value: Option<f64>,
+    pub(crate) aria_orientation: Option<accesskit::Orientation>,
+    pub(crate) aria_level: Option<usize>,
+    pub(crate) aria_position_in_set: Option<usize>,
+    pub(crate) aria_size_of_set: Option<usize>,
+    pub(crate) aria_row_index: Option<usize>,
+    pub(crate) aria_column_index: Option<usize>,
+    pub(crate) aria_row_count: Option<usize>,
+    pub(crate) aria_column_count: Option<usize>,
 
     #[cfg(any(feature = "inspector", debug_assertions))]
     pub(crate) source_location: Option<&'static core::panic::Location<'static>>,
@@ -1862,10 +1972,6 @@ impl Interactivity {
                 window
                     .a11y_focus_ids
                     .insert(global_id.accesskit_node_id(), focus_handle.id);
-                
-                if focus_handle.is_focused(window) {
-                    window.a11y_nodes.set_focused(global_id.accesskit_node_id());
-                }
             }
         }
         window.with_optional_element_state::<InteractiveElementState, _>(

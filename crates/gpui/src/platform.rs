@@ -492,12 +492,20 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas>;
     fn is_subpixel_rendering_supported(&self) -> bool;
 
-    /// Initialize accesskit adapter
+    /// Initialize accesskit adapter.
+    ///
+    /// Implementations must panic if called more than once.
     fn a11y_init(&self, callbacks: A11yCallbacks);
 
     /// Provide a [`accesskit::TreeUpdate`] to the underlying adapter, notifying
     /// accessibility tools that the state of the UI has changed.
+    ///
+    /// Implementations may assume that [`PlatformWindow::a11y_init`] has been
+    /// called.
     fn a11y_tree_update(&mut self, tree_update: TreeUpdate);
+
+    /// Inform the accesskit adapter of the bounds of the window.
+    fn a11y_update_window_bounds(&self);
 
     // macOS specific methods
     fn get_title(&self) -> String {
@@ -587,13 +595,13 @@ impl accesskit::DeactivationHandler for TrivialDeactivationHandler {
     }
 }
 
-/// todo!
+/// Callbacks required by accesskit adapters
 pub struct A11yCallbacks {
-    /// todo!
+    /// See [`accesskit::ActivationHandler`]
     pub activation: TrivialActivationHandler,
-    /// todo!
+    /// See [`accesskit::ActionHandler`]
     pub action: TrivialActionHandler,
-    /// todo!
+    /// See [`accesskit::DeactivationHandler`]
     pub deactivation: TrivialDeactivationHandler,
 }
 

@@ -280,6 +280,8 @@ pub struct X11WindowState {
     edge_constraints: Option<EdgeConstraints>,
     pub handle: AnyWindowHandle,
     last_insets: [u32; 4],
+    // todo! document initialization reqs
+    accesskit: Option<accesskit_unix::Adapter>,
 }
 
 impl X11WindowState {
@@ -728,6 +730,7 @@ impl X11WindowState {
                 edge_constraints: None,
                 counter_id: sync_request_counter,
                 last_sync_counter: None,
+                accesskit: None,
             })
         });
 
@@ -1218,12 +1221,6 @@ impl X11WindowStatePtr {
 }
 
 impl PlatformWindow for X11Window {
-    fn a11y_init(&self, _callbacks: gpui::A11yCallbacks) {
-        todo!("later")
-    }
-    fn a11y_tree_update(&mut self, _tree_update: TreeUpdate) {
-        todo!("later")
-    }
     fn bounds(&self) -> Bounds<Pixels> {
         self.0.state.borrow().bounds
     }
@@ -1763,5 +1760,59 @@ impl PlatformWindow for X11Window {
 
     fn gpu_specs(&self) -> Option<GpuSpecs> {
         self.0.state.borrow().renderer.gpu_specs().into()
+    }
+
+    fn a11y_init(&self, callbacks: gpui::A11yCallbacks) {
+        let mut state = self.0.state.borrow_mut();
+
+        if state.accesskit.is_some() {
+            panic!("cannot initialize accesskit twice");
+        }
+
+        state.accesskit = Some(accesskit_unix::Adapter::new(
+            callbacks.activation,
+            callbacks.action,
+            callbacks.deactivation,
+        ))
+    }
+
+    fn a11y_tree_update(&mut self, tree_update: TreeUpdate) {
+        let mut state = self.0.state.borrow_mut();
+
+        let Some(adapter) = &mut state.accesskit else {
+            panic!("cannot update accesskit tree - not initialized");
+        };
+
+        adapter.update_if_active(|| tree_update);
+    }
+
+    fn a11y_update_window_bounds(&self) {
+        let mut state = self.0.state.borrow_mut();
+
+        let outer_bounds = state.bounds;
+        let [left, right, top, bottom] = state.last_insets;
+        let scale = state.scale_factor;
+
+        let inner_origin_x = outer_bounds.origin.x + px((left as f32) / scale);
+        let inner_origin_y = outer_bounds.origin.y + px((top as f32) / scale);
+        let inner_width = outer_bounds.size.width - px(((left + right) as f32) / scale);
+        let inner_height = outer_bounds.size.height - px(((top + bottom) as f32) / scale);
+
+        if let Some(accesskit) = &mut state.accesskit {
+            accesskit.set_root_window_bounds(
+                accesskit::Rect {
+                    x0: f64::from(outer_bounds.origin.x),
+                    y0: f64::from(outer_bounds.origin.y),
+                    x1: f64::from(outer_bounds.origin.x + outer_bounds.size.width),
+                    y1: f64::from(outer_bounds.origin.y + outer_bounds.size.height),
+                },
+                accesskit::Rect {
+                    x0: f64::from(inner_origin_x),
+                    y0: f64::from(inner_origin_y),
+                    x1: f64::from(inner_origin_x + inner_width),
+                    y1: f64::from(inner_origin_y + inner_height),
+                },
+            );
+        }
     }
 }

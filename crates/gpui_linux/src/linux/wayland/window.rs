@@ -1434,7 +1434,7 @@ impl PlatformWindow for WaylandWindow {
             callbacks.activation,
             callbacks.action,
             callbacks.deactivation,
-        ))
+        ));
     }
 
     fn a11y_tree_update(&mut self, tree_update: TreeUpdate) {
@@ -1443,7 +1443,7 @@ impl PlatformWindow for WaylandWindow {
         let Some(adapter) = &mut state.accesskit else {
             panic!("cannot update accesskit tree - not initialized");
         };
-
+        
         adapter.update_if_active(|| tree_update);
     }
 }

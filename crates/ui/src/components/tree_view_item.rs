@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use gpui::{AnyElement, AnyView, ClickEvent, MouseButton, MouseDownEvent};
+use gpui::{AnyElement, AnyView, ClickEvent, MouseButton, MouseDownEvent, Role};
 
 use crate::{Disclosure, prelude::*};
 
@@ -15,6 +15,9 @@ pub struct TreeViewItem {
     focused: bool,
     default_expanded: bool,
     root_item: bool,
+    level: Option<usize>,
+    position_in_set: Option<usize>,
+    size_of_set: Option<usize>,
     tooltip: Option<Box<dyn Fn(&mut Window, &mut App) -> AnyView + 'static>>,
     on_click: Option<Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>,
     on_hover: Option<Box<dyn Fn(&bool, &mut Window, &mut App) + 'static>>,
@@ -36,6 +39,9 @@ impl TreeViewItem {
             focused: false,
             default_expanded: false,
             root_item: false,
+            level: None,
+            position_in_set: None,
+            size_of_set: None,
             tooltip: None,
             on_click: None,
             on_hover: None,
@@ -114,6 +120,21 @@ impl TreeViewItem {
         self.focus_handle = Some(focus_handle.clone());
         self
     }
+
+    pub fn level(mut self, level: usize) -> Self {
+        self.level = Some(level);
+        self
+    }
+
+    pub fn position_in_set(mut self, position: usize) -> Self {
+        self.position_in_set = Some(position);
+        self
+    }
+
+    pub fn size_of_set(mut self, size: usize) -> Self {
+        self.size_of_set = Some(size);
+        self
+    }
 }
 
 impl Disableable for TreeViewItem {
@@ -148,6 +169,17 @@ impl RenderOnce for TreeViewItem {
 
         h_flex()
             .id(self.id)
+            .role(Role::TreeItem)
+            .aria_label(self.label.clone())
+            .aria_expanded(self.expanded)
+            .aria_selected(self.selected)
+            .when_some(self.level, |this, level| this.aria_level(level))
+            .when_some(self.position_in_set, |this, pos| {
+                this.aria_position_in_set(pos)
+            })
+            .when_some(self.size_of_set, |this, size| {
+                this.aria_size_of_set(size)
+            })
             .when_some(self.group_name, |this, group| this.group(group))
             .w_full()
             .child(

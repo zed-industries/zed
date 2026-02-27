@@ -2,7 +2,7 @@ use std::{ops::Range, rc::Rc};
 
 use gpui::{
     AbsoluteLength, AppContext, Context, DefiniteLength, DragMoveEvent, Entity, EntityId,
-    FocusHandle, Length, ListHorizontalSizingBehavior, ListSizingBehavior, ListState, Point,
+    FocusHandle, Length, ListHorizontalSizingBehavior, ListSizingBehavior, ListState, Point, Role,
     Stateful, UniformListScrollHandle, WeakEntity, list, transparent_black, uniform_list,
 };
 
@@ -955,6 +955,8 @@ pub fn render_table_row(
         .flex()
         .flex_row()
         .id(("table_row", row_index))
+        .role(Role::Row)
+        .aria_row_index(row_index)
         .size_full()
         .when_some(bg, |row, bg| row.bg(bg))
         .when(table_context.show_row_hover, |row| {
@@ -971,9 +973,16 @@ pub fn render_table_row(
             .map(IntoElement::into_any_element)
             .into_vec()
             .into_iter()
+            .enumerate()
             .zip(column_widths.into_vec())
-            .map(|(cell, width)| {
+            .map(|((column_index, cell), width)| {
                 base_cell_style_text(width, table_context.use_ui_font, cx)
+                    .id(ElementId::NamedInteger(
+                        "table_cell".into(),
+                        column_index as u64,
+                    ))
+                    .role(Role::Cell)
+                    .aria_column_index(column_index)
                     .px_1()
                     .py_0p5()
                     .child(cell)
@@ -1019,6 +1028,11 @@ pub fn render_table_header(
         .items_center()
         .justify_between()
         .w_full()
+        .id(ElementId::NamedInteger(
+            shared_element_id.clone(),
+            u64::MAX,
+        ))
+        .role(Role::Row)
         .p_2()
         .border_b_1()
         .border_color(cx.theme().colors().border)
@@ -1035,6 +1049,8 @@ pub fn render_table_header(
                             shared_element_id.clone(),
                             header_idx as u64,
                         ))
+                        .role(Role::ColumnHeader)
+                        .aria_column_index(header_idx)
                         .when_some(
                             columns_widths.as_ref().cloned(),
                             |this, (column_widths, resizables, initial_sizes)| {
@@ -1089,6 +1105,7 @@ impl TableRenderContext {
 
 impl RenderOnce for Table {
     fn render(mut self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let cols = self.cols;
         let table_context = TableRenderContext::new(&self, cx);
         let interaction_state = self.interaction_state.and_then(|state| state.upgrade());
         let current_widths = self
@@ -1298,6 +1315,8 @@ impl RenderOnce for Table {
             table
                 .track_focus(&interaction_state.read(cx).focus_handle)
                 .id(("table", interaction_state.entity_id()))
+                .role(Role::Table)
+                .aria_column_count(cols)
                 .into_any_element()
         } else {
             table.into_any_element()

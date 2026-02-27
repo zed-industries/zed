@@ -1003,12 +1003,11 @@ mod a11y {
         }
 
         pub fn set_focused(&mut self, node_id: accesskit::NodeId) {
-            debug_assert!(
-                self.focused.is_none(),
-                "cannot set focused node twice in one prepaint phase"
-            );
-
             self.focused = Some(node_id);
+        }
+
+        pub fn current_node_id(&self) -> Option<accesskit::NodeId> {
+            self.ids_stack.last().copied()
         }
 
         pub fn push(&mut self, id: accesskit::NodeId, node: accesskit::Node) {
@@ -1060,7 +1059,7 @@ mod a11y {
 
             let nodes = std::mem::take(&mut self.all_nodes);
             let focused = self.focused.take().unwrap_or(ROOT_ID);
-            
+
             accesskit::TreeUpdate {
                 nodes,
                 tree_id: accesskit::TreeId::ROOT,
@@ -1266,9 +1265,7 @@ impl Window {
                 Some(initial_tree_update.clone())
             })),
             action: TrivialActionHandler(Box::new(move |request| {
-                a11y_action_tx
-                    .unbounded_send(request)
-                    .log_err();
+                a11y_action_tx.unbounded_send(request).log_err();
             })),
             deactivation: TrivialDeactivationHandler(Box::new(|| {})),
         });
@@ -2043,6 +2040,8 @@ impl Window {
         self.scale_factor = self.platform_window.scale_factor();
         self.viewport_size = self.platform_window.content_size();
         self.display_id = self.platform_window.display().map(|display| display.id());
+
+        self.platform_window.a11y_update_window_bounds();
 
         self.refresh();
 
@@ -3831,6 +3830,9 @@ impl Window {
         self.invalidator.debug_assert_prepaint();
         if focus_handle.is_focused(self) {
             self.next_frame.focus = Some(focus_handle.id);
+            if let Some(node_id) = self.a11y_nodes.current_node_id() {
+                self.a11y_nodes.set_focused(node_id);
+            }
         }
         self.next_frame.dispatch_tree.set_focus_id(focus_handle.id);
     }
