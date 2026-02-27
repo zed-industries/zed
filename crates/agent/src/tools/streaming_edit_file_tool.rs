@@ -456,7 +456,7 @@ impl EditSession {
         let Some(abs_path) = cx.update(|cx| tool.project.read(cx).absolute_path(&project_path, cx))
         else {
             return Err(StreamingEditFileToolOutput::error(format!(
-                "File '{path_str}' does not exist"
+                "Worktree at '{path_str}' does not exist"
             )));
         };
 
