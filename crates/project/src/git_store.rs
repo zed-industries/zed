@@ -2732,23 +2732,10 @@ impl GitStore {
     ) -> Result<proto::GitDiffStatResponse> {
         let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
         let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
-        let diff_type = match envelope.payload.diff_type() {
-            proto::git_diff_stat::DiffType::HeadToIndex => DiffType::HeadToIndex,
-            proto::git_diff_stat::DiffType::HeadToWorktree => DiffType::HeadToWorktree,
-            proto::git_diff_stat::DiffType::MergeBase => {
-                let base_ref = envelope
-                    .payload
-                    .merge_base_ref
-                    .ok_or_else(|| anyhow!("merge_base_ref is required for MergeBase diff type"))?;
-                DiffType::MergeBase {
-                    base_ref: base_ref.into(),
-                }
-            }
-        };
 
         let stats = repository_handle
             .update(&mut cx, |repository_handle, cx| {
-                repository_handle.diff_stat(diff_type, &[], cx)
+                repository_handle.diff_stat(&[], cx)
             })
             .await??;
 
@@ -5816,7 +5803,6 @@ impl Repository {
     /// Fetches per-line diff statistics (additions/deletions) via `git diff --numstat`.
     pub fn diff_stat(
         &mut self,
-        diff_type: DiffType,
         path_prefixes: &[RepoPath],
         _cx: &App,
     ) -> oneshot::Receiver<Result<git::status::GitDiffStat>> {
@@ -5825,27 +5811,14 @@ impl Repository {
         self.send_job(None, move |repo, _cx| async move {
             match repo {
                 RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
-                    backend.diff_stat(diff_type, &path_prefixes).await
+                    backend.diff_stat(&path_prefixes).await
                 }
                 RepositoryState::Remote(RemoteRepositoryState { project_id, client }) => {
-                    let (proto_diff_type, merge_base_ref) = match &diff_type {
-                        DiffType::HeadToIndex => {
-                            (proto::git_diff_stat::DiffType::HeadToIndex.into(), None)
-                        }
-                        DiffType::HeadToWorktree => {
-                            (proto::git_diff_stat::DiffType::HeadToWorktree.into(), None)
-                        }
-                        DiffType::MergeBase { base_ref } => (
-                            proto::git_diff_stat::DiffType::MergeBase.into(),
-                            Some(base_ref.to_string()),
-                        ),
-                    };
                     let response = client
                         .request(proto::GitDiffStat {
                             project_id: project_id.0,
                             repository_id: id.to_proto(),
-                            diff_type: proto_diff_type,
-                            merge_base_ref,
+                            ..Default::default()
                         })
                         .await?;
                     let entries: Arc<[(RepoPath, git::status::DiffStat)]> = response

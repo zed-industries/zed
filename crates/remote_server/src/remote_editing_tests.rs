@@ -8,7 +8,7 @@ use agent::{
 use client::{Client, UserStore};
 use clock::FakeSystemClock;
 use collections::{HashMap, HashSet};
-use git::repository::DiffType;
+
 use language_model::{LanguageModelToolResultContent, fake_provider::FakeLanguageModel};
 use prompt_store::ProjectContext;
 
@@ -1976,11 +1976,7 @@ async fn test_remote_git_diff_stat(cx: &mut TestAppContext, server_cx: &mut Test
     }
 
     let stats = cx
-        .update(|cx| {
-            repository.update(cx, |repo, cx| {
-                repo.diff_stat(DiffType::HeadToWorktree, &[], cx)
-            })
-        })
+        .update(|cx| repository.update(cx, |repo, cx| repo.diff_stat(&[], cx)))
         .await
         .unwrap()
         .unwrap();
@@ -1996,25 +1992,6 @@ async fn test_remote_git_diff_stat(cx: &mut TestAppContext, server_cx: &mut Test
 
     let stat = lookup_stat(&stats.entries, "README.md").expect("README.md");
     assert_eq!((stat.added, stat.deleted), (1, 0));
-
-    let stats = cx
-        .update(|cx| {
-            repository.update(cx, |repo, cx| {
-                repo.diff_stat(DiffType::HeadToIndex, &[], cx)
-            })
-        })
-        .await
-        .unwrap()
-        .unwrap();
-
-    let stat = lookup_stat(&stats.entries, "src/lib.rs").expect("src/lib.rs");
-    assert_eq!((stat.added, stat.deleted), (4, 2));
-
-    let stat = lookup_stat(&stats.entries, "src/staged_only.rs").expect("src/staged_only.rs");
-    assert_eq!((stat.added, stat.deleted), (2, 0));
-
-    let stat = lookup_stat(&stats.entries, "src/deleted.rs").expect("src/deleted.rs");
-    assert_eq!((stat.added, stat.deleted), (0, 1));
 }
 
 #[gpui::test]

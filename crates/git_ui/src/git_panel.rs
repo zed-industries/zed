@@ -3757,39 +3757,21 @@ impl GitPanel {
             return;
         };
 
-        let unstaged_rx = repo.update(cx, |repo, cx| {
-            repo.diff_stat(DiffType::HeadToWorktree, &[], cx)
-        });
-        let staged_rx = repo.update(cx, |repo, cx| {
-            repo.diff_stat(DiffType::HeadToIndex, &[], cx)
-        });
+        let diff_stat_rx = repo.update(cx, |repo, cx| repo.diff_stat(&[], cx));
 
         self.diff_stats_task = cx.spawn(async move |this, cx| {
-            let (unstaged_result, staged_result) =
-                futures::future::join(unstaged_rx, staged_rx).await;
+            let result = diff_stat_rx.await;
 
             let mut combined: HashMap<RepoPath, DiffStat> = HashMap::default();
 
-            match unstaged_result {
+            match result {
                 Ok(Ok(stats)) => {
                     for (path, stat) in stats.entries.iter() {
                         *combined.entry(path.clone()).or_default() += *stat;
                     }
                 }
                 Ok(Err(err)) => {
-                    log::warn!("Failed to fetch unstaged diff stats: {err:?}");
-                }
-                Err(_) => {}
-            };
-
-            match staged_result {
-                Ok(Ok(stats)) => {
-                    for (path, stat) in stats.entries.iter() {
-                        *combined.entry(path.clone()).or_default() += *stat;
-                    }
-                }
-                Ok(Err(err)) => {
-                    log::warn!("Failed to fetch staged diff stats: {err:?}");
+                    log::warn!("Failed to fetch diff stats: {err:?}");
                 }
                 Err(_) => {}
             };

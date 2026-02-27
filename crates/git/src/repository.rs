@@ -900,7 +900,6 @@ pub trait GitRepository: Send + Sync {
 
     fn diff_stat(
         &self,
-        diff: DiffType,
         path_prefixes: &[RepoPath],
     ) -> BoxFuture<'_, Result<crate::status::GitDiffStat>>;
 
@@ -2039,58 +2038,32 @@ impl GitRepository for RealGitRepository {
 
     fn diff_stat(
         &self,
-        diff: DiffType,
         path_prefixes: &[RepoPath],
     ) -> BoxFuture<'_, Result<crate::status::GitDiffStat>> {
         let working_directory = self.working_directory();
         let git_binary_path = self.any_git_binary_path.clone();
+        let executor = self.executor.clone();
         let path_prefixes = path_prefixes.to_vec();
         self.executor
             .spawn(async move {
                 let working_directory = working_directory?;
-                let mut args = match &diff {
-                    DiffType::HeadToIndex => {
-                        vec![
-                            "diff".to_owned(),
-                            "--numstat".to_owned(),
-                            "--staged".to_owned(),
-                        ]
-                    }
-                    DiffType::HeadToWorktree => {
-                        vec!["diff".to_owned(), "--numstat".to_owned()]
-                    }
-                    DiffType::MergeBase { base_ref } => {
-                        vec![
-                            "diff".to_owned(),
-                            "--numstat".to_owned(),
-                            "--merge-base".to_owned(),
-                            base_ref.to_string(),
-                            "HEAD".to_owned(),
-                        ]
-                    }
-                };
+                let git = GitBinary::new(git_binary_path, working_directory, executor);
+                let mut args: Vec<String> = vec![
+                    "diff".into(),
+                    "--numstat".into(),
+                    "--no-renames".into(),
+                    "HEAD".into(),
+                ];
                 if !path_prefixes.is_empty() {
-                    args.push("--".to_owned());
+                    args.push("--".into());
                     args.extend(
                         path_prefixes
                             .iter()
                             .map(|p| p.as_std_path().to_string_lossy().into_owned()),
                     );
                 }
-                let output = new_command(&git_binary_path)
-                    .current_dir(&working_directory)
-                    .args(&args)
-                    .output()
-                    .await?;
-
-                anyhow::ensure!(
-                    output.status.success(),
-                    "Failed to run git diff --numstat:\n{}",
-                    String::from_utf8_lossy(&output.stderr)
-                );
-                Ok(crate::status::parse_numstat(&String::from_utf8_lossy(
-                    &output.stdout,
-                )))
+                let output = git.run(&args).await?;
+                Ok(crate::status::parse_numstat(&output))
             })
             .boxed()
     }
@@ -3041,6 +3014,7 @@ fn git_status_args(path_prefixes: &[RepoPath]) -> Vec<OsString> {
         OsString::from("--no-renames"),
         OsString::from("-z"),
     ];
+    // todo! figure out why args are duplicated
     args.extend(
         path_prefixes
             .iter()
