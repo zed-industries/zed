@@ -52,7 +52,8 @@ impl WgpuContext {
             adapter.get_info().backend
         );
 
-        let (device, queue, dual_source_blending) = Self::create_device(&adapter)?;
+        let (device, queue, dual_source_blending) =
+            pollster::block_on(Self::create_device(&adapter))?;
 
         Ok(Self {
             instance,
@@ -80,29 +81,36 @@ impl WgpuContext {
             })
             .await
             .map_err(|e| anyhow::anyhow!("Failed to request GPU adapter: {e}"))?;
-        Self::create_context(instance, adapter).await
-    }
 
-    #[cfg(target_family = "wasm")]
-    async fn create_context(
-        instance: wgpu::Instance,
-        adapter: wgpu::Adapter,
-    ) -> anyhow::Result<Self> {
         log::info!(
             "Selected GPU adapter: {:?} ({:?})",
             adapter.get_info().name,
             adapter.get_info().backend
         );
 
-        let dual_source_blending_available = adapter
+        let (device, queue, dual_source_blending) = Self::create_device(&adapter).await?;
+
+        Ok(Self {
+            instance,
+            adapter,
+            device: Arc::new(device),
+            queue: Arc::new(queue),
+            dual_source_blending,
+        })
+    }
+
+    async fn create_device(
+        adapter: &wgpu::Adapter,
+    ) -> anyhow::Result<(wgpu::Device, wgpu::Queue, bool)> {
+        let dual_source_blending = adapter
             .features()
             .contains(wgpu::Features::DUAL_SOURCE_BLENDING);
 
         let mut required_features = wgpu::Features::empty();
-        if dual_source_blending_available {
+        if dual_source_blending {
             required_features |= wgpu::Features::DUAL_SOURCE_BLENDING;
         } else {
-            log::info!(
+            log::warn!(
                 "Dual-source blending not available on this GPU. \
                 Subpixel text antialiasing will be disabled."
             );
@@ -112,7 +120,7 @@ impl WgpuContext {
             .request_device(&wgpu::DeviceDescriptor {
                 label: Some("gpui_device"),
                 required_features,
-                required_limits: wgpu::Limits::default(),
+                required_limits: wgpu::Limits::downlevel_defaults(),
                 memory_hints: wgpu::MemoryHints::MemoryUsage,
                 trace: wgpu::Trace::Off,
                 experimental_features: wgpu::ExperimentalFeatures::disabled(),
@@ -120,13 +128,7 @@ impl WgpuContext {
             .await
             .map_err(|e| anyhow::anyhow!("Failed to create wgpu device: {e}"))?;
 
-        Ok(Self {
-            instance,
-            adapter,
-            device: Arc::new(device),
-            queue: Arc::new(queue),
-            dual_source_blending: dual_source_blending_available,
-        })
+        Ok((device, queue, dual_source_blending))
     }
 
     #[cfg(not(target_family = "wasm"))]
@@ -152,35 +154,6 @@ impl WgpuContext {
             );
         }
         Ok(())
-    }
-
-    #[cfg(not(target_family = "wasm"))]
-    fn create_device(adapter: &wgpu::Adapter) -> anyhow::Result<(wgpu::Device, wgpu::Queue, bool)> {
-        let dual_source_blending_available = adapter
-            .features()
-            .contains(wgpu::Features::DUAL_SOURCE_BLENDING);
-
-        let mut required_features = wgpu::Features::empty();
-        if dual_source_blending_available {
-            required_features |= wgpu::Features::DUAL_SOURCE_BLENDING;
-        } else {
-            log::warn!(
-                "Dual-source blending not available on this GPU. \
-                Subpixel text antialiasing will be disabled."
-            );
-        }
-
-        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-            label: Some("gpui_device"),
-            required_features,
-            required_limits: wgpu::Limits::default(),
-            memory_hints: wgpu::MemoryHints::MemoryUsage,
-            trace: wgpu::Trace::Off,
-            experimental_features: wgpu::ExperimentalFeatures::disabled(),
-        }))
-        .map_err(|e| anyhow::anyhow!("Failed to create wgpu device: {e}"))?;
-
-        Ok((device, queue, dual_source_blending_available))
     }
 
     #[cfg(not(target_family = "wasm"))]
