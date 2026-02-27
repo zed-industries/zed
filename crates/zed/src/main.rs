@@ -1398,7 +1398,7 @@ pub(crate) async fn restore_or_create_workspace(
                         .update(cx, |multi_workspace, _, cx| {
                             multi_workspace.workspace().update(cx, |workspace, cx| {
                                 workspace.show_toast(
-                                    Toast::new(NotificationId::unique::<()>(), message),
+                                    Toast::new(NotificationId::unique::<()>(), message.clone()),
                                     cx,
                                 )
                             });
