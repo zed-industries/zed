@@ -74,7 +74,7 @@ pub struct StreamingEditFileToolInput {
     pub path: String,
 
     /// The mode of operation on the file. Possible values:
-    /// - 'write': Replace the entire contents of an the file. If the file doesn't exist, it will be created. Requires 'content' field.
+    /// - 'write': Replace the entire contents of the file. If the file doesn't exist, it will be created. Requires 'content' field.
     /// - 'edit': Make granular edits to an existing file. Requires 'edits' field.
     ///
     /// When a file already exists or you just created it, prefer editing it as opposed to recreating it from scratch.
@@ -2981,7 +2981,7 @@ mod tests {
         let result = test_resolve_path(&mode, "root/dir/subdir", cx);
         assert_eq!(
             result.await.unwrap_err().to_string(),
-            "Can't create file: path is a directory"
+            "Can't write to file: path is a directory"
         );
 
         let result = test_resolve_path(&mode, "root/dir/nonexistent_dir/new.txt", cx);
