@@ -282,7 +282,7 @@ mod tests {
             events.as_slice(),
             &[ToolEditEvent::OldTextChunk {
                 edit_index: 0,
-                chunk: "lo w".into(),
+                chunk: "o w".into(),
                 done: false,
             }]
         );
