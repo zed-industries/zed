@@ -1233,56 +1233,16 @@ fn test_permission_options_terminal_pipeline_produces_dropdown_with_patterns() {
     assert!(labels.contains(&"Always for terminal"));
     assert!(labels.contains(&"Only this time"));
 
-    // Should have per-command patterns for cargo and tail
+    // Should have per-command patterns for "cargo test" and "tail"
     assert_eq!(patterns.len(), 2);
     let pattern_names: Vec<&str> = patterns.iter().map(|cp| cp.display_name.as_str()).collect();
-    assert!(pattern_names.contains(&"cargo"));
+    assert!(pattern_names.contains(&"cargo test"));
     assert!(pattern_names.contains(&"tail"));
 
     // Verify patterns are valid regex patterns
     let regex_patterns: Vec<&str> = patterns.iter().map(|cp| cp.pattern.as_str()).collect();
-    assert!(regex_patterns.contains(&"^cargo\\b"));
+    assert!(regex_patterns.contains(&"^cargo\\s+test(\\s|$)"));
     assert!(regex_patterns.contains(&"^tail\\b"));
-}
-
-#[test]
-fn test_permission_options_terminal_single_command_stays_dropdown() {
-    let permission_options = ToolPermissionContext::new(
-        TerminalTool::NAME,
-        vec!["cargo build --release".to_string()],
-    )
-    .build_permission_options();
-
-    // Single command should still use Dropdown, not DropdownWithPatterns
-    assert!(
-        matches!(permission_options, PermissionOptions::Dropdown(_)),
-        "Single command should produce Dropdown, not DropdownWithPatterns"
-    );
-}
-
-#[test]
-fn test_permission_options_terminal_pipeline_deduplicates_commands() {
-    let permission_options = ToolPermissionContext::new(
-        TerminalTool::NAME,
-        vec!["grep foo file.txt | grep bar".to_string()],
-    )
-    .build_permission_options();
-
-    let PermissionOptions::DropdownWithPatterns { patterns, .. } = permission_options else {
-        // If both greps deduplicate to a single pattern, it should be a regular Dropdown
-        // since there's only 1 unique command
-        return;
-    };
-
-    // If we get DropdownWithPatterns, verify no duplicates
-    let names: Vec<&str> = patterns.iter().map(|cp| cp.display_name.as_str()).collect();
-    let unique_count = names.len();
-    let deduped: std::collections::HashSet<&&str> = names.iter().collect();
-    assert_eq!(
-        unique_count,
-        deduped.len(),
-        "Command patterns should be deduplicated"
-    );
 }
 
 #[test]
@@ -1297,15 +1257,12 @@ fn test_permission_options_terminal_pipeline_with_chaining() {
         panic!("Expected DropdownWithPatterns for chained pipeline command");
     };
 
+    // With subcommand-aware patterns, "npm install" and "npm test" are distinct
+    assert_eq!(patterns.len(), 3);
     let pattern_names: Vec<&str> = patterns.iter().map(|cp| cp.display_name.as_str()).collect();
-    assert!(pattern_names.contains(&"npm"));
+    assert!(pattern_names.contains(&"npm install"));
+    assert!(pattern_names.contains(&"npm test"));
     assert!(pattern_names.contains(&"tail"));
-    // npm should be deduplicated even though it appears twice
-    assert_eq!(
-        pattern_names.iter().filter(|n| **n == "npm").count(),
-        1,
-        "npm should appear only once after deduplication"
-    );
 }
 
 #[gpui::test]

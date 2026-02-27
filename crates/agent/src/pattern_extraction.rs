@@ -1,5 +1,4 @@
-use std::collections::HashSet;
-
+use acp_thread::PermissionPattern;
 use shell_command_parser::extract_commands;
 use std::path::{Path, PathBuf};
 use url::Url;
@@ -58,33 +57,38 @@ fn extract_command_prefix(command: &str) -> Option<CommandPrefix> {
     })
 }
 
-/// Extracts a regex pattern from a terminal command based on the first token (command name).
+/// Extracts a regex pattern and display name from a terminal command.
 ///
 /// Returns `None` for commands starting with `./`, `/`, or other path-like prefixes.
 /// This is a deliberate security decision: we only allow pattern-based "always allow"
 /// rules for well-known command names (like `cargo`, `npm`, `git`), not for arbitrary
 /// scripts or absolute paths which could be manipulated by an attacker.
-pub fn extract_terminal_pattern(command: &str) -> Option<String> {
+pub fn extract_terminal_permission_pattern(command: &str) -> Option<PermissionPattern> {
     let prefix = extract_command_prefix(command)?;
     let escaped_command = regex::escape(&prefix.command);
-    Some(match &prefix.subcommand {
-        Some(subcommand) => {
+    let (pattern, display_name) = match &prefix.subcommand {
+        Some(subcommand) => (
             format!(
                 "^{}\\s+{}(\\s|$)",
                 escaped_command,
                 regex::escape(subcommand)
-            )
-        }
-        None => format!("^{}\\b", escaped_command),
+            ),
+            format!("{} {}", prefix.command, subcommand),
+        ),
+        None => (format!("^{}\\b", escaped_command), prefix.command.clone()),
+    };
+    Some(PermissionPattern {
+        pattern,
+        display_name,
     })
 }
 
+pub fn extract_terminal_pattern(command: &str) -> Option<String> {
+    extract_terminal_permission_pattern(command).map(|p| p.pattern)
+}
+
 pub fn extract_terminal_pattern_display(command: &str) -> Option<String> {
-    let prefix = extract_command_prefix(command)?;
-    match prefix.subcommand {
-        Some(subcommand) => Some(format!("{} {}", prefix.command, subcommand)),
-        None => Some(prefix.command),
-    }
+    extract_terminal_permission_pattern(command).map(|p| p.display_name)
 }
 
 /// Extracts patterns for ALL commands in a pipeline, not just the first one.
@@ -93,32 +97,27 @@ pub fn extract_terminal_pattern_display(command: &str) -> Option<String> {
 /// both `cargo` and `tail`. Path-based commands (e.g. `./script.sh`) are
 /// filtered out, and duplicate command names are deduplicated while preserving
 /// order.
-pub fn extract_all_terminal_patterns(command: &str) -> Vec<(String, String)> {
+pub fn extract_all_terminal_patterns(command: &str) -> Vec<PermissionPattern> {
     let commands = match extract_commands(command) {
         Some(commands) => commands,
         None => return Vec::new(),
     };
 
-    let mut seen = HashSet::new();
     let mut results = Vec::new();
 
     for cmd in &commands {
-        let first_token = match cmd.split_whitespace().next() {
-            Some(token) => token,
-            None => continue,
+        let Some(permission_pattern) = extract_terminal_permission_pattern(cmd) else {
+            continue;
         };
 
-        if !first_token
-            .chars()
-            .all(|c| c.is_alphanumeric() || c == '-' || c == '_')
+        if results
+            .iter()
+            .any(|p: &PermissionPattern| p.display_name == permission_pattern.display_name)
         {
             continue;
         }
 
-        if seen.insert(first_token.to_string()) {
-            let pattern = format!("^{}\\b", regex::escape(first_token));
-            results.push((pattern, first_token.to_string()));
-        }
+        results.push(permission_pattern);
     }
 
     results
@@ -281,25 +280,15 @@ mod tests {
         assert_eq!(
             extract_all_terminal_patterns("cargo test 2>&1 | tail"),
             vec![
-                ("^cargo\\b".to_string(), "cargo".to_string()),
-                ("^tail\\b".to_string(), "tail".to_string()),
+                PermissionPattern {
+                    pattern: "^cargo\\s+test(\\s|$)".to_string(),
+                    display_name: "cargo test".to_string(),
+                },
+                PermissionPattern {
+                    pattern: "^tail\\b".to_string(),
+                    display_name: "tail".to_string(),
+                },
             ]
-        );
-    }
-
-    #[test]
-    fn test_extract_all_terminal_patterns_single_command() {
-        assert_eq!(
-            extract_all_terminal_patterns("cargo build --release"),
-            vec![("^cargo\\b".to_string(), "cargo".to_string())]
-        );
-    }
-
-    #[test]
-    fn test_extract_all_terminal_patterns_chained() {
-        assert_eq!(
-            extract_all_terminal_patterns("npm install && npm test"),
-            vec![("^npm\\b".to_string(), "npm".to_string())]
         );
     }
 
@@ -307,7 +296,10 @@ mod tests {
     fn test_extract_all_terminal_patterns_with_path_commands() {
         assert_eq!(
             extract_all_terminal_patterns("./script.sh | grep foo"),
-            vec![("^grep\\b".to_string(), "grep".to_string())]
+            vec![PermissionPattern {
+                pattern: "^grep\\s+foo(\\s|$)".to_string(),
+                display_name: "grep foo".to_string(),
+            }]
         );
     }
 

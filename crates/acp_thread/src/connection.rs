@@ -450,7 +450,7 @@ impl PermissionOptionChoice {
 /// For example, a pattern of `^cargo\\s+build(\\s|$)` would display as `cargo
 /// build`. It's handy to keep these together rather than trying to derive
 /// one from the other.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct PermissionPattern {
     pub pattern: String,
     pub display_name: String,
