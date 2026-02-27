@@ -3,8 +3,9 @@ use std::{
     sync::Arc,
 };
 
+use crate::paths::SanitizedPath;
 use itertools::Itertools;
-use util::paths::SanitizedPath;
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 /// A list of absolute paths, in a specific order.
 ///
@@ -115,6 +116,19 @@ impl PathList {
             write!(&mut order, "{}", *ix).unwrap();
         }
         SerializedPathList { paths, order }
+    }
+}
+
+impl Serialize for PathList {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        self.paths.serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for PathList {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let paths: Vec<PathBuf> = Vec::deserialize(deserializer)?;
+        Ok(PathList::new(&paths))
     }
 }
 

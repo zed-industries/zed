@@ -83,3 +83,24 @@ If your issue persists after regenerating the database, please [file an issue](h
 ## Language Server Issues
 
 If you're experiencing language-server related issues, such as stale diagnostics or issues jumping to definitions, restarting the language server via {#action editor::RestartLanguageServer} from the command palette will often resolve the issue.
+
+## Agent Error Messages
+
+### "Max tokens reached"
+
+> **Preview:** This error handling is available in Zed Preview. It will be included in the next Stable release.
+
+You see this error when the agent's response exceeds the model's maximum token limit. This happens when:
+
+- The agent generates an extremely long response
+- The conversation context plus the response exceeds the model's capacity
+- Tool outputs are large and consume the available token budget
+
+**To resolve this:**
+
+1. Start a new thread to reduce context size
+2. Use a model with a larger token limit in AI settings
+3. Break your request into smaller, focused tasks
+4. Clear tool outputs or previous messages using the thread controls
+
+The token limit varies by model—check your model provider's documentation for specific limits.

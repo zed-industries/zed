@@ -27,6 +27,7 @@ component.workspace = true
 db.workspace = true
 editor.workspace = true
 futures.workspace = true
+feature_flags.workspace = true
 fuzzy.workspace = true
 git.workspace = true
 gpui.workspace = true

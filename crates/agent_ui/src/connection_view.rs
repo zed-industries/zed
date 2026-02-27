@@ -62,12 +62,12 @@ use zed_actions::assistant::OpenRulesLibrary;
 
 use super::config_options::ConfigOptionsView;
 use super::entry_view_state::EntryViewState;
-use super::thread_history::AcpThreadHistory;
-use crate::acp::AcpModelSelectorPopover;
-use crate::acp::ModeSelector;
-use crate::acp::entry_view_state::{EntryViewEvent, ViewEvent};
-use crate::acp::message_editor::{MessageEditor, MessageEditorEvent};
+use super::thread_history::ThreadHistory;
+use crate::ModeSelector;
+use crate::ModelSelectorPopover;
 use crate::agent_diff::AgentDiff;
+use crate::entry_view_state::{EntryViewEvent, ViewEvent};
+use crate::message_editor::{MessageEditor, MessageEditorEvent};
 use crate::profile_selector::{ProfileProvider, ProfileSelector};
 use crate::ui::{AgentNotification, AgentNotificationEvent};
 use crate::{
@@ -75,15 +75,15 @@ use crate::{
     ClearMessageQueue, CycleFavoriteModels, CycleModeSelector, CycleThinkingEffort,
     EditFirstQueuedMessage, ExpandMessageEditor, Follow, KeepAll, NewThread, OpenAddContextMenu,
     OpenAgentDiff, OpenHistory, RejectAll, RejectOnce, RemoveFirstQueuedMessage,
-    SelectPermissionGranularity, SendImmediately, SendNextQueuedMessage, ToggleProfileSelector,
-    ToggleThinkingEffortMenu, ToggleThinkingMode, UndoLastReject,
+    SelectPermissionGranularity, SendImmediately, SendNextQueuedMessage, ToggleFastMode,
+    ToggleProfileSelector, ToggleThinkingEffortMenu, ToggleThinkingMode, UndoLastReject,
 };
 
 const STOPWATCH_THRESHOLD: Duration = Duration::from_secs(30);
 const TOKEN_THRESHOLD: u64 = 250;
 
-mod active_thread;
-pub use active_thread::*;
+mod thread_view;
+pub use thread_view::*;
 
 pub struct QueuedMessage {
     pub content: Vec<acp::ContentBlock>,
@@ -107,8 +107,8 @@ pub(crate) enum ThreadError {
     },
 }
 
-impl ThreadError {
-    fn from_err(error: anyhow::Error, agent_name: &str) -> Self {
+impl From<anyhow::Error> for ThreadError {
+    fn from(error: anyhow::Error) -> Self {
         if error.is::<language_model::PaymentRequiredError>() {
             Self::PaymentRequired
         } else if let Some(acp_error) = error.downcast_ref::<acp::Error>()
@@ -123,18 +123,9 @@ impl ThreadError {
                 .downcast_ref::<acp::Error>()
                 .map(|acp_error| SharedString::from(acp_error.code.to_string()));
 
-            // TODO: we should have Gemini return better errors here.
-            if agent_name == "Gemini CLI"
-                && message.contains("Could not load the default credentials")
-                || message.contains("API key not valid")
-                || message.contains("Request had invalid authentication credentials")
-            {
-                Self::AuthenticationRequired(message)
-            } else {
-                Self::Other {
-                    message,
-                    acp_error_code,
-                }
+            Self::Other {
+                message,
+                acp_error_code,
             }
         }
     }
@@ -191,7 +182,7 @@ impl Conversation {
             | AcpThreadEvent::EntriesRemoved(_)
             | AcpThreadEvent::Retry(_)
             | AcpThreadEvent::SubagentSpawned(_)
-            | AcpThreadEvent::Stopped
+            | AcpThreadEvent::Stopped(_)
             | AcpThreadEvent::Error
             | AcpThreadEvent::LoadError(_)
             | AcpThreadEvent::PromptCapabilitiesUpdated
@@ -278,7 +269,7 @@ impl Conversation {
     }
 }
 
-pub struct AcpServerView {
+pub struct ConnectionView {
     agent: Rc<dyn AgentServer>,
     agent_server_store: Entity<AgentServerStore>,
     workspace: WeakEntity<Workspace>,
@@ -286,8 +277,7 @@ pub struct AcpServerView {
     thread_store: Option<Entity<ThreadStore>>,
     prompt_store: Option<Entity<PromptStore>>,
     server_state: ServerState,
-    login: Option<task::SpawnInTerminal>, // is some <=> Active | Unauthenticated
-    history: Entity<AcpThreadHistory>,
+    history: Entity<ThreadHistory>,
     focus_handle: FocusHandle,
     notifications: Vec<WindowHandle<AgentNotification>>,
     notification_subscriptions: HashMap<WindowHandle<AgentNotification>, Vec<Subscription>>,
@@ -295,8 +285,14 @@ pub struct AcpServerView {
     _subscriptions: Vec<Subscription>,
 }
 
-impl AcpServerView {
-    pub fn active_thread(&self) -> Option<&Entity<AcpThreadView>> {
+impl ConnectionView {
+    pub fn has_auth_methods(&self) -> bool {
+        self.as_connected().map_or(false, |connected| {
+            !connected.connection.auth_methods().is_empty()
+        })
+    }
+
+    pub fn active_thread(&self) -> Option<&Entity<ThreadView>> {
         match &self.server_state {
             ServerState::Connected(connected) => connected.active_view(),
             _ => None,
@@ -314,7 +310,7 @@ impl AcpServerView {
             .pending_tool_call(id, cx)
     }
 
-    pub fn parent_thread(&self, cx: &App) -> Option<Entity<AcpThreadView>> {
+    pub fn parent_thread(&self, cx: &App) -> Option<Entity<ThreadView>> {
         match &self.server_state {
             ServerState::Connected(connected) => {
                 let mut current = connected.active_view()?;
@@ -331,7 +327,7 @@ impl AcpServerView {
         }
     }
 
-    pub fn thread_view(&self, session_id: &acp::SessionId) -> Option<Entity<AcpThreadView>> {
+    pub fn thread_view(&self, session_id: &acp::SessionId) -> Option<Entity<ThreadView>> {
         let connected = self.as_connected()?;
         connected.threads.get(session_id).cloned()
     }
@@ -379,7 +375,7 @@ enum ServerState {
 pub struct ConnectedServerState {
     auth_state: AuthState,
     active_id: Option<acp::SessionId>,
-    threads: HashMap<acp::SessionId, Entity<AcpThreadView>>,
+    threads: HashMap<acp::SessionId, Entity<ThreadView>>,
     connection: Rc<dyn AgentConnection>,
     conversation: Entity<Conversation>,
 }
@@ -407,7 +403,7 @@ struct LoadingView {
 }
 
 impl ConnectedServerState {
-    pub fn active_view(&self) -> Option<&Entity<AcpThreadView>> {
+    pub fn active_view(&self) -> Option<&Entity<ThreadView>> {
         self.active_id.as_ref().and_then(|id| self.threads.get(id))
     }
 
@@ -434,7 +430,7 @@ impl ConnectedServerState {
     }
 }
 
-impl AcpServerView {
+impl ConnectionView {
     pub fn new(
         agent: Rc<dyn AgentServer>,
         resume_thread: Option<AgentSessionInfo>,
@@ -443,7 +439,7 @@ impl AcpServerView {
         project: Entity<Project>,
         thread_store: Option<Entity<ThreadStore>>,
         prompt_store: Option<Entity<PromptStore>>,
-        history: Entity<AcpThreadHistory>,
+        history: Entity<ThreadHistory>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -487,7 +483,6 @@ impl AcpServerView {
                 window,
                 cx,
             ),
-            login: None,
             notifications: Vec::new(),
             notification_subscriptions: HashMap::default(),
             auth_task: None,
@@ -569,7 +564,6 @@ impl AcpServerView {
                 }
             })
             .collect();
-        let root_dir = worktree_roots.first().cloned();
         let session_cwd = resume_thread
             .as_ref()
             .and_then(|resume| {
@@ -584,7 +578,7 @@ impl AcpServerView {
                     })
                     .map(|path| path.into())
             })
-            .or_else(|| root_dir.clone())
+            .or_else(|| worktree_roots.first().cloned())
             .unwrap_or_else(|| paths::home_dir().as_path().into());
 
         let (status_tx, mut status_rx) = watch::channel("Loading…".into());
@@ -596,19 +590,18 @@ impl AcpServerView {
             Some(new_version_available_tx),
         );
 
-        let connect_task = agent.connect(root_dir.as_deref(), delegate, cx);
+        let connect_task = agent.connect(delegate, cx);
         let load_task = cx.spawn_in(window, async move |this, cx| {
             let connection = match connect_task.await {
-                Ok((connection, login)) => {
-                    this.update(cx, |this, _| this.login = login).ok();
-                    connection
-                }
+                Ok(connection) => connection,
                 Err(err) => {
                     this.update_in(cx, |this, window, cx| {
                         if err.downcast_ref::<LoadError>().is_some() {
                             this.handle_load_error(err, window, cx);
                         } else if let Some(active) = this.active_thread() {
-                            active.update(cx, |active, cx| active.handle_any_thread_error(err, cx));
+                            active.update(cx, |active, cx| active.handle_thread_error(err, cx));
+                        } else {
+                            this.handle_load_error(err, window, cx);
                         }
                         cx.notify();
                     })
@@ -768,7 +761,7 @@ impl AcpServerView {
         initial_content: Option<AgentInitialContent>,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Entity<AcpThreadView> {
+    ) -> Entity<ThreadView> {
         let agent_name = self.agent.name();
         let prompt_capabilities = Rc::new(RefCell::new(acp::PromptCapabilities::default()));
         let available_commands = Rc::new(RefCell::new(vec![]));
@@ -840,7 +833,7 @@ impl AcpServerView {
                 let agent_server = self.agent.clone();
                 let fs = self.project.read(cx).fs().clone();
                 cx.new(|cx| {
-                    AcpModelSelectorPopover::new(
+                    ModelSelectorPopover::new(
                         selector,
                         agent_server,
                         fs,
@@ -917,11 +910,10 @@ impl AcpServerView {
 
         let weak = cx.weak_entity();
         cx.new(|cx| {
-            AcpThreadView::new(
+            ThreadView::new(
                 parent_id,
                 thread,
                 conversation,
-                self.login.clone(),
                 weak,
                 agent_icon,
                 agent_name,
@@ -1198,13 +1190,18 @@ impl AcpServerView {
                     });
                 }
             }
-            AcpThreadEvent::Stopped => {
+            AcpThreadEvent::Stopped(stop_reason) => {
                 if let Some(active) = self.thread_view(&thread_id) {
                     active.update(cx, |active, _cx| {
                         active.thread_retry_status.take();
                     });
                 }
                 if is_subagent {
+                    if *stop_reason == acp::StopReason::EndTurn {
+                        thread.update(cx, |thread, cx| {
+                            thread.mark_as_subagent_output(cx);
+                        });
+                    }
                     return;
                 }
 
@@ -1417,13 +1414,6 @@ impl AcpServerView {
                     })
                     .unwrap_or_default();
 
-                // Run SpawnInTerminal in the same dir as the ACP server
-                let cwd = connected
-                    .connection
-                    .clone()
-                    .downcast::<agent_servers::AcpConnection>()
-                    .map(|acp_conn| acp_conn.root_dir().to_path_buf());
-
                 // Build SpawnInTerminal from _meta
                 let login = task::SpawnInTerminal {
                     id: task::TaskId(format!("external-agent-{}-login", label)),
@@ -1432,7 +1422,6 @@ impl AcpServerView {
                     command: Some(command.to_string()),
                     args,
                     command_label: label.to_string(),
-                    cwd,
                     env,
                     use_new_terminal: true,
                     allow_concurrent_runs: true,
@@ -1487,7 +1476,7 @@ impl AcpServerView {
                                     }
                                     if let Some(active) = this.active_thread() {
                                         active.update(cx, |active, cx| {
-                                            active.handle_any_thread_error(err, cx);
+                                            active.handle_thread_error(err, cx);
                                         })
                                     }
                                 } else {
@@ -1503,79 +1492,10 @@ impl AcpServerView {
             }
         }
 
-        if method.0.as_ref() == "gemini-api-key" {
-            let registry = LanguageModelRegistry::global(cx);
-            let provider = registry
-                .read(cx)
-                .provider(&language_model::GOOGLE_PROVIDER_ID)
-                .unwrap();
-            if !provider.is_authenticated(cx) {
-                let this = cx.weak_entity();
-                let agent_name = self.agent.name();
-                let connection = connection.clone();
-                window.defer(cx, |window, cx| {
-                    Self::handle_auth_required(
-                        this,
-                        AuthRequired {
-                            description: Some("GEMINI_API_KEY must be set".to_owned()),
-                            provider_id: Some(language_model::GOOGLE_PROVIDER_ID),
-                        },
-                        agent_name,
-                        connection,
-                        window,
-                        cx,
-                    );
-                });
-                return;
-            }
-        } else if method.0.as_ref() == "vertex-ai"
-            && std::env::var("GOOGLE_API_KEY").is_err()
-            && (std::env::var("GOOGLE_CLOUD_PROJECT").is_err()
-                || (std::env::var("GOOGLE_CLOUD_PROJECT").is_err()))
-        {
-            let this = cx.weak_entity();
-            let agent_name = self.agent.name();
-            let connection = connection.clone();
-
-            window.defer(cx, |window, cx| {
-                    Self::handle_auth_required(
-                        this,
-                        AuthRequired {
-                            description: Some(
-                                "GOOGLE_API_KEY must be set in the environment to use Vertex AI authentication for Gemini CLI. Please export it and restart Zed."
-                                    .to_owned(),
-                            ),
-                            provider_id: None,
-                        },
-                        agent_name,
-                        connection,
-                        window,
-                        cx,
-                    )
-                });
-            return;
-        }
-
         configuration_view.take();
         pending_auth_method.replace(method.clone());
-        let authenticate = if let Some(login) = self.login.clone() {
-            if let Some(workspace) = self.workspace.upgrade() {
-                let project = self.project.clone();
-                Self::spawn_external_agent_login(
-                    login,
-                    workspace,
-                    project,
-                    method.clone(),
-                    false,
-                    window,
-                    cx,
-                )
-            } else {
-                Task::ready(Ok(()))
-            }
-        } else {
-            connection.authenticate(method, cx)
-        };
+
+        let authenticate = connection.authenticate(method, cx);
         cx.notify();
         self.auth_task = Some(cx.spawn_in(window, {
             async move |this, cx| {
@@ -1605,7 +1525,7 @@ impl AcpServerView {
                             pending_auth_method.take();
                         }
                         if let Some(active) = this.active_thread() {
-                            active.update(cx, |active, cx| active.handle_any_thread_error(err, cx));
+                            active.update(cx, |active, cx| active.handle_thread_error(err, cx));
                         }
                     } else {
                         this.reset(window, cx);
@@ -1850,15 +1770,7 @@ impl AcpServerView {
                     .enumerate()
                     .rev()
                     .map(|(ix, method)| {
-                        let (method_id, name) = if self.project.read(cx).is_via_remote_server()
-                            && method.id.0.as_ref() == "oauth-personal"
-                            && method.name == "Log in with Google"
-                        {
-                            ("spawn-gemini-cli".into(), "Log in with Gemini CLI".into())
-                        } else {
-                            (method.id.0.clone(), method.name.clone())
-                        };
-
+                        let (method_id, name) = (method.id.0.clone(), method.name.clone());
                         let agent_telemetry_id = connection.telemetry_id();
 
                         Button::new(method_id.clone(), name)
@@ -2283,7 +2195,7 @@ impl AcpServerView {
     fn render_markdown(&self, markdown: Entity<Markdown>, style: MarkdownStyle) -> MarkdownElement {
         let workspace = self.workspace.clone();
         MarkdownElement::new(markdown, style).on_url_click(move |text, window, cx| {
-            crate::acp::thread_view::active_thread::open_link(text, &workspace, window, cx);
+            crate::connection_view::thread_view::open_link(text, &workspace, window, cx);
         })
     }
 
@@ -2606,7 +2518,7 @@ fn placeholder_text(agent_name: &str, has_commands: bool) -> String {
     }
 }
 
-impl Focusable for AcpServerView {
+impl Focusable for ConnectionView {
     fn focus_handle(&self, cx: &App) -> FocusHandle {
         match self.active_thread() {
             Some(thread) => thread.read(cx).focus_handle(cx),
@@ -2616,7 +2528,7 @@ impl Focusable for AcpServerView {
 }
 
 #[cfg(any(test, feature = "test-support"))]
-impl AcpServerView {
+impl ConnectionView {
     /// Expands a tool call so its content is visible.
     /// This is primarily useful for visual testing.
     pub fn expand_tool_call(&mut self, tool_call_id: acp::ToolCallId, cx: &mut Context<Self>) {
@@ -2629,7 +2541,7 @@ impl AcpServerView {
     }
 }
 
-impl Render for AcpServerView {
+impl Render for ConnectionView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.sync_queued_message_editors(window, cx);
 
@@ -2808,11 +2720,11 @@ pub(crate) mod tests {
 
         let thread_store = cx.update(|_window, cx| cx.new(|cx| ThreadStore::new(cx)));
         // Create history without an initial session list - it will be set after connection
-        let history = cx.update(|window, cx| cx.new(|cx| AcpThreadHistory::new(None, window, cx)));
+        let history = cx.update(|window, cx| cx.new(|cx| ThreadHistory::new(None, window, cx)));
 
         let thread_view = cx.update(|window, cx| {
             cx.new(|cx| {
-                AcpServerView::new(
+                ConnectionView::new(
                     Rc::new(StubAgentServer::default_response()),
                     None,
                     None,
@@ -2880,11 +2792,11 @@ pub(crate) mod tests {
         let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
         let thread_store = cx.update(|_window, cx| cx.new(|cx| ThreadStore::new(cx)));
-        let history = cx.update(|window, cx| cx.new(|cx| AcpThreadHistory::new(None, window, cx)));
+        let history = cx.update(|window, cx| cx.new(|cx| ThreadHistory::new(None, window, cx)));
 
         let thread_view = cx.update(|window, cx| {
             cx.new(|cx| {
-                AcpServerView::new(
+                ConnectionView::new(
                     Rc::new(StubAgentServer::new(ResumeOnlyAgentConnection)),
                     Some(session),
                     None,
@@ -2934,11 +2846,11 @@ pub(crate) mod tests {
         session.cwd = Some(PathBuf::from("/project/subdir"));
 
         let thread_store = cx.update(|_window, cx| cx.new(|cx| ThreadStore::new(cx)));
-        let history = cx.update(|window, cx| cx.new(|cx| AcpThreadHistory::new(None, window, cx)));
+        let history = cx.update(|window, cx| cx.new(|cx| ThreadHistory::new(None, window, cx)));
 
         let _thread_view = cx.update(|window, cx| {
             cx.new(|cx| {
-                AcpServerView::new(
+                ConnectionView::new(
                     Rc::new(StubAgentServer::new(connection)),
                     Some(session),
                     None,
@@ -2986,11 +2898,11 @@ pub(crate) mod tests {
         session.cwd = Some(PathBuf::from("/some/other/path"));
 
         let thread_store = cx.update(|_window, cx| cx.new(|cx| ThreadStore::new(cx)));
-        let history = cx.update(|window, cx| cx.new(|cx| AcpThreadHistory::new(None, window, cx)));
+        let history = cx.update(|window, cx| cx.new(|cx| ThreadHistory::new(None, window, cx)));
 
         let _thread_view = cx.update(|window, cx| {
             cx.new(|cx| {
-                AcpServerView::new(
+                ConnectionView::new(
                     Rc::new(StubAgentServer::new(connection)),
                     Some(session),
                     None,
@@ -3038,11 +2950,11 @@ pub(crate) mod tests {
         session.cwd = Some(PathBuf::from("/project/../outside"));
 
         let thread_store = cx.update(|_window, cx| cx.new(|cx| ThreadStore::new(cx)));
-        let history = cx.update(|window, cx| cx.new(|cx| AcpThreadHistory::new(None, window, cx)));
+        let history = cx.update(|window, cx| cx.new(|cx| ThreadHistory::new(None, window, cx)));
 
         let _thread_view = cx.update(|window, cx| {
             cx.new(|cx| {
-                AcpServerView::new(
+                ConnectionView::new(
                     Rc::new(StubAgentServer::new(connection)),
                     Some(session),
                     None,
@@ -3093,6 +3005,38 @@ pub(crate) mod tests {
     }
 
     #[gpui::test]
+    async fn test_connect_failure_transitions_to_load_error(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let (thread_view, cx) = setup_thread_view(FailingAgentServer, cx).await;
+
+        thread_view.read_with(cx, |view, cx| {
+            let title = view.title(cx);
+            assert_eq!(
+                title.as_ref(),
+                "Error Loading Codex CLI",
+                "Tab title should show the agent name with an error prefix"
+            );
+            match &view.server_state {
+                ServerState::LoadError(LoadError::Other(msg)) => {
+                    assert!(
+                        msg.contains("Invalid gzip header"),
+                        "Error callout should contain the underlying extraction error, got: {msg}"
+                    );
+                }
+                other => panic!(
+                    "Expected LoadError::Other, got: {}",
+                    match other {
+                        ServerState::Loading(_) => "Loading (stuck!)",
+                        ServerState::LoadError(_) => "LoadError (wrong variant)",
+                        ServerState::Connected(_) => "Connected",
+                    }
+                ),
+            }
+        });
+    }
+
+    #[gpui::test]
     async fn test_auth_required_on_initial_connect(cx: &mut TestAppContext) {
         init_test(cx);
 
@@ -3126,7 +3070,7 @@ pub(crate) mod tests {
             );
         });
 
-        // Authenticate using the real authenticate flow on AcpServerView.
+        // Authenticate using the real authenticate flow on ConnectionView.
         // This calls connection.authenticate(), which flips the internal flag,
         // then on success triggers reset() -> new_session() which now succeeds.
         thread_view.update_in(cx, |view, window, cx| {
@@ -3313,12 +3257,12 @@ pub(crate) mod tests {
 
         // Set up thread view in workspace 1
         let thread_store = cx.update(|_window, cx| cx.new(|cx| ThreadStore::new(cx)));
-        let history = cx.update(|window, cx| cx.new(|cx| AcpThreadHistory::new(None, window, cx)));
+        let history = cx.update(|window, cx| cx.new(|cx| ThreadHistory::new(None, window, cx)));
 
         let agent = StubAgentServer::default_response();
         let thread_view = cx.update(|window, cx| {
             cx.new(|cx| {
-                AcpServerView::new(
+                ConnectionView::new(
                     Rc::new(agent),
                     None,
                     None,
@@ -3482,7 +3426,7 @@ pub(crate) mod tests {
     async fn setup_thread_view(
         agent: impl AgentServer + 'static,
         cx: &mut TestAppContext,
-    ) -> (Entity<AcpServerView>, &mut VisualTestContext) {
+    ) -> (Entity<ConnectionView>, &mut VisualTestContext) {
         let fs = FakeFs::new(cx.executor());
         let project = Project::test(fs, [], cx).await;
         let (multi_workspace, cx) =
@@ -3490,11 +3434,11 @@ pub(crate) mod tests {
         let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
         let thread_store = cx.update(|_window, cx| cx.new(|cx| ThreadStore::new(cx)));
-        let history = cx.update(|window, cx| cx.new(|cx| AcpThreadHistory::new(None, window, cx)));
+        let history = cx.update(|window, cx| cx.new(|cx| ThreadHistory::new(None, window, cx)));
 
         let thread_view = cx.update(|window, cx| {
             cx.new(|cx| {
-                AcpServerView::new(
+                ConnectionView::new(
                     Rc::new(agent),
                     None,
                     None,
@@ -3512,7 +3456,7 @@ pub(crate) mod tests {
         (thread_view, cx)
     }
 
-    fn add_to_workspace(thread_view: Entity<AcpServerView>, cx: &mut VisualTestContext) {
+    fn add_to_workspace(thread_view: Entity<ConnectionView>, cx: &mut VisualTestContext) {
         let workspace = thread_view.read_with(cx, |thread_view, _cx| thread_view.workspace.clone());
 
         workspace
@@ -3528,7 +3472,7 @@ pub(crate) mod tests {
             .unwrap();
     }
 
-    struct ThreadViewItem(Entity<AcpServerView>);
+    struct ThreadViewItem(Entity<ConnectionView>);
 
     impl Item for ThreadViewItem {
         type Event = ();
@@ -3590,11 +3534,39 @@ pub(crate) mod tests {
 
         fn connect(
             &self,
-            _root_dir: Option<&Path>,
             _delegate: AgentServerDelegate,
             _cx: &mut App,
-        ) -> Task<gpui::Result<(Rc<dyn AgentConnection>, Option<task::SpawnInTerminal>)>> {
-            Task::ready(Ok((Rc::new(self.connection.clone()), None)))
+        ) -> Task<gpui::Result<Rc<dyn AgentConnection>>> {
+            Task::ready(Ok(Rc::new(self.connection.clone())))
+        }
+
+        fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
+            self
+        }
+    }
+
+    struct FailingAgentServer;
+
+    impl AgentServer for FailingAgentServer {
+        fn logo(&self) -> ui::IconName {
+            ui::IconName::AiOpenAi
+        }
+
+        fn name(&self) -> SharedString {
+            "Codex CLI".into()
+        }
+
+        fn connect(
+            &self,
+            _delegate: AgentServerDelegate,
+            _cx: &mut App,
+        ) -> Task<gpui::Result<Rc<dyn AgentConnection>>> {
+            Task::ready(Err(anyhow!(
+                "extracting downloaded asset for \
+                 https://github.com/zed-industries/codex-acp/releases/download/v0.9.4/\
+                 codex-acp-0.9.4-aarch64-pc-windows-msvc.zip: \
+                 failed to iterate over archive: Invalid gzip header"
+            )))
         }
 
         fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
@@ -4063,9 +4035,9 @@ pub(crate) mod tests {
     }
 
     fn active_thread(
-        thread_view: &Entity<AcpServerView>,
+        thread_view: &Entity<ConnectionView>,
         cx: &TestAppContext,
-    ) -> Entity<AcpThreadView> {
+    ) -> Entity<ThreadView> {
         cx.read(|cx| {
             thread_view
                 .read(cx)
@@ -4076,7 +4048,7 @@ pub(crate) mod tests {
     }
 
     fn message_editor(
-        thread_view: &Entity<AcpServerView>,
+        thread_view: &Entity<ConnectionView>,
         cx: &TestAppContext,
     ) -> Entity<MessageEditor> {
         let thread = active_thread(thread_view, cx);
@@ -4102,12 +4074,12 @@ pub(crate) mod tests {
         let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
         let thread_store = cx.update(|_window, cx| cx.new(|cx| ThreadStore::new(cx)));
-        let history = cx.update(|window, cx| cx.new(|cx| AcpThreadHistory::new(None, window, cx)));
+        let history = cx.update(|window, cx| cx.new(|cx| ThreadHistory::new(None, window, cx)));
 
         let connection = Rc::new(StubAgentConnection::new());
         let thread_view = cx.update(|window, cx| {
             cx.new(|cx| {
-                AcpServerView::new(
+                ConnectionView::new(
                     Rc::new(StubAgentServer::new(connection.as_ref().clone())),
                     None,
                     None,
@@ -4634,7 +4606,7 @@ pub(crate) mod tests {
     }
 
     struct GeneratingThreadSetup {
-        thread_view: Entity<AcpServerView>,
+        thread_view: Entity<ConnectionView>,
         thread: Entity<AcpThread>,
         message_editor: Entity<MessageEditor>,
     }

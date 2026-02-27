@@ -1,5 +1,5 @@
 use crate::{
-    example::{Example, ExamplePromptInputs, ExampleState},
+    example::{Example, ExampleState},
     git,
     headless::EpAppState,
     progress::{ExampleProgress, InfoStyle, Step, StepProgress},
@@ -7,6 +7,7 @@ use crate::{
 use anyhow::{Context as _, Result};
 use edit_prediction::{
     EditPredictionStore,
+    cursor_excerpt::compute_excerpt_ranges,
     udiff::{OpenedBuffers, refresh_worktree_entries, strip_diff_path_prefix},
 };
 use futures::AsyncWriteExt as _;
@@ -14,6 +15,7 @@ use gpui::{AsyncApp, Entity};
 use language::{Anchor, Buffer, LanguageNotFound, ToOffset, ToPoint};
 use project::{Project, ProjectPath, buffer_store::BufferStoreEvent};
 use std::{fs, path::PathBuf, sync::Arc};
+use zeta_prompt::ZetaPromptInput;
 
 pub async fn run_load_project(
     example: &mut Example,
@@ -58,7 +60,7 @@ pub async fn run_load_project(
         .read_with(&cx, |buffer, _| buffer.parsing_idle())
         .await;
 
-    let edit_history = ep_store.update(&mut cx, |store, cx| {
+    let events: Vec<Arc<zeta_prompt::Event>> = ep_store.update(&mut cx, |store, cx| {
         store
             .edit_history_for_project(&project, cx)
             .into_iter()
@@ -66,25 +68,46 @@ pub async fn run_load_project(
             .collect()
     });
 
+    let existing_related_files = example
+        .prompt_inputs
+        .take()
+        .map(|inputs| inputs.related_files)
+        .unwrap_or_default();
+
     let (prompt_inputs, language_name) = buffer.read_with(&cx, |buffer, _cx| {
-        let cursor_point = cursor_position.to_point(&buffer);
+        let snapshot = buffer.snapshot();
+        let cursor_point = cursor_position.to_point(&snapshot);
+        let cursor_offset = cursor_position.to_offset(&snapshot);
         let language_name = buffer
             .language()
             .map(|l| l.name().to_string())
             .unwrap_or_else(|| "Unknown".to_string());
+
+        let (full_context_point_range, full_context_offset_range, excerpt_ranges) =
+            compute_excerpt_ranges(cursor_point, &snapshot);
+
+        let cursor_excerpt: Arc<str> = buffer
+            .text_for_range(full_context_offset_range.clone())
+            .collect::<String>()
+            .into();
+        let cursor_offset_in_excerpt = cursor_offset - full_context_offset_range.start;
+        let excerpt_start_row = Some(full_context_point_range.start.row);
+
+        let editable_range_in_excerpt = excerpt_ranges.editable_350.clone();
+
         (
-            ExamplePromptInputs {
-                content: buffer.text(),
-                cursor_row: cursor_point.row,
-                cursor_column: cursor_point.column,
-                cursor_offset: cursor_position.to_offset(&buffer),
-                excerpt_start_row: Some(0),
-                edit_history,
-                related_files: example
-                    .prompt_inputs
-                    .take()
-                    .map(|inputs| inputs.related_files)
-                    .unwrap_or_default(),
+            ZetaPromptInput {
+                cursor_path: example.spec.cursor_path.clone(),
+                cursor_excerpt,
+                editable_range_in_excerpt,
+                cursor_offset_in_excerpt,
+                excerpt_start_row,
+                events,
+                related_files: existing_related_files,
+                excerpt_ranges: Some(excerpt_ranges),
+                preferred_model: None,
+                in_open_source_repo: false,
+                can_collect_data: false,
             },
             language_name,
         )

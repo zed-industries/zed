@@ -332,8 +332,8 @@ fn main() {
         .background_executor()
         .spawn(Session::new(session_id.clone()));
 
-    app.background_executor()
-        .spawn(crashes::init(InitCrashHandler {
+    crashes::init(
+        InitCrashHandler {
             session_id,
             zed_version: app_version.to_string(),
             binary: "zed".to_string(),
@@ -342,8 +342,11 @@ fn main() {
                 .as_ref()
                 .map(|sha| sha.full())
                 .unwrap_or_else(|| "no sha".to_owned()),
-        }))
-        .detach();
+        },
+        |task| {
+            app.background_executor().spawn(task).detach();
+        },
+    );
 
     let (open_listener, mut open_rx) = OpenListener::new();
 
@@ -948,7 +951,12 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
 
                     thread_store
                         .update(&mut cx.clone(), |store, cx| {
-                            store.save_thread(save_session_id.clone(), db_thread, cx)
+                            store.save_thread(
+                                save_session_id.clone(),
+                                db_thread,
+                                Default::default(),
+                                cx,
+                            )
                         })
                         .await?;
 

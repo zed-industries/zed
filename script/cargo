@@ -62,8 +62,21 @@ function getShellConfigPath(shell) {
     case "fish":
       return path.join(home, ".config", "fish", "config.fish");
     case "powershell":
-      // PowerShell Core (pwsh) profile locations
       if (process.platform === "win32") {
+        // Spawn PowerShell to get the real $PROFILE path, since os.homedir() doesn't account
+        // for OneDrive folder redirection, and the subdirectory differs between Windows PowerShell
+        // 5.x ("WindowsPowerShell") and PowerShell Core ("PowerShell").
+        const psModulePath = process.env.PSModulePath || "";
+        const psExe = psModulePath.toLowerCase().includes("\\windowspowershell\\") ? "powershell" : "pwsh";
+        const result = spawnSync(psExe, ["-NoProfile", "-Command", "$PROFILE"], {
+          encoding: "utf-8",
+          stdio: ["pipe", "pipe", "pipe"],
+          timeout: 5000,
+        });
+        if (result.status === 0 && result.stdout.trim()) {
+          return result.stdout.trim();
+        }
+        // Fallback if spawning fails
         return path.join(home, "Documents", "PowerShell", "Microsoft.PowerShell_profile.ps1");
       } else {
         return path.join(home, ".config", "powershell", "Microsoft.PowerShell_profile.ps1");
@@ -79,13 +92,30 @@ function generateAlias(shell, scriptDir) {
   switch (shell) {
     case "zsh":
     case "bash":
-      return `\n# Zed cargo timing wrapper\ncargo() { local w="${cargoWrapper}"; [[ -x "$w" ]] && "$w" "$@" || command cargo "$@"; }\n`;
+      return `\n# Zed cargo timing wrapper\ncargo() { local w="${cargoWrapper}"; if [[ -x "$w" ]]; then "$w" "$@"; else command cargo "$@"; fi; }\n`;
     case "fish":
-      return `\n# Zed cargo timing wrapper\nfunction cargo\n    set -l w "${cargoWrapper}"\n    if test -x "$w"\n        "$w" $argv\n    else\n        command cargo $argv\n    end\nend\n`;
+      return `\n# Zed cargo timing wrapper\nfunction cargo\n    set -l w "${cargoWrapper}"\n    if test -x "$w"\n        "$w" $argv\n        return $status\n    else\n        command cargo $argv\n    end\nend\n`;
     case "powershell":
-      return `\n# Zed cargo timing wrapper\nfunction cargo {\n    \$wrapper = "${cargoWrapper}"\n    if (Test-Path \$wrapper) {\n        & \$wrapper @args\n    } else {\n        & (Get-Command -Name cargo -CommandType Application | Select-Object -First 1).Source @args\n    }\n}\n`;
+      return `\n# Zed cargo timing wrapper\nfunction cargo {\n    \$wrapper = "${cargoWrapper}"\n    if (Test-Path \$wrapper) {\n        node \$wrapper @args\n    } else {\n        & (Get-Command -Name cargo -CommandType Application | Select-Object -First 1).Source @args\n    }\n}\n`;
     default:
-      return `cargo() { local w="${cargoWrapper}"; [[ -x "$w" ]] && "$w" "$@" || command cargo "$@"; }`;
+      return `cargo() { local w="${cargoWrapper}"; if [[ -x "$w" ]]; then "$w" "$@"; else command cargo "$@"; fi; }`;
+  }
+}
+
+function aliasBlockRegex(shell) {
+  switch (shell) {
+    case "zsh":
+    case "bash":
+      // Comment line + single-line cargo() { ... } function
+      return /\n?# Zed cargo timing wrapper\ncargo\(\) \{[^\n]*\}\n/;
+    case "fish":
+      // Comment line + multi-line function cargo...end block
+      return /\n?# Zed cargo timing wrapper\nfunction cargo\n[\s\S]*?\nend\n/;
+    case "powershell":
+      // Comment line + multi-line function cargo {...} block
+      return /\n?# Zed cargo timing wrapper\nfunction cargo \{[\s\S]*?\n\}\n/;
+    default:
+      return null;
   }
 }
 
@@ -102,12 +132,19 @@ function initShellAlias() {
     return;
   }
 
-  // Check if alias already exists
+  // Check if alias already exists; if so, replace it in-place
   if (fs.existsSync(configPath)) {
     const content = fs.readFileSync(configPath, "utf-8");
     if (content.includes("Zed cargo timing wrapper")) {
-      console.log(`Alias already exists in ${configPath}`);
-      console.log("To update, remove the existing alias and run --init again.");
+      const blockRegex = aliasBlockRegex(shell);
+      const updated = blockRegex ? content.replace(blockRegex, "") : content;
+      fs.writeFileSync(configPath, updated + alias);
+      console.log(`Updated cargo timing alias in ${configPath}`);
+      if (shell === "powershell") {
+        console.log(`\nRestart PowerShell or run: . "${configPath}"`);
+      } else {
+        console.log(`\nRestart your shell or run: source ${configPath}`);
+      }
       return;
     }
   }
@@ -209,6 +246,10 @@ async function main() {
 
   // Handle --init flag
   if (args[0] === "--init") {
+    if (process.env.NIX_WRAPPER === "1") {
+      console.error("`--init` not supported when going through the nix wrapper");
+      process.exit(1);
+    }
     initShellAlias();
     return;
   }
