@@ -24,10 +24,6 @@ use workspace::{
     item::{Item, ItemEvent},
 };
 
-/// Registry IDs for built-in agents that Zed already provides first-class support for.
-/// These are filtered out of the ACP Agent Registry UI to avoid showing duplicates.
-const BUILT_IN_REGISTRY_IDS: [&str; 4] = ["claude-acp", "claude-code-acp", "codex-acp", "gemini"];
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum RegistryFilter {
     All,
@@ -162,8 +158,14 @@ impl AgentRegistryPage {
         self.registry_agents.sort_by(|left, right| {
             left.name()
                 .as_ref()
-                .cmp(right.name().as_ref())
-                .then_with(|| left.id().as_ref().cmp(right.id().as_ref()))
+                .to_lowercase()
+                .cmp(&right.name().as_ref().to_lowercase())
+                .then_with(|| {
+                    left.id()
+                        .as_ref()
+                        .to_lowercase()
+                        .cmp(&right.id().as_ref().to_lowercase())
+                })
         });
         self.filter_registry_agents(cx);
     }
@@ -215,12 +217,6 @@ impl AgentRegistryPage {
             .iter()
             .enumerate()
             .filter(|(_, agent)| {
-                // Filter out built-in agents since they already appear in the main
-                // agent configuration UI and don't need to be installed from the registry.
-                if BUILT_IN_REGISTRY_IDS.contains(&agent.id().as_ref()) {
-                    return false;
-                }
-
                 let matches_search = search.as_ref().is_none_or(|query| {
                     let query = query.as_str();
                     agent.id().as_ref().to_lowercase().contains(query)
