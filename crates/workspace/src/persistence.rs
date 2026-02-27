@@ -1843,8 +1843,14 @@ impl WorkspaceDb {
         let mut delete_tasks = Vec::new();
         let remote_connections = self.remote_connections()?;
 
-        for (id, paths, remote_connection_id, workspace_file_path, workspace_file_kind, timestamp) in
-            self.recent_workspaces()?
+        for (
+            id,
+            paths,
+            remote_connection_id,
+            workspace_file_path,
+            workspace_file_kind,
+            timestamp,
+        ) in self.recent_workspaces()?
         {
             if let Some(remote_connection_id) = remote_connection_id {
                 if let Some(connection_options) = remote_connections.get(&remote_connection_id) {

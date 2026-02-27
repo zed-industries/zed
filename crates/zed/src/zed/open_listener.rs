@@ -1340,7 +1340,7 @@ mod tests {
 
         let (paths, workspace_source) = derive_paths_with_position(
             app_state.fs.as_ref(),
-            vec!["/projects/my-workspace.code-workspace"],
+            vec![path!("/projects/my-workspace.code-workspace")],
         )
         .await;
 
@@ -1352,7 +1352,7 @@ mod tests {
         let source = workspace_source.expect("Expected workspace file source");
         assert_eq!(
             source.path,
-            std::path::PathBuf::from("/projects/my-workspace.code-workspace")
+            std::path::PathBuf::from(path!("/projects/my-workspace.code-workspace"))
         );
         assert_eq!(source.kind, workspace::WorkspaceFileKind::CodeWorkspace);
     }
@@ -1373,7 +1373,8 @@ mod tests {
             .await;
 
         let (paths, workspace_source) =
-            derive_paths_with_position(app_state.fs.as_ref(), vec!["/projects/my-project"]).await;
+            derive_paths_with_position(app_state.fs.as_ref(), vec![path!("/projects/my-project")])
+                .await;
 
         assert_eq!(paths.len(), 1);
         assert_eq!(paths[0].path, PathBuf::from(path!("/projects/my-project")));

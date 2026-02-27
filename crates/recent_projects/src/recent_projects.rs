@@ -1015,14 +1015,14 @@ impl PickerDelegate for RecentProjectsDelegate {
                         }
                     }
                     .detach_and_prompt_err(
-                    "Failed to open project",
-                    window,
-                    cx,
-                    |_, _, _| None,
-                );
-            });
-            cx.emit(DismissEvent);
-        }
+                        "Failed to open project",
+                        window,
+                        cx,
+                        |_, _, _| None,
+                    );
+                });
+                cx.emit(DismissEvent);
+            }
             _ => {}
         }
     }
