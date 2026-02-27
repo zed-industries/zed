@@ -743,7 +743,7 @@ impl ToolPermissionContext {
         if tool_name == TerminalTool::NAME && shell_supports_always_allow {
             if let Some(input) = input_values.first() {
                 let all_patterns = extract_all_terminal_patterns(input);
-                if all_patterns.len() >= 2 {
+                if all_patterns.len() > 1 {
                     let mut choices = Vec::new();
                     choices.push(acp_thread::PermissionOptionChoice {
                         allow: acp::PermissionOption::new(

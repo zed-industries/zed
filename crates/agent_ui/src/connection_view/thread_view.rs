@@ -5869,10 +5869,10 @@ impl ThreadView {
                 focus_handle,
                 cx,
             ),
-            PermissionOptions::Dropdown(choices) => self.render_permission_buttons_dropdown(
-                session_id,
+            PermissionOptions::Dropdown(choices) => self.render_permission_buttons_with_dropdown(
                 is_first,
                 choices,
+                None,
                 entry_ix,
                 tool_call_id,
                 focus_handle,
@@ -5882,11 +5882,10 @@ impl ThreadView {
                 choices,
                 patterns,
                 tool_name,
-            } => self.render_permission_buttons_with_patterns(
+            } => self.render_permission_buttons_with_dropdown(
                 is_first,
                 choices,
-                patterns,
-                tool_name,
+                Some((patterns, tool_name)),
                 entry_ix,
                 tool_call_id,
                 focus_handle,
@@ -5895,45 +5894,55 @@ impl ThreadView {
         }
     }
 
-    fn render_permission_buttons_dropdown(
+    fn render_permission_buttons_with_dropdown(
         &self,
-        session_id: acp::SessionId,
         is_first: bool,
         choices: &[PermissionOptionChoice],
+        patterns: Option<(&[PermissionPattern], &str)>,
         entry_ix: usize,
         tool_call_id: acp::ToolCallId,
         focus_handle: &FocusHandle,
         cx: &Context<Self>,
     ) -> Div {
-        // Get the selected granularity index, defaulting to the last option ("Only this time")
-        let selected_index = self
-            .permission_selections
-            .get(&tool_call_id)
+        let selection = self.permission_selections.get(&tool_call_id);
+
+        let selected_index = selection
             .and_then(|s| s.choice_index())
             .unwrap_or_else(|| choices.len().saturating_sub(1));
 
-        let selected_choice = choices.get(selected_index).or(choices.last());
-
-        let dropdown_label: SharedString = selected_choice
-            .map(|choice| choice.label())
-            .unwrap_or_else(|| "Only this time".into());
-
-        let (allow_option_id, allow_option_kind, deny_option_id, deny_option_kind) =
-            if let Some(choice) = selected_choice {
-                (
-                    choice.allow.option_id.clone(),
-                    choice.allow.kind,
-                    choice.deny.option_id.clone(),
-                    choice.deny.kind,
-                )
+        let dropdown_label: SharedString =
+            if matches!(selection, Some(PermissionSelection::SelectedPatterns(_))) {
+                "Allow selected commands".into()
             } else {
-                (
-                    acp::PermissionOptionId::new("allow"),
-                    acp::PermissionOptionKind::AllowOnce,
-                    acp::PermissionOptionId::new("deny"),
-                    acp::PermissionOptionKind::RejectOnce,
-                )
+                choices
+                    .get(selected_index)
+                    .or(choices.last())
+                    .map(|choice| choice.label())
+                    .unwrap_or_else(|| "Only this time".into())
             };
+
+        let dropdown = if let Some((pattern_list, tool_name)) = patterns {
+            self.render_permission_granularity_dropdown_with_patterns(
+                choices,
+                pattern_list,
+                tool_name,
+                dropdown_label,
+                entry_ix,
+                tool_call_id.clone(),
+                is_first,
+                cx,
+            )
+        } else {
+            self.render_permission_granularity_dropdown(
+                choices,
+                dropdown_label,
+                entry_ix,
+                tool_call_id.clone(),
+                selected_index,
+                is_first,
+                cx,
+            )
+        };
 
         h_flex()
             .w_full()
@@ -5963,19 +5972,8 @@ impl ThreadView {
                                 )
                             })
                             .on_click(cx.listener({
-                                let session_id = session_id.clone();
-                                let tool_call_id = tool_call_id.clone();
-                                let option_id = allow_option_id;
-                                let option_kind = allow_option_kind;
                                 move |this, _, window, cx| {
-                                    this.authorize_tool_call(
-                                        session_id.clone(),
-                                        tool_call_id.clone(),
-                                        option_id.clone(),
-                                        option_kind,
-                                        window,
-                                        cx,
-                                    );
+                                    this.authorize_pending_with_granularity(true, window, cx);
                                 }
                             })),
                     )
@@ -5997,33 +5995,13 @@ impl ThreadView {
                                 )
                             })
                             .on_click(cx.listener({
-                                let session_id = session_id.clone();
-                                let tool_call_id = tool_call_id.clone();
-                                let option_id = deny_option_id;
-                                let option_kind = deny_option_kind;
                                 move |this, _, window, cx| {
-                                    this.authorize_tool_call(
-                                        session_id.clone(),
-                                        tool_call_id.clone(),
-                                        option_id.clone(),
-                                        option_kind,
-                                        window,
-                                        cx,
-                                    );
+                                    this.authorize_pending_with_granularity(false, window, cx);
                                 }
                             })),
                     ),
             )
-            .child(self.render_permission_granularity_dropdown(
-                choices,
-                dropdown_label,
-                entry_ix,
-                session_id,
-                tool_call_id,
-                selected_index,
-                is_first,
-                cx,
-            ))
+            .child(dropdown)
     }
 
     fn render_permission_granularity_dropdown(
@@ -6101,102 +6079,6 @@ impl ThreadView {
                 }))
             })
             .into_any_element()
-    }
-
-    fn render_permission_buttons_with_patterns(
-        &self,
-        is_first: bool,
-        choices: &[PermissionOptionChoice],
-        patterns: &[PermissionPattern],
-        tool_name: &str,
-        entry_ix: usize,
-        tool_call_id: acp::ToolCallId,
-        focus_handle: &FocusHandle,
-        cx: &Context<Self>,
-    ) -> Div {
-        let selection = self.permission_selections.get(&tool_call_id);
-
-        let dropdown_label: SharedString =
-            if matches!(selection, Some(PermissionSelection::SelectedPatterns(_))) {
-                "Allow selected commands".into()
-            } else {
-                let selected_index = selection
-                    .and_then(|s| s.choice_index())
-                    .unwrap_or_else(|| choices.len().saturating_sub(1));
-                choices
-                    .get(selected_index)
-                    .or(choices.last())
-                    .map(|choice| choice.label())
-                    .unwrap_or_else(|| "Only this time".into())
-            };
-
-        h_flex()
-            .w_full()
-            .p_1()
-            .gap_2()
-            .justify_between()
-            .border_t_1()
-            .border_color(self.tool_card_border_color(cx))
-            .child(
-                h_flex()
-                    .gap_0p5()
-                    .child(
-                        Button::new(("allow-btn", entry_ix), "Allow")
-                            .icon(IconName::Check)
-                            .icon_color(Color::Success)
-                            .icon_position(IconPosition::Start)
-                            .icon_size(IconSize::XSmall)
-                            .label_size(LabelSize::Small)
-                            .when(is_first, |this| {
-                                this.key_binding(
-                                    KeyBinding::for_action_in(
-                                        &AllowOnce as &dyn Action,
-                                        focus_handle,
-                                        cx,
-                                    )
-                                    .map(|kb| kb.size(rems_from_px(10.))),
-                                )
-                            })
-                            .on_click(cx.listener({
-                                move |this, _, window, cx| {
-                                    this.authorize_pending_with_granularity(true, window, cx);
-                                }
-                            })),
-                    )
-                    .child(
-                        Button::new(("deny-btn", entry_ix), "Deny")
-                            .icon(IconName::Close)
-                            .icon_color(Color::Error)
-                            .icon_position(IconPosition::Start)
-                            .icon_size(IconSize::XSmall)
-                            .label_size(LabelSize::Small)
-                            .when(is_first, |this| {
-                                this.key_binding(
-                                    KeyBinding::for_action_in(
-                                        &RejectOnce as &dyn Action,
-                                        focus_handle,
-                                        cx,
-                                    )
-                                    .map(|kb| kb.size(rems_from_px(10.))),
-                                )
-                            })
-                            .on_click(cx.listener({
-                                move |this, _, window, cx| {
-                                    this.authorize_pending_with_granularity(false, window, cx);
-                                }
-                            })),
-                    ),
-            )
-            .child(self.render_permission_granularity_dropdown_with_patterns(
-                choices,
-                patterns,
-                tool_name,
-                dropdown_label,
-                entry_ix,
-                tool_call_id,
-                is_first,
-                cx,
-            ))
     }
 
     fn render_permission_granularity_dropdown_with_patterns(

@@ -200,7 +200,6 @@ pub struct SelectPermissionGranularity {
 }
 
 /// Action to toggle a command pattern checkbox in the permission dropdown.
-/// This updates the checked state without triggering authorization or closing the menu.
 #[derive(Clone, PartialEq, Deserialize, JsonSchema, Action)]
 #[action(namespace = agent)]
 #[serde(deny_unknown_fields)]

@@ -110,10 +110,7 @@ pub fn extract_all_terminal_patterns(command: &str) -> Vec<PermissionPattern> {
             continue;
         };
 
-        if results
-            .iter()
-            .any(|p: &PermissionPattern| p.display_name == permission_pattern.display_name)
-        {
+        if results.contains(&permission_pattern) {
             continue;
         }
 
