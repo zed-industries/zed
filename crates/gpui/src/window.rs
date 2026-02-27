@@ -3327,9 +3327,9 @@ impl Window {
     pub fn paint_glyph_with_raster_bounds(
         &mut self,
         origin: Point<Pixels>,
-        font_id: FontId,
-        glyph_id: GlyphId,
-        font_size: Pixels,
+        _font_id: FontId,
+        _glyph_id: GlyphId,
+        _font_size: Pixels,
         color: Hsla,
         raster_bounds: Bounds<DevicePixels>,
         params: &RenderGlyphParams,
@@ -3373,9 +3373,9 @@ impl Window {
     pub fn paint_emoji_with_raster_bounds(
         &mut self,
         origin: Point<Pixels>,
-        font_id: FontId,
-        glyph_id: GlyphId,
-        font_size: Pixels,
+        _font_id: FontId,
+        _glyph_id: GlyphId,
+        _font_size: Pixels,
         raster_bounds: Bounds<DevicePixels>,
         params: &RenderGlyphParams,
     ) -> Result<()> {

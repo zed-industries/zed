@@ -29,7 +29,7 @@ use crate::{
     Bounds, ClipboardItem, Context, Entity, ForegroundExecutor, Global, InputEvent, Keystroke,
     MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Platform,
     PlatformTextSystem, Point, Render, Size, Task, TestDispatcher, TestPlatform, TextSystem,
-    Window, WindowBounds, WindowHandle, WindowOptions, app::GpuiMode, point, px,
+    Window, WindowBounds, WindowHandle, WindowOptions, app::GpuiMode,
 };
 use std::{future::Future, rc::Rc, sync::Arc, time::Duration};
 
