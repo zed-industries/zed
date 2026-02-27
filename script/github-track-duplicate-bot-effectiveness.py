@@ -117,8 +117,8 @@ def parse_suggested_issues(comment_body):
     return [int(match) for match in re.findall(r"^- #(\d+)", comment_body, re.MULTILINE)]
 
 
-def github_api_graphql(query, variables=None):
-    """Execute a GitHub GraphQL query. Raises on errors."""
+def github_api_graphql(query, variables=None, partial_errors_ok=False):
+    """Execute a GitHub GraphQL query. Raises on errors unless partial_errors_ok is set."""
     response = requests.post(
         GRAPHQL_URL,
         headers=GITHUB_HEADERS,
@@ -127,43 +127,51 @@ def github_api_graphql(query, variables=None):
     response.raise_for_status()
     data = response.json()
     if "errors" in data:
-        raise RuntimeError(f"GraphQL errors: {data['errors']}")
+        if not partial_errors_ok or "data" not in data:
+            raise RuntimeError(f"GraphQL errors: {data['errors']}")
+        print(f"  GraphQL partial errors (ignored): {data['errors']}")
     return data["data"]
 
 
-def get_closed_as_duplicate_of(issue_number):
-    """Get the issue number this issue was closed as a duplicate of.
+def find_canonical_among(duplicate_number, candidates):
+    """Check if any candidate issue has duplicate_number marked as a duplicate.
 
-    Uses the timeline to find the most recent MarkedAsDuplicateEvent.
-    Returns the original issue number, or None.
+    The MarkedAsDuplicateEvent lives on the canonical issue's timeline, not the
+    duplicate's. So to find which canonical issue our duplicate was closed against,
+    we check each candidate's timeline for a MarkedAsDuplicateEvent whose
+    `duplicate` field matches our issue.
 
-    Note: not all "closed as duplicate" issues have a MarkedAsDuplicateEvent.
-    If the closer used the "Close as duplicate" button without separately
-    marking the duplicate relationship, no event is created and this returns
-    None. The caller handles this by flagging the item for manual review.
+    Returns the matching canonical issue number, or None.
     """
+    if not candidates:
+        return None
+
     data = github_api_graphql(
         """
-        query($owner: String!, $repo: String!, $number: Int!) {
+        query($owner: String!, $repo: String!, $numbers: [Int!]!) {
           repository(owner: $owner, name: $repo) {
-            issue(number: $number) {
-              timelineItems(last: 10, itemTypes: [MARKED_AS_DUPLICATE_EVENT]) {
-                nodes {
-                  ... on MarkedAsDuplicateEvent {
-                    canonical { ... on Issue { number } }
-                  }
-                }
-              }
-            }
+            PLACEHOLDER
           }
         }
-        """,
-        {"owner": REPO_OWNER, "repo": REPO_NAME, "number": issue_number},
+        """.replace("PLACEHOLDER", "\n            ".join(
+            f'issue_{number}: issue(number: {number}) {{'
+            f' timelineItems(last: 50, itemTypes: [MARKED_AS_DUPLICATE_EVENT]) {{'
+            f' nodes {{ ... on MarkedAsDuplicateEvent {{ duplicate {{ ... on Issue {{ number }} }} }} }} }} }}'
+            for number in candidates
+        )),
+        {"owner": REPO_OWNER, "repo": REPO_NAME, "numbers": list(candidates)},
+        partial_errors_ok=True,
     )
-    nodes = data["repository"]["issue"]["timelineItems"]["nodes"]
-    for node in reversed(nodes):
-        if original := (node.get("canonical") or {}).get("number"):
-            return original
+
+    repo = data["repository"]
+    for candidate in candidates:
+        issue_data = repo.get(f"issue_{candidate}")
+        if not issue_data:
+            continue
+        for node in issue_data["timelineItems"]["nodes"]:
+            dup_number = (node.get("duplicate") or {}).get("number")
+            if dup_number == duplicate_number:
+                return candidate
     return None
 
 
@@ -378,29 +386,28 @@ def classify_non_author_closed(issue, bot_comment, state_reason):
 def classify_as_assist(issue, bot_comment):
     """Staff member closed as duplicate after the bot commented. Check if the dup matches."""
     suggested = parse_suggested_issues(bot_comment["body"])
+    if not suggested:
+        print("  -> Assist, needs review (could not parse bot suggestions)")
+        add_or_update_project_item(
+            issue["node_id"], outcome="Assist", closed_as="duplicate",
+            status="Needs review", notes="Could not parse bot suggestions",
+            bot_comment_time=bot_comment["created_at"])
+        return
+
     original = None
     try:
-        original = get_closed_as_duplicate_of(issue["number"])
+        original = find_canonical_among(issue["number"], suggested)
     except (requests.RequestException, RuntimeError) as error:
-        print(f"  Warning: failed to get the original-for the duplicate issue: {error}")
+        print(f"  Warning: failed to query candidate timelines: {error}")
 
-    if original and suggested:
-        if original in suggested:
-            status = "Auto-classified"
-            notes = None
-            print(f"  -> Assist (original #{original} matches bot suggestion)")
-        else:
-            status = "Needs review"
-            suggested_str = ", ".join(f"#{number}" for number in suggested)
-            notes = f"Bot suggested {suggested_str}; closed as dup of #{original}"
-            print(f"  -> Possible Assist, needs review ({notes})")
+    if original:
+        status = "Auto-classified"
+        notes = None
+        print(f"  -> Assist (original #{original} matches bot suggestion)")
     else:
-        # couldn't determine original or no suggestions parsed
         status = "Needs review"
-        if not original:
-            notes = "Could not determine original issue from timeline"
-        else:
-            notes = f"Closed as dup of #{original}; could not parse bot suggestions"
+        suggested_str = ", ".join(f"#{number}" for number in suggested)
+        notes = f"Bot suggested {suggested_str}; none matched as canonical"
         print(f"  -> Possible Assist, needs review ({notes})")
 
     add_or_update_project_item(
