@@ -1494,6 +1494,9 @@ impl Item for TerminalView {
                 let workspace = workspace.downgrade();
                 let terminal_panel = terminal_panel.downgrade();
 
+                // Defer the split operation to avoid re-entrancy panic.
+                // The pane may be the one currently being updated, so we cannot
+                // call mark_positions (via split) synchronously.
                 window
                     .spawn(cx, async move |cx| {
                         cx.update(|window, cx| {
