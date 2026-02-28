@@ -328,7 +328,7 @@ pub mod feedback {
 pub mod theme_mode {
     use gpui::actions;
 
-    actions!(theme_mode, [SetLight, SetDark, SetSystem]);
+    actions!(theme_mode, [Toggle]);
 }
 
 pub mod theme_selector {

@@ -1529,7 +1529,7 @@ mod tests {
         }
     }
 
-    fn set_theme_mode(content: &mut SettingsContent, mode: ThemeAppearanceMode) {
+    fn apply_theme_mode(content: &mut SettingsContent, mode: ThemeAppearanceMode) {
         let theme = content.theme.as_mut();
 
         if let Some(selection) = theme.theme.as_mut() {
@@ -1557,6 +1557,30 @@ mod tests {
             }
             theme.theme = Some(selection);
         }
+    }
+
+    fn toggle_theme_mode(content: &mut SettingsContent, active_appearance: ThemeAppearanceMode) {
+        let current_mode = content
+            .theme
+            .theme
+            .as_ref()
+            .and_then(|selection| match selection {
+                ThemeSelection::Static(_) => None,
+                ThemeSelection::Dynamic { mode, .. } => Some(*mode),
+            });
+
+        let next_mode = match current_mode {
+            Some(ThemeAppearanceMode::Light) => ThemeAppearanceMode::Dark,
+            Some(ThemeAppearanceMode::Dark) => ThemeAppearanceMode::Light,
+            Some(ThemeAppearanceMode::System) | None => match active_appearance {
+                ThemeAppearanceMode::Light => ThemeAppearanceMode::Dark,
+                ThemeAppearanceMode::Dark | ThemeAppearanceMode::System => {
+                    ThemeAppearanceMode::Light
+                }
+            },
+        };
+
+        apply_theme_mode(content, next_mode);
     }
 
     #[derive(Debug, PartialEq)]
@@ -1711,37 +1735,13 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_theme_mode_actions_update_settings_in_dynamic_theme_selection(cx: &mut App) {
+    fn test_toggle_theme_mode_in_dynamic_theme_selection(cx: &mut App) {
         let mut store = SettingsStore::new(cx, &test_settings());
 
         check_settings_update(
             &mut store,
             r#"{
                 "theme": {
-                    "mode": "system",
-                    "light": "One Light",
-                    "dark": "One Dark"
-                }
-            }"#
-            .unindent(),
-            |settings| {
-                set_theme_mode(settings, ThemeAppearanceMode::Light);
-            },
-            r#"{
-                "theme": {
-                    "mode": "light",
-                    "light": "One Light",
-                    "dark": "One Dark"
-                }
-            }"#
-            .unindent(),
-            cx,
-        );
-
-        check_settings_update(
-            &mut store,
-            r#"{
-                "theme": {
                     "mode": "light",
                     "light": "One Light",
                     "dark": "One Dark"
@@ -1749,7 +1749,7 @@ mod tests {
             }"#
             .unindent(),
             |settings| {
-                set_theme_mode(settings, ThemeAppearanceMode::Dark);
+                toggle_theme_mode(settings, ThemeAppearanceMode::Dark);
             },
             r#"{
                 "theme": {
@@ -1773,11 +1773,35 @@ mod tests {
             }"#
             .unindent(),
             |settings| {
-                set_theme_mode(settings, ThemeAppearanceMode::System);
+                toggle_theme_mode(settings, ThemeAppearanceMode::Light);
             },
             r#"{
                 "theme": {
+                    "mode": "light",
+                    "light": "One Light",
+                    "dark": "One Dark"
+                }
+            }"#
+            .unindent(),
+            cx,
+        );
+
+        check_settings_update(
+            &mut store,
+            r#"{
+                "theme": {
                     "mode": "system",
+                    "light": "One Light",
+                    "dark": "One Dark"
+                }
+            }"#
+            .unindent(),
+            |settings| {
+                toggle_theme_mode(settings, ThemeAppearanceMode::Dark);
+            },
+            r#"{
+                "theme": {
+                    "mode": "light",
                     "light": "One Light",
                     "dark": "One Dark"
                 }
@@ -1788,7 +1812,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_theme_mode_actions_noop_in_static_theme_selection(cx: &mut App) {
+    fn test_toggle_theme_mode_switches_static_to_dynamic_theme_selection(cx: &mut App) {
         let mut store = SettingsStore::new(cx, &test_settings());
 
         check_settings_update(
@@ -1798,51 +1822,11 @@ mod tests {
             }"#
             .unindent(),
             |settings| {
-                set_theme_mode(settings, ThemeAppearanceMode::Light);
-            },
-            r#"{
-                "theme": {
-                    "mode": "light",
-                    "light": "One Dark",
-                    "dark": "One Dark"
-                }
-            }"#
-            .unindent(),
-            cx,
-        );
-
-        check_settings_update(
-            &mut store,
-            r#"{
-                "theme": "One Dark"
-            }"#
-            .unindent(),
-            |settings| {
-                set_theme_mode(settings, ThemeAppearanceMode::Dark);
+                toggle_theme_mode(settings, ThemeAppearanceMode::Light);
             },
             r#"{
                 "theme": {
                     "mode": "dark",
-                    "light": "One Dark",
-                    "dark": "One Dark"
-                }
-            }"#
-            .unindent(),
-            cx,
-        );
-
-        check_settings_update(
-            &mut store,
-            r#"{
-                "theme": "One Dark"
-            }"#
-            .unindent(),
-            |settings| {
-                set_theme_mode(settings, ThemeAppearanceMode::System);
-            },
-            r#"{
-                "theme": {
-                    "mode": "system",
                     "light": "One Dark",
                     "dark": "One Dark"
                 }

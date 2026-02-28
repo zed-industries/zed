@@ -146,11 +146,7 @@ pub use workspace_settings::{
     AutosaveSetting, BottomDockLayout, RestoreOnStartupBehavior, StatusBarSettings, TabBarSettings,
     WorkspaceSettings,
 };
-use zed_actions::{
-    Spawn,
-    feedback::FileBugReport,
-    theme_mode::{SetDark, SetLight, SetSystem},
-};
+use zed_actions::{Spawn, feedback::FileBugReport, theme_mode::Toggle};
 
 use crate::{item::ItemBufferKind, notifications::NotificationId};
 use crate::{
@@ -6509,9 +6505,7 @@ impl Workspace {
             .on_action(cx.listener(Self::move_item_to_pane_at_index))
             .on_action(cx.listener(Self::move_focused_panel_to_next_position))
             .on_action(cx.listener(Self::toggle_edit_predictions_all_files))
-            .on_action(cx.listener(Self::set_theme_mode_light))
-            .on_action(cx.listener(Self::set_theme_mode_dark))
-            .on_action(cx.listener(Self::set_theme_mode_system))
+            .on_action(cx.listener(Self::toggle_theme_mode))
             .on_action(cx.listener(|workspace, _: &Unfollow, window, cx| {
                 let pane = workspace.active_pane().clone();
                 workspace.unfollow_in_pane(&pane, window, cx);
@@ -7166,31 +7160,21 @@ impl Workspace {
         });
     }
 
-    fn set_theme_mode_light(&mut self, _: &SetLight, _window: &mut Window, cx: &mut Context<Self>) {
-        self.set_theme_mode(theme::ThemeAppearanceMode::Light, cx);
-    }
+    fn toggle_theme_mode(&mut self, _: &Toggle, _window: &mut Window, cx: &mut Context<Self>) {
+        let current_mode = ThemeSettings::get_global(cx).theme.mode();
+        let next_mode = match current_mode {
+            Some(theme::ThemeAppearanceMode::Light) => theme::ThemeAppearanceMode::Dark,
+            Some(theme::ThemeAppearanceMode::Dark) => theme::ThemeAppearanceMode::Light,
+            Some(theme::ThemeAppearanceMode::System) | None => match cx.theme().appearance() {
+                theme::Appearance::Light => theme::ThemeAppearanceMode::Dark,
+                theme::Appearance::Dark => theme::ThemeAppearanceMode::Light,
+            },
+        };
 
-    fn set_theme_mode_dark(&mut self, _: &SetDark, _window: &mut Window, cx: &mut Context<Self>) {
-        self.set_theme_mode(theme::ThemeAppearanceMode::Dark, cx);
-    }
-
-    fn set_theme_mode_system(
-        &mut self,
-        _: &SetSystem,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.set_theme_mode(theme::ThemeAppearanceMode::System, cx);
+        self.set_theme_mode(next_mode, cx);
     }
 
     fn set_theme_mode(&mut self, mode: theme::ThemeAppearanceMode, cx: &mut Context<Self>) {
-        if ThemeSettings::get_global(cx).theme.mode().is_none() {
-            let id = NotificationId::named("theme-mode-static-selection".into());
-            let message = "Theme mode can only be changed when your global settings use dynamic theme selection.";
-            self.show_toast(Toast::new(id, message).autohide(), cx);
-            return;
-        }
-
         let fs = self.project().read(cx).fs().clone();
         settings::update_settings_file(fs, cx, move |settings, _cx| {
             theme::set_mode(settings, mode);
