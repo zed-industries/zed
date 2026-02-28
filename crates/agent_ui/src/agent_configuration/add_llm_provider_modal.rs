@@ -7,8 +7,14 @@ use gpui::{
     DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Render, ScrollHandle, Task,
 };
 use language_model::LanguageModelRegistry;
-use language_models::provider::open_ai_compatible::{AvailableModel, ModelCapabilities};
-use settings::{OpenAiCompatibleSettingsContent, update_settings_file};
+use language_models::provider::open_ai_compatible::{
+    AvailableModel as OpenAiCompatibleAvailableModel,
+    ModelCapabilities as OpenAiCompatibleModelCapabilities,
+};
+use settings::{
+    AnthropicAvailableModel, AnthropicCompatibleSettingsContent, OpenAiCompatibleSettingsContent,
+    update_settings_file,
+};
 use ui::{
     Banner, Checkbox, KeyBinding, Modal, ModalFooter, ModalHeader, Section, ToggleState,
     WithScrollbar, prelude::*,
@@ -40,18 +46,37 @@ fn single_line_input(
 #[derive(Clone, Copy)]
 pub enum LlmCompatibleProvider {
     OpenAi,
+    Anthropic,
 }
 
 impl LlmCompatibleProvider {
     fn name(&self) -> &'static str {
         match self {
             LlmCompatibleProvider::OpenAi => "OpenAI",
+            LlmCompatibleProvider::Anthropic => "Anthropic",
         }
     }
 
     fn api_url(&self) -> &'static str {
         match self {
             LlmCompatibleProvider::OpenAi => "https://api.openai.com/v1",
+            LlmCompatibleProvider::Anthropic => "https://api.anthropic.com",
+        }
+    }
+
+    fn description(&self) -> &'static str {
+        match self {
+            LlmCompatibleProvider::OpenAi => "This provider will use an OpenAI compatible API.",
+            LlmCompatibleProvider::Anthropic => {
+                "This provider will use an Anthropic Messages compatible API."
+            }
+        }
+    }
+
+    fn supports_chat_completions(&self) -> bool {
+        match self {
+            LlmCompatibleProvider::OpenAi => true,
+            LlmCompatibleProvider::Anthropic => false,
         }
     }
 }
@@ -81,13 +106,14 @@ impl AddLlmProviderInput {
             provider_name,
             api_url,
             api_key,
-            models: vec![ModelInput::new(0, window, cx)],
+            models: vec![ModelInput::new(provider, 0, window, cx)],
         }
     }
 
-    fn add_model(&mut self, window: &mut Window, cx: &mut App) {
+    fn add_model(&mut self, provider: LlmCompatibleProvider, window: &mut Window, cx: &mut App) {
         let model_index = self.models.len();
-        self.models.push(ModelInput::new(model_index, window, cx));
+        self.models
+            .push(ModelInput::new(provider, model_index, window, cx));
     }
 
     fn remove_model(&mut self, index: usize) {
@@ -104,6 +130,7 @@ struct ModelCapabilityToggles {
 }
 
 struct ModelInput {
+    provider: LlmCompatibleProvider,
     name: Entity<InputField>,
     max_completion_tokens: Entity<InputField>,
     max_output_tokens: Entity<InputField>,
@@ -112,7 +139,12 @@ struct ModelInput {
 }
 
 impl ModelInput {
-    fn new(model_index: usize, window: &mut Window, cx: &mut App) -> Self {
+    fn new(
+        provider: LlmCompatibleProvider,
+        model_index: usize,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Self {
         let base_tab_index = (3 + (model_index * 4)) as isize;
 
         let model_name = single_line_input(
@@ -148,15 +180,16 @@ impl ModelInput {
             cx,
         );
 
-        let ModelCapabilities {
+        let OpenAiCompatibleModelCapabilities {
             tools,
             images,
             parallel_tool_calls,
             prompt_cache_key,
             chat_completions,
-        } = ModelCapabilities::default();
+        } = OpenAiCompatibleModelCapabilities::default();
 
         Self {
+            provider,
             name: model_name,
             max_completion_tokens,
             max_output_tokens,
@@ -171,35 +204,46 @@ impl ModelInput {
         }
     }
 
-    fn parse(&self, cx: &App) -> Result<AvailableModel, SharedString> {
+    fn parse_name(&self, cx: &App) -> Result<String, SharedString> {
         let name = self.name.read(cx).text(cx);
         if name.is_empty() {
             return Err(SharedString::from("Model Name cannot be empty"));
         }
-        Ok(AvailableModel {
-            name,
+        Ok(name)
+    }
+
+    fn parse_u64_field(
+        &self,
+        field: &Entity<InputField>,
+        field_name: &str,
+        cx: &App,
+    ) -> Result<u64, SharedString> {
+        field
+            .read(cx)
+            .text(cx)
+            .parse::<u64>()
+            .map_err(|_| SharedString::from(format!("{field_name} must be a number")))
+    }
+
+    fn parse_open_ai_compatible(
+        &self,
+        cx: &App,
+    ) -> Result<OpenAiCompatibleAvailableModel, SharedString> {
+        Ok(OpenAiCompatibleAvailableModel {
+            name: self.parse_name(cx)?,
             display_name: None,
-            max_completion_tokens: Some(
-                self.max_completion_tokens
-                    .read(cx)
-                    .text(cx)
-                    .parse::<u64>()
-                    .map_err(|_| SharedString::from("Max Completion Tokens must be a number"))?,
-            ),
-            max_output_tokens: Some(
-                self.max_output_tokens
-                    .read(cx)
-                    .text(cx)
-                    .parse::<u64>()
-                    .map_err(|_| SharedString::from("Max Output Tokens must be a number"))?,
-            ),
-            max_tokens: self
-                .max_tokens
-                .read(cx)
-                .text(cx)
-                .parse::<u64>()
-                .map_err(|_| SharedString::from("Max Tokens must be a number"))?,
-            capabilities: ModelCapabilities {
+            max_completion_tokens: Some(self.parse_u64_field(
+                &self.max_completion_tokens,
+                "Max Completion Tokens",
+                cx,
+            )?),
+            max_output_tokens: Some(self.parse_u64_field(
+                &self.max_output_tokens,
+                "Max Output Tokens",
+                cx,
+            )?),
+            max_tokens: self.parse_u64_field(&self.max_tokens, "Max Tokens", cx)?,
+            capabilities: OpenAiCompatibleModelCapabilities {
                 tools: self.capabilities.supports_tools.selected(),
                 images: self.capabilities.supports_images.selected(),
                 parallel_tool_calls: self.capabilities.supports_parallel_tool_calls.selected(),
@@ -208,9 +252,31 @@ impl ModelInput {
             },
         })
     }
+
+    fn parse_anthropic_compatible(
+        &self,
+        cx: &App,
+    ) -> Result<AnthropicAvailableModel, SharedString> {
+        Ok(AnthropicAvailableModel {
+            name: self.parse_name(cx)?,
+            display_name: None,
+            max_tokens: self.parse_u64_field(&self.max_tokens, "Max Tokens", cx)?,
+            tool_override: None,
+            cache_configuration: None,
+            max_output_tokens: Some(self.parse_u64_field(
+                &self.max_output_tokens,
+                "Max Output Tokens",
+                cx,
+            )?),
+            default_temperature: None,
+            extra_beta_headers: Vec::new(),
+            mode: None,
+        })
+    }
 }
 
 fn save_provider_to_settings(
+    provider: LlmCompatibleProvider,
     input: &AddLlmProviderInput,
     cx: &mut App,
 ) -> Task<Result<(), SharedString>> {
@@ -242,17 +308,31 @@ fn save_provider_to_settings(
         return Task::ready(Err("API Key cannot be empty".into()));
     }
 
-    let mut models = Vec::new();
     let mut model_names: HashSet<String> = HashSet::default();
+    let mut open_ai_models = Vec::new();
+    let mut anthropic_models = Vec::new();
     for model in &input.models {
-        match model.parse(cx) {
-            Ok(model) => {
+        match provider {
+            LlmCompatibleProvider::OpenAi => {
+                let model = match model.parse_open_ai_compatible(cx) {
+                    Ok(model) => model,
+                    Err(error) => return Task::ready(Err(error)),
+                };
                 if !model_names.insert(model.name.clone()) {
                     return Task::ready(Err("Model Names must be unique".into()));
                 }
-                models.push(model)
+                open_ai_models.push(model);
             }
-            Err(err) => return Task::ready(Err(err)),
+            LlmCompatibleProvider::Anthropic => {
+                let model = match model.parse_anthropic_compatible(cx) {
+                    Ok(model) => model,
+                    Err(error) => return Task::ready(Err(error)),
+                };
+                if !model_names.insert(model.name.clone()) {
+                    return Task::ready(Err("Model Names must be unique".into()));
+                }
+                anthropic_models.push(model);
+            }
         }
     }
 
@@ -262,19 +342,34 @@ fn save_provider_to_settings(
         task.await
             .map_err(|_| SharedString::from("Failed to write API key to keychain"))?;
         cx.update(|cx| {
-            update_settings_file(fs, cx, |settings, _cx| {
-                settings
-                    .language_models
-                    .get_or_insert_default()
-                    .openai_compatible
-                    .get_or_insert_default()
-                    .insert(
-                        provider_name,
-                        OpenAiCompatibleSettingsContent {
-                            api_url,
-                            available_models: models,
-                        },
-                    );
+            update_settings_file(fs, cx, move |settings, _cx| {
+                let language_models = settings.language_models.get_or_insert_default();
+                match provider {
+                    LlmCompatibleProvider::OpenAi => {
+                        language_models
+                            .openai_compatible
+                            .get_or_insert_default()
+                            .insert(
+                                provider_name.clone(),
+                                OpenAiCompatibleSettingsContent {
+                                    api_url: api_url.clone(),
+                                    available_models: open_ai_models.clone(),
+                                },
+                            );
+                    }
+                    LlmCompatibleProvider::Anthropic => {
+                        language_models
+                            .anthropic_compatible
+                            .get_or_insert_default()
+                            .insert(
+                                provider_name.clone(),
+                                AnthropicCompatibleSettingsContent {
+                                    api_url: api_url.clone(),
+                                    available_models: anthropic_models.clone(),
+                                },
+                            );
+                    }
+                }
             });
         });
         Ok(())
@@ -310,7 +405,7 @@ impl AddLlmProviderModal {
     }
 
     fn confirm(&mut self, _: &menu::Confirm, _: &mut Window, cx: &mut Context<Self>) {
-        let task = save_provider_to_settings(&self.input, cx);
+        let task = save_provider_to_settings(self.provider, &self.input, cx);
         cx.spawn(async move |this, cx| {
             let result = task.await;
             this.update(cx, |this, cx| match result {
@@ -346,7 +441,7 @@ impl AddLlmProviderModal {
                             .icon_color(Color::Muted)
                             .label_size(LabelSize::Small)
                             .on_click(cx.listener(|this, _, window, cx| {
-                                this.input.add_model(window, cx);
+                                this.input.add_model(this.provider, window, cx);
                                 cx.notify();
                             })),
                     ),
@@ -376,73 +471,87 @@ impl AddLlmProviderModal {
             .child(
                 h_flex()
                     .gap_2()
-                    .child(model.max_completion_tokens.clone())
+                    .when(model.provider.supports_chat_completions(), |parent| {
+                        parent.child(model.max_completion_tokens.clone())
+                    })
                     .child(model.max_output_tokens.clone()),
             )
             .child(model.max_tokens.clone())
-            .child(
-                v_flex()
-                    .gap_1()
-                    .child(
-                        Checkbox::new(("supports-tools", ix), model.capabilities.supports_tools)
+            .when(model.provider.supports_chat_completions(), |parent| {
+                parent.child(
+                    v_flex()
+                        .gap_1()
+                        .child(
+                            Checkbox::new(
+                                ("supports-tools", ix),
+                                model.capabilities.supports_tools,
+                            )
                             .label("Supports tools")
-                            .on_click(cx.listener(move |this, checked, _window, cx| {
-                                this.input.models[ix].capabilities.supports_tools = *checked;
-                                cx.notify();
-                            })),
-                    )
-                    .child(
-                        Checkbox::new(("supports-images", ix), model.capabilities.supports_images)
+                            .on_click(cx.listener(
+                                move |this, checked, _window, cx| {
+                                    this.input.models[ix].capabilities.supports_tools = *checked;
+                                    cx.notify();
+                                },
+                            )),
+                        )
+                        .child(
+                            Checkbox::new(
+                                ("supports-images", ix),
+                                model.capabilities.supports_images,
+                            )
                             .label("Supports images")
-                            .on_click(cx.listener(move |this, checked, _window, cx| {
-                                this.input.models[ix].capabilities.supports_images = *checked;
-                                cx.notify();
-                            })),
-                    )
-                    .child(
-                        Checkbox::new(
-                            ("supports-parallel-tool-calls", ix),
-                            model.capabilities.supports_parallel_tool_calls,
+                            .on_click(cx.listener(
+                                move |this, checked, _window, cx| {
+                                    this.input.models[ix].capabilities.supports_images = *checked;
+                                    cx.notify();
+                                },
+                            )),
                         )
-                        .label("Supports parallel_tool_calls")
-                        .on_click(cx.listener(
-                            move |this, checked, _window, cx| {
-                                this.input.models[ix]
-                                    .capabilities
-                                    .supports_parallel_tool_calls = *checked;
-                                cx.notify();
-                            },
-                        )),
-                    )
-                    .child(
-                        Checkbox::new(
-                            ("supports-prompt-cache-key", ix),
-                            model.capabilities.supports_prompt_cache_key,
+                        .child(
+                            Checkbox::new(
+                                ("supports-parallel-tool-calls", ix),
+                                model.capabilities.supports_parallel_tool_calls,
+                            )
+                            .label("Supports parallel_tool_calls")
+                            .on_click(cx.listener(
+                                move |this, checked, _window, cx| {
+                                    this.input.models[ix]
+                                        .capabilities
+                                        .supports_parallel_tool_calls = *checked;
+                                    cx.notify();
+                                },
+                            )),
                         )
-                        .label("Supports prompt_cache_key")
-                        .on_click(cx.listener(
-                            move |this, checked, _window, cx| {
-                                this.input.models[ix].capabilities.supports_prompt_cache_key =
-                                    *checked;
-                                cx.notify();
-                            },
-                        )),
-                    )
-                    .child(
-                        Checkbox::new(
-                            ("supports-chat-completions", ix),
-                            model.capabilities.supports_chat_completions,
+                        .child(
+                            Checkbox::new(
+                                ("supports-prompt-cache-key", ix),
+                                model.capabilities.supports_prompt_cache_key,
+                            )
+                            .label("Supports prompt_cache_key")
+                            .on_click(cx.listener(
+                                move |this, checked, _window, cx| {
+                                    this.input.models[ix].capabilities.supports_prompt_cache_key =
+                                        *checked;
+                                    cx.notify();
+                                },
+                            )),
                         )
-                        .label("Supports /chat/completions")
-                        .on_click(cx.listener(
-                            move |this, checked, _window, cx| {
-                                this.input.models[ix].capabilities.supports_chat_completions =
-                                    *checked;
-                                cx.notify();
-                            },
-                        )),
-                    ),
-            )
+                        .child(
+                            Checkbox::new(
+                                ("supports-chat-completions", ix),
+                                model.capabilities.supports_chat_completions,
+                            )
+                            .label("Supports /chat/completions")
+                            .on_click(cx.listener(
+                                move |this, checked, _window, cx| {
+                                    this.input.models[ix].capabilities.supports_chat_completions =
+                                        *checked;
+                                    cx.notify();
+                                },
+                            )),
+                        ),
+                )
+            })
             .when(has_more_than_one_model, |this| {
                 this.child(
                     Button::new(("remove-model", ix), "Remove Model")
@@ -512,13 +621,11 @@ impl Render for AddLlmProviderModal {
             }))
             .child(
                 Modal::new("configure-context-server", None)
-                    .header(ModalHeader::new().headline("Add LLM Provider").description(
-                        match self.provider {
-                            LlmCompatibleProvider::OpenAi => {
-                                "This provider will use an OpenAI compatible API."
-                            }
-                        },
-                    ))
+                    .header(
+                        ModalHeader::new()
+                            .headline("Add LLM Provider")
+                            .description(self.provider.description()),
+                    )
                     .when_some(self.last_error.clone(), |this, error| {
                         this.section(
                             Section::new().child(
@@ -719,7 +826,7 @@ mod tests {
         let cx = setup_test(cx).await;
 
         cx.update(|window, cx| {
-            let model_input = ModelInput::new(0, window, cx);
+            let model_input = ModelInput::new(LlmCompatibleProvider::OpenAi, 0, window, cx);
             model_input.name.update(cx, |input, cx| {
                 input.set_text("somemodel", window, cx);
             });
@@ -744,7 +851,7 @@ mod tests {
                 ToggleState::Selected
             );
 
-            let parsed_model = model_input.parse(cx).unwrap();
+            let parsed_model = model_input.parse_open_ai_compatible(cx).unwrap();
             assert!(parsed_model.capabilities.tools);
             assert!(!parsed_model.capabilities.images);
             assert!(!parsed_model.capabilities.parallel_tool_calls);
@@ -758,7 +865,7 @@ mod tests {
         let cx = setup_test(cx).await;
 
         cx.update(|window, cx| {
-            let mut model_input = ModelInput::new(0, window, cx);
+            let mut model_input = ModelInput::new(LlmCompatibleProvider::OpenAi, 0, window, cx);
             model_input.name.update(cx, |input, cx| {
                 input.set_text("somemodel", window, cx);
             });
@@ -769,7 +876,7 @@ mod tests {
             model_input.capabilities.supports_prompt_cache_key = ToggleState::Unselected;
             model_input.capabilities.supports_chat_completions = ToggleState::Unselected;
 
-            let parsed_model = model_input.parse(cx).unwrap();
+            let parsed_model = model_input.parse_open_ai_compatible(cx).unwrap();
             assert!(!parsed_model.capabilities.tools);
             assert!(!parsed_model.capabilities.images);
             assert!(!parsed_model.capabilities.parallel_tool_calls);
@@ -783,7 +890,7 @@ mod tests {
         let cx = setup_test(cx).await;
 
         cx.update(|window, cx| {
-            let mut model_input = ModelInput::new(0, window, cx);
+            let mut model_input = ModelInput::new(LlmCompatibleProvider::OpenAi, 0, window, cx);
             model_input.name.update(cx, |input, cx| {
                 input.set_text("somemodel", window, cx);
             });
@@ -794,7 +901,7 @@ mod tests {
             model_input.capabilities.supports_prompt_cache_key = ToggleState::Unselected;
             model_input.capabilities.supports_chat_completions = ToggleState::Selected;
 
-            let parsed_model = model_input.parse(cx).unwrap();
+            let parsed_model = model_input.parse_open_ai_compatible(cx).unwrap();
             assert_eq!(parsed_model.name, "somemodel");
             assert!(parsed_model.capabilities.tools);
             assert!(!parsed_model.capabilities.images);
@@ -824,6 +931,7 @@ mod tests {
         cx
     }
 
+    #[cfg(test)]
     async fn save_provider_validation_errors(
         provider_name: &str,
         api_url: &str,
@@ -847,7 +955,12 @@ mod tests {
                 models.iter().enumerate()
             {
                 if i >= input.models.len() {
-                    input.models.push(ModelInput::new(i, window, cx));
+                    input.models.push(ModelInput::new(
+                        LlmCompatibleProvider::OpenAi,
+                        i,
+                        window,
+                        cx,
+                    ));
                 }
                 let model = &mut input.models[i];
                 set_text(&model.name, name, window, cx);
@@ -860,7 +973,7 @@ mod tests {
                 );
                 set_text(&model.max_output_tokens, max_output_tokens, window, cx);
             }
-            save_provider_to_settings(&input, cx)
+            save_provider_to_settings(LlmCompatibleProvider::OpenAi, &input, cx)
         });
 
         task.await.err()
