@@ -364,6 +364,30 @@ impl Markdown {
         self.code_block_scroll_handles.clear();
     }
 
+    fn autoscroll_code_block_for_selection(&self, cursor_position: Point<Pixels>) {
+        for scroll_handle in self.code_block_scroll_handles.values() {
+            let bounds = scroll_handle.bounds();
+            if cursor_position.y < bounds.top() || cursor_position.y > bounds.bottom() {
+                continue;
+            }
+
+            let horizontal_delta = if cursor_position.x < bounds.left() {
+                bounds.left() - cursor_position.x
+            } else if cursor_position.x > bounds.right() {
+                bounds.right() - cursor_position.x
+            } else {
+                px(0.)
+            };
+
+            if horizontal_delta == px(0.) {
+                continue;
+            }
+
+            let offset = scroll_handle.offset();
+            scroll_handle.set_offset(point(offset.x + horizontal_delta, offset.y));
+        }
+    }
+
     pub fn is_parsing(&self) -> bool {
         self.pending_parse.is_some()
     }
@@ -902,6 +926,7 @@ impl MarkdownElement {
                         Ok(ix) | Err(ix) => ix,
                     };
                     markdown.selection.set_head(source_index, &rendered_text);
+                    markdown.autoscroll_code_block_for_selection(event.position);
                     markdown.autoscroll_request = Some(source_index);
                     cx.notify();
                 } else {
