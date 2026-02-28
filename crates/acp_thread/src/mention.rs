@@ -64,31 +64,14 @@ pub enum MentionUri {
 
 impl MentionUri {
     pub fn parse(input: &str, path_style: PathStyle) -> Result<Self> {
-        fn parse_line_range(fragment: &str) -> Result<RangeInclusive<u32>> {
-            let range = fragment.strip_prefix("L").unwrap_or(fragment);
+        let input = input.trim();
 
-            let (start, end) = if let Some((start, end)) = range.split_once(":") {
-                (start, end)
-            } else if let Some((start, end)) = range.split_once("-") {
-                // Also handle L10-20 or L10-L20 format
-                (start, end.strip_prefix("L").unwrap_or(end))
-            } else {
-                // Single line number like L1872 - treat as a range of one line
-                (range, range)
-            };
-
-            let start_line = start
-                .parse::<u32>()
-                .context("Parsing line range start")?
-                .checked_sub(1)
-                .context("Line numbers should be 1-based")?;
-            let end_line = end
-                .parse::<u32>()
-                .context("Parsing line range end")?
-                .checked_sub(1)
-                .context("Line numbers should be 1-based")?;
-
-            Ok(start_line..=end_line)
+        if !input.contains("://") {
+            if let Some(mention) = parse_plain_file_location(input, path_style)
+                .or_else(|| parse_plain_path(input, path_style))
+            {
+                return Ok(mention);
+            }
         }
 
         let url = url::Url::parse(input)?;
@@ -376,6 +359,108 @@ impl MentionUri {
             }
         }
     }
+}
+
+fn parse_line_range(fragment: &str) -> Result<RangeInclusive<u32>> {
+    let range = fragment.strip_prefix('L').unwrap_or(fragment);
+
+    let (start, end) = if let Some((start, end)) = range.split_once(':') {
+        (start, end)
+    } else if let Some((start, end)) = range.split_once('-') {
+        (start, end.strip_prefix('L').unwrap_or(end))
+    } else {
+        (range, range)
+    };
+
+    let start_line = start
+        .parse::<u32>()
+        .context("Parsing line range start")?
+        .checked_sub(1)
+        .context("Line numbers should be 1-based")?;
+    let end_line = end
+        .parse::<u32>()
+        .context("Parsing line range end")?
+        .checked_sub(1)
+        .context("Line numbers should be 1-based")?;
+
+    Ok(start_line..=end_line)
+}
+
+fn parse_plain_file_location(input: &str, path_style: PathStyle) -> Option<MentionUri> {
+    let (path, line_range) = split_path_and_line_range(input, path_style)?;
+    Some(MentionUri::Selection {
+        abs_path: Some(path.into()),
+        line_range,
+    })
+}
+
+fn parse_plain_path(input: &str, path_style: PathStyle) -> Option<MentionUri> {
+    if !looks_like_file_path(input, path_style) {
+        return None;
+    }
+
+    if input.ends_with(['/', '\\']) {
+        Some(MentionUri::Directory {
+            abs_path: input.into(),
+        })
+    } else {
+        Some(MentionUri::File {
+            abs_path: input.into(),
+        })
+    }
+}
+
+fn split_path_and_line_range(
+    input: &str,
+    path_style: PathStyle,
+) -> Option<(&str, RangeInclusive<u32>)> {
+    let (path_with_suffix, trailing_fragment) = input.rsplit_once(':')?;
+
+    if let Some((path, line_part)) = path_with_suffix.rsplit_once(':')
+        && trailing_fragment
+            .parse::<u32>()
+            .is_ok_and(|column| column > 0)
+        && looks_like_file_path(path, path_style)
+        && let Ok(line_range) = parse_line_range(line_part)
+    {
+        return Some((path, line_range));
+    }
+
+    if looks_like_file_path(path_with_suffix, path_style)
+        && let Ok(line_range) = parse_line_range(trailing_fragment)
+    {
+        return Some((path_with_suffix, line_range));
+    }
+
+    None
+}
+
+fn looks_like_file_path(path: &str, path_style: PathStyle) -> bool {
+    if path.is_empty() {
+        return false;
+    }
+
+    if path.starts_with('/') || path.starts_with("./") || path.starts_with("../") {
+        return true;
+    }
+
+    if path_style.is_windows() {
+        // Require a separator after the drive letter to avoid misclassifying host:port text.
+        let bytes = path.as_bytes();
+        if bytes.len() >= 3
+            && bytes[0].is_ascii_alphabetic()
+            && bytes[1] == b':'
+            && (bytes[2] == b'\\' || bytes[2] == b'/')
+        {
+            return true;
+        }
+    }
+
+    if path.contains(['/', '\\']) {
+        return true;
+    }
+
+    false
 }
 
 pub struct MentionLink<'a>(&'a MentionUri);
@@ -677,6 +762,118 @@ mod tests {
             }
             _ => panic!("Expected Selection variant"),
         }
+    }
+
+    #[test]
+    fn test_parse_plain_selections() {
+        let cases = [
+            (
+                "/project/src/main.ts:21-25",
+                PathStyle::Posix,
+                path!("/project/src/main.ts"),
+                20..=24,
+            ),
+            ("src/lib.rs:7", PathStyle::Posix, "src/lib.rs", 6..=6),
+            ("src/lib.rs:42:7", PathStyle::Posix, "src/lib.rs", 41..=41),
+            ("src/lib.rs:L10-L15", PathStyle::Posix, "src/lib.rs", 9..=14),
+            (
+                r"C:\repo\src\main.rs:7-9",
+                PathStyle::Windows,
+                r"C:\repo\src\main.rs",
+                6..=8,
+            ),
+            (
+                r"C:\repo\src\main.rs:7:9",
+                PathStyle::Windows,
+                r"C:\repo\src\main.rs",
+                6..=6,
+            ),
+            (
+                r"d:\repo\main.rs:10",
+                PathStyle::Windows,
+                r"d:\repo\main.rs",
+                9..=9,
+            ),
+            ("  src/lib.rs:7  ", PathStyle::Posix, "src/lib.rs", 6..=6),
+        ];
+
+        for (input, path_style, expected_path, expected_range) in cases {
+            let parsed = MentionUri::parse(input, path_style).unwrap();
+            let MentionUri::Selection {
+                abs_path: Some(path),
+                line_range,
+            } = parsed
+            else {
+                panic!("Expected Selection for input `{input}`, got {parsed:?}");
+            };
+
+            assert_eq!(path, PathBuf::from(expected_path), "Path mismatch for `{input}`");
+            assert_eq!(line_range, expected_range, "Range mismatch for `{input}`");
+        }
+    }
+
+    #[test]
+    fn test_parse_plain_files() {
+        let cases = [
+            (
+                "/project/src/main.ts",
+                PathStyle::Posix,
+                path!("/project/src/main.ts"),
+            ),
+            (
+                r"C:\repo\src\main.rs",
+                PathStyle::Windows,
+                r"C:\repo\src\main.rs",
+            ),
+        ];
+
+        for (input, path_style, expected_path) in cases {
+            let parsed = MentionUri::parse(input, path_style).unwrap();
+            let MentionUri::File { abs_path } = parsed else {
+                panic!("Expected File for input `{input}`, got {parsed:?}");
+            };
+
+            assert_eq!(
+                abs_path,
+                PathBuf::from(expected_path),
+                "Path mismatch for `{input}`"
+            );
+        }
+    }
+
+    #[test]
+    fn test_parse_plain_directories() {
+        let cases = [
+            ("/project/src/", PathStyle::Posix, path!("/project/src/")),
+            (r"C:\repo\src\", PathStyle::Windows, r"C:\repo\src\"),
+        ];
+
+        for (input, path_style, expected_path) in cases {
+            let parsed = MentionUri::parse(input, path_style).unwrap();
+            let MentionUri::Directory { abs_path } = parsed else {
+                panic!("Expected Directory for input `{input}`, got {parsed:?}");
+            };
+
+            assert_eq!(
+                abs_path,
+                PathBuf::from(expected_path),
+                "Path mismatch for `{input}`"
+            );
+        }
+    }
+
+    #[test]
+    fn test_parse_invalid_or_non_selection_inputs() {
+        assert!(
+            MentionUri::parse("example.com:443", PathStyle::Posix).is_err(),
+            "Expected host:port to fail parsing as file location",
+        );
+
+        let parsed = MentionUri::parse("src/lib.rs:0", PathStyle::Posix).unwrap();
+        let MentionUri::File { abs_path } = parsed else {
+            panic!("Expected File fallback for line-0 input, got {parsed:?}");
+        };
+        assert_eq!(abs_path, PathBuf::from("src/lib.rs:0"));
     }
 
     #[test]
