@@ -3282,10 +3282,7 @@ edition = "2021"
     cx.background_executor.allow_parking();
     let project_panel = cx
         .foreground_executor
-        .block_test(ProjectPanel::load(
-            weak_workspace.clone(),
-            async_window_cx.clone(),
-        ))
+        .block_test(ProjectPanel::load(weak_workspace, async_window_cx))
         .context("Failed to load project panel")?;
     cx.background_executor.forbid_parking();
 
