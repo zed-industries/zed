@@ -4390,6 +4390,204 @@ let c = 3;"#
     }
 
     #[gpui::test]
+    async fn test_refresh_requested_multi_server(cx: &mut gpui::TestAppContext) {
+        // Bug 2: When one LSP server sends workspace/inlayHint/refresh, the editor
+        // wipes all tracking state via clear(), then spawns tasks that call
+        // LspStore::inlay_hints with for_server=Some(requesting_server). The LspStore
+        // filters out other servers' cached hints via the for_server guard, so only
+        // the requesting server's hints are returned. apply_fetched_hints removes ALL
+        // visible hints (should_invalidate()=true) but only adds back the requesting
+        // server's hints. Other servers' hints disappear permanently.
+        init_test(cx, &|settings| {
+            settings.defaults.inlay_hints = Some(InlayHintSettingsContent {
+                enabled: Some(true),
+                edit_debounce_ms: Some(0),
+                scroll_debounce_ms: Some(0),
+                show_type_hints: Some(true),
+                show_parameter_hints: Some(true),
+                show_other_hints: Some(true),
+                ..InlayHintSettingsContent::default()
+            })
+        });
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/a"),
+            json!({
+                "main.rs": "fn main() { let x = 1; } // padding to keep hints from being trimmed",
+                "other.rs": "// Test file",
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs, [path!("/a").as_ref()], cx).await;
+        let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+        language_registry.add(rust_lang());
+
+        // Server A returns a hint labeled "server_a".
+        let server_a_request_count = Arc::new(AtomicU32::new(0));
+        let mut fake_servers_a = language_registry.register_fake_lsp(
+            "Rust",
+            FakeLspAdapter {
+                name: "rust-analyzer",
+                capabilities: lsp::ServerCapabilities {
+                    inlay_hint_provider: Some(lsp::OneOf::Left(true)),
+                    ..lsp::ServerCapabilities::default()
+                },
+                initializer: Some(Box::new({
+                    let server_a_request_count = server_a_request_count.clone();
+                    move |fake_server| {
+                        let server_a_request_count = server_a_request_count.clone();
+                        fake_server.set_request_handler::<lsp::request::InlayHintRequest, _, _>(
+                            move |_params, _| {
+                                let count =
+                                    server_a_request_count.fetch_add(1, Ordering::Release) + 1;
+                                async move {
+                                    Ok(Some(vec![lsp::InlayHint {
+                                        position: lsp::Position::new(0, 9),
+                                        label: lsp::InlayHintLabel::String(format!(
+                                            "server_a_{count}"
+                                        )),
+                                        kind: Some(lsp::InlayHintKind::TYPE),
+                                        text_edits: None,
+                                        tooltip: None,
+                                        padding_left: None,
+                                        padding_right: None,
+                                        data: None,
+                                    }]))
+                                }
+                            },
+                        );
+                    }
+                })),
+                ..FakeLspAdapter::default()
+            },
+        );
+
+        // Server B returns a hint labeled "server_b" at a different position.
+        let server_b_request_count = Arc::new(AtomicU32::new(0));
+        let mut fake_servers_b = language_registry.register_fake_lsp(
+            "Rust",
+            FakeLspAdapter {
+                name: "secondary-ls",
+                capabilities: lsp::ServerCapabilities {
+                    inlay_hint_provider: Some(lsp::OneOf::Left(true)),
+                    ..lsp::ServerCapabilities::default()
+                },
+                initializer: Some(Box::new({
+                    let server_b_request_count = server_b_request_count.clone();
+                    move |fake_server| {
+                        let server_b_request_count = server_b_request_count.clone();
+                        fake_server.set_request_handler::<lsp::request::InlayHintRequest, _, _>(
+                            move |_params, _| {
+                                let count =
+                                    server_b_request_count.fetch_add(1, Ordering::Release) + 1;
+                                async move {
+                                    Ok(Some(vec![lsp::InlayHint {
+                                        position: lsp::Position::new(0, 22),
+                                        label: lsp::InlayHintLabel::String(format!(
+                                            "server_b_{count}"
+                                        )),
+                                        kind: Some(lsp::InlayHintKind::TYPE),
+                                        text_edits: None,
+                                        tooltip: None,
+                                        padding_left: None,
+                                        padding_right: None,
+                                        data: None,
+                                    }]))
+                                }
+                            },
+                        );
+                    }
+                })),
+                ..FakeLspAdapter::default()
+            },
+        );
+
+        let buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer(path!("/a/main.rs"), cx)
+            })
+            .await
+            .unwrap();
+        let editor =
+            cx.add_window(|window, cx| Editor::for_buffer(buffer, Some(project), window, cx));
+        cx.executor().run_until_parked();
+
+        let fake_server_a = fake_servers_a.next().await.unwrap();
+        let _fake_server_b = fake_servers_b.next().await.unwrap();
+
+        editor
+            .update(cx, |editor, window, cx| {
+                editor.set_visible_line_count(50.0, window, cx);
+                editor.set_visible_column_count(120.0);
+                editor.refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx);
+            })
+            .unwrap();
+        cx.executor().advance_clock(Duration::from_millis(100));
+        cx.executor().run_until_parked();
+
+        // Verify both servers' hints are present initially.
+        editor
+            .update(cx, |editor, _window, cx| {
+                let visible = visible_hint_labels(editor, cx);
+                let has_a = visible.iter().any(|h| h.starts_with("server_a"));
+                let has_b = visible.iter().any(|h| h.starts_with("server_b"));
+                assert!(
+                    has_a && has_b,
+                    "Both servers should have hints initially. Got: {visible:?}"
+                );
+            })
+            .unwrap();
+
+        // Trigger RefreshRequested from server A. This should re-fetch server A's
+        // hints while keeping server B's hints intact.
+        editor
+            .update(cx, |editor, _window, cx| {
+                editor.refresh_inlay_hints(
+                    InlayHintRefreshReason::RefreshRequested {
+                        server_id: fake_server_a.server.server_id(),
+                        request_id: Some(1),
+                    },
+                    cx,
+                );
+            })
+            .unwrap();
+        cx.executor().advance_clock(Duration::from_millis(100));
+        cx.executor().run_until_parked();
+
+        // Also trigger NewLinesShown to give the system a chance to recover
+        // any chunks that might have been cleared.
+        editor
+            .update(cx, |editor, _window, cx| {
+                editor.refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx);
+            })
+            .unwrap();
+        cx.executor().advance_clock(Duration::from_millis(100));
+        cx.executor().run_until_parked();
+
+        editor
+            .update(cx, |editor, _window, cx| {
+                let visible = visible_hint_labels(editor, cx);
+                let has_a = visible.iter().any(|h| h.starts_with("server_a"));
+                let has_b = visible.iter().any(|h| h.starts_with("server_b"));
+                assert!(
+                    has_a,
+                    "Server A hints should be present after its own refresh. Got: {visible:?}"
+                );
+                assert!(
+                    has_b,
+                    "Server B hints should NOT be lost when server A triggers \
+                     RefreshRequested. Bug 2: clear() wipes all tracking, then \
+                     LspStore filters out server B's cached hints via the for_server \
+                     guard, and apply_fetched_hints removes all visible hints but only \
+                     adds back server A's. Got: {visible:?}"
+                );
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
     async fn test_multi_language_multibuffer_no_duplicate_hints(cx: &mut gpui::TestAppContext) {
         init_test(cx, &|settings| {
             settings.defaults.inlay_hints = Some(InlayHintSettingsContent {
