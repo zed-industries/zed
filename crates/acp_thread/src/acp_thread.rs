@@ -1988,8 +1988,16 @@ impl AcpThread {
                         if r.stop_reason == acp::StopReason::MaxTokens {
                             this.had_error = true;
                             cx.emit(AcpThreadEvent::Error);
-                            log::error!("Max tokens reached. Usage: {:?}", this.token_usage);
-                            return Err(anyhow!("Max tokens reached"));
+                            let max_output_tokens = this
+                                .token_usage
+                                .as_ref()
+                                .and_then(|usage| usage.max_output_tokens)
+                                .map_or("unknown".to_string(), |tokens| tokens.to_string());
+                            let message = format!(
+                                "Max output tokens reached for this response (limit: {max_output_tokens}). Send 'continue' to resume."
+                            );
+                            log::error!("Max tokens reached for the response. Usage: {:?}", this.token_usage);
+                            return Err(anyhow!(message));
                         }
 
                         let canceled = matches!(r.stop_reason, acp::StopReason::Cancelled);
