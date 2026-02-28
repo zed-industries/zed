@@ -5792,7 +5792,7 @@ mod tests {
                 detail: 0,
                 is_active: true,
             };
-            pane.handle_tab_drop(&dragged_tab, 0, true, window, cx);
+            pane.handle_tab_drop(&dragged_tab, 0, false, window, cx);
         });
 
         // A should stay pinned
@@ -5840,7 +5840,7 @@ mod tests {
                 detail: 0,
                 is_active: true,
             };
-            pane.handle_tab_drop(&dragged_tab, 1, true, window, cx);
+            pane.handle_tab_drop(&dragged_tab, 1, false, window, cx);
         });
 
         // A should become pinned
@@ -5884,7 +5884,7 @@ mod tests {
                 detail: 0,
                 is_active: true,
             };
-            pane.handle_tab_drop(&dragged_tab, 0, true, window, cx);
+            pane.handle_tab_drop(&dragged_tab, 0, false, window, cx);
         });
 
         // A should stay pinned
@@ -5946,7 +5946,7 @@ mod tests {
                 detail: 0,
                 is_active: true,
             };
-            pane.handle_tab_drop(&dragged_tab, 0, true, window, cx);
+            pane.handle_tab_drop(&dragged_tab, 0, false, window, cx);
         });
 
         // E (unpinned) should be closed, leaving 3 pinned items
@@ -5981,7 +5981,7 @@ mod tests {
                 detail: 0,
                 is_active: true,
             };
-            pane.handle_tab_drop(&dragged_tab, 1, true, window, cx);
+            pane.handle_tab_drop(&dragged_tab, 1, false, window, cx);
         });
 
         // A should still be pinned and active
@@ -6021,7 +6021,7 @@ mod tests {
                 detail: 0,
                 is_active: true,
             };
-            pane.handle_tab_drop(&dragged_tab, 2, true, window, cx);
+            pane.handle_tab_drop(&dragged_tab, 2, false, window, cx);
         });
 
         // A stays pinned
@@ -6058,7 +6058,7 @@ mod tests {
                 detail: 0,
                 is_active: true,
             };
-            pane.handle_tab_drop(&dragged_tab, 1, true, window, cx);
+            pane.handle_tab_drop(&dragged_tab, 1, false, window, cx);
         });
 
         // Neither are pinned
@@ -6095,7 +6095,7 @@ mod tests {
                 detail: 0,
                 is_active: true,
             };
-            pane.handle_tab_drop(&dragged_tab, 2, true, window, cx);
+            pane.handle_tab_drop(&dragged_tab, 2, false, window, cx);
         });
 
         // A becomes unpinned
@@ -6132,7 +6132,7 @@ mod tests {
                 detail: 0,
                 is_active: true,
             };
-            pane.handle_tab_drop(&dragged_tab, 0, true, window, cx);
+            pane.handle_tab_drop(&dragged_tab, 0, false, window, cx);
         });
 
         // A becomes unpinned
@@ -6168,7 +6168,7 @@ mod tests {
                 detail: 0,
                 is_active: true,
             };
-            pane.handle_tab_drop(&dragged_tab, 1, true, window, cx);
+            pane.handle_tab_drop(&dragged_tab, 1, false, window, cx);
         });
 
         // A stays pinned, B and C remain unpinned
@@ -6209,7 +6209,7 @@ mod tests {
                 detail: 0,
                 is_active: true,
             };
-            pane.handle_tab_drop(&dragged_tab, 0, true, window, cx);
+            pane.handle_tab_drop(&dragged_tab, 0, false, window, cx);
         });
 
         // A should become pinned since it was dropped in the pinned region
@@ -6298,7 +6298,7 @@ mod tests {
                 detail: 0,
                 is_active: true,
             };
-            pane.handle_tab_drop(&dragged_tab, 1, true, window, cx);
+            pane.handle_tab_drop(&dragged_tab, 1, false, window, cx);
         });
 
         // A should be after B and all are pinned
@@ -6313,7 +6313,7 @@ mod tests {
                 detail: 0,
                 is_active: true,
             };
-            pane.handle_tab_drop(&dragged_tab, 2, true, window, cx);
+            pane.handle_tab_drop(&dragged_tab, 2, false, window, cx);
         });
 
         // A should be after C and all are pinned
@@ -6328,7 +6328,7 @@ mod tests {
                 detail: 0,
                 is_active: true,
             };
-            pane.handle_tab_drop(&dragged_tab, 1, true, window, cx);
+            pane.handle_tab_drop(&dragged_tab, 1, false, window, cx);
         });
 
         // A should be before C and all are pinned
@@ -6343,7 +6343,7 @@ mod tests {
                 detail: 0,
                 is_active: true,
             };
-            pane.handle_tab_drop(&dragged_tab, 0, true, window, cx);
+            pane.handle_tab_drop(&dragged_tab, 0, false, window, cx);
         });
 
         // A should be before B and all are pinned
@@ -6375,7 +6375,7 @@ mod tests {
                 detail: 0,
                 is_active: true,
             };
-            pane.handle_tab_drop(&dragged_tab, 2, true, window, cx);
+            pane.handle_tab_drop(&dragged_tab, 2, false, window, cx);
         });
 
         // A should be at the end
@@ -6407,7 +6407,7 @@ mod tests {
                 detail: 0,
                 is_active: true,
             };
-            pane.handle_tab_drop(&dragged_tab, 0, true, window, cx);
+            pane.handle_tab_drop(&dragged_tab, 0, false, window, cx);
         });
 
         // C should be at the beginning
