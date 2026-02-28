@@ -3111,6 +3111,7 @@ fn run_git_command(args: &[&str], dir: &std::path::Path) -> Result<()> {
     Ok(())
 }
 
+#[cfg(all(target_os = "macos", feature = "visual-tests"))]
 fn run_thread_target_selector_visual_tests(
     app_state: Arc<AppState>,
     cx: &mut VisualTestAppContext,
