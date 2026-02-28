@@ -6,7 +6,7 @@ use crate::{
 };
 use anyhow::{Context as _, Result};
 use edit_prediction::example_spec::encode_cursor_in_patch;
-use zeta_prompt::{CURSOR_MARKER, ZetaFormat};
+use zeta_prompt::{CURSOR_MARKER, ZetaFormat, hashline};
 
 pub fn run_parse_output(example: &mut Example) -> Result<()> {
     example
@@ -81,7 +81,10 @@ fn extract_zeta2_current_region(prompt: &str, format: ZetaFormat) -> Result<Stri
         + start;
 
     let region = &prompt[start..end];
-    let region = region.replace(CURSOR_MARKER, "");
+    let mut region = region.replace(CURSOR_MARKER, "");
+    if matches!(format, ZetaFormat::v0226Hashline) {
+        region = hashline::strip_hashline_prefixes(&region);
+    }
 
     Ok(region)
 }
@@ -100,6 +103,9 @@ fn parse_zeta2_output(
     let old_text = extract_zeta2_current_region(prompt, format)?;
 
     let mut new_text = actual_output.to_string();
+    if matches!(format, ZetaFormat::v0226Hashline) {
+        new_text = zeta_prompt::hashline::apply_edit_commands(&old_text, &new_text);
+    }
     let cursor_offset = if let Some(offset) = new_text.find(CURSOR_MARKER) {
         new_text.replace_range(offset..offset + CURSOR_MARKER.len(), "");
         Some(offset)
