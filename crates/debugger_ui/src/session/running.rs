@@ -314,7 +314,6 @@ impl Item for SubView {
         &self,
         active_pane: &Pane,
         dropped: &dyn Any,
-        is_pane_target: bool,
         window: &mut Window,
         cx: &mut App,
     ) -> bool {
@@ -332,11 +331,6 @@ impl Item for SubView {
         let Some(item) = item.filter(|item| item.downcast::<SubView>().is_some()) else {
             return true;
         };
-
-        if !is_pane_target {
-            return false;
-        }
-
         let Some(split_direction) = active_pane.drag_split_direction() else {
             return false;
         };

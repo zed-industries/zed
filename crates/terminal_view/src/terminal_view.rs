@@ -1427,7 +1427,6 @@ impl Item for TerminalView {
         &self,
         active_pane: &Pane,
         dropped: &dyn Any,
-        is_pane_target: bool,
         window: &mut Window,
         cx: &mut App,
     ) -> bool {
@@ -1534,12 +1533,6 @@ impl Item for TerminalView {
 
                 return true;
             } else {
-                if !is_pane_target {
-                    // If a tab was not dropped onto the pane itself, but the
-                    // drop target on the pane's tab, let the pane handle the drop.
-                    return false;
-                }
-
                 if let Some(project_path) = item.project_path(cx)
                     && let Some(path) = project.read(cx).absolute_path(&project_path, cx)
                 {
