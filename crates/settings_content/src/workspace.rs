@@ -113,6 +113,12 @@ pub struct WorkspaceSettingsContent {
     ///
     /// Default: true
     pub zoomed_padding: Option<bool>,
+    /// Whether toggling a panel (e.g. with its keyboard shortcut) also closes
+    /// the panel when it is already focused, instead of just moving focus back
+    /// to the editor.
+    ///
+    /// Default: false
+    pub close_panel_on_toggle: Option<bool>,
     /// What draws window decorations/titlebar, the client application (Zed) or display server
     /// Default: client
     pub window_decorations: Option<WindowDecorations>,
@@ -733,6 +739,10 @@ pub struct ProjectPanelSettingsContent {
     ///
     /// Default: directories_first
     pub sort_mode: Option<ProjectPanelSortMode>,
+    /// Whether to show error and warning count badges next to file names in the project panel.
+    ///
+    /// Default: true
+    pub diagnostic_badges: Option<bool>,
 }
 
 #[derive(

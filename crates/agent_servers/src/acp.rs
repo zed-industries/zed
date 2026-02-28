@@ -7,11 +7,10 @@ use action_log::ActionLog;
 use agent_client_protocol::{self as acp, Agent as _, ErrorCode};
 use anyhow::anyhow;
 use collections::HashMap;
-use feature_flags::{AcpBetaFeatureFlag, FeatureFlagAppExt as _};
 use futures::AsyncBufReadExt as _;
 use futures::io::BufReader;
 use project::Project;
-use project::agent_server_store::AgentServerCommand;
+use project::agent_server_store::{AgentServerCommand, GEMINI_NAME};
 use serde::Deserialize;
 use settings::Settings as _;
 use task::ShellBuilder;
@@ -37,6 +36,7 @@ pub struct UnsupportedVersion;
 
 pub struct AcpConnection {
     server_name: SharedString,
+    display_name: SharedString,
     telemetry_id: SharedString,
     connection: Rc<acp::ClientSideConnection>,
     sessions: Rc<RefCell<HashMap<acp::SessionId, AcpSession>>>,
@@ -45,7 +45,6 @@ pub struct AcpConnection {
     default_mode: Option<acp::SessionModeId>,
     default_model: Option<acp::ModelId>,
     default_config_options: HashMap<String, String>,
-    root_dir: PathBuf,
     child: Child,
     session_list: Option<Rc<AcpSessionList>>,
     _io_task: Task<Result<(), acp::Error>>,
@@ -159,22 +158,20 @@ impl AgentSessionList for AcpSessionList {
 
 pub async fn connect(
     server_name: SharedString,
+    display_name: SharedString,
     command: AgentServerCommand,
-    root_dir: &Path,
     default_mode: Option<acp::SessionModeId>,
     default_model: Option<acp::ModelId>,
     default_config_options: HashMap<String, String>,
-    is_remote: bool,
     cx: &mut AsyncApp,
 ) -> Result<Rc<dyn AgentConnection>> {
     let conn = AcpConnection::stdio(
         server_name,
+        display_name,
         command.clone(),
-        root_dir,
         default_mode,
         default_model,
         default_config_options,
-        is_remote,
         cx,
     )
     .await?;
@@ -186,12 +183,11 @@ const MINIMUM_SUPPORTED_VERSION: acp::ProtocolVersion = acp::ProtocolVersion::V1
 impl AcpConnection {
     pub async fn stdio(
         server_name: SharedString,
+        display_name: SharedString,
         command: AgentServerCommand,
-        root_dir: &Path,
         default_mode: Option<acp::SessionModeId>,
         default_model: Option<acp::ModelId>,
         default_config_options: HashMap<String, String>,
-        is_remote: bool,
         cx: &mut AsyncApp,
     ) -> Result<Self> {
         let shell = cx.update(|cx| TerminalSettings::get(None, cx).shell.clone());
@@ -199,9 +195,6 @@ impl AcpConnection {
         let mut child =
             builder.build_std_command(Some(command.path.display().to_string()), &command.args);
         child.envs(command.env.iter().flatten());
-        if !is_remote {
-            child.current_dir(root_dir);
-        }
         let mut child = Child::spawn(child, Stdio::piped(), Stdio::piped(), Stdio::piped())?;
 
         let stdout = child.stdout.take().context("Failed to take stdout")?;
@@ -326,11 +319,30 @@ impl AcpConnection {
             None
         };
 
+        // TODO: Remove this override once Google team releases their official auth methods
+        let auth_methods = if server_name == GEMINI_NAME {
+            let mut args = command.args.clone();
+            args.retain(|a| a != "--experimental-acp");
+            let value = serde_json::json!({
+                "label": "gemini /auth",
+                "command": command.path.to_string_lossy().into_owned(),
+                "args": args,
+                "env": command.env.clone().unwrap_or_default(),
+            });
+            let meta = acp::Meta::from_iter([("terminal-auth".to_string(), value)]);
+            vec![
+                acp::AuthMethod::new("spawn-gemini-cli", "Login")
+                    .description("Login with your Google or Vertex AI account")
+                    .meta(meta),
+            ]
+        } else {
+            response.auth_methods
+        };
         Ok(Self {
-            auth_methods: response.auth_methods,
-            root_dir: root_dir.to_owned(),
+            auth_methods,
             connection,
             server_name,
+            display_name,
             telemetry_id,
             sessions,
             agent_capabilities: response.agent_capabilities,
@@ -347,10 +359,6 @@ impl AcpConnection {
 
     pub fn prompt_capabilities(&self) -> &acp::PromptCapabilities {
         &self.agent_capabilities.prompt_capabilities
-    }
-
-    pub fn root_dir(&self) -> &Path {
-        &self.root_dir
     }
 }
 
@@ -419,10 +427,6 @@ impl AgentConnection for AcpConnection {
                             "`{default_mode}` is not valid {name} mode. Available options:\n{available_modes}",
                         );
                     }
-                } else {
-                    log::warn!(
-                        "`{name}` does not support modes, but `default_mode` was set in settings.",
-                    );
                 }
             }
 
@@ -462,10 +466,6 @@ impl AgentConnection for AcpConnection {
                             "`{default_model}` is not a valid {name} model. Available options:\n{available_models}",
                         );
                     }
-                } else {
-                    log::warn!(
-                        "`{name}` does not support model selection, but `default_model` was set in settings.",
-                    );
                 }
             }
 
@@ -559,7 +559,7 @@ impl AgentConnection for AcpConnection {
             let thread: Entity<AcpThread> = cx.new(|cx| {
                 AcpThread::new(
                     None,
-                    self.server_name.clone(),
+                    self.display_name.clone(),
                     self.clone(),
                     project,
                     action_log,
@@ -585,17 +585,15 @@ impl AgentConnection for AcpConnection {
         })
     }
 
-    fn supports_load_session(&self, cx: &App) -> bool {
-        cx.has_flag::<AcpBetaFeatureFlag>() && self.agent_capabilities.load_session
+    fn supports_load_session(&self) -> bool {
+        self.agent_capabilities.load_session
     }
 
-    fn supports_resume_session(&self, cx: &App) -> bool {
-        cx.has_flag::<AcpBetaFeatureFlag>()
-            && self
-                .agent_capabilities
-                .session_capabilities
-                .resume
-                .is_some()
+    fn supports_resume_session(&self) -> bool {
+        self.agent_capabilities
+            .session_capabilities
+            .resume
+            .is_some()
     }
 
     fn load_session(
@@ -605,7 +603,7 @@ impl AgentConnection for AcpConnection {
         cwd: &Path,
         cx: &mut App,
     ) -> Task<Result<Entity<AcpThread>>> {
-        if !cx.has_flag::<AcpBetaFeatureFlag>() || !self.agent_capabilities.load_session {
+        if !self.agent_capabilities.load_session {
             return Task::ready(Err(anyhow!(LoadError::Other(
                 "Loading sessions is not supported by this agent.".into()
             ))));
@@ -614,10 +612,14 @@ impl AgentConnection for AcpConnection {
         let cwd = cwd.to_path_buf();
         let mcp_servers = mcp_servers_for_project(&project, cx);
         let action_log = cx.new(|_| ActionLog::new(project.clone()));
+        let title = session
+            .title
+            .clone()
+            .unwrap_or_else(|| self.display_name.clone());
         let thread: Entity<AcpThread> = cx.new(|cx| {
             AcpThread::new(
                 None,
-                self.server_name.clone(),
+                title,
                 self.clone(),
                 project,
                 action_log,
@@ -673,12 +675,11 @@ impl AgentConnection for AcpConnection {
         cwd: &Path,
         cx: &mut App,
     ) -> Task<Result<Entity<AcpThread>>> {
-        if !cx.has_flag::<AcpBetaFeatureFlag>()
-            || self
-                .agent_capabilities
-                .session_capabilities
-                .resume
-                .is_none()
+        if self
+            .agent_capabilities
+            .session_capabilities
+            .resume
+            .is_none()
         {
             return Task::ready(Err(anyhow!(LoadError::Other(
                 "Resuming sessions is not supported by this agent.".into()
@@ -688,10 +689,14 @@ impl AgentConnection for AcpConnection {
         let cwd = cwd.to_path_buf();
         let mcp_servers = mcp_servers_for_project(&project, cx);
         let action_log = cx.new(|_| ActionLog::new(project.clone()));
+        let title = session
+            .title
+            .clone()
+            .unwrap_or_else(|| self.display_name.clone());
         let thread: Entity<AcpThread> = cx.new(|cx| {
             AcpThread::new(
                 None,
-                self.server_name.clone(),
+                title,
                 self.clone(),
                 project,
                 action_log,
@@ -887,12 +892,8 @@ impl AgentConnection for AcpConnection {
         }) as _)
     }
 
-    fn session_list(&self, cx: &mut App) -> Option<Rc<dyn AgentSessionList>> {
-        if cx.has_flag::<AcpBetaFeatureFlag>() {
-            self.session_list.clone().map(|s| s as _)
-        } else {
-            None
-        }
+    fn session_list(&self, _cx: &mut App) -> Option<Rc<dyn AgentSessionList>> {
+        self.session_list.clone().map(|s| s as _)
     }
 
     fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
@@ -1219,10 +1220,6 @@ impl acp::Client for ClientDelegate {
         {
             if let Some(session_modes) = &session.session_modes {
                 session_modes.borrow_mut().current_mode_id = current_mode_id.clone();
-            } else {
-                log::error!(
-                    "Got a `CurrentModeUpdate` notification, but they agent didn't specify `modes` during setting setup."
-                );
             }
         }
 
@@ -1234,10 +1231,6 @@ impl acp::Client for ClientDelegate {
             if let Some(opts) = &session.config_options {
                 *opts.config_options.borrow_mut() = config_options.clone();
                 opts.tx.borrow_mut().send(()).ok();
-            } else {
-                log::error!(
-                    "Got a `ConfigOptionUpdate` notification, but the agent didn't specify `config_options` during session setup."
-                );
             }
         }
 

@@ -50,6 +50,7 @@ use {
     agent_servers::{AgentServer, AgentServerDelegate},
     anyhow::{Context as _, Result},
     assets::Assets,
+    chrono::{Duration as ChronoDuration, Utc},
     editor::display_map::DisplayRow,
     feature_flags::FeatureFlagAppExt as _,
     git_ui::project_diff::ProjectDiff,
@@ -149,7 +150,10 @@ fn main() {
 fn run_visual_tests(project_path: PathBuf, update_baseline: bool) -> Result<()> {
     // Create the visual test context with deterministic task scheduling
     // Use real Assets so that SVG icons render properly
-    let mut cx = VisualTestAppContext::with_asset_source(Arc::new(Assets));
+    let mut cx = VisualTestAppContext::with_asset_source(
+        gpui_platform::current_platform(false),
+        Arc::new(Assets),
+    );
 
     // Load embedded fonts (IBM Plex Sans, Lilex, etc.) so UI renders with correct fonts
     cx.update(|cx| {
@@ -526,8 +530,26 @@ fn run_visual_tests(project_path: PathBuf, update_baseline: bool) -> Result<()> 
         }
     }
 
-    // Run Test 8: Tool Permissions Settings UI visual test
-    println!("\n--- Test 8: tool_permissions_settings ---");
+    // Run Test 8: ThreadItem icon decorations visual tests
+    println!("\n--- Test 8: thread_item_icon_decorations ---");
+    match run_thread_item_icon_decorations_visual_tests(app_state.clone(), &mut cx, update_baseline)
+    {
+        Ok(TestResult::Passed) => {
+            println!("✓ thread_item_icon_decorations: PASSED");
+            passed += 1;
+        }
+        Ok(TestResult::BaselineUpdated(_)) => {
+            println!("✓ thread_item_icon_decorations: Baseline updated");
+            updated += 1;
+        }
+        Err(e) => {
+            eprintln!("✗ thread_item_icon_decorations: FAILED - {}", e);
+            failed += 1;
+        }
+    }
+
+    // Run Test 9: Tool Permissions Settings UI visual test
+    println!("\n--- Test 9: tool_permissions_settings ---");
     match run_tool_permissions_visual_tests(app_state.clone(), &mut cx, update_baseline) {
         Ok(TestResult::Passed) => {
             println!("✓ tool_permissions_settings: PASSED");
@@ -543,8 +565,8 @@ fn run_visual_tests(project_path: PathBuf, update_baseline: bool) -> Result<()> 
         }
     }
 
-    // Run Test 9: Settings UI sub-page auto-open visual tests
-    println!("\n--- Test 9: settings_ui_subpage_auto_open (2 variants) ---");
+    // Run Test 10: Settings UI sub-page auto-open visual tests
+    println!("\n--- Test 10: settings_ui_subpage_auto_open (2 variants) ---");
     match run_settings_ui_subpage_visual_tests(app_state.clone(), &mut cx, update_baseline) {
         Ok(TestResult::Passed) => {
             println!("✓ settings_ui_subpage_auto_open: PASSED");
@@ -1266,7 +1288,7 @@ fn run_settings_ui_subpage_visual_tests(
         )
     });
 
-    let workspace_window: WindowHandle<Workspace> = cx
+    let workspace_window: WindowHandle<MultiWorkspace> = cx
         .update(|cx| {
             cx.open_window(
                 WindowOptions {
@@ -1276,9 +1298,10 @@ fn run_settings_ui_subpage_visual_tests(
                     ..Default::default()
                 },
                 |window, cx| {
-                    cx.new(|cx| {
+                    let workspace = cx.new(|cx| {
                         Workspace::new(None, project.clone(), app_state.clone(), window, cx)
-                    })
+                    });
+                    cx.new(|cx| MultiWorkspace::new(workspace, window, cx))
                 },
             )
         })
@@ -1922,11 +1945,10 @@ impl AgentServer for StubAgentServer {
 
     fn connect(
         &self,
-        _root_dir: Option<&Path>,
         _delegate: AgentServerDelegate,
         _cx: &mut App,
-    ) -> gpui::Task<gpui::Result<(Rc<dyn AgentConnection>, Option<task::SpawnInTerminal>)>> {
-        gpui::Task::ready(Ok((Rc::new(self.connection.clone()), None)))
+    ) -> gpui::Task<gpui::Result<Rc<dyn AgentConnection>>> {
+        gpui::Task::ready(Ok(Rc::new(self.connection.clone())))
     }
 
     fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
@@ -1940,7 +1962,7 @@ fn run_agent_thread_view_test(
     cx: &mut VisualTestAppContext,
     update_baseline: bool,
 ) -> Result<TestResult> {
-    use agent::AgentTool;
+    use agent::{AgentTool, ToolInput};
     use agent_ui::AgentPanel;
 
     // Create a temporary directory with the test image
@@ -2025,12 +2047,20 @@ fn run_agent_thread_view_test(
         start_line: None,
         end_line: None,
     };
-    let run_task = cx.update(|cx| tool.clone().run(input, event_stream, cx));
+    let run_task = cx.update(|cx| {
+        tool.clone()
+            .run(ToolInput::resolved(input), event_stream, cx)
+    });
 
     cx.background_executor.allow_parking();
     let run_result = cx.foreground_executor.block_test(run_task);
     cx.background_executor.forbid_parking();
-    run_result.context("ReadFileTool failed")?;
+    run_result.map_err(|e| match e {
+        language_model::LanguageModelToolResultContent::Text(text) => {
+            anyhow::anyhow!("ReadFileTool failed: {text}")
+        }
+        other => anyhow::anyhow!("ReadFileTool failed: {other:?}"),
+    })?;
 
     cx.run_until_parked();
 
@@ -2316,7 +2346,7 @@ fn run_tool_permissions_visual_tests(
         )
     });
 
-    let workspace_window: WindowHandle<Workspace> = cx
+    let workspace_window: WindowHandle<MultiWorkspace> = cx
         .update(|cx| {
             cx.open_window(
                 WindowOptions {
@@ -2326,9 +2356,10 @@ fn run_tool_permissions_visual_tests(
                     ..Default::default()
                 },
                 |window, cx| {
-                    cx.new(|cx| {
+                    let workspace = cx.new(|cx| {
                         Workspace::new(None, project.clone(), app_state.clone(), window, cx)
-                    })
+                    });
+                    cx.new(|cx| MultiWorkspace::new(workspace, window, cx))
                 },
             )
         })
@@ -2654,30 +2685,40 @@ fn run_multi_workspace_sidebar_visual_tests(
     // be inside a MultiWorkspace update when that happens.
     cx.update(|cx| {
         sidebar.update(cx, |sidebar, cx| {
+            let now = Utc::now();
+            let today_timestamp = now;
+            let yesterday_timestamp = now - ChronoDuration::days(1);
+            let past_week_timestamp = now - ChronoDuration::days(10);
+            let all_timestamp = now - ChronoDuration::days(60);
+
             let recent_projects = vec![
                 RecentProjectEntry {
                     name: "tiny-project".into(),
                     full_path: recent1_dir.to_string_lossy().to_string().into(),
                     paths: vec![recent1_dir.clone()],
                     workspace_id: WorkspaceId::default(),
+                    timestamp: today_timestamp,
                 },
                 RecentProjectEntry {
                     name: "font-kit".into(),
                     full_path: recent2_dir.to_string_lossy().to_string().into(),
                     paths: vec![recent2_dir.clone()],
                     workspace_id: WorkspaceId::default(),
+                    timestamp: yesterday_timestamp,
                 },
                 RecentProjectEntry {
                     name: "ideas".into(),
                     full_path: recent3_dir.to_string_lossy().to_string().into(),
                     paths: vec![recent3_dir.clone()],
                     workspace_id: WorkspaceId::default(),
+                    timestamp: past_week_timestamp,
                 },
                 RecentProjectEntry {
                     name: "tmp".into(),
                     full_path: recent4_dir.to_string_lossy().to_string().into(),
                     paths: vec![recent4_dir.clone()],
                     workspace_id: WorkspaceId::default(),
+                    timestamp: all_timestamp,
                 },
             ];
             sidebar.set_test_recent_projects(recent_projects, cx);
@@ -2690,12 +2731,12 @@ fn run_multi_workspace_sidebar_visual_tests(
             sidebar.set_test_thread_info(
                 0,
                 "Refine thread view scrolling behavior".into(),
-                sidebar::AgentThreadStatus::Completed,
+                ui::AgentThreadStatus::Completed,
             );
             sidebar.set_test_thread_info(
                 1,
                 "Add line numbers option to FileEditBlock".into(),
-                sidebar::AgentThreadStatus::Running,
+                ui::AgentThreadStatus::Running,
             );
         });
     });
@@ -2827,6 +2868,151 @@ impl gpui::Render for ErrorWrappingTestView {
                     .actions_slot(Button::new("retry", "Retry").label_size(LabelSize::Small)),
             )
     }
+}
+
+#[cfg(target_os = "macos")]
+struct ThreadItemIconDecorationsTestView;
+
+#[cfg(target_os = "macos")]
+impl gpui::Render for ThreadItemIconDecorationsTestView {
+    fn render(
+        &mut self,
+        _window: &mut gpui::Window,
+        cx: &mut gpui::Context<Self>,
+    ) -> impl gpui::IntoElement {
+        use ui::{IconName, Label, LabelSize, ThreadItem, prelude::*};
+
+        let section_label = |text: &str| {
+            Label::new(text.to_string())
+                .size(LabelSize::Small)
+                .color(Color::Muted)
+        };
+
+        let container = || {
+            v_flex()
+                .w_80()
+                .border_1()
+                .border_color(cx.theme().colors().border_variant)
+                .bg(cx.theme().colors().panel_background)
+        };
+
+        v_flex()
+            .size_full()
+            .bg(cx.theme().colors().background)
+            .p_4()
+            .gap_3()
+            .child(
+                Label::new("ThreadItem Icon Decorations")
+                    .size(LabelSize::Large)
+                    .color(Color::Default),
+            )
+            .child(section_label("No decoration (default idle)"))
+            .child(
+                container()
+                    .child(ThreadItem::new("ti-none", "Default idle thread").timestamp("1:00 AM")),
+            )
+            .child(section_label("Blue dot (generation done)"))
+            .child(
+                container().child(
+                    ThreadItem::new("ti-done", "Generation completed successfully")
+                        .timestamp("1:05 AM")
+                        .generation_done(true),
+                ),
+            )
+            .child(section_label("Yellow triangle (waiting for confirmation)"))
+            .child(
+                container().child(
+                    ThreadItem::new("ti-waiting", "Waiting for user confirmation")
+                        .timestamp("1:10 AM")
+                        .status(ui::AgentThreadStatus::WaitingForConfirmation),
+                ),
+            )
+            .child(section_label("Red X (error)"))
+            .child(
+                container().child(
+                    ThreadItem::new("ti-error", "Failed to connect to server")
+                        .timestamp("1:15 AM")
+                        .status(ui::AgentThreadStatus::Error),
+                ),
+            )
+            .child(section_label("Spinner (running)"))
+            .child(
+                container().child(
+                    ThreadItem::new("ti-running", "Generating response...")
+                        .icon(IconName::AiClaude)
+                        .timestamp("1:20 AM")
+                        .running(true),
+                ),
+            )
+            .child(section_label(
+                "Spinner + yellow triangle (running + waiting)",
+            ))
+            .child(
+                container().child(
+                    ThreadItem::new("ti-running-waiting", "Running but needs confirmation")
+                        .icon(IconName::AiClaude)
+                        .timestamp("1:25 AM")
+                        .running(true)
+                        .status(ui::AgentThreadStatus::WaitingForConfirmation),
+                ),
+            )
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn run_thread_item_icon_decorations_visual_tests(
+    _app_state: Arc<AppState>,
+    cx: &mut VisualTestAppContext,
+    update_baseline: bool,
+) -> Result<TestResult> {
+    let window_size = size(px(400.0), px(600.0));
+    let bounds = Bounds {
+        origin: point(px(0.0), px(0.0)),
+        size: window_size,
+    };
+
+    let window = cx
+        .update(|cx| {
+            cx.open_window(
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::Windowed(bounds)),
+                    focus: false,
+                    show: false,
+                    ..Default::default()
+                },
+                |_window, cx| cx.new(|_| ThreadItemIconDecorationsTestView),
+            )
+        })
+        .context("Failed to open thread item icon decorations test window")?;
+
+    cx.run_until_parked();
+
+    cx.update_window(window.into(), |_, window, _cx| {
+        window.refresh();
+    })?;
+
+    cx.run_until_parked();
+
+    let test_result = run_visual_test(
+        "thread_item_icon_decorations",
+        window.into(),
+        cx,
+        update_baseline,
+    )?;
+
+    cx.update_window(window.into(), |_, window, _cx| {
+        window.remove_window();
+    })
+    .log_err();
+
+    cx.run_until_parked();
+
+    for _ in 0..15 {
+        cx.advance_clock(Duration::from_millis(100));
+        cx.run_until_parked();
+    }
+
+    Ok(test_result)
 }
 
 #[cfg(target_os = "macos")]

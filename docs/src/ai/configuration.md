@@ -16,7 +16,7 @@ You can configure multiple dimensions of AI usage in Zed:
 
 ## Turning AI Off Entirely
 
-To disable all AI features, add the following to your `settings.json`:
+To disable all AI features, add the following to your settings file ([how to edit](../configuring-zed.md#settings-files)):
 
 ```json [settings]
 {

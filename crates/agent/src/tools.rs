@@ -14,9 +14,10 @@ mod open_tool;
 mod read_file_tool;
 mod restore_file_from_disk_tool;
 mod save_file_tool;
+mod spawn_agent_tool;
 mod streaming_edit_file_tool;
-mod subagent_tool;
 mod terminal_tool;
+mod tool_edit_parser;
 mod tool_permissions;
 mod web_search_tool;
 
@@ -39,8 +40,8 @@ pub use open_tool::*;
 pub use read_file_tool::*;
 pub use restore_file_from_disk_tool::*;
 pub use save_file_tool::*;
+pub use spawn_agent_tool::*;
 pub use streaming_edit_file_tool::*;
-pub use subagent_tool::*;
 pub use terminal_tool::*;
 pub use tool_permissions::*;
 pub use web_search_tool::*;
@@ -100,6 +101,7 @@ macro_rules! tools {
                     name: T::NAME.to_string(),
                     description: T::description().to_string(),
                     input_schema: T::input_schema(LanguageModelToolSchemaFormat::JsonSchema).to_value(),
+                    use_input_streaming: T::supports_input_streaming(),
                 }
             }
             [
@@ -128,7 +130,7 @@ tools! {
     ReadFileTool,
     RestoreFileFromDiskTool,
     SaveFileTool,
-    SubagentTool,
+    SpawnAgentTool,
     TerminalTool,
     WebSearchTool,
 }

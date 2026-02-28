@@ -1,3 +1,8 @@
+---
+title: HTML
+description: "Configure HTML language support in Zed, including language servers, formatting, and debugging."
+---
+
 # HTML
 
 HTML support is available through the [HTML extension](https://github.com/zed-industries/zed/tree/main/extensions/html).
@@ -19,7 +24,7 @@ This extension is automatically installed, but if you do not want to use it, you
 
 By default Zed uses [Prettier](https://prettier.io/) for formatting HTML.
 
-You can disable `format_on_save` by adding the following to your Zed `settings.json`:
+Configure formatting in Settings ({#kb zed::OpenSettings}) under Languages > HTML, or add to your settings file:
 
 ```json [settings]
   "languages": {
@@ -29,11 +34,11 @@ You can disable `format_on_save` by adding the following to your Zed `settings.j
   }
 ```
 
-You can still trigger formatting manually with {#kb editor::Format} or by opening [the Command Palette](..//getting-started.md#command-palette) ({#kb command_palette::Toggle}) and selecting "Format Document".
+You can still trigger formatting manually with {#kb editor::Format} or by opening the [command palette](..//getting-started.md#command-palette) ({#kb command_palette::Toggle}) and selecting "Format Document".
 
 ### LSP Formatting
 
-To use the `vscode-html-language-server` language server auto-formatting instead of Prettier, add the following to your Zed settings:
+To use the `vscode-html-language-server` language server auto-formatting instead of Prettier, configure the formatter in Settings ({#kb zed::OpenSettings}) under Languages > HTML, or add to your settings file:
 
 ```json [settings]
   "languages": {

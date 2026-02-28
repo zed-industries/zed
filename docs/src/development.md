@@ -1,3 +1,8 @@
+---
+title: Developing Zed
+description: "Guide to building and developing Zed from source."
+---
+
 # Developing Zed
 
 See the platform-specific instructions for building Zed from source:
@@ -21,9 +26,9 @@ your password again the next time something changes in the binary.
 This quickly becomes annoying and impedes development speed.
 
 That is why, by default, when running a development build of Zed an alternative
-credential provider is used in order to bypass the system keychain.
+credential provider is used to bypass the system keychain.
 
-> Note: This is **only** the case for development builds. For all non-development
+> **Note:** This is **only** the case for development builds. For all non-development
 > release channels the system keychain is always used.
 
 If you need to test something out using the real system keychain in a
@@ -80,6 +85,36 @@ The `script/histogram` tool can accept as many measurement files as you like and
 For benchmarking unit tests, annotate them with the `#[perf]` attribute from the `util_macros` crate. Then run `cargo
 perf-test -p $CRATE` to benchmark them. See the rustdoc documentation on `crates/util_macros` and `tooling/perf` for
 in-depth examples and explanations.
+
+## ETW Profiling on Windows
+
+> **Changed in Preview (v0.225).** See [release notes](/releases#0.225).
+
+Zed supports Event Tracing for Windows (ETW) to capture detailed performance data. You can record CPU, GPU, disk I/O, and file I/O activity, with optional heap allocation tracking.
+
+### Recording a trace
+
+Open the command palette and run:
+
+- **`etw_tracing: Record Etw Trace`** — Records CPU, GPU, and I/O activity
+- **`etw_tracing: Record Etw Trace With Heap Tracing`** — Includes heap allocation data for the Zed process
+
+Zed prompts you to choose a save location for the `.etl` trace file.
+
+### Saving or canceling
+
+While recording:
+
+- **`etw_tracing: Save Etw Trace`** — Stops recording and saves the trace to disk
+- **`etw_tracing: Cancel Etw Trace`** — Stops recording without saving
+
+Zed buffers trace data in memory. Recordings automatically save after 60 seconds if you don't manually stop them.
+
+### Analyzing traces
+
+Open `.etl` files with [Windows Performance Analyzer](https://learn.microsoft.com/en-us/windows-hardware/test/wpt/windows-performance-analyzer) to inspect CPU stacks, GPU usage, disk I/O patterns, and heap allocations.
+
+**Note for existing keybindings**: The `etw_tracing::StopEtwTrace` action was renamed to `etw_tracing::SaveEtwTrace`. Update any custom keybindings.
 
 ## Contributor links
 
