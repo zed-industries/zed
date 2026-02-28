@@ -700,6 +700,10 @@ jobs:
       with:
         input: crates/proto/proto/
         against: https://github.com/${GITHUB_REPOSITORY}.git#branch=${BUF_BASE_BRANCH},subdir=crates/proto/proto/
+    - name: run_tests::check_postgres_and_protobuf_migrations::buf_lint
+      run: buf lint crates/proto/proto
+    - name: run_tests::check_postgres_and_protobuf_migrations::check_protobuf_formatting
+      run: buf format --diff --exit-code crates/proto/proto
     timeout-minutes: 60
   tests_pass:
     needs:
