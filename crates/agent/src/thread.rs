@@ -9,7 +9,8 @@ use crate::{
 use acp_thread::{MentionUri, UserMessageId};
 use action_log::ActionLog;
 use feature_flags::{
-    FeatureFlagAppExt as _, StreamingEditFileToolFeatureFlag, SubagentsFeatureFlag,
+    FeatureFlagAppExt as _, MultiAgentCollaborationFeatureFlag, StreamingEditFileToolFeatureFlag,
+SubagentsFeatureFlag,
 };
 
 use agent_client_protocol as acp;
@@ -66,6 +67,7 @@ use uuid::Uuid;
 const TOOL_CANCELED_MESSAGE: &str = "Tool canceled by user";
 pub const MAX_TOOL_NAME_LENGTH: usize = 64;
 pub const MAX_SUBAGENT_DEPTH: u8 = 1;
+pub const MAX_SUBAGENT_DEPTH_MULTI_AGENT: u8 = 2;
 
 /// Context passed to a subagent thread for lifecycle management
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -1373,10 +1375,18 @@ impl Thread {
         self.add_tool(TerminalTool::new(self.project.clone(), environment.clone()));
         self.add_tool(WebSearchTool);
 
-        if cx.has_flag::<SubagentsFeatureFlag>() && self.depth() < MAX_SUBAGENT_DEPTH {
-            self.add_tool(SpawnAgentTool::new(environment));
-        }
+        let max_depth = if cx.has_flag::<MultiAgentCollaborationFeatureFlag>() {
+    MAX_SUBAGENT_DEPTH_MULTI_AGENT
+} else {
+    MAX_SUBAGENT_DEPTH
+};
+
+if cx.has_flag::<SubagentsFeatureFlag>() && self.depth() < max_depth {
+    self.add_tool(SpawnAgentTool::new(environment.clone()));
+    if self.depth() == 0 && cx.has_flag::<MultiAgentCollaborationFeatureFlag>() {
+        self.add_tool(ParallelAgentsTool::new(environment));
     }
+}
 
     pub fn add_tool<T: AgentTool>(&mut self, tool: T) {
         debug_assert!(
