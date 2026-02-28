@@ -820,6 +820,18 @@ impl Editor {
         // from the cache.
         if invalidate_cache.should_invalidate() {
             hints_to_remove.extend(visible_inlay_hint_ids);
+
+            // When invalidating, this task removes ALL visible hints for the buffer
+            // but only adds back hints for its own chunk ranges. Chunks fetched by
+            // other concurrent tasks (e.g., a scroll task that completed before this
+            // edit task) would have their hints removed but remain marked as "already
+            // fetched" in hint_chunk_fetching, preventing re-fetch on the next
+            // NewLinesShown. Fix: retain only chunks that this task has results for.
+            let task_chunk_ranges: HashSet<&Range<BufferRow>> =
+                new_hints.iter().map(|(range, _)| range).collect();
+            if let Some((_, fetched_chunks)) = inlay_hints.hint_chunk_fetching.get_mut(&buffer_id) {
+                fetched_chunks.retain(|chunk| task_chunk_ranges.contains(chunk));
+            }
         }
 
         let mut inserted_hint_text = HashMap::default();
@@ -4177,6 +4189,204 @@ let c = 3;"#
             4,
             "Should have queried hints once more per each file, after editing the file once"
         );
+    }
+
+    #[gpui::test]
+    async fn test_edit_then_scroll_race(cx: &mut gpui::TestAppContext) {
+        // Bug 1: An edit fires with a long debounce, and a scroll brings new lines
+        // before that debounce elapses. The edit task's apply_fetched_hints removes
+        // ALL visible hints (including the scroll-added ones) but only adds back
+        // hints for its own chunks. The scroll chunk remains in hint_chunk_fetching,
+        // so it is never re-queried, leaving it permanently empty.
+        init_test(cx, &|settings| {
+            settings.defaults.inlay_hints = Some(InlayHintSettingsContent {
+                enabled: Some(true),
+                edit_debounce_ms: Some(700),
+                scroll_debounce_ms: Some(50),
+                show_type_hints: Some(true),
+                show_parameter_hints: Some(true),
+                show_other_hints: Some(true),
+                ..InlayHintSettingsContent::default()
+            })
+        });
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        let mut file_content = String::from("fn main() {\n");
+        for i in 0..150 {
+            file_content.push_str(&format!("    let v{i} = {i};\n"));
+        }
+        file_content.push_str("}\n");
+        fs.insert_tree(
+            path!("/a"),
+            json!({
+                "main.rs": file_content,
+                "other.rs": "// Test file",
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs, [path!("/a").as_ref()], cx).await;
+        let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+        language_registry.add(rust_lang());
+
+        let lsp_request_ranges = Arc::new(Mutex::new(Vec::new()));
+        let mut fake_servers = language_registry.register_fake_lsp(
+            "Rust",
+            FakeLspAdapter {
+                capabilities: lsp::ServerCapabilities {
+                    inlay_hint_provider: Some(lsp::OneOf::Left(true)),
+                    ..lsp::ServerCapabilities::default()
+                },
+                initializer: Some(Box::new({
+                    let lsp_request_ranges = lsp_request_ranges.clone();
+                    move |fake_server| {
+                        let lsp_request_ranges = lsp_request_ranges.clone();
+                        fake_server.set_request_handler::<lsp::request::InlayHintRequest, _, _>(
+                            move |params, _| {
+                                let lsp_request_ranges = lsp_request_ranges.clone();
+                                async move {
+                                    lsp_request_ranges.lock().push(params.range);
+                                    let start_line = params.range.start.line;
+                                    Ok(Some(vec![lsp::InlayHint {
+                                        position: lsp::Position::new(start_line + 1, 9),
+                                        label: lsp::InlayHintLabel::String(format!(
+                                            "chunk_{start_line}"
+                                        )),
+                                        kind: Some(lsp::InlayHintKind::TYPE),
+                                        text_edits: None,
+                                        tooltip: None,
+                                        padding_left: None,
+                                        padding_right: None,
+                                        data: None,
+                                    }]))
+                                }
+                            },
+                        );
+                    }
+                })),
+                ..FakeLspAdapter::default()
+            },
+        );
+
+        let buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer(path!("/a/main.rs"), cx)
+            })
+            .await
+            .unwrap();
+        let editor =
+            cx.add_window(|window, cx| Editor::for_buffer(buffer, Some(project), window, cx));
+        cx.executor().run_until_parked();
+        let _fake_server = fake_servers.next().await.unwrap();
+
+        editor
+            .update(cx, |editor, window, cx| {
+                editor.set_visible_line_count(50.0, window, cx);
+                editor.set_visible_column_count(120.0);
+                editor.refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx);
+            })
+            .unwrap();
+        cx.executor().advance_clock(Duration::from_millis(100));
+        cx.executor().run_until_parked();
+
+        editor
+            .update(cx, |editor, _window, cx| {
+                let visible = visible_hint_labels(editor, cx);
+                assert!(
+                    visible.iter().any(|h| h.starts_with("chunk_0")),
+                    "Should have chunk_0 hints initially, got: {visible:?}"
+                );
+            })
+            .unwrap();
+
+        lsp_request_ranges.lock().clear();
+
+        // Step 1: Make an edit → triggers BufferEdited with 700ms debounce.
+        editor
+            .update(cx, |editor, window, cx| {
+                editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+                    s.select_ranges([MultiBufferOffset(13)..MultiBufferOffset(13)])
+                });
+                editor.handle_input("x", window, cx);
+            })
+            .unwrap();
+        // Let the BufferEdited event propagate and the edit task get spawned.
+        cx.executor().run_until_parked();
+
+        // Step 2: Scroll down to reveal a new chunk, then trigger NewLinesShown.
+        // This spawns a scroll task with the shorter 50ms debounce.
+        editor
+            .update(cx, |editor, window, cx| {
+                editor.scroll_screen(&ScrollAmount::Page(1.0), window, cx);
+            })
+            .unwrap();
+        // Explicitly trigger NewLinesShown for the new visible range.
+        editor
+            .update(cx, |editor, _window, cx| {
+                editor.refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx);
+            })
+            .unwrap();
+
+        // Step 3: Advance clock past scroll debounce (50ms) but NOT past edit
+        // debounce (700ms). The scroll task completes and adds hints for the
+        // new chunk.
+        cx.executor().advance_clock(Duration::from_millis(100));
+        cx.executor().run_until_parked();
+
+        // The scroll task's apply_fetched_hints also processes
+        // invalidate_hints_for_buffers (set by the earlier BufferEdited), which
+        // removes the old chunk_0 hint. Only the scroll chunk's hint remains.
+        editor
+            .update(cx, |editor, _window, cx| {
+                let visible = visible_hint_labels(editor, cx);
+                assert!(
+                    visible.iter().any(|h| h.starts_with("chunk_50")),
+                    "After scroll task completes, the scroll chunk's hints should be \
+                     present, got: {visible:?}"
+                );
+            })
+            .unwrap();
+
+        // Step 4: Advance clock past the edit debounce (700ms). The edit task
+        // completes, calling apply_fetched_hints with should_invalidate()=true,
+        // which removes ALL visible hints (including the scroll chunk's) but only
+        // adds back hints for its own chunks (chunk_0).
+        cx.executor().advance_clock(Duration::from_millis(700));
+        cx.executor().run_until_parked();
+
+        // At this point the edit task has:
+        //   - removed chunk_50's hint (via should_invalidate removing all visible)
+        //   - added chunk_0's hint (from its own fetch)
+        //   - (with fix) cleared chunk_50 from hint_chunk_fetching
+        // Without the fix, chunk_50 is stuck in hint_chunk_fetching and will
+        // never be re-queried by NewLinesShown.
+
+        // Step 5: Trigger NewLinesShown to give the system a chance to re-fetch
+        // any chunks whose hints were lost.
+        editor
+            .update(cx, |editor, _window, cx| {
+                editor.refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx);
+            })
+            .unwrap();
+        cx.executor().advance_clock(Duration::from_millis(100));
+        cx.executor().run_until_parked();
+
+        editor
+            .update(cx, |editor, _window, cx| {
+                let visible = visible_hint_labels(editor, cx);
+                assert!(
+                    visible.iter().any(|h| h.starts_with("chunk_0")),
+                    "chunk_0 hints (from edit task) should be present. Got: {visible:?}"
+                );
+                assert!(
+                    visible.iter().any(|h| h.starts_with("chunk_50")),
+                    "chunk_50 hints should have been re-fetched after NewLinesShown. \
+                     Bug 1: the scroll chunk's hints were removed by the edit task \
+                     and the chunk was stuck in hint_chunk_fetching, preventing \
+                     re-fetch. Got: {visible:?}"
+                );
+            })
+            .unwrap();
     }
 
     #[gpui::test]
