@@ -365,30 +365,30 @@ impl Markdown {
         self.code_block_scroll_handles.clear();
     }
 
-    fn autoscroll_code_block_for_selection(&self, cursor_position: Point<Pixels>) {
-        for scroll_handle in self.code_block_scroll_handles.values() {
-            let bounds = scroll_handle.bounds();
+    fn autoscroll_code_block(&self, source_index: usize, cursor_position: Point<Pixels>) {
+        let Some((_, scroll_handle)) = self
+            .code_block_scroll_handles
+            .range(..=source_index)
+            .next_back()
+        else {
+            return;
+        };
 
-            if bounds.top() > cursor_position.y {
-                break;
-            }
-
-            if bounds.bottom() < cursor_position.y {
-                continue;
-            }
-
-            let horizontal_delta = if cursor_position.x < bounds.left() {
-                bounds.left() - cursor_position.x
-            } else if cursor_position.x > bounds.right() {
-                bounds.right() - cursor_position.x
-            } else {
-                break;
-            };
-
-            let offset = scroll_handle.offset();
-            scroll_handle.set_offset(point(offset.x + horizontal_delta, offset.y));
-            break;
+        let bounds = scroll_handle.bounds();
+        if cursor_position.y < bounds.top() || cursor_position.y > bounds.bottom() {
+            return;
         }
+
+        let horizontal_delta = if cursor_position.x < bounds.left() {
+            bounds.left() - cursor_position.x
+        } else if cursor_position.x > bounds.right() {
+            bounds.right() - cursor_position.x
+        } else {
+            return;
+        };
+
+        let offset = scroll_handle.offset();
+        scroll_handle.set_offset(point(offset.x + horizontal_delta, offset.y));
     }
 
     pub fn is_parsing(&self) -> bool {
@@ -929,7 +929,7 @@ impl MarkdownElement {
                         Ok(ix) | Err(ix) => ix,
                     };
                     markdown.selection.set_head(source_index, &rendered_text);
-                    markdown.autoscroll_code_block_for_selection(event.position);
+                    markdown.autoscroll_code_block(source_index, event.position);
                     markdown.autoscroll_request = Some(source_index);
                     cx.notify();
                 } else {
