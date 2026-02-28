@@ -971,6 +971,10 @@ impl RemoteClient {
         self.connection_options.clone()
     }
 
+    pub fn unique_identifier(&self) -> &str {
+        &self.unique_identifier
+    }
+
     pub fn connection(&self) -> Option<Arc<dyn RemoteConnection>> {
         if let State::Connected {
             remote_connection, ..

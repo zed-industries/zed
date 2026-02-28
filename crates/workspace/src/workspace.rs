@@ -1434,6 +1434,18 @@ impl Workspace {
                     this.dismiss_notification(&NotificationId::named(notification_id.clone()), cx)
                 }
 
+                project::Event::OpenPathOnClient { path, .. } => {
+                    let abs_path = std::path::PathBuf::from(path);
+                    let task =
+                        this.open_abs_path(abs_path, OpenOptions::default(), window, cx);
+                    cx.spawn_in(window, async move |_workspace, _cx| {
+                        if let Err(e) = task.await {
+                            log::error!("Failed to open remote path: {e:#}");
+                        }
+                    })
+                    .detach();
+                }
+
                 project::Event::LanguageServerPrompt(request) => {
                     struct LanguageServerPrompt;
 

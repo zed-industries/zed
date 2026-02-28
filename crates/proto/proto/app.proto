@@ -91,3 +91,15 @@ message RemoteProfilingLocation {
     uint32 line = 2;
     uint32 column = 3;
 }
+
+message OpenPathOnClient {
+    uint64 project_id = 1;
+    string path = 2;
+    optional uint32 row = 3;
+    optional uint32 column = 4;
+    bool wait = 5;
+}
+
+message OpenPathOnClientResponse {
+    bool success = 1;
+}
