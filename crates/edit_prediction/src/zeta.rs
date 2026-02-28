@@ -309,6 +309,7 @@ pub fn request_prediction_with_zeta(
                         edits,
                         cursor_position,
                         received_response_at,
+                        editable_range_in_buffer,
                     )),
                     model_version,
                 )),
@@ -331,6 +332,7 @@ pub fn request_prediction_with_zeta(
             edits,
             cursor_position,
             received_response_at,
+            editable_range_in_buffer,
         )) = prediction
         else {
             return Ok(Some(EditPredictionResult {
@@ -338,6 +340,20 @@ pub fn request_prediction_with_zeta(
                 prediction: Err(EditPredictionRejectReason::Empty),
             }));
         };
+
+        if can_collect_data {
+            this.update(cx, |this, cx| {
+                this.enqueue_settled_prediction(
+                    id.clone(),
+                    &project,
+                    &edited_buffer,
+                    &edited_buffer_snapshot,
+                    editable_range_in_buffer,
+                    cx,
+                );
+            })
+            .ok();
+        }
 
         Ok(Some(
             EditPredictionResult::new(

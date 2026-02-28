@@ -29,7 +29,10 @@ use util::path;
 use uuid::Uuid;
 use zeta_prompt::ZetaPromptInput;
 
-use crate::{BufferEditPrediction, EditPredictionId, EditPredictionStore, REJECT_REQUEST_DEBOUNCE};
+use crate::{
+    BufferEditPrediction, EDIT_PREDICTION_SETTLED_QUIESCENCE, EditPredictionId,
+    EditPredictionStore, REJECT_REQUEST_DEBOUNCE,
+};
 
 #[gpui::test]
 async fn test_current_state(cx: &mut TestAppContext) {
@@ -2572,6 +2575,177 @@ async fn test_diagnostic_jump_excludes_collaborator_regions(cx: &mut TestAppCont
         Path::new(path!("root/free_file.txt")),
         "should skip collab_file.txt (has collaborator) and pick free_file.txt"
     );
+}
+
+#[gpui::test]
+async fn test_edit_prediction_settled(cx: &mut TestAppContext) {
+    let (ep_store, _requests) = init_test_with_fake_client(cx);
+    let fs = FakeFs::new(cx.executor());
+
+    // Buffer with two clearly separated regions:
+    //   Region A = lines 0-9   (offsets 0..50)
+    //   Region B = lines 20-29 (offsets 105..155)
+    // A big gap in between so edits in one region never overlap the other.
+    let mut content = String::new();
+    for i in 0..30 {
+        content.push_str(&format!("line {i:02}\n"));
+    }
+
+    fs.insert_tree(
+        "/root",
+        json!({
+            "foo.md": content.clone()
+        }),
+    )
+    .await;
+    let project = Project::test(fs, vec![path!("/root").as_ref()], cx).await;
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            let path = project.find_project_path(path!("root/foo.md"), cx).unwrap();
+            project.open_buffer(path, cx)
+        })
+        .await
+        .unwrap();
+
+    let settled_events: Arc<Mutex<Vec<(EditPredictionId, String)>>> =
+        Arc::new(Mutex::new(Vec::new()));
+
+    ep_store.update(cx, |ep_store, cx| {
+        ep_store.register_buffer(&buffer, &project, cx);
+
+        let settled_events = settled_events.clone();
+        ep_store.settled_event_callback = Some(Box::new(move |id, text| {
+            settled_events.lock().push((id, text));
+        }));
+    });
+
+    // --- Phase 1: edit in region A and enqueue prediction A ---
+
+    buffer.update(cx, |buffer, cx| {
+        // Edit at the start of line 0.
+        buffer.edit(vec![(0..0, "ADDED ")], None, cx);
+    });
+    cx.run_until_parked();
+
+    let snapshot_a = buffer.read_with(cx, |buffer, _cx| buffer.snapshot());
+
+    // Region A: first 10 lines of the buffer.
+    let editable_region_a = 0..snapshot_a.point_to_offset(Point::new(10, 0));
+    ep_store.update(cx, |ep_store, cx| {
+        ep_store.enqueue_settled_prediction(
+            EditPredictionId("prediction-a".into()),
+            &project,
+            &buffer,
+            &snapshot_a,
+            editable_region_a,
+            cx,
+        );
+    });
+
+    // --- Phase 2: repeatedly edit in region A to keep it unsettled ---
+
+    // Let the worker process the channel message before we start advancing.
+    cx.run_until_parked();
+
+    let mut region_a_edit_offset = 5;
+    for _ in 0..3 {
+        // Edit inside region A (not at the boundary) so `last_edit_at` is
+        // updated before the worker's next wake.
+        buffer.update(cx, |buffer, cx| {
+            buffer.edit(
+                vec![(region_a_edit_offset..region_a_edit_offset, "x")],
+                None,
+                cx,
+            );
+        });
+        region_a_edit_offset += 1;
+        cx.run_until_parked();
+
+        cx.executor()
+            .advance_clock(EDIT_PREDICTION_SETTLED_QUIESCENCE / 2);
+        cx.run_until_parked();
+        assert!(
+            settled_events.lock().is_empty(),
+            "no settled events should fire while region A is still being edited"
+        );
+    }
+
+    // Still nothing settled.
+    assert!(settled_events.lock().is_empty());
+
+    // --- Phase 3: edit in distinct region B, enqueue prediction B ---
+    // Advance a small amount so B's quiescence window starts later than A's,
+    // but not so much that A settles (A's last edit was at the start of
+    // iteration 3, and it needs a full Q to settle).
+    cx.executor()
+        .advance_clock(EDIT_PREDICTION_SETTLED_QUIESCENCE / 4);
+    cx.run_until_parked();
+    assert!(settled_events.lock().is_empty());
+
+    let snapshot_b = buffer.read_with(cx, |buffer, _cx| buffer.snapshot());
+    let line_20_offset = snapshot_b.point_to_offset(Point::new(20, 0));
+
+    buffer.update(cx, |buffer, cx| {
+        buffer.edit(vec![(line_20_offset..line_20_offset, "NEW ")], None, cx);
+    });
+    cx.run_until_parked();
+
+    let snapshot_b2 = buffer.read_with(cx, |buffer, _cx| buffer.snapshot());
+    let editable_region_b = line_20_offset..snapshot_b2.point_to_offset(Point::new(25, 0));
+    ep_store.update(cx, |ep_store, cx| {
+        ep_store.enqueue_settled_prediction(
+            EditPredictionId("prediction-b".into()),
+            &project,
+            &buffer,
+            &snapshot_b2,
+            editable_region_b,
+            cx,
+        );
+    });
+
+    cx.run_until_parked();
+    assert!(
+        settled_events.lock().is_empty(),
+        "neither prediction should have settled yet"
+    );
+
+    // --- Phase 4: let enough time pass for region A to settle ---
+    // A's last edit was at T_a (during the last loop iteration). The worker is
+    // sleeping until T_a + Q. We advance just enough to reach that wake time
+    // (Q/4 since we already advanced Q/4 in phase 3 on top of the loop's
+    // 3*Q/2). At that point A has been quiet for Q and settles, but B was
+    // enqueued only Q/4 ago and stays pending.
+    cx.executor()
+        .advance_clock(EDIT_PREDICTION_SETTLED_QUIESCENCE / 4);
+    cx.run_until_parked();
+
+    {
+        let events = settled_events.lock().clone();
+        assert_eq!(
+            events.len(),
+            1,
+            "only prediction A should have settled, got: {events:?}"
+        );
+        assert_eq!(events[0].0, EditPredictionId("prediction-a".into()));
+    }
+
+    // --- Phase 5: let more time pass for region B to settle ---
+    // B's last edit was Q/4 before A settled. The worker rescheduled to
+    // B's last_edit_at + Q, which is 3Q/4 from now.
+    cx.executor()
+        .advance_clock(EDIT_PREDICTION_SETTLED_QUIESCENCE * 3 / 4);
+    cx.run_until_parked();
+
+    {
+        let events = settled_events.lock().clone();
+        assert_eq!(
+            events.len(),
+            2,
+            "both predictions should have settled, got: {events:?}"
+        );
+        assert_eq!(events[1].0, EditPredictionId("prediction-b".into()));
+    }
 }
 
 #[ctor::ctor]
