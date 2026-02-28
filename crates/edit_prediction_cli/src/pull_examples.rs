@@ -23,7 +23,7 @@ pub(crate) const SNOWFLAKE_ASYNC_IN_PROGRESS_CODE: &str = "333334";
 const PREDICTIVE_EDIT_REQUESTED_EVENT: &str = "Predictive Edit Requested";
 const PREDICTIVE_EDIT_REJECTED_EVENT: &str = "Predictive Edit Rejected";
 const EDIT_PREDICTION_RATED_EVENT: &str = "Edit Prediction Rated";
-const EDIT_PREDICTION_SNAPSHOT_EVENT: &str = "Edit Prediction Snapshot";
+const EDIT_PREDICTION_SETTLED_EVENT: &str = "Edit Prediction Settled";
 
 /// Minimum Zed version for filtering captured examples.
 /// For example, `MinCaptureVersion { minor: 224, patch: 1 }` means only pull examples
@@ -35,7 +35,7 @@ pub struct MinCaptureVersion {
 }
 
 const DEFAULT_STATEMENT_TIMEOUT_SECONDS: u64 = 120;
-const SNAPSHOT_STATEMENT_TIMEOUT_SECONDS: u64 = 240;
+const SETTLED_STATEMENT_TIMEOUT_SECONDS: u64 = 240;
 pub(crate) const POLL_INTERVAL: Duration = Duration::from_secs(2);
 pub(crate) const MAX_POLL_ATTEMPTS: usize = 120;
 
@@ -54,9 +54,9 @@ pub fn parse_requested_after_input(input: &str) -> Option<&str> {
     input.strip_prefix("requested-after:")
 }
 
-/// Parse an input token of the form `snapshot-after:{timestamp}`.
-pub fn parse_snapshot_after_input(input: &str) -> Option<&str> {
-    input.strip_prefix("snapshot-after:")
+/// Parse an input token of the form `settled-after:{timestamp}`.
+pub fn parse_settled_after_input(input: &str) -> Option<&str> {
+    input.strip_prefix("settled-after:")
 }
 
 /// Parse an input token of the form `rated-after:{timestamp}`, `rated-positive-after:{timestamp}`,
@@ -603,7 +603,7 @@ pub async fn fetch_requested_examples_after(
     Ok(all_examples)
 }
 
-pub async fn fetch_snapshot_examples_after(
+pub async fn fetch_settled_examples_after(
     http_client: Arc<dyn HttpClient>,
     after_timestamps: &[String],
     max_rows_per_timestamp: usize,
@@ -627,7 +627,7 @@ pub async fn fetch_snapshot_examples_after(
     let mut all_examples = Vec::new();
 
     for after_date in after_timestamps.iter() {
-        let step_progress_name = format!("snapshot>{after_date}");
+        let step_progress_name = format!("settled>{after_date}");
         let step_progress = progress.start(Step::PullExamples, &step_progress_name);
         step_progress.set_substatus("querying");
 
@@ -654,15 +654,13 @@ pub async fn fetch_snapshot_examples_after(
                 req.time AS time,
                 req.input AS input,
                 req.requested_output AS requested_output,
-                snap.event_properties:new_cursor_region::string AS new_cursor_region,
-                snap.event_properties:editable_range_in_excerpt:start::integer AS snapshot_editable_start,
-                snap.event_properties:editable_range_in_excerpt:end::integer AS snapshot_editable_end,
+                settled.event_properties:settled_editable_region::string AS settled_editable_region,
                 req.requested_format AS requested_format,
                 req.zed_version AS zed_version
             FROM requested req
-            INNER JOIN events snap
-                ON req.request_id = snap.event_properties:request_id::string
-            WHERE snap.event_type = ?
+            INNER JOIN events settled
+                ON req.request_id = settled.event_properties:request_id::string
+            WHERE settled.event_type = ?
             ORDER BY req.req_time ASC
             LIMIT ?
             OFFSET ?
@@ -671,7 +669,7 @@ pub async fn fetch_snapshot_examples_after(
         let _ = min_capture_version;
         let request = json!({
             "statement": statement,
-            "timeout": SNAPSHOT_STATEMENT_TIMEOUT_SECONDS,
+            "timeout": SETTLED_STATEMENT_TIMEOUT_SECONDS,
             "database": "EVENTS",
             "schema": "PUBLIC",
             "warehouse": "DBT",
@@ -679,7 +677,7 @@ pub async fn fetch_snapshot_examples_after(
             "bindings": {
                 "1": { "type": "TEXT", "value": PREDICTIVE_EDIT_REQUESTED_EVENT },
                 "2": { "type": "TEXT", "value": after_date },
-                "3": { "type": "TEXT", "value": EDIT_PREDICTION_SNAPSHOT_EVENT },
+                "3": { "type": "TEXT", "value": EDIT_PREDICTION_SETTLED_EVENT },
                 "4": { "type": "FIXED", "value": max_rows_per_timestamp.to_string() },
                 "5": { "type": "FIXED", "value": offset.to_string() }
             }
@@ -719,15 +717,13 @@ pub async fn fetch_snapshot_examples_after(
                 "time",
                 "input",
                 "requested_output",
-                "new_cursor_region",
-                "snapshot_editable_start",
-                "snapshot_editable_end",
+                "settled_editable_region",
                 "requested_format",
                 "zed_version",
             ],
         );
 
-        all_examples.extend(snapshot_examples_from_response(&response, &column_indices)?);
+        all_examples.extend(settled_examples_from_response(&response, &column_indices)?);
 
         if num_partitions > 1 {
             let statement_handle = response
@@ -751,7 +747,7 @@ pub async fn fetch_snapshot_examples_after(
                 )
                 .await?;
 
-                all_examples.extend(snapshot_examples_from_response(
+                all_examples.extend(settled_examples_from_response(
                     &partition_response,
                     &column_indices,
                 )?);
@@ -1157,7 +1153,7 @@ fn requested_examples_from_response<'a>(
     Ok(iter)
 }
 
-fn snapshot_examples_from_response<'a>(
+fn settled_examples_from_response<'a>(
     response: &'a SnowflakeStatementResponse,
     column_indices: &'a std::collections::HashMap<String, usize>,
 ) -> Result<impl Iterator<Item = Example> + 'a> {
@@ -1200,14 +1196,6 @@ fn snapshot_examples_from_response<'a>(
                 }
             };
 
-            let get_usize = |name: &str| -> Option<usize> {
-                match get_value(name)? {
-                    JsonValue::Number(n) => n.as_u64().map(|v| v as usize),
-                    JsonValue::String(s) => s.parse::<usize>().ok(),
-                    _ => None,
-                }
-            };
-
             let request_id_str = get_string("request_id");
             let device_id = get_string("device_id");
             let time = get_string("time");
@@ -1217,9 +1205,7 @@ fn snapshot_examples_from_response<'a>(
                 .as_ref()
                 .and_then(|parsed| serde_json::from_value(parsed.clone()).ok());
             let requested_output = get_string("requested_output");
-            let new_cursor_region = get_string("new_cursor_region");
-            let snapshot_editable_start = get_usize("snapshot_editable_start");
-            let snapshot_editable_end = get_usize("snapshot_editable_end");
+            let settled_editable_region = get_string("settled_editable_region");
             let requested_format =
                 get_string("requested_format").and_then(|s| ZetaFormat::parse(&s).ok());
             let zed_version = get_string("zed_version");
@@ -1230,9 +1216,7 @@ fn snapshot_examples_from_response<'a>(
                 time.clone(),
                 input.clone(),
                 requested_output.clone(),
-                new_cursor_region.clone(),
-                snapshot_editable_start,
-                snapshot_editable_end,
+                settled_editable_region.clone(),
                 requested_format,
             ) {
                 (
@@ -1241,18 +1225,15 @@ fn snapshot_examples_from_response<'a>(
                     Some(time),
                     Some(input),
                     Some(requested_output),
-                    Some(new_cursor_region),
-                    Some(snapshot_editable_start),
-                    Some(snapshot_editable_end),
+                    Some(settled_editable_region),
                     Some(requested_format),
-                ) => Some(build_snapshot_example(
+                ) => Some(build_settled_example(
                     request_id,
                     device_id,
                     time,
                     input,
                     requested_output,
-                    new_cursor_region,
-                    snapshot_editable_start..snapshot_editable_end,
+                    settled_editable_region,
                     requested_format,
                     zed_version,
                 )),
@@ -1274,21 +1255,15 @@ fn snapshot_examples_from_response<'a>(
                     if requested_output.is_none() {
                         missing_fields.push("requested_output");
                     }
-                    if new_cursor_region.is_none() {
-                        missing_fields.push("new_cursor_region");
-                    }
-                    if snapshot_editable_start.is_none() {
-                        missing_fields.push("snapshot_editable_start");
-                    }
-                    if snapshot_editable_end.is_none() {
-                        missing_fields.push("snapshot_editable_end");
+                    if settled_editable_region.is_none() {
+                        missing_fields.push("settled_editable_region");
                     }
                     if requested_format.is_none() {
                         missing_fields.push("requested_format");
                     }
 
                     log::warn!(
-                        "skipping snapshot row {row_index}: [{}]",
+                        "skipping settled row {row_index}: [{}]",
                         missing_fields.join(", "),
                     );
                     None
@@ -1299,14 +1274,13 @@ fn snapshot_examples_from_response<'a>(
     Ok(iter)
 }
 
-fn build_snapshot_example(
+fn build_settled_example(
     request_id: String,
     device_id: String,
     time: String,
     input: ZetaPromptInput,
     requested_output: String,
-    snapshotted_cursor_region: String,
-    snapshotted_editable_range: std::ops::Range<usize>,
+    settled_editable_region: String,
     requested_format: ZetaFormat,
     zed_version: Option<String>,
 ) -> Example {
@@ -1320,33 +1294,27 @@ fn build_snapshot_example(
 
     let requested_range_is_valid = requested_editable_range.start <= requested_editable_range.end
         && requested_editable_range.end <= base_cursor_excerpt.len();
-    let snapshot_range_is_valid = snapshotted_editable_range.start
-        <= snapshotted_editable_range.end
-        && snapshotted_editable_range.end <= snapshotted_cursor_region.len();
-
     let mut example = build_example_from_snowflake(
         request_id.clone(),
         device_id,
         time,
         input,
-        vec!["snapshot".to_string()],
+        vec!["settled".to_string()],
         None,
         zed_version,
     );
 
-    if !(requested_range_is_valid && snapshot_range_is_valid) {
+    if !requested_range_is_valid {
         log::warn!(
-            "skipping malformed snapshot ranges for request {}: requested={:?} (base_len={}), snapshot={:?} (snapshot_len={})",
+            "skipping malformed requested range for request {}: requested={:?} (base_len={})",
             request_id,
             requested_editable_range,
             base_cursor_excerpt.len(),
-            snapshotted_editable_range,
-            snapshotted_cursor_region.len()
         );
         return example;
     }
 
-    let snapshot_replacement = &snapshotted_cursor_region[snapshotted_editable_range];
+    let settled_replacement = settled_editable_region.as_str();
     let rejected_patch = build_output_patch(
         &example.spec.cursor_path,
         &base_cursor_excerpt,
@@ -1357,7 +1325,7 @@ fn build_snapshot_example(
         &example.spec.cursor_path,
         &base_cursor_excerpt,
         &requested_editable_range,
-        snapshot_replacement,
+        settled_replacement,
     );
 
     example.spec.expected_patches = vec![expected_patch];
