@@ -188,7 +188,7 @@ impl DiffStats {
 }
 
 pub enum AcpThreadViewEvent {
-    FirstSendRequested { text: String },
+    FirstSendRequested { content: Vec<acp::ContentBlock> },
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -715,8 +715,38 @@ impl ThreadView {
             && self.thread.read(cx).entries().is_empty()
             && !message_editor.read(cx).is_empty(cx)
         {
-            let text = message_editor.read(cx).text(cx);
-            cx.emit(AcpThreadViewEvent::FirstSendRequested { text });
+            let full_mention_content = self.as_native_thread(cx).is_some_and(|thread| {
+                // Include full contents when using minimal profile
+                let thread = thread.read(cx);
+                AgentSettings::get_global(cx)
+                    .profiles
+                    .get(thread.profile())
+                    .is_some_and(|profile| profile.tools.is_empty())
+            });
+
+            let content_task = message_editor.update(cx, |message_editor, cx| {
+                message_editor.contents(full_mention_content, cx)
+            });
+
+            cx.spawn(async move |this, cx| match content_task.await {
+                Ok((content, _tracked_buffers)) => {
+                    if content.is_empty() {
+                        return;
+                    }
+                    this.update(cx, |_, cx| {
+                        cx.emit(AcpThreadViewEvent::FirstSendRequested { content });
+                    })
+                    .ok();
+                }
+                Err(error) => {
+                    this.update(cx, |this, cx| {
+                        this.handle_thread_error(error, cx);
+                    })
+                    .ok();
+                }
+            })
+            .detach();
+
             return;
         }
 

@@ -33,7 +33,7 @@ use crate::{
     OpenAgentDiff, OpenHistory, ResetTrialEndUpsell, ResetTrialUpsell, SetThreadTarget,
     ThreadTargetKind, ToggleNavigationMenu, ToggleNewThreadMenu, ToggleOptionsMenu,
     agent_configuration::{AgentConfiguration, AssistantConfigurationEvent},
-    connection_view::{AcpServerViewEvent, AcpThreadViewEvent, FirstSendPolicy, ThreadView},
+    connection_view::{AcpThreadViewEvent, FirstSendPolicy, ThreadView},
     slash_command::SlashCommandCompletionProvider,
     text_thread_editor::{AgentPanelDelegate, TextThreadEditor, make_lsp_adapter_delegate},
     ui::EndTrialUpsell,
@@ -711,10 +711,8 @@ impl AgentPanel {
                             let is_valid = match &thread_target {
                                 ThreadTarget::LocalProject => true,
                                 ThreadTarget::NewWorktree => {
-                                    is_worktree_flag_enabled && {
-                                        let project = panel.project.read(cx);
-                                        !project.is_via_collab() && !project.repositories(cx).is_empty()
-                                    }
+                                    let project = panel.project.read(cx);
+                                    is_worktree_flag_enabled && !project.is_via_collab()
                                 }
                                 ThreadTarget::ExistingWorktree { .. } => is_worktree_flag_enabled,
                             };
@@ -1758,20 +1756,16 @@ impl AgentPanel {
             ActiveView::AgentThread { server_view } => {
                 self._thread_view_subscription =
                     Self::subscribe_to_active_thread_view(server_view, window, cx);
-                Some(cx.subscribe_in(
-                    server_view,
-                    window,
-                    |this, server_view, event: &AcpServerViewEvent, window, cx| match event {
-                        AcpServerViewEvent::ActiveThreadChanged => {
-                            this._thread_view_subscription =
-                                Self::subscribe_to_active_thread_view(&server_view, window, cx);
-                            this.sync_active_thread_first_send_policy(cx);
-                            cx.emit(AgentPanelEvent::ActiveViewChanged);
-                            this.serialize(cx);
-                            cx.notify();
-                        }
-                    },
-                ))
+                Some(
+                    cx.observe_in(server_view, window, |this, server_view, window, cx| {
+                        this._thread_view_subscription =
+                            Self::subscribe_to_active_thread_view(&server_view, window, cx);
+                        this.sync_active_thread_first_send_policy(cx);
+                        cx.emit(AgentPanelEvent::ActiveViewChanged);
+                        this.serialize(cx);
+                        cx.notify();
+                    }),
+                )
             }
             _ => {
                 self._thread_view_subscription = None;
@@ -1902,8 +1896,8 @@ impl AgentPanel {
                 &tv,
                 window,
                 |this, view, event: &AcpThreadViewEvent, window, cx| match event {
-                    AcpThreadViewEvent::FirstSendRequested { text } => {
-                        this.handle_first_send_requested(view.clone(), text.clone(), window, cx);
+                    AcpThreadViewEvent::FirstSendRequested { content } => {
+                        this.handle_first_send_requested(view.clone(), content.clone(), window, cx);
                     }
                 },
             )
@@ -2130,12 +2124,12 @@ impl AgentPanel {
     fn handle_first_send_requested(
         &mut self,
         thread_view: Entity<ThreadView>,
-        text: String,
+        content: Vec<acp::ContentBlock>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         if self.thread_target == ThreadTarget::NewWorktree {
-            self.handle_worktree_creation_requested(text, window, cx);
+            self.handle_worktree_creation_requested(content, window, cx);
         } else {
             cx.defer_in(window, move |_this, window, cx| {
                 thread_view.update(cx, |thread_view, cx| {
@@ -2172,14 +2166,30 @@ impl AgentPanel {
 
         for worktree in project.read(cx).visible_worktrees(cx) {
             let wt_path = worktree.read(cx).abs_path();
-            let matching_repo = repositories.iter().find(|(_, repo)| {
-                let work_dir = &repo.read(cx).work_directory_abs_path;
-                wt_path.starts_with(work_dir.as_ref()) || work_dir.starts_with(wt_path.as_ref())
-            });
 
-            if let Some((id, repo)) = matching_repo {
-                if seen_repo_ids.insert(*id) {
-                    git_repos.push(repo.clone());
+            let matching_repo = repositories
+                .iter()
+                .filter_map(|(id, repo)| {
+                    let work_dir = repo.read(cx).work_directory_abs_path.clone();
+                    if wt_path.starts_with(work_dir.as_ref())
+                        || work_dir.starts_with(wt_path.as_ref())
+                    {
+                        Some((*id, repo.clone(), work_dir.as_ref().components().count()))
+                    } else {
+                        None
+                    }
+                })
+                .max_by(
+                    |(left_id, _left_repo, left_depth), (right_id, _right_repo, right_depth)| {
+                        left_depth
+                            .cmp(right_depth)
+                            .then_with(|| left_id.cmp(right_id))
+                    },
+                );
+
+            if let Some((id, repo, _)) = matching_repo {
+                if seen_repo_ids.insert(id) {
+                    git_repos.push(repo);
                 }
             } else {
                 non_git_paths.push(wt_path.to_path_buf());
@@ -2313,7 +2323,7 @@ impl AgentPanel {
 
     fn handle_worktree_creation_requested(
         &mut self,
-        text: String,
+        content: Vec<acp::ContentBlock>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -2417,7 +2427,7 @@ impl AgentPanel {
                 path_remapping,
                 non_git_paths,
                 has_non_git,
-                text,
+                content,
                 cx,
             )
             .await
@@ -2438,7 +2448,7 @@ impl AgentPanel {
         path_remapping: Vec<(PathBuf, PathBuf)>,
         non_git_paths: Vec<PathBuf>,
         has_non_git: bool,
-        text: String,
+        content: Vec<acp::ContentBlock>,
         cx: &mut AsyncWindowContext,
     ) -> Result<()> {
         let init: Option<
@@ -2470,7 +2480,7 @@ impl AgentPanel {
         }
 
         let initial_content = AgentInitialContent::ContentBlock {
-            blocks: vec![acp::ContentBlock::Text(acp::TextContent::new(text))],
+            blocks: content,
             auto_submit: true,
         };
 
@@ -2491,11 +2501,19 @@ impl AgentPanel {
                 let remapped_paths: Vec<PathBuf> = open_file_paths
                     .iter()
                     .filter_map(|original_path| {
-                        for (old_root, new_root) in &path_remapping {
-                            if let Ok(relative) = original_path.strip_prefix(old_root) {
-                                return Some(new_root.join(relative));
-                            }
+                        let best_match = path_remapping
+                            .iter()
+                            .filter_map(|(old_root, new_root)| {
+                                original_path.strip_prefix(old_root).ok().map(|relative| {
+                                    (old_root.components().count(), new_root.join(relative))
+                                })
+                            })
+                            .max_by_key(|(depth, _)| *depth);
+
+                        if let Some((_, remapped_path)) = best_match {
+                            return Some(remapped_path);
                         }
+
                         for non_git in &non_git_paths {
                             if original_path.starts_with(non_git) {
                                 return Some(original_path.clone());
@@ -4660,7 +4678,10 @@ mod tests {
     async fn test_thread_target_serialization_round_trip(cx: &mut TestAppContext) {
         init_test(cx);
         cx.update(|cx| {
-            cx.update_flags(true, vec!["agent-v2".to_string()]);
+            cx.update_flags(
+                true,
+                vec!["agent-v2".to_string(), "agent-git-worktrees".to_string()],
+            );
             agent::ThreadStore::init_global(cx);
             language_model::LanguageModelRegistry::test(cx);
         });
