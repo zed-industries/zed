@@ -837,8 +837,8 @@ notify = { git = "https://github.com/zed-industries/notify.git", rev = "ce58c24c
 notify-types = { git = "https://github.com/zed-industries/notify.git", rev = "ce58c24cad542c28e04ced02e20325a4ec28a31d" }
 windows-capture = { git = "https://github.com/zed-industries/windows-capture.git", rev = "f0d6c1b6691db75461b732f6d5ff56eed002eeb9" }
 calloop = { git = "https://github.com/zed-industries/calloop" }
-livekit = { git = "https://github.com/zed-industries/livekit-rust-sdks", rev = "9c38d9a0a91951967f8fa84ed86e193626436774" }
-libwebrtc = { git = "https://github.com/zed-industries/livekit-rust-sdks", rev = "9c38d9a0a91951967f8fa84ed86e193626436774" }
+livekit = { git = "https://github.com/zed-industries/livekit-rust-sdks", rev = "fccf29d1d0d0a139b2e50746b0b9a1bac828fa04" }
+libwebrtc = { git = "https://github.com/zed-industries/livekit-rust-sdks", rev = "fccf29d1d0d0a139b2e50746b0b9a1bac828fa04" }
 
 [profile.dev]
 split-debuginfo = "unpacked"
