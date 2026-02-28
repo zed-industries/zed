@@ -1355,7 +1355,7 @@ impl DisplayMap {
         widths_changed
     }
 
-    pub(crate) fn current_inlays(&self) -> impl Iterator<Item = &Inlay> {
+    pub(crate) fn current_inlays(&self) -> impl Iterator<Item = &Inlay> + Default {
         self.inlay_map.current_inlays()
     }
 
