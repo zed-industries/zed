@@ -46,6 +46,15 @@ impl FeatureFlag for SubagentsFeatureFlag {
         true
     }
 }
+pub struct MultiAgentCollaborationFeatureFlag;
+
+impl FeatureFlag for MultiAgentCollaborationFeatureFlag {
+    const NAME: &'static str = "multi-agent-collaboration";
+
+    fn enabled_for_staff() -> bool {
+        true
+    }
+}
 
 pub struct DiffReviewFeatureFlag;
 
