@@ -367,8 +367,10 @@ fn parse_line_range(fragment: &str) -> Result<RangeInclusive<u32>> {
     let (start, end) = if let Some((start, end)) = range.split_once(':') {
         (start, end)
     } else if let Some((start, end)) = range.split_once('-') {
+        // Also handle L10-20 or L10-L20 format
         (start, end.strip_prefix('L').unwrap_or(end))
     } else {
+        // Single line number like L1872 - treat as a range of one line
         (range, range)
     };
 
