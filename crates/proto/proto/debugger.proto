@@ -1,7 +1,6 @@
 syntax = "proto3";
 package zed.messages;
 
-import "core.proto";
 import "buffer.proto";
 import "task.proto";
 
