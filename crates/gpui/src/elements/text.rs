@@ -234,6 +234,12 @@ impl StyledText {
                 range.end += 1;
             }
 
+            // Ensure we don't rewind into already-consumed bytes
+            range.start = range.start.max(ix);
+            if range.end <= range.start {
+                continue;
+            }
+
             if ix < range.start {
                 runs.push(default_style.clone().to_run(range.start - ix));
             }
@@ -976,6 +982,20 @@ mod tests {
         let default_style = TextStyle::default();
         let highlights = vec![(Range { start: 0, end: 10 }, HighlightStyle::default())];
 
+        let _ = StyledText::new(text).with_default_highlights(&default_style, highlights);
+    }
+
+    #[test]
+    fn test_with_runs_tolerates_overlapping_highlights_on_multibyte_char() {
+        use crate::{HighlightStyle, StyledText, TextStyle};
+        use std::ops::Range;
+
+        let text = "éa";
+        let default_style = TextStyle::default();
+        let highlights = vec![
+            (Range { start: 0, end: 1 }, HighlightStyle::default()),
+            (Range { start: 1, end: 2 }, HighlightStyle::default()),
+        ];
         let _ = StyledText::new(text).with_default_highlights(&default_style, highlights);
     }
 }
