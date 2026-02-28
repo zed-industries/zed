@@ -15,6 +15,7 @@ use ui::Checkbox;
 use ui::CopyButton;
 
 use std::borrow::Cow;
+use std::collections::BTreeMap;
 use std::iter;
 use std::mem;
 use std::ops::Range;
@@ -246,7 +247,7 @@ pub struct Markdown {
     fallback_code_block_language: Option<LanguageName>,
     options: Options,
     copied_code_blocks: HashSet<ElementId>,
-    code_block_scroll_handles: HashMap<usize, ScrollHandle>,
+    code_block_scroll_handles: BTreeMap<usize, ScrollHandle>,
     context_menu_selected_text: Option<String>,
 }
 
@@ -316,7 +317,7 @@ impl Markdown {
                 parse_links_only: false,
             },
             copied_code_blocks: HashSet::default(),
-            code_block_scroll_handles: HashMap::default(),
+            code_block_scroll_handles: BTreeMap::default(),
             context_menu_selected_text: None,
         };
         this.parse(cx);
@@ -341,7 +342,7 @@ impl Markdown {
                 parse_links_only: true,
             },
             copied_code_blocks: HashSet::default(),
-            code_block_scroll_handles: HashMap::default(),
+            code_block_scroll_handles: BTreeMap::default(),
             context_menu_selected_text: None,
         };
         this.parse(cx);
@@ -367,7 +368,12 @@ impl Markdown {
     fn autoscroll_code_block_for_selection(&self, cursor_position: Point<Pixels>) {
         for scroll_handle in self.code_block_scroll_handles.values() {
             let bounds = scroll_handle.bounds();
-            if cursor_position.y < bounds.top() || cursor_position.y > bounds.bottom() {
+
+            if bounds.top() > cursor_position.y {
+                break;
+            }
+
+            if bounds.bottom() < cursor_position.y {
                 continue;
             }
 
@@ -376,15 +382,12 @@ impl Markdown {
             } else if cursor_position.x > bounds.right() {
                 bounds.right() - cursor_position.x
             } else {
-                px(0.)
+                break;
             };
-
-            if horizontal_delta == px(0.) {
-                continue;
-            }
 
             let offset = scroll_handle.offset();
             scroll_handle.set_offset(point(offset.x + horizontal_delta, offset.y));
+            break;
         }
     }
 
