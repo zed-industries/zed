@@ -624,21 +624,18 @@ impl Editor {
                     match cached_hint.resolve_state {
                         ResolveState::Resolved => {
                             let original_text = cached_hint.text();
-                            let actual_left_padding = if cached_hint.padding_left
-                                && original_text.chars_at(0).next() != Some(' ')
-                            {
-                                1
-                            } else {
-                                0
-                            };
-                            let actual_right_padding = if cached_hint.padding_right
-                                && original_text.reversed_chars_at(original_text.len()).next()
-                                    != Some(' ')
-                            {
-                                1
-                            } else {
-                                0
-                            };
+                            let actual_left_padding =
+                                if cached_hint.padding_left && !original_text.starts_with(" ") {
+                                    1
+                                } else {
+                                    0
+                                };
+                            let actual_right_padding =
+                                if cached_hint.padding_right && !original_text.ends_with(" ") {
+                                    1
+                                } else {
+                                    0
+                                };
                             match cached_hint.label {
                                 InlayHintLabel::String(_) => {
                                     if let Some(tooltip) = cached_hint.tooltip {
