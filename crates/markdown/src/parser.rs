@@ -309,10 +309,11 @@ pub fn parse_markdown(
                 }
             }
             pulldown_cmark::Event::Code(_) => {
-                let content_range = extract_code_content_range(&text[range.clone()]);
-                let content_range =
-                    content_range.start + range.start..content_range.end + range.start;
-                events.push((content_range, MarkdownEvent::Code))
+                let wrapper_range = range.clone();
+                let content_range = extract_code_content_range(&text[wrapper_range.clone()]);
+                let content_range = content_range.start + wrapper_range.start
+                    ..content_range.end + wrapper_range.start;
+                events.push((content_range, MarkdownEvent::Code { wrapper_range }))
             }
             pulldown_cmark::Event::Html(_) => events.push((range, MarkdownEvent::Html)),
             pulldown_cmark::Event::InlineHtml(_) => events.push((range, MarkdownEvent::InlineHtml)),
@@ -384,7 +385,7 @@ pub enum MarkdownEvent {
     /// and smart punctuation.
     SubstitutedText(String),
     /// An inline code node.
-    Code,
+    Code { wrapper_range: Range<usize> },
     /// An HTML node.
     Html,
     /// An inline HTML node.
@@ -751,6 +752,24 @@ mod tests {
 
         let input = "``let x = 5;`";
         assert_eq!(extract_code_content_range(input), 0..13);
+    }
+
+    #[test]
+    fn test_inline_code_event_keeps_wrapper_range() {
+        let events = parse_markdown("`code`").0;
+        assert_eq!(
+            events,
+            vec![
+                (0..6, Start(Paragraph)),
+                (
+                    1..5,
+                    Code {
+                        wrapper_range: 0..6
+                    }
+                ),
+                (0..6, End(MarkdownTagEnd::Paragraph))
+            ]
+        );
     }
 
     #[test]
