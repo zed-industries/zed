@@ -33154,11 +33154,11 @@ async fn test_restore_and_next(cx: &mut TestAppContext) {
 
     cx.set_state(
         &r#"
-        ˇONE
+        ONE
         two
-        THREE
+        ˇTHREE
         four
-        five
+        FIVE
         "#
         .unindent(),
     );
@@ -33172,10 +33172,28 @@ async fn test_restore_and_next(cx: &mut TestAppContext) {
 
     cx.assert_state_with_diff(
         r#"
-          one
+        - one
+        + ONE
           two
-        - ˇthree
-        + THREE
+          three
+          four
+        - ˇfive
+        + FIVE
+        "#
+        .unindent(),
+    );
+
+    cx.update_editor(|editor, window, cx| {
+        editor.restore_and_next(&Default::default(), window, cx);
+    });
+    cx.run_until_parked();
+
+    cx.assert_state_with_diff(
+        r#"
+        - ˇone
+        + ONE
+          two
+          three
           four
           five
         "#
