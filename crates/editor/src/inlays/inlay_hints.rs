@@ -369,7 +369,7 @@ impl Editor {
         if invalidate_cache.should_invalidate() {
             if invalidate_hints_for_buffers.is_empty() {
                 inlay_hints.clear();
-            } else if invalidate_cache.should_invalidate() {
+            } else {
                 inlay_hints.clear_for_buffers(
                     &invalidate_hints_for_buffers,
                     Self::visible_inlay_hints(self.display_map.read(cx)),
