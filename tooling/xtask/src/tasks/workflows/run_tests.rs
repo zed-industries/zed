@@ -1,12 +1,12 @@
 use gh_workflow::{
-    Concurrency, Container, Env, Event, Expression, Job, Port, PullRequest, Push, Run, Step, Use,
+    Concurrency, Container, Event, Expression, Job, Port, PullRequest, Push, Run, Step, Use,
     Workflow,
 };
 use indexmap::IndexMap;
 use indoc::formatdoc;
 
 use crate::tasks::workflows::{
-    steps::{CommonJobConditions, repository_owner_guard_expression},
+    steps::{CommonJobConditions, repository_owner_guard_expression, use_clang},
     vars::{self, PathCondition},
 };
 
@@ -14,11 +14,6 @@ use super::{
     runners::{self, Platform},
     steps::{self, FluentBuilder, NamedJob, named, release_job},
 };
-
-fn use_clang(job: Job) -> Job {
-    job.add_env(Env::new("CC", "clang"))
-        .add_env(Env::new("CXX", "clang++"))
-}
 
 pub(crate) fn run_tests() -> Workflow {
     // Specify anything which should potentially skip full test suite in this regex:
