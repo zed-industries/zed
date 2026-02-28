@@ -21,6 +21,7 @@ fn single_line_input(
     placeholder: &str,
     text: Option<&str>,
     tab_index: isize,
+    masked: bool,
     window: &mut Window,
     cx: &mut App,
 ) -> Entity<InputField> {
@@ -29,6 +30,8 @@ fn single_line_input(
             .label(label)
             .tab_index(tab_index)
             .tab_stop(true);
+
+        input.editor().set_masked(masked, window, cx);
 
         if let Some(text) = text {
             input.set_text(text, window, cx);
@@ -66,13 +69,14 @@ struct AddLlmProviderInput {
 impl AddLlmProviderInput {
     fn new(provider: LlmCompatibleProvider, window: &mut Window, cx: &mut App) -> Self {
         let provider_name =
-            single_line_input("Provider Name", provider.name(), None, 1, window, cx);
-        let api_url = single_line_input("API URL", provider.api_url(), None, 2, window, cx);
+            single_line_input("Provider Name", provider.name(), None, 1, false, window, cx);
+        let api_url = single_line_input("API URL", provider.api_url(), None, 2, false, window, cx);
         let api_key = single_line_input(
             "API Key",
             "000000000000000000000000000000000000000000000000",
             None,
             3,
+            true,
             window,
             cx,
         );
@@ -120,6 +124,7 @@ impl ModelInput {
             "e.g. gpt-5, claude-opus-4, gemini-2.5-pro",
             None,
             base_tab_index + 1,
+            false,
             window,
             cx,
         );
@@ -128,6 +133,7 @@ impl ModelInput {
             "200000",
             Some("200000"),
             base_tab_index + 2,
+            false,
             window,
             cx,
         );
@@ -136,6 +142,7 @@ impl ModelInput {
             "Max Output Tokens",
             Some("32000"),
             base_tab_index + 3,
+            false,
             window,
             cx,
         );
@@ -144,6 +151,7 @@ impl ModelInput {
             "Max Tokens",
             Some("200000"),
             base_tab_index + 4,
+            false,
             window,
             cx,
         );
