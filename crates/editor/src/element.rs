@@ -8070,7 +8070,7 @@ fn apply_dirty_filename_style(
     text_style: &gpui::TextStyle,
     cx: &App,
 ) -> Option<gpui::AnyElement> {
-    let text = segment.text.replace('\n', "⏎");
+    let text = segment.text.replace('\n', " ");
 
     let filename_position = std::path::Path::new(&segment.text)
         .file_name()
