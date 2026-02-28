@@ -2417,7 +2417,8 @@ impl AgentPanel {
                 }
             };
 
-            Self::setup_new_workspace(
+            let this_for_error = this.clone();
+            if let Err(err) = Self::setup_new_workspace(
                 this,
                 all_paths,
                 app_state,
@@ -2431,6 +2432,18 @@ impl AgentPanel {
                 cx,
             )
             .await
+            {
+                this_for_error
+                    .update_in(cx, |this, window, cx| {
+                        this.set_worktree_creation_error(
+                            format!("Failed to set up workspace: {err}").into(),
+                            window,
+                            cx,
+                        );
+                    })
+                    .log_err();
+            }
+            anyhow::Ok(())
         });
 
         self._worktree_creation_task = Some(cx.foreground_executor().spawn(async move {

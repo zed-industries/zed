@@ -3088,6 +3088,29 @@ fn run_error_wrapping_visual_tests(
 }
 
 #[cfg(all(target_os = "macos", feature = "visual-tests"))]
+/// Runs a git command in the given directory and returns an error with
+/// stderr/stdout context if the command fails (non-zero exit status).
+fn run_git_command(args: &[&str], dir: &std::path::Path) -> Result<()> {
+    let output = std::process::Command::new("git")
+        .args(args)
+        .current_dir(dir)
+        .output()
+        .with_context(|| format!("failed to spawn `git {}`", args.join(" ")))?;
+
+    if !output.status.success() {
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!(
+            "`git {}` failed (exit {})\nstdout: {}\nstderr: {}",
+            args.join(" "),
+            output.status,
+            stdout.trim(),
+            stderr.trim(),
+        );
+    }
+    Ok(())
+}
+
 fn run_thread_target_selector_visual_tests(
     app_state: Arc<AppState>,
     cx: &mut VisualTestAppContext,
@@ -3111,18 +3134,9 @@ fn run_thread_target_selector_visual_tests(
     std::fs::create_dir_all(&project_path)?;
 
     // Initialize git repo
-    std::process::Command::new("git")
-        .args(["init"])
-        .current_dir(&project_path)
-        .output()?;
-    std::process::Command::new("git")
-        .args(["config", "user.email", "test@test.com"])
-        .current_dir(&project_path)
-        .output()?;
-    std::process::Command::new("git")
-        .args(["config", "user.name", "Test User"])
-        .current_dir(&project_path)
-        .output()?;
+    run_git_command(&["init"], &project_path)?;
+    run_git_command(&["config", "user.email", "test@test.com"], &project_path)?;
+    run_git_command(&["config", "user.name", "Test User"], &project_path)?;
 
     // Create source files
     let src_dir = project_path.join("src");
@@ -3162,14 +3176,8 @@ edition = "2021"
     )?;
 
     // Commit so git status is clean
-    std::process::Command::new("git")
-        .args(["add", "."])
-        .current_dir(&project_path)
-        .output()?;
-    std::process::Command::new("git")
-        .args(["commit", "-m", "Initial commit"])
-        .current_dir(&project_path)
-        .output()?;
+    run_git_command(&["add", "."], &project_path)?;
+    run_git_command(&["commit", "-m", "Initial commit"], &project_path)?;
 
     let project = cx.update(|cx| {
         project::Project::local(
@@ -3336,7 +3344,7 @@ edition = "2021"
     // flow get AgentPanel and ProjectPanel loaded automatically. Without this,
     // `workspace.panel::<AgentPanel>(cx)` returns None in the new workspace and
     // the creation flow's `focus_panel::<AgentPanel>` call is a no-op.
-    cx.update({
+    let _workspace_observer = cx.update({
         let prompt_builder = prompt_builder.clone();
         |cx| {
             cx.observe_new(move |workspace: &mut Workspace, window, cx| {
@@ -3364,7 +3372,6 @@ edition = "2021"
                 });
                 workspace.set_panels_task(panels_task);
             })
-            .detach();
         }
     });
 
@@ -3626,7 +3633,10 @@ edition = "2021"
         update_baseline,
     );
 
-    // Clean up
+    // Clean up — drop the workspace observer first so no new panels are
+    // registered on workspaces created during teardown.
+    drop(_workspace_observer);
+
     workspace_window
         .update(cx, |multi_workspace, _window, cx| {
             let workspace = &multi_workspace.workspaces()[0];
@@ -3653,6 +3663,15 @@ edition = "2021"
     for _ in 0..15 {
         cx.advance_clock(Duration::from_millis(100));
         cx.run_until_parked();
+    }
+
+    // Delete the preserved temp directory so visual-test runs don't
+    // accumulate filesystem artifacts.
+    if let Err(err) = std::fs::remove_dir_all(&temp_path) {
+        log::warn!(
+            "failed to clean up visual-test temp dir {}: {err}",
+            temp_path.display()
+        );
     }
 
     // Reset feature flags
