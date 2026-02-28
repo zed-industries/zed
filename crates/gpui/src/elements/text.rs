@@ -222,17 +222,26 @@ impl StyledText {
     ) -> Vec<TextRun> {
         let mut runs = Vec::new();
         let mut ix = 0;
-        for (range, highlight) in highlights {
+        for (mut range, highlight) in highlights {
+            range.start = range.start.min(text.len());
+            range.end = range.end.min(text.len());
+
+            while range.start > 0 && !text.is_char_boundary(range.start) {
+                range.start -= 1;
+            }
+
+            while range.end < text.len() && !text.is_char_boundary(range.end) {
+                range.end += 1;
+            }
+
             if ix < range.start {
-                debug_assert!(text.is_char_boundary(range.start));
                 runs.push(default_style.clone().to_run(range.start - ix));
             }
-            debug_assert!(text.is_char_boundary(range.end));
             runs.push(
                 default_style
                     .clone()
                     .highlight(highlight)
-                    .to_run(range.len()),
+                    .to_run(range.end - range.start),
             );
             ix = range.end;
         }
@@ -948,36 +957,25 @@ mod tests {
 
     #[test]
     fn test_with_runs_tolerates_non_char_boundary() {
-        use crate::{Font, StyledText, TextRun, black};
+        use crate::{HighlightStyle, StyledText, TextStyle};
+        use std::ops::Range;
 
-        // "é" is 2 bytes (0xC3 0xA9). A run of len=1 splits the character.
+        // "é" is 2 bytes (0xC3 0xA9). A highlight range that splits the character.
         let text = "é";
-        let run = TextRun {
-            len: 1,
-            font: Font::default(),
-            color: black(),
-            background_color: None,
-            underline: None,
-            strikethrough: None,
-        };
-        // Should not panic.
-        let _ = StyledText::new(text).with_runs(vec![run]);
+        let default_style = TextStyle::default();
+        let highlights = vec![(Range { start: 0, end: 1 }, HighlightStyle::default())];
+        let _ = StyledText::new(text).with_default_highlights(&default_style, highlights);
     }
 
     #[test]
     fn test_with_runs_tolerates_runs_exceeding_text_length() {
-        use crate::{Font, StyledText, TextRun, black};
+        use crate::{HighlightStyle, StyledText, TextStyle};
+        use std::ops::Range;
 
         let text = "hi";
-        let run = TextRun {
-            len: 10,
-            font: Font::default(),
-            color: black(),
-            background_color: None,
-            underline: None,
-            strikethrough: None,
-        };
-        // Should not panic.
-        let _ = StyledText::new(text).with_runs(vec![run]);
+        let default_style = TextStyle::default();
+        let highlights = vec![(Range { start: 0, end: 10 }, HighlightStyle::default())];
+
+        let _ = StyledText::new(text).with_default_highlights(&default_style, highlights);
     }
 }
