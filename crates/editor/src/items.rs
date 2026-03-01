@@ -3,7 +3,7 @@ use crate::{
     EditorSettings, ExcerptId, ExcerptRange, FormatTarget, MultiBuffer, MultiBufferSnapshot,
     NavigationData, ReportEditorEvent, SelectionEffects, ToPoint as _,
     display_map::HighlightKey,
-    editor_settings::SeedQuerySetting,
+    editor_settings::{PersistentUndoSettings, SeedQuerySetting},
     persistence::{DB, SerializedEditor},
     scroll::{ScrollAnchor, ScrollOffset},
 };
@@ -64,6 +64,25 @@ use zed_actions::preview::{
 };
 
 pub const MAX_TAB_TITLE_LEN: usize = 24;
+
+fn blob_path_for(abs_path: &Path) -> PathBuf {
+    use sha2::Digest as _;
+    let mut hasher = sha2::Sha256::new();
+    hasher.update(abs_path.as_os_str().as_encoded_bytes());
+    let hash = hasher.finalize();
+    db::database_dir()
+        .join("undo_history")
+        .join(format!("{}.bin", hex::encode(hash)))
+}
+
+fn compute_content_hash(rope: &rope::Rope) -> String {
+    use sha2::Digest as _;
+    let mut hasher = sha2::Sha256::new();
+    for chunk in rope.chunks() {
+        hasher.update(chunk.as_bytes());
+    }
+    hex::encode(hasher.finalize())
+}
 
 impl FollowableItem for Editor {
     fn remote_id(&self) -> Option<ViewId> {
@@ -1367,6 +1386,17 @@ impl SerializableItem for Editor {
         let is_dirty = buffer.read(cx).is_dirty();
         let mtime = buffer.read(cx).saved_mtime();
 
+        // Write undo history on save (not on every buffer edit)
+        if let Some(abs_path_ref) = abs_path.as_ref() {
+            if let Some(task) = self.write_undo_history(
+                workspace_id,
+                Arc::from(abs_path_ref.as_path()),
+                cx,
+            ) {
+                task.detach();
+            }
+        }
+
         let snapshot = buffer.read(cx).snapshot();
 
         Some(cx.spawn_in(window, async move |_this, cx| {
@@ -1494,6 +1524,87 @@ fn clip_ranges<'a>(
 impl EventEmitter<SearchEvent> for Editor {}
 
 impl Editor {
+    fn write_undo_history(
+        &self,
+        workspace_id: WorkspaceId,
+        abs_path: Arc<Path>,
+        cx: &App,
+    ) -> Option<Task<()>> {
+        use settings::Settings as _;
+        if !PersistentUndoSettings::get_global(cx).enabled {
+            return None;
+        }
+
+        let buffer = self.buffer().read(cx).as_singleton()?;
+        let buffer = buffer.read(cx);
+
+        // Only write when file has been saved and buffer matches disk content
+        if buffer.is_dirty() {
+            return None;
+        }
+
+        let mtime = buffer.saved_mtime()?;
+        let (mtime_seconds, mtime_nanos) = mtime.to_seconds_and_nanos_for_persistence()?;
+
+        let max_entries = PersistentUndoSettings::get_global(cx).max_entries as usize;
+        let undo_stack = buffer.undo_stack();
+        let redo_stack = buffer.redo_stack();
+
+        // Apply max_entries: keep the most recent N entries from undo_stack.
+        // undo_stack is oldest-first, so keep the tail.
+        let undo_start = undo_stack.len().saturating_sub(max_entries);
+        let undo_entries: Vec<_> = undo_stack[undo_start..].to_vec();
+        let redo_entries: Vec<_> = redo_stack.to_vec();
+
+        let total_entries = undo_entries.len() + redo_entries.len();
+        if total_entries == 0 {
+            return None;
+        }
+
+        let operations = buffer.operations().clone();
+
+        // Compute content hash from buffer text (not dirty, so matches disk)
+        let content_hash = compute_content_hash(buffer.as_rope());
+
+        let blob_path = blob_path_for(&abs_path);
+
+        Some(cx.background_spawn(async move {
+            let blob = match text::history_serde::encode_history(
+                &undo_entries,
+                &redo_entries,
+                &operations,
+            ) {
+                Ok(bytes) => bytes,
+                Err(err) => {
+                    log::warn!("Failed to encode undo history for {abs_path:?}: {err}");
+                    return;
+                }
+            };
+
+            if let Some(parent) = blob_path.parent() {
+                if let Err(err) = smol::fs::create_dir_all(parent).await {
+                    log::warn!("Failed to create undo_history dir: {err}");
+                    return;
+                }
+            }
+
+            if let Err(err) = smol::fs::write(&blob_path, &blob).await {
+                log::warn!("Failed to write undo history blob for {abs_path:?}: {err}");
+                return;
+            }
+
+            DB.save_undo_history_meta(
+                workspace_id,
+                abs_path.clone(),
+                content_hash,
+                mtime_seconds as i64,
+                mtime_nanos as i32,
+            )
+            .await
+            .log_err();
+        }))
+    }
+
     pub fn update_restoration_data(
         &self,
         cx: &mut Context<Self>,
