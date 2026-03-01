@@ -12,6 +12,7 @@ mod move_path_tool;
 mod now_tool;
 mod open_tool;
 mod read_file_tool;
+mod recent_changes_tool;
 mod restore_file_from_disk_tool;
 mod save_file_tool;
 mod spawn_agent_tool;
@@ -38,6 +39,7 @@ pub use move_path_tool::*;
 pub use now_tool::*;
 pub use open_tool::*;
 pub use read_file_tool::*;
+pub use recent_changes_tool::*;
 pub use restore_file_from_disk_tool::*;
 pub use save_file_tool::*;
 pub use spawn_agent_tool::*;
@@ -128,6 +130,7 @@ tools! {
     NowTool,
     OpenTool,
     ReadFileTool,
+    RecentChangesTool,
     RestoreFileFromDiskTool,
     SaveFileTool,
     SpawnAgentTool,
