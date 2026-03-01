@@ -148,6 +148,14 @@ impl HistoryEntry {
     pub fn transaction_id(&self) -> TransactionId {
         self.transaction.id
     }
+
+    pub fn transaction(&self) -> &Transaction {
+        &self.transaction
+    }
+
+    pub fn suppress_grouping(&self) -> bool {
+        self.suppress_grouping
+    }
 }
 
 struct History {
@@ -1491,12 +1499,55 @@ impl Buffer {
         !self.deferred_ops.is_empty()
     }
 
+    pub fn undo_stack(&self) -> &[HistoryEntry] {
+        &self.history.undo_stack
+    }
+
+    pub fn redo_stack(&self) -> &[HistoryEntry] {
+        &self.history.redo_stack
+    }
+
     pub fn peek_undo_stack(&self) -> Option<&HistoryEntry> {
         self.history.undo_stack.last()
     }
 
     pub fn peek_redo_stack(&self) -> Option<&HistoryEntry> {
         self.history.redo_stack.last()
+    }
+
+    pub fn restore_history(
+        &mut self,
+        undo_stack: Vec<Transaction>,
+        redo_stack: Vec<Transaction>,
+        undo_operations: Vec<UndoOperation>,
+    ) {
+        let now = Instant::now();
+        self.history.undo_stack = undo_stack
+            .into_iter()
+            .map(|transaction| HistoryEntry {
+                transaction,
+                first_edit_at: now,
+                last_edit_at: now,
+                suppress_grouping: true,
+            })
+            .collect();
+        self.history.redo_stack = redo_stack
+            .into_iter()
+            .map(|transaction| HistoryEntry {
+                transaction,
+                first_edit_at: now,
+                last_edit_at: now,
+                suppress_grouping: true,
+            })
+            .collect();
+        for undo in &undo_operations {
+            self.snapshot.undo_map.insert(undo);
+        }
+        for undo in undo_operations {
+            self.history
+                .operations
+                .insert(undo.timestamp, Operation::Undo(undo));
+        }
     }
 
     pub fn start_transaction(&mut self) -> Option<TransactionId> {
