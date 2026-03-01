@@ -1060,4 +1060,116 @@ mod tests {
             Point::new(px(5.0), px(5.1))
         ),);
     }
+
+    #[cfg(any(feature = "wayland", feature = "x11"))]
+    mod xkb_tests {
+        use crate::{Keystroke, Modifiers};
+        use xkbcommon::xkb;
+
+        fn create_us_xkb_state() -> xkb::State {
+            let context = xkb::Context::new(xkb::CONTEXT_NO_FLAGS);
+            let keymap = xkb::Keymap::new_from_names(
+                &context,
+                &"evdev",
+                &"pc105",
+                &"us",
+                &"",
+                None,
+                xkb::KEYMAP_COMPILE_NO_FLAGS,
+            )
+            .expect("Failed to create US keymap");
+            xkb::State::new(&keymap)
+        }
+
+        // Evdev keycodes + 8 = XKB keycodes
+        const KEYCODE_SPACE: u32 = 65;
+        const KEYCODE_A: u32 = 38;
+        const KEYCODE_B: u32 = 56;
+        const KEYCODE_BRACKETLEFT: u32 = 34;
+
+        #[test]
+        fn test_from_xkb_space_with_update_mask_only() {
+            let mut state = create_us_xkb_state();
+
+            // Simulate the KeyPress flow: update_mask from event state, then from_xkb.
+            // No update_key() should be needed for correct keysym resolution.
+            state.update_mask(0, 0, 0, 0, 0, 0);
+            let keystroke =
+                Keystroke::from_xkb(&state, Modifiers::default(), xkb::Keycode::new(KEYCODE_SPACE));
+            assert_eq!(keystroke.key, "space");
+            assert_eq!(keystroke.key_char.as_deref(), Some(" "));
+        }
+
+        #[test]
+        fn test_from_xkb_letters_with_update_mask_only() {
+            let mut state = create_us_xkb_state();
+
+            state.update_mask(0, 0, 0, 0, 0, 0);
+            let keystroke =
+                Keystroke::from_xkb(&state, Modifiers::default(), xkb::Keycode::new(KEYCODE_A));
+            assert_eq!(keystroke.key, "a");
+            assert_eq!(keystroke.key_char.as_deref(), Some("a"));
+
+            // Second key press without update_key in between
+            state.update_mask(0, 0, 0, 0, 0, 0);
+            let keystroke =
+                Keystroke::from_xkb(&state, Modifiers::default(), xkb::Keycode::new(KEYCODE_B));
+            assert_eq!(keystroke.key, "b");
+            assert_eq!(keystroke.key_char.as_deref(), Some("b"));
+        }
+
+        #[test]
+        fn test_from_xkb_shift_bracket_with_update_mask_only() {
+            let mut state = create_us_xkb_state();
+
+            // Simulate Shift+[ → { using update_mask to set shift as depressed.
+            // Shift modifier bit is 0x01 in XKB.
+            let shift_mod = 1u32;
+            state.update_mask(shift_mod, 0, 0, 0, 0, 0);
+            let keystroke = Keystroke::from_xkb(
+                &state,
+                Modifiers {
+                    shift: true,
+                    ..Default::default()
+                },
+                xkb::Keycode::new(KEYCODE_BRACKETLEFT),
+            );
+            assert_eq!(keystroke.key, "{");
+        }
+
+        #[test]
+        fn test_from_xkb_sequential_keys_without_update_key() {
+            let mut state = create_us_xkb_state();
+
+            // Simulate typing "a b" (a, space, b) using only update_mask, no update_key.
+            // This verifies that skipping update_key doesn't corrupt state for
+            // subsequent key presses.
+            let keys_and_expected = [
+                (KEYCODE_A, "a", Some("a")),
+                (KEYCODE_SPACE, "space", Some(" ")),
+                (KEYCODE_B, "b", Some("b")),
+                (KEYCODE_SPACE, "space", Some(" ")),
+            ];
+
+            for (keycode, expected_key, expected_char) in keys_and_expected {
+                state.update_mask(0, 0, 0, 0, 0, 0);
+                let keystroke = Keystroke::from_xkb(
+                    &state,
+                    Modifiers::default(),
+                    xkb::Keycode::new(keycode),
+                );
+                assert_eq!(
+                    keystroke.key, expected_key,
+                    "keycode {keycode}: expected key={expected_key:?}, got {:?}",
+                    keystroke.key,
+                );
+                assert_eq!(
+                    keystroke.key_char.as_deref(),
+                    expected_char,
+                    "keycode {keycode}: expected key_char={expected_char:?}, got {:?}",
+                    keystroke.key_char,
+                );
+            }
+        }
+    }
 }
