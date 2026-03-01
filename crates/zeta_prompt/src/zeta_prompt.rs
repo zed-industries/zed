@@ -1,10 +1,120 @@
-use anyhow::{Result, anyhow};
+use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::fmt::Write;
 use std::ops::Range;
 use std::path::Path;
 use std::sync::Arc;
 use strum::{EnumIter, IntoEnumIterator as _, IntoStaticStr};
+
+pub trait Zeta2FormatSpec: Sync {
+    fn special_tokens(&self) -> &'static [&'static str];
+
+    fn excerpt_ranges(&self, ranges: &ExcerptRanges) -> (Range<usize>, Range<usize>) {
+        (
+            ranges.editable_350.clone(),
+            ranges.editable_350_context_150.clone(),
+        )
+    }
+
+    fn write_cursor_excerpt_section(
+        &self,
+        prompt: &mut String,
+        path: &Path,
+        context: &str,
+        editable_range: &Range<usize>,
+        cursor_offset: usize,
+    );
+
+    fn format_prompt_with_budget(
+        &self,
+        path: &Path,
+        context: &str,
+        editable_range: &Range<usize>,
+        cursor_offset: usize,
+        events: &[Arc<Event>],
+        related_files: &[RelatedFile],
+        max_tokens: usize,
+    ) -> String {
+        let mut cursor_section = String::new();
+        self.write_cursor_excerpt_section(
+            &mut cursor_section,
+            path,
+            context,
+            editable_range,
+            cursor_offset,
+        );
+
+        let cursor_tokens = estimate_tokens(cursor_section.len());
+        let budget_after_cursor = max_tokens.saturating_sub(cursor_tokens);
+
+        let edit_history_section = format_edit_history_within_budget(
+            events,
+            "<|file_sep|>",
+            "edit history",
+            budget_after_cursor,
+        );
+        let edit_history_tokens = estimate_tokens(edit_history_section.len());
+        let budget_after_edit_history = budget_after_cursor.saturating_sub(edit_history_tokens);
+
+        let related_files_section = format_related_files_within_budget(
+            related_files,
+            "<|file_sep|>",
+            "",
+            budget_after_edit_history,
+        );
+
+        let mut prompt = String::new();
+        prompt.push_str(&related_files_section);
+        prompt.push_str(&edit_history_section);
+        prompt.push_str(&cursor_section);
+        prompt
+    }
+
+    fn get_prefill(&self, _context: &str, _editable_range: &Range<usize>) -> String {
+        String::new()
+    }
+
+    fn output_end_marker(&self) -> Option<&'static str> {
+        None
+    }
+
+    fn post_process_output<'a>(&self, output: &'a str) -> &'a str {
+        match self.output_end_marker() {
+            Some(marker) => output.strip_suffix(marker).unwrap_or(output),
+            None => output,
+        }
+    }
+
+    fn current_region_markers(&self) -> (&'static str, &'static str);
+
+    fn clean_extracted_region(&self, region: &str) -> String {
+        region.to_string()
+    }
+
+    fn encode_patch_as_output(
+        &self,
+        old_editable_region: &str,
+        patch: &str,
+        cursor_offset: Option<usize>,
+    ) -> Result<Option<String>> {
+        let _ = (old_editable_region, patch, cursor_offset);
+        Ok(None)
+    }
+
+    fn output_with_context(
+        &self,
+        old_editable_region: &str,
+        output: &str,
+    ) -> Result<Option<String>> {
+        let _ = (old_editable_region, output);
+        Ok(None)
+    }
+
+    fn output_contains_edit_commands(&self, output: &str) -> bool {
+        let _ = output;
+        false
+    }
+}
 
 pub const CURSOR_MARKER: &str = "<|user_cursor|>";
 pub const MAX_PROMPT_TOKENS: usize = 4096;
@@ -130,24 +240,21 @@ impl ZetaFormat {
             .concat()
     }
 
-    pub fn special_tokens(&self) -> &'static [&'static str] {
+    pub fn spec(&self) -> &'static dyn Zeta2FormatSpec {
         match self {
-            ZetaFormat::V0112MiddleAtEnd
-            | ZetaFormat::V0113Ordered
-            | ZetaFormat::V0114180EditableRegion => &[
-                "<|fim_prefix|>",
-                "<|fim_suffix|>",
-                "<|fim_middle|>",
-                "<|file_sep|>",
-                CURSOR_MARKER,
-            ],
-            ZetaFormat::V0120GitMergeMarkers => v0120_git_merge_markers::special_tokens(),
-            ZetaFormat::V0131GitMergeMarkersPrefix | ZetaFormat::V0211Prefill => {
-                v0131_git_merge_markers_prefix::special_tokens()
-            }
-            ZetaFormat::V0211SeedCoder => seed_coder::special_tokens(),
-            ZetaFormat::v0226Hashline => hashline::special_tokens(),
+            ZetaFormat::V0112MiddleAtEnd => &v0112_middle_at_end::SPEC,
+            ZetaFormat::V0113Ordered => &v0113_ordered::SPEC,
+            ZetaFormat::V0114180EditableRegion => &v0114180_editable_region::SPEC,
+            ZetaFormat::V0120GitMergeMarkers => &v0120_git_merge_markers::SPEC,
+            ZetaFormat::V0131GitMergeMarkersPrefix => &v0131_git_merge_markers_prefix::SPEC,
+            ZetaFormat::V0211Prefill => &v0211_prefill::SPEC,
+            ZetaFormat::V0211SeedCoder => &seed_coder::SPEC,
+            ZetaFormat::v0226Hashline => &hashline::SPEC,
         }
+    }
+
+    pub fn special_tokens(&self) -> &'static [&'static str] {
+        self.spec().special_tokens()
     }
 }
 
@@ -232,39 +339,14 @@ pub fn format_zeta_prompt(input: &ZetaPromptInput, format: ZetaFormat) -> String
 
 /// Post-processes model output for the given zeta format by stripping format-specific suffixes.
 pub fn clean_zeta2_model_output(output: &str, format: ZetaFormat) -> &str {
-    match format {
-        ZetaFormat::V0120GitMergeMarkers => output
-            .strip_suffix(v0120_git_merge_markers::END_MARKER)
-            .unwrap_or(output),
-        ZetaFormat::V0131GitMergeMarkersPrefix => output
-            .strip_suffix(v0131_git_merge_markers_prefix::END_MARKER)
-            .unwrap_or(output),
-        ZetaFormat::V0211SeedCoder => output
-            .strip_suffix(seed_coder::END_MARKER)
-            .unwrap_or(output),
-        _ => output,
-    }
+    format.spec().post_process_output(output)
 }
 
 pub fn excerpt_range_for_format(
     format: ZetaFormat,
     ranges: &ExcerptRanges,
 ) -> (Range<usize>, Range<usize>) {
-    match format {
-        ZetaFormat::V0112MiddleAtEnd | ZetaFormat::V0113Ordered => (
-            ranges.editable_150.clone(),
-            ranges.editable_150_context_350.clone(),
-        ),
-        ZetaFormat::V0114180EditableRegion
-        | ZetaFormat::V0120GitMergeMarkers
-        | ZetaFormat::V0131GitMergeMarkersPrefix
-        | ZetaFormat::V0211Prefill
-        | ZetaFormat::V0211SeedCoder
-        | ZetaFormat::v0226Hashline => (
-            ranges.editable_350.clone(),
-            ranges.editable_350_context_150.clone(),
-        ),
-    }
+    format.spec().excerpt_ranges(ranges)
 }
 
 pub fn resolve_cursor_region(
@@ -297,102 +379,20 @@ fn format_zeta_prompt_with_budget(
     let (context, editable_range, cursor_offset) = resolve_cursor_region(input, format);
     let path = &*input.cursor_path;
 
-    let mut cursor_section = String::new();
-    match format {
-        ZetaFormat::V0112MiddleAtEnd => {
-            v0112_middle_at_end::write_cursor_excerpt_section(
-                &mut cursor_section,
-                path,
-                context,
-                &editable_range,
-                cursor_offset,
-            );
-        }
-        ZetaFormat::V0113Ordered | ZetaFormat::V0114180EditableRegion => {
-            v0113_ordered::write_cursor_excerpt_section(
-                &mut cursor_section,
-                path,
-                context,
-                &editable_range,
-                cursor_offset,
-            )
-        }
-        ZetaFormat::V0120GitMergeMarkers => v0120_git_merge_markers::write_cursor_excerpt_section(
-            &mut cursor_section,
-            path,
-            context,
-            &editable_range,
-            cursor_offset,
-        ),
-        ZetaFormat::V0131GitMergeMarkersPrefix | ZetaFormat::V0211Prefill => {
-            v0131_git_merge_markers_prefix::write_cursor_excerpt_section(
-                &mut cursor_section,
-                path,
-                context,
-                &editable_range,
-                cursor_offset,
-            )
-        }
-        ZetaFormat::v0226Hashline => hashline::write_cursor_excerpt_section(
-            &mut cursor_section,
-            path,
-            context,
-            &editable_range,
-            cursor_offset,
-        ),
-        ZetaFormat::V0211SeedCoder => {
-            return seed_coder::format_prompt_with_budget(
-                path,
-                context,
-                &editable_range,
-                cursor_offset,
-                &input.events,
-                &input.related_files,
-                max_tokens,
-            );
-        }
-    }
-
-    let cursor_tokens = estimate_tokens(cursor_section.len());
-    let budget_after_cursor = max_tokens.saturating_sub(cursor_tokens);
-
-    let edit_history_section = format_edit_history_within_budget(
+    format.spec().format_prompt_with_budget(
+        path,
+        context,
+        &editable_range,
+        cursor_offset,
         &input.events,
-        "<|file_sep|>",
-        "edit history",
-        budget_after_cursor,
-    );
-    let edit_history_tokens = estimate_tokens(edit_history_section.len());
-    let budget_after_edit_history = budget_after_cursor.saturating_sub(edit_history_tokens);
-
-    let related_files_section = format_related_files_within_budget(
         &input.related_files,
-        "<|file_sep|>",
-        "",
-        budget_after_edit_history,
-    );
-
-    let mut prompt = String::new();
-    prompt.push_str(&related_files_section);
-    prompt.push_str(&edit_history_section);
-    prompt.push_str(&cursor_section);
-    prompt
+        max_tokens,
+    )
 }
 
 pub fn get_prefill(input: &ZetaPromptInput, format: ZetaFormat) -> String {
-    match format {
-        ZetaFormat::V0112MiddleAtEnd
-        | ZetaFormat::V0113Ordered
-        | ZetaFormat::V0114180EditableRegion
-        | ZetaFormat::V0120GitMergeMarkers
-        | ZetaFormat::V0131GitMergeMarkersPrefix
-        | ZetaFormat::V0211SeedCoder
-        | ZetaFormat::v0226Hashline => String::new(),
-        ZetaFormat::V0211Prefill => {
-            let (context, editable_range, _) = resolve_cursor_region(input, format);
-            v0211_prefill::get_prefill(context, &editable_range)
-        }
-    }
+    let (context, editable_range, _) = resolve_cursor_region(input, format);
+    format.spec().get_prefill(context, &editable_range)
 }
 
 fn format_edit_history_within_budget(
@@ -558,6 +558,43 @@ pub fn write_related_files(
 mod v0112_middle_at_end {
     use super::*;
 
+    pub(super) struct V0112MiddleAtEndSpec;
+    pub(super) static SPEC: V0112MiddleAtEndSpec = V0112MiddleAtEndSpec;
+
+    impl Zeta2FormatSpec for V0112MiddleAtEndSpec {
+        fn special_tokens(&self) -> &'static [&'static str] {
+            &[
+                "<|fim_prefix|>",
+                "<|fim_suffix|>",
+                "<|fim_middle|>",
+                "<|file_sep|>",
+                CURSOR_MARKER,
+            ]
+        }
+
+        fn excerpt_ranges(&self, ranges: &ExcerptRanges) -> (Range<usize>, Range<usize>) {
+            (
+                ranges.editable_150.clone(),
+                ranges.editable_150_context_350.clone(),
+            )
+        }
+
+        fn write_cursor_excerpt_section(
+            &self,
+            prompt: &mut String,
+            path: &Path,
+            context: &str,
+            editable_range: &Range<usize>,
+            cursor_offset: usize,
+        ) {
+            write_cursor_excerpt_section(prompt, path, context, editable_range, cursor_offset);
+        }
+
+        fn current_region_markers(&self) -> (&'static str, &'static str) {
+            ("<|fim_middle|>current\n", "<|fim_middle|>updated")
+        }
+    }
+
     pub fn write_cursor_excerpt_section(
         prompt: &mut String,
         path: &Path,
@@ -592,6 +629,43 @@ mod v0112_middle_at_end {
 mod v0113_ordered {
     use super::*;
 
+    pub(super) struct V0113OrderedSpec;
+    pub(super) static SPEC: V0113OrderedSpec = V0113OrderedSpec;
+
+    impl Zeta2FormatSpec for V0113OrderedSpec {
+        fn special_tokens(&self) -> &'static [&'static str] {
+            &[
+                "<|fim_prefix|>",
+                "<|fim_suffix|>",
+                "<|fim_middle|>",
+                "<|file_sep|>",
+                CURSOR_MARKER,
+            ]
+        }
+
+        fn excerpt_ranges(&self, ranges: &ExcerptRanges) -> (Range<usize>, Range<usize>) {
+            (
+                ranges.editable_150.clone(),
+                ranges.editable_150_context_350.clone(),
+            )
+        }
+
+        fn write_cursor_excerpt_section(
+            &self,
+            prompt: &mut String,
+            path: &Path,
+            context: &str,
+            editable_range: &Range<usize>,
+            cursor_offset: usize,
+        ) {
+            write_cursor_excerpt_section(prompt, path, context, editable_range, cursor_offset);
+        }
+
+        fn current_region_markers(&self) -> (&'static str, &'static str) {
+            ("<|fim_middle|>current\n", "<|fim_suffix|>")
+        }
+    }
+
     pub fn write_cursor_excerpt_section(
         prompt: &mut String,
         path: &Path,
@@ -626,6 +700,40 @@ mod v0113_ordered {
     }
 }
 
+mod v0114180_editable_region {
+    use super::*;
+
+    pub(super) struct V0114180EditableRegionSpec;
+    pub(super) static SPEC: V0114180EditableRegionSpec = V0114180EditableRegionSpec;
+
+    impl Zeta2FormatSpec for V0114180EditableRegionSpec {
+        fn special_tokens(&self) -> &'static [&'static str] {
+            v0113_ordered::SPEC.special_tokens()
+        }
+
+        fn write_cursor_excerpt_section(
+            &self,
+            prompt: &mut String,
+            path: &Path,
+            context: &str,
+            editable_range: &Range<usize>,
+            cursor_offset: usize,
+        ) {
+            v0113_ordered::write_cursor_excerpt_section(
+                prompt,
+                path,
+                context,
+                editable_range,
+                cursor_offset,
+            );
+        }
+
+        fn current_region_markers(&self) -> (&'static str, &'static str) {
+            ("<|fim_middle|>current\n", "<|fim_suffix|>")
+        }
+    }
+}
+
 pub mod v0120_git_merge_markers {
     //! A prompt that uses git-style merge conflict markers to represent the editable region.
     //!
@@ -655,6 +763,34 @@ pub mod v0120_git_merge_markers {
     pub const START_MARKER: &str = "<<<<<<< CURRENT\n";
     pub const SEPARATOR: &str = "=======\n";
     pub const END_MARKER: &str = ">>>>>>> UPDATED\n";
+
+    pub(super) struct V0120GitMergeMarkersSpec;
+    pub(super) static SPEC: V0120GitMergeMarkersSpec = V0120GitMergeMarkersSpec;
+
+    impl Zeta2FormatSpec for V0120GitMergeMarkersSpec {
+        fn special_tokens(&self) -> &'static [&'static str] {
+            special_tokens()
+        }
+
+        fn write_cursor_excerpt_section(
+            &self,
+            prompt: &mut String,
+            path: &Path,
+            context: &str,
+            editable_range: &Range<usize>,
+            cursor_offset: usize,
+        ) {
+            write_cursor_excerpt_section(prompt, path, context, editable_range, cursor_offset);
+        }
+
+        fn output_end_marker(&self) -> Option<&'static str> {
+            Some(END_MARKER)
+        }
+
+        fn current_region_markers(&self) -> (&'static str, &'static str) {
+            (START_MARKER, SEPARATOR)
+        }
+    }
 
     pub fn special_tokens() -> &'static [&'static str] {
         &[
@@ -726,9 +862,37 @@ pub mod v0131_git_merge_markers_prefix {
 
     use super::*;
 
+    pub(super) struct V0131GitMergeMarkersPrefixSpec;
+    pub(super) static SPEC: V0131GitMergeMarkersPrefixSpec = V0131GitMergeMarkersPrefixSpec;
+
     pub const START_MARKER: &str = "<<<<<<< CURRENT\n";
     pub const SEPARATOR: &str = "=======\n";
     pub const END_MARKER: &str = ">>>>>>> UPDATED\n";
+
+    impl Zeta2FormatSpec for V0131GitMergeMarkersPrefixSpec {
+        fn special_tokens(&self) -> &'static [&'static str] {
+            special_tokens()
+        }
+
+        fn write_cursor_excerpt_section(
+            &self,
+            prompt: &mut String,
+            path: &Path,
+            context: &str,
+            editable_range: &Range<usize>,
+            cursor_offset: usize,
+        ) {
+            write_cursor_excerpt_section(prompt, path, context, editable_range, cursor_offset);
+        }
+
+        fn output_end_marker(&self) -> Option<&'static str> {
+            Some(END_MARKER)
+        }
+
+        fn current_region_markers(&self) -> (&'static str, &'static str) {
+            (START_MARKER, SEPARATOR)
+        }
+    }
 
     pub fn special_tokens() -> &'static [&'static str] {
         &[
@@ -777,6 +941,47 @@ pub mod v0131_git_merge_markers_prefix {
 pub mod v0211_prefill {
     use super::*;
 
+    pub(super) struct V0211PrefillSpec;
+    pub(super) static SPEC: V0211PrefillSpec = V0211PrefillSpec;
+
+    impl Zeta2FormatSpec for V0211PrefillSpec {
+        fn special_tokens(&self) -> &'static [&'static str] {
+            v0131_git_merge_markers_prefix::special_tokens()
+        }
+
+        fn write_cursor_excerpt_section(
+            &self,
+            prompt: &mut String,
+            path: &Path,
+            context: &str,
+            editable_range: &Range<usize>,
+            cursor_offset: usize,
+        ) {
+            v0131_git_merge_markers_prefix::write_cursor_excerpt_section(
+                prompt,
+                path,
+                context,
+                editable_range,
+                cursor_offset,
+            );
+        }
+
+        fn output_end_marker(&self) -> Option<&'static str> {
+            Some(v0131_git_merge_markers_prefix::END_MARKER)
+        }
+
+        fn get_prefill(&self, context: &str, editable_range: &Range<usize>) -> String {
+            get_prefill(context, editable_range)
+        }
+
+        fn current_region_markers(&self) -> (&'static str, &'static str) {
+            (
+                v0120_git_merge_markers::START_MARKER,
+                v0120_git_merge_markers::SEPARATOR,
+            )
+        }
+    }
+
     pub fn get_prefill(context: &str, editable_range: &Range<usize>) -> String {
         let editable_region = &context[editable_range.start..editable_range.end];
 
@@ -816,6 +1021,58 @@ pub mod hashline {
     pub const START_MARKER: &str = "<|fim_middle|>current";
 
     use super::*;
+
+    pub(super) struct V0226HashlineSpec;
+    pub(super) static SPEC: V0226HashlineSpec = V0226HashlineSpec;
+
+    impl Zeta2FormatSpec for V0226HashlineSpec {
+        fn special_tokens(&self) -> &'static [&'static str] {
+            special_tokens()
+        }
+
+        fn write_cursor_excerpt_section(
+            &self,
+            prompt: &mut String,
+            path: &Path,
+            context: &str,
+            editable_range: &Range<usize>,
+            cursor_offset: usize,
+        ) {
+            write_cursor_excerpt_section(prompt, path, context, editable_range, cursor_offset);
+        }
+
+        fn current_region_markers(&self) -> (&'static str, &'static str) {
+            ("<|fim_middle|>current\n", "<|fim_suffix|>")
+        }
+
+        fn clean_extracted_region(&self, region: &str) -> String {
+            strip_hashline_prefixes(region)
+        }
+
+        fn encode_patch_as_output(
+            &self,
+            old_editable_region: &str,
+            patch: &str,
+            cursor_offset: Option<usize>,
+        ) -> Result<Option<String>> {
+            patch_to_edit_commands(old_editable_region, patch, cursor_offset).map(Some)
+        }
+
+        fn output_with_context(
+            &self,
+            old_editable_region: &str,
+            output: &str,
+        ) -> Result<Option<String>> {
+            if self.output_contains_edit_commands(output) {
+                return Ok(Some(apply_edit_commands(old_editable_region, output)));
+            }
+            Ok(None)
+        }
+
+        fn output_contains_edit_commands(&self, output: &str) -> bool {
+            output_has_edit_commands(output)
+        }
+    }
 
     pub fn special_tokens() -> &'static [&'static str] {
         return &[
@@ -2237,6 +2494,56 @@ pub mod seed_coder {
     pub const START_MARKER: &str = "<<<<<<< CURRENT\n";
     pub const SEPARATOR: &str = "=======\n";
     pub const END_MARKER: &str = ">>>>>>> UPDATED\n";
+
+    pub(super) struct V0211SeedCoderSpec;
+    pub(super) static SPEC: V0211SeedCoderSpec = V0211SeedCoderSpec;
+
+    impl Zeta2FormatSpec for V0211SeedCoderSpec {
+        fn special_tokens(&self) -> &'static [&'static str] {
+            special_tokens()
+        }
+
+        fn write_cursor_excerpt_section(
+            &self,
+            prompt: &mut String,
+            path: &Path,
+            context: &str,
+            editable_range: &Range<usize>,
+            cursor_offset: usize,
+        ) {
+            let section = build_cursor_prefix_section(path, context, editable_range, cursor_offset);
+            prompt.push_str(&section);
+        }
+
+        fn format_prompt_with_budget(
+            &self,
+            path: &Path,
+            context: &str,
+            editable_range: &Range<usize>,
+            cursor_offset: usize,
+            events: &[Arc<Event>],
+            related_files: &[RelatedFile],
+            max_tokens: usize,
+        ) -> String {
+            format_prompt_with_budget(
+                path,
+                context,
+                editable_range,
+                cursor_offset,
+                events,
+                related_files,
+                max_tokens,
+            )
+        }
+
+        fn output_end_marker(&self) -> Option<&'static str> {
+            Some(END_MARKER)
+        }
+
+        fn current_region_markers(&self) -> (&'static str, &'static str) {
+            (START_MARKER, SEPARATOR)
+        }
+    }
 
     pub fn special_tokens() -> &'static [&'static str] {
         &[

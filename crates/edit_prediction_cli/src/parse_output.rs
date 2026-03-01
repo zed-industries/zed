@@ -6,7 +6,7 @@ use crate::{
 };
 use anyhow::{Context as _, Result};
 use edit_prediction::example_spec::encode_cursor_in_patch;
-use zeta_prompt::{CURSOR_MARKER, ZetaFormat, hashline};
+use zeta_prompt::{CURSOR_MARKER, ZetaFormat};
 
 pub fn run_parse_output(example: &mut Example) -> Result<()> {
     example
@@ -51,22 +51,8 @@ pub fn parse_prediction_output(
 }
 
 fn extract_zeta2_current_region(prompt: &str, format: ZetaFormat) -> Result<String> {
-    let (current_marker, end_marker) = match format {
-        ZetaFormat::V0112MiddleAtEnd => ("<|fim_middle|>current\n", "<|fim_middle|>updated"),
-        ZetaFormat::V0113Ordered
-        | ZetaFormat::V0114180EditableRegion
-        | ZetaFormat::v0226Hashline => ("<|fim_middle|>current\n", "<|fim_suffix|>"),
-        ZetaFormat::V0120GitMergeMarkers
-        | ZetaFormat::V0131GitMergeMarkersPrefix
-        | ZetaFormat::V0211Prefill => (
-            zeta_prompt::v0120_git_merge_markers::START_MARKER,
-            zeta_prompt::v0120_git_merge_markers::SEPARATOR,
-        ),
-        ZetaFormat::V0211SeedCoder => (
-            zeta_prompt::seed_coder::START_MARKER,
-            zeta_prompt::seed_coder::SEPARATOR,
-        ),
-    };
+    let spec = format.spec();
+    let (current_marker, end_marker) = spec.current_region_markers();
 
     let start = prompt.find(current_marker).with_context(|| {
         format!(
@@ -81,12 +67,8 @@ fn extract_zeta2_current_region(prompt: &str, format: ZetaFormat) -> Result<Stri
         + start;
 
     let region = &prompt[start..end];
-    let mut region = region.replace(CURSOR_MARKER, "");
-    if matches!(format, ZetaFormat::v0226Hashline) {
-        region = hashline::strip_hashline_prefixes(&region);
-    }
-
-    Ok(region)
+    let region = region.replace(CURSOR_MARKER, "");
+    Ok(spec.clean_extracted_region(&region))
 }
 
 fn parse_zeta2_output(
@@ -103,8 +85,8 @@ fn parse_zeta2_output(
     let old_text = extract_zeta2_current_region(prompt, format)?;
 
     let mut new_text = actual_output.to_string();
-    if matches!(format, ZetaFormat::v0226Hashline) {
-        new_text = zeta_prompt::hashline::apply_edit_commands(&old_text, &new_text);
+    if let Some(transformed) = format.spec().output_with_context(&old_text, &new_text)? {
+        new_text = transformed;
     }
     let cursor_offset = if let Some(offset) = new_text.find(CURSOR_MARKER) {
         new_text.replace_range(offset..offset + CURSOR_MARKER.len(), "");
@@ -113,23 +95,7 @@ fn parse_zeta2_output(
         None
     };
 
-    let suffix = match format {
-        ZetaFormat::V0131GitMergeMarkersPrefix | ZetaFormat::V0211Prefill => {
-            zeta_prompt::v0131_git_merge_markers_prefix::END_MARKER
-        }
-        ZetaFormat::V0120GitMergeMarkers => zeta_prompt::v0120_git_merge_markers::END_MARKER,
-        ZetaFormat::V0112MiddleAtEnd
-        | ZetaFormat::V0113Ordered
-        | ZetaFormat::V0114180EditableRegion
-        | ZetaFormat::v0226Hashline => "",
-        ZetaFormat::V0211SeedCoder => zeta_prompt::seed_coder::END_MARKER,
-    };
-    if !suffix.is_empty() {
-        new_text = new_text
-            .strip_suffix(suffix)
-            .unwrap_or(&new_text)
-            .to_string();
-    }
+    new_text = format.spec().post_process_output(&new_text).to_string();
 
     let mut old_text_normalized = old_text.clone();
     if !new_text.is_empty() && !new_text.ends_with('\n') {

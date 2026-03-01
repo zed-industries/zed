@@ -20,7 +20,7 @@ use std::ops::Range;
 use std::{path::Path, sync::Arc, time::Instant};
 use zeta_prompt::{
     CURSOR_MARKER, EditPredictionModelKind, ZetaFormat, clean_zeta2_model_output,
-    format_zeta_prompt, get_prefill, hashline, prompt_input_contains_special_tokens,
+    format_zeta_prompt, get_prefill, prompt_input_contains_special_tokens,
     zeta1::{self, EDITABLE_REGION_END_MARKER},
 };
 
@@ -270,10 +270,11 @@ pub fn request_prediction_with_zeta(
             // the original editable region to produce the full replacement text.
             // This must happen before cursor marker stripping because the cursor
             // marker is embedded inside edit command content.
-            if matches!(zeta_version, ZetaFormat::v0226Hashline)
-                && hashline::output_has_edit_commands(&output_text)
+            if let Some(rewritten_output) = zeta_version
+                .spec()
+                .output_with_context(&old_text, &output_text)?
             {
-                output_text = hashline::apply_edit_commands(&old_text, &output_text);
+                output_text = rewritten_output;
             }
 
             // Client-side cursor marker processing (applies to both raw and v3 responses)
