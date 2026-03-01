@@ -1,4 +1,4 @@
-use std::cmp::{self, max, min};
+use std::cmp::{self, min};
 use std::iter::repeat;
 
 use alacritty_terminal::grid::Dimensions;
@@ -93,9 +93,51 @@ pub fn scroll_report(
             e.modifiers,
             MouseFormat::from_mode(mode),
         )
-        .map(|report| repeat(report).take(max(scroll_lines, 1) as usize))
+        .map(|report| repeat(report).take(scroll_lines.unsigned_abs() as usize))
     } else {
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui::{ScrollDelta, TouchPhase, point};
+
+    #[test]
+    fn scroll_report_repeats_for_negative_scroll_lines() {
+        let grid_point = AlacPoint::new(GridLine(0), GridCol(0));
+
+        let scroll_event = ScrollWheelEvent {
+            delta: ScrollDelta::Lines(point(0., -1.)),
+            touch_phase: TouchPhase::Moved,
+            ..Default::default()
+        };
+
+        let mode = TermMode::MOUSE_MODE;
+        let reports: Vec<Vec<u8>> = scroll_report(grid_point, -3, &scroll_event, mode)
+            .expect("mouse mode should produce a scroll report")
+            .collect();
+
+        assert_eq!(reports.len(), 3);
+    }
+
+    #[test]
+    fn scroll_report_repeats_for_positive_scroll_lines() {
+        let grid_point = AlacPoint::new(GridLine(0), GridCol(0));
+
+        let scroll_event = ScrollWheelEvent {
+            delta: ScrollDelta::Lines(point(0., 1.)),
+            touch_phase: TouchPhase::Moved,
+            ..Default::default()
+        };
+
+        let mode = TermMode::MOUSE_MODE;
+        let reports: Vec<Vec<u8>> = scroll_report(grid_point, 3, &scroll_event, mode)
+            .expect("mouse mode should produce a scroll report")
+            .collect();
+
+        assert_eq!(reports.len(), 3);
     }
 }
 

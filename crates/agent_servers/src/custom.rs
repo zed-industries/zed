@@ -3,11 +3,15 @@ use acp_thread::AgentConnection;
 use agent_client_protocol as acp;
 use anyhow::{Context as _, Result};
 use collections::HashSet;
+use credentials_provider::CredentialsProvider;
 use fs::Fs;
 use gpui::{App, AppContext as _, SharedString, Task};
-use project::agent_server_store::{AllAgentServersSettings, ExternalAgentServerName};
+use language_model::{ApiKey, EnvVar};
+use project::agent_server_store::{
+    AllAgentServersSettings, CLAUDE_AGENT_NAME, CODEX_NAME, ExternalAgentServerName, GEMINI_NAME,
+};
 use settings::{SettingsStore, update_settings_file};
-use std::{path::Path, rc::Rc, sync::Arc};
+use std::{rc::Rc, sync::Arc};
 use ui::IconName;
 
 /// A generic agent server implementation for custom user-defined agents
@@ -34,7 +38,6 @@ impl AgentServer for CustomAgentServer {
         let settings = cx.read_global(|settings: &SettingsStore, _| {
             settings
                 .get::<AllAgentServersSettings>(None)
-                .custom
                 .get(self.name().as_ref())
                 .cloned()
         });
@@ -52,7 +55,6 @@ impl AgentServer for CustomAgentServer {
         let settings = cx.read_global(|settings: &SettingsStore, _| {
             settings
                 .get::<AllAgentServersSettings>(None)
-                .custom
                 .get(self.name().as_ref())
                 .cloned()
         });
@@ -86,7 +88,6 @@ impl AgentServer for CustomAgentServer {
             let settings = settings
                 .agent_servers
                 .get_or_insert_default()
-                .custom
                 .entry(name.to_string())
                 .or_insert_with(|| settings::CustomAgentServerSettings::Extension {
                     default_model: None,
@@ -135,7 +136,6 @@ impl AgentServer for CustomAgentServer {
             let settings = settings
                 .agent_servers
                 .get_or_insert_default()
-                .custom
                 .entry(name.to_string())
                 .or_insert_with(|| settings::CustomAgentServerSettings::Extension {
                     default_model: None,
@@ -160,7 +160,6 @@ impl AgentServer for CustomAgentServer {
         let settings = cx.read_global(|settings: &SettingsStore, _| {
             settings
                 .get::<AllAgentServersSettings>(None)
-                .custom
                 .get(self.name().as_ref())
                 .cloned()
         });
@@ -176,7 +175,6 @@ impl AgentServer for CustomAgentServer {
             let settings = settings
                 .agent_servers
                 .get_or_insert_default()
-                .custom
                 .entry(name.to_string())
                 .or_insert_with(|| settings::CustomAgentServerSettings::Extension {
                     default_model: None,
@@ -201,7 +199,6 @@ impl AgentServer for CustomAgentServer {
         let settings = cx.read_global(|settings: &SettingsStore, _| {
             settings
                 .get::<AllAgentServersSettings>(None)
-                .custom
                 .get(self.name().as_ref())
                 .cloned()
         });
@@ -229,7 +226,6 @@ impl AgentServer for CustomAgentServer {
             let settings = settings
                 .agent_servers
                 .get_or_insert_default()
-                .custom
                 .entry(name.to_string())
                 .or_insert_with(|| settings::CustomAgentServerSettings::Extension {
                     default_model: None,
@@ -267,7 +263,6 @@ impl AgentServer for CustomAgentServer {
         let settings = cx.read_global(|settings: &SettingsStore, _| {
             settings
                 .get::<AllAgentServersSettings>(None)
-                .custom
                 .get(self.name().as_ref())
                 .cloned()
         });
@@ -291,7 +286,6 @@ impl AgentServer for CustomAgentServer {
             let settings = settings
                 .agent_servers
                 .get_or_insert_default()
-                .custom
                 .entry(name.to_string())
                 .or_insert_with(|| settings::CustomAgentServerSettings::Extension {
                     default_model: None,
@@ -327,20 +321,23 @@ impl AgentServer for CustomAgentServer {
 
     fn connect(
         &self,
-        root_dir: Option<&Path>,
         delegate: AgentServerDelegate,
         cx: &mut App,
-    ) -> Task<Result<(Rc<dyn AgentConnection>, Option<task::SpawnInTerminal>)>> {
+    ) -> Task<Result<Rc<dyn AgentConnection>>> {
         let name = self.name();
-        let root_dir = root_dir.map(|root_dir| root_dir.to_string_lossy().into_owned());
-        let is_remote = delegate.project.read(cx).is_via_remote_server();
+        let display_name = delegate
+            .store
+            .read(cx)
+            .agent_display_name(&ExternalAgentServerName(name.clone()))
+            .unwrap_or_else(|| name.clone());
         let default_mode = self.default_mode(cx);
         let default_model = self.default_model(cx);
+        let is_previous_built_in =
+            matches!(name.as_ref(), CLAUDE_AGENT_NAME | CODEX_NAME | GEMINI_NAME);
         let (default_config_options, is_registry_agent) =
             cx.read_global(|settings: &SettingsStore, _| {
                 let agent_settings = settings
                     .get::<AllAgentServersSettings>(None)
-                    .custom
                     .get(self.name().as_ref());
 
                 let is_registry = agent_settings
@@ -372,16 +369,46 @@ impl AgentServer for CustomAgentServer {
                 (config_options, is_registry)
             });
 
+        // Intermediate step to allow for previous built-ins to also be triggered if they aren't in settings yet.
+        let is_registry_agent = is_registry_agent || is_previous_built_in;
+
         if is_registry_agent {
             if let Some(registry_store) = project::AgentRegistryStore::try_global(cx) {
                 registry_store.update(cx, |store, cx| store.refresh_if_stale(cx));
             }
         }
 
+        let mut extra_env = load_proxy_env(cx);
+        if delegate.store.read(cx).no_browser() {
+            extra_env.insert("NO_BROWSER".to_owned(), "1".to_owned());
+        }
+        if is_registry_agent {
+            match name.as_ref() {
+                CLAUDE_AGENT_NAME => {
+                    extra_env.insert("ANTHROPIC_API_KEY".into(), "".into());
+                }
+                CODEX_NAME => {
+                    if let Ok(api_key) = std::env::var("CODEX_API_KEY") {
+                        extra_env.insert("CODEX_API_KEY".into(), api_key);
+                    }
+                    if let Ok(api_key) = std::env::var("OPEN_AI_API_KEY") {
+                        extra_env.insert("OPEN_AI_API_KEY".into(), api_key);
+                    }
+                }
+                GEMINI_NAME => {
+                    extra_env.insert("SURFACE".to_owned(), "zed".to_owned());
+                }
+                _ => {}
+            }
+        }
         let store = delegate.store.downgrade();
-        let extra_env = load_proxy_env(cx);
         cx.spawn(async move |cx| {
-            let (command, root_dir, login) = store
+            if is_registry_agent && name.as_ref() == GEMINI_NAME {
+                if let Some(api_key) = cx.update(api_key_for_gemini_cli).await.ok() {
+                    extra_env.insert("GEMINI_API_KEY".into(), api_key);
+                }
+            }
+            let command = store
                 .update(cx, |store, cx| {
                     let agent = store
                         .get_external_agent(&ExternalAgentServerName(name.clone()))
@@ -389,7 +416,6 @@ impl AgentServer for CustomAgentServer {
                             format!("Custom agent server `{}` is not registered", name)
                         })?;
                     anyhow::Ok(agent.get_command(
-                        root_dir.as_deref(),
                         extra_env,
                         delegate.status_tx,
                         delegate.new_version_available,
@@ -399,20 +425,36 @@ impl AgentServer for CustomAgentServer {
                 .await?;
             let connection = crate::acp::connect(
                 name,
+                display_name,
                 command,
-                root_dir.as_ref(),
                 default_mode,
                 default_model,
                 default_config_options,
-                is_remote,
                 cx,
             )
             .await?;
-            Ok((connection, login))
+            Ok(connection)
         })
     }
 
     fn into_any(self: Rc<Self>) -> Rc<dyn std::any::Any> {
         self
     }
+}
+
+fn api_key_for_gemini_cli(cx: &mut App) -> Task<Result<String>> {
+    let env_var = EnvVar::new("GEMINI_API_KEY".into()).or(EnvVar::new("GOOGLE_AI_API_KEY".into()));
+    if let Some(key) = env_var.value {
+        return Task::ready(Ok(key));
+    }
+    let credentials_provider = <dyn CredentialsProvider>::global(cx);
+    let api_url = google_ai::API_URL.to_string();
+    cx.spawn(async move |cx| {
+        Ok(
+            ApiKey::load_from_system_keychain(&api_url, credentials_provider.as_ref(), cx)
+                .await?
+                .key()
+                .to_string(),
+        )
+    })
 }
