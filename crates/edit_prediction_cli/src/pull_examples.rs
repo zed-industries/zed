@@ -166,10 +166,10 @@ async fn fetch_examples_with_query(
     bindings: JsonValue,
     timeout_seconds: u64,
     required_columns: &[&str],
-    parse_response: fn(
-        &SnowflakeStatementResponse,
-        &std::collections::HashMap<String, usize>,
-    ) -> Result<Vec<Example>>,
+    parse_response: for<'a> fn(
+        &'a SnowflakeStatementResponse,
+        &'a std::collections::HashMap<String, usize>,
+    ) -> Result<Box<dyn Iterator<Item = Example> + 'a>>,
 ) -> Result<Vec<Example>> {
     let snowflake = SnowflakeConfig {
         token: std::env::var("EP_SNOWFLAKE_API_KEY")
@@ -555,9 +555,7 @@ pub async fn fetch_requested_examples_after(
             bindings,
             DEFAULT_STATEMENT_TIMEOUT_SECONDS,
             &["request_id", "device_id", "time", "input", "zed_version"],
-            |response, column_indices| {
-                Ok(requested_examples_from_response(response, column_indices)?.collect())
-            },
+            requested_examples_from_response,
         )
         .await?;
 
@@ -766,7 +764,7 @@ pub async fn fetch_rated_examples_after(
 fn rated_examples_from_response<'a>(
     response: &'a SnowflakeStatementResponse,
     column_indices: &'a std::collections::HashMap<String, usize>,
-) -> Result<Vec<Example>> {
+) -> Result<Box<dyn Iterator<Item = Example> + 'a>> {
     if let Some(code) = &response.code {
         if code != SNOWFLAKE_SUCCESS_CODE {
             anyhow::bail!(
@@ -776,7 +774,7 @@ fn rated_examples_from_response<'a>(
         }
     }
 
-    let examples = response
+    let iter = response
         .data
         .iter()
         .enumerate()
@@ -852,9 +850,9 @@ fn rated_examples_from_response<'a>(
                     None
                 }
             }
-        }).collect();
+        });
 
-    Ok(examples)
+    Ok(Box::new(iter))
 }
 
 fn build_rated_example(
@@ -914,7 +912,7 @@ fn build_rated_example(
 fn requested_examples_from_response<'a>(
     response: &'a SnowflakeStatementResponse,
     column_indices: &'a std::collections::HashMap<String, usize>,
-) -> Result<impl Iterator<Item = Example> + 'a> {
+) -> Result<Box<dyn Iterator<Item = Example> + 'a>> {
     if let Some(code) = &response.code {
         if code != SNOWFLAKE_SUCCESS_CODE {
             anyhow::bail!(
@@ -983,13 +981,13 @@ fn requested_examples_from_response<'a>(
             }
         });
 
-    Ok(iter)
+    Ok(Box::new(iter))
 }
 
 fn settled_examples_from_response<'a>(
     response: &'a SnowflakeStatementResponse,
     column_indices: &'a std::collections::HashMap<String, usize>,
-) -> Result<Vec<Example>> {
+) -> Result<Box<dyn Iterator<Item = Example> + 'a>> {
     if let Some(code) = &response.code {
         if code != SNOWFLAKE_SUCCESS_CODE {
             anyhow::bail!(
@@ -999,7 +997,7 @@ fn settled_examples_from_response<'a>(
         }
     }
 
-    let examples = response
+    let iter = response
         .data
         .iter()
         .enumerate()
@@ -1102,10 +1100,9 @@ fn settled_examples_from_response<'a>(
                     None
                 }
             }
-        })
-        .collect();
+        });
 
-    Ok(examples)
+    Ok(Box::new(iter))
 }
 
 fn build_settled_example(
@@ -1170,7 +1167,7 @@ fn build_settled_example(
 fn rejected_examples_from_response<'a>(
     response: &'a SnowflakeStatementResponse,
     column_indices: &'a std::collections::HashMap<String, usize>,
-) -> Result<Vec<Example>> {
+) -> Result<Box<dyn Iterator<Item = Example> + 'a>> {
     if let Some(code) = &response.code {
         if code != SNOWFLAKE_SUCCESS_CODE {
             anyhow::bail!(
@@ -1180,7 +1177,7 @@ fn rejected_examples_from_response<'a>(
         }
     }
 
-    let examples = response
+    let iter = response
         .data
         .iter()
         .enumerate()
@@ -1253,9 +1250,9 @@ fn rejected_examples_from_response<'a>(
                     None
                 }
             }
-        }).collect();
+        });
 
-    Ok(examples)
+    Ok(Box::new(iter))
 }
 
 fn build_rejected_example(
