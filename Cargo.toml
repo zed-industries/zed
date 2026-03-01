@@ -204,6 +204,7 @@ members = [
     "crates/ui_input",
     "crates/ui_macros",
     "crates/ui_prompt",
+    "crates/undo_tree_panel",
     "crates/util",
     "crates/util_macros",
     "crates/vercel",
@@ -448,6 +449,7 @@ ui = { path = "crates/ui" }
 ui_input = { path = "crates/ui_input" }
 ui_macros = { path = "crates/ui_macros" }
 ui_prompt = { path = "crates/ui_prompt" }
+undo_tree_panel = { path = "crates/undo_tree_panel" }
 util = { path = "crates/util" }
 util_macros = { path = "crates/util_macros" }
 vercel = { path = "crates/vercel" }

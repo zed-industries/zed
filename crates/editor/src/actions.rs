@@ -860,6 +860,10 @@ actions!(
         ToggleTabBar,
         /// Transposes characters around cursor.
         Transpose,
+        /// Navigates to the chronologically earlier undo state across all branches.
+        UndoEarlier,
+        /// Navigates to the chronologically later undo state across all branches.
+        UndoLater,
         /// Undoes the last edit.
         Undo,
         /// Undoes the last selection change.

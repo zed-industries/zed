@@ -18604,6 +18604,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "undo_tree_panel"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clock",
+ "collections",
+ "db",
+ "editor",
+ "gpui",
+ "language",
+ "multi_buffer",
+ "project",
+ "serde",
+ "serde_json",
+ "settings",
+ "text",
+ "theme",
+ "ui",
+ "util",
+ "workspace",
+]
+
+[[package]]
 name = "unicase"
 version = "2.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -21887,6 +21910,7 @@ dependencies = [
  "tree-sitter-rust",
  "ui",
  "ui_prompt",
+ "undo_tree_panel",
  "url",
  "urlencoding",
  "util",

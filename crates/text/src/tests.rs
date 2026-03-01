@@ -995,3 +995,400 @@ fn test_edit_undo_after_split() {
     assert_eq!(buffer.text(), original);
     buffer.check_invariants();
 }
+
+#[test]
+fn test_branch_preservation() {
+    let mut buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), "hello");
+    buffer.set_group_interval(Duration::from_secs(0));
+
+    // Build linear history: hello -> hello world -> hello brave world
+    let now = Instant::now();
+    buffer.start_transaction_at(now);
+    buffer.edit([(5..5, " world")]);
+    buffer.end_transaction_at(now);
+    assert_eq!(buffer.text(), "hello world");
+
+    buffer.start_transaction_at(now);
+    buffer.edit([(6..6, "brave ")]);
+    buffer.end_transaction_at(now);
+    assert_eq!(buffer.text(), "hello brave world");
+
+    // Undo back to "hello world"
+    buffer.undo();
+    assert_eq!(buffer.text(), "hello world");
+
+    // Make a new edit — this would have cleared the redo stack before.
+    // Now the "brave " transaction should be preserved.
+    buffer.start_transaction_at(now);
+    buffer.edit([(5..5, "!")]);
+    buffer.end_transaction_at(now);
+    assert_eq!(buffer.text(), "hello! world");
+
+    // The redo stack should be empty (new edit clears it),
+    // but the branch should be preserved in the undo tree.
+    assert!(buffer.peek_redo_stack().is_none());
+
+    // The "brave " transaction's edit_ids are still in the CRDT —
+    // verify the branch is preserved in the tree (3 nodes: world, brave, !).
+    let tree = buffer.undo_tree_snapshot();
+    assert_eq!(
+        tree.live_count(),
+        3,
+        "branch should be preserved in the tree"
+    );
+}
+
+#[test]
+fn test_undo_tree_snapshot_basic() {
+    let mut buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), "hello");
+    buffer.set_group_interval(Duration::from_secs(0));
+
+    // Before any edits, snapshot should be empty.
+    let tree = buffer.undo_tree_snapshot();
+    assert!(tree.is_empty(), "Tree should be empty before any edits");
+
+    // Make an edit.
+    let now = Instant::now();
+    buffer.start_transaction_at(now);
+    buffer.edit([(5..5, " world")]);
+    buffer.end_transaction_at(now);
+    assert_eq!(buffer.text(), "hello world");
+
+    let tree = buffer.undo_tree_snapshot();
+    assert_eq!(tree.len(), 1, "Tree should have 1 node after one edit");
+    assert!(tree.current().is_some(), "Current should point to the edit");
+
+    // Make a second edit.
+    buffer.start_transaction_at(now);
+    buffer.edit([(11..11, "!")]);
+    buffer.end_transaction_at(now);
+    assert_eq!(buffer.text(), "hello world!");
+
+    let tree = buffer.undo_tree_snapshot();
+    assert_eq!(tree.len(), 2, "Tree should have 2 nodes after two edits");
+    assert_eq!(tree.current(), Some(1), "Current should be at second node");
+
+    // Undo, then branch.
+    buffer.undo();
+    assert_eq!(buffer.text(), "hello world");
+
+    buffer.start_transaction_at(now);
+    buffer.edit([(5..5, ",")]);
+    buffer.end_transaction_at(now);
+    assert_eq!(buffer.text(), "hello, world");
+
+    let tree = buffer.undo_tree_snapshot();
+    assert_eq!(tree.len(), 3, "Tree should have 3 nodes after branching");
+    assert_eq!(tree.current(), Some(2), "Current should be at the branch tip");
+}
+
+#[test]
+fn test_all_transactions_chronological_order() {
+    let mut buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), "abc");
+    buffer.set_group_interval(Duration::from_secs(0));
+
+    let now = Instant::now();
+
+    // Create three transactions: A, B, C
+    buffer.start_transaction_at(now);
+    buffer.edit([(3..3, "d")]);
+    let (id_a, _) = buffer.end_transaction_at(now).unwrap();
+    assert_eq!(buffer.text(), "abcd");
+
+    buffer.start_transaction_at(now);
+    buffer.edit([(4..4, "e")]);
+    let (id_b, _) = buffer.end_transaction_at(now).unwrap();
+    assert_eq!(buffer.text(), "abcde");
+
+    buffer.start_transaction_at(now);
+    buffer.edit([(5..5, "f")]);
+    let (id_c, _) = buffer.end_transaction_at(now).unwrap();
+    assert_eq!(buffer.text(), "abcdef");
+
+    // All three should be in chronological order
+    let all = buffer.all_transaction_ids();
+    assert_eq!(all.len(), 3);
+    assert_eq!(all[0], id_a);
+    assert_eq!(all[1], id_b);
+    assert_eq!(all[2], id_c);
+
+    // Undo B and C, make a new edit D — should create a branch
+    buffer.undo(); // undo C
+    buffer.undo(); // undo B
+    assert_eq!(buffer.text(), "abcd");
+
+    buffer.start_transaction_at(now);
+    buffer.edit([(4..4, "X")]);
+    let (id_d, _) = buffer.end_transaction_at(now).unwrap();
+    assert_eq!(buffer.text(), "abcdX");
+
+    // Now we should have 4 transactions: A, B, C, D
+    let all = buffer.all_transaction_ids();
+    assert_eq!(all.len(), 4);
+    assert_eq!(all[0], id_a);
+    assert_eq!(all[1], id_b);
+    assert_eq!(all[2], id_c);
+    assert_eq!(all[3], id_d);
+}
+
+#[test]
+fn test_undo_earlier_later_linear() {
+    let mut buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), "abc");
+    buffer.set_group_interval(Duration::from_secs(0));
+
+    let now = Instant::now();
+
+    // Create A, B, C
+    buffer.start_transaction_at(now);
+    buffer.edit([(3..3, "d")]);
+    buffer.end_transaction_at(now);
+    assert_eq!(buffer.text(), "abcd");
+
+    buffer.start_transaction_at(now);
+    buffer.edit([(4..4, "e")]);
+    buffer.end_transaction_at(now);
+    assert_eq!(buffer.text(), "abcde");
+
+    buffer.start_transaction_at(now);
+    buffer.edit([(5..5, "f")]);
+    buffer.end_transaction_at(now);
+    assert_eq!(buffer.text(), "abcdef");
+
+    // undo_earlier walks backward: abcdef -> abcde -> abcd -> abc
+    let result = buffer.undo_earlier();
+    assert!(result.is_some());
+    assert_eq!(buffer.text(), "abcde");
+
+    let result = buffer.undo_earlier();
+    assert!(result.is_some());
+    assert_eq!(buffer.text(), "abcd");
+
+    let result = buffer.undo_earlier();
+    assert!(result.is_some());
+    assert_eq!(buffer.text(), "abc");
+
+    // At the beginning, no earlier state
+    let result = buffer.undo_earlier();
+    assert!(result.is_none());
+    assert_eq!(buffer.text(), "abc");
+
+    // undo_later walks forward: abc -> abcd -> abcde -> abcdef
+    let result = buffer.undo_later();
+    assert!(result.is_some());
+    assert_eq!(buffer.text(), "abcd");
+
+    let result = buffer.undo_later();
+    assert!(result.is_some());
+    assert_eq!(buffer.text(), "abcde");
+
+    let result = buffer.undo_later();
+    assert!(result.is_some());
+    assert_eq!(buffer.text(), "abcdef");
+
+    // At the end, no later state
+    let result = buffer.undo_later();
+    assert!(result.is_none());
+    assert_eq!(buffer.text(), "abcdef");
+}
+
+#[test]
+fn test_undo_earlier_later_across_branches() {
+    let mut buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), "base");
+    buffer.set_group_interval(Duration::from_secs(0));
+
+    let now = Instant::now();
+
+    // Create: base -> base A
+    buffer.start_transaction_at(now);
+    buffer.edit([(4..4, " A")]);
+    buffer.end_transaction_at(now);
+    assert_eq!(buffer.text(), "base A");
+
+    // Create: base A -> base A B
+    buffer.start_transaction_at(now);
+    buffer.edit([(6..6, " B")]);
+    buffer.end_transaction_at(now);
+    assert_eq!(buffer.text(), "base A B");
+
+    // Undo both, back to "base"
+    buffer.undo();
+    buffer.undo();
+    assert_eq!(buffer.text(), "base");
+
+    // Branch: base -> baseX (this is transaction D, chronologically 3rd)
+    buffer.start_transaction_at(now);
+    buffer.edit([(4..4, "X")]);
+    buffer.end_transaction_at(now);
+    assert_eq!(buffer.text(), "baseX");
+
+    // Now the chronological order is: A, B, D (X)
+    // Current state: baseX (D is active, on a different branch from A,B)
+
+    // undo_earlier should go to B's state (chronologically before D)
+    let result = buffer.undo_earlier();
+    assert!(result.is_some());
+    assert_eq!(buffer.text(), "base A B");
+
+    // undo_earlier should go to A's state
+    let result = buffer.undo_earlier();
+    assert!(result.is_some());
+    assert_eq!(buffer.text(), "base A");
+
+    // undo_earlier should go to initial state (undo A)
+    let result = buffer.undo_earlier();
+    assert!(result.is_some());
+    assert_eq!(buffer.text(), "base");
+
+    // undo_later should go back to A
+    let result = buffer.undo_later();
+    assert!(result.is_some());
+    assert_eq!(buffer.text(), "base A");
+
+    // undo_later should go to B
+    let result = buffer.undo_later();
+    assert!(result.is_some());
+    assert_eq!(buffer.text(), "base A B");
+
+    // undo_later should go to D (baseX)
+    let result = buffer.undo_later();
+    assert!(result.is_some());
+    assert_eq!(buffer.text(), "baseX");
+}
+
+#[test]
+fn test_goto_transaction_across_branches() {
+    let mut buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), "start");
+    buffer.set_group_interval(Duration::from_secs(0));
+
+    let now = Instant::now();
+
+    // Build: start -> start1
+    buffer.start_transaction_at(now);
+    buffer.edit([(5..5, "1")]);
+    let (id_a, _) = buffer.end_transaction_at(now).unwrap();
+    assert_eq!(buffer.text(), "start1");
+
+    // Build: start1 -> start12
+    buffer.start_transaction_at(now);
+    buffer.edit([(6..6, "2")]);
+    let (id_b, _) = buffer.end_transaction_at(now).unwrap();
+    assert_eq!(buffer.text(), "start12");
+
+    // Undo both
+    buffer.undo();
+    buffer.undo();
+    assert_eq!(buffer.text(), "start");
+
+    // Branch: start -> startX
+    buffer.start_transaction_at(now);
+    buffer.edit([(5..5, "X")]);
+    let (id_c, _) = buffer.end_transaction_at(now).unwrap();
+    assert_eq!(buffer.text(), "startX");
+
+    // Jump directly to id_b (start12), crossing branches
+    buffer.goto_transaction(id_b);
+    assert_eq!(buffer.text(), "start12");
+
+    // Jump directly to id_c (startX), crossing back
+    buffer.goto_transaction(id_c);
+    assert_eq!(buffer.text(), "startX");
+
+    // Jump to id_a (start1)
+    buffer.goto_transaction(id_a);
+    assert_eq!(buffer.text(), "start1");
+}
+
+#[test]
+fn test_tree_parent_tracking() {
+    let mut buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), "root");
+    buffer.set_group_interval(Duration::from_secs(0));
+
+    let now = Instant::now();
+
+    // A: root -> rootA
+    buffer.start_transaction_at(now);
+    buffer.edit([(4..4, "A")]);
+    let (id_a, _) = buffer.end_transaction_at(now).unwrap();
+
+    // B: rootA -> rootAB
+    buffer.start_transaction_at(now);
+    buffer.edit([(5..5, "B")]);
+    let (id_b, _) = buffer.end_transaction_at(now).unwrap();
+
+    // A's parent should be None (first transaction, root child)
+    let tree = &buffer.history.tree;
+    let idx_a = tree.index_for_transaction(id_a).unwrap();
+    assert_eq!(tree.node(idx_a).unwrap().parent, None);
+
+    // B's parent should be A
+    let idx_b = tree.index_for_transaction(id_b).unwrap();
+    assert_eq!(tree.node(idx_b).unwrap().parent, Some(idx_a));
+
+    // Undo B, create C from A
+    buffer.undo();
+    buffer.start_transaction_at(now);
+    buffer.edit([(5..5, "C")]);
+    let (id_c, _) = buffer.end_transaction_at(now).unwrap();
+
+    // C's parent should also be A (branching)
+    let tree = &buffer.history.tree;
+    let idx_c = tree.index_for_transaction(id_c).unwrap();
+    assert_eq!(tree.node(idx_c).unwrap().parent, Some(idx_a));
+
+    // path to B should be [A, B]
+    let path_b = tree.transaction_ids_on_path(idx_b);
+    assert_eq!(path_b, vec![id_a, id_b]);
+
+    // path to C should be [A, C]
+    let path_c = tree.transaction_ids_on_path(idx_c);
+    assert_eq!(path_c, vec![id_a, id_c]);
+}
+
+#[test]
+fn test_regular_undo_redo_still_works_after_branching() {
+    let mut buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), "hello");
+    buffer.set_group_interval(Duration::from_secs(0));
+
+    let now = Instant::now();
+
+    // A: hello -> hello world
+    buffer.start_transaction_at(now);
+    buffer.edit([(5..5, " world")]);
+    buffer.end_transaction_at(now);
+    assert_eq!(buffer.text(), "hello world");
+
+    // B: hello world -> hello brave world
+    buffer.start_transaction_at(now);
+    buffer.edit([(6..6, "brave ")]);
+    buffer.end_transaction_at(now);
+    assert_eq!(buffer.text(), "hello brave world");
+
+    // Undo B
+    buffer.undo();
+    assert_eq!(buffer.text(), "hello world");
+
+    // New edit C: hello world -> hello! world (creates branch)
+    buffer.start_transaction_at(now);
+    buffer.edit([(5..5, "!")]);
+    buffer.end_transaction_at(now);
+    assert_eq!(buffer.text(), "hello! world");
+
+    // Regular undo should undo C
+    buffer.undo();
+    assert_eq!(buffer.text(), "hello world");
+
+    // Regular redo should redo C (not B — B is on the old branch)
+    buffer.redo();
+    assert_eq!(buffer.text(), "hello! world");
+
+    // Undo C and A
+    buffer.undo();
+    assert_eq!(buffer.text(), "hello world");
+    buffer.undo();
+    assert_eq!(buffer.text(), "hello");
+
+    // Redo A
+    buffer.redo();
+    assert_eq!(buffer.text(), "hello world");
+}
+

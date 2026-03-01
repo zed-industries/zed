@@ -5,6 +5,7 @@ mod path_key;
 mod transaction;
 
 use self::transaction::History;
+pub use self::transaction::{MultiBufferHistoryEntry, MultiBufferHistorySnapshot};
 
 pub use anchor::{Anchor, AnchorRangeExt};
 
