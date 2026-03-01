@@ -1,87 +1,28 @@
 # Roadmap: Persistent Undo History
 
-## Overview
+## Milestones
 
-This roadmap delivers persistent undo/redo history for Zed in four phases following a strict dependency chain. Phase 1 exposes the text layer API that everything else requires. Phase 2 defines the storage schema and settings before any writes occur. Phase 3 delivers the core user-facing feature: history survives tab close and full restarts. Phase 4 adds pruning and maintenance so storage remains bounded.
+- ✅ **v1.0 Persistent Undo History** — Phases 1-4 (shipped 2026-03-01)
 
 ## Phases
 
-**Phase Numbering:**
-- Integer phases (1, 2, 3): Planned milestone work
-- Decimal phases (2.1, 2.2): Urgent insertions (marked with INSERTED)
+<details>
+<summary>✅ v1.0 Persistent Undo History (Phases 1-4) — SHIPPED 2026-03-01</summary>
 
-Decimal phases appear between their surrounding integers in numeric order.
+- [x] Phase 1: Text Layer API (2/2 plans) — completed 2026-03-01
+- [x] Phase 2: Persistence Schema and Settings (2/2 plans) — completed 2026-03-01
+- [x] Phase 3: Core Write and Restore (2/2 plans) — completed 2026-03-01
+- [x] Phase 4: Pruning and Maintenance (1/1 plan) — completed 2026-03-01
 
-- [x] **Phase 1: Text Layer API** - Expose undo/redo stack accessors and establish serialization format
-- [x] **Phase 2: Persistence Schema and Settings** - Define the SQLite schema and configuration settings (completed 2026-03-01)
-- [x] **Phase 3: Core Write and Restore** - Save history on buffer events and restore on file open (completed 2026-03-01)
-- [x] **Phase 4: Pruning and Maintenance** - Auto-prune orphaned history records on startup (completed 2026-03-01)
+See [v1.0-ROADMAP.md](milestones/v1.0-ROADMAP.md) for full details.
 
-## Phase Details
-
-### Phase 1: Text Layer API
-**Goal**: Users can serialize and deserialize a complete undo/redo stack via a stable, versioned format
-**Depends on**: Nothing (first phase)
-**Requirements**: INFRA-01, INFRA-03, INFRA-04, INFRA-05
-**Success Criteria** (what must be TRUE):
-  1. `text::Buffer` exposes public accessors (`undo_stack()`, `redo_stack()`, `restore_history()`) usable from `crates/editor/`
-  2. A `HistoryBlob::V1` versioned envelope encodes and decodes an undo/redo stack via `postcard` without data loss
-  3. Round-trip serialization test passes: serialize a stack, deserialize it, and confirm all transactions are identical
-  4. Only transaction-level stacks are serialized — the full CRDT operation log is not included in the blob
-  5. All encoding work executes on a background thread, not the UI thread
-**Plans:** 2 plans
-- [x] 01-01-PLAN.md — Add serde/postcard deps and Buffer API accessors (undo_stack, redo_stack, restore_history)
-- [x] 01-02-PLAN.md — Create history_serde module with mirror structs, HistoryBlob::V1, encode/decode, and round-trip tests
-
-### Phase 2: Persistence Schema and Settings
-**Goal**: A `UndoHistoryDb` SQLite domain exists with the correct schema, and user-facing settings are registered in Zed's settings system
-**Depends on**: Phase 1
-**Requirements**: INFRA-02, CONF-01, CONF-02
-**Success Criteria** (what must be TRUE):
-  1. The `undo_history` table exists in the editor database with columns for `workspace_id`, `abs_path`, `content_hash`, `mtime_seconds`, `mtime_nanos`, and `last_accessed_at`
-  2. History records are keyed on `(workspace_id, abs_path)`, not session-scoped item IDs
-  3. User can set `persistent_undo.enabled` in Zed settings and schema validation accepts it (default: false)
-  4. User can set `persistent_undo.max_entries` in Zed settings and schema validation accepts it (default: 10,000)
-**Plans:** 2/2 plans complete
-- [x] 02-01-PLAN.md — Add undo_history SQLite migration and query methods to EditorDb
-- [x] 02-02-PLAN.md — Add PersistentUndoSettings to settings system (content struct, resolved struct, default.json, registration)
-
-### Phase 3: Core Write and Restore
-**Goal**: Users can close a tab or quit Zed and reopen the same file with their full undo/redo history intact
-**Depends on**: Phase 2
-**Requirements**: PERS-01, PERS-02, PERS-03, PERS-04, PERS-05, PERS-06
-**Success Criteria** (what must be TRUE):
-  1. User closes a tab, reopens the same file, and cmd-z / cmd-shift-z restores history from before the close
-  2. User quits Zed entirely, relaunches, reopens a file, and undo/redo history is fully intact
-  3. If the file is modified externally between sessions, reopening it does not restore stale history — history is silently discarded
-  4. When the feature is disabled (`persistent_undo.enabled: false`), no disk writes occur and existing undo behavior is unchanged
-  5. History is only restored when the file's content hash matches the stored SHA-256 hash
-**Plans:** 2/2 plans complete
-- [x] 03-01-PLAN.md — Add sha2/hex deps, write_undo_history helper, blob_path_for utility, wire into serialize
-- [x] 03-02-PLAN.md — Add restore_undo_history helper, wire into added_to_workspace and deserialize, hash validation
-
-### Phase 4: Pruning and Maintenance
-**Goal**: Persistent undo storage remains bounded and does not accumulate records for files that no longer exist
-**Depends on**: Phase 3
-**Requirements**: MAINT-01
-**Gap Closure:** Closes gaps from v1.0 audit (MAINT-01 orphaned, delete_undo_history unwired, tech debt)
-**Success Criteria** (what must be TRUE):
-  1. On Zed startup, history records for files that no longer exist on disk are automatically deleted
-  2. After pruning runs, no orphaned records remain for non-existent files
-  3. `delete_undo_history` has a production caller (integration gap closed)
-  4. 02-02-SUMMARY.md lists CONF-01 and CONF-02 in `requirements_completed` frontmatter (tech debt)
-  5. Double `restore_undo_history` call for standalone file deserialize path is removed (tech debt)
-**Plans:** 1/1 plans complete
-- [ ] 04-01-PLAN.md — Add prune_undo_history, wire into cleanup, fix double restore call, fix 02-02 frontmatter
+</details>
 
 ## Progress
 
-**Execution Order:**
-Phases execute in numeric order: 1 → 2 → 3 → 4
-
-| Phase | Plans Complete | Status | Completed |
-|-------|----------------|--------|-----------|
-| 1. Text Layer API | 2/2 | Complete | 2026-03-01 |
-| 2. Persistence Schema and Settings | 2/2 | Complete   | 2026-03-01 |
-| 3. Core Write and Restore | 2/2 | Complete | 2026-03-01 |
-| 4. Pruning and Maintenance | 1/1 | Complete   | 2026-03-01 |
+| Phase | Milestone | Plans Complete | Status | Completed |
+|-------|-----------|----------------|--------|-----------|
+| 1. Text Layer API | v1.0 | 2/2 | Complete | 2026-03-01 |
+| 2. Persistence Schema and Settings | v1.0 | 2/2 | Complete | 2026-03-01 |
+| 3. Core Write and Restore | v1.0 | 2/2 | Complete | 2026-03-01 |
+| 4. Pruning and Maintenance | v1.0 | 1/1 | Complete | 2026-03-01 |

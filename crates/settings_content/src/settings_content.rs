@@ -1253,3 +1253,30 @@ impl std::fmt::Display for DelayMs {
         write!(f, "{}ms", self.0)
     }
 }
+
+#[cfg(test)]
+mod schema_tests {
+    use super::*;
+
+    #[test]
+    fn test_settings_content_schema_contains_persistent_undo() {
+        let mut generator = schemars::generate::SchemaSettings::draft2019_09().into_generator();
+        let schema = generator.root_schema_for::<SettingsContent>();
+        let schema_str = serde_json::to_string(&schema).unwrap();
+        assert!(
+            schema_str.contains("\"persistent_undo\""),
+            "SettingsContent schema must contain 'persistent_undo' property"
+        );
+    }
+
+    #[test]
+    fn test_user_settings_content_schema_contains_persistent_undo() {
+        let mut generator = schemars::generate::SchemaSettings::draft2019_09().into_generator();
+        let schema = generator.root_schema_for::<UserSettingsContent>();
+        let schema_str = serde_json::to_string(&schema).unwrap();
+        assert!(
+            schema_str.contains("\"persistent_undo\""),
+            "UserSettingsContent schema must contain 'persistent_undo' property"
+        );
+    }
+}
