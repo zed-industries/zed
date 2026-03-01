@@ -16,8 +16,8 @@
 
 ### Configuration
 
-- [ ] **CONF-01**: User can enable/disable persistent undo via `persistent_undo.enabled` setting (default: false)
-- [ ] **CONF-02**: User can set maximum undo entries via `persistent_undo.max_entries` setting (default: 10,000)
+- [x] **CONF-01**: User can enable/disable persistent undo via `persistent_undo.enabled` setting (default: false)
+- [x] **CONF-02**: User can set maximum undo entries via `persistent_undo.max_entries` setting (default: 10,000)
 
 ### Maintenance
 
@@ -67,8 +67,8 @@
 | PERS-04 | Phase 3 | Pending |
 | PERS-05 | Phase 3 | Pending |
 | PERS-06 | Phase 3 | Pending |
-| CONF-01 | Phase 2 | Pending |
-| CONF-02 | Phase 2 | Pending |
+| CONF-01 | Phase 2 | Complete |
+| CONF-02 | Phase 2 | Complete |
 | MAINT-01 | Phase 4 | Pending |
 | INFRA-01 | Phase 1 | Complete |
 | INFRA-02 | Phase 2 | Pending |

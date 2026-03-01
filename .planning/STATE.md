@@ -1,3 +1,16 @@
+---
+gsd_state_version: 1.0
+milestone: v1.0
+milestone_name: milestone
+status: in_progress
+last_updated: "2026-03-01T17:57:00.000Z"
+progress:
+  total_phases: 4
+  completed_phases: 1
+  total_plans: 4
+  completed_plans: 4
+---
+
 # Project State
 
 ## Project Reference
@@ -5,33 +18,34 @@
 See: .planning/PROJECT.md (updated 2026-03-01)
 
 **Core value:** Closing and reopening a file must preserve the complete undo/redo history
-**Current focus:** Phase 1 - Text Layer API
+**Current focus:** Phase 2 - Persistence Schema and Settings
 
 ## Current Position
 
-Phase: 1 of 4 (Text Layer API)
+Phase: 2 of 4 (Persistence Schema and Settings)
 Plan: 2 of 2 in current phase — PHASE COMPLETE
-Status: Phase 1 complete; ready for Phase 2
-Last activity: 2026-03-01 — Plan 01-02 complete: history_serde module with encode/decode and round-trip tests
+Status: Phase 2 complete; ready for Phase 3
+Last activity: 2026-03-01 — Plan 02-02 complete: PersistentUndoSettings wired into Zed settings system
 
-Progress: [██░░░░░░░░] 25%
+Progress: [████░░░░░░] 50%
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 2
-- Average duration: 12min
-- Total execution time: 25min
+- Total plans completed: 4
+- Average duration: 10min
+- Total execution time: ~40min
 
 **By Phase:**
 
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
 | 01-text-layer-api | 2 | 25min | 12min |
+| 02-persistence-schema-and-settings | 2 | ~15min | ~8min |
 
 **Recent Trend:**
-- Last 5 plans: 20min, 5min
-- Trend: faster
+- Last 5 plans: 20min, 5min, ~7min, ~8min
+- Trend: consistent
 
 *Updated after each plan completion*
 
@@ -57,6 +71,8 @@ Recent decisions affecting current work:
 - [Plan 01-02]: clock::Global serialized as Vec<u32> (index = replica_id, value = seq) matching internal SmallVec layout
 - [Plan 01-02]: FullOffset serialized as u64 for cross-platform stability (usize is platform-dependent)
 - [Plan 01-02]: restore_history must be called on a buffer with matching CRDT fragment state for undo/redo to work
+- [Plan 02-02]: RegisterSetting derive macro uses inventory::submit! for auto-registration — no explicit register(cx) call needed in editor::init()
+- [Plan 02-02]: PersistentUndoSettingsContent placed in editor.rs (settings_content) consistent with editor-adjacent settings pattern
 
 ### Pending Todos
 
@@ -70,5 +86,5 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-03-01
-Stopped at: Completed Plan 01-02 (history_serde module); Phase 1 complete — ready for Phase 2
+Stopped at: Completed Plan 02-02 (PersistentUndoSettings); Phase 2 complete — ready for Phase 3
 Resume file: None
