@@ -223,6 +223,20 @@ impl Domain for EditorDb {
                 PRIMARY KEY(workspace_id, path, start)
             );
         ),
+        sql! (
+            CREATE TABLE undo_history (
+                workspace_id INTEGER NOT NULL,
+                abs_path BLOB NOT NULL,
+                content_hash TEXT NOT NULL,
+                mtime_seconds INTEGER NOT NULL,
+                mtime_nanos INTEGER NOT NULL,
+                last_accessed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id)
+                    ON DELETE CASCADE
+                    ON UPDATE CASCADE,
+                PRIMARY KEY(workspace_id, abs_path)
+            );
+        ),
     ];
 }
 
@@ -408,6 +422,53 @@ VALUES {placeholders};
         })
         .await
     }
+
+    query! {
+        pub fn get_undo_history_meta(
+            workspace_id: WorkspaceId,
+            abs_path: &Path
+        ) -> Result<Option<(String, i64, i32, String)>> {
+            SELECT content_hash, mtime_seconds, mtime_nanos, last_accessed_at
+            FROM undo_history
+            WHERE workspace_id = ?1 AND abs_path = ?2
+        }
+    }
+
+    pub async fn save_undo_history_meta(
+        &self,
+        workspace_id: WorkspaceId,
+        abs_path: Arc<Path>,
+        content_hash: String,
+        mtime_seconds: i64,
+        mtime_nanos: i32,
+    ) -> Result<()> {
+        self.write(move |conn| {
+            conn.exec_bound(sql!(
+                INSERT INTO undo_history
+                    (workspace_id, abs_path, content_hash, mtime_seconds, mtime_nanos, last_accessed_at)
+                VALUES (?1, ?2, ?3, ?4, ?5, CURRENT_TIMESTAMP)
+                ON CONFLICT(workspace_id, abs_path) DO UPDATE SET
+                    content_hash = excluded.content_hash,
+                    mtime_seconds = excluded.mtime_seconds,
+                    mtime_nanos = excluded.mtime_nanos,
+                    last_accessed_at = CURRENT_TIMESTAMP;
+            ))?((workspace_id, abs_path.as_ref(), content_hash, mtime_seconds, mtime_nanos))
+        })
+        .await
+    }
+
+    pub async fn delete_undo_history(
+        &self,
+        workspace_id: WorkspaceId,
+        abs_path: Arc<Path>,
+    ) -> Result<()> {
+        self.write(move |conn| {
+            conn.exec_bound(sql!(
+                DELETE FROM undo_history WHERE workspace_id = ?1 AND abs_path = ?2;
+            ))?((workspace_id, abs_path.as_ref()))
+        })
+        .await
+    }
 }
 
 #[cfg(test)]
@@ -463,7 +524,9 @@ mod tests {
         assert_eq!(mtime_nanos, 99_i32);
 
         // Test 3: delete removes the row, get returns None
-        DB.delete_undo_history(workspace_id, &path_a).await.unwrap();
+        DB.delete_undo_history(workspace_id, path_a.clone())
+            .await
+            .unwrap();
         let deleted = DB.get_undo_history_meta(workspace_id, &path_a).unwrap();
         assert!(deleted.is_none(), "row should be gone after delete");
 
