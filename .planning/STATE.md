@@ -3,12 +3,12 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: unknown
-last_updated: "2026-03-01T18:02:58.909Z"
+last_updated: "2026-03-01T18:06:55.334Z"
 progress:
-  total_phases: 2
+  total_phases: 4
   completed_phases: 2
-  total_plans: 4
-  completed_plans: 4
+  total_plans: 8
+  completed_plans: 5
 ---
 
 # Project State
@@ -18,16 +18,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-01)
 
 **Core value:** Closing and reopening a file must preserve the complete undo/redo history
-**Current focus:** Phase 2 - Persistence Schema and Settings
+**Current focus:** Phase 3 - Core Write and Restore
 
 ## Current Position
 
-Phase: 2 of 4 (Persistence Schema and Settings)
-Plan: 2 of 2 in current phase — PHASE COMPLETE
-Status: Phase 2 complete; ready for Phase 3
-Last activity: 2026-03-01 — Plan 02-02 complete: PersistentUndoSettings wired into Zed settings system
+Phase: 3 of 4 (Core Write and Restore)
+Plan: 1 of 2 in current phase — plan 03-01 complete
+Status: Phase 3 in progress; Plan 03-01 complete
+Last activity: 2026-03-01 — Plan 03-01 complete: write_undo_history with blob_path_for and compute_content_hash implemented
 
-Progress: [████░░░░░░] 50%
+Progress: [██████░░░░] 62%
 
 ## Performance Metrics
 
@@ -42,6 +42,7 @@ Progress: [████░░░░░░] 50%
 |-------|-------|-------|----------|
 | 01-text-layer-api | 2 | 25min | 12min |
 | 02-persistence-schema-and-settings | 2 | ~15min | ~8min |
+| 03-core-write-and-restore P01 | 1 | ~10min | ~10min |
 
 **Recent Trend:**
 - Last 5 plans: 20min, 5min, ~7min, ~8min
@@ -77,6 +78,10 @@ Recent decisions affecting current work:
 - [Plan 02-02]: RegisterSetting derive macro uses inventory::submit! for auto-registration — no explicit register(cx) call needed in editor::init()
 - [Plan 02-02]: PersistentUndoSettingsContent placed in editor.rs (settings_content) consistent with editor-adjacent settings pattern
 - [Phase 02]: abs_path stored as BLOB not TEXT in undo_history — sqlez &Path bind uses as_encoded_bytes() (BLOB), STRICT TEXT column fails at runtime
+- [Plan 03-01]: write_undo_history placed in items.rs impl Editor block — serialize lifecycle lives there and is the only call site
+- [Plan 03-01]: use settings::Settings as _ scoped inside write_undo_history body — avoids polluting module-level imports with a trait-only import
+- [Plan 03-01]: SHA-256 path hashing uses abs_path.as_os_str().as_encoded_bytes() for cross-platform byte-stable hashing
+- [Plan 03-01]: Rope chunk hashing iterates rope.chunks() feeding chunk.as_bytes() — avoids materializing full string
 
 ### Pending Todos
 
@@ -90,5 +95,5 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-03-01
-Stopped at: Completed Plan 02-01 (undo_history table and query methods); Phase 2 fully complete — ready for Phase 3
+Stopped at: Completed Plan 03-01 (write_undo_history write path); Phase 3 Plan 1 complete — ready for Plan 03-02 (restore path)
 Resume file: None

@@ -43,8 +43,8 @@ Decimal phases appear between their surrounding integers in numeric order.
   3. User can set `persistent_undo.enabled` in Zed settings and schema validation accepts it (default: false)
   4. User can set `persistent_undo.max_entries` in Zed settings and schema validation accepts it (default: 10,000)
 **Plans:** 2/2 plans complete
-- [ ] 02-01-PLAN.md — Add undo_history SQLite migration and query methods to EditorDb
-- [ ] 02-02-PLAN.md — Add PersistentUndoSettings to settings system (content struct, resolved struct, default.json, registration)
+- [x] 02-01-PLAN.md — Add undo_history SQLite migration and query methods to EditorDb
+- [x] 02-02-PLAN.md — Add PersistentUndoSettings to settings system (content struct, resolved struct, default.json, registration)
 
 ### Phase 3: Core Write and Restore
 **Goal**: Users can close a tab or quit Zed and reopen the same file with their full undo/redo history intact
@@ -56,7 +56,9 @@ Decimal phases appear between their surrounding integers in numeric order.
   3. If the file is modified externally between sessions, reopening it does not restore stale history — history is silently discarded
   4. When the feature is disabled (`persistent_undo.enabled: false`), no disk writes occur and existing undo behavior is unchanged
   5. History is only restored when the file's content hash matches the stored SHA-256 hash
-**Plans**: TBD
+**Plans:** 1/2 plans complete
+- [x] 03-01-PLAN.md — Add sha2/hex deps, write_undo_history helper, blob_path_for utility, wire into serialize
+- [ ] 03-02-PLAN.md — Add restore_undo_history helper, wire into added_to_workspace and deserialize, hash validation
 
 ### Phase 4: Pruning and Maintenance
 **Goal**: Persistent undo storage remains bounded and does not accumulate records for files that no longer exist
@@ -76,5 +78,5 @@ Phases execute in numeric order: 1 → 2 → 3 → 4
 |-------|----------------|--------|-----------|
 | 1. Text Layer API | 2/2 | Complete | 2026-03-01 |
 | 2. Persistence Schema and Settings | 2/2 | Complete   | 2026-03-01 |
-| 3. Core Write and Restore | 0/TBD | Not started | - |
+| 3. Core Write and Restore | 1/2 | In progress | - |
 | 4. Pruning and Maintenance | 0/TBD | Not started | - |

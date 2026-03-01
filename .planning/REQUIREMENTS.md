@@ -9,9 +9,9 @@
 
 - [ ] **PERS-01**: User can close a tab and reopen the same file with full undo/redo history intact
 - [ ] **PERS-02**: User can quit Zed entirely, relaunch, and reopen a file with undo/redo history intact
-- [ ] **PERS-03**: Undo history is written to disk when a buffer is saved or a tab is closed
+- [x] **PERS-03**: Undo history is written to disk when a buffer is saved or a tab is closed
 - [ ] **PERS-04**: Undo history is restored from disk when a file is reopened (only if file content unchanged)
-- [ ] **PERS-05**: File content hash (SHA-256) is stored alongside history and validated before restore
+- [x] **PERS-05**: File content hash (SHA-256) is stored alongside history and validated before restore
 - [ ] **PERS-06**: If hash validation fails (file modified externally), persisted history is silently discarded
 
 ### Configuration
@@ -63,9 +63,9 @@
 |-------------|-------|--------|
 | PERS-01 | Phase 3 | Pending |
 | PERS-02 | Phase 3 | Pending |
-| PERS-03 | Phase 3 | Pending |
+| PERS-03 | Phase 3 | Complete |
 | PERS-04 | Phase 3 | Pending |
-| PERS-05 | Phase 3 | Pending |
+| PERS-05 | Phase 3 | Complete |
 | PERS-06 | Phase 3 | Pending |
 | CONF-01 | Phase 2 | Complete |
 | CONF-02 | Phase 2 | Complete |
