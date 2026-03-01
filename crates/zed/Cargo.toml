@@ -82,10 +82,12 @@ cli.workspace = true
 client.workspace = true
 codestral.workspace = true
 collab_ui.workspace = true
+context_server = { path = "../context_server" }
 collections.workspace = true
 command_palette.workspace = true
 component.workspace = true
 component_preview.workspace = true
+context_server_tools.workspace = true
 copilot.workspace = true
 copilot_chat.workspace = true
 copilot_ui.workspace = true

@@ -1,10 +1,13 @@
 pub mod client;
 pub mod listener;
+pub mod log_store;
 pub mod protocol;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test;
 pub mod transport;
 pub mod types;
+
+pub use log_store::init;
 
 use collections::HashMap;
 use http_client::HttpClient;
@@ -36,11 +39,31 @@ enum ContextServerTransport {
     Custom(Arc<dyn crate::transport::Transport>),
 }
 
+pub struct ContextServerIoSubscription {
+    id: i32,
+    io_subscribers: std::sync::Weak<parking_lot::Mutex<HashMap<i32, client::IoHandler>>>,
+}
+
+impl Drop for ContextServerIoSubscription {
+    fn drop(&mut self) {
+        if let Some(subscribers) = self.io_subscribers.upgrade() {
+            subscribers.lock().remove(&self.id);
+        }
+    }
+}
+
 pub struct ContextServer {
     id: ContextServerId,
     client: RwLock<Option<Arc<crate::protocol::InitializedContextServerProtocol>>>,
     configuration: ContextServerTransport,
     request_timeout: Option<Duration>,
+    /// A list of external subscribers listening to this server's I/O events.
+    io_subscribers: Arc<parking_lot::Mutex<HashMap<i32, client::IoHandler>>>,
+    /// The next ID to assign to a new I/O subscriber.
+    next_io_subscription_id: std::sync::atomic::AtomicI32,
+    /// The subscription to the currently active inner client's I/O stream.
+    /// Replaced when the server is restarted.
+    _client_io_subscription: parking_lot::Mutex<Option<client::IoSubscription>>,
 }
 
 impl ContextServer {
@@ -57,6 +80,9 @@ impl ContextServer {
                 working_directory.map(|directory| directory.to_path_buf()),
             ),
             request_timeout: None,
+            io_subscribers: Arc::new(parking_lot::Mutex::new(collections::HashMap::default())),
+            next_io_subscription_id: std::sync::atomic::AtomicI32::new(0),
+            _client_io_subscription: parking_lot::Mutex::new(None),
         }
     }
 
@@ -94,6 +120,23 @@ impl ContextServer {
             client: RwLock::new(None),
             configuration: ContextServerTransport::Custom(transport),
             request_timeout,
+            io_subscribers: Arc::new(parking_lot::Mutex::new(collections::HashMap::default())),
+            next_io_subscription_id: std::sync::atomic::AtomicI32::new(0),
+            _client_io_subscription: parking_lot::Mutex::new(None),
+        }
+    }
+
+    pub fn on_io<F>(&self, f: F) -> ContextServerIoSubscription
+    where
+        F: 'static + Send + FnMut(client::IoKind, &str),
+    {
+        let id = self
+            .next_io_subscription_id
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        self.io_subscribers.lock().insert(id, Box::new(f));
+        ContextServerIoSubscription {
+            id,
+            io_subscribers: Arc::downgrade(&self.io_subscribers),
         }
     }
 
@@ -110,7 +153,7 @@ impl ContextServer {
     }
 
     fn new_client(&self, cx: &AsyncApp) -> Result<Client> {
-        Ok(match &self.configuration {
+        let client = match &self.configuration {
             ContextServerTransport::Stdio(command, working_directory) => Client::stdio(
                 client::ContextServerId(self.id.0.clone()),
                 client::ModelContextServerBinary {
@@ -124,12 +167,21 @@ impl ContextServer {
             )?,
             ContextServerTransport::Custom(transport) => Client::new(
                 client::ContextServerId(self.id.0.clone()),
-                self.id().0,
+                self.id.0.clone(),
                 transport.clone(),
                 self.request_timeout,
                 cx.clone(),
             )?,
-        })
+        };
+
+        let io_subscribers = self.io_subscribers.clone();
+        *self._client_io_subscription.lock() = Some(client.on_io(move |kind, msg| {
+            for subscriber in io_subscribers.lock().values_mut() {
+                subscriber(kind, msg);
+            }
+        }));
+
+        Ok(client)
     }
 
     async fn initialize(&self, client: Client) -> Result<()> {
