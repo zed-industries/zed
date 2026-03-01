@@ -86,7 +86,6 @@ For benchmarking unit tests, annotate them with the `#[perf]` attribute from the
 perf-test -p $CRATE` to benchmark them. See the rustdoc documentation on `crates/util_macros` and `tooling/perf` for
 in-depth examples and explanations.
 
-
 ## ETW Profiling on Windows
 
 Zed supports performance profiling with Event Tracing for Windows (ETW) to capture detailed performance data, including CPU, GPU, memory, disk, and file I/O activity. Data is saved to an `.etl` file, which can be opened in standard profiling tools for analysis.
