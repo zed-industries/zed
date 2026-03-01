@@ -1,10 +1,10 @@
 use std::rc::Rc;
 
 use gpui::{
-    Capslock, ExternalPaths, FileDropEvent, KeyDownEvent, KeyUpEvent, Keystroke, Modifiers,
-    ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseExitEvent, MouseMoveEvent,
-    MouseUpEvent, NavigationDirection, Pixels, PlatformInput, Point, ScrollDelta, ScrollWheelEvent,
-    TouchPhase, point, px,
+    Capslock, DispatchEventResult, ExternalPaths, FileDropEvent, KeyDownEvent, KeyUpEvent,
+    Keystroke, Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseExitEvent,
+    MouseMoveEvent, MouseUpEvent, NavigationDirection, Pixels, PlatformInput, Point, ScrollDelta,
+    ScrollWheelEvent, TouchPhase, point, px,
 };
 use smallvec::smallvec;
 use wasm_bindgen::prelude::*;
@@ -109,11 +109,9 @@ impl WebWindowInner {
         closure
     }
 
-    fn dispatch_input(&self, input: PlatformInput) {
+    fn dispatch_input(&self, input: PlatformInput) -> Option<DispatchEventResult> {
         let mut borrowed = self.callbacks.borrow_mut();
-        if let Some(ref mut callback) = borrowed.input {
-            callback(input);
-        }
+        borrowed.input.as_mut().map(|callback| callback(input))
     }
 
     fn register_pointer_down(self: &Rc<Self>) -> Closure<dyn FnMut(JsValue)> {
@@ -346,14 +344,28 @@ impl WebWindowInner {
             let keystroke = Keystroke {
                 modifiers,
                 key,
-                key_char,
+                key_char: key_char.clone(),
             };
 
-            this.dispatch_input(PlatformInput::KeyDown(KeyDownEvent {
+            let result = this.dispatch_input(PlatformInput::KeyDown(KeyDownEvent {
                 keystroke,
                 is_held,
                 prefer_character_input: false,
             }));
+
+            if let Some(result) = result {
+                if !result.propagate {
+                    return;
+                }
+            }
+
+            if modifiers.is_subset_of(&Modifiers::shift()) {
+                if let Some(text) = key_char {
+                    this.with_input_handler(|handler| {
+                        handler.replace_text_in_range(None, &text);
+                    });
+                }
+            }
         })
     }
 

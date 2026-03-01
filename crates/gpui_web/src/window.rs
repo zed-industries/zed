@@ -390,6 +390,16 @@ impl WebWindowInner {
         Some(closure)
     }
 
+    pub(crate) fn with_input_handler<R>(
+        &self,
+        f: impl FnOnce(&mut PlatformInputHandler) -> R,
+    ) -> Option<R> {
+        let mut handler = self.state.borrow_mut().input_handler.take()?;
+        let result = f(&mut handler);
+        self.state.borrow_mut().input_handler = Some(handler);
+        Some(result)
+    }
+
     pub(crate) fn register_appearance_change(
         self: &Rc<Self>,
     ) -> Option<Closure<dyn FnMut(JsValue)>> {
