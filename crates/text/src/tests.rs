@@ -1,4 +1,4 @@
-use super::{network::Network, *};
+use super::{history_serde::{decode_history, encode_history}, network::Network, *};
 use clock::ReplicaId;
 use rand::prelude::*;
 use std::{
@@ -994,4 +994,202 @@ fn test_edit_undo_after_split() {
     buffer.undo();
     assert_eq!(buffer.text(), original);
     buffer.check_invariants();
+}
+
+#[test]
+fn test_history_serialization_round_trip() {
+    let time = Instant::now();
+    let mut buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), "hello world");
+    buffer.set_group_interval(Duration::from_secs(0));
+
+    buffer.start_transaction_at(time);
+    buffer.edit([(0..5, "goodbye")]);
+    buffer.end_transaction_at(time + Duration::from_secs(1));
+
+    buffer.start_transaction_at(time + Duration::from_secs(2));
+    buffer.edit([(8..13, "earth")]);
+    buffer.end_transaction_at(time + Duration::from_secs(3));
+
+    assert_eq!(buffer.text(), "goodbye earth");
+    assert_eq!(buffer.undo_stack().len(), 2);
+    assert_eq!(buffer.redo_stack().len(), 0);
+
+    let bytes = encode_history(
+        buffer.undo_stack(),
+        buffer.redo_stack(),
+        buffer.operations(),
+    )
+    .unwrap();
+
+    let (undo_transactions, redo_transactions, _undo_ops) = decode_history(&bytes).unwrap();
+
+    assert_eq!(undo_transactions.len(), 2);
+    assert_eq!(redo_transactions.len(), 0);
+
+    for (original, restored) in buffer.undo_stack().iter().zip(undo_transactions.iter()) {
+        assert_eq!(original.transaction().id, restored.id);
+        assert_eq!(original.transaction().edit_ids, restored.edit_ids);
+    }
+}
+
+#[test]
+fn test_history_serialization_with_undo() {
+    let time = Instant::now();
+    let mut buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), "hello");
+    buffer.set_group_interval(Duration::from_secs(0));
+
+    buffer.start_transaction_at(time);
+    buffer.edit([(5..5, " world")]);
+    buffer.end_transaction_at(time + Duration::from_secs(1));
+
+    buffer.start_transaction_at(time + Duration::from_secs(2));
+    buffer.edit([(0..5, "goodbye")]);
+    buffer.end_transaction_at(time + Duration::from_secs(3));
+
+    assert_eq!(buffer.text(), "goodbye world");
+
+    buffer.undo();
+    assert_eq!(buffer.text(), "hello world");
+    assert_eq!(buffer.undo_stack().len(), 1);
+    assert_eq!(buffer.redo_stack().len(), 1);
+
+    let original_undo_id = buffer.undo_stack()[0].transaction().id;
+    let original_redo_id = buffer.redo_stack()[0].transaction().id;
+
+    let bytes = encode_history(
+        buffer.undo_stack(),
+        buffer.redo_stack(),
+        buffer.operations(),
+    )
+    .unwrap();
+
+    let (undo_transactions, redo_transactions, undo_ops) = decode_history(&bytes).unwrap();
+
+    assert_eq!(undo_transactions.len(), 1);
+    assert_eq!(redo_transactions.len(), 1);
+
+    // Verify that transaction IDs and edit_ids survive the round-trip
+    assert_eq!(undo_transactions[0].id, original_undo_id);
+    assert_eq!(redo_transactions[0].id, original_redo_id);
+    assert_eq!(
+        undo_transactions[0].edit_ids,
+        buffer.undo_stack()[0].transaction().edit_ids
+    );
+    assert_eq!(
+        redo_transactions[0].edit_ids,
+        buffer.redo_stack()[0].transaction().edit_ids
+    );
+
+    // Restore history on the buffer that has matching CRDT state.
+    // This simulates loading the buffer from disk and restoring its history.
+    buffer.restore_history(undo_transactions, redo_transactions, undo_ops);
+
+    assert_eq!(buffer.undo_stack().len(), 1);
+    assert_eq!(buffer.redo_stack().len(), 1);
+    assert_eq!(buffer.text(), "hello world");
+
+    // Redo should work because the buffer's CRDT fragments match the original state.
+    buffer.redo();
+    assert_eq!(buffer.text(), "goodbye world");
+}
+
+#[test]
+fn test_history_serialization_empty() {
+    let buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), "hello");
+
+    assert_eq!(buffer.undo_stack().len(), 0);
+    assert_eq!(buffer.redo_stack().len(), 0);
+
+    let bytes = encode_history(
+        buffer.undo_stack(),
+        buffer.redo_stack(),
+        buffer.operations(),
+    )
+    .unwrap();
+
+    let (undo_transactions, redo_transactions, undo_ops) = decode_history(&bytes).unwrap();
+
+    assert_eq!(undo_transactions.len(), 0);
+    assert_eq!(redo_transactions.len(), 0);
+    assert_eq!(undo_ops.len(), 0);
+}
+
+#[test]
+fn test_history_serialization_filters_operations() {
+    // Verify that only operations referenced by the undo/redo stacks are
+    // included in the serialized blob, not the full operations map.
+    //
+    // Strategy: make 3 edits, undo all 3 so redo stack has 3 entries.
+    // Then make a new edit and commit it (which clears the redo stack).
+    // The new edit's operation will be in the undo stack.
+    // The old 3 undo operations (from undoing) are still in the ops map.
+    // We then undo the new edit too. Now:
+    //   - undo stack: empty
+    //   - redo stack: [new_edit]
+    //   - operations map: [edit1, edit2, edit3, undo1, undo2, undo3, new_edit, undo_new_edit] = 8 ops
+    // But serialized blob should only include new_edit + undo_new_edit (2 ops).
+
+    // Simpler approach: encode_history only includes operations whose timestamps
+    // appear in the undo/redo stacks' edit_ids. Verify this by checking all
+    // referenced edit_ids are present in the decoded operations.
+    let time = Instant::now();
+    let mut buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), "hello");
+    buffer.set_group_interval(Duration::from_secs(0));
+
+    buffer.start_transaction_at(time);
+    buffer.edit([(5..5, " world")]);
+    buffer.end_transaction_at(time + Duration::from_secs(1));
+
+    buffer.start_transaction_at(time + Duration::from_secs(2));
+    buffer.edit([(0..5, "goodbye")]);
+    buffer.end_transaction_at(time + Duration::from_secs(3));
+
+    buffer.start_transaction_at(time + Duration::from_secs(4));
+    buffer.edit([(8..13, "earth")]);
+    buffer.end_transaction_at(time + Duration::from_secs(5));
+
+    assert_eq!(buffer.text(), "goodbye earth");
+    assert_eq!(buffer.undo_stack().len(), 3);
+
+    // Undo all 3 edits, then make a new edit to separate stacks
+    buffer.undo();
+    buffer.undo();
+    buffer.undo();
+    assert_eq!(buffer.text(), "hello");
+    assert_eq!(buffer.undo_stack().len(), 0);
+    assert_eq!(buffer.redo_stack().len(), 3);
+
+    // Now make a new edit — this clears the redo stack
+    buffer.start_transaction_at(time + Duration::from_secs(10));
+    buffer.edit([(5..5, "!")]);
+    buffer.end_transaction_at(time + Duration::from_secs(11));
+
+    assert_eq!(buffer.text(), "hello!");
+    assert_eq!(buffer.undo_stack().len(), 1);
+    assert_eq!(buffer.redo_stack().len(), 0);
+
+    // The operations map now contains: 3 edits + 3 undos + 1 new_edit = 7 ops
+    let total_operations = buffer.operations().iter().count();
+    assert_eq!(total_operations, 7, "expected 7 operations in map");
+
+    let bytes = encode_history(
+        buffer.undo_stack(),
+        buffer.redo_stack(),
+        buffer.operations(),
+    )
+    .unwrap();
+
+    let (undo_transactions, redo_transactions, undo_ops) = decode_history(&bytes).unwrap();
+
+    assert_eq!(undo_transactions.len(), 1);
+    assert_eq!(redo_transactions.len(), 0);
+    // Only the new edit operation is referenced by the undo stack;
+    // the 3 old edits and 3 old undo operations are not included.
+    assert_eq!(undo_ops.len(), 0);
+
+    // Verify all referenced edit_ids are present by checking the blob decoded correctly
+    assert_eq!(
+        undo_transactions[0].edit_ids,
+        buffer.undo_stack()[0].transaction().edit_ids
+    );
 }
