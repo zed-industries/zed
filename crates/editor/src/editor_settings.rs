@@ -300,3 +300,19 @@ impl Settings for EditorSettings {
         }
     }
 }
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, RegisterSetting)]
+pub struct PersistentUndoSettings {
+    pub enabled: bool,
+    pub max_entries: u32,
+}
+
+impl Settings for PersistentUndoSettings {
+    fn from_settings(content: &settings::SettingsContent) -> Self {
+        let persistent_undo = content.persistent_undo.unwrap();
+        Self {
+            enabled: persistent_undo.enabled.unwrap(),
+            max_entries: persistent_undo.max_entries.unwrap(),
+        }
+    }
+}
