@@ -174,6 +174,9 @@ pub struct SettingsContent {
     /// Configuration for the Notification Panel
     pub notification_panel: Option<NotificationPanelSettingsContent>,
 
+    /// Configuration for persistent undo/redo history.
+    pub persistent_undo: Option<PersistentUndoSettingsContent>,
+
     pub proxy: Option<String>,
 
     /// The URL of the Zed server to connect to.
