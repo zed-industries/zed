@@ -42,7 +42,9 @@ Decimal phases appear between their surrounding integers in numeric order.
   2. History records are keyed on `(workspace_id, abs_path)`, not session-scoped item IDs
   3. User can set `persistent_undo.enabled` in Zed settings and schema validation accepts it (default: false)
   4. User can set `persistent_undo.max_entries` in Zed settings and schema validation accepts it (default: 10,000)
-**Plans**: TBD
+**Plans:** 2 plans
+- [ ] 02-01-PLAN.md — Add undo_history SQLite migration and query methods to EditorDb
+- [ ] 02-02-PLAN.md — Add PersistentUndoSettings to settings system (content struct, resolved struct, default.json, registration)
 
 ### Phase 3: Core Write and Restore
 **Goal**: Users can close a tab or quit Zed and reopen the same file with their full undo/redo history intact
@@ -73,6 +75,6 @@ Phases execute in numeric order: 1 → 2 → 3 → 4
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Text Layer API | 2/2 | Complete | 2026-03-01 |
-| 2. Persistence Schema and Settings | 0/TBD | Not started | - |
+| 2. Persistence Schema and Settings | 0/2 | In progress | - |
 | 3. Core Write and Restore | 0/TBD | Not started | - |
 | 4. Pruning and Maintenance | 0/TBD | Not started | - |
