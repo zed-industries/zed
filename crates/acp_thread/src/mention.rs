@@ -12,7 +12,10 @@ use std::{
 use ui::{App, IconName, SharedString};
 use url::Url;
 use urlencoding::decode;
-use util::{ResultExt, paths::PathStyle};
+use util::{
+    ResultExt,
+    paths::{PathStyle, PathWithPosition, is_absolute},
+};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Hash)]
 pub enum MentionUri {
@@ -389,11 +392,28 @@ fn parse_line_range(fragment: &str) -> Result<RangeInclusive<u32>> {
 }
 
 fn parse_plain_file_location(input: &str, path_style: PathStyle) -> Option<MentionUri> {
-    let (path, line_range) = split_path_and_line_range(input, path_style)?;
-    Some(MentionUri::Selection {
-        abs_path: Some(path.into()),
-        line_range,
-    })
+    let path_with_position = PathWithPosition::parse_str(input);
+    if let Some(row) = path_with_position.row {
+        let line = row.checked_sub(1)?;
+        let path_string = path_with_position.path.to_string_lossy();
+        if looks_like_file_path(&path_string, path_style) {
+            return Some(MentionUri::Selection {
+                abs_path: Some(path_with_position.path),
+                line_range: line..=line,
+            });
+        }
+    }
+
+    let (path, suffix) = input.rsplit_once(':')?;
+    if suffix.contains('-') && looks_like_file_path(path, path_style) {
+        let line_range = parse_line_range(suffix).ok()?;
+        return Some(MentionUri::Selection {
+            abs_path: Some(path.into()),
+            line_range,
+        });
+    }
+
+    None
 }
 
 fn parse_plain_path(input: &str, path_style: PathStyle) -> Option<MentionUri> {
@@ -412,57 +432,12 @@ fn parse_plain_path(input: &str, path_style: PathStyle) -> Option<MentionUri> {
     }
 }
 
-fn split_path_and_line_range(
-    input: &str,
-    path_style: PathStyle,
-) -> Option<(&str, RangeInclusive<u32>)> {
-    let (path_with_suffix, trailing_fragment) = input.rsplit_once(':')?;
-
-    if let Some((path, line_part)) = path_with_suffix.rsplit_once(':')
-        && trailing_fragment
-            .parse::<u32>()
-            .is_ok_and(|column| column > 0)
-        && looks_like_file_path(path, path_style)
-        && let Ok(line_range) = parse_line_range(line_part)
-    {
-        return Some((path, line_range));
-    }
-
-    if looks_like_file_path(path_with_suffix, path_style)
-        && let Ok(line_range) = parse_line_range(trailing_fragment)
-    {
-        return Some((path_with_suffix, line_range));
-    }
-
-    None
-}
-
 fn looks_like_file_path(path: &str, path_style: PathStyle) -> bool {
-    if path.is_empty() {
-        return false;
-    }
-
-    if path.starts_with('/') || path.starts_with("./") || path.starts_with("../") {
-        return true;
-    }
-
-    if path_style.is_windows() {
-        // Require a separator after the drive letter to avoid misclassifying host:port text.
-        let bytes = path.as_bytes();
-        if bytes.len() >= 3
-            && bytes[0].is_ascii_alphabetic()
-            && bytes[1] == b':'
-            && (bytes[2] == b'\\' || bytes[2] == b'/')
-        {
-            return true;
-        }
-    }
-
-    if path.contains(['/', '\\']) {
-        return true;
-    }
-
-    false
+    !path.is_empty()
+        && (is_absolute(path, path_style)
+            || path.starts_with("./")
+            || path.starts_with("../")
+            || path.contains(['/', '\\']))
 }
 
 pub struct MentionLink<'a>(&'a MentionUri);
@@ -796,6 +771,10 @@ mod tests {
                 r"d:\repo\main.rs",
                 9..=9,
             ),
+            ("src/lib.rs(10,2)", PathStyle::Posix, "src/lib.rs", 9..=9),
+            ("src/lib.rs:10:", PathStyle::Posix, "src/lib.rs", 9..=9),
+            ("src/lib.rs::10", PathStyle::Posix, "src/lib.rs", 9..=9),
+            ("foo/bar:34:in", PathStyle::Posix, "foo/bar", 33..=33),
             ("  src/lib.rs:7  ", PathStyle::Posix, "src/lib.rs", 6..=6),
         ];
 
@@ -809,7 +788,11 @@ mod tests {
                 panic!("Expected Selection for input `{input}`, got {parsed:?}");
             };
 
-            assert_eq!(path, PathBuf::from(expected_path), "Path mismatch for `{input}`");
+            assert_eq!(
+                path,
+                PathBuf::from(expected_path),
+                "Path mismatch for `{input}`"
+            );
             assert_eq!(line_range, expected_range, "Range mismatch for `{input}`");
         }
     }
