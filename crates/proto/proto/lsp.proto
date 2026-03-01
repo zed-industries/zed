@@ -2,8 +2,6 @@ syntax = "proto3";
 package zed.messages;
 
 import "buffer.proto";
-import "core.proto";
-import "worktree.proto";
 
 message GetDefinition {
   uint64 project_id = 1;

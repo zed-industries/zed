@@ -466,10 +466,13 @@ pub(crate) async fn capture_local_video_track(
 ) -> Result<(crate::LocalVideoTrack, Box<dyn ScreenCaptureStream>)> {
     let metadata = capture_source.metadata()?;
     let track_source = gpui_tokio::Tokio::spawn(cx, async move {
-        NativeVideoSource::new(VideoResolution {
-            width: metadata.resolution.width.0 as u32,
-            height: metadata.resolution.height.0 as u32,
-        })
+        NativeVideoSource::new(
+            VideoResolution {
+                width: metadata.resolution.width.0 as u32,
+                height: metadata.resolution.height.0 as u32,
+            },
+            true,
+        )
     })
     .await?;
 

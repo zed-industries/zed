@@ -7030,6 +7030,21 @@ impl LspStore {
                 .collect()
         } else {
             for (chunk, range_to_query) in ranges_to_query.into_iter().flatten() {
+                // When a server refresh was requested, other servers' cached hints
+                // are unaffected by the refresh and must be included in the result.
+                // Otherwise apply_fetched_hints (with should_invalidate()=true)
+                // removes all visible hints but only adds back the requesting
+                // server's new hints, permanently losing other servers' hints.
+                let other_servers_cached: CacheInlayHints = if lsp_refresh_requested {
+                    lsp_data
+                        .inlay_hints
+                        .cached_hints(&chunk)
+                        .cloned()
+                        .unwrap_or_default()
+                } else {
+                    HashMap::default()
+                };
+
                 let next_hint_id = next_hint_id.clone();
                 let buffer = buffer.clone();
                 let query_version = query_version.clone();
@@ -7048,33 +7063,32 @@ impl LspStore {
                                         if update_cache {
                                             lsp_data.inlay_hints.invalidate_for_chunk(chunk);
                                         }
-                                        HashMap::default()
+                                        other_servers_cached
                                     } else {
-                                        new_hints_by_server
-                                            .into_iter()
-                                            .map(|(server_id, new_hints)| {
-                                                let new_hints = new_hints
-                                                    .into_iter()
-                                                    .map(|new_hint| {
-                                                        (
-                                                            InlayId::Hint(next_hint_id.fetch_add(
-                                                                1,
-                                                                atomic::Ordering::AcqRel,
-                                                            )),
-                                                            new_hint,
-                                                        )
-                                                    })
-                                                    .collect::<Vec<_>>();
-                                                if update_cache {
-                                                    lsp_data.inlay_hints.insert_new_hints(
-                                                        chunk,
-                                                        server_id,
-                                                        new_hints.clone(),
-                                                    );
-                                                }
-                                                (server_id, new_hints)
-                                            })
-                                            .collect()
+                                        let mut result = other_servers_cached;
+                                        for (server_id, new_hints) in new_hints_by_server {
+                                            let new_hints = new_hints
+                                                .into_iter()
+                                                .map(|new_hint| {
+                                                    (
+                                                        InlayId::Hint(next_hint_id.fetch_add(
+                                                            1,
+                                                            atomic::Ordering::AcqRel,
+                                                        )),
+                                                        new_hint,
+                                                    )
+                                                })
+                                                .collect::<Vec<_>>();
+                                            if update_cache {
+                                                lsp_data.inlay_hints.insert_new_hints(
+                                                    chunk,
+                                                    server_id,
+                                                    new_hints.clone(),
+                                                );
+                                            }
+                                            result.insert(server_id, new_hints);
+                                        }
+                                        result
                                     }
                                 })
                             })

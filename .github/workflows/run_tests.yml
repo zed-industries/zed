@@ -190,6 +190,9 @@ jobs:
     - orchestrate
     if: needs.orchestrate.outputs.run_tests == 'true'
     runs-on: namespace-profile-16x32-ubuntu-2204
+    env:
+      CC: clang
+      CXX: clang++
     steps:
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -300,6 +303,9 @@ jobs:
     - orchestrate
     if: needs.orchestrate.outputs.run_tests == 'true'
     runs-on: namespace-profile-16x32-ubuntu-2204
+    env:
+      CC: clang
+      CXX: clang++
     steps:
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -400,6 +406,9 @@ jobs:
     - orchestrate
     if: needs.orchestrate.outputs.run_tests == 'true'
     runs-on: namespace-profile-16x32-ubuntu-2204
+    env:
+      CC: clang
+      CXX: clang++
     steps:
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -443,6 +452,9 @@ jobs:
     - orchestrate
     if: needs.orchestrate.outputs.run_tests == 'true'
     runs-on: namespace-profile-8x16-ubuntu-2204
+    env:
+      CC: clang
+      CXX: clang++
     steps:
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -525,6 +537,9 @@ jobs:
     - orchestrate
     if: needs.orchestrate.outputs.run_tests == 'true'
     runs-on: namespace-profile-2x4-ubuntu-2404
+    env:
+      CC: clang
+      CXX: clang++
     steps:
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -557,6 +572,9 @@ jobs:
     - orchestrate
     if: needs.orchestrate.outputs.run_docs == 'true'
     runs-on: namespace-profile-8x16-ubuntu-2204
+    env:
+      CC: clang
+      CXX: clang++
     steps:
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -682,6 +700,10 @@ jobs:
       with:
         input: crates/proto/proto/
         against: https://github.com/${GITHUB_REPOSITORY}.git#branch=${BUF_BASE_BRANCH},subdir=crates/proto/proto/
+    - name: run_tests::check_postgres_and_protobuf_migrations::buf_lint
+      run: buf lint crates/proto/proto
+    - name: run_tests::check_postgres_and_protobuf_migrations::check_protobuf_formatting
+      run: buf format --diff --exit-code crates/proto/proto
     timeout-minutes: 60
   tests_pass:
     needs:

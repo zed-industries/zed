@@ -661,6 +661,51 @@ impl<T: Item> SumTree<T> {
         }
     }
 
+    pub fn update_first(
+        &mut self,
+        f: impl FnOnce(&mut T),
+        cx: <T::Summary as Summary>::Context<'_>,
+    ) {
+        self.update_first_recursive(f, cx);
+    }
+
+    fn update_first_recursive(
+        &mut self,
+        f: impl FnOnce(&mut T),
+        cx: <T::Summary as Summary>::Context<'_>,
+    ) -> Option<T::Summary> {
+        match Arc::make_mut(&mut self.0) {
+            Node::Internal {
+                summary,
+                child_summaries,
+                child_trees,
+                ..
+            } => {
+                let first_summary = child_summaries.first_mut().unwrap();
+                let first_child = child_trees.first_mut().unwrap();
+                *first_summary = first_child.update_first_recursive(f, cx).unwrap();
+                *summary = sum(child_summaries.iter(), cx);
+                Some(summary.clone())
+            }
+            Node::Leaf {
+                summary,
+                items,
+                item_summaries,
+            } => {
+                if let Some((item, item_summary)) =
+                    items.first_mut().zip(item_summaries.first_mut())
+                {
+                    (f)(item);
+                    *item_summary = item.summary(cx);
+                    *summary = sum(item_summaries.iter(), cx);
+                    Some(summary.clone())
+                } else {
+                    None
+                }
+            }
+        }
+    }
+
     pub fn extent<'a, D: Dimension<'a, T::Summary>>(
         &'a self,
         cx: <T::Summary as Summary>::Context<'_>,

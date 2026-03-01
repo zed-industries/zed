@@ -167,6 +167,11 @@ impl Rope {
             (),
         );
 
+        if text.is_empty() {
+            self.check_invariants();
+            return;
+        }
+
         #[cfg(all(test, not(rust_analyzer)))]
         const NUM_CHUNKS: usize = 16;
         #[cfg(not(all(test, not(rust_analyzer))))]
@@ -269,6 +274,23 @@ impl Rope {
     }
 
     pub fn push_front(&mut self, text: &str) {
+        if text.is_empty() {
+            return;
+        }
+        if self.is_empty() {
+            self.push(text);
+            return;
+        }
+        if self
+            .chunks
+            .first()
+            .is_some_and(|c| c.text.len() + text.len() <= chunk::MAX_BASE)
+        {
+            self.chunks
+                .update_first(|first_chunk| first_chunk.prepend_str(text), ());
+            self.check_invariants();
+            return;
+        }
         let suffix = mem::replace(self, Rope::from(text));
         self.append(suffix);
     }
@@ -546,6 +568,48 @@ impl Rope {
         } else {
             self.summary().lines_utf16()
         }
+    }
+
+    pub fn starts_with(&self, pattern: &str) -> bool {
+        if pattern.len() > self.len() {
+            return false;
+        }
+        let mut remaining = pattern;
+        for chunk in self.chunks_in_range(0..self.len()) {
+            let Some(chunk) = chunk.get(..remaining.len().min(chunk.len())) else {
+                return false;
+            };
+            if remaining.starts_with(chunk) {
+                remaining = &remaining[chunk.len()..];
+                if remaining.is_empty() {
+                    return true;
+                }
+            } else {
+                return false;
+            }
+        }
+        remaining.is_empty()
+    }
+
+    pub fn ends_with(&self, pattern: &str) -> bool {
+        if pattern.len() > self.len() {
+            return false;
+        }
+        let mut remaining = pattern;
+        for chunk in self.reversed_chunks_in_range(0..self.len()) {
+            let Some(chunk) = chunk.get(chunk.len() - remaining.len().min(chunk.len())..) else {
+                return false;
+            };
+            if remaining.ends_with(chunk) {
+                remaining = &remaining[..remaining.len() - chunk.len()];
+                if remaining.is_empty() {
+                    return true;
+                }
+            } else {
+                return false;
+            }
+        }
+        remaining.is_empty()
     }
 
     pub fn line_len(&self, row: u32) -> u32 {
@@ -2169,6 +2233,74 @@ mod tests {
     }
 
     #[test]
+    fn test_starts_with() {
+        let text = "Hello, world! 🌍🌎🌏";
+        let rope = Rope::from(text);
+
+        assert!(rope.starts_with(""));
+        assert!(rope.starts_with("H"));
+        assert!(rope.starts_with("Hello"));
+        assert!(rope.starts_with("Hello, world! 🌍🌎🌏"));
+        assert!(!rope.starts_with("ello"));
+        assert!(!rope.starts_with("Hello, world! 🌍🌎🌏!"));
+
+        let empty_rope = Rope::from("");
+        assert!(empty_rope.starts_with(""));
+        assert!(!empty_rope.starts_with("a"));
+    }
+
+    #[test]
+    fn test_ends_with() {
+        let text = "Hello, world! 🌍🌎🌏";
+        let rope = Rope::from(text);
+
+        assert!(rope.ends_with(""));
+        assert!(rope.ends_with("🌏"));
+        assert!(rope.ends_with("🌍🌎🌏"));
+        assert!(rope.ends_with("Hello, world! 🌍🌎🌏"));
+        assert!(!rope.ends_with("🌎"));
+        assert!(!rope.ends_with("!Hello, world! 🌍🌎🌏"));
+
+        let empty_rope = Rope::from("");
+        assert!(empty_rope.ends_with(""));
+        assert!(!empty_rope.ends_with("a"));
+    }
+
+    #[test]
+    fn test_starts_with_ends_with_random() {
+        let mut rng = StdRng::seed_from_u64(0);
+        for _ in 0..100 {
+            let len = rng.random_range(0..100);
+            let text: String = RandomCharIter::new(&mut rng).take(len).collect();
+            let rope = Rope::from(text.as_str());
+
+            for _ in 0..10 {
+                let start = rng.random_range(0..=text.len());
+                let start = text.ceil_char_boundary(start);
+                let end = rng.random_range(start..=text.len());
+                let end = text.ceil_char_boundary(end);
+                let prefix = &text[..end];
+                let suffix = &text[start..];
+
+                assert_eq!(
+                    rope.starts_with(prefix),
+                    text.starts_with(prefix),
+                    "starts_with mismatch for {:?} in {:?}",
+                    prefix,
+                    text
+                );
+                assert_eq!(
+                    rope.ends_with(suffix),
+                    text.ends_with(suffix),
+                    "ends_with mismatch for {:?} in {:?}",
+                    suffix,
+                    text
+                );
+            }
+        }
+    }
+
+    #[test]
     fn test_is_char_boundary() {
         let fixture = "地";
         let rope = Rope::from("地");
@@ -2227,6 +2359,119 @@ mod tests {
         for b in 0..=fixture.len() {
             assert_eq!(rope.ceil_char_boundary(b), fixture.ceil_char_boundary(b));
         }
+    }
+
+    #[test]
+    fn test_push_front_empty_text_on_empty_rope() {
+        let mut rope = Rope::new();
+        rope.push_front("");
+        assert_eq!(rope.text(), "");
+        assert_eq!(rope.len(), 0);
+    }
+
+    #[test]
+    fn test_push_front_empty_text_on_nonempty_rope() {
+        let mut rope = Rope::from("hello");
+        rope.push_front("");
+        assert_eq!(rope.text(), "hello");
+    }
+
+    #[test]
+    fn test_push_front_on_empty_rope() {
+        let mut rope = Rope::new();
+        rope.push_front("hello");
+        assert_eq!(rope.text(), "hello");
+        assert_eq!(rope.len(), 5);
+        assert_eq!(rope.max_point(), Point::new(0, 5));
+    }
+
+    #[test]
+    fn test_push_front_single_space() {
+        let mut rope = Rope::from("hint");
+        rope.push_front(" ");
+        assert_eq!(rope.text(), " hint");
+        assert_eq!(rope.len(), 5);
+    }
+
+    #[gpui::test(iterations = 50)]
+    fn test_push_front_random(mut rng: StdRng) {
+        let initial_len = rng.random_range(0..=64);
+        let initial_text: String = RandomCharIter::new(&mut rng).take(initial_len).collect();
+        let mut rope = Rope::from(initial_text.as_str());
+
+        let mut expected = initial_text;
+
+        for _ in 0..rng.random_range(1..=10) {
+            let prefix_len = rng.random_range(0..=32);
+            let prefix: String = RandomCharIter::new(&mut rng).take(prefix_len).collect();
+
+            rope.push_front(&prefix);
+            expected.insert_str(0, &prefix);
+
+            assert_eq!(
+                rope.text(),
+                expected,
+                "text mismatch after push_front({:?})",
+                prefix
+            );
+            assert_eq!(rope.len(), expected.len());
+
+            let actual_summary = rope.summary();
+            let expected_summary = TextSummary::from(expected.as_str());
+            assert_eq!(
+                actual_summary.len, expected_summary.len,
+                "len mismatch for {:?}",
+                expected
+            );
+            assert_eq!(
+                actual_summary.lines, expected_summary.lines,
+                "lines mismatch for {:?}",
+                expected
+            );
+            assert_eq!(
+                actual_summary.chars, expected_summary.chars,
+                "chars mismatch for {:?}",
+                expected
+            );
+            assert_eq!(
+                actual_summary.longest_row, expected_summary.longest_row,
+                "longest_row mismatch for {:?}",
+                expected
+            );
+
+            // Verify offset-to-point and point-to-offset round-trip at boundaries.
+            for (ix, _) in expected.char_indices().chain(Some((expected.len(), '\0'))) {
+                assert_eq!(
+                    rope.point_to_offset(rope.offset_to_point(ix)),
+                    ix,
+                    "offset round-trip failed at {} for {:?}",
+                    ix,
+                    expected
+                );
+            }
+        }
+    }
+
+    #[gpui::test(iterations = 50)]
+    fn test_push_front_large_prefix(mut rng: StdRng) {
+        let initial_len = rng.random_range(0..=32);
+        let initial_text: String = RandomCharIter::new(&mut rng).take(initial_len).collect();
+        let mut rope = Rope::from(initial_text.as_str());
+
+        let prefix_len = rng.random_range(64..=256);
+        let prefix: String = RandomCharIter::new(&mut rng).take(prefix_len).collect();
+
+        rope.push_front(&prefix);
+        let expected = format!("{}{}", prefix, initial_text);
+
+        assert_eq!(rope.text(), expected);
+        assert_eq!(rope.len(), expected.len());
+
+        let actual_summary = rope.summary();
+        let expected_summary = TextSummary::from(expected.as_str());
+        assert_eq!(actual_summary.len, expected_summary.len);
+        assert_eq!(actual_summary.lines, expected_summary.lines);
+        assert_eq!(actual_summary.chars, expected_summary.chars);
     }
 
     fn clip_offset(text: &str, mut offset: usize, bias: Bias) -> usize {
