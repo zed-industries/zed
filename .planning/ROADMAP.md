@@ -64,9 +64,13 @@ Decimal phases appear between their surrounding integers in numeric order.
 **Goal**: Persistent undo storage remains bounded and does not accumulate records for files that no longer exist
 **Depends on**: Phase 3
 **Requirements**: MAINT-01
+**Gap Closure:** Closes gaps from v1.0 audit (MAINT-01 orphaned, delete_undo_history unwired, tech debt)
 **Success Criteria** (what must be TRUE):
   1. On Zed startup, history records for files that no longer exist on disk are automatically deleted
   2. After pruning runs, no orphaned records remain for non-existent files
+  3. `delete_undo_history` has a production caller (integration gap closed)
+  4. 02-02-SUMMARY.md lists CONF-01 and CONF-02 in `requirements_completed` frontmatter (tech debt)
+  5. Double `restore_undo_history` call for standalone file deserialize path is removed (tech debt)
 **Plans**: TBD
 
 ## Progress
