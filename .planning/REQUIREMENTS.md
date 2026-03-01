@@ -21,7 +21,7 @@
 
 ### Maintenance
 
-- [ ] **MAINT-01**: History records for files that no longer exist on disk are automatically pruned on startup
+- [x] **MAINT-01**: History records for files that no longer exist on disk are automatically pruned on startup
 
 ### Infrastructure
 
@@ -69,7 +69,7 @@
 | PERS-06 | Phase 3 | Complete |
 | CONF-01 | Phase 2 | Complete |
 | CONF-02 | Phase 2 | Complete |
-| MAINT-01 | Phase 4 | Pending |
+| MAINT-01 | Phase 4 | Complete |
 | INFRA-01 | Phase 1 | Complete |
 | INFRA-02 | Phase 2 | Complete |
 | INFRA-03 | Phase 1 | Complete |

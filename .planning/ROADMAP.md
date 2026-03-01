@@ -15,7 +15,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 1: Text Layer API** - Expose undo/redo stack accessors and establish serialization format
 - [x] **Phase 2: Persistence Schema and Settings** - Define the SQLite schema and configuration settings (completed 2026-03-01)
 - [x] **Phase 3: Core Write and Restore** - Save history on buffer events and restore on file open (completed 2026-03-01)
-- [ ] **Phase 4: Pruning and Maintenance** - Auto-prune orphaned history records on startup
+- [x] **Phase 4: Pruning and Maintenance** - Auto-prune orphaned history records on startup (completed 2026-03-01)
 
 ## Phase Details
 
@@ -71,7 +71,7 @@ Decimal phases appear between their surrounding integers in numeric order.
   3. `delete_undo_history` has a production caller (integration gap closed)
   4. 02-02-SUMMARY.md lists CONF-01 and CONF-02 in `requirements_completed` frontmatter (tech debt)
   5. Double `restore_undo_history` call for standalone file deserialize path is removed (tech debt)
-**Plans:** 1 plan
+**Plans:** 1/1 plans complete
 - [ ] 04-01-PLAN.md — Add prune_undo_history, wire into cleanup, fix double restore call, fix 02-02 frontmatter
 
 ## Progress
@@ -84,4 +84,4 @@ Phases execute in numeric order: 1 → 2 → 3 → 4
 | 1. Text Layer API | 2/2 | Complete | 2026-03-01 |
 | 2. Persistence Schema and Settings | 2/2 | Complete   | 2026-03-01 |
 | 3. Core Write and Restore | 2/2 | Complete | 2026-03-01 |
-| 4. Pruning and Maintenance | 0/1 | Not started | - |
+| 4. Pruning and Maintenance | 1/1 | Complete   | 2026-03-01 |

@@ -2,13 +2,13 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: unknown
-last_updated: "2026-03-01T18:30:00.000Z"
+status: complete
+last_updated: "2026-03-01T20:31:00Z"
 progress:
   total_phases: 4
-  completed_phases: 2
-  total_plans: 8
-  completed_plans: 6
+  completed_phases: 4
+  total_plans: 7
+  completed_plans: 7
 ---
 
 # Project State
@@ -22,12 +22,12 @@ See: .planning/PROJECT.md (updated 2026-03-01)
 
 ## Current Position
 
-Phase: 3 of 4 (Core Write and Restore)
-Plan: 2 of 2 in current phase — plan 03-02 complete; Phase 3 complete
-Status: Phase 3 complete; ready for Phase 4
-Last activity: 2026-03-01 — Plan 03-02 complete: restore_undo_history wired into added_to_workspace and all four deserialize branches
+Phase: 4 of 4 (Pruning and Maintenance)
+Plan: 1 of 1 in current phase — plan 04-01 complete; Phase 4 complete
+Status: All phases complete; v1.0 milestone reached
+Last activity: 2026-03-01 — Plan 04-01 complete: prune_undo_history wired into Editor::cleanup, orphaned undo history deleted at workspace restore
 
-Progress: [███████░░░] 75%
+Progress: [██████████] 100%
 
 ## Performance Metrics
 
@@ -51,6 +51,7 @@ Progress: [███████░░░] 75%
 
 *Updated after each plan completion*
 | Phase 02-persistence-schema-and-settings P01 | 13 | 1 tasks | 1 files |
+| Phase 04-pruning-and-maintenance P01 | 10 | 2 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -86,6 +87,9 @@ Recent decisions affecting current work:
 - [Plan 03-02]: language::Buffer.restore_history delegates to self.text.restore_history — language::Buffer has Deref but not DerefMut to text::Buffer, so mutable text methods must be wrapped
 - [Plan 03-02]: read_with/update_in in spawn_in closures take cx (not &cx) — cx is already &mut AsyncWindowContext
 - [Plan 03-02]: Hash validation returns Ok(()) on None (no singleton) and on mismatch — only Err propagates task failure
+- [Plan 04-01]: prune_undo_history is a free function (not an Editor method) — cleanup is a static method on SerializableItem with no &self
+- [Plan 04-01]: smol::fs::metadata any-error-is-absent: treats all IO errors as file missing for pruning (best-effort operation)
+- [Plan 04-01]: query! macro requires no trailing comma after last arg: workspace_id: WorkspaceId (not workspace_id: WorkspaceId,)
 
 ### Pending Todos
 
@@ -99,5 +103,5 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-03-01
-Stopped at: Completed Plan 03-02 (restore_undo_history restore path); Phase 3 complete — ready for Phase 4 (eviction and settings)
+Stopped at: Completed Plan 04-01 (prune_undo_history at startup); Phase 4 complete — v1.0 milestone reached
 Resume file: None
