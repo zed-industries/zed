@@ -1,0 +1,24 @@
+[package]
+name = "workspace_command_extension"
+version = "0.1.0"
+license = "GPL-3.0-or-later"
+publish.workspace = true
+edition.workspace = true
+
+[dependencies]
+command_palette_hooks.workspace = true
+extension.workspace = true
+gpui.workspace = true
+log.workspace = true
+parking_lot.workspace = true
+picker.workspace = true
+schemars.workspace = true
+serde.workspace = true
+ui.workspace = true
+workspace.workspace = true
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/workspace_command_extension.rs"

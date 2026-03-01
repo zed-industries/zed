@@ -21325,6 +21325,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "workspace_command_extension"
+version = "0.1.0"
+dependencies = [
+ "command_palette_hooks",
+ "extension",
+ "gpui",
+ "log",
+ "parking_lot",
+ "picker",
+ "schemars",
+ "serde",
+ "ui",
+ "workspace",
+]
+
+[[package]]
 name = "worktree"
 version = "0.1.0"
 dependencies = [
@@ -21896,6 +21912,7 @@ dependencies = [
  "windows 0.61.3",
  "winresource",
  "workspace",
+ "workspace_command_extension",
  "zed-reqwest",
  "zed_actions",
  "zed_env_vars",

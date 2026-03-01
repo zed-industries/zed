@@ -110,6 +110,8 @@ pub struct ExtensionManifest {
     #[serde(default)]
     pub slash_commands: BTreeMap<Arc<str>, SlashCommandManifestEntry>,
     #[serde(default)]
+    pub workspace_commands: BTreeMap<Arc<str>, WorkspaceCommandManifestEntry>,
+    #[serde(default)]
     pub snippets: Option<ExtensionSnippets>,
     #[serde(default)]
     pub capabilities: Vec<ExtensionCapability>,
@@ -348,6 +350,25 @@ pub struct SlashCommandManifestEntry {
     pub requires_argument: bool,
 }
 
+/// Manifest entry for a workspace command provided by an extension.
+///
+/// Workspace commands appear in the command palette and can be bound to keybindings.
+///
+/// Example `extension.toml` entry:
+/// ```toml
+/// [workspace_commands.switch-companion-file]
+/// name = "Switch to Companion File"
+/// description = "Open the companion file with the same base name"
+/// ```
+#[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
+pub struct WorkspaceCommandManifestEntry {
+    /// The display name shown in the command palette.
+    pub name: String,
+    /// An optional description shown in the command palette.
+    #[serde(default)]
+    pub description: Option<String>,
+}
+
 #[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
 pub struct DebugAdapterManifestEntry {
     pub schema_path: Option<PathBuf>,
@@ -432,6 +453,7 @@ fn manifest_from_old_manifest(
         context_servers: BTreeMap::default(),
         agent_servers: BTreeMap::default(),
         slash_commands: BTreeMap::default(),
+        workspace_commands: BTreeMap::default(),
         snippets: None,
         capabilities: Vec::new(),
         debug_adapters: Default::default(),

@@ -9,7 +9,7 @@ use extension::{
     CodeLabel, Command, Completion, ContextServerConfiguration, DebugAdapterBinary,
     DebugTaskDefinition, ExtensionCapability, ExtensionHostProxy, KeyValueStoreDelegate,
     ProjectDelegate, SlashCommand, SlashCommandArgumentCompletion, SlashCommandOutput, Symbol,
-    WorktreeDelegate,
+    WorkspaceCommandResult, WorktreeDelegate,
 };
 use fs::Fs;
 use futures::future::LocalBoxFuture;
@@ -300,6 +300,37 @@ impl extension::Extension for WasmExtension {
                     .map_err(|err| store.data().extension_error(err))?;
 
                 Ok(output.into())
+            }
+            .boxed()
+        })
+        .await?
+    }
+
+    async fn run_workspace_command(
+        &self,
+        command_id: String,
+        active_file: Option<String>,
+        delegate: Option<Arc<dyn WorktreeDelegate>>,
+    ) -> Result<WorkspaceCommandResult> {
+        self.call(|extension, store| {
+            async move {
+                let resource = if let Some(delegate) = delegate {
+                    Some(store.data_mut().table().push(delegate)?)
+                } else {
+                    None
+                };
+
+                let result = extension
+                    .call_run_workspace_command(
+                        store,
+                        &command_id,
+                        active_file.as_deref(),
+                        resource,
+                    )
+                    .await?
+                    .map_err(|err| store.data().extension_error(err))?;
+
+                Ok(result.into())
             }
             .boxed()
         })

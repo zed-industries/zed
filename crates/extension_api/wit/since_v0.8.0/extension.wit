@@ -15,6 +15,7 @@ world extension {
     use lsp.{completion, symbol};
     use process.{command};
     use slash-command.{slash-command, slash-command-argument-completion, slash-command-output};
+    use workspace-command.{workspace-command, workspace-command-result};
 
     /// Initializes the extension.
     export init-extension: func();
@@ -136,6 +137,14 @@ world extension {
     export labels-for-completions: func(language-server-id: string, completions: list<completion>) -> result<list<option<code-label>>, string>;
     export labels-for-symbols: func(language-server-id: string, symbols: list<symbol>) -> result<list<option<code-label>>, string>;
 
+
+    /// Returns the list of workspace commands provided by this extension.
+    export workspace-commands: func() -> list<workspace-command>;
+
+    /// Executes the workspace command with the given ID.
+    ///
+    /// `active-file` is the absolute path of the file currently focused in the editor, if any.
+    export run-workspace-command: func(command-id: string, active-file: option<string>, worktree: option<borrow<worktree>>) -> result<workspace-command-result, string>;
 
     /// Returns the completions that should be shown when completing the provided slash command with the given query.
     export complete-slash-command-argument: func(command: slash-command, args: list<string>) -> result<list<slash-command-argument-completion>, string>;

@@ -18,7 +18,7 @@ use extension::{
     ExtensionContextServerProxy, ExtensionDebugAdapterProviderProxy, ExtensionEvents,
     ExtensionGrammarProxy, ExtensionHostProxy, ExtensionLanguageProxy,
     ExtensionLanguageServerProxy, ExtensionSlashCommandProxy, ExtensionSnippetProxy,
-    ExtensionThemeProxy,
+    ExtensionThemeProxy, ExtensionWorkspaceCommandProxy,
 };
 use fs::{Fs, RemoveOptions};
 use futures::future::join_all;
@@ -1211,6 +1211,10 @@ impl ExtensionStore {
             for command_name in extension.manifest.slash_commands.keys() {
                 self.proxy.unregister_slash_command(command_name.clone());
             }
+            if !extension.manifest.workspace_commands.is_empty() {
+                self.proxy
+                    .unregister_workspace_commands(extension.manifest.id.clone());
+            }
         }
 
         self.wasm_extensions
@@ -1412,6 +1416,17 @@ impl ExtensionStore {
                                 // defined in extensions, as they are not able to be added to the menu.
                                 tooltip_text: String::new(),
                                 requires_argument: slash_command.requires_argument,
+                            },
+                        );
+                    }
+
+                    for (command_id, command_entry) in &manifest.workspace_commands {
+                        this.proxy.register_workspace_command(
+                            extension.clone(),
+                            extension::WorkspaceCommand {
+                                id: command_id.to_string(),
+                                name: command_entry.name.clone(),
+                                description: command_entry.description.clone(),
                             },
                         );
                     }

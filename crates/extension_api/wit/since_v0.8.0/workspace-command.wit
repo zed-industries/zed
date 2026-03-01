@@ -1,0 +1,21 @@
+interface workspace-command {
+    /// A workspace command that can be invoked from the command palette or via a keybinding.
+    record workspace-command {
+        /// The unique identifier for this command within the extension.
+        id: string,
+        /// The display name shown in the command palette.
+        name: string,
+        /// An optional description shown in the command palette.
+        description: option<string>,
+    }
+
+    /// The result of executing a workspace command.
+    variant workspace-command-result {
+        /// Open the file at the given absolute path in the editor.
+        open-file(string),
+        /// Show a picker with multiple candidate file paths for the user to choose from.
+        pick-and-open(list<string>),
+        /// No action is needed (the command was handled entirely within the extension).
+        none,
+    }
+}

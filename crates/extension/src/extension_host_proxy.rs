@@ -8,7 +8,7 @@ use language::{BinaryStatus, LanguageMatcher, LanguageName, LoadedLanguage};
 use lsp::LanguageServerName;
 use parking_lot::RwLock;
 
-use crate::{Extension, SlashCommand};
+use crate::{Extension, SlashCommand, WorkspaceCommand};
 
 #[derive(Default)]
 struct GlobalExtensionHostProxy(Arc<ExtensionHostProxy>);
@@ -30,6 +30,7 @@ pub struct ExtensionHostProxy {
     language_server_proxy: RwLock<Option<Arc<dyn ExtensionLanguageServerProxy>>>,
     snippet_proxy: RwLock<Option<Arc<dyn ExtensionSnippetProxy>>>,
     slash_command_proxy: RwLock<Option<Arc<dyn ExtensionSlashCommandProxy>>>,
+    workspace_command_proxy: RwLock<Option<Arc<dyn ExtensionWorkspaceCommandProxy>>>,
     context_server_proxy: RwLock<Option<Arc<dyn ExtensionContextServerProxy>>>,
     debug_adapter_provider_proxy: RwLock<Option<Arc<dyn ExtensionDebugAdapterProviderProxy>>>,
     language_model_provider_proxy: RwLock<Option<Arc<dyn ExtensionLanguageModelProviderProxy>>>,
@@ -56,6 +57,7 @@ impl ExtensionHostProxy {
             language_server_proxy: RwLock::default(),
             snippet_proxy: RwLock::default(),
             slash_command_proxy: RwLock::default(),
+            workspace_command_proxy: RwLock::default(),
             context_server_proxy: RwLock::default(),
             debug_adapter_provider_proxy: RwLock::default(),
             language_model_provider_proxy: RwLock::default(),
@@ -84,6 +86,12 @@ impl ExtensionHostProxy {
 
     pub fn register_slash_command_proxy(&self, proxy: impl ExtensionSlashCommandProxy) {
         self.slash_command_proxy.write().replace(Arc::new(proxy));
+    }
+
+    pub fn register_workspace_command_proxy(&self, proxy: impl ExtensionWorkspaceCommandProxy) {
+        self.workspace_command_proxy
+            .write()
+            .replace(Arc::new(proxy));
     }
 
     pub fn register_context_server_proxy(&self, proxy: impl ExtensionContextServerProxy) {
@@ -377,6 +385,36 @@ impl ExtensionSlashCommandProxy for ExtensionHostProxy {
         };
 
         proxy.unregister_slash_command(command_name)
+    }
+}
+
+pub trait ExtensionWorkspaceCommandProxy: Send + Sync + 'static {
+    fn register_workspace_command(
+        &self,
+        extension: Arc<dyn Extension>,
+        command: WorkspaceCommand,
+    );
+
+    fn unregister_workspace_commands(&self, extension_id: Arc<str>);
+}
+
+impl ExtensionWorkspaceCommandProxy for ExtensionHostProxy {
+    fn register_workspace_command(
+        &self,
+        extension: Arc<dyn Extension>,
+        command: WorkspaceCommand,
+    ) {
+        let Some(proxy) = self.workspace_command_proxy.read().clone() else {
+            return;
+        };
+        proxy.register_workspace_command(extension, command)
+    }
+
+    fn unregister_workspace_commands(&self, extension_id: Arc<str>) {
+        let Some(proxy) = self.workspace_command_proxy.read().clone() else {
+            return;
+        };
+        proxy.unregister_workspace_commands(extension_id)
     }
 }
 

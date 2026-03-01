@@ -37,6 +37,7 @@ pub use wit::{
     zed::extension::slash_command::{
         SlashCommand, SlashCommandArgumentCompletion, SlashCommandOutput, SlashCommandOutputSection,
     },
+    zed::extension::workspace_command::{WorkspaceCommand, WorkspaceCommandResult},
 };
 
 // Undocumented WIT re-exports.
@@ -155,6 +156,25 @@ pub trait Extension: Send + Sync {
         _worktree: Option<&Worktree>,
     ) -> Result<SlashCommandOutput, String> {
         Err("`run_slash_command` not implemented".to_string())
+    }
+
+    /// Returns the list of workspace commands provided by this extension.
+    ///
+    /// Workspace commands appear in the command palette and can be bound to keybindings.
+    fn workspace_commands(&self) -> Vec<WorkspaceCommand> {
+        Vec::new()
+    }
+
+    /// Executes the workspace command with the given ID.
+    ///
+    /// `active_file` is the absolute path of the file currently focused in the editor, if any.
+    fn run_workspace_command(
+        &self,
+        _command_id: String,
+        _active_file: Option<String>,
+        _worktree: Option<&Worktree>,
+    ) -> Result<WorkspaceCommandResult, String> {
+        Err("`run_workspace_command` not implemented".to_string())
     }
 
     /// Returns the command used to start a context server.
@@ -432,6 +452,18 @@ impl wit::Guest for Component {
             }
         }
         Ok(labels)
+    }
+
+    fn workspace_commands() -> Vec<WorkspaceCommand> {
+        extension().workspace_commands()
+    }
+
+    fn run_workspace_command(
+        command_id: String,
+        active_file: Option<String>,
+        worktree: Option<&Worktree>,
+    ) -> Result<WorkspaceCommandResult, String> {
+        extension().run_workspace_command(command_id, active_file, worktree)
     }
 
     fn complete_slash_command_argument(

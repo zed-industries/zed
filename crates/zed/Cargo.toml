@@ -220,6 +220,7 @@ web_search.workspace = true
 web_search_providers.workspace = true
 which_key.workspace = true
 workspace.workspace = true
+workspace_command_extension.workspace = true
 zed_actions.workspace = true
 zed_env_vars.workspace = true
 zlog.workspace = true

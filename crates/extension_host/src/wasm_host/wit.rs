@@ -783,6 +783,33 @@ impl Extension {
         }
     }
 
+    pub async fn call_workspace_commands(
+        &self,
+        store: &mut Store<WasmState>,
+    ) -> Result<Vec<latest::zed::extension::workspace_command::WorkspaceCommand>> {
+        match self {
+            Extension::V0_8_0(ext) => ext.call_workspace_commands(store).await,
+            _ => Ok(Vec::new()),
+        }
+    }
+
+    pub async fn call_run_workspace_command(
+        &self,
+        store: &mut Store<WasmState>,
+        command_id: &str,
+        active_file: Option<&str>,
+        resource: Option<Resource<Arc<dyn WorktreeDelegate>>>,
+    ) -> Result<Result<latest::zed::extension::workspace_command::WorkspaceCommandResult, String>>
+    {
+        match self {
+            Extension::V0_8_0(ext) => {
+                ext.call_run_workspace_command(store, command_id, active_file, resource)
+                    .await
+            }
+            _ => anyhow::bail!("`run_workspace_command` not available prior to v0.8.0"),
+        }
+    }
+
     pub async fn call_complete_slash_command_argument(
         &self,
         store: &mut Store<WasmState>,

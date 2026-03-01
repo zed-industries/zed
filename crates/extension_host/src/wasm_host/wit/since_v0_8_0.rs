@@ -499,6 +499,26 @@ impl From<SlashCommandArgumentCompletion> for extension::SlashCommandArgumentCom
     }
 }
 
+impl From<WorkspaceCommand> for extension::WorkspaceCommand {
+    fn from(value: WorkspaceCommand) -> Self {
+        Self {
+            id: value.id,
+            name: value.name,
+            description: value.description,
+        }
+    }
+}
+
+impl From<WorkspaceCommandResult> for extension::WorkspaceCommandResult {
+    fn from(value: WorkspaceCommandResult) -> Self {
+        match value {
+            WorkspaceCommandResult::OpenFile(path) => Self::OpenFile(path),
+            WorkspaceCommandResult::PickAndOpen(paths) => Self::PickAndOpen(paths),
+            WorkspaceCommandResult::None => Self::None,
+        }
+    }
+}
+
 impl TryFrom<ContextServerConfiguration> for extension::ContextServerConfiguration {
     type Error = anyhow::Error;
 
@@ -883,6 +903,7 @@ impl process::Host for WasmState {
 
 #[async_trait]
 impl slash_command::Host for WasmState {}
+impl workspace_command::Host for WasmState {}
 
 #[async_trait]
 impl context_server::Host for WasmState {}
