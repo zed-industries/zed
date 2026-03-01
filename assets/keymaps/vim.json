@@ -133,6 +133,8 @@
       "g i": "vim::InsertAtPrevious",
       "g ,": "vim::ChangeListNewer",
       "g ;": "vim::ChangeListOlder",
+      "g -": "vim::UndoEarlier",
+      "g +": "vim::UndoLater",
       "shift-h": "vim::WindowTop",
       "shift-m": "vim::WindowMiddle",
       "shift-l": "vim::WindowBottom",

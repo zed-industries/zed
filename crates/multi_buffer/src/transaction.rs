@@ -42,6 +42,26 @@ struct Transaction {
     suppress_grouping: bool,
 }
 
+/// A read-only view of a single multibuffer transaction for the undo tree panel.
+#[derive(Clone)]
+pub struct MultiBufferHistoryEntry {
+    pub id: TransactionId,
+    pub buffer_transactions: HashMap<BufferId, text::TransactionId>,
+    pub first_edit_at: Instant,
+    pub last_edit_at: Instant,
+}
+
+/// Snapshot of a multibuffer's linear undo/redo history.
+#[derive(Clone)]
+pub struct MultiBufferHistorySnapshot {
+    /// Entries ordered oldest-first. Indices `0..undo_depth` are the undo stack,
+    /// indices `undo_depth..` are the redo stack (in chronological order).
+    pub entries: Vec<MultiBufferHistoryEntry>,
+    /// Number of entries on the undo stack. The "current" entry is at index
+    /// `undo_depth - 1` when `undo_depth > 0`.
+    pub undo_depth: usize,
+}
+
 impl History {
     fn start_transaction(&mut self, now: Instant) -> Option<TransactionId> {
         self.transaction_depth += 1;
@@ -249,6 +269,31 @@ impl History {
 
     pub fn set_group_interval(&mut self, group_interval: Duration) {
         self.group_interval = group_interval;
+    }
+
+    fn history_snapshot(&self) -> MultiBufferHistorySnapshot {
+        let mut entries = Vec::with_capacity(self.undo_stack.len() + self.redo_stack.len());
+        for transaction in &self.undo_stack {
+            entries.push(MultiBufferHistoryEntry {
+                id: transaction.id,
+                buffer_transactions: transaction.buffer_transactions.clone(),
+                first_edit_at: transaction.first_edit_at,
+                last_edit_at: transaction.last_edit_at,
+            });
+        }
+        let undo_depth = entries.len();
+        for transaction in self.redo_stack.iter().rev() {
+            entries.push(MultiBufferHistoryEntry {
+                id: transaction.id,
+                buffer_transactions: transaction.buffer_transactions.clone(),
+                first_edit_at: transaction.first_edit_at,
+                last_edit_at: transaction.last_edit_at,
+            });
+        }
+        MultiBufferHistorySnapshot {
+            entries,
+            undo_depth,
+        }
     }
 }
 
@@ -506,6 +551,22 @@ impl MultiBuffer {
         None
     }
 
+    pub fn undo_earlier(&mut self, cx: &mut Context<Self>) -> Option<TransactionId> {
+        if let Some(buffer) = self.as_singleton() {
+            buffer.update(cx, |buffer, cx| buffer.undo_earlier(cx))
+        } else {
+            None
+        }
+    }
+
+    pub fn undo_later(&mut self, cx: &mut Context<Self>) -> Option<TransactionId> {
+        if let Some(buffer) = self.as_singleton() {
+            buffer.update(cx, |buffer, cx| buffer.undo_later(cx))
+        } else {
+            None
+        }
+    }
+
     pub fn undo_transaction(&mut self, transaction_id: TransactionId, cx: &mut Context<Self>) {
         if let Some(buffer) = self.as_singleton() {
             buffer.update(cx, |buffer, cx| buffer.undo_transaction(transaction_id, cx));
@@ -534,5 +595,12 @@ impl MultiBuffer {
                 }
             }
         }
+    }
+
+    /// Returns a snapshot of the multibuffer's linear undo/redo history.
+    /// Only meaningful for non-singleton multibuffers; singletons delegate
+    /// history to the underlying `text::Buffer`.
+    pub fn undo_history_snapshot(&self) -> MultiBufferHistorySnapshot {
+        self.history.history_snapshot()
     }
 }

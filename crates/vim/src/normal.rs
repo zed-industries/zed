@@ -90,6 +90,10 @@ actions!(
         ToggleComments,
         /// Shows the current location in the file.
         ShowLocation,
+        /// Navigates to the chronologically earlier undo state (g- in Vim).
+        UndoEarlier,
+        /// Navigates to the chronologically later undo state (g+ in Vim).
+        UndoLater,
         /// Undoes the last change.
         Undo,
         /// Redoes the last undone change.
@@ -251,6 +255,24 @@ pub(crate) fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
         vim.update_editor(cx, |_, editor, cx| {
             for _ in 0..times.unwrap_or(1) {
                 editor.redo(&editor::actions::Redo, window, cx);
+            }
+        });
+    });
+    Vim::action(editor, cx, |vim, _: &UndoEarlier, window, cx| {
+        let times = Vim::take_count(cx);
+        Vim::take_forced_motion(cx);
+        vim.update_editor(cx, |_, editor, cx| {
+            for _ in 0..times.unwrap_or(1) {
+                editor.undo_earlier(&editor::actions::UndoEarlier, window, cx);
+            }
+        });
+    });
+    Vim::action(editor, cx, |vim, _: &UndoLater, window, cx| {
+        let times = Vim::take_count(cx);
+        Vim::take_forced_motion(cx);
+        vim.update_editor(cx, |_, editor, cx| {
+            for _ in 0..times.unwrap_or(1) {
+                editor.undo_later(&editor::actions::UndoLater, window, cx);
             }
         });
     });

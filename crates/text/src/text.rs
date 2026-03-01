@@ -9,8 +9,10 @@ pub mod subscription;
 #[cfg(test)]
 mod tests;
 mod undo_map;
+pub mod undo_tree;
 
 pub use anchor::*;
+pub use undo_tree::{UndoTree, UndoTreeNode};
 use anyhow::{Context as _, Result};
 use clock::Lamport;
 pub use clock::ReplicaId;
@@ -145,8 +147,43 @@ impl Transaction {
 }
 
 impl HistoryEntry {
+    /// Create a new `HistoryEntry` with the given transaction and timestamp.
+    pub fn new(transaction: Transaction, now: Instant) -> Self {
+        Self {
+            transaction,
+            first_edit_at: now,
+            last_edit_at: now,
+            suppress_grouping: false,
+        }
+    }
+
     pub fn transaction_id(&self) -> TransactionId {
         self.transaction.id
+    }
+
+    /// Read-only access to the underlying transaction.
+    pub fn transaction(&self) -> &Transaction {
+        &self.transaction
+    }
+
+    /// Mutable access to the underlying transaction (for grouping/merge).
+    pub(crate) fn transaction_mut(&mut self) -> &mut Transaction {
+        &mut self.transaction
+    }
+
+    /// When this entry's first edit occurred.
+    pub fn first_edit_at(&self) -> Instant {
+        self.first_edit_at
+    }
+
+    /// When this entry's last edit occurred.
+    pub fn last_edit_at(&self) -> Instant {
+        self.last_edit_at
+    }
+
+    /// Update the last-edit timestamp (used during grouping/merge).
+    pub(crate) fn set_last_edit_at(&mut self, t: Instant) {
+        self.last_edit_at = t;
     }
 }
 
@@ -157,6 +194,7 @@ struct History {
     redo_stack: Vec<HistoryEntry>,
     transaction_depth: usize,
     group_interval: Duration,
+    tree: UndoTree,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -227,6 +265,7 @@ impl History {
             group_interval: Duration::ZERO,
             #[cfg(not(any(test, feature = "test-support")))]
             group_interval: Duration::from_millis(300),
+            tree: UndoTree::new(),
         }
     }
 
@@ -274,6 +313,7 @@ impl History {
                 self.undo_stack.pop();
                 None
             } else {
+                // Entries leaving the redo stack are preserved in the tree.
                 self.redo_stack.clear();
                 let entry = self.undo_stack.last_mut().unwrap();
                 entry.last_edit_at = now;
@@ -318,20 +358,47 @@ impl History {
 
     fn group_trailing(&mut self, n: usize) -> Option<TransactionId> {
         let new_len = self.undo_stack.len() - n;
-        let (entries_to_keep, entries_to_merge) = self.undo_stack.split_at_mut(new_len);
-        if let Some(last_entry) = entries_to_keep.last_mut() {
-            for entry in &*entries_to_merge {
-                for edit_id in &entry.transaction.edit_ids {
-                    last_entry.transaction.edit_ids.push(*edit_id);
+        {
+            let (entries_to_keep, entries_to_merge) = self.undo_stack.split_at_mut(new_len);
+            if let Some(last_entry) = entries_to_keep.last_mut() {
+                for entry in &*entries_to_merge {
+                    for edit_id in &entry.transaction.edit_ids {
+                        last_entry.transaction.edit_ids.push(*edit_id);
+                    }
                 }
-            }
 
-            if let Some(entry) = entries_to_merge.last_mut() {
-                last_entry.last_edit_at = entry.last_edit_at;
+                if let Some(entry) = entries_to_merge.last_mut() {
+                    last_entry.last_edit_at = entry.last_edit_at;
+                }
             }
         }
 
+        // Collect merged IDs in tip-first order for tree merging.
+        let merged_ids: Vec<TransactionId> = self.undo_stack[new_len..]
+            .iter()
+            .rev()
+            .map(|e| e.transaction.id)
+            .collect();
+
         self.undo_stack.truncate(new_len);
+
+        // Merge each removed node into its parent in the tree.
+        for id in &merged_ids {
+            if let Some(idx) = self.tree.index_for_transaction(*id) {
+                self.tree.goto(idx);
+                self.tree.merge_current_into_parent();
+            }
+        }
+
+        // Sync the surviving entry's updated data to the tree.
+        if let Some(surviving) = self.undo_stack.last().cloned() {
+            if let Some(idx) = self.tree.index_for_transaction(surviving.transaction_id()) {
+                if let Some(node) = self.tree.node_mut(idx) {
+                    node.entry = surviving;
+                }
+            }
+        }
+
         self.undo_stack.last().map(|e| e.transaction.id)
     }
 
@@ -345,12 +412,18 @@ impl History {
 
     fn push_transaction(&mut self, transaction: Transaction, now: Instant) {
         assert_eq!(self.transaction_depth, 0);
-        self.undo_stack.push(HistoryEntry {
+
+        // Set tree current to parent (current undo_stack tip) before pushing.
+        self.sync_tree_current_to_undo_tip();
+
+        let entry = HistoryEntry {
             transaction,
             first_edit_at: now,
             last_edit_at: now,
             suppress_grouping: false,
-        });
+        };
+        self.tree.push(entry.clone());
+        self.undo_stack.push(entry);
     }
 
     /// Differs from `push_transaction` in that it does not clear the redo
@@ -372,17 +445,22 @@ impl History {
     ) -> TransactionId {
         assert_eq!(self.transaction_depth, 0);
         let id = clock.tick();
-        let transaction = Transaction {
-            id,
-            start,
-            edit_ids: Vec::new(),
-        };
-        self.undo_stack.push(HistoryEntry {
-            transaction,
+
+        // Set tree current to parent (current undo_stack tip) before pushing.
+        self.sync_tree_current_to_undo_tip();
+
+        let entry = HistoryEntry {
+            transaction: Transaction {
+                id,
+                start,
+                edit_ids: Vec::new(),
+            },
             first_edit_at: now,
             last_edit_at: now,
             suppress_grouping: false,
-        });
+        };
+        self.tree.push(entry.clone());
+        self.undo_stack.push(entry);
         id
     }
 
@@ -433,7 +511,8 @@ impl History {
 
     fn forget(&mut self, transaction_id: TransactionId) -> Option<Transaction> {
         assert_eq!(self.transaction_depth, 0);
-        if let Some(entry_ix) = self
+
+        let result = if let Some(entry_ix) = self
             .undo_stack
             .iter()
             .rposition(|entry| entry.transaction.id == transaction_id)
@@ -447,40 +526,74 @@ impl History {
             Some(self.redo_stack.remove(entry_ix).transaction)
         } else {
             None
+        };
+
+        // Also remove from the tree.
+        if let Some(idx) = self.tree.index_for_transaction(transaction_id) {
+            self.tree.remove_node(idx);
         }
+
+        result
     }
 
     fn transaction(&self, transaction_id: TransactionId) -> Option<&Transaction> {
-        let entry = self
-            .undo_stack
+        self.undo_stack
             .iter()
             .rfind(|entry| entry.transaction.id == transaction_id)
             .or_else(|| {
                 self.redo_stack
                     .iter()
                     .rfind(|entry| entry.transaction.id == transaction_id)
-            })?;
-        Some(&entry.transaction)
+            })
+            .map(|e| &e.transaction)
+            .or_else(|| {
+                self.tree
+                    .index_for_transaction(transaction_id)
+                    .and_then(|idx| self.tree.node(idx))
+                    .map(|node| node.entry.transaction())
+            })
     }
 
     fn transaction_mut(&mut self, transaction_id: TransactionId) -> Option<&mut Transaction> {
-        let entry = self
+        if let Some(entry) = self
             .undo_stack
             .iter_mut()
             .rfind(|entry| entry.transaction.id == transaction_id)
-            .or_else(|| {
-                self.redo_stack
-                    .iter_mut()
-                    .rfind(|entry| entry.transaction.id == transaction_id)
-            })?;
-        Some(&mut entry.transaction)
+        {
+            return Some(&mut entry.transaction);
+        }
+        if let Some(entry) = self
+            .redo_stack
+            .iter_mut()
+            .rfind(|entry| entry.transaction.id == transaction_id)
+        {
+            return Some(&mut entry.transaction);
+        }
+        if let Some(idx) = self.tree.index_for_transaction(transaction_id) {
+            if let Some(node) = self.tree.node_mut(idx) {
+                return Some(node.entry.transaction_mut());
+            }
+        }
+        None
     }
 
     fn merge_transactions(&mut self, transaction: TransactionId, destination: TransactionId) {
-        if let Some(transaction) = self.forget(transaction)
-            && let Some(destination) = self.transaction_mut(destination)
-        {
-            destination.edit_ids.extend(transaction.edit_ids);
+        let Some(source) = self.forget(transaction) else {
+            return;
+        };
+        let edit_ids = source.edit_ids;
+
+        // Update the destination entry on whichever stack holds it.
+        if let Some(dest) = self.transaction_mut(destination) {
+            dest.edit_ids.extend_from_slice(&edit_ids);
+        }
+
+        // Sync the destination entry to the tree (transaction_mut may have
+        // updated the stack copy; propagate the same edit_ids to the tree copy).
+        if let Some(idx) = self.tree.index_for_transaction(destination) {
+            if let Some(node) = self.tree.node_mut(idx) {
+                node.entry.transaction_mut().edit_ids.extend_from_slice(&edit_ids);
+            }
         }
     }
 
@@ -507,6 +620,116 @@ impl History {
                 .extend(self.redo_stack.drain(entry_ix..).rev());
         }
         &self.undo_stack[undo_stack_start_len..]
+    }
+
+    /// Look up an entry by transaction ID, preferring stack copies (which may
+    /// have more up-to-date edit_ids from `merge_transactions`) over tree copies.
+    fn entry_for_transaction(&self, id: TransactionId) -> Option<&HistoryEntry> {
+        self.undo_stack
+            .iter()
+            .rfind(|e| e.transaction.id == id)
+            .or_else(|| self.redo_stack.iter().rfind(|e| e.transaction.id == id))
+            .or_else(|| {
+                self.tree
+                    .index_for_transaction(id)
+                    .and_then(|idx| self.tree.node(idx))
+                    .map(|node| &node.entry)
+            })
+    }
+
+    fn parent_on_undo_stack(&self, id: TransactionId) -> Option<TransactionId> {
+        let pos = self.undo_stack.iter().rposition(|e| e.transaction.id == id)?;
+        if pos > 0 {
+            Some(self.undo_stack[pos - 1].transaction.id)
+        } else {
+            None
+        }
+    }
+
+    /// Set tree.current to match the current undo_stack tip (or root if empty).
+    fn sync_tree_current_to_undo_tip(&mut self) {
+        if let Some(tip) = self.undo_stack.last() {
+            if let Some(idx) = self.tree.index_for_transaction(tip.transaction_id()) {
+                self.tree.goto(idx);
+            } else {
+                self.tree.goto_root();
+            }
+        } else {
+            self.tree.goto_root();
+        }
+    }
+
+    /// Record a committed transaction in the tree. Called from
+    /// `Buffer::end_transaction_at` before grouping.
+    fn record_entry_in_tree(&mut self, id: TransactionId) {
+        if self.tree.index_for_transaction(id).is_some() {
+            return;
+        }
+
+        let parent_id = self.parent_on_undo_stack(id);
+        match parent_id.and_then(|pid| self.tree.index_for_transaction(pid)) {
+            Some(idx) => {
+                self.tree.goto(idx);
+            }
+            None => {
+                self.tree.goto_root();
+            }
+        }
+
+        if let Some(entry) = self
+            .undo_stack
+            .iter()
+            .rfind(|e| e.transaction_id() == id)
+            .cloned()
+        {
+            self.tree.push(entry);
+        }
+    }
+
+    fn reconstruct_stacks(&mut self, current: TransactionId) {
+        let Some(target_idx) = self.tree.index_for_transaction(current) else {
+            return;
+        };
+
+        // Collect all current stack entries — they may have fresher data than
+        // the tree copies (due to merge_transactions).  Sync them into the
+        // tree first so both derived stacks get consistent, up-to-date data.
+        for entry in self.undo_stack.drain(..) {
+            if let Some(idx) = self.tree.index_for_transaction(entry.transaction.id) {
+                if let Some(node) = self.tree.node_mut(idx) {
+                    node.entry = entry;
+                }
+            }
+        }
+        for entry in self.redo_stack.drain(..) {
+            if let Some(idx) = self.tree.index_for_transaction(entry.transaction.id) {
+                if let Some(node) = self.tree.node_mut(idx) {
+                    node.entry = entry;
+                }
+            }
+        }
+
+        // Derive both stacks from the (now up-to-date) tree.
+        self.undo_stack = self.tree.entries_on_path(target_idx);
+        self.redo_stack = self.tree.primary_branch_forward(target_idx);
+
+        self.tree.goto(target_idx);
+    }
+
+    fn build_undo_tree(&self) -> UndoTree {
+        let mut snapshot = self.tree.clone();
+
+        if let Some(current_id) = self.undo_stack.last().map(|e| e.transaction_id()) {
+            if let Some(idx) = snapshot.index_for_transaction(current_id) {
+                snapshot.goto(idx);
+            } else {
+                snapshot.goto_root();
+            }
+        } else {
+            snapshot.goto_root();
+        }
+
+        snapshot
     }
 }
 
@@ -1515,6 +1738,9 @@ impl Buffer {
     pub fn end_transaction_at(&mut self, now: Instant) -> Option<(TransactionId, clock::Global)> {
         if let Some(entry) = self.history.end_transaction(now) {
             let since = entry.transaction.start.clone();
+            let new_id = entry.transaction_id();
+            // Record in tree BEFORE grouping so merge_current_into_parent works.
+            self.history.record_entry_in_tree(new_id);
             let id = self.history.group().unwrap();
             Some((id, since))
         } else {
@@ -1607,6 +1833,118 @@ impl Buffer {
             .into_iter()
             .map(|transaction| self.undo_or_redo(transaction))
             .collect()
+    }
+
+
+
+
+
+
+
+    /// Returns all transaction IDs in chronological (creation) order, across all branches.
+    pub fn all_transaction_ids(&self) -> Vec<TransactionId> {
+        self.history.tree.all_live_transaction_ids()
+    }
+
+    /// Build a snapshot of the undo tree for rendering.
+    pub fn undo_tree_snapshot(&self) -> UndoTree {
+        self.history.build_undo_tree()
+    }
+
+    /// Navigate to a specific transaction, restoring the buffer to the state
+    /// right after that transaction was committed. Works across branches.
+    pub fn goto_transaction(&mut self, target: TransactionId) -> Vec<Operation> {
+        let active: HashSet<TransactionId> = self
+            .history
+            .undo_stack
+            .iter()
+            .map(|e| e.transaction.id)
+            .collect();
+
+        let target_idx = match self.history.tree.index_for_transaction(target) {
+            Some(idx) => idx,
+            None => return Vec::new(),
+        };
+        let target_path = self.history.tree.transaction_ids_on_path(target_idx);
+        let target_set: HashSet<TransactionId> = target_path.iter().copied().collect();
+
+        let to_deactivate: Vec<TransactionId> =
+            active.difference(&target_set).copied().collect();
+        let to_activate: Vec<TransactionId> =
+            target_set.difference(&active).copied().collect();
+
+        // Collect transactions to toggle before mutating.
+        let deactivate_txns: Vec<Transaction> = to_deactivate
+            .iter()
+            .filter_map(|id| {
+                self.history
+                    .entry_for_transaction(*id)
+                    .map(|e| e.transaction().clone())
+            })
+            .collect();
+        let activate_txns: Vec<Transaction> = to_activate
+            .iter()
+            .filter_map(|id| {
+                self.history
+                    .entry_for_transaction(*id)
+                    .map(|e| e.transaction().clone())
+            })
+            .collect();
+
+        let mut ops = Vec::new();
+        for txn in deactivate_txns {
+            ops.push(self.undo_or_redo(txn));
+        }
+        for txn in activate_txns {
+            ops.push(self.undo_or_redo(txn));
+        }
+
+        self.history.reconstruct_stacks(target);
+        ops
+    }
+
+    /// Navigate to the chronologically earlier undo state (g- in Vim).
+    pub fn undo_earlier(&mut self) -> Option<(TransactionId, Vec<Operation>)> {
+        if self.history.tree.is_empty() {
+            return None;
+        }
+
+        let current_id = self.history.undo_stack.last().map(|e| e.transaction.id);
+
+        // Sync tree.current to match the undo_stack tip.
+        self.history.sync_tree_current_to_undo_tip();
+
+        match self.history.tree.chrono_prev_index() {
+            Some(prev_idx) => {
+                let target = self.history.tree.node(prev_idx)?.entry.transaction_id();
+                let ops = self.goto_transaction(target);
+                Some((target, ops))
+            }
+            None => {
+                // At the first transaction — undo to initial state.
+                if current_id.is_some() {
+                    let (id, op) = self.undo()?;
+                    Some((id, vec![op]))
+                } else {
+                    None
+                }
+            }
+        }
+    }
+
+    /// Navigate to the chronologically later undo state (g+ in Vim).
+    pub fn undo_later(&mut self) -> Option<(TransactionId, Vec<Operation>)> {
+        if self.history.tree.is_empty() {
+            return None;
+        }
+
+        // Sync tree.current to match the undo_stack tip.
+        self.history.sync_tree_current_to_undo_tip();
+
+        let next_idx = self.history.tree.chrono_next_index()?;
+        let target = self.history.tree.node(next_idx)?.entry.transaction_id();
+        let ops = self.goto_transaction(target);
+        Some((target, ops))
     }
 
     fn undo_or_redo(&mut self, transaction: Transaction) -> Operation {

@@ -307,6 +307,8 @@ impl EditorElement {
         register_action(editor, window, Editor::paste);
         register_action(editor, window, Editor::undo);
         register_action(editor, window, Editor::redo);
+        register_action(editor, window, Editor::undo_earlier);
+        register_action(editor, window, Editor::undo_later);
         register_action(editor, window, Editor::move_page_up);
         register_action(editor, window, Editor::move_page_down);
         register_action(editor, window, Editor::next_screen);
