@@ -415,6 +415,94 @@ mod tests {
     use super::*;
 
     #[gpui::test]
+    async fn test_save_and_get_undo_history_meta() {
+        let workspace_id = workspace::WORKSPACE_DB.next_id().await.unwrap();
+
+        let path_a: Arc<Path> = Arc::from(Path::new("/tmp/test_undo_a.rs"));
+        let path_b: Arc<Path> = Arc::from(Path::new("/tmp/test_undo_b.rs"));
+
+        // Test 1: save and retrieve a row with correct field values
+        DB.save_undo_history_meta(
+            workspace_id,
+            path_a.clone(),
+            "abc123hash".to_string(),
+            1000,
+            42,
+        )
+        .await
+        .unwrap();
+
+        let result = DB
+            .get_undo_history_meta(workspace_id, &path_a)
+            .unwrap()
+            .unwrap();
+        let (content_hash, mtime_seconds, mtime_nanos, last_accessed_at) = result;
+        assert_eq!(content_hash, "abc123hash");
+        assert_eq!(mtime_seconds, 1000_i64);
+        assert_eq!(mtime_nanos, 42_i32);
+        assert!(!last_accessed_at.is_empty(), "last_accessed_at should be non-empty");
+
+        // Test 2: upsert — calling save again with a different hash overwrites, not duplicates
+        DB.save_undo_history_meta(
+            workspace_id,
+            path_a.clone(),
+            "newhash456".to_string(),
+            2000,
+            99,
+        )
+        .await
+        .unwrap();
+
+        let result = DB
+            .get_undo_history_meta(workspace_id, &path_a)
+            .unwrap()
+            .unwrap();
+        let (content_hash, mtime_seconds, mtime_nanos, _last_accessed_at) = result;
+        assert_eq!(content_hash, "newhash456");
+        assert_eq!(mtime_seconds, 2000_i64);
+        assert_eq!(mtime_nanos, 99_i32);
+
+        // Test 3: delete removes the row, get returns None
+        DB.delete_undo_history(workspace_id, &path_a).await.unwrap();
+        let deleted = DB.get_undo_history_meta(workspace_id, &path_a).unwrap();
+        assert!(deleted.is_none(), "row should be gone after delete");
+
+        // Test 4: two different paths in the same workspace are independent
+        DB.save_undo_history_meta(
+            workspace_id,
+            path_a.clone(),
+            "hash_for_a".to_string(),
+            100,
+            1,
+        )
+        .await
+        .unwrap();
+        DB.save_undo_history_meta(
+            workspace_id,
+            path_b.clone(),
+            "hash_for_b".to_string(),
+            200,
+            2,
+        )
+        .await
+        .unwrap();
+
+        let result_a = DB
+            .get_undo_history_meta(workspace_id, &path_a)
+            .unwrap()
+            .unwrap();
+        let result_b = DB
+            .get_undo_history_meta(workspace_id, &path_b)
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(result_a.0, "hash_for_a");
+        assert_eq!(result_b.0, "hash_for_b");
+        assert_eq!(result_a.1, 100_i64);
+        assert_eq!(result_b.1, 200_i64);
+    }
+
+    #[gpui::test]
     async fn test_save_and_get_serialized_editor() {
         let workspace_id = workspace::WORKSPACE_DB.next_id().await.unwrap();
 
