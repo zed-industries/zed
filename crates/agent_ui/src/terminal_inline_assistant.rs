@@ -276,6 +276,7 @@ impl TerminalInlineAssistant {
                 temperature,
                 thinking_allowed: false,
                 thinking_effort: None,
+                speed: None,
             }
         }))
     }

@@ -725,6 +725,7 @@ pub fn into_anthropic(
         metadata: None,
         output_config: None,
         stop_sequences: Vec::new(),
+        speed: request.speed.map(From::from),
         temperature: request.temperature.or(Some(default_temperature)),
         top_k: None,
         top_p: None,
@@ -1105,6 +1106,7 @@ mod tests {
             tool_choice: None,
             thinking_allowed: true,
             thinking_effort: None,
+            speed: None,
         };
 
         let anthropic_request = into_anthropic(
@@ -1167,6 +1169,7 @@ mod tests {
             tools: vec![],
             tool_choice: None,
             thinking_allowed: true,
+            speed: None,
         };
         request.messages.push(LanguageModelRequestMessage {
             role: Role::Assistant,

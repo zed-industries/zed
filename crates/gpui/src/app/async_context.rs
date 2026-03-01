@@ -7,7 +7,7 @@ use crate::{
 use anyhow::Context as _;
 use derive_more::{Deref, DerefMut};
 use futures::channel::oneshot;
-use smol::future::FutureExt;
+use futures::future::FutureExt;
 use std::{future::Future, rc::Weak};
 
 use super::{Context, WeakEntity};
@@ -241,10 +241,10 @@ impl AsyncApp {
         &self,
         entity: &WeakEntity<T>,
         f: Callback,
-    ) -> util::Deferred<impl FnOnce() + use<T, Callback>> {
+    ) -> gpui_util::Deferred<impl FnOnce() + use<T, Callback>> {
         let entity = entity.clone();
         let mut cx = self.clone();
-        util::defer(move || {
+        gpui_util::defer(move || {
             entity.update(&mut cx, f).ok();
         })
     }

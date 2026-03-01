@@ -361,6 +361,7 @@ impl ProjectState {
                         prediction_id,
                         EditPredictionRejectReason::Canceled,
                         false,
+                        None,
                         cx,
                     );
                 })
@@ -1394,7 +1395,14 @@ impl EditPredictionStore {
         if let Some(project_state) = self.projects.get_mut(&project.entity_id()) {
             project_state.pending_predictions.clear();
             if let Some(prediction) = project_state.current_prediction.take() {
-                self.reject_prediction(prediction.prediction.id, reason, prediction.was_shown, cx);
+                let model_version = prediction.prediction.model_version.clone();
+                self.reject_prediction(
+                    prediction.prediction.id,
+                    reason,
+                    prediction.was_shown,
+                    model_version,
+                    cx,
+                );
             }
         };
     }
@@ -1453,6 +1461,7 @@ impl EditPredictionStore {
         prediction_id: EditPredictionId,
         reason: EditPredictionRejectReason,
         was_shown: bool,
+        model_version: Option<String>,
         cx: &App,
     ) {
         match self.edit_prediction_model {
@@ -1467,6 +1476,7 @@ impl EditPredictionStore {
                             request_id: prediction_id.to_string(),
                             reason,
                             was_shown,
+                            model_version,
                         })
                         .log_err();
                 }
@@ -1812,6 +1822,7 @@ impl EditPredictionStore {
                                         new_prediction.prediction.id,
                                         EditPredictionRejectReason::CurrentPreferred,
                                         false,
+                                        new_prediction.prediction.model_version,
                                         cx,
                                     );
                                     None
@@ -1821,7 +1832,13 @@ impl EditPredictionStore {
                             }
                         }
                         Err(reject_reason) => {
-                            this.reject_prediction(prediction_result.id, reject_reason, false, cx);
+                            this.reject_prediction(
+                                prediction_result.id,
+                                reject_reason,
+                                false,
+                                None,
+                                cx,
+                            );
                             None
                         }
                     }
