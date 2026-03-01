@@ -904,7 +904,7 @@ impl LeakDetector {
     /// at the allocation site.
     #[track_caller]
     pub fn handle_created(&mut self, entity_id: EntityId) -> HandleId {
-        let id = util::post_inc(&mut self.next_handle_id);
+        let id = gpui_util::post_inc(&mut self.next_handle_id);
         let handle_id = HandleId { id };
         let handles = self.entity_handles.entry(entity_id).or_default();
         handles.insert(

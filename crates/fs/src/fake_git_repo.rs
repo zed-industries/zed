@@ -768,6 +768,136 @@ impl GitRepository for FakeGitRepository {
         unimplemented!()
     }
 
+    fn diff_stat(
+        &self,
+        diff_type: git::repository::DiffType,
+    ) -> BoxFuture<'_, Result<HashMap<RepoPath, git::status::DiffStat>>> {
+        fn count_lines(s: &str) -> u32 {
+            if s.is_empty() {
+                0
+            } else {
+                s.lines().count() as u32
+            }
+        }
+
+        match diff_type {
+            git::repository::DiffType::HeadToIndex => self
+                .with_state_async(false, |state| {
+                    let mut result = HashMap::default();
+                    let all_paths: HashSet<&RepoPath> = state
+                        .head_contents
+                        .keys()
+                        .chain(state.index_contents.keys())
+                        .collect();
+                    for path in all_paths {
+                        let head = state.head_contents.get(path);
+                        let index = state.index_contents.get(path);
+                        match (head, index) {
+                            (Some(old), Some(new)) if old != new => {
+                                result.insert(
+                                    path.clone(),
+                                    git::status::DiffStat {
+                                        added: count_lines(new),
+                                        deleted: count_lines(old),
+                                    },
+                                );
+                            }
+                            (Some(old), None) => {
+                                result.insert(
+                                    path.clone(),
+                                    git::status::DiffStat {
+                                        added: 0,
+                                        deleted: count_lines(old),
+                                    },
+                                );
+                            }
+                            (None, Some(new)) => {
+                                result.insert(
+                                    path.clone(),
+                                    git::status::DiffStat {
+                                        added: count_lines(new),
+                                        deleted: 0,
+                                    },
+                                );
+                            }
+                            _ => {}
+                        }
+                    }
+                    Ok(result)
+                })
+                .boxed(),
+            git::repository::DiffType::HeadToWorktree => {
+                let workdir_path = self.dot_git_path.parent().unwrap().to_path_buf();
+                let worktree_files: HashMap<RepoPath, String> = self
+                    .fs
+                    .files()
+                    .iter()
+                    .filter_map(|path| {
+                        let repo_path = path.strip_prefix(&workdir_path).ok()?;
+                        if repo_path.starts_with(".git") {
+                            return None;
+                        }
+                        let content = self
+                            .fs
+                            .read_file_sync(path)
+                            .ok()
+                            .and_then(|bytes| String::from_utf8(bytes).ok())?;
+                        let repo_path = RelPath::new(repo_path, PathStyle::local()).ok()?;
+                        Some((RepoPath::from_rel_path(&repo_path), content))
+                    })
+                    .collect();
+
+                self.with_state_async(false, move |state| {
+                    let mut result = HashMap::default();
+                    let all_paths: HashSet<&RepoPath> = state
+                        .head_contents
+                        .keys()
+                        .chain(worktree_files.keys())
+                        .collect();
+                    for path in all_paths {
+                        let head = state.head_contents.get(path);
+                        let worktree = worktree_files.get(path);
+                        match (head, worktree) {
+                            (Some(old), Some(new)) if old != new => {
+                                result.insert(
+                                    path.clone(),
+                                    git::status::DiffStat {
+                                        added: count_lines(new),
+                                        deleted: count_lines(old),
+                                    },
+                                );
+                            }
+                            (Some(old), None) => {
+                                result.insert(
+                                    path.clone(),
+                                    git::status::DiffStat {
+                                        added: 0,
+                                        deleted: count_lines(old),
+                                    },
+                                );
+                            }
+                            (None, Some(new)) => {
+                                result.insert(
+                                    path.clone(),
+                                    git::status::DiffStat {
+                                        added: count_lines(new),
+                                        deleted: 0,
+                                    },
+                                );
+                            }
+                            _ => {}
+                        }
+                    }
+                    Ok(result)
+                })
+                .boxed()
+            }
+            git::repository::DiffType::MergeBase { .. } => {
+                future::ready(Ok(HashMap::default())).boxed()
+            }
+        }
+    }
+
     fn checkpoint(&self) -> BoxFuture<'static, Result<GitRepositoryCheckpoint>> {
         let executor = self.executor.clone();
         let fs = self.fs.clone();

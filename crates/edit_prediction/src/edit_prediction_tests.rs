@@ -29,7 +29,10 @@ use util::path;
 use uuid::Uuid;
 use zeta_prompt::ZetaPromptInput;
 
-use crate::{BufferEditPrediction, EditPredictionId, EditPredictionStore, REJECT_REQUEST_DEBOUNCE};
+use crate::{
+    BufferEditPrediction, EDIT_PREDICTION_SETTLED_QUIESCENCE, EditPredictionId,
+    EditPredictionStore, REJECT_REQUEST_DEBOUNCE,
+};
 
 #[gpui::test]
 async fn test_current_state(cx: &mut TestAppContext) {
@@ -897,7 +900,8 @@ async fn test_empty_prediction(cx: &mut TestAppContext) {
         &[EditPredictionRejection {
             request_id: id,
             reason: EditPredictionRejectReason::Empty,
-            was_shown: false
+            was_shown: false,
+            model_version: None,
         }]
     );
 }
@@ -957,7 +961,8 @@ async fn test_interpolated_empty(cx: &mut TestAppContext) {
         &[EditPredictionRejection {
             request_id: id,
             reason: EditPredictionRejectReason::InterpolatedEmpty,
-            was_shown: false
+            was_shown: false,
+            model_version: None,
         }]
     );
 }
@@ -1049,7 +1054,8 @@ async fn test_replace_current(cx: &mut TestAppContext) {
         &[EditPredictionRejection {
             request_id: first_id,
             reason: EditPredictionRejectReason::Replaced,
-            was_shown: false
+            was_shown: false,
+            model_version: None,
         }]
     );
 }
@@ -1143,7 +1149,8 @@ async fn test_current_preferred(cx: &mut TestAppContext) {
         &[EditPredictionRejection {
             request_id: second_id,
             reason: EditPredictionRejectReason::CurrentPreferred,
-            was_shown: false
+            was_shown: false,
+            model_version: None,
         }]
     );
 }
@@ -1234,7 +1241,8 @@ async fn test_cancel_earlier_pending_requests(cx: &mut TestAppContext) {
         &[EditPredictionRejection {
             request_id: first_id,
             reason: EditPredictionRejectReason::Canceled,
-            was_shown: false
+            was_shown: false,
+            model_version: None,
         }]
     );
 }
@@ -1364,12 +1372,14 @@ async fn test_cancel_second_on_third_request(cx: &mut TestAppContext) {
             EditPredictionRejection {
                 request_id: cancelled_id,
                 reason: EditPredictionRejectReason::Canceled,
-                was_shown: false
+                was_shown: false,
+                model_version: None,
             },
             EditPredictionRejection {
                 request_id: first_id,
                 reason: EditPredictionRejectReason::Replaced,
-                was_shown: false
+                was_shown: false,
+                model_version: None,
             }
         ]
     );
@@ -1485,12 +1495,14 @@ async fn test_rejections_flushing(cx: &mut TestAppContext) {
             EditPredictionId("test-1".into()),
             EditPredictionRejectReason::Discarded,
             false,
+            None,
             cx,
         );
         ep_store.reject_prediction(
             EditPredictionId("test-2".into()),
             EditPredictionRejectReason::Canceled,
             true,
+            None,
             cx,
         );
     });
@@ -1508,7 +1520,8 @@ async fn test_rejections_flushing(cx: &mut TestAppContext) {
         EditPredictionRejection {
             request_id: "test-1".to_string(),
             reason: EditPredictionRejectReason::Discarded,
-            was_shown: false
+            was_shown: false,
+            model_version: None,
         }
     );
     assert_eq!(
@@ -1516,7 +1529,8 @@ async fn test_rejections_flushing(cx: &mut TestAppContext) {
         EditPredictionRejection {
             request_id: "test-2".to_string(),
             reason: EditPredictionRejectReason::Canceled,
-            was_shown: true
+            was_shown: true,
+            model_version: None,
         }
     );
 
@@ -1527,6 +1541,7 @@ async fn test_rejections_flushing(cx: &mut TestAppContext) {
                 EditPredictionId(format!("batch-{}", i).into()),
                 EditPredictionRejectReason::Discarded,
                 false,
+                None,
                 cx,
             );
         }
@@ -1558,6 +1573,7 @@ async fn test_rejections_flushing(cx: &mut TestAppContext) {
             EditPredictionId("retry-1".into()),
             EditPredictionRejectReason::Discarded,
             false,
+            None,
             cx,
         );
     });
@@ -1577,6 +1593,7 @@ async fn test_rejections_flushing(cx: &mut TestAppContext) {
             EditPredictionId("retry-2".into()),
             EditPredictionRejectReason::Discarded,
             false,
+            None,
             cx,
         );
     });
@@ -1687,20 +1704,29 @@ async fn test_rejections_flushing(cx: &mut TestAppContext) {
 
 // Generate a model response that would apply the given diff to the active file.
 fn model_response(request: &PredictEditsV3Request, diff_to_apply: &str) -> PredictEditsV3Response {
-    let excerpt =
-        request.input.cursor_excerpt[request.input.editable_range_in_excerpt.clone()].to_string();
+    let editable_range = request
+        .input
+        .excerpt_ranges
+        .as_ref()
+        .map(|r| zeta_prompt::excerpt_range_for_format(Default::default(), r).1)
+        .unwrap_or(request.input.editable_range_in_excerpt.clone());
+    let excerpt = request.input.cursor_excerpt[editable_range.clone()].to_string();
     let new_excerpt = apply_diff_to_string(diff_to_apply, &excerpt).unwrap();
 
     PredictEditsV3Response {
         request_id: Uuid::new_v4().to_string(),
+        editable_range,
         output: new_excerpt,
+        model_version: None,
     }
 }
 
 fn empty_response() -> PredictEditsV3Response {
     PredictEditsV3Response {
         request_id: Uuid::new_v4().to_string(),
+        editable_range: 0..0,
         output: String::new(),
+        model_version: None,
     }
 }
 
@@ -1830,6 +1856,7 @@ async fn test_edit_prediction_basic_interpolation(cx: &mut TestAppContext) {
         },
         buffer_snapshotted_at: Instant::now(),
         response_received_at: Instant::now(),
+        model_version: None,
     };
 
     cx.update(|cx| {
@@ -2018,13 +2045,16 @@ async fn test_edit_prediction_no_spurious_trailing_newline(cx: &mut TestAppConte
         ep_store.refresh_prediction_from_buffer(project.clone(), buffer.clone(), position, cx);
     });
 
-    let (_request, respond_tx) = requests.predict.next().await.unwrap();
+    let (request, respond_tx) = requests.predict.next().await.unwrap();
 
     // Model returns output WITH a trailing newline, even though the buffer doesn't have one.
     // Zeta2 should normalize both sides before diffing, so no spurious newline is inserted.
+    let excerpt_length = request.input.cursor_excerpt.len();
     let response = PredictEditsV3Response {
         request_id: Uuid::new_v4().to_string(),
         output: "hello world\n".to_string(),
+        editable_range: 0..excerpt_length,
+        model_version: None,
     };
     respond_tx.send(response).unwrap();
 
@@ -2099,9 +2129,12 @@ async fn make_test_ep_store(
         let mut next_request_id = 0;
         move |req| {
             let completion_response = completion_response.clone();
+            let method = req.method().clone();
+            let uri = req.uri().path().to_string();
+            let mut body = req.into_body();
             async move {
-                match (req.method(), req.uri().path()) {
-                    (&Method::POST, "/client/llm_tokens") => Ok(http_client::Response::builder()
+                match (method, uri.as_str()) {
+                    (Method::POST, "/client/llm_tokens") => Ok(http_client::Response::builder()
                         .status(200)
                         .body(
                             serde_json::to_string(&CreateLlmTokenResponse {
@@ -2111,14 +2144,22 @@ async fn make_test_ep_store(
                             .into(),
                         )
                         .unwrap()),
-                    (&Method::POST, "/predict_edits/v3") => {
+                    (Method::POST, "/predict_edits/v3") => {
+                        let mut buf = Vec::new();
+                        body.read_to_end(&mut buf).await.ok();
+                        let decompressed = zstd::decode_all(&buf[..]).unwrap();
+                        let req: PredictEditsV3Request =
+                            serde_json::from_slice(&decompressed).unwrap();
+
                         next_request_id += 1;
                         Ok(http_client::Response::builder()
                             .status(200)
                             .body(
                                 serde_json::to_string(&PredictEditsV3Response {
                                     request_id: format!("request-{next_request_id}"),
+                                    editable_range: 0..req.input.cursor_excerpt.len(),
                                     output: completion_response.lock().clone(),
+                                    model_version: None,
                                 })
                                 .unwrap()
                                 .into(),
@@ -2127,7 +2168,7 @@ async fn make_test_ep_store(
                     }
                     _ => Ok(http_client::Response::builder()
                         .status(404)
-                        .body("Not Found".into())
+                        .body("Not Found".to_string().into())
                         .unwrap()),
                 }
             }
@@ -2534,6 +2575,177 @@ async fn test_diagnostic_jump_excludes_collaborator_regions(cx: &mut TestAppCont
         Path::new(path!("root/free_file.txt")),
         "should skip collab_file.txt (has collaborator) and pick free_file.txt"
     );
+}
+
+#[gpui::test]
+async fn test_edit_prediction_settled(cx: &mut TestAppContext) {
+    let (ep_store, _requests) = init_test_with_fake_client(cx);
+    let fs = FakeFs::new(cx.executor());
+
+    // Buffer with two clearly separated regions:
+    //   Region A = lines 0-9   (offsets 0..50)
+    //   Region B = lines 20-29 (offsets 105..155)
+    // A big gap in between so edits in one region never overlap the other.
+    let mut content = String::new();
+    for i in 0..30 {
+        content.push_str(&format!("line {i:02}\n"));
+    }
+
+    fs.insert_tree(
+        "/root",
+        json!({
+            "foo.md": content.clone()
+        }),
+    )
+    .await;
+    let project = Project::test(fs, vec![path!("/root").as_ref()], cx).await;
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            let path = project.find_project_path(path!("root/foo.md"), cx).unwrap();
+            project.open_buffer(path, cx)
+        })
+        .await
+        .unwrap();
+
+    let settled_events: Arc<Mutex<Vec<(EditPredictionId, String)>>> =
+        Arc::new(Mutex::new(Vec::new()));
+
+    ep_store.update(cx, |ep_store, cx| {
+        ep_store.register_buffer(&buffer, &project, cx);
+
+        let settled_events = settled_events.clone();
+        ep_store.settled_event_callback = Some(Box::new(move |id, text| {
+            settled_events.lock().push((id, text));
+        }));
+    });
+
+    // --- Phase 1: edit in region A and enqueue prediction A ---
+
+    buffer.update(cx, |buffer, cx| {
+        // Edit at the start of line 0.
+        buffer.edit(vec![(0..0, "ADDED ")], None, cx);
+    });
+    cx.run_until_parked();
+
+    let snapshot_a = buffer.read_with(cx, |buffer, _cx| buffer.snapshot());
+
+    // Region A: first 10 lines of the buffer.
+    let editable_region_a = 0..snapshot_a.point_to_offset(Point::new(10, 0));
+    ep_store.update(cx, |ep_store, cx| {
+        ep_store.enqueue_settled_prediction(
+            EditPredictionId("prediction-a".into()),
+            &project,
+            &buffer,
+            &snapshot_a,
+            editable_region_a,
+            cx,
+        );
+    });
+
+    // --- Phase 2: repeatedly edit in region A to keep it unsettled ---
+
+    // Let the worker process the channel message before we start advancing.
+    cx.run_until_parked();
+
+    let mut region_a_edit_offset = 5;
+    for _ in 0..3 {
+        // Edit inside region A (not at the boundary) so `last_edit_at` is
+        // updated before the worker's next wake.
+        buffer.update(cx, |buffer, cx| {
+            buffer.edit(
+                vec![(region_a_edit_offset..region_a_edit_offset, "x")],
+                None,
+                cx,
+            );
+        });
+        region_a_edit_offset += 1;
+        cx.run_until_parked();
+
+        cx.executor()
+            .advance_clock(EDIT_PREDICTION_SETTLED_QUIESCENCE / 2);
+        cx.run_until_parked();
+        assert!(
+            settled_events.lock().is_empty(),
+            "no settled events should fire while region A is still being edited"
+        );
+    }
+
+    // Still nothing settled.
+    assert!(settled_events.lock().is_empty());
+
+    // --- Phase 3: edit in distinct region B, enqueue prediction B ---
+    // Advance a small amount so B's quiescence window starts later than A's,
+    // but not so much that A settles (A's last edit was at the start of
+    // iteration 3, and it needs a full Q to settle).
+    cx.executor()
+        .advance_clock(EDIT_PREDICTION_SETTLED_QUIESCENCE / 4);
+    cx.run_until_parked();
+    assert!(settled_events.lock().is_empty());
+
+    let snapshot_b = buffer.read_with(cx, |buffer, _cx| buffer.snapshot());
+    let line_20_offset = snapshot_b.point_to_offset(Point::new(20, 0));
+
+    buffer.update(cx, |buffer, cx| {
+        buffer.edit(vec![(line_20_offset..line_20_offset, "NEW ")], None, cx);
+    });
+    cx.run_until_parked();
+
+    let snapshot_b2 = buffer.read_with(cx, |buffer, _cx| buffer.snapshot());
+    let editable_region_b = line_20_offset..snapshot_b2.point_to_offset(Point::new(25, 0));
+    ep_store.update(cx, |ep_store, cx| {
+        ep_store.enqueue_settled_prediction(
+            EditPredictionId("prediction-b".into()),
+            &project,
+            &buffer,
+            &snapshot_b2,
+            editable_region_b,
+            cx,
+        );
+    });
+
+    cx.run_until_parked();
+    assert!(
+        settled_events.lock().is_empty(),
+        "neither prediction should have settled yet"
+    );
+
+    // --- Phase 4: let enough time pass for region A to settle ---
+    // A's last edit was at T_a (during the last loop iteration). The worker is
+    // sleeping until T_a + Q. We advance just enough to reach that wake time
+    // (Q/4 since we already advanced Q/4 in phase 3 on top of the loop's
+    // 3*Q/2). At that point A has been quiet for Q and settles, but B was
+    // enqueued only Q/4 ago and stays pending.
+    cx.executor()
+        .advance_clock(EDIT_PREDICTION_SETTLED_QUIESCENCE / 4);
+    cx.run_until_parked();
+
+    {
+        let events = settled_events.lock().clone();
+        assert_eq!(
+            events.len(),
+            1,
+            "only prediction A should have settled, got: {events:?}"
+        );
+        assert_eq!(events[0].0, EditPredictionId("prediction-a".into()));
+    }
+
+    // --- Phase 5: let more time pass for region B to settle ---
+    // B's last edit was Q/4 before A settled. The worker rescheduled to
+    // B's last_edit_at + Q, which is 3Q/4 from now.
+    cx.executor()
+        .advance_clock(EDIT_PREDICTION_SETTLED_QUIESCENCE * 3 / 4);
+    cx.run_until_parked();
+
+    {
+        let events = settled_events.lock().clone();
+        assert_eq!(
+            events.len(),
+            2,
+            "both predictions should have settled, got: {events:?}"
+        );
+        assert_eq!(events[1].0, EditPredictionId("prediction-b".into()));
+    }
 }
 
 #[ctor::ctor]
