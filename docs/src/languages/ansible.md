@@ -105,15 +105,15 @@ By default, the following configuration is passed to the Ansible language server
 }
 ```
 
-> **Note:** In order for linting to work, ensure that `ansible-lint` is installed and discoverable on your `PATH`.
+> **Note:** In order for linting to work, ensure that `ansible-lint` is installed and discoverable on your `$PATH`.
 
 When desired, any of the above default settings can be overridden under the `"lsp"` section of your Zed settings file. For example:
 
 ```json [settings]
 {
   "lsp": {
-    // Note, the Zed Ansible extension prefixes all settings with `ansible`
-    // so instead of using `ansible.ansible.path` use `ansible.path`.
+    // The Zed Ansible extension prefixes all settings with `ansible`
+    // so use `ansible.path` instead of `ansible.ansible.path`.
     "ansible-language-server": {
       "settings": {
         "ansible": {
@@ -126,9 +126,9 @@ When desired, any of the above default settings can be overridden under the `"ls
           "interpreterPath": "python3"
         },
         "validation": {
-          "enabled": false, // disable validation
+          "enabled": false,
           "lint": {
-            "enabled": false, // disable ansible-lint
+            "enabled": false,
             "path": "ansible-lint"
           }
         }
@@ -138,5 +138,4 @@ When desired, any of the above default settings can be overridden under the `"ls
 }
 ```
 
-A full list of options/settings, that can be passed to the server, can be found at the project's page [here](https://github.com/ansible/vscode-ansible/blob/5a89836d66d470fb9d20e7ea8aa2af96f12f61fb/docs/als/settings.md).
-Feel free to modify option values as needed.
+A full list of options/settings that can be passed to the server can be found at the project's page [here](https://github.com/ansible/vscode-ansible/blob/main/docs/als/settings.md).
