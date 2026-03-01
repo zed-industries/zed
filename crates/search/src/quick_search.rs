@@ -21,7 +21,7 @@ use gpui::{
 };
 use language::Buffer;
 use menu;
-use multi_buffer::{ExcerptRange, MultiBuffer};
+use multi_buffer::{ExcerptId, ExcerptRange, MultiBuffer};
 use picker::{Picker, PickerDelegate, PickerEditorPosition};
 use project::SearchResults;
 use project::search::{SearchInputKind, SearchQuery, SearchResult};
@@ -1617,7 +1617,8 @@ impl QuickSearchDelegate {
 
             multi_buffer.update(cx, |multi_buffer, cx| {
                 multi_buffer.clear(cx);
-                multi_buffer.push_excerpts(
+                multi_buffer.insert_excerpts_after(
+                    ExcerptId::max(),
                     buffer.clone(),
                     [ExcerptRange {
                         context: context_start..context_end,
