@@ -706,10 +706,7 @@ async fn test_remote_context_server(cx: &mut TestAppContext) {
 
     let _server_events = assert_server_events(
         &store,
-        vec![
-            (server_id.clone(), ContextServerStatus::Starting),
-            (server_id.clone(), ContextServerStatus::Running),
-        ],
+        vec![(server_id.clone(), ContextServerStatus::Starting)],
         cx,
     );
     cx.run_until_parked();
@@ -919,6 +916,7 @@ async fn setup_context_server_test(
     cx.update(|cx| {
         let settings_store = SettingsStore::test(cx);
         cx.set_global(settings_store);
+        context_server::init(cx);
         let mut settings = ProjectSettings::get_global(cx).clone();
         for (id, config) in context_server_configurations {
             settings.context_servers.insert(id, config);

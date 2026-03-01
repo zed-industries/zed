@@ -583,17 +583,50 @@ pub struct ResourceTemplate {
     pub mime_type: Option<String>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum LoggingLevel {
+#[derive(
     Debug,
+    Serialize,
+    Copy,
+    Clone,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    strum::EnumIter,
+    strum::Display,
+    strum::AsRefStr,
+    strum::EnumString,
+)]
+#[serde(rename_all = "lowercase")]
+#[strum(serialize_all = "lowercase", ascii_case_insensitive)]
+pub enum LoggingLevel {
+    #[strum(to_string = "Debug")]
+    Debug,
+    #[strum(to_string = "Info")]
     Info,
+    #[strum(to_string = "Notice")]
     Notice,
+    #[strum(to_string = "Warning")]
     Warning,
+    #[strum(to_string = "Error")]
     Error,
+    #[strum(to_string = "Critical")]
     Critical,
+    #[strum(to_string = "Alert")]
     Alert,
+    #[strum(to_string = "Emergency")]
     Emergency,
+}
+
+impl<'de> Deserialize<'de> for LoggingLevel {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        use std::str::FromStr;
+        let s = String::deserialize(deserializer)?;
+        Ok(LoggingLevel::from_str(&s).unwrap_or(LoggingLevel::Info))
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -755,4 +788,81 @@ pub struct Root {
     pub uri: Url,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ContextServerLogEvent {
+    Rpc {
+        direction: RpcDirection,
+        message: String,
+    },
+    Log {
+        level: LoggingLevel,
+        message: String,
+    },
+    Stderr {
+        message: String,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RpcDirection {
+    Send,
+    Receive,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn test_logging_level_deserialization() {
+        // Valid log levels according to MCP specification
+        assert_eq!(
+            serde_json::from_value::<LoggingLevel>(json!("debug")).unwrap(),
+            LoggingLevel::Debug
+        );
+        assert_eq!(
+            serde_json::from_value::<LoggingLevel>(json!("info")).unwrap(),
+            LoggingLevel::Info
+        );
+        assert_eq!(
+            serde_json::from_value::<LoggingLevel>(json!("notice")).unwrap(),
+            LoggingLevel::Notice
+        );
+        assert_eq!(
+            serde_json::from_value::<LoggingLevel>(json!("warning")).unwrap(),
+            LoggingLevel::Warning
+        );
+        assert_eq!(
+            serde_json::from_value::<LoggingLevel>(json!("error")).unwrap(),
+            LoggingLevel::Error
+        );
+        assert_eq!(
+            serde_json::from_value::<LoggingLevel>(json!("critical")).unwrap(),
+            LoggingLevel::Critical
+        );
+        assert_eq!(
+            serde_json::from_value::<LoggingLevel>(json!("alert")).unwrap(),
+            LoggingLevel::Alert
+        );
+        assert_eq!(
+            serde_json::from_value::<LoggingLevel>(json!("emergency")).unwrap(),
+            LoggingLevel::Emergency
+        );
+
+        // Invalid log level gracefully falls back to Info
+        assert_eq!(
+            serde_json::from_value::<LoggingLevel>(json!("foo")).unwrap(),
+            LoggingLevel::Info
+        );
+        assert_eq!(
+            serde_json::from_value::<LoggingLevel>(json!("FATAL")).unwrap(), // case sensitive in current string fallback
+            LoggingLevel::Info
+        );
+
+        // Integer/different types will still fail deserialization as String::deserialize expects string
+        assert!(serde_json::from_value::<LoggingLevel>(json!(42)).is_err());
+    }
 }
