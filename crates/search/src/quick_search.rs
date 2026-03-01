@@ -2233,7 +2233,10 @@ impl PickerDelegate for QuickSearchDelegate {
         let Some(search_query) = self.build_search_query(&query, open_buffers, cx) else {
             self.matches.clear();
             self.selected_index = 0;
+            self.match_count = 0;
+            self.file_count = 0;
             self.search_in_progress = false;
+            self.update_preview(window, cx);
             cx.notify();
             return Task::ready(());
         };
