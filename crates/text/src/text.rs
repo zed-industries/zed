@@ -1,4 +1,5 @@
 mod anchor;
+pub mod history_serde;
 pub mod locator;
 #[cfg(any(test, feature = "test-support"))]
 pub mod network;
