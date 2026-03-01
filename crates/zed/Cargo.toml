@@ -205,6 +205,7 @@ tracing.workspace = true
 toolchain_selector.workspace = true
 ui.workspace = true
 ui_prompt.workspace = true
+undo_tree_panel.workspace = true
 url.workspace = true
 urlencoding.workspace = true
 util.workspace = true

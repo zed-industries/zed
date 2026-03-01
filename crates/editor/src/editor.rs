@@ -14120,6 +14120,50 @@ impl Editor {
         }
     }
 
+    pub fn undo_earlier(
+        &mut self,
+        _: &UndoEarlier,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.read_only(cx) {
+            return;
+        }
+
+        self.hide_mouse_cursor(HideMouseCursorOrigin::TypingAction, cx);
+
+        if let Some(transaction_id) =
+            self.buffer.update(cx, |buffer, cx| buffer.undo_earlier(cx))
+        {
+            self.request_autoscroll(Autoscroll::fit(), cx);
+            self.unmark_text(window, cx);
+            self.refresh_edit_prediction(true, false, window, cx);
+            cx.emit(EditorEvent::Edited { transaction_id });
+        }
+    }
+
+    pub fn undo_later(
+        &mut self,
+        _: &UndoLater,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.read_only(cx) {
+            return;
+        }
+
+        self.hide_mouse_cursor(HideMouseCursorOrigin::TypingAction, cx);
+
+        if let Some(transaction_id) =
+            self.buffer.update(cx, |buffer, cx| buffer.undo_later(cx))
+        {
+            self.request_autoscroll(Autoscroll::fit(), cx);
+            self.unmark_text(window, cx);
+            self.refresh_edit_prediction(true, false, window, cx);
+            cx.emit(EditorEvent::Edited { transaction_id });
+        }
+    }
+
     pub fn finalize_last_transaction(&mut self, cx: &mut Context<Self>) {
         self.buffer
             .update(cx, |buffer, cx| buffer.finalize_last_transaction(cx));

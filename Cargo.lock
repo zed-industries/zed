@@ -18752,6 +18752,29 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "eaea85b334db583fe3274d12b4cd1880032beab409c0d774be044d4480ab9a94"
 
 [[package]]
+name = "undo_tree_panel"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clock",
+ "collections",
+ "db",
+ "editor",
+ "gpui",
+ "language",
+ "multi_buffer",
+ "project",
+ "serde",
+ "serde_json",
+ "settings",
+ "text",
+ "theme",
+ "ui",
+ "util",
+ "workspace",
+]
+
+[[package]]
 name = "unicase"
 version = "2.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -22044,6 +22067,7 @@ dependencies = [
  "tree-sitter-rust",
  "ui",
  "ui_prompt",
+ "undo_tree_panel",
  "url",
  "urlencoding",
  "util",
