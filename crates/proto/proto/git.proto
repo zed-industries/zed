@@ -125,6 +125,8 @@ message UpdateRepository {
   repeated StashEntry stash_entries = 13;
   optional string remote_upstream_url = 14;
   optional string remote_origin_url = 15;
+  repeated GitDiffStatEntry updated_diff_stats = 16;
+  repeated string removed_diff_stats = 17;
 }
 
 message RemoveRepository {
@@ -226,23 +228,6 @@ message GitDiff {
 
 message GitDiffResponse {
   string diff = 1;
-}
-
-message GitDiffStat {
-  uint64 project_id = 1;
-  uint64 repository_id = 2;
-  DiffType diff_type = 3;
-  optional string merge_base_ref = 4;
-
-  enum DiffType {
-    HEAD_TO_WORKTREE = 0;
-    HEAD_TO_INDEX = 1;
-    MERGE_BASE = 2;
-  }
-}
-
-message GitDiffStatResponse {
-  repeated GitDiffStatEntry entries = 1;
 }
 
 message GitDiffStatEntry {

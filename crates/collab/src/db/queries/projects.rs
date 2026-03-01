@@ -999,6 +999,7 @@ impl Database {
                         );
                     }
                 } else {
+                    // todo! support diff stats here
                     repositories.push(proto::UpdateRepository {
                         project_id: db_repository_entry.project_id.0 as u64,
                         id: db_repository_entry.id as u64,
@@ -1015,6 +1016,8 @@ impl Database {
                         stash_entries: Vec::new(),
                         remote_upstream_url: db_repository_entry.remote_upstream_url.clone(),
                         remote_origin_url: db_repository_entry.remote_origin_url.clone(),
+                        updated_diff_stats: Vec::new(),
+                        removed_diff_stats: Vec::new(),
                     });
                 }
             }

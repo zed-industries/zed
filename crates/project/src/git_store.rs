@@ -569,7 +569,6 @@ impl GitStore {
         client.add_entity_request_handler(Self::handle_askpass);
         client.add_entity_request_handler(Self::handle_check_for_pushed_commits);
         client.add_entity_request_handler(Self::handle_git_diff);
-        client.add_entity_request_handler(Self::handle_git_diff_stat);
         client.add_entity_request_handler(Self::handle_tree_diff);
         client.add_entity_request_handler(Self::handle_get_blob_content);
         client.add_entity_request_handler(Self::handle_open_unstaged_diff);
@@ -2725,33 +2724,6 @@ impl GitStore {
         Ok(proto::GitDiffResponse { diff })
     }
 
-    async fn handle_git_diff_stat(
-        this: Entity<Self>,
-        envelope: TypedEnvelope<proto::GitDiffStat>,
-        mut cx: AsyncApp,
-    ) -> Result<proto::GitDiffStatResponse> {
-        let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
-        let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
-
-        let stats = repository_handle
-            .update(&mut cx, |repository_handle, cx| {
-                repository_handle.diff_stat(&[], cx)
-            })
-            .await??;
-
-        let entries = stats
-            .entries
-            .iter()
-            .map(|(path, stat)| proto::GitDiffStatEntry {
-                path: path.to_proto(),
-                added: stat.added,
-                deleted: stat.deleted,
-            })
-            .collect();
-
-        Ok(proto::GitDiffStatResponse { entries })
-    }
-
     async fn handle_tree_diff(
         this: Entity<Self>,
         request: TypedEnvelope<proto::GetTreeDiff>,
@@ -3524,6 +3496,16 @@ impl RepositorySnapshot {
                 .map(|entry| entry.to_proto())
                 .collect(),
             removed_statuses: Default::default(),
+            updated_diff_stats: self
+                .diff_stats_by_path
+                .iter()
+                .map(|entry| proto::GitDiffStatEntry {
+                    path: entry.repo_path.to_proto(),
+                    added: entry.diff_stat.added,
+                    deleted: entry.diff_stat.deleted,
+                })
+                .collect(),
+            removed_diff_stats: Default::default(),
             current_merge_conflicts: self
                 .merge
                 .conflicted_paths
@@ -3590,11 +3572,66 @@ impl RepositorySnapshot {
             }
         }
 
+        let mut updated_diff_stats: Vec<proto::GitDiffStatEntry> = Vec::new();
+        let mut removed_diff_stats: Vec<String> = Vec::new();
+
+        let mut new_diff_stats = self.diff_stats_by_path.iter().peekable();
+        let mut old_diff_stats = old.diff_stats_by_path.iter().peekable();
+
+        let mut current_new_ds = new_diff_stats.next();
+        let mut current_old_ds = old_diff_stats.next();
+        loop {
+            match (current_new_ds, current_old_ds) {
+                (Some(new_entry), Some(old_entry)) => {
+                    match new_entry.repo_path.cmp(&old_entry.repo_path) {
+                        Ordering::Less => {
+                            updated_diff_stats.push(proto::GitDiffStatEntry {
+                                path: new_entry.repo_path.to_proto(),
+                                added: new_entry.diff_stat.added,
+                                deleted: new_entry.diff_stat.deleted,
+                            });
+                            current_new_ds = new_diff_stats.next();
+                        }
+                        Ordering::Equal => {
+                            if new_entry.diff_stat != old_entry.diff_stat {
+                                updated_diff_stats.push(proto::GitDiffStatEntry {
+                                    path: new_entry.repo_path.to_proto(),
+                                    added: new_entry.diff_stat.added,
+                                    deleted: new_entry.diff_stat.deleted,
+                                });
+                            }
+                            current_old_ds = old_diff_stats.next();
+                            current_new_ds = new_diff_stats.next();
+                        }
+                        Ordering::Greater => {
+                            removed_diff_stats.push(old_entry.repo_path.to_proto());
+                            current_old_ds = old_diff_stats.next();
+                        }
+                    }
+                }
+                (None, Some(old_entry)) => {
+                    removed_diff_stats.push(old_entry.repo_path.to_proto());
+                    current_old_ds = old_diff_stats.next();
+                }
+                (Some(new_entry), None) => {
+                    updated_diff_stats.push(proto::GitDiffStatEntry {
+                        path: new_entry.repo_path.to_proto(),
+                        added: new_entry.diff_stat.added,
+                        deleted: new_entry.diff_stat.deleted,
+                    });
+                    current_new_ds = new_diff_stats.next();
+                }
+                (None, None) => break,
+            }
+        }
+
         proto::UpdateRepository {
             branch_summary: self.branch.as_ref().map(branch_to_proto),
             head_commit_details: self.head_commit.as_ref().map(commit_details_to_proto),
             updated_statuses,
             removed_statuses,
+            updated_diff_stats,
+            removed_diff_stats,
             current_merge_conflicts: self
                 .merge
                 .conflicted_paths
@@ -5810,48 +5847,6 @@ impl Repository {
         })
     }
 
-    /// Fetches per-line diff statistics (additions/deletions) via `git diff --numstat`.
-    pub fn diff_stat(
-        &mut self,
-        path_prefixes: &[RepoPath],
-        _cx: &App,
-    ) -> oneshot::Receiver<Result<git::status::GitDiffStat>> {
-        let id = self.id;
-        let path_prefixes = path_prefixes.to_vec();
-        self.send_job(None, move |repo, _cx| async move {
-            match repo {
-                RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
-                    backend.diff_stat(&path_prefixes).await
-                }
-                RepositoryState::Remote(RemoteRepositoryState { project_id, client }) => {
-                    let response = client
-                        .request(proto::GitDiffStat {
-                            project_id: project_id.0,
-                            repository_id: id.to_proto(),
-                            ..Default::default()
-                        })
-                        .await?;
-                    let entries: Arc<[(RepoPath, git::status::DiffStat)]> = response
-                        .entries
-                        .into_iter()
-                        .filter_map(|entry| {
-                            let path = RepoPath::from_proto(&entry.path).log_err()?;
-                            Some((
-                                path,
-                                git::status::DiffStat {
-                                    added: entry.added,
-                                    deleted: entry.deleted,
-                                },
-                            ))
-                        })
-                        .collect();
-
-                    Ok(git::status::GitDiffStat { entries })
-                }
-            }
-        })
-    }
-
     pub fn create_branch(
         &mut self,
         branch_name: String,
@@ -6068,6 +6063,30 @@ impl Repository {
             cx.emit(RepositoryEvent::StatusesChanged);
         }
         self.snapshot.statuses_by_path.edit(edits, ());
+
+        let diff_stat_edits = update
+            .removed_diff_stats
+            .into_iter()
+            .filter_map(|path| {
+                Some(sum_tree::Edit::Remove(PathKey(
+                    RelPath::from_proto(&path).log_err()?,
+                )))
+            })
+            .chain(update.updated_diff_stats.into_iter().filter_map(|entry| {
+                let repo_path = RepoPath::from_proto(&entry.path).log_err()?;
+                Some(sum_tree::Edit::Insert(DiffStatEntry {
+                    repo_path,
+                    diff_stat: DiffStat {
+                        added: entry.added,
+                        deleted: entry.deleted,
+                    },
+                }))
+            }))
+            .collect::<Vec<_>>();
+        if !diff_stat_edits.is_empty() {
+            self.snapshot.diff_stats_by_path.edit(diff_stat_edits, ());
+        }
+
         if update.is_last_update {
             self.snapshot.scan_id = update.scan_id;
         }
@@ -6419,7 +6438,10 @@ impl Repository {
                 });
 
                 let changed_diff_stats_task = cx.background_spawn(async move {
-                    let diff_stats = backend_for_diff_stats.diff_stat(&[]).await?;
+                    // todo! pass justed the changed paths
+                    let diff_stats = backend_for_diff_stats
+                        .diff_stat(&[/* changed paths */])
+                        .await?;
                     let mut changed_diff_stats = Vec::new();
                     let prev_diff_stats = prev_snapshot.diff_stats_by_path.clone();
                     let mut cursor = prev_diff_stats.cursor::<PathProgress>(());
