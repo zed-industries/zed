@@ -13,7 +13,7 @@ This roadmap delivers persistent undo/redo history for Zed in four phases follow
 Decimal phases appear between their surrounding integers in numeric order.
 
 - [x] **Phase 1: Text Layer API** - Expose undo/redo stack accessors and establish serialization format
-- [ ] **Phase 2: Persistence Schema and Settings** - Define the SQLite schema and configuration settings
+- [x] **Phase 2: Persistence Schema and Settings** - Define the SQLite schema and configuration settings (completed 2026-03-01)
 - [ ] **Phase 3: Core Write and Restore** - Save history on buffer events and restore on file open
 - [ ] **Phase 4: Pruning and Maintenance** - Auto-prune orphaned history records on startup
 
@@ -42,7 +42,7 @@ Decimal phases appear between their surrounding integers in numeric order.
   2. History records are keyed on `(workspace_id, abs_path)`, not session-scoped item IDs
   3. User can set `persistent_undo.enabled` in Zed settings and schema validation accepts it (default: false)
   4. User can set `persistent_undo.max_entries` in Zed settings and schema validation accepts it (default: 10,000)
-**Plans:** 1/2 plans executed
+**Plans:** 2/2 plans complete
 - [ ] 02-01-PLAN.md — Add undo_history SQLite migration and query methods to EditorDb
 - [ ] 02-02-PLAN.md — Add PersistentUndoSettings to settings system (content struct, resolved struct, default.json, registration)
 
@@ -75,6 +75,6 @@ Phases execute in numeric order: 1 → 2 → 3 → 4
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Text Layer API | 2/2 | Complete | 2026-03-01 |
-| 2. Persistence Schema and Settings | 1/2 | In Progress|  |
+| 2. Persistence Schema and Settings | 2/2 | Complete   | 2026-03-01 |
 | 3. Core Write and Restore | 0/TBD | Not started | - |
 | 4. Pruning and Maintenance | 0/TBD | Not started | - |

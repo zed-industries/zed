@@ -2,11 +2,11 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: in_progress
-last_updated: "2026-03-01T17:57:00.000Z"
+status: unknown
+last_updated: "2026-03-01T18:02:58.909Z"
 progress:
-  total_phases: 4
-  completed_phases: 1
+  total_phases: 2
+  completed_phases: 2
   total_plans: 4
   completed_plans: 4
 ---
@@ -48,6 +48,7 @@ Progress: [████░░░░░░] 50%
 - Trend: consistent
 
 *Updated after each plan completion*
+| Phase 02-persistence-schema-and-settings P01 | 13 | 1 tasks | 1 files |
 
 ## Accumulated Context
 
@@ -71,8 +72,11 @@ Recent decisions affecting current work:
 - [Plan 01-02]: clock::Global serialized as Vec<u32> (index = replica_id, value = seq) matching internal SmallVec layout
 - [Plan 01-02]: FullOffset serialized as u64 for cross-platform stability (usize is platform-dependent)
 - [Plan 01-02]: restore_history must be called on a buffer with matching CRDT fragment state for undo/redo to work
+- [Plan 02-01]: abs_path stored as BLOB not TEXT in undo_history — sqlez &Path bind uses as_encoded_bytes() (BLOB), STRICT TEXT column fails at runtime
+- [Plan 02-01]: delete_undo_history takes Arc<Path> not &Path — move closure in self.write() requires owned data, consistent with delete_file_folds
 - [Plan 02-02]: RegisterSetting derive macro uses inventory::submit! for auto-registration — no explicit register(cx) call needed in editor::init()
 - [Plan 02-02]: PersistentUndoSettingsContent placed in editor.rs (settings_content) consistent with editor-adjacent settings pattern
+- [Phase 02]: abs_path stored as BLOB not TEXT in undo_history — sqlez &Path bind uses as_encoded_bytes() (BLOB), STRICT TEXT column fails at runtime
 
 ### Pending Todos
 
@@ -86,5 +90,5 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-03-01
-Stopped at: Completed Plan 02-02 (PersistentUndoSettings); Phase 2 complete — ready for Phase 3
+Stopped at: Completed Plan 02-01 (undo_history table and query methods); Phase 2 fully complete — ready for Phase 3
 Resume file: None

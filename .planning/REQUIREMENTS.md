@@ -26,7 +26,7 @@
 ### Infrastructure
 
 - [x] **INFRA-01**: Serialization uses postcard with a versioned envelope format (HistoryBlob::V1) for forward compatibility
-- [ ] **INFRA-02**: History is keyed on (workspace_id, abs_path), not session-scoped item_id
+- [x] **INFRA-02**: History is keyed on (workspace_id, abs_path), not session-scoped item_id
 - [x] **INFRA-03**: Only transaction-level undo/redo stacks are serialized (not the full CRDT operation log)
 - [x] **INFRA-04**: All serialization and disk I/O occurs off the UI thread via background tasks
 - [x] **INFRA-05**: text::Buffer exposes public accessors for undo/redo stack state needed by serialization
@@ -71,7 +71,7 @@
 | CONF-02 | Phase 2 | Complete |
 | MAINT-01 | Phase 4 | Pending |
 | INFRA-01 | Phase 1 | Complete |
-| INFRA-02 | Phase 2 | Pending |
+| INFRA-02 | Phase 2 | Complete |
 | INFRA-03 | Phase 1 | Complete |
 | INFRA-04 | Phase 1 | Complete |
 | INFRA-05 | Phase 1 | Complete |
