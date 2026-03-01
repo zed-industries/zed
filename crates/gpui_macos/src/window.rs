@@ -1,7 +1,6 @@
 use crate::{
-    BoolExt, DisplayLink, MacDisplay, NSRange, NSStringExt, dispatch_get_main_queue,
-    dispatcher::dispatch_sys::dispatch_async_f, events::platform_input_from_native, ns_string,
-    renderer,
+    BoolExt, DisplayLink, MacDisplay, NSRange, NSStringExt, events::platform_input_from_native,
+    ns_string, renderer,
 };
 #[cfg(any(test, feature = "test-support"))]
 use anyhow::Result;
@@ -22,6 +21,7 @@ use cocoa::{
         NSUserDefaults,
     },
 };
+use dispatch2::DispatchQueue;
 use gpui::{
     AnyWindowHandle, BackgroundExecutor, Bounds, Capslock, ExternalPaths, FileDropEvent,
     ForegroundExecutor, KeyDownEvent, Keystroke, Modifiers, ModifiersChangedEvent, MouseButton,
@@ -1050,34 +1050,32 @@ impl PlatformWindow for MacWindow {
 
     fn merge_all_windows(&self) {
         let native_window = self.0.lock().native_window;
-        unsafe extern "C" fn merge_windows_async(context: *mut std::ffi::c_void) {
-            let native_window = context as id;
-            let _: () = msg_send![native_window, mergeAllWindows:nil];
+        extern "C" fn merge_windows_async(context: *mut std::ffi::c_void) {
+            unsafe {
+                let native_window = context as id;
+                let _: () = msg_send![native_window, mergeAllWindows:nil];
+            }
         }
 
         unsafe {
-            dispatch_async_f(
-                dispatch_get_main_queue(),
-                native_window as *mut std::ffi::c_void,
-                Some(merge_windows_async),
-            );
+            DispatchQueue::main()
+                .exec_async_f(native_window as *mut std::ffi::c_void, merge_windows_async);
         }
     }
 
     fn move_tab_to_new_window(&self) {
         let native_window = self.0.lock().native_window;
-        unsafe extern "C" fn move_tab_async(context: *mut std::ffi::c_void) {
-            let native_window = context as id;
-            let _: () = msg_send![native_window, moveTabToNewWindow:nil];
-            let _: () = msg_send![native_window, makeKeyAndOrderFront: nil];
+        extern "C" fn move_tab_async(context: *mut std::ffi::c_void) {
+            unsafe {
+                let native_window = context as id;
+                let _: () = msg_send![native_window, moveTabToNewWindow:nil];
+                let _: () = msg_send![native_window, makeKeyAndOrderFront: nil];
+            }
         }
 
         unsafe {
-            dispatch_async_f(
-                dispatch_get_main_queue(),
-                native_window as *mut std::ffi::c_void,
-                Some(move_tab_async),
-            );
+            DispatchQueue::main()
+                .exec_async_f(native_window as *mut std::ffi::c_void, move_tab_async);
         }
     }
 
@@ -2252,7 +2250,7 @@ extern "C" fn display_layer(this: &Object, _: Sel, _: id) {
     }
 }
 
-unsafe extern "C" fn step(view: *mut c_void) {
+extern "C" fn step(view: *mut c_void) {
     let view = view as id;
     let window_state = unsafe { get_window_state(&*view) };
     let mut lock = window_state.lock();
@@ -2551,19 +2549,20 @@ fn send_file_drop_event(
     window_state: Arc<Mutex<MacWindowState>>,
     file_drop_event: FileDropEvent,
 ) -> bool {
-    let mut window_state = window_state.lock();
-    let window_event_callback = window_state.event_callback.as_mut();
-    if let Some(callback) = window_event_callback {
-        let external_files_dragged = match file_drop_event {
-            FileDropEvent::Entered { .. } => Some(true),
-            FileDropEvent::Exited => Some(false),
-            _ => None,
-        };
+    let external_files_dragged = match file_drop_event {
+        FileDropEvent::Entered { .. } => Some(true),
+        FileDropEvent::Exited => Some(false),
+        _ => None,
+    };
 
+    let mut lock = window_state.lock();
+    if let Some(mut callback) = lock.event_callback.take() {
+        drop(lock);
         callback(PlatformInput::FileDrop(file_drop_event));
-
+        let mut lock = window_state.lock();
+        lock.event_callback = Some(callback);
         if let Some(external_files_dragged) = external_files_dragged {
-            window_state.external_files_dragged = external_files_dragged;
+            lock.external_files_dragged = external_files_dragged;
         }
         true
     } else {

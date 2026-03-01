@@ -5,7 +5,7 @@ use std::sync::Arc;
 use edit_prediction::udiff::apply_diff_to_string;
 use language::{char_diff, text_diff};
 
-use crate::example::ExamplePromptInputs;
+use zeta_prompt::ZetaPromptInput;
 
 fn apply_diff_to_string_lenient(diff_str: &str, text: &str) -> String {
     let hunks = parse_diff_hunks(diff_str);
@@ -602,21 +602,34 @@ fn extract_diff_from_event(event: &zeta_prompt::Event) -> &str {
     }
 }
 
+fn is_predicted_event(event: &zeta_prompt::Event) -> bool {
+    match event {
+        zeta_prompt::Event::BufferChange { predicted, .. } => *predicted,
+    }
+}
+
 pub fn compute_prediction_reversal_ratio(
-    prompt_inputs: &ExamplePromptInputs,
+    prompt_inputs: &ZetaPromptInput,
     predicted_content: &str,
     cursor_path: &Path,
 ) -> f32 {
-    let current_content = &prompt_inputs.content;
+    let current_content: &str = prompt_inputs.cursor_excerpt.as_ref();
 
-    let edit_history: &[Arc<zeta_prompt::Event>] = &prompt_inputs.edit_history;
+    let edit_history: &[Arc<zeta_prompt::Event>] = &prompt_inputs.events;
     let relevant_events = filter_edit_history_by_path(edit_history, cursor_path);
 
+    let most_recent = match relevant_events.last() {
+        Some(event) if !is_predicted_event(event) => *event,
+        _ => return 0.0,
+    };
+
+    let diff = extract_diff_from_event(most_recent);
+    if diff.is_empty() {
+        return 0.0;
+    }
+
     if let Some(excerpt_start_row) = prompt_inputs.excerpt_start_row {
-        let diffs: Vec<&str> = relevant_events
-            .iter()
-            .map(|e| extract_diff_from_event(e))
-            .collect();
+        let diffs = vec![diff];
         let overlap = compute_excerpt_aware_reversal_overlap(
             &diffs,
             current_content,
@@ -626,21 +639,12 @@ pub fn compute_prediction_reversal_ratio(
         return overlap.ratio();
     }
 
-    let mut original_content = current_content.to_string();
-    for event in relevant_events.into_iter().rev() {
-        let diff = extract_diff_from_event(event);
-        if diff.is_empty() {
-            continue;
-        }
-        let reversed = reverse_diff(diff);
-        let with_headers = format!("--- a/file\n+++ b/file\n{}", reversed);
-        match apply_diff_to_string(&with_headers, &original_content) {
-            Ok(updated_content) => original_content = updated_content,
-            Err(_) => {
-                original_content = apply_diff_to_string_lenient(&reversed, &original_content);
-            }
-        }
-    }
+    let reversed = reverse_diff(diff);
+    let with_headers = format!("--- a/file\n+++ b/file\n{}", reversed);
+    let original_content = match apply_diff_to_string(&with_headers, current_content) {
+        Ok(updated_content) => updated_content,
+        Err(_) => apply_diff_to_string_lenient(&reversed, current_content),
+    };
 
     let overlap = compute_reversal_overlap(&original_content, current_content, predicted_content);
     overlap.ratio()
@@ -651,6 +655,26 @@ mod tests {
     use super::*;
     use edit_prediction::udiff::apply_diff_to_string;
     use indoc::indoc;
+
+    fn make_test_prompt_inputs(
+        content: &str,
+        events: Vec<Arc<zeta_prompt::Event>>,
+        excerpt_start_row: Option<u32>,
+    ) -> ZetaPromptInput {
+        ZetaPromptInput {
+            cursor_path: Arc::from(Path::new("src/test.rs")),
+            cursor_excerpt: content.into(),
+            editable_range_in_excerpt: 0..content.len(),
+            cursor_offset_in_excerpt: 0,
+            excerpt_start_row,
+            events,
+            related_files: Vec::new(),
+            excerpt_ranges: None,
+            preferred_model: None,
+            in_open_source_repo: false,
+            can_collect_data: false,
+        }
+    }
 
     #[test]
     fn test_reversal_overlap() {
@@ -1725,17 +1749,13 @@ mod tests {
 
     #[test]
     fn test_compute_prediction_reversal_ratio_full_file() {
-        let prompt_inputs = ExamplePromptInputs {
-            content: indoc! {"
+        let prompt_inputs = make_test_prompt_inputs(
+            indoc! {"
                 line1
                 user_added
                 line2
-            "}
-            .to_string(),
-            cursor_row: 0,
-            cursor_column: 0,
-            cursor_offset: 0,
-            edit_history: vec![Arc::new(zeta_prompt::Event::BufferChange {
+            "},
+            vec![Arc::new(zeta_prompt::Event::BufferChange {
                 path: Arc::from(Path::new("src/test.rs")),
                 old_path: Arc::from(Path::new("src/test.rs")),
                 diff: indoc! {"
@@ -1748,9 +1768,8 @@ mod tests {
                 predicted: false,
                 in_open_source_repo: false,
             })],
-            excerpt_start_row: None,
-            related_files: None,
-        };
+            None,
+        );
 
         let predicted = indoc! {"
             line1
@@ -1768,17 +1787,13 @@ mod tests {
 
     #[test]
     fn test_compute_prediction_reversal_ratio_with_excerpt() {
-        let prompt_inputs = ExamplePromptInputs {
-            content: indoc! {"
+        let prompt_inputs = make_test_prompt_inputs(
+            indoc! {"
                 line10
                 user_added
                 line11
-            "}
-            .to_string(),
-            cursor_row: 0,
-            cursor_column: 0,
-            cursor_offset: 0,
-            edit_history: vec![Arc::new(zeta_prompt::Event::BufferChange {
+            "},
+            vec![Arc::new(zeta_prompt::Event::BufferChange {
                 path: Arc::from(Path::new("src/test.rs")),
                 old_path: Arc::from(Path::new("src/test.rs")),
                 diff: indoc! {"
@@ -1791,9 +1806,8 @@ mod tests {
                 predicted: false,
                 in_open_source_repo: false,
             })],
-            excerpt_start_row: Some(10),
-            related_files: None,
-        };
+            Some(10),
+        );
 
         let predicted = indoc! {"
             line10
@@ -1811,18 +1825,13 @@ mod tests {
 
     #[test]
     fn test_compute_prediction_reversal_ratio_no_history() {
-        let prompt_inputs = ExamplePromptInputs {
-            content: indoc! {"
+        let prompt_inputs = make_test_prompt_inputs(
+            indoc! {"
                 original content
-            "}
-            .to_string(),
-            cursor_row: 0,
-            cursor_column: 0,
-            cursor_offset: 0,
-            edit_history: vec![],
-            excerpt_start_row: None,
-            related_files: None,
-        };
+            "},
+            vec![],
+            None,
+        );
 
         let predicted = indoc! {"
             completely different
@@ -1838,17 +1847,13 @@ mod tests {
 
     #[test]
     fn test_compute_prediction_reversal_ratio_path_filtering() {
-        let prompt_inputs = ExamplePromptInputs {
-            content: indoc! {"
+        let prompt_inputs = make_test_prompt_inputs(
+            indoc! {"
                 line1
                 user_added
                 line2
-            "}
-            .to_string(),
-            cursor_row: 0,
-            cursor_column: 0,
-            cursor_offset: 0,
-            edit_history: vec![Arc::new(zeta_prompt::Event::BufferChange {
+            "},
+            vec![Arc::new(zeta_prompt::Event::BufferChange {
                 path: Arc::from(Path::new("src/other.rs")),
                 old_path: Arc::from(Path::new("src/other.rs")),
                 diff: indoc! {"
@@ -1861,9 +1866,8 @@ mod tests {
                 predicted: false,
                 in_open_source_repo: false,
             })],
-            excerpt_start_row: None,
-            related_files: None,
-        };
+            None,
+        );
 
         let predicted = indoc! {"
             line1
@@ -1880,17 +1884,13 @@ mod tests {
 
     #[test]
     fn test_compute_prediction_reversal_ratio_lenient_fallback() {
-        let prompt_inputs = ExamplePromptInputs {
-            content: indoc! {"
+        let prompt_inputs = make_test_prompt_inputs(
+            indoc! {"
                 actual_line1
                 user_added
                 actual_line2
-            "}
-            .to_string(),
-            cursor_row: 0,
-            cursor_column: 0,
-            cursor_offset: 0,
-            edit_history: vec![Arc::new(zeta_prompt::Event::BufferChange {
+            "},
+            vec![Arc::new(zeta_prompt::Event::BufferChange {
                 path: Arc::from(Path::new("src/test.rs")),
                 old_path: Arc::from(Path::new("src/test.rs")),
                 diff: indoc! {"
@@ -1903,9 +1903,8 @@ mod tests {
                 predicted: false,
                 in_open_source_repo: false,
             })],
-            excerpt_start_row: None,
-            related_files: None,
-        };
+            None,
+        );
 
         let predicted = indoc! {"
             actual_line1
@@ -1950,19 +1949,15 @@ mod tests {
     }
 
     #[test]
-    fn test_multiple_sequential_diffs() {
-        let prompt_inputs = ExamplePromptInputs {
-            content: indoc! {"
+    fn test_only_most_recent_edit_tracked() {
+        let prompt_inputs = make_test_prompt_inputs(
+            indoc! {"
                 line1
                 first_add
                 second_add
                 line2
-            "}
-            .to_string(),
-            cursor_row: 0,
-            cursor_column: 0,
-            cursor_offset: 0,
-            edit_history: vec![
+            "},
+            vec![
                 Arc::new(zeta_prompt::Event::BufferChange {
                     path: Arc::from(Path::new("src/test.rs")),
                     old_path: Arc::from(Path::new("src/test.rs")),
@@ -1990,12 +1985,12 @@ mod tests {
                     in_open_source_repo: false,
                 }),
             ],
-            excerpt_start_row: None,
-            related_files: None,
-        };
+            None,
+        );
 
         let predicted = indoc! {"
             line1
+            first_add
             line2
         "};
         let ratio =
@@ -2003,7 +1998,7 @@ mod tests {
 
         assert!(
             ratio > 0.9,
-            "Expected high reversal ratio when reversing multiple sequential edits, got {}",
+            "Expected high reversal ratio when prediction exactly reverses the most recent edit, got {}",
             ratio
         );
     }

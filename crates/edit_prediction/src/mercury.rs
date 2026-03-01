@@ -1,7 +1,7 @@
 use crate::{
     DebugEvent, EditPredictionFinishedDebugEvent, EditPredictionId, EditPredictionModelInput,
     EditPredictionStartedDebugEvent, open_ai_response::text_from_response,
-    prediction::EditPredictionResult, zeta1::compute_edits,
+    prediction::EditPredictionResult, zeta::compute_edits,
 };
 use anyhow::{Context as _, Result};
 use cloud_llm_client::EditPredictionRejectReason;
@@ -218,6 +218,7 @@ impl Mercury {
                     buffer_snapshotted_at,
                     response_received_at,
                     inputs,
+                    None,
                     cx,
                 )
                 .await,

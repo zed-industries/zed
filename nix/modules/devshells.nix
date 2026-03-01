@@ -15,6 +15,18 @@
         (zed-editor.overrideAttrs (attrs: {
           passthru.env = attrs.env;
         })).env; # exfil `env`; it's not in drvAttrs
+
+      # Musl cross-compiler for building remote_server
+      muslCross = pkgs.pkgsCross.musl64;
+
+      # Cargo build timings wrapper script
+      wrappedCargo = pkgs.writeShellApplication {
+        name = "cargo";
+        runtimeInputs = [pkgs.nodejs];
+        text = ''
+          NIX_WRAPPER=1 CARGO=${rustToolchain}/bin/cargo ./script/cargo "$@"
+        '';
+      };
     in
     {
       devShells.default = (pkgs.mkShell.override { inherit (zed-editor) stdenv; }) {
@@ -22,6 +34,7 @@
         inputsFrom = [ zed-editor ];
 
         packages = with pkgs; [
+          wrappedCargo  # must be first, to shadow the `cargo` provided by `rustToolchain`
           rustToolchain # cargo, rustc, and rust-toolchain.toml components included
           cargo-nextest
           cargo-hakari
@@ -54,6 +67,8 @@
             };
             PROTOC = "${pkgs.protobuf}/bin/protoc";
             ZED_ZSTD_MUSL_LIB = "${pkgs.pkgsCross.musl64.pkgsStatic.zstd.out}/lib";
+            # For aws-lc-sys musl cross-compilation
+            CC_x86_64_unknown_linux_musl = "${muslCross.stdenv.cc}/bin/x86_64-unknown-linux-musl-gcc";
           };
       };
     };

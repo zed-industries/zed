@@ -3,6 +3,11 @@ use serde_json::Value;
 
 use crate::tasks::workflows::{runners::Platform, vars, vars::StepOutput};
 
+pub(crate) fn use_clang(job: Job) -> Job {
+    job.add_env(Env::new("CC", "clang"))
+        .add_env(Env::new("CXX", "clang++"))
+}
+
 const SCCACHE_R2_BUCKET: &str = "sccache-zed";
 
 const BASH_SHELL: &str = "bash -euxo pipefail {0}";
@@ -14,7 +19,7 @@ pub(crate) struct Nextest(Step<Run>);
 pub(crate) fn cargo_nextest(platform: Platform) -> Nextest {
     Nextest(named::run(
         platform,
-        "cargo nextest run --workspace --no-fail-fast",
+        "cargo nextest run --workspace --no-fail-fast --no-tests=warn",
     ))
 }
 

@@ -521,22 +521,25 @@ impl TestAppContext {
         let mut notifications = self.notifications(entity);
 
         use futures::FutureExt as _;
-        use smol::future::FutureExt as _;
+        use futures_concurrency::future::Race as _;
 
-        async {
-            loop {
-                if entity.update(self, &mut predicate) {
-                    return Ok(());
-                }
+        (
+            async {
+                loop {
+                    if entity.update(self, &mut predicate) {
+                        return Ok(());
+                    }
 
-                if notifications.next().await.is_none() {
-                    bail!("entity dropped")
+                    if notifications.next().await.is_none() {
+                        bail!("entity dropped")
+                    }
                 }
-            }
-        }
-        .race(timer.map(|_| Err(anyhow!("condition timed out"))))
-        .await
-        .unwrap();
+            },
+            timer.map(|_| Err(anyhow!("condition timed out"))),
+        )
+            .race()
+            .await
+            .unwrap();
     }
 
     /// Set a name for this App.

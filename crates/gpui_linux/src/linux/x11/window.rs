@@ -391,7 +391,7 @@ impl X11WindowState {
         handle: AnyWindowHandle,
         client: X11ClientStatePtr,
         executor: ForegroundExecutor,
-        gpu_context: &WgpuContext,
+        gpu_context: &mut Option<WgpuContext>,
         params: WindowParams,
         xcb: &Rc<XCBConnection>,
         client_side_decorations_supported: bool,
@@ -496,21 +496,6 @@ impl X11WindowState {
                     &[pid],
                 ),
             )?;
-
-            if let Some(size) = params.window_min_size {
-                let mut size_hints = WmSizeHints::new();
-                let min_size = (f32::from(size.width) as i32, f32::from(size.height) as i32);
-                size_hints.min_size = Some(min_size);
-                check_reply(
-                    || {
-                        format!(
-                            "X11 change of WM_SIZE_HINTS failed. min_size: {:?}",
-                            min_size
-                        )
-                    },
-                    size_hints.set_normal_hints(xcb, x_window),
-                )?;
-            }
 
             let reply = get_reply(|| "X11 GetGeometry failed.", xcb.get_geometry(x_window))?;
             if reply.x == 0 && reply.y == 0 {
@@ -697,6 +682,25 @@ impl X11WindowState {
                 WgpuRenderer::new(gpu_context, &raw_window, config)?
             };
 
+            // Set max window size hints based on the GPU's maximum texture dimension.
+            // This prevents the window from being resized larger than what the GPU can render.
+            let max_texture_size = renderer.max_texture_size();
+            let mut size_hints = WmSizeHints::new();
+            if let Some(size) = params.window_min_size {
+                size_hints.min_size =
+                    Some((f32::from(size.width) as i32, f32::from(size.height) as i32));
+            }
+            size_hints.max_size = Some((max_texture_size as i32, max_texture_size as i32));
+            check_reply(
+                || {
+                    format!(
+                        "X11 change of WM_SIZE_HINTS failed. max_size: {:?}",
+                        max_texture_size
+                    )
+                },
+                size_hints.set_normal_hints(xcb, x_window),
+            )?;
+
             let display = Rc::new(X11Display::new(xcb, scale_factor, x_screen_index)?);
 
             Ok(Self {
@@ -798,7 +802,7 @@ impl X11Window {
         handle: AnyWindowHandle,
         client: X11ClientStatePtr,
         executor: ForegroundExecutor,
-        gpu_context: &WgpuContext,
+        gpu_context: &mut Option<WgpuContext>,
         params: WindowParams,
         xcb: &Rc<XCBConnection>,
         client_side_decorations_supported: bool,
@@ -1045,9 +1049,10 @@ impl X11WindowStatePtr {
     }
 
     pub fn refresh(&self, request_frame_options: RequestFrameOptions) {
-        let mut cb = self.callbacks.borrow_mut();
-        if let Some(ref mut fun) = cb.request_frame {
+        let callback = self.callbacks.borrow_mut().request_frame.take();
+        if let Some(mut fun) = callback {
             fun(request_frame_options);
+            self.callbacks.borrow_mut().request_frame = Some(fun);
         }
     }
 
@@ -1055,10 +1060,13 @@ impl X11WindowStatePtr {
         if self.is_blocked() {
             return;
         }
-        if let Some(ref mut fun) = self.callbacks.borrow_mut().input
-            && !fun(input.clone()).propagate
-        {
-            return;
+        let callback = self.callbacks.borrow_mut().input.take();
+        if let Some(mut fun) = callback {
+            let result = fun(input.clone());
+            self.callbacks.borrow_mut().input = Some(fun);
+            if !result.propagate {
+                return;
+            }
         }
         if let PlatformInput::KeyDown(event) = input {
             // only allow shift modifier when inserting text
@@ -1191,14 +1199,18 @@ impl X11WindowStatePtr {
     }
 
     pub fn set_active(&self, focus: bool) {
-        if let Some(ref mut fun) = self.callbacks.borrow_mut().active_status_change {
+        let callback = self.callbacks.borrow_mut().active_status_change.take();
+        if let Some(mut fun) = callback {
             fun(focus);
+            self.callbacks.borrow_mut().active_status_change = Some(fun);
         }
     }
 
     pub fn set_hovered(&self, focus: bool) {
-        if let Some(ref mut fun) = self.callbacks.borrow_mut().hovered_status_change {
+        let callback = self.callbacks.borrow_mut().hovered_status_change.take();
+        if let Some(mut fun) = callback {
             fun(focus);
+            self.callbacks.borrow_mut().hovered_status_change = Some(fun);
         }
     }
 
@@ -1209,9 +1221,10 @@ impl X11WindowStatePtr {
         state.renderer.update_transparency(is_transparent);
         state.appearance = appearance;
         drop(state);
-        let mut callbacks = self.callbacks.borrow_mut();
-        if let Some(ref mut fun) = callbacks.appearance_changed {
-            (fun)()
+        let callback = self.callbacks.borrow_mut().appearance_changed.take();
+        if let Some(mut fun) = callback {
+            fun();
+            self.callbacks.borrow_mut().appearance_changed = Some(fun);
         }
     }
 }
@@ -1465,7 +1478,10 @@ impl PlatformWindow for X11Window {
             .upgrade()
             .map(|ref_cell| {
                 let state = ref_cell.borrow();
-                state.gpu_context.supports_dual_source_blending()
+                state
+                    .gpu_context
+                    .as_ref()
+                    .is_some_and(|ctx| ctx.supports_dual_source_blending())
             })
             .unwrap_or_default()
     }

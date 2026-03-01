@@ -15,7 +15,7 @@ mod xdg_desktop_portal;
 pub use dispatcher::*;
 pub(crate) use headless::*;
 pub(crate) use keyboard::*;
-pub use platform::*;
+pub(crate) use platform::*;
 #[cfg(any(feature = "wayland", feature = "x11"))]
 pub(crate) use text_system::*;
 #[cfg(feature = "wayland")]

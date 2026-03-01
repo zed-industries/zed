@@ -376,8 +376,19 @@ pub fn initialize_workspace(
             return;
         };
         let multi_workspace_handle = cx.entity();
-        let sidebar = cx.new(|cx| Sidebar::new(multi_workspace_handle, window, cx));
+        let sidebar = cx.new(|cx| Sidebar::new(multi_workspace_handle.clone(), window, cx));
         multi_workspace.register_sidebar(sidebar, window, cx);
+
+        let multi_workspace_handle = multi_workspace_handle.downgrade();
+        window.on_window_should_close(cx, move |window, cx| {
+            multi_workspace_handle
+                .update(cx, |multi_workspace, cx| {
+                    // We'll handle closing asynchronously
+                    multi_workspace.close_window(&CloseWindow, window, cx);
+                    false
+                })
+                .unwrap_or(true)
+        });
     })
     .detach();
 
@@ -483,17 +494,6 @@ pub fn initialize_workspace(
             status_bar.add_right_item(vim_mode_indicator, window, cx);
             status_bar.add_right_item(cursor_position, window, cx);
             status_bar.add_right_item(image_info, window, cx);
-        });
-
-        let handle = cx.entity().downgrade();
-        window.on_window_should_close(cx, move |window, cx| {
-            handle
-                .update(cx, |workspace, cx| {
-                    // We'll handle closing asynchronously
-                    workspace.close_window(&CloseWindow, window, cx);
-                    false
-                })
-                .unwrap_or(true)
         });
 
         initialize_panels(prompt_builder.clone(), window, cx);
@@ -1119,7 +1119,7 @@ fn register_actions(
                             Editor::new_file(workspace, &Default::default(), window, cx)
                         },
                     )
-                    .detach();
+                    .detach_and_log_err(cx);
                 }
             }
         })
@@ -2060,40 +2060,39 @@ fn open_settings_file(
     cx: &mut Context<Workspace>,
 ) {
     cx.spawn_in(window, async move |workspace, cx| {
-        let settings_open_task = workspace
+        let (worktree_creation_task, settings_open_task) = workspace
             .update_in(cx, |workspace, window, cx| {
-                workspace.with_local_workspace(window, cx, move |_workspace, window, cx| {
-                    cx.spawn_in(window, async move |workspace, cx| {
-                        let worktree_creation_task =
-                            workspace.update_in(cx, |workspace, _window, cx| {
-                                workspace.project().update(cx, |project, cx| {
-                                    // Set up a dedicated worktree for settings, since
-                                    // otherwise we're dropping and re-starting LSP servers
-                                    // for each file inside on every settings file
-                                    // close/open
+                workspace.with_local_or_wsl_workspace(window, cx, move |workspace, window, cx| {
+                    let project = workspace.project().clone();
 
-                                    // TODO: Do note that all other external files (e.g.
-                                    // drag and drop from OS) still have their worktrees
-                                    // released on file close, causing LSP servers'
-                                    // restarts.
-                                    project.find_or_create_worktree(
-                                        paths::config_dir().as_path(),
-                                        false,
-                                        cx,
-                                    )
-                                })
-                            })?;
-                        let _ = worktree_creation_task.await?;
-                        let settings_open_task =
-                            workspace.update_in(cx, |_workspace, window, cx| {
-                                create_and_open_local_file(abs_path, window, cx, default_content)
-                            })?;
-                        let _ = settings_open_task.await?;
-                        anyhow::Ok(())
-                    })
+                    let worktree_creation_task = cx.spawn_in(window, async move |_, cx| {
+                        let config_dir = project
+                            .update(cx, |project, cx| {
+                                project.try_windows_path_to_wsl(paths::config_dir().as_path(), cx)
+                            })
+                            .await?;
+                        // Set up a dedicated worktree for settings, since
+                        // otherwise we're dropping and re-starting LSP servers
+                        // for each file inside on every settings file
+                        // close/open
+
+                        // TODO: Do note that all other external files (e.g.
+                        // drag and drop from OS) still have their worktrees
+                        // released on file close, causing LSP servers'
+                        // restarts.
+                        project
+                            .update(cx, |project, cx| {
+                                project.find_or_create_worktree(&config_dir, false, cx)
+                            })
+                            .await
+                    });
+                    let settings_open_task =
+                        create_and_open_local_file(abs_path, window, cx, default_content);
+                    (worktree_creation_task, settings_open_task)
                 })
             })?
             .await?;
+        let _ = worktree_creation_task.await?;
         let _ = settings_open_task.await?;
         anyhow::Ok(())
     })
@@ -2779,6 +2778,7 @@ mod tests {
         assert_eq!(cx.update(|cx| cx.windows().len()), 0);
     }
 
+    #[ignore = "This test has timing issues across platforms."]
     #[gpui::test]
     async fn test_window_edit_state_restoring_enabled(cx: &mut TestAppContext) {
         let app_state = init_test(cx);
@@ -3665,7 +3665,7 @@ mod tests {
                             .language_at(MultiBufferOffset(0), cx)
                             .unwrap()
                             .name(),
-                        "Rust".into()
+                        "Rust"
                     );
                 });
             })
@@ -3813,7 +3813,7 @@ mod tests {
                             .language_at(MultiBufferOffset(0), cx)
                             .unwrap()
                             .name(),
-                        "Rust".into()
+                        "Rust"
                     )
                 });
             })

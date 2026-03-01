@@ -132,7 +132,7 @@ use language::{
     AutoindentMode, BlockCommentConfig, BracketMatch, BracketPair, Buffer, BufferRow,
     BufferSnapshot, Capability, CharClassifier, CharKind, CharScopeContext, CodeLabel, CursorShape,
     DiagnosticEntryRef, DiffOptions, EditPredictionsMode, EditPreview, HighlightedText, IndentKind,
-    IndentSize, Language, LanguageName, LanguageRegistry, LanguageScope, OffsetRangeExt,
+    IndentSize, Language, LanguageName, LanguageRegistry, LanguageScope, LocalFile, OffsetRangeExt,
     OutlineItem, Point, Runnable, Selection, SelectionGoal, TextObject, TransactionId,
     TreeSitterOptions, WordsQuery,
     language_settings::{
@@ -360,7 +360,7 @@ pub fn init(cx: &mut App) {
                     Editor::new_file(workspace, &Default::default(), window, cx)
                 },
             )
-            .detach();
+            .detach_and_log_err(cx);
         }
     })
     .on_action(move |_: &workspace::NewWindow, cx| {
@@ -375,7 +375,7 @@ pub fn init(cx: &mut App) {
                     Editor::new_file(workspace, &Default::default(), window, cx)
                 },
             )
-            .detach();
+            .detach_and_log_err(cx);
         }
     });
     _ = ui_input::ERASED_EDITOR_FACTORY.set(|window, cx| {
@@ -1791,7 +1791,7 @@ impl ClipboardSelection {
 
 // selections, scroll behavior, was newest selection reversed
 type SelectSyntaxNodeHistoryState = (
-    Box<[Selection<MultiBufferOffset>]>,
+    Box<[Selection<Anchor>]>,
     SelectSyntaxNodeScrollBehavior,
     bool,
 );
@@ -3736,8 +3736,16 @@ impl Editor {
         let Some(workspace_id) = self.workspace_serialization_id(cx) else {
             return;
         };
+
+        // Get file path for path-based fold storage (survives tab close)
+        let Some(file_path) = self.buffer().read(cx).as_singleton().and_then(|buffer| {
+            project::File::from_dyn(buffer.read(cx).file())
+                .map(|file| Arc::<Path>::from(file.abs_path(cx)))
+        }) else {
+            return;
+        };
+
         let background_executor = cx.background_executor().clone();
-        let editor_id = cx.entity().entity_id().as_u64() as ItemId;
         const FINGERPRINT_LEN: usize = 32;
         let db_folds = display_snapshot
             .folds_in_range(MultiBufferOffset(0)..display_snapshot.buffer_snapshot().len())
@@ -3764,14 +3772,20 @@ impl Editor {
             .collect::<Vec<_>>();
         self.serialize_folds = cx.background_spawn(async move {
             background_executor.timer(SERIALIZATION_THROTTLE_TIME).await;
-            DB.save_editor_folds(editor_id, workspace_id, db_folds)
-                .await
-                .with_context(|| {
-                    format!(
-                        "persisting editor folds for editor {editor_id}, workspace {workspace_id:?}"
-                    )
-                })
-                .log_err();
+            if db_folds.is_empty() {
+                // No folds - delete any persisted folds for this file
+                DB.delete_file_folds(workspace_id, file_path)
+                    .await
+                    .with_context(|| format!("deleting file folds for workspace {workspace_id:?}"))
+                    .log_err();
+            } else {
+                DB.save_file_folds(workspace_id, file_path, db_folds)
+                    .await
+                    .with_context(|| {
+                        format!("persisting file folds for workspace {workspace_id:?}")
+                    })
+                    .log_err();
+            }
         });
     }
 
@@ -6336,7 +6350,7 @@ impl Editor {
         self.completion_tasks.push((id, task));
     }
 
-    #[cfg(feature = "test-support")]
+    #[cfg(any(test, feature = "test-support"))]
     pub fn current_completions(&self) -> Option<Vec<project::Completion>> {
         let menu = self.context_menu.borrow();
         if let CodeContextMenu::Completions(menu) = menu.as_ref()? {
@@ -8886,7 +8900,7 @@ impl Editor {
                 .context(focus_handle)
                 .when(run_to_cursor, |this| {
                     let weak_editor = weak_editor.clone();
-                    this.entry("Run to cursor", None, move |window, cx| {
+                    this.entry("Run to Cursor", None, move |window, cx| {
                         weak_editor
                             .update(cx, |editor, cx| {
                                 editor.change_selections(
@@ -9461,7 +9475,7 @@ impl Editor {
 
         if target_display_point.row() < visible_row_range.start {
             return self.render_edit_prediction_scroll_popover(
-                |_| SCROLL_PADDING_Y,
+                &|_| SCROLL_PADDING_Y,
                 IconName::ArrowUp,
                 visible_row_range,
                 line_layouts,
@@ -9472,7 +9486,7 @@ impl Editor {
             );
         } else if target_display_point.row() >= visible_row_range.end {
             return self.render_edit_prediction_scroll_popover(
-                |size| text_bounds.size.height - size.height - SCROLL_PADDING_Y,
+                &|size| text_bounds.size.height - size.height - SCROLL_PADDING_Y,
                 IconName::ArrowDown,
                 visible_row_range,
                 line_layouts,
@@ -9538,7 +9552,7 @@ impl Editor {
 
     fn render_edit_prediction_scroll_popover(
         &mut self,
-        to_y: impl Fn(Size<Pixels>) -> Pixels,
+        to_y: &dyn Fn(Size<Pixels>) -> Pixels,
         scroll_icon: IconName,
         visible_row_range: Range<DisplayRow>,
         line_layouts: &[LineWithInvisibles],
@@ -11295,6 +11309,15 @@ impl Editor {
             // would do nothing for single line selections individual cursors.
             let end = if selection.start.row == selection.end.row {
                 MultiBufferRow(selection.start.row + 1)
+            } else if selection.end.column == 0 {
+                // If the selection ends at the start of a line, it's logically at the end of the
+                // previous line (plus its newline).
+                // Don't include the end line unless there's only one line selected.
+                if selection.start.row + 1 == selection.end.row {
+                    MultiBufferRow(selection.end.row)
+                } else {
+                    MultiBufferRow(selection.end.row - 1)
+                }
             } else {
                 MultiBufferRow(selection.end.row)
             };
@@ -13652,94 +13675,94 @@ impl Editor {
         let selections = self.selections.all::<Point>(&self.display_snapshot(cx));
         let buffer = self.buffer.read(cx).read(cx);
         let mut text = String::new();
-
         let mut clipboard_selections = Vec::with_capacity(selections.len());
-        {
-            let max_point = buffer.max_point();
-            let mut is_first = true;
-            let mut prev_selection_was_entire_line = false;
-            for selection in &selections {
-                let mut start = selection.start;
-                let mut end = selection.end;
-                let is_entire_line = selection.is_empty() || self.selections.line_mode();
-                let mut add_trailing_newline = false;
-                if is_entire_line {
-                    start = Point::new(start.row, 0);
-                    let next_line_start = Point::new(end.row + 1, 0);
-                    if next_line_start <= max_point {
-                        end = next_line_start;
-                    } else {
-                        // We're on the last line without a trailing newline.
-                        // Copy to the end of the line and add a newline afterwards.
-                        end = Point::new(end.row, buffer.line_len(MultiBufferRow(end.row)));
-                        add_trailing_newline = true;
-                    }
-                }
 
-                let mut trimmed_selections = Vec::new();
-                if strip_leading_indents && end.row.saturating_sub(start.row) > 0 {
-                    let row = MultiBufferRow(start.row);
-                    let first_indent = buffer.indent_size_for_line(row);
-                    if first_indent.len == 0 || start.column > first_indent.len {
-                        trimmed_selections.push(start..end);
-                    } else {
-                        trimmed_selections.push(
-                            Point::new(row.0, first_indent.len)
-                                ..Point::new(row.0, buffer.line_len(row)),
-                        );
-                        for row in start.row + 1..=end.row {
-                            let mut line_len = buffer.line_len(MultiBufferRow(row));
-                            if row == end.row {
-                                line_len = end.column;
-                            }
-                            if line_len == 0 {
-                                trimmed_selections
-                                    .push(Point::new(row, 0)..Point::new(row, line_len));
-                                continue;
-                            }
-                            let row_indent_size = buffer.indent_size_for_line(MultiBufferRow(row));
-                            if row_indent_size.len >= first_indent.len {
-                                trimmed_selections.push(
-                                    Point::new(row, first_indent.len)..Point::new(row, line_len),
-                                );
-                            } else {
-                                trimmed_selections.clear();
-                                trimmed_selections.push(start..end);
-                                break;
-                            }
-                        }
-                    }
+        let max_point = buffer.max_point();
+        let mut is_first = true;
+        for selection in &selections {
+            let mut start = selection.start;
+            let mut end = selection.end;
+            let is_entire_line = selection.is_empty() || self.selections.line_mode();
+            let mut add_trailing_newline = false;
+            if is_entire_line {
+                start = Point::new(start.row, 0);
+                let next_line_start = Point::new(end.row + 1, 0);
+                if next_line_start <= max_point {
+                    end = next_line_start;
                 } else {
-                    trimmed_selections.push(start..end);
-                }
-
-                let is_multiline_trim = trimmed_selections.len() > 1;
-                for trimmed_range in trimmed_selections {
-                    if is_first {
-                        is_first = false;
-                    } else if is_multiline_trim || !prev_selection_was_entire_line {
-                        text += "\n";
-                    }
-                    prev_selection_was_entire_line = is_entire_line && !is_multiline_trim;
-                    let mut len = 0;
-                    for chunk in buffer.text_for_range(trimmed_range.start..trimmed_range.end) {
-                        text.push_str(chunk);
-                        len += chunk.len();
-                    }
-                    if add_trailing_newline {
-                        text.push('\n');
-                        len += 1;
-                    }
-                    clipboard_selections.push(ClipboardSelection::for_buffer(
-                        len,
-                        is_entire_line,
-                        trimmed_range,
-                        &buffer,
-                        self.project.as_ref(),
-                        cx,
-                    ));
+                    // We're on the last line without a trailing newline.
+                    // Copy to the end of the line and add a newline afterwards.
+                    end = Point::new(end.row, buffer.line_len(MultiBufferRow(end.row)));
+                    add_trailing_newline = true;
                 }
             }
+
+            let mut trimmed_selections = Vec::new();
+            if strip_leading_indents && end.row.saturating_sub(start.row) > 0 {
+                let row = MultiBufferRow(start.row);
+                let first_indent = buffer.indent_size_for_line(row);
+                if first_indent.len == 0 || start.column > first_indent.len {
+                    trimmed_selections.push(start..end);
+                } else {
+                    trimmed_selections.push(
+                        Point::new(row.0, first_indent.len)
+                            ..Point::new(row.0, buffer.line_len(row)),
+                    );
+                    for row in start.row + 1..=end.row {
+                        let mut line_len = buffer.line_len(MultiBufferRow(row));
+                        if row == end.row {
+                            line_len = end.column;
+                        }
+                        if line_len == 0 {
+                            trimmed_selections.push(Point::new(row, 0)..Point::new(row, line_len));
+                            continue;
+                        }
+                        let row_indent_size = buffer.indent_size_for_line(MultiBufferRow(row));
+                        if row_indent_size.len >= first_indent.len {
+                            trimmed_selections
+                                .push(Point::new(row, first_indent.len)..Point::new(row, line_len));
+                        } else {
+                            trimmed_selections.clear();
+                            trimmed_selections.push(start..end);
+                            break;
+                        }
+                    }
+                }
+            } else {
+                trimmed_selections.push(start..end);
+            }
+
+            let is_multiline_trim = trimmed_selections.len() > 1;
+            let mut selection_len: usize = 0;
+            let prev_selection_was_entire_line = is_entire_line && !is_multiline_trim;
+
+            for trimmed_range in trimmed_selections {
+                if is_first {
+                    is_first = false;
+                } else if is_multiline_trim || !prev_selection_was_entire_line {
+                    text.push('\n');
+                    if is_multiline_trim {
+                        selection_len += 1;
+                    }
+                }
+                for chunk in buffer.text_for_range(trimmed_range.start..trimmed_range.end) {
+                    text.push_str(chunk);
+                    selection_len += chunk.len();
+                }
+                if add_trailing_newline {
+                    text.push('\n');
+                    selection_len += 1;
+                }
+            }
+
+            clipboard_selections.push(ClipboardSelection::for_buffer(
+                selection_len,
+                is_entire_line,
+                start..end,
+                &buffer,
+                self.project.as_ref(),
+                cx,
+            ));
         }
 
         cx.write_to_clipboard(ClipboardItem::new_string_with_json_metadata(
@@ -13823,7 +13846,7 @@ impl Editor {
                                 let language = snapshot.language_at(selection.head());
                                 let range = selection.range();
                                 if let Some(language) = language
-                                    && language.name() == "Markdown".into()
+                                    && language.name() == "Markdown"
                                 {
                                     edit_for_markdown_paste(
                                         &snapshot,
@@ -13882,16 +13905,30 @@ impl Editor {
 
                     let mut edits = Vec::new();
 
-                    for selection in old_selections.iter() {
+                    // When pasting text without metadata (e.g. copied from an
+                    // external editor using multiple cursors) and the number of
+                    // lines matches the number of selections, distribute one
+                    // line per cursor instead of pasting the whole text at each.
+                    let lines: Vec<&str> = clipboard_text.split('\n').collect();
+                    let distribute_lines =
+                        old_selections.len() > 1 && lines.len() == old_selections.len();
+
+                    for (ix, selection) in old_selections.iter().enumerate() {
                         let language = snapshot.language_at(selection.head());
                         let range = selection.range();
 
-                        let (edit_range, edit_text) = if let Some(language) = language
-                            && language.name() == "Markdown".into()
-                        {
-                            edit_for_markdown_paste(&snapshot, range, &clipboard_text, url.clone())
+                        let text_for_cursor: &str = if distribute_lines {
+                            lines[ix]
                         } else {
-                            (range, clipboard_text.clone())
+                            &clipboard_text
+                        };
+
+                        let (edit_range, edit_text) = if let Some(language) = language
+                            && language.name() == "Markdown"
+                        {
+                            edit_for_markdown_paste(&snapshot, range, text_for_cursor, url.clone())
+                        } else {
+                            (range, Cow::Borrowed(text_for_cursor))
                         };
 
                         edits.push((edit_range, edit_text));
@@ -16592,6 +16629,10 @@ impl Editor {
             SelectSyntaxNodeScrollBehavior::CursorBottom
         };
 
+        let old_selections: Box<[Selection<Anchor>]> = old_selections
+            .iter()
+            .map(|s| s.map(|offset| buffer.anchor_before(offset)))
+            .collect();
         self.select_syntax_node_history.push((
             old_selections,
             scroll_behavior,
@@ -16614,9 +16655,15 @@ impl Editor {
                 selection.reversed = is_selection_reversed;
             }
 
+            let snapshot = self.buffer.read(cx).snapshot(cx);
+            let selections: Vec<Selection<MultiBufferOffset>> = selections
+                .iter()
+                .map(|s| s.map(|anchor| anchor.to_offset(&snapshot)))
+                .collect();
+
             self.select_syntax_node_history.disable_clearing = true;
             self.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
-                s.select(selections.to_vec());
+                s.select(selections);
             });
             self.select_syntax_node_history.disable_clearing = false;
 
@@ -22765,11 +22812,35 @@ impl Editor {
         maybe!({
             let breakpoint_store = self.breakpoint_store.as_ref()?;
 
-            let Some(active_stack_frame) = breakpoint_store.read(cx).active_position().cloned()
-            else {
+            let (active_stack_frame, debug_line_pane_id) = {
+                let store = breakpoint_store.read(cx);
+                let active_stack_frame = store.active_position().cloned();
+                let debug_line_pane_id = store.active_debug_line_pane_id();
+                (active_stack_frame, debug_line_pane_id)
+            };
+
+            let Some(active_stack_frame) = active_stack_frame else {
                 self.clear_row_highlights::<ActiveDebugLine>();
                 return None;
             };
+
+            if let Some(debug_line_pane_id) = debug_line_pane_id {
+                if let Some(workspace) = self
+                    .workspace
+                    .as_ref()
+                    .and_then(|(workspace, _)| workspace.upgrade())
+                {
+                    let editor_pane_id = workspace
+                        .read(cx)
+                        .pane_for_item_id(cx.entity_id())
+                        .map(|pane| pane.entity_id());
+
+                    if editor_pane_id.is_some_and(|id| id != debug_line_pane_id) {
+                        self.clear_row_highlights::<ActiveDebugLine>();
+                        return None;
+                    }
+                }
+            }
 
             let position = active_stack_frame.position;
             let buffer_id = position.buffer_id?;
@@ -23565,7 +23636,7 @@ impl Editor {
             .insert(TypeId::of::<T>(), (color_fetcher, gutter_highlights));
     }
 
-    #[cfg(feature = "test-support")]
+    #[cfg(any(test, feature = "test-support"))]
     pub fn all_text_highlights(
         &self,
         window: &mut Window,
@@ -23589,7 +23660,7 @@ impl Editor {
         })
     }
 
-    #[cfg(feature = "test-support")]
+    #[cfg(any(test, feature = "test-support"))]
     pub fn all_text_background_highlights(
         &self,
         window: &mut Window,
@@ -23619,7 +23690,7 @@ impl Editor {
         res
     }
 
-    #[cfg(feature = "test-support")]
+    #[cfg(any(test, feature = "test-support"))]
     pub fn search_background_highlights(&mut self, cx: &mut Context<Self>) -> Vec<Range<Point>> {
         let snapshot = self.buffer().read(cx).snapshot(cx);
 
@@ -25213,9 +25284,34 @@ impl Editor {
         {
             let buffer_snapshot = OnceCell::new();
 
-            if let Some(folds) = DB.get_editor_folds(item_id, workspace_id).log_err()
-                && !folds.is_empty()
-            {
+            // Get file path for path-based fold lookup
+            let file_path: Option<Arc<Path>> =
+                self.buffer().read(cx).as_singleton().and_then(|buffer| {
+                    project::File::from_dyn(buffer.read(cx).file())
+                        .map(|file| Arc::from(file.abs_path(cx)))
+                });
+
+            // Try file_folds (path-based) first, fallback to editor_folds (migration)
+            let (folds, needs_migration) = if let Some(ref path) = file_path {
+                if let Some(folds) = DB.get_file_folds(workspace_id, path).log_err()
+                    && !folds.is_empty()
+                {
+                    (Some(folds), false)
+                } else if let Some(folds) = DB.get_editor_folds(item_id, workspace_id).log_err()
+                    && !folds.is_empty()
+                {
+                    // Found old editor_folds data, will migrate to file_folds
+                    (Some(folds), true)
+                } else {
+                    (None, false)
+                }
+            } else {
+                // No file path, try editor_folds as fallback
+                let folds = DB.get_editor_folds(item_id, workspace_id).log_err();
+                (folds.filter(|f| !f.is_empty()), false)
+            };
+
+            if let Some(folds) = folds {
                 let snapshot = buffer_snapshot.get_or_init(|| self.buffer.read(cx).snapshot(cx));
                 let snapshot_len = snapshot.len().0;
 
@@ -25243,6 +25339,9 @@ impl Editor {
                 // Track search position to handle duplicate fingerprints correctly.
                 // Folds are stored in document order, so we advance after each match.
                 let mut search_start = 0usize;
+
+                // Collect db_folds for migration (only folds with valid fingerprints)
+                let mut db_folds_for_migration: Vec<(usize, usize, String, String)> = Vec::new();
 
                 let valid_folds: Vec<_> = folds
                     .into_iter()
@@ -25288,6 +25387,11 @@ impl Editor {
                             return None;
                         }
 
+                        // Collect for migration if needed
+                        if needs_migration {
+                            db_folds_for_migration.push((new_start, new_end, sfp, efp));
+                        }
+
                         Some(
                             snapshot.clip_offset(MultiBufferOffset(new_start), Bias::Left)
                                 ..snapshot.clip_offset(MultiBufferOffset(new_end), Bias::Right),
@@ -25298,17 +25402,17 @@ impl Editor {
                 if !valid_folds.is_empty() {
                     self.fold_ranges(valid_folds, false, window, cx);
 
-                    // Migrate folds to current entity_id before workspace cleanup runs.
-                    // Entity IDs change between sessions, but workspace cleanup deletes
-                    // old editor rows (cascading to folds) based on current entity IDs.
-                    let new_editor_id = cx.entity().entity_id().as_u64() as ItemId;
-                    if new_editor_id != item_id {
-                        cx.spawn(async move |_, _| {
-                            DB.migrate_editor_folds(item_id, new_editor_id, workspace_id)
-                                .await
-                                .log_err();
-                        })
-                        .detach();
+                    // Migrate from editor_folds to file_folds if we loaded from old table
+                    if needs_migration {
+                        if let Some(ref path) = file_path {
+                            let path = path.clone();
+                            cx.spawn(async move |_, _| {
+                                DB.save_file_folds(workspace_id, path, db_folds_for_migration)
+                                    .await
+                                    .log_err();
+                            })
+                            .detach();
+                        }
                     }
                 }
             }
@@ -25330,6 +25434,100 @@ impl Editor {
         }
 
         self.read_scroll_position_from_db(item_id, workspace_id, window, cx);
+    }
+
+    /// Load folds from the file_folds database table by file path.
+    /// Used when manually opening a file that was previously closed.
+    fn load_folds_from_db(
+        &mut self,
+        workspace_id: WorkspaceId,
+        file_path: PathBuf,
+        window: &mut Window,
+        cx: &mut Context<Editor>,
+    ) {
+        if self.mode.is_minimap()
+            || WorkspaceSettings::get(None, cx).restore_on_startup
+                == RestoreOnStartupBehavior::EmptyTab
+        {
+            return;
+        }
+
+        let Some(folds) = DB.get_file_folds(workspace_id, &file_path).log_err() else {
+            return;
+        };
+        if folds.is_empty() {
+            return;
+        }
+
+        let snapshot = self.buffer.read(cx).snapshot(cx);
+        let snapshot_len = snapshot.len().0;
+
+        // Helper: search for fingerprint in buffer, return offset if found
+        let find_fingerprint = |fingerprint: &str, search_start: usize| -> Option<usize> {
+            let search_start = snapshot
+                .clip_offset(MultiBufferOffset(search_start), Bias::Left)
+                .0;
+            let search_end = snapshot_len.saturating_sub(fingerprint.len());
+
+            let mut byte_offset = search_start;
+            for ch in snapshot.chars_at(MultiBufferOffset(search_start)) {
+                if byte_offset > search_end {
+                    break;
+                }
+                if snapshot.contains_str_at(MultiBufferOffset(byte_offset), fingerprint) {
+                    return Some(byte_offset);
+                }
+                byte_offset += ch.len_utf8();
+            }
+            None
+        };
+
+        let mut search_start = 0usize;
+
+        let valid_folds: Vec<_> = folds
+            .into_iter()
+            .filter_map(|(stored_start, stored_end, start_fp, end_fp)| {
+                let sfp = start_fp?;
+                let efp = end_fp?;
+                let efp_len = efp.len();
+
+                let start_matches = stored_start < snapshot_len
+                    && snapshot.contains_str_at(MultiBufferOffset(stored_start), &sfp);
+                let efp_check_pos = stored_end.saturating_sub(efp_len);
+                let end_matches = efp_check_pos >= stored_start
+                    && stored_end <= snapshot_len
+                    && snapshot.contains_str_at(MultiBufferOffset(efp_check_pos), &efp);
+
+                let (new_start, new_end) = if start_matches && end_matches {
+                    (stored_start, stored_end)
+                } else if sfp == efp {
+                    let new_start = find_fingerprint(&sfp, search_start)?;
+                    let fold_len = stored_end - stored_start;
+                    let new_end = new_start + fold_len;
+                    (new_start, new_end)
+                } else {
+                    let new_start = find_fingerprint(&sfp, search_start)?;
+                    let efp_pos = find_fingerprint(&efp, new_start + sfp.len())?;
+                    let new_end = efp_pos + efp_len;
+                    (new_start, new_end)
+                };
+
+                search_start = new_end;
+
+                if new_end <= new_start {
+                    return None;
+                }
+
+                Some(
+                    snapshot.clip_offset(MultiBufferOffset(new_start), Bias::Left)
+                        ..snapshot.clip_offset(MultiBufferOffset(new_end), Bias::Right),
+                )
+            })
+            .collect();
+
+        if !valid_folds.is_empty() {
+            self.fold_ranges(valid_folds, false, window, cx);
+        }
     }
 
     fn update_lsp_data(
@@ -25671,19 +25869,25 @@ fn comment_delimiter_for_newline(
     let comment_candidate = snapshot
         .chars_for_range(range.clone())
         .skip(num_of_whitespaces)
-        .take(max_len_of_delimiter)
+        .take(max_len_of_delimiter + 2)
         .collect::<String>();
-    let (delimiter, trimmed_len) = delimiters
+    let (delimiter, trimmed_len, is_repl) = delimiters
         .iter()
         .filter_map(|delimiter| {
             let prefix = delimiter.trim_end();
             if comment_candidate.starts_with(prefix) {
-                Some((delimiter, prefix.len()))
+                let is_repl = if let Some(stripped_comment) = comment_candidate.strip_prefix(prefix)
+                {
+                    stripped_comment.starts_with(" %%")
+                } else {
+                    false
+                };
+                Some((delimiter, prefix.len(), is_repl))
             } else {
                 None
             }
         })
-        .max_by_key(|(_, len)| *len)?;
+        .max_by_key(|(_, len, _)| *len)?;
 
     if let Some(BlockCommentConfig {
         start: block_start, ..
@@ -25692,7 +25896,7 @@ fn comment_delimiter_for_newline(
         let block_start_trimmed = block_start.trim_end();
         if block_start_trimmed.starts_with(delimiter.trim_end()) {
             let line_content = snapshot
-                .chars_for_range(range)
+                .chars_for_range(range.clone())
                 .skip(num_of_whitespaces)
                 .take(block_start_trimmed.len())
                 .collect::<String>();
@@ -25706,7 +25910,20 @@ fn comment_delimiter_for_newline(
     let cursor_is_placed_after_comment_marker =
         num_of_whitespaces + trimmed_len <= start_point.column as usize;
     if cursor_is_placed_after_comment_marker {
-        Some(delimiter.clone())
+        if !is_repl {
+            return Some(delimiter.clone());
+        }
+
+        let line_content_after_cursor: String = snapshot
+            .chars_for_range(range)
+            .skip(start_point.column as usize)
+            .collect();
+
+        if line_content_after_cursor.trim().is_empty() {
+            return None;
+        } else {
+            return Some(delimiter.clone());
+        }
     } else {
         None
     }
@@ -26822,7 +27039,7 @@ fn snippet_completions(
                         .enumerate()
                         .map(move |(prefix_ix, prefix)| {
                             let word_count =
-                                snippet_candidate_suffixes(prefix, is_word_char).count();
+                                snippet_candidate_suffixes(prefix, &is_word_char).count();
                             ((snippet_ix, prefix_ix), prefix, word_count)
                         })
                 })
@@ -26832,7 +27049,7 @@ fn snippet_completions(
 
             // Each prefix may be matched multiple times; the completion menu must filter out duplicates.
 
-            let buffer_windows = snippet_candidate_suffixes(&max_buffer_window, is_word_char)
+            let buffer_windows = snippet_candidate_suffixes(&max_buffer_window, &is_word_char)
                 .take(
                     sorted_snippet_candidates
                         .first()
@@ -27663,7 +27880,6 @@ impl EditorSnapshot {
     ) -> HashMap<DisplayRow, u32> {
         let initial_offset =
             self.relative_line_delta(current_selection_head, rows.start, count_wrapped_lines);
-        let current_selection_point = current_selection_head.as_display_point().to_point(self);
 
         self.row_infos(rows.start)
             .take(rows.len())
@@ -27674,23 +27890,19 @@ impl EditorSnapshot {
                     || (count_wrapped_lines && row_info.wrapped_buffer_row.is_some())
             })
             .enumerate()
-            .filter(|(_, (row, row_info))| {
-                // We want to check here that
-                // - the row is not the current selection head to ensure the current
-                // line has absolute numbering
-                // - similarly, should the selection head live in a soft-wrapped line
-                // and we are not counting those, that the parent line keeps its
-                // absolute number
-                // - lastly, if we are in a deleted line, it is fine to number this
+            .filter_map(|(i, (row, row_info))| {
+                // We want to ensure here that the current line has absolute
+                // numbering, even if we are in a soft-wrapped line. With the
+                // exception that if we are in a deleted line, we should number this
                 // relative with 0, as otherwise it would have no line number at all
-                (*row != current_selection_head
-                    && (count_wrapped_lines
-                        || row_info.buffer_row != Some(current_selection_point.row)))
+                let relative_line_number = (initial_offset + i as i64).unsigned_abs() as u32;
+
+                (relative_line_number != 0
                     || row_info
                         .diff_status
-                        .is_some_and(|status| status.is_deleted())
+                        .is_some_and(|status| status.is_deleted()))
+                .then_some((row, relative_line_number))
             })
-            .map(|(i, (row, _))| (row, (initial_offset + i as i64).unsigned_abs() as u32))
             .collect()
     }
 }
@@ -28456,10 +28668,10 @@ pub(crate) fn split_words(text: &str) -> impl std::iter::Iterator<Item = &str> +
 /// every non-word character).
 ///
 /// Shorter suffixes are returned first.
-pub(crate) fn snippet_candidate_suffixes(
-    text: &str,
-    is_word_char: impl Fn(char) -> bool,
-) -> impl std::iter::Iterator<Item = &str> {
+pub(crate) fn snippet_candidate_suffixes<'a>(
+    text: &'a str,
+    is_word_char: &'a dyn Fn(char) -> bool,
+) -> impl std::iter::Iterator<Item = &'a str> + 'a {
     let mut prev_index = text.len();
     let mut prev_codepoint = None;
     text.char_indices()

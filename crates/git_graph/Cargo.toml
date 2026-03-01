@@ -26,6 +26,7 @@ feature_flags.workspace = true
 git.workspace = true
 git_ui.workspace = true
 gpui.workspace = true
+language.workspace = true
 menu.workspace = true
 project.workspace = true
 settings.workspace = true
