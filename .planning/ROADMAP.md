@@ -71,7 +71,8 @@ Decimal phases appear between their surrounding integers in numeric order.
   3. `delete_undo_history` has a production caller (integration gap closed)
   4. 02-02-SUMMARY.md lists CONF-01 and CONF-02 in `requirements_completed` frontmatter (tech debt)
   5. Double `restore_undo_history` call for standalone file deserialize path is removed (tech debt)
-**Plans**: TBD
+**Plans:** 1 plan
+- [ ] 04-01-PLAN.md — Add prune_undo_history, wire into cleanup, fix double restore call, fix 02-02 frontmatter
 
 ## Progress
 
@@ -83,4 +84,4 @@ Phases execute in numeric order: 1 → 2 → 3 → 4
 | 1. Text Layer API | 2/2 | Complete | 2026-03-01 |
 | 2. Persistence Schema and Settings | 2/2 | Complete   | 2026-03-01 |
 | 3. Core Write and Restore | 2/2 | Complete | 2026-03-01 |
-| 4. Pruning and Maintenance | 0/TBD | Not started | - |
+| 4. Pruning and Maintenance | 0/1 | Not started | - |
