@@ -560,86 +560,51 @@ mod macos {
 
 #[cfg(target_os = "windows")]
 mod windows {
-    use windows::Win32::Globalization::{
-        DATE_LONGDATE, DATE_SHORTDATE, ENUM_DATE_FORMATS_FLAGS, GetDateFormatEx, GetTimeFormatEx,
-        TIME_FORMAT_FLAGS,
-    };
+    use windows::Globalization::DateTimeFormatting::DateTimeFormatter;
 
     pub fn format_time(timestamp: &time::OffsetDateTime) -> String {
-        format_with_system_time(timestamp)
+        format_with_formatter(DateTimeFormatter::ShortTime(), timestamp, true)
     }
 
     pub fn format_date(timestamp: &time::OffsetDateTime) -> String {
-        format_with_system_date(timestamp, DATE_SHORTDATE)
+        format_with_formatter(DateTimeFormatter::ShortDate(), timestamp, false)
     }
 
     pub fn format_date_medium(timestamp: &time::OffsetDateTime) -> String {
-        // Windows does not have date format equivalent to kCFDateFormatterMediumStyle,
-        // DATE_LONGDATE is the closest available option.
-        format_with_system_date(timestamp, DATE_LONGDATE)
+        format_with_formatter(
+            DateTimeFormatter::CreateDateTimeFormatter(windows::core::h!(
+                "month.abbreviated day year.full"
+            )),
+            timestamp,
+            false,
+        )
     }
 
-    fn format_with_system_time(timestamp: &time::OffsetDateTime) -> String {
-        let system_time = timestamp_to_system_time(timestamp);
-        let mut buffer = [0u16; 128];
-
-        let len = unsafe {
-            GetTimeFormatEx(
-                None, // NULL: LOCALE_NAME_USER_DEFAULT
-                TIME_FORMAT_FLAGS::default(),
-                Some(&system_time),
-                None,
-                Some(&mut buffer),
-            )
-        };
-
-        if len == 0 {
-            super::format_timestamp_naive_time(*timestamp, true)
-        } else {
-            String::from_utf16_lossy(&buffer[..len as usize - 1])
-        }
-    }
-
-    fn format_with_system_date(
+    fn format_with_formatter(
+        formatter: windows::core::Result<DateTimeFormatter>,
         timestamp: &time::OffsetDateTime,
-        flags: ENUM_DATE_FORMATS_FLAGS,
+        is_time: bool,
     ) -> String {
-        let system_time = timestamp_to_system_time(timestamp);
-        let mut buffer = [0u16; 128];
-
-        let len = unsafe {
-            GetDateFormatEx(
-                None, // NULL: LOCALE_NAME_USER_DEFAULT
-                flags,
-                Some(&system_time),
-                None,
-                Some(&mut buffer),
-                None,
-            )
-        };
-
-        if len == 0 {
-            super::format_timestamp_naive_date(*timestamp, *timestamp, true)
-        } else {
-            String::from_utf16_lossy(&buffer[..len as usize - 1])
-        }
+        formatter
+            .and_then(|formatter| formatter.Format(to_winrt_datetime(timestamp)))
+            .map(|hstring| hstring.to_string())
+            .unwrap_or_else(|_| {
+                if is_time {
+                    super::format_timestamp_naive_time(*timestamp, true)
+                } else {
+                    super::format_timestamp_naive_date(*timestamp, *timestamp, true)
+                }
+            })
     }
 
-    fn timestamp_to_system_time(
-        timestamp: &time::OffsetDateTime,
-    ) -> windows::Win32::Foundation::SYSTEMTIME {
-        let date = timestamp.date();
-        let time = timestamp.time();
+    fn to_winrt_datetime(timestamp: &time::OffsetDateTime) -> windows::Foundation::DateTime {
+        // DateTime uses 100-nanosecond intervals since January 1, 1601 (UTC).
+        const WINDOWS_EPOCH: time::OffsetDateTime = time::macros::datetime!(1601-01-01 0:00 UTC);
+        let duration_since_winrt_epoch = *timestamp - WINDOWS_EPOCH;
+        let universal_time = duration_since_winrt_epoch.whole_nanoseconds() / 100;
 
-        windows::Win32::Foundation::SYSTEMTIME {
-            wYear: date.year() as u16,
-            wMonth: date.month() as u8 as u16,
-            wDayOfWeek: 0, // Not used
-            wDay: date.day() as u16,
-            wHour: time.hour() as u16,
-            wMinute: time.minute() as u16,
-            wSecond: time.second() as u16,
-            wMilliseconds: 0, // Not used
+        windows::Foundation::DateTime {
+            UniversalTime: universal_time as i64,
         }
     }
 }

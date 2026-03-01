@@ -17525,6 +17525,7 @@ dependencies = [
  "core-foundation-sys",
  "sys-locale",
  "time",
+ "windows 0.61.3",
 ]
 
 [[package]]
