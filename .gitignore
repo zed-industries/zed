@@ -50,9 +50,6 @@ crates/docs_preprocessor/actions.json
 # where yet, so for now they get generated into a gitignored dir.)
 /crates/zed/test_fixtures/visual_tests/
 
-# GSD planning files (local-only)
-.planning/
-
 # Local documentation audit files
 /december-2025-releases.md
 /docs/december-2025-documentation-gaps.md
