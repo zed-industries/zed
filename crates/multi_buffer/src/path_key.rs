@@ -495,7 +495,7 @@ impl MultiBuffer {
                 .cloned()
                 // todo(lw): There is a logic bug somewhere that causes excerpt_ids to not necessarily be in order by locator
                 .sorted_by_cached_key(|&id| snapshot.excerpt_locator_for_id(id))
-                .collect();
+                .collect::<Vec<_>>();
             for &excerpt_id in &excerpt_ids {
                 self.paths_by_excerpt.insert(excerpt_id, path.clone());
             }
