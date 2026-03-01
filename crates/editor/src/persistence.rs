@@ -342,7 +342,7 @@ impl EditorDb {
         log::debug!("Saving selections for editor {editor_id} in workspace {workspace_id:?}");
         let mut first_selection;
         let mut last_selection = 0_usize;
-        for (count, placeholders) in std::iter::once("(?1, ?2, ?, ?)")
+        for (count, placeholders) in std::iter::once("SELECT ?1, ?2, ?, ?")
             .cycle()
             .take(selections.len())
             .chunks(MAX_QUERY_PLACEHOLDERS / 4)
@@ -353,7 +353,7 @@ impl EditorDb {
                     .inspect(|_| {
                         count += 1;
                     })
-                    .join(", ");
+                    .join(" UNION ALL ");
                 (count, placeholders)
             })
             .collect::<Vec<_>>()
@@ -364,8 +364,9 @@ impl EditorDb {
                 r#"
 DELETE FROM editor_selections WHERE editor_id = ?1 AND workspace_id = ?2;
 
-INSERT OR IGNORE INTO editor_selections (editor_id, workspace_id, start, end)
-VALUES {placeholders};
+INSERT INTO editor_selections (editor_id, workspace_id, start, end)
+SELECT * FROM ({placeholders})
+WHERE EXISTS (SELECT 1 FROM editors WHERE item_id = ?1 AND workspace_id = ?2);
 "#
             );
 
