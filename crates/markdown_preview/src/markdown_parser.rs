@@ -14,16 +14,24 @@ use std::{
 };
 use ui::SharedString;
 
+const PARSE_OPTIONS: Options = Options::ENABLE_TABLES
+    .union(Options::ENABLE_FOOTNOTES)
+    .union(Options::ENABLE_STRIKETHROUGH)
+    .union(Options::ENABLE_TASKLISTS)
+    .union(Options::ENABLE_SMART_PUNCTUATION)
+    .union(Options::ENABLE_HEADING_ATTRIBUTES)
+    .union(Options::ENABLE_PLUSES_DELIMITED_METADATA_BLOCKS)
+    .union(Options::ENABLE_OLD_FOOTNOTES)
+    .union(Options::ENABLE_GFM)
+    .union(Options::ENABLE_SUPERSCRIPT)
+    .union(Options::ENABLE_SUBSCRIPT);
+
 pub async fn parse_markdown(
     markdown_input: &str,
     file_location_directory: Option<PathBuf>,
     language_registry: Option<Arc<LanguageRegistry>>,
 ) -> ParsedMarkdown {
-    let mut options = Options::all();
-    options.remove(pulldown_cmark::Options::ENABLE_DEFINITION_LIST);
-    options.remove(pulldown_cmark::Options::ENABLE_MATH);
-
-    let parser = Parser::new_ext(markdown_input, options);
+    let parser = Parser::new_ext(markdown_input, PARSE_OPTIONS);
     let parser = MarkdownParser::new(
         parser.into_offset_iter().collect(),
         file_location_directory,
@@ -3074,6 +3082,24 @@ More text
                 ),
                 p("More text", 21..31)
             ]
+        );
+    }
+
+    const UNWANTED_OPTIONS: Options = Options::ENABLE_YAML_STYLE_METADATA_BLOCKS
+        .union(Options::ENABLE_MATH)
+        .union(Options::ENABLE_DEFINITION_LIST)
+        .union(Options::ENABLE_WIKILINKS);
+
+    #[test]
+    fn all_options_considered() {
+        assert_eq!(PARSE_OPTIONS.union(UNWANTED_OPTIONS), Options::all());
+    }
+
+    #[test]
+    fn wanted_and_unwanted_options_disjoint() {
+        assert_eq!(
+            PARSE_OPTIONS.intersection(UNWANTED_OPTIONS),
+            Options::empty()
         );
     }
 
