@@ -70,16 +70,16 @@ impl PromptCompletionProviderDelegate for Entity<MessageEditor> {
     }
 
     fn supported_modes(&self, cx: &App) -> Vec<PromptContextType> {
-        let mut supported = vec![PromptContextType::File, PromptContextType::Symbol];
+        let mut supported = vec![
+            PromptContextType::File,
+            PromptContextType::Symbol,
+            PromptContextType::Diagnostics,
+        ];
         if self.read(cx).prompt_capabilities.borrow().embedded_context {
             if self.read(cx).thread_store.is_some() {
                 supported.push(PromptContextType::Thread);
             }
-            supported.extend(&[
-                PromptContextType::Diagnostics,
-                PromptContextType::Fetch,
-                PromptContextType::Rules,
-            ]);
+            supported.extend(&[PromptContextType::Fetch, PromptContextType::Rules]);
         }
         supported
     }
@@ -450,6 +450,8 @@ impl MessageEditor {
                                             ),
                                         ),
                                     ))
+                                } else if matches!(uri, MentionUri::Diagnostics { .. }) {
+                                    content.clone().into()
                                 } else {
                                     acp::ContentBlock::ResourceLink(acp::ResourceLink::new(
                                         uri.name(),
