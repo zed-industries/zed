@@ -604,19 +604,16 @@ impl<'a> Iterator for TabChunks<'a> {
 
     #[ztracing::instrument(skip_all)]
     fn next(&mut self) -> Option<Self::Item> {
-        if self.chunk.text.is_empty() {
-            if let Some(chunk) = self.fold_chunks.next() {
-                self.chunk = chunk;
-                if self.inside_leading_tab {
-                    self.chunk.text = &self.chunk.text[1..];
-                    self.chunk.tabs >>= 1;
-                    self.chunk.chars >>= 1;
-                    self.chunk.newlines >>= 1;
-                    self.inside_leading_tab = false;
-                    self.input_column += 1;
-                }
-            } else {
-                return None;
+        while self.chunk.text.is_empty() {
+            let chunk = self.fold_chunks.next()?;
+            self.chunk = chunk;
+            if self.inside_leading_tab {
+                self.chunk.text = &self.chunk.text[1..];
+                self.chunk.tabs >>= 1;
+                self.chunk.chars >>= 1;
+                self.chunk.newlines >>= 1;
+                self.inside_leading_tab = false;
+                self.input_column += 1;
             }
         }
 
@@ -710,7 +707,7 @@ mod tests {
     use crate::{
         MultiBuffer,
         display_map::{
-            fold_map::{FoldMap, FoldOffset},
+            fold_map::{FoldMap, FoldOffset, FoldPlaceholder},
             inlay_map::InlayMap,
         },
     };
@@ -1088,6 +1085,44 @@ mod tests {
             }
             chunks
         }
+    }
+
+    #[gpui::test]
+    fn test_empty_chunk_after_leading_tab_trim(cx: &mut gpui::App) {
+        // We fold "hello" (offsets 1..6) so the fold map creates a
+        // transform boundary at offset 1, producing a 1-byte fold chunk
+        // for the tab.
+        let text = "\thello";
+        let buffer = MultiBuffer::build_simple(text, cx);
+        let buffer_snapshot = buffer.read(cx).snapshot(cx);
+        let (_, inlay_snapshot) = InlayMap::new(buffer_snapshot);
+        let mut fold_map = FoldMap::new(inlay_snapshot.clone()).0;
+
+        let (mut writer, _, _) = fold_map.write(inlay_snapshot.clone(), vec![]);
+        writer.fold(vec![(
+            MultiBufferOffset(1)..MultiBufferOffset(6),
+            FoldPlaceholder::test(),
+        )]);
+        let (fold_snapshot, _) = fold_map.read(inlay_snapshot, vec![]);
+
+        let tab_size = NonZeroU32::new(4).unwrap();
+        let (_, tab_snapshot) = TabMap::new(fold_snapshot, tab_size);
+
+        // The tab at column 0 expands to 4 spaces (columns 0‥4).
+        // Seek starting at column 2 (middle of that tab) so that
+        // `inside_leading_tab = true` and `to_next_stop = 2`.
+        // Set the end just past the tab expansion so the iterator must
+        // process the tab byte from the fold chunk.
+        let max = tab_snapshot.max_point();
+        let start = TabPoint::new(0, 2);
+        let end = max;
+
+        // This should not panic.
+        let result: String = tab_snapshot
+            .chunks(start..end, false, Highlights::default())
+            .map(|c| c.text)
+            .collect();
+        assert!(!result.is_empty());
     }
 
     #[gpui::test(iterations = 100)]

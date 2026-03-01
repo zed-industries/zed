@@ -1,7 +1,7 @@
 use crate::{
-    Anchor, Autoscroll, BufferSerialization, Capability, Editor, EditorEvent, EditorSettings,
-    ExcerptId, ExcerptRange, FormatTarget, MultiBuffer, MultiBufferSnapshot, NavigationData,
-    ReportEditorEvent, SelectionEffects, ToPoint as _,
+    ActiveDebugLine, Anchor, Autoscroll, BufferSerialization, Capability, Editor, EditorEvent,
+    EditorSettings, ExcerptId, ExcerptRange, FormatTarget, MultiBuffer, MultiBufferSnapshot,
+    NavigationData, ReportEditorEvent, SelectionEffects, ToPoint as _,
     display_map::HighlightKey,
     editor_settings::SeedQuerySetting,
     persistence::{DB, SerializedEditor},
@@ -989,18 +989,54 @@ impl Item for Editor {
     fn added_to_workspace(
         &mut self,
         workspace: &mut Workspace,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         self.workspace = Some((workspace.weak_handle(), workspace.database_id()));
-        if let Some(workspace) = &workspace.weak_handle().upgrade() {
-            cx.subscribe(workspace, |editor, _, event: &workspace::Event, _cx| {
-                if let workspace::Event::ModalOpened = event {
-                    editor.mouse_context_menu.take();
-                    editor.inline_blame_popover.take();
-                }
-            })
+        if let Some(workspace_entity) = &workspace.weak_handle().upgrade() {
+            cx.subscribe(
+                workspace_entity,
+                |editor, _, event: &workspace::Event, _cx| {
+                    if let workspace::Event::ModalOpened = event {
+                        editor.mouse_context_menu.take();
+                        editor.inline_blame_popover.take();
+                    }
+                },
+            )
             .detach();
+        }
+
+        // Load persisted folds if this editor doesn't already have folds.
+        // This handles manually-opened files (not workspace restoration).
+        let display_snapshot = self
+            .display_map
+            .update(cx, |display_map, cx| display_map.snapshot(cx));
+        let has_folds = display_snapshot
+            .folds_in_range(MultiBufferOffset(0)..display_snapshot.buffer_snapshot().len())
+            .next()
+            .is_some();
+
+        if !has_folds {
+            if let Some(workspace_id) = workspace.database_id()
+                && let Some(file_path) = self.buffer().read(cx).as_singleton().and_then(|buffer| {
+                    project::File::from_dyn(buffer.read(cx).file()).map(|file| file.abs_path(cx))
+                })
+            {
+                self.load_folds_from_db(workspace_id, file_path, window, cx);
+            }
+        }
+    }
+
+    fn pane_changed(&mut self, new_pane_id: EntityId, cx: &mut Context<Self>) {
+        if self
+            .highlighted_rows
+            .get(&TypeId::of::<ActiveDebugLine>())
+            .is_some_and(|lines| !lines.is_empty())
+            && let Some(breakpoint_store) = self.breakpoint_store.as_ref()
+        {
+            breakpoint_store.update(cx, |store, _cx| {
+                store.set_active_debug_pane_id(new_pane_id);
+            });
         }
     }
 
@@ -1397,6 +1433,7 @@ impl ProjectItem for Editor {
         cx: &mut Context<Self>,
     ) -> Self {
         let mut editor = Self::for_buffer(buffer.clone(), Some(project), window, cx);
+
         if let Some((excerpt_id, _, snapshot)) =
             editor.buffer().read(cx).snapshot(cx).as_singleton()
             && WorkspaceSettings::get(None, cx).restore_on_file_reopen
@@ -1408,12 +1445,14 @@ impl ProjectItem for Editor {
                     data.entries.get(&file.abs_path(cx))
                 })
         {
-            editor.fold_ranges(
-                clip_ranges(&restoration_data.folds, snapshot),
-                false,
-                window,
-                cx,
-            );
+            if !restoration_data.folds.is_empty() {
+                editor.fold_ranges(
+                    clip_ranges(&restoration_data.folds, snapshot),
+                    false,
+                    window,
+                    cx,
+                );
+            }
             if !restoration_data.selections.is_empty() {
                 editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
                     s.select_ranges(clip_ranges(&restoration_data.selections, snapshot));

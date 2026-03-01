@@ -2,7 +2,7 @@ use super::restore_file_from_disk_tool::RestoreFileFromDiskTool;
 use super::save_file_tool::SaveFileTool;
 use super::tool_permissions::authorize_file_edit;
 use crate::{
-    AgentTool, Templates, Thread, ToolCallEventStream,
+    AgentTool, Templates, Thread, ToolCallEventStream, ToolInput,
     edit_agent::{EditAgent, EditAgentOutput, EditAgentOutputEvent, EditFormat},
 };
 use acp_thread::Diff;
@@ -237,35 +237,44 @@ impl AgentTool for EditFileTool {
 
     fn run(
         self: Arc<Self>,
-        input: Self::Input,
+        input: ToolInput<Self::Input>,
         event_stream: ToolCallEventStream,
         cx: &mut App,
     ) -> Task<Result<Self::Output, Self::Output>> {
-        let Ok(project) = self
-            .thread
-            .read_with(cx, |thread, _cx| thread.project().clone())
-        else {
-            return Task::ready(Err(EditFileToolOutput::Error {
-                error: "thread was dropped".to_string(),
-            }));
-        };
-        let project_path = match resolve_path(&input, project.clone(), cx) {
-            Ok(path) => path,
-            Err(err) => {
-                return Task::ready(Err(EditFileToolOutput::Error {
-                    error: err.to_string(),
-                }));
-            }
-        };
-        let abs_path = project.read(cx).absolute_path(&project_path, cx);
-        if let Some(abs_path) = abs_path.clone() {
-            event_stream.update_fields(
-                ToolCallUpdateFields::new().locations(vec![acp::ToolCallLocation::new(abs_path)]),
-            );
-        }
-
-        let authorize = self.authorize(&input, &event_stream, cx);
         cx.spawn(async move |cx: &mut AsyncApp| {
+            let input = input.recv().await.map_err(|e| EditFileToolOutput::Error {
+                error: format!("Failed to receive tool input: {e}"),
+            })?;
+
+            let project = self
+                .thread
+                .read_with(cx, |thread, _cx| thread.project().clone())
+                .map_err(|_| EditFileToolOutput::Error {
+                    error: "thread was dropped".to_string(),
+                })?;
+
+            let (project_path, abs_path, allow_thinking, authorize) =
+                cx.update(|cx| {
+                    let project_path = resolve_path(&input, project.clone(), cx).map_err(|err| {
+                        EditFileToolOutput::Error {
+                            error: err.to_string(),
+                        }
+                    })?;
+                    let abs_path = project.read(cx).absolute_path(&project_path, cx);
+                    if let Some(abs_path) = abs_path.clone() {
+                        event_stream.update_fields(
+                            ToolCallUpdateFields::new()
+                                .locations(vec![acp::ToolCallLocation::new(abs_path)]),
+                        );
+                    }
+                    let allow_thinking = self
+                        .thread
+                        .read_with(cx, |thread, _cx| thread.thinking_enabled())
+                        .unwrap_or(true);
+                    let authorize = self.authorize(&input, &event_stream, cx);
+                    Ok::<_, EditFileToolOutput>((project_path, abs_path, allow_thinking, authorize))
+                })?;
+
             let result: anyhow::Result<EditFileToolOutput> = async {
                 authorize.await?;
 
@@ -283,6 +292,7 @@ impl AgentTool for EditFileTool {
                     action_log.clone(),
                     self.templates.clone(),
                     edit_format,
+                    allow_thinking,
                 );
 
                 let buffer = project
@@ -667,7 +677,11 @@ mod tests {
                     language_registry,
                     Templates::new(),
                 ))
-                .run(input, ToolCallEventStream::test().0, cx)
+                .run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
             })
             .await;
         assert_eq!(
@@ -876,7 +890,11 @@ mod tests {
                     language_registry.clone(),
                     Templates::new(),
                 ))
-                .run(input, ToolCallEventStream::test().0, cx)
+                .run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
             });
 
             // Stream the unformatted content
@@ -935,7 +953,11 @@ mod tests {
                     language_registry,
                     Templates::new(),
                 ))
-                .run(input, ToolCallEventStream::test().0, cx)
+                .run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
             });
 
             // Stream the unformatted content
@@ -1022,7 +1044,11 @@ mod tests {
                     language_registry.clone(),
                     Templates::new(),
                 ))
-                .run(input, ToolCallEventStream::test().0, cx)
+                .run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
             });
 
             // Stream the content with trailing whitespace
@@ -1077,7 +1103,11 @@ mod tests {
                     language_registry,
                     Templates::new(),
                 ))
-                .run(input, ToolCallEventStream::test().0, cx)
+                .run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
             });
 
             // Stream the content with trailing whitespace
@@ -2076,11 +2106,11 @@ mod tests {
             let (stream_tx, mut stream_rx) = ToolCallEventStream::test();
             let edit = cx.update(|cx| {
                 tool.run(
-                    EditFileToolInput {
+                    ToolInput::resolved(EditFileToolInput {
                         display_description: "Edit file".into(),
                         path: path!("/main.rs").into(),
                         mode: EditFileMode::Edit,
-                    },
+                    }),
                     stream_tx,
                     cx,
                 )
@@ -2106,11 +2136,11 @@ mod tests {
             let (stream_tx, mut stream_rx) = ToolCallEventStream::test();
             let edit = cx.update(|cx| {
                 tool.run(
-                    EditFileToolInput {
+                    ToolInput::resolved(EditFileToolInput {
                         display_description: "Edit file".into(),
                         path: path!("/main.rs").into(),
                         mode: EditFileMode::Edit,
-                    },
+                    }),
                     stream_tx,
                     cx,
                 )
@@ -2134,11 +2164,11 @@ mod tests {
             let (stream_tx, mut stream_rx) = ToolCallEventStream::test();
             let edit = cx.update(|cx| {
                 tool.run(
-                    EditFileToolInput {
+                    ToolInput::resolved(EditFileToolInput {
                         display_description: "Edit file".into(),
                         path: path!("/main.rs").into(),
                         mode: EditFileMode::Edit,
-                    },
+                    }),
                     stream_tx,
                     cx,
                 )
@@ -2194,11 +2224,11 @@ mod tests {
         // Read the file to record the read time
         cx.update(|cx| {
             read_tool.clone().run(
-                crate::ReadFileToolInput {
+                ToolInput::resolved(crate::ReadFileToolInput {
                     path: "root/test.txt".to_string(),
                     start_line: None,
                     end_line: None,
-                },
+                }),
                 ToolCallEventStream::test().0,
                 cx,
             )
@@ -2222,11 +2252,11 @@ mod tests {
         // Read the file again - should update the entry
         cx.update(|cx| {
             read_tool.clone().run(
-                crate::ReadFileToolInput {
+                ToolInput::resolved(crate::ReadFileToolInput {
                     path: "root/test.txt".to_string(),
                     start_line: None,
                     end_line: None,
-                },
+                }),
                 ToolCallEventStream::test().0,
                 cx,
             )
@@ -2293,11 +2323,11 @@ mod tests {
         // Read the file first
         cx.update(|cx| {
             read_tool.clone().run(
-                crate::ReadFileToolInput {
+                ToolInput::resolved(crate::ReadFileToolInput {
                     path: "root/test.txt".to_string(),
                     start_line: None,
                     end_line: None,
-                },
+                }),
                 ToolCallEventStream::test().0,
                 cx,
             )
@@ -2309,11 +2339,11 @@ mod tests {
         let edit_result = {
             let edit_task = cx.update(|cx| {
                 edit_tool.clone().run(
-                    EditFileToolInput {
+                    ToolInput::resolved(EditFileToolInput {
                         display_description: "First edit".into(),
                         path: "root/test.txt".into(),
                         mode: EditFileMode::Edit,
-                    },
+                    }),
                     ToolCallEventStream::test().0,
                     cx,
                 )
@@ -2338,11 +2368,11 @@ mod tests {
         let edit_result = {
             let edit_task = cx.update(|cx| {
                 edit_tool.clone().run(
-                    EditFileToolInput {
+                    ToolInput::resolved(EditFileToolInput {
                         display_description: "Second edit".into(),
                         path: "root/test.txt".into(),
                         mode: EditFileMode::Edit,
-                    },
+                    }),
                     ToolCallEventStream::test().0,
                     cx,
                 )
@@ -2407,11 +2437,11 @@ mod tests {
         // Read the file first
         cx.update(|cx| {
             read_tool.clone().run(
-                crate::ReadFileToolInput {
+                ToolInput::resolved(crate::ReadFileToolInput {
                     path: "root/test.txt".to_string(),
                     start_line: None,
                     end_line: None,
-                },
+                }),
                 ToolCallEventStream::test().0,
                 cx,
             )
@@ -2451,11 +2481,11 @@ mod tests {
         let result = cx
             .update(|cx| {
                 edit_tool.clone().run(
-                    EditFileToolInput {
+                    ToolInput::resolved(EditFileToolInput {
                         display_description: "Edit after external change".into(),
                         path: "root/test.txt".into(),
                         mode: EditFileMode::Edit,
-                    },
+                    }),
                     ToolCallEventStream::test().0,
                     cx,
                 )
@@ -2518,11 +2548,11 @@ mod tests {
         // Read the file first
         cx.update(|cx| {
             read_tool.clone().run(
-                crate::ReadFileToolInput {
+                ToolInput::resolved(crate::ReadFileToolInput {
                     path: "root/test.txt".to_string(),
                     start_line: None,
                     end_line: None,
-                },
+                }),
                 ToolCallEventStream::test().0,
                 cx,
             )
@@ -2555,11 +2585,11 @@ mod tests {
         let result = cx
             .update(|cx| {
                 edit_tool.clone().run(
-                    EditFileToolInput {
+                    ToolInput::resolved(EditFileToolInput {
                         display_description: "Edit with dirty buffer".into(),
                         path: "root/test.txt".into(),
                         mode: EditFileMode::Edit,
-                    },
+                    }),
                     ToolCallEventStream::test().0,
                     cx,
                 )

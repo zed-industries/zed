@@ -673,7 +673,7 @@ pub(crate) async fn find_file(
 // (literally, [LinkTitle](link_file.txt)) as a candidate.
 fn link_pattern_file_candidates(candidate: &str) -> Vec<(String, Range<usize>)> {
     static MD_LINK_REGEX: LazyLock<Regex> =
-        LazyLock::new(|| Regex::new(r"\(([^)]*)\)").expect("Failed to create REGEX"));
+        LazyLock::new(|| Regex::new(r"]\(([^)]*)\)").expect("Failed to create REGEX"));
 
     let candidate_len = candidate.len();
 
@@ -1444,14 +1444,26 @@ mod tests {
             candidates,
             vec!["LinkTitle](link\\ _file.txt)", "link\\ _file.txt",]
         );
-        //
-        // Square brackets not strictly necessary
+        // Parentheses without preceding `]` should not extract inner content,
+        // to avoid matching function calls like `do_work(file2)` as file paths.
         let candidates: Vec<String> = link_pattern_file_candidates("(link_file.txt)")
             .into_iter()
             .map(|(c, _)| c)
             .collect();
+        assert_eq!(candidates, vec!["(link_file.txt)"]);
 
-        assert_eq!(candidates, vec!["(link_file.txt)", "link_file.txt",]);
+        let candidates: Vec<String> = link_pattern_file_candidates("do_work(file2);")
+            .into_iter()
+            .map(|(c, _)| c)
+            .collect();
+        assert_eq!(candidates, vec!["do_work(file2);"]);
+
+        // Markdown links should still extract the path
+        let candidates: Vec<String> = link_pattern_file_candidates("](readme.md)")
+            .into_iter()
+            .map(|(c, _)| c)
+            .collect();
+        assert_eq!(candidates, vec!["](readme.md)", "readme.md"]);
 
         // No nesting
         let candidates: Vec<String> =

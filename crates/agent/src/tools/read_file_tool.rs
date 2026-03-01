@@ -21,7 +21,7 @@ use super::tool_permissions::{
     ResolvedProjectPath, authorize_symlink_access, canonicalize_worktree_roots,
     resolve_project_path,
 };
-use crate::{AgentTool, Thread, ToolCallEventStream, outline};
+use crate::{AgentTool, Thread, ToolCallEventStream, ToolInput, outline};
 
 /// Reads the content of the given file in the project.
 ///
@@ -114,7 +114,7 @@ impl AgentTool for ReadFileTool {
 
     fn run(
         self: Arc<Self>,
-        input: Self::Input,
+        input: ToolInput<Self::Input>,
         event_stream: ToolCallEventStream,
         cx: &mut App,
     ) -> Task<Result<LanguageModelToolResultContent, LanguageModelToolResultContent>> {
@@ -122,6 +122,10 @@ impl AgentTool for ReadFileTool {
         let thread = self.thread.clone();
         let action_log = self.action_log.clone();
         cx.spawn(async move |cx| {
+            let input = input
+                .recv()
+                .await
+                .map_err(tool_content_err)?;
             let fs = project.read_with(cx, |project, _cx| project.fs().clone());
             let canonical_roots = canonicalize_worktree_roots(&project, &fs, cx).await;
 
@@ -398,7 +402,7 @@ mod test {
                     start_line: None,
                     end_line: None,
                 };
-                tool.run(input, event_stream, cx)
+                tool.run(ToolInput::resolved(input), event_stream, cx)
             })
             .await;
         assert_eq!(
@@ -442,7 +446,11 @@ mod test {
                     start_line: None,
                     end_line: None,
                 };
-                tool.run(input, ToolCallEventStream::test().0, cx)
+                tool.run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
             })
             .await;
         assert_eq!(result.unwrap(), "This is a small file content".into());
@@ -485,7 +493,11 @@ mod test {
                     start_line: None,
                     end_line: None,
                 };
-                tool.clone().run(input, ToolCallEventStream::test().0, cx)
+                tool.clone().run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
             })
             .await
             .unwrap();
@@ -510,7 +522,11 @@ mod test {
                     start_line: None,
                     end_line: None,
                 };
-                tool.run(input, ToolCallEventStream::test().0, cx)
+                tool.run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
             })
             .await
             .unwrap();
@@ -570,7 +586,11 @@ mod test {
                     start_line: Some(2),
                     end_line: Some(4),
                 };
-                tool.run(input, ToolCallEventStream::test().0, cx)
+                tool.run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
             })
             .await;
         assert_eq!(result.unwrap(), "Line 2\nLine 3\nLine 4\n".into());
@@ -613,7 +633,11 @@ mod test {
                     start_line: Some(0),
                     end_line: Some(2),
                 };
-                tool.clone().run(input, ToolCallEventStream::test().0, cx)
+                tool.clone().run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
             })
             .await;
         assert_eq!(result.unwrap(), "Line 1\nLine 2\n".into());
@@ -626,7 +650,11 @@ mod test {
                     start_line: Some(1),
                     end_line: Some(0),
                 };
-                tool.clone().run(input, ToolCallEventStream::test().0, cx)
+                tool.clone().run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
             })
             .await;
         assert_eq!(result.unwrap(), "Line 1\n".into());
@@ -639,7 +667,11 @@ mod test {
                     start_line: Some(3),
                     end_line: Some(2),
                 };
-                tool.clone().run(input, ToolCallEventStream::test().0, cx)
+                tool.clone().run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
             })
             .await;
         assert_eq!(result.unwrap(), "Line 3\n".into());
@@ -744,7 +776,11 @@ mod test {
                     start_line: None,
                     end_line: None,
                 };
-                tool.clone().run(input, ToolCallEventStream::test().0, cx)
+                tool.clone().run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
             })
             .await;
         assert!(
@@ -760,7 +796,11 @@ mod test {
                     start_line: None,
                     end_line: None,
                 };
-                tool.clone().run(input, ToolCallEventStream::test().0, cx)
+                tool.clone().run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
             })
             .await;
         assert!(
@@ -776,7 +816,11 @@ mod test {
                     start_line: None,
                     end_line: None,
                 };
-                tool.clone().run(input, ToolCallEventStream::test().0, cx)
+                tool.clone().run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
             })
             .await;
         assert!(
@@ -791,7 +835,11 @@ mod test {
                     start_line: None,
                     end_line: None,
                 };
-                tool.clone().run(input, ToolCallEventStream::test().0, cx)
+                tool.clone().run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
             })
             .await;
         assert!(
@@ -807,7 +855,11 @@ mod test {
                     start_line: None,
                     end_line: None,
                 };
-                tool.clone().run(input, ToolCallEventStream::test().0, cx)
+                tool.clone().run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
             })
             .await;
         assert!(
@@ -822,7 +874,11 @@ mod test {
                     start_line: None,
                     end_line: None,
                 };
-                tool.clone().run(input, ToolCallEventStream::test().0, cx)
+                tool.clone().run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
             })
             .await;
         assert!(
@@ -837,7 +893,11 @@ mod test {
                     start_line: None,
                     end_line: None,
                 };
-                tool.clone().run(input, ToolCallEventStream::test().0, cx)
+                tool.clone().run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
             })
             .await;
         assert!(
@@ -853,7 +913,11 @@ mod test {
                     start_line: None,
                     end_line: None,
                 };
-                tool.clone().run(input, ToolCallEventStream::test().0, cx)
+                tool.clone().run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
             })
             .await;
         assert!(result.is_ok(), "Should be able to read normal files");
@@ -867,7 +931,11 @@ mod test {
                     start_line: None,
                     end_line: None,
                 };
-                tool.run(input, ToolCallEventStream::test().0, cx)
+                tool.run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
             })
             .await;
         assert!(
@@ -911,11 +979,11 @@ mod test {
         let (event_stream, mut event_rx) = ToolCallEventStream::test();
         let read_task = cx.update(|cx| {
             tool.run(
-                ReadFileToolInput {
+                ToolInput::resolved(ReadFileToolInput {
                     path: "root/secret.png".to_string(),
                     start_line: None,
                     end_line: None,
-                },
+                }),
                 event_stream,
                 cx,
             )
@@ -1039,7 +1107,11 @@ mod test {
                     start_line: None,
                     end_line: None,
                 };
-                tool.clone().run(input, ToolCallEventStream::test().0, cx)
+                tool.clone().run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
             })
             .await
             .unwrap();
@@ -1057,7 +1129,11 @@ mod test {
                     start_line: None,
                     end_line: None,
                 };
-                tool.clone().run(input, ToolCallEventStream::test().0, cx)
+                tool.clone().run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
             })
             .await;
 
@@ -1075,7 +1151,11 @@ mod test {
                     start_line: None,
                     end_line: None,
                 };
-                tool.clone().run(input, ToolCallEventStream::test().0, cx)
+                tool.clone().run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
             })
             .await;
 
@@ -1093,7 +1173,11 @@ mod test {
                     start_line: None,
                     end_line: None,
                 };
-                tool.clone().run(input, ToolCallEventStream::test().0, cx)
+                tool.clone().run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
             })
             .await
             .unwrap();
@@ -1111,7 +1195,11 @@ mod test {
                     start_line: None,
                     end_line: None,
                 };
-                tool.clone().run(input, ToolCallEventStream::test().0, cx)
+                tool.clone().run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
             })
             .await;
 
@@ -1129,7 +1217,11 @@ mod test {
                     start_line: None,
                     end_line: None,
                 };
-                tool.clone().run(input, ToolCallEventStream::test().0, cx)
+                tool.clone().run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
             })
             .await;
 
@@ -1148,7 +1240,11 @@ mod test {
                     start_line: None,
                     end_line: None,
                 };
-                tool.clone().run(input, ToolCallEventStream::test().0, cx)
+                tool.clone().run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
             })
             .await;
 
@@ -1210,11 +1306,11 @@ mod test {
         let (event_stream, mut event_rx) = ToolCallEventStream::test();
         let task = cx.update(|cx| {
             tool.clone().run(
-                ReadFileToolInput {
+                ToolInput::resolved(ReadFileToolInput {
                     path: "project/secret_link.txt".to_string(),
                     start_line: None,
                     end_line: None,
-                },
+                }),
                 event_stream,
                 cx,
             )
@@ -1286,11 +1382,11 @@ mod test {
         let (event_stream, mut event_rx) = ToolCallEventStream::test();
         let task = cx.update(|cx| {
             tool.clone().run(
-                ReadFileToolInput {
+                ToolInput::resolved(ReadFileToolInput {
                     path: "project/secret_link.txt".to_string(),
                     start_line: None,
                     end_line: None,
-                },
+                }),
                 event_stream,
                 cx,
             )
@@ -1367,11 +1463,11 @@ mod test {
         let result = cx
             .update(|cx| {
                 tool.clone().run(
-                    ReadFileToolInput {
+                    ToolInput::resolved(ReadFileToolInput {
                         path: "project/secret_link.txt".to_string(),
                         start_line: None,
                         end_line: None,
-                    },
+                    }),
                     event_stream,
                     cx,
                 )

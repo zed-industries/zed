@@ -1,10 +1,6 @@
 use crate::{
-    StoredEvent,
-    cursor_excerpt::editable_and_context_ranges_for_cursor_position,
-    example_spec::{
-        CapturedEvent, CapturedPromptInput, CapturedRelatedExcerpt, CapturedRelatedFile,
-        ExampleSpec, MAX_CURSOR_FILE_SIZE,
-    },
+    StoredEvent, cursor_excerpt::editable_and_context_ranges_for_cursor_position,
+    example_spec::ExampleSpec,
 };
 use anyhow::Result;
 use buffer_diff::BufferDiffSnapshot;
@@ -13,14 +9,13 @@ use gpui::{App, Entity, Task};
 use language::{Buffer, ToPoint as _};
 use project::{Project, WorktreeId};
 use std::{collections::hash_map, fmt::Write as _, ops::Range, path::Path, sync::Arc};
-use text::{BufferSnapshot as TextBufferSnapshot, Point, ToOffset as _};
+use text::{BufferSnapshot as TextBufferSnapshot, Point};
 
 pub fn capture_example(
     project: Entity<Project>,
     buffer: Entity<Buffer>,
     cursor_anchor: language::Anchor,
     mut events: Vec<StoredEvent>,
-    related_files: Vec<zeta_prompt::RelatedFile>,
     populate_expected_patch: bool,
     cx: &mut App,
 ) -> Option<Task<Result<ExampleSpec>>> {
@@ -59,14 +54,6 @@ pub fn capture_example(
             .and_then(|lang| lang.config().line_comments.first())
             .map(|s| s.to_string())
             .unwrap_or_default();
-
-        let full_cursor_offset = cursor_anchor.to_offset(&snapshot);
-        let cursor_point = cursor_anchor.to_point(&snapshot);
-        let cursor_file_content = if snapshot.len() <= MAX_CURSOR_FILE_SIZE {
-            Some(snapshot.text())
-        } else {
-            None
-        };
 
         let (cursor_excerpt, cursor_offset_in_excerpt, cursor_excerpt_range) = cx
             .background_executor()
@@ -109,56 +96,6 @@ pub fn capture_example(
             rejected_patch = Some(empty_patch);
         }
 
-        let prompt_input = cursor_file_content.map(|content| {
-            let captured_events: Vec<CapturedEvent> = events
-                .iter()
-                .map(|stored_event| {
-                    let zeta_prompt::Event::BufferChange {
-                        path,
-                        old_path,
-                        diff,
-                        predicted,
-                        in_open_source_repo,
-                    } = stored_event.event.as_ref();
-                    CapturedEvent {
-                        path: strip_root_name(path, &root_name).into(),
-                        old_path: strip_root_name(old_path, &root_name).into(),
-                        diff: diff.clone(),
-                        predicted: *predicted,
-                        in_open_source_repo: *in_open_source_repo,
-                    }
-                })
-                .collect();
-
-            let captured_related_files: Vec<CapturedRelatedFile> = related_files
-                .iter()
-                .map(|rf| CapturedRelatedFile {
-                    path: strip_root_name(&rf.path, &root_name).into(),
-                    max_row: rf.max_row,
-                    excerpts: rf
-                        .excerpts
-                        .iter()
-                        .map(|e| CapturedRelatedExcerpt {
-                            row_range: e.row_range.clone(),
-                            text: e.text.to_string(),
-                        })
-                        .collect(),
-                })
-                .collect();
-
-            CapturedPromptInput {
-                cursor_file_content: content,
-                cursor_offset: full_cursor_offset,
-                cursor_row: cursor_point.row,
-                cursor_column: cursor_point.column,
-                excerpt_start_row: Some(0),
-                events: captured_events,
-                related_files: captured_related_files,
-                in_open_source_repo: false,
-                zed_version: None,
-            }
-        });
-
         let mut spec = ExampleSpec {
             name: generate_timestamp_name(),
             repository_url,
@@ -171,7 +108,6 @@ pub fn capture_example(
             edit_history,
             expected_patches,
             rejected_patch,
-            captured_prompt_input: prompt_input,
             telemetry: None,
             human_feedback: Vec::new(),
             rating: None,
@@ -466,7 +402,6 @@ mod tests {
                     buffer.clone(),
                     Anchor::MIN,
                     events,
-                    Vec::new(),
                     true,
                     cx,
                 )
@@ -584,37 +519,10 @@ mod tests {
                     "}
                     .to_string()
                 ),
-                captured_prompt_input: example.captured_prompt_input.clone(),
                 telemetry: None,
                 human_feedback: Vec::new(),
                 rating: None,
             }
-        );
-
-        let prompt_input = example
-            .captured_prompt_input
-            .expect("should have captured prompt input");
-        assert!(
-            prompt_input.cursor_file_content.contains("fn main()"),
-            "cursor_file_content should contain file content"
-        );
-        assert_eq!(
-            prompt_input.cursor_offset, 0,
-            "cursor at Anchor::MIN should be offset 0"
-        );
-        assert_eq!(
-            prompt_input.cursor_row, 0,
-            "cursor at Anchor::MIN should be row 0"
-        );
-        assert_eq!(
-            prompt_input.cursor_column, 0,
-            "cursor at Anchor::MIN should be column 0"
-        );
-        assert!(prompt_input.events.len() > 0, "should have captured events");
-        assert_eq!(
-            prompt_input.related_files.len(),
-            0,
-            "should have no related files (none passed)"
         );
     }
 

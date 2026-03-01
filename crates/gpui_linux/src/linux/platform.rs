@@ -46,50 +46,6 @@ pub(crate) const KEYRING_LABEL: &str = "zed-github-account";
 const FILE_PICKER_PORTAL_MISSING: &str =
     "Couldn't open file picker due to missing xdg-desktop-portal implementation.";
 
-#[cfg(any(feature = "x11", feature = "wayland"))]
-pub trait ResultExt {
-    type Ok;
-
-    fn notify_err(self, msg: &'static str) -> Self::Ok;
-}
-
-#[cfg(any(feature = "x11", feature = "wayland"))]
-impl<T> ResultExt for anyhow::Result<T> {
-    type Ok = T;
-
-    fn notify_err(self, msg: &'static str) -> T {
-        match self {
-            Ok(v) => v,
-            Err(e) => {
-                use ashpd::desktop::notification::{Notification, NotificationProxy, Priority};
-                use futures::executor::block_on;
-
-                let proxy = block_on(NotificationProxy::new()).expect(msg);
-
-                let notification_id = "dev.zed.Oops";
-                block_on(
-                    proxy.add_notification(
-                        notification_id,
-                        Notification::new("Zed failed to launch")
-                            .body(Some(
-                                format!(
-                                    "{e:?}. See https://zed.dev/docs/linux for troubleshooting steps."
-                                )
-                                .as_str(),
-                            ))
-                            .priority(Priority::High)
-                            .icon(ashpd::desktop::Icon::with_names(&[
-                                "dialog-question-symbolic",
-                            ])),
-                    )
-                ).expect(msg);
-
-                panic!("{msg}");
-            }
-        }
-    }
-}
-
 pub(crate) trait LinuxClient {
     fn compositor_name(&self) -> &'static str;
     fn with_common<R>(&self, f: impl FnOnce(&mut LinuxCommon) -> R) -> R;
@@ -99,10 +55,12 @@ pub(crate) trait LinuxClient {
     fn display(&self, id: DisplayId) -> Option<Rc<dyn PlatformDisplay>>;
     fn primary_display(&self) -> Option<Rc<dyn PlatformDisplay>>;
 
+    #[cfg(feature = "screen-capture")]
     fn is_screen_capture_supported(&self) -> bool {
         false
     }
 
+    #[cfg(feature = "screen-capture")]
     fn screen_capture_sources(
         &self,
     ) -> oneshot::Receiver<Result<Vec<Rc<dyn gpui::ScreenCaptureSource>>>> {
@@ -166,7 +124,7 @@ impl LinuxCommon {
         let (main_sender, main_receiver) = PriorityQueueCalloopReceiver::new();
 
         #[cfg(any(feature = "wayland", feature = "x11"))]
-        let text_system = Arc::new(crate::linux::CosmicTextSystem::new());
+        let text_system = Arc::new(crate::linux::CosmicTextSystem::new("IBM Plex Sans"));
         #[cfg(not(any(feature = "wayland", feature = "x11")))]
         let text_system = Arc::new(gpui::NoopTextSystem::new());
 
@@ -408,7 +366,8 @@ impl<P: LinuxClient + 'static> Platform for LinuxPlatform<P> {
                         response
                             .uris()
                             .iter()
-                            .filter_map(|uri| uri.to_file_path().ok())
+                            .filter_map(|uri: &ashpd::Uri| url::Url::parse(uri.as_str()).ok())
+                            .filter_map(|uri: url::Url| uri.to_file_path().ok())
                             .collect::<Vec<_>>(),
                     )),
                     Err(ashpd::Error::Response(_)) => Ok(None),
@@ -470,7 +429,8 @@ impl<P: LinuxClient + 'static> Platform for LinuxPlatform<P> {
                         Ok(response) => Ok(response
                             .uris()
                             .first()
-                            .and_then(|uri| uri.to_file_path().ok())),
+                            .and_then(|uri: &ashpd::Uri| url::Url::parse(uri.as_str()).ok())
+                            .and_then(|uri: url::Url| uri.to_file_path().ok())),
                         Err(ashpd::Error::Response(_)) => Ok(None),
                         Err(e) => Err(e.into()),
                     };
@@ -671,7 +631,7 @@ pub(super) fn open_uri_internal(
     uri: &str,
     activation_token: Option<String>,
 ) {
-    if let Some(uri) = ashpd::url::Url::parse(uri).log_err() {
+    if let Some(uri) = ashpd::Uri::parse(uri).log_err() {
         executor
             .spawn(async move {
                 match ashpd::desktop::open_uri::OpenFileRequest::default()

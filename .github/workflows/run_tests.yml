@@ -139,6 +139,21 @@ jobs:
       uses: crate-ci/typos@2d0ce569feab1f8752f1dde43cc2f2aa53236e06
       with:
         config: ./typos.toml
+    - name: run_tests::check_style::fetch_ts_query_ls
+      uses: dsaltares/fetch-gh-release-asset@aa37ae5c44d3c9820bc12fe675e8670ecd93bd1c
+      with:
+        repo: ribru17/ts_query_ls
+        version: tags/v3.15.1
+        file: ts_query_ls-x86_64-unknown-linux-gnu.tar.gz
+    - name: run_tests::check_style::run_ts_query_ls
+      run: |-
+        tar -xf ts_query_ls-x86_64-unknown-linux-gnu.tar.gz
+        ./ts_query_ls format --check . || {
+            echo "Found unformatted queries, please format them with ts_query_ls."
+            echo "For easy use, install the Tree-sitter query extension:"
+            echo "zed://extension/tree-sitter-query"
+            false
+        }
     timeout-minutes: 60
   clippy_windows:
     needs:
@@ -175,6 +190,9 @@ jobs:
     - orchestrate
     if: needs.orchestrate.outputs.run_tests == 'true'
     runs-on: namespace-profile-16x32-ubuntu-2204
+    env:
+      CC: clang
+      CXX: clang++
     steps:
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -285,6 +303,9 @@ jobs:
     - orchestrate
     if: needs.orchestrate.outputs.run_tests == 'true'
     runs-on: namespace-profile-16x32-ubuntu-2204
+    env:
+      CC: clang
+      CXX: clang++
     steps:
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -385,6 +406,9 @@ jobs:
     - orchestrate
     if: needs.orchestrate.outputs.run_tests == 'true'
     runs-on: namespace-profile-16x32-ubuntu-2204
+    env:
+      CC: clang
+      CXX: clang++
     steps:
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -428,6 +452,9 @@ jobs:
     - orchestrate
     if: needs.orchestrate.outputs.run_tests == 'true'
     runs-on: namespace-profile-8x16-ubuntu-2204
+    env:
+      CC: clang
+      CXX: clang++
     steps:
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -466,11 +493,53 @@ jobs:
       run: |
         rm -rf ./../.cargo
     timeout-minutes: 60
+  check_wasm:
+    needs:
+    - orchestrate
+    if: needs.orchestrate.outputs.run_tests == 'true'
+    runs-on: namespace-profile-8x16-ubuntu-2204
+    steps:
+    - name: steps::checkout_repo
+      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      with:
+        clean: false
+    - name: steps::setup_cargo_config
+      run: |
+        mkdir -p ./../.cargo
+        cp ./.cargo/ci-config.toml ./../.cargo/config.toml
+    - name: steps::cache_rust_dependencies_namespace
+      uses: namespacelabs/nscloud-cache-action@v1
+      with:
+        cache: rust
+        path: ~/.rustup
+    - name: run_tests::check_wasm::install_nightly_wasm_toolchain
+      run: rustup toolchain install nightly --component rust-src --target wasm32-unknown-unknown
+    - name: steps::setup_sccache
+      run: ./script/setup-sccache
+      env:
+        R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+        R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+        R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+        SCCACHE_BUCKET: sccache-zed
+    - name: run_tests::check_wasm::cargo_check_wasm
+      run: cargo +nightly -Zbuild-std=std,panic_abort check --target wasm32-unknown-unknown -p gpui_platform
+      env:
+        CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUSTFLAGS: -C target-feature=+atomics,+bulk-memory,+mutable-globals
+    - name: steps::show_sccache_stats
+      run: sccache --show-stats || true
+    - name: steps::cleanup_cargo_config
+      if: always()
+      run: |
+        rm -rf ./../.cargo
+    timeout-minutes: 60
   check_dependencies:
     needs:
     - orchestrate
     if: needs.orchestrate.outputs.run_tests == 'true'
     runs-on: namespace-profile-2x4-ubuntu-2404
+    env:
+      CC: clang
+      CXX: clang++
     steps:
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -503,6 +572,9 @@ jobs:
     - orchestrate
     if: needs.orchestrate.outputs.run_docs == 'true'
     runs-on: namespace-profile-8x16-ubuntu-2204
+    env:
+      CC: clang
+      CXX: clang++
     steps:
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -641,6 +713,7 @@ jobs:
     - run_tests_mac
     - doctests
     - check_workspace_binaries
+    - check_wasm
     - check_dependencies
     - check_docs
     - check_licenses
@@ -668,6 +741,7 @@ jobs:
         check_result "run_tests_mac" "${{ needs.run_tests_mac.result }}"
         check_result "doctests" "${{ needs.doctests.result }}"
         check_result "check_workspace_binaries" "${{ needs.check_workspace_binaries.result }}"
+        check_result "check_wasm" "${{ needs.check_wasm.result }}"
         check_result "check_dependencies" "${{ needs.check_dependencies.result }}"
         check_result "check_docs" "${{ needs.check_docs.result }}"
         check_result "check_licenses" "${{ needs.check_licenses.result }}"

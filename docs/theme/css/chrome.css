@@ -70,7 +70,9 @@ a > .hljs {
 }
 
 .logo-nav {
-  display: block;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   filter: var(--logo-brightness);
 }
 
@@ -138,6 +140,40 @@ a > .hljs {
 .footer-button i {
   text-decoration: underline !important;
   text-decoration-color: transparent !important;
+}
+
+.footer {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  padding: 24px 0;
+  border-top: 1px dashed var(--border-footer);
+}
+
+.footer-link {
+  font-size: 1.25rem;
+  color: var(--links);
+  text-decoration: underline;
+  text-decoration-color: var(--link-line-decoration);
+  text-wrap-mode: nowrap;
+
+  :hover {
+    text-decoration-color: var(--link-line-decoration-hover);
+  }
+}
+
+.footer-separator {
+  color: var(--border-light);
+  font-size: 0.8em;
+}
+
+.footer-logo {
+  height: 16px;
+  border-radius: 0 !important;
+  border: none !important;
+  background: transparent !important;
 }
 
 .mobile-nav-chapters {

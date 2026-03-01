@@ -72,8 +72,6 @@ To disable word diff for specific languages only, add this to your settings.json
 
 ### Diff View Styles
 
-> **Changed in Preview (v0.225).** See [release notes](/releases#0.225).
-
 Zed displays diffs in two modes: **split** (side-by-side comparison) or **unified** (inline changes). Split view is the default.
 
 #### Changing the diff view
