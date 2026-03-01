@@ -31,6 +31,7 @@ decisions:
   - "Used RegisterSetting derive macro for auto-registration via inventory::submit! — no explicit register(cx) call needed in editor init()"
   - "PersistentUndoSettingsContent placed in editor.rs (settings_content crate) following the pattern for editor-adjacent settings"
   - "persistent_undo field placed alphabetically before proxy in SettingsContent"
+requirements-completed: [CONF-01, CONF-02]
 metrics:
   duration: "~8min"
   completed: "2026-03-01"
