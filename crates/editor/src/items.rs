@@ -1044,6 +1044,10 @@ impl Item for Editor {
                 self.load_folds_from_db(workspace_id, file_path, window, cx);
             }
         }
+
+        if let Some(workspace_id) = workspace.database_id() {
+            self.restore_undo_history(workspace_id, window, cx);
+        }
     }
 
     fn pane_changed(&mut self, new_pane_id: EntityId, cx: &mut Context<Self>) {
@@ -1603,6 +1607,87 @@ impl Editor {
             .await
             .log_err();
         }))
+    }
+
+    fn restore_undo_history(
+        &mut self,
+        workspace_id: WorkspaceId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        use settings::Settings as _;
+        if !PersistentUndoSettings::get_global(cx).enabled {
+            return;
+        }
+
+        let buffer_handle = match self.buffer().read(cx).as_singleton() {
+            Some(buffer) => buffer.clone(),
+            None => return,
+        };
+
+        let abs_path: Arc<Path> = {
+            let buffer = buffer_handle.read(cx);
+            match File::from_dyn(buffer.file()) {
+                Some(file) => Arc::from(file.abs_path(cx)),
+                None => return,
+            }
+        };
+
+        let blob_path = blob_path_for(&abs_path);
+
+        cx.spawn_in(window, async move |this, cx| {
+            let meta = match DB.get_undo_history_meta(workspace_id, &abs_path) {
+                Ok(Some(meta)) => meta,
+                Ok(None) => return Ok(()),
+                Err(err) => {
+                    log::debug!("Failed to read undo_history_meta for {abs_path:?}: {err}");
+                    return Ok(());
+                }
+            };
+            let (stored_hash, _mtime_seconds, _mtime_nanos, _last_accessed_at) = meta;
+
+            let blob_bytes = match smol::fs::read(&blob_path).await {
+                Ok(bytes) => bytes,
+                Err(_) => return Ok(()),
+            };
+
+            let current_hash = match this.read_with(cx, |editor, cx| {
+                let buffer = editor.buffer().read(cx).as_singleton()?;
+                let buffer = buffer.read(cx);
+                Some(compute_content_hash(buffer.as_rope()))
+            }) {
+                Ok(Some(hash)) => hash,
+                Ok(None) => return Ok(()),
+                Err(err) => return Err(err),
+            };
+
+            if current_hash != stored_hash {
+                log::debug!(
+                    "Undo history hash mismatch for {abs_path:?}: stored={stored_hash}, current={current_hash}; discarding"
+                );
+                return Ok(());
+            }
+
+            let (undo_stack, redo_stack, undo_operations) =
+                match text::history_serde::decode_history(&blob_bytes) {
+                    Ok(decoded) => decoded,
+                    Err(err) => {
+                        log::warn!("Failed to decode undo history for {abs_path:?}: {err}");
+                        return Ok(());
+                    }
+                };
+
+            this.update_in(cx, |editor, _window, cx| {
+                if let Some(buffer) = editor.buffer().read(cx).as_singleton() {
+                    buffer.update(cx, |buffer, _| {
+                        buffer.restore_history(undo_stack, redo_stack, undo_operations);
+                    });
+                }
+            })?;
+
+            Ok(())
+        })
+        .detach_and_log_err(cx);
     }
 
     pub fn update_restoration_data(

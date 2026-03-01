@@ -2510,6 +2510,17 @@ impl Buffer {
         self.text.merge_transactions(transaction, destination);
     }
 
+    /// Replaces the buffer's undo and redo stacks with the given history, reconstructing
+    /// the undo map from the provided operations. Used to restore persisted undo history.
+    pub fn restore_history(
+        &mut self,
+        undo_stack: Vec<Transaction>,
+        redo_stack: Vec<Transaction>,
+        undo_operations: Vec<text::UndoOperation>,
+    ) {
+        self.text.restore_history(undo_stack, redo_stack, undo_operations);
+    }
+
     /// Waits for the buffer to receive operations with the given timestamps.
     pub fn wait_for_edits<It: IntoIterator<Item = clock::Lamport>>(
         &mut self,
