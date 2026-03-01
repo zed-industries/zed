@@ -1243,6 +1243,7 @@ impl SerializableItem for Editor {
                             let mut editor = Editor::for_buffer(buffer, Some(project), window, cx);
 
                             editor.read_metadata_from_db(item_id, workspace_id, window, cx);
+                            editor.restore_undo_history(workspace_id, window, cx);
                             editor
                         })
                     })
@@ -1281,6 +1282,7 @@ impl SerializableItem for Editor {
                                     Editor::for_buffer(buffer, Some(project), window, cx);
 
                                 editor.read_metadata_from_db(item_id, workspace_id, window, cx);
+                                editor.restore_undo_history(workspace_id, window, cx);
                                 editor
                             })
                         })
@@ -1320,6 +1322,7 @@ impl SerializableItem for Editor {
 
                             editor.update_in(cx, |editor, window, cx| {
                                 editor.read_metadata_from_db(item_id, workspace_id, window, cx);
+                                editor.restore_undo_history(workspace_id, window, cx);
                             })?;
                             Ok(editor)
                         })
@@ -1341,6 +1344,7 @@ impl SerializableItem for Editor {
                         let mut editor = Editor::for_buffer(buffer, Some(project), window, cx);
 
                         editor.read_metadata_from_db(item_id, workspace_id, window, cx);
+                        editor.restore_undo_history(workspace_id, window, cx);
                         editor
                     })
                 })
