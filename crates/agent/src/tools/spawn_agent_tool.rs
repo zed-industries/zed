@@ -83,9 +83,14 @@ impl AgentTool for SpawnAgentTool {
         input: Result<Self::Input, serde_json::Value>,
         _cx: &mut App,
     ) -> SharedString {
-        input
-            .map(|i| i.label.into())
-            .unwrap_or_else(|_| "Spawning agent".into())
+        match input {
+            Ok(i) => i.label.into(),
+            Err(value) => value
+                .get("label")
+                .and_then(|v| v.as_str())
+                .map(|s| SharedString::from(s.to_owned()))
+                .unwrap_or_else(|| "Spawning agent".into()),
+        }
     }
 
     fn run(
@@ -137,9 +142,13 @@ impl AgentTool for SpawnAgentTool {
                 }
                 Err(e) => {
                     let error = e.to_string();
-                    event_stream.update_fields(
-                        acp::ToolCallUpdateFields::new().content(vec![error.clone().into()]),
-                    );
+                    // workaround for now because the agent loop will always mark this as ToolCallStatus::Failed
+                    let canceled = error == "User canceled";
+                    event_stream.update_fields(acp::ToolCallUpdateFields::new().content(vec![
+                        acp::ToolCallContent::Content(acp::Content::new(error.clone()).meta(
+                            acp::Meta::from_iter([("cancelled".into(), canceled.into())]),
+                        )),
+                    ]));
                     Err(SpawnAgentToolOutput::Error {
                         session_id: Some(subagent_session_id),
                         error,

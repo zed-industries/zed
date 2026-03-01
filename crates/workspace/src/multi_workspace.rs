@@ -672,7 +672,6 @@ impl MultiWorkspace {
 impl Render for MultiWorkspace {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let multi_workspace_enabled = self.multi_workspace_enabled(cx);
-        let is_zoomed = self.workspace().read(cx).zoomed_item().is_some();
 
         let sidebar: Option<AnyElement> = if multi_workspace_enabled && self.sidebar_open {
             self.sidebar.as_ref().map(|sidebar_handle| {
@@ -784,14 +783,13 @@ impl Render for MultiWorkspace {
                         .flex_1()
                         .size_full()
                         .overflow_hidden()
-                        .when(is_zoomed, |this| this.absolute().inset_0())
                         .child(self.workspace().clone()),
                 )
                 .child(self.workspace().read(cx).modal_layer.clone()),
             window,
             cx,
             Tiling {
-                left: multi_workspace_enabled && self.sidebar_open && !is_zoomed,
+                left: multi_workspace_enabled && self.sidebar_open,
                 ..Tiling::default()
             },
         )

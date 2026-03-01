@@ -64,6 +64,7 @@ impl LinuxClient for HeadlessClient {
         None
     }
 
+    #[cfg(feature = "screen-capture")]
     fn screen_capture_sources(
         &self,
     ) -> futures::channel::oneshot::Receiver<anyhow::Result<Vec<Rc<dyn gpui::ScreenCaptureSource>>>>

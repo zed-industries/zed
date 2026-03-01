@@ -1822,7 +1822,7 @@ impl SubagentHandle for NativeSubagentHandle {
                         .map(|m| m.to_markdown())
                         .context("No response from subagent")
                 }),
-                SubagentPromptResult::Cancelled => Err(anyhow!("User cancelled")),
+                SubagentPromptResult::Cancelled => Err(anyhow!("User canceled")),
                 SubagentPromptResult::Error(message) => Err(anyhow!("{message}")),
                 SubagentPromptResult::ContextWindowWarning => {
                     thread.update(cx, |thread, cx| thread.cancel(cx)).await;

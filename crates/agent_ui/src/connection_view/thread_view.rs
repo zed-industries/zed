@@ -1,4 +1,6 @@
+use acp_thread::ContentBlock;
 use cloud_api_types::{SubmitAgentThreadFeedbackBody, SubmitAgentThreadFeedbackCommentsBody};
+use editor::actions::OpenExcerpts;
 use gpui::{Corner, List};
 use language_model::{LanguageModelEffortLevel, Speed};
 use settings::update_settings_file;
@@ -578,7 +580,68 @@ impl ThreadView {
             ViewEvent::MessageEditorEvent(_editor, MessageEditorEvent::Cancel) => {
                 self.cancel_editing(&Default::default(), window, cx);
             }
+            ViewEvent::OpenDiffLocation {
+                path,
+                position,
+                split,
+            } => {
+                self.open_diff_location(path, *position, *split, window, cx);
+            }
         }
+    }
+
+    fn open_diff_location(
+        &self,
+        path: &str,
+        position: Point,
+        split: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(project) = self.project.upgrade() else {
+            return;
+        };
+        let Some(project_path) = project.read(cx).find_project_path(path, cx) else {
+            return;
+        };
+
+        let open_task = if split {
+            self.workspace
+                .update(cx, |workspace, cx| {
+                    workspace.split_path(project_path, window, cx)
+                })
+                .log_err()
+        } else {
+            self.workspace
+                .update(cx, |workspace, cx| {
+                    workspace.open_path(project_path, None, true, window, cx)
+                })
+                .log_err()
+        };
+
+        let Some(open_task) = open_task else {
+            return;
+        };
+
+        window
+            .spawn(cx, async move |cx| {
+                let item = open_task.await?;
+                let Some(editor) = item.downcast::<Editor>() else {
+                    return anyhow::Ok(());
+                };
+                editor.update_in(cx, |editor, window, cx| {
+                    editor.change_selections(
+                        SelectionEffects::scroll(Autoscroll::center()),
+                        window,
+                        cx,
+                        |selections| {
+                            selections.select_ranges([position..position]);
+                        },
+                    );
+                })?;
+                anyhow::Ok(())
+            })
+            .detach_and_log_err(cx);
     }
 
     // turns
@@ -3778,6 +3841,7 @@ impl ThreadView {
                     entry_ix,
                     tool_call,
                     &self.focus_handle(cx),
+                    false,
                     window,
                     cx,
                 )
@@ -4627,6 +4691,7 @@ impl ThreadView {
         terminal: &Entity<acp_thread::Terminal>,
         tool_call: &ToolCall,
         focus_handle: &FocusHandle,
+        is_subagent: bool,
         window: &Window,
         cx: &Context<Self>,
     ) -> AnyElement {
@@ -4845,12 +4910,14 @@ impl ThreadView {
             .and_then(|entry| entry.terminal(terminal));
 
         v_flex()
-            .my_1p5()
-            .mx_5()
-            .border_1()
-            .when(tool_failed || command_failed, |card| card.border_dashed())
-            .border_color(border_color)
-            .rounded_md()
+            .when(!is_subagent, |this| {
+                this.my_1p5()
+                    .mx_5()
+                    .border_1()
+                    .when(tool_failed || command_failed, |card| card.border_dashed())
+                    .border_color(border_color)
+                    .rounded_md()
+            })
             .overflow_hidden()
             .child(
                 v_flex()
@@ -4927,6 +4994,7 @@ impl ThreadView {
         entry_ix: usize,
         tool_call: &ToolCall,
         focus_handle: &FocusHandle,
+        is_subagent: bool,
         window: &Window,
         cx: &Context<Self>,
     ) -> Div {
@@ -4951,6 +5019,7 @@ impl ThreadView {
                         terminal,
                         tool_call,
                         focus_handle,
+                        is_subagent,
                         window,
                         cx,
                     )
@@ -4961,6 +5030,7 @@ impl ThreadView {
                     entry_ix,
                     tool_call,
                     focus_handle,
+                    is_subagent,
                     window,
                     cx,
                 ))
@@ -4974,6 +5044,7 @@ impl ThreadView {
         entry_ix: usize,
         tool_call: &ToolCall,
         focus_handle: &FocusHandle,
+        is_subagent: bool,
         window: &Window,
         cx: &Context<Self>,
     ) -> Div {
@@ -4995,14 +5066,20 @@ impl ThreadView {
             matches!(tool_call.kind, acp::ToolKind::Edit) || tool_call.diffs().next().is_some();
 
         let is_cancelled_edit = is_edit && matches!(tool_call.status, ToolCallStatus::Canceled);
-        let has_revealed_diff = tool_call.diffs().next().is_some_and(|diff| {
-            self.entry_view_state
-                .read(cx)
-                .entry(entry_ix)
-                .and_then(|entry| entry.editor_for_diff(diff))
-                .is_some()
-                && diff.read(cx).has_revealed_range(cx)
-        });
+        let (has_revealed_diff, tool_call_output_focus) = tool_call
+            .diffs()
+            .next()
+            .and_then(|diff| {
+                let editor = self
+                    .entry_view_state
+                    .read(cx)
+                    .entry(entry_ix)
+                    .and_then(|entry| entry.editor_for_diff(diff))?;
+                let has_revealed_diff = diff.read(cx).has_revealed_range(cx);
+                let has_focus = editor.read(cx).is_focused(window);
+                Some((has_revealed_diff, has_focus))
+            })
+            .unwrap_or((false, false));
 
         let use_card_layout = needs_confirmation || is_edit || is_terminal_tool;
 
@@ -5188,7 +5265,9 @@ impl ThreadView {
 
         v_flex()
             .map(|this| {
-                if use_card_layout {
+                if is_subagent {
+                    this
+                } else if use_card_layout {
                     this.my_1p5()
                         .rounded_md()
                         .border_1()
@@ -5200,18 +5279,25 @@ impl ThreadView {
                     this.my_1()
                 }
             })
-            .map(|this| {
-                if has_location && !use_card_layout {
-                    this.ml_4()
-                } else {
-                    this.ml_5()
-                }
+            .when(!is_subagent, |this| {
+                this.map(|this| {
+                    if has_location && !use_card_layout {
+                        this.ml_4()
+                    } else {
+                        this.ml_5()
+                    }
+                })
+                .mr_5()
             })
-            .mr_5()
             .map(|this| {
                 if is_terminal_tool {
                     let label_source = tool_call.label.read(cx).source();
-                    this.child(self.render_collapsible_command(true, label_source, &tool_call.id, cx))
+                    this.child(self.render_collapsible_command(
+                        true,
+                        label_source,
+                        &tool_call.id,
+                        cx,
+                    ))
                 } else {
                     this.child(
                         h_flex()
@@ -5235,97 +5321,148 @@ impl ThreadView {
                                 window,
                                 cx,
                             ))
-                            .when(is_collapsible || failed_or_canceled, |this| {
-                                let diff_for_discard =
-                                    if has_revealed_diff && is_cancelled_edit && cx.has_flag::<AgentV2FeatureFlag>() {
-                                        tool_call.diffs().next().cloned()
-                                    } else {
-                                        None
-                                    };
-                                this.child(
-                                    h_flex()
-                                        .px_1()
-                                        .when_some(diff_for_discard.clone(), |this, _| this.pr_0p5())
-                                        .gap_1()
-                                        .when(is_collapsible, |this| {
-                                            this.child(
-                                            Disclosure::new(("expand-output", entry_ix), is_open)
-                                                .opened_icon(IconName::ChevronUp)
-                                                .closed_icon(IconName::ChevronDown)
-                                                .visible_on_hover(&card_header_id)
-                                                .on_click(cx.listener({
-                                                    let id = tool_call.id.clone();
-                                                    move |this: &mut Self, _, _, cx: &mut Context<Self>| {
-                                                                if is_open {
-                                                                    this
-                                                                        .expanded_tool_calls.remove(&id);
-                                                                } else {
-                                                                    this.expanded_tool_calls.insert(id.clone());
-                                                                }
-                                                            cx.notify();
-                                                    }
-                                                })),
-                                        )
-                                        })
-                                        .when(failed_or_canceled, |this| {
-                                            if is_cancelled_edit && !has_revealed_diff {
-                                                this.child(
-                                                    div()
-                                                        .id(entry_ix)
-                                                        .tooltip(Tooltip::text(
-                                                            "Interrupted Edit",
-                                                        ))
-                                                        .child(
-                                                            Icon::new(IconName::XCircle)
-                                                                .color(Color::Muted)
-                                                                .size(IconSize::Small),
-                                                        ),
-                                                )
-                                            } else if is_cancelled_edit {
-                                                this
-                                            } else {
-                                                this.child(
-                                                    Icon::new(IconName::Close)
-                                                        .color(Color::Error)
-                                                        .size(IconSize::Small),
-                                                )
-                                            }
-                                        })
-                                        .when_some(diff_for_discard, |this, diff| {
-                                            let tool_call_id = tool_call.id.clone();
-                                            let is_discarded = self.discarded_partial_edits.contains(&tool_call_id);
-                                            this.when(!is_discarded, |this| {
-                                                this.child(
-                                                    IconButton::new(
-                                                        ("discard-partial-edit", entry_ix),
-                                                        IconName::Undo,
-                                                    )
-                                                    .icon_size(IconSize::Small)
-                                                    .tooltip(move |_, cx| Tooltip::with_meta(
-                                                        "Discard Interrupted Edit",
-                                                        None,
-                                                        "You can discard this interrupted partial edit and restore the original file content.",
-                                                        cx
-                                                    ))
-                                                    .on_click(cx.listener({
-                                                        let tool_call_id = tool_call_id.clone();
-                                                        move |this, _, _window, cx| {
-                                                            let diff_data = diff.read(cx);
-                                                            let base_text = diff_data.base_text().clone();
-                                                            let buffer = diff_data.buffer().clone();
-                                                            buffer.update(cx, |buffer, cx| {
-                                                                buffer.set_text(base_text.as_ref(), cx);
-                                                            });
-                                                            this.discarded_partial_edits.insert(tool_call_id.clone());
-                                                            cx.notify();
-                                                        }
-                                                    })),
-                                                )
-                                            })
-                                        })
+                            .child(
+                                h_flex()
+                                    .gap_0p5()
+                                    .when(is_collapsible || failed_or_canceled, |this| {
+                                        let diff_for_discard = if has_revealed_diff
+                                            && is_cancelled_edit
+                                            && cx.has_flag::<AgentV2FeatureFlag>()
+                                        {
+                                            tool_call.diffs().next().cloned()
+                                        } else {
+                                            None
+                                        };
 
-                                )
-                            }),
+                                        this.child(
+                                            h_flex()
+                                                .px_1()
+                                                .when_some(diff_for_discard.clone(), |this, _| {
+                                                    this.pr_0p5()
+                                                })
+                                                .gap_1()
+                                                .when(is_collapsible, |this| {
+                                                    this.child(
+                                                        Disclosure::new(
+                                                            ("expand-output", entry_ix),
+                                                            is_open,
+                                                        )
+                                                        .opened_icon(IconName::ChevronUp)
+                                                        .closed_icon(IconName::ChevronDown)
+                                                        .visible_on_hover(&card_header_id)
+                                                        .on_click(cx.listener({
+                                                            let id = tool_call.id.clone();
+                                                            move |this: &mut Self,
+                                                                  _,
+                                                                  _,
+                                                                  cx: &mut Context<Self>| {
+                                                                if is_open {
+                                                                    this.expanded_tool_calls
+                                                                        .remove(&id);
+                                                                } else {
+                                                                    this.expanded_tool_calls
+                                                                        .insert(id.clone());
+                                                                }
+                                                                cx.notify();
+                                                            }
+                                                        })),
+                                                    )
+                                                })
+                                                .when(failed_or_canceled, |this| {
+                                                    if is_cancelled_edit && !has_revealed_diff {
+                                                        this.child(
+                                                            div()
+                                                                .id(entry_ix)
+                                                                .tooltip(Tooltip::text(
+                                                                    "Interrupted Edit",
+                                                                ))
+                                                                .child(
+                                                                    Icon::new(IconName::XCircle)
+                                                                        .color(Color::Muted)
+                                                                        .size(IconSize::Small),
+                                                                ),
+                                                        )
+                                                    } else if is_cancelled_edit {
+                                                        this
+                                                    } else {
+                                                        this.child(
+                                                            Icon::new(IconName::Close)
+                                                                .color(Color::Error)
+                                                                .size(IconSize::Small),
+                                                        )
+                                                    }
+                                                })
+                                                .when_some(diff_for_discard, |this, diff| {
+                                                    let tool_call_id = tool_call.id.clone();
+                                                    let is_discarded = self
+                                                        .discarded_partial_edits
+                                                        .contains(&tool_call_id);
+
+                                                    this.when(!is_discarded, |this| {
+                                                        this.child(
+                                                            IconButton::new(
+                                                                ("discard-partial-edit", entry_ix),
+                                                                IconName::Undo,
+                                                            )
+                                                            .icon_size(IconSize::Small)
+                                                            .tooltip(move |_, cx| {
+                                                                Tooltip::with_meta(
+                                                                    "Discard Interrupted Edit",
+                                                                    None,
+                                                                    "You can discard this interrupted partial edit and restore the original file content.",
+                                                                    cx,
+                                                                )
+                                                            })
+                                                            .on_click(cx.listener({
+                                                                let tool_call_id =
+                                                                    tool_call_id.clone();
+                                                                move |this, _, _window, cx| {
+                                                                    let diff_data = diff.read(cx);
+                                                                    let base_text = diff_data
+                                                                        .base_text()
+                                                                        .clone();
+                                                                    let buffer =
+                                                                        diff_data.buffer().clone();
+                                                                    buffer.update(
+                                                                        cx,
+                                                                        |buffer, cx| {
+                                                                            buffer.set_text(
+                                                                                base_text.as_ref(),
+                                                                                cx,
+                                                                            );
+                                                                        },
+                                                                    );
+                                                                    this.discarded_partial_edits
+                                                                        .insert(
+                                                                            tool_call_id.clone(),
+                                                                        );
+                                                                    cx.notify();
+                                                                }
+                                                            })),
+                                                        )
+                                                    })
+                                                }),
+                                        )
+                                    })
+                                    .when(tool_call_output_focus, |this| {
+                                        this.child(
+                                            Button::new("open-file-button", "Open File")
+                                                .label_size(LabelSize::Small)
+                                                .style(ButtonStyle::OutlinedGhost)
+                                                .key_binding(
+                                                    KeyBinding::for_action(&OpenExcerpts, cx)
+                                                        .map(|s| s.size(rems_from_px(12.))),
+                                                )
+                                                .on_click(|_, window, cx| {
+                                                    window.dispatch_action(
+                                                        Box::new(OpenExcerpts),
+                                                        cx,
+                                                    )
+                                                }),
+                                        )
+                                    }),
+                            )
+
                     )
                 }
             })
@@ -5945,6 +6082,7 @@ impl ThreadView {
                 terminal,
                 tool_call,
                 focus_handle,
+                false,
                 window,
                 cx,
             ),
@@ -6228,6 +6366,15 @@ impl ThreadView {
             .map(|log| log.read(cx).changed_buffers(cx))
             .unwrap_or_default();
 
+        let is_pending_tool_call = thread
+            .as_ref()
+            .and_then(|thread| {
+                self.conversation
+                    .read(cx)
+                    .pending_tool_call(thread.read(cx).session_id(), cx)
+            })
+            .is_some();
+
         let is_expanded = self.expanded_tool_calls.contains(&tool_call.id);
         let files_changed = changed_buffers.len();
         let diff_stats = DiffStats::all_files(&changed_buffers, cx);
@@ -6236,39 +6383,71 @@ impl ThreadView {
             tool_call.status,
             ToolCallStatus::Pending | ToolCallStatus::InProgress
         );
-        let is_canceled_or_failed = matches!(
+
+        let is_failed = matches!(
             tool_call.status,
-            ToolCallStatus::Canceled | ToolCallStatus::Failed | ToolCallStatus::Rejected
+            ToolCallStatus::Failed | ToolCallStatus::Rejected
         );
 
-        let has_title = thread
-            .as_ref()
-            .is_some_and(|t| !t.read(cx).title().is_empty());
-        let has_no_title_or_canceled = !has_title || is_canceled_or_failed;
-
-        let title = thread
-            .as_ref()
-            .map(|t| t.read(cx).title())
-            .unwrap_or_else(|| {
-                if is_canceled_or_failed {
-                    "Subagent Canceled"
-                } else {
-                    "Spawning Subagent…"
+        let is_cancelled = matches!(tool_call.status, ToolCallStatus::Canceled)
+            || tool_call.content.iter().any(|c| match c {
+                ToolCallContent::ContentBlock(ContentBlock::Markdown { markdown }) => {
+                    markdown.read(cx).source() == "User canceled"
                 }
-                .into()
+                _ => false,
             });
 
+        let thread_title = thread
+            .as_ref()
+            .map(|t| t.read(cx).title())
+            .filter(|t| !t.is_empty());
+        let tool_call_label = tool_call.label.read(cx).source().to_string();
+        let has_tool_call_label = !tool_call_label.is_empty();
+
+        let has_title = thread_title.is_some() || has_tool_call_label;
+        let has_no_title_or_canceled = !has_title || is_failed || is_cancelled;
+
+        let title: SharedString = if let Some(thread_title) = thread_title {
+            thread_title
+        } else if !tool_call_label.is_empty() {
+            tool_call_label.into()
+        } else if is_cancelled {
+            "Subagent Canceled".into()
+        } else if is_failed {
+            "Subagent Failed".into()
+        } else {
+            "Spawning Agent…".into()
+        };
+
         let card_header_id = format!("subagent-header-{}", entry_ix);
+        let status_icon = format!("status-icon-{}", entry_ix);
         let diff_stat_id = format!("subagent-diff-{}", entry_ix);
 
         let icon = h_flex().w_4().justify_center().child(if is_running {
             SpinnerLabel::new()
                 .size(LabelSize::Small)
                 .into_any_element()
-        } else if is_canceled_or_failed {
-            Icon::new(IconName::Close)
-                .size(IconSize::Small)
-                .color(Color::Error)
+        } else if is_cancelled {
+            div()
+                .id(status_icon)
+                .child(
+                    Icon::new(IconName::Circle)
+                        .size(IconSize::Small)
+                        .color(Color::Custom(
+                            cx.theme().colors().icon_disabled.opacity(0.5),
+                        )),
+                )
+                .tooltip(Tooltip::text("Subagent Cancelled"))
+                .into_any_element()
+        } else if is_failed {
+            div()
+                .id(status_icon)
+                .child(
+                    Icon::new(IconName::Close)
+                        .size(IconSize::Small)
+                        .color(Color::Error),
+                )
+                .tooltip(Tooltip::text("Subagent Failed"))
                 .into_any_element()
         } else {
             Icon::new(IconName::Check)
@@ -6286,6 +6465,8 @@ impl ThreadView {
         } else {
             "Click to Preview"
         };
+
+        let error_message = self.subagent_error_message(&tool_call.status, tool_call, cx);
 
         v_flex()
             .w_full()
@@ -6347,7 +6528,7 @@ impl ThreadView {
                                         )
                                     }),
                             )
-                            .when(!has_no_title_or_canceled, |this| {
+                            .when(!has_no_title_or_canceled && !is_pending_tool_call, |this| {
                                 this.tooltip(move |_, cx| {
                                     Tooltip::with_meta(
                                         title.to_string(),
@@ -6357,7 +6538,7 @@ impl ThreadView {
                                     )
                                 })
                             })
-                            .when(has_expandable_content, |this| {
+                            .when(has_expandable_content && !is_pending_tool_call, |this| {
                                 this.cursor_pointer()
                                     .hover(|s| s.bg(cx.theme().colors().element_hover))
                                     .child(
@@ -6419,14 +6600,16 @@ impl ThreadView {
                     if let Some((entry_ix, tool_call)) =
                         thread.read(cx).tool_call(&subagent_tool_call_id)
                     {
-                        this.child(thread_view.read(cx).render_any_tool_call(
-                            active_session_id,
-                            entry_ix,
-                            tool_call,
-                            focus_handle,
-                            window,
-                            cx,
-                        ))
+                        this.child(Divider::horizontal().color(DividerColor::Border))
+                            .child(thread_view.read(cx).render_any_tool_call(
+                                active_session_id,
+                                entry_ix,
+                                tool_call,
+                                focus_handle,
+                                true,
+                                window,
+                                cx,
+                            ))
                     } else {
                         this
                     }
@@ -6440,6 +6623,14 @@ impl ThreadView {
                             window,
                             cx,
                         ))
+                        .when_some(error_message, |this, message| {
+                            this.child(
+                                Callout::new()
+                                    .severity(Severity::Error)
+                                    .icon(IconName::XCircle)
+                                    .title(message),
+                            )
+                        })
                         .child(
                             h_flex()
                                 .id(entry_ix)
@@ -6447,8 +6638,8 @@ impl ThreadView {
                                 .w_full()
                                 .justify_center()
                                 .border_t_1()
-                                .when(is_canceled_or_failed, |this| this.border_dashed())
-                                .border_color(cx.theme().colors().border_variant)
+                                .when(is_failed, |this| this.border_dashed())
+                                .border_color(self.tool_card_border_color(cx))
                                 .hover(|s| s.bg(cx.theme().colors().element_hover))
                                 .child(
                                     Icon::new(IconName::Maximize)
@@ -6484,54 +6675,6 @@ impl ThreadView {
     ) -> impl IntoElement {
         const MAX_PREVIEW_ENTRIES: usize = 8;
 
-        let subagent_view = thread_view.read(cx);
-        let session_id = subagent_view.thread.read(cx).session_id().clone();
-
-        let is_canceled_or_failed = matches!(
-            tool_call.status,
-            ToolCallStatus::Canceled | ToolCallStatus::Failed | ToolCallStatus::Rejected
-        );
-
-        let editor_bg = cx.theme().colors().editor_background;
-        let overlay = {
-            div()
-                .absolute()
-                .inset_0()
-                .size_full()
-                .bg(linear_gradient(
-                    180.,
-                    linear_color_stop(editor_bg.opacity(0.5), 0.),
-                    linear_color_stop(editor_bg.opacity(0.), 0.1),
-                ))
-                .block_mouse_except_scroll()
-        };
-
-        let entries = subagent_view.thread.read(cx).entries();
-        let total_entries = entries.len();
-        let start_ix = total_entries.saturating_sub(MAX_PREVIEW_ENTRIES);
-
-        let scroll_handle = self
-            .subagent_scroll_handles
-            .borrow_mut()
-            .entry(session_id.clone())
-            .or_default()
-            .clone();
-        if is_running {
-            scroll_handle.scroll_to_bottom();
-        }
-
-        let rendered_entries: Vec<AnyElement> = entries[start_ix..]
-            .iter()
-            .enumerate()
-            .map(|(i, entry)| {
-                let actual_ix = start_ix + i;
-                subagent_view.render_entry(actual_ix, total_entries + 1, entry, window, cx)
-            })
-            .collect();
-
-        let error_message =
-            self.subagent_error_message(subagent_view, &tool_call.status, tool_call, cx);
-
         let parent_thread = self.thread.read(cx);
         let mut started_subagent_count = 0usize;
         let mut turn_has_our_call = false;
@@ -6556,8 +6699,56 @@ impl ThreadView {
             }
         }
 
+        let subagent_view = thread_view.read(cx);
+        let session_id = subagent_view.thread.read(cx).session_id().clone();
+
+        let is_canceled_or_failed = matches!(
+            tool_call.status,
+            ToolCallStatus::Canceled | ToolCallStatus::Failed | ToolCallStatus::Rejected
+        );
+
+        let editor_bg = cx.theme().colors().editor_background;
+        let overlay = {
+            div()
+                .absolute()
+                .inset_0()
+                .size_full()
+                .bg(linear_gradient(
+                    180.,
+                    linear_color_stop(editor_bg.opacity(0.5), 0.),
+                    linear_color_stop(editor_bg.opacity(0.), 0.1),
+                ))
+                .block_mouse_except_scroll()
+        };
+
+        let entries = subagent_view.thread.read(cx).entries();
+        let total_entries = entries.len();
+        let start_ix = if started_subagent_count > 1 {
+            total_entries.saturating_sub(MAX_PREVIEW_ENTRIES)
+        } else {
+            0
+        };
+
+        let scroll_handle = self
+            .subagent_scroll_handles
+            .borrow_mut()
+            .entry(session_id.clone())
+            .or_default()
+            .clone();
+        if is_running {
+            scroll_handle.scroll_to_bottom();
+        }
+
+        let rendered_entries: Vec<AnyElement> = entries[start_ix..]
+            .iter()
+            .enumerate()
+            .map(|(i, entry)| {
+                let actual_ix = start_ix + i;
+                subagent_view.render_entry(actual_ix, total_entries + 1, entry, window, cx)
+            })
+            .collect();
+
         v_flex()
-            .relative()
             .w_full()
             .border_t_1()
             .when(is_canceled_or_failed, |this| this.border_dashed())
@@ -6565,22 +6756,12 @@ impl ThreadView {
             .overflow_hidden()
             .child(
                 div()
-                    .id(format!("subagent-entries-{}", session_id))
-                    .flex_1()
-                    .min_h_0()
                     .pb_1()
-                    .overflow_hidden()
+                    .min_h_0()
+                    .id(format!("subagent-entries-{}", session_id))
                     .track_scroll(&scroll_handle)
                     .children(rendered_entries),
             )
-            .when_some(error_message, |this, message| {
-                this.child(
-                    Callout::new()
-                        .severity(Severity::Error)
-                        .icon(IconName::XCircle)
-                        .title(message),
-                )
-            })
             .when(started_subagent_count > 1, |this| {
                 this.h_56().child(overlay)
             })
@@ -6589,37 +6770,31 @@ impl ThreadView {
 
     fn subagent_error_message(
         &self,
-        subagent_view: &ThreadView,
         status: &ToolCallStatus,
         tool_call: &ToolCall,
         cx: &App,
     ) -> Option<SharedString> {
-        if matches!(status, ToolCallStatus::Canceled | ToolCallStatus::Rejected) {
-            return None;
-        }
-
-        subagent_view
-            .thread_error
-            .as_ref()
-            .and_then(|e| match e {
-                ThreadError::Refusal => Some("The agent refused to respond to this prompt.".into()),
-                ThreadError::Other { message, .. } => Some(message.clone()),
-                ThreadError::PaymentRequired | ThreadError::AuthenticationRequired(_) => None,
-            })
-            .or_else(|| {
-                tool_call.content.iter().find_map(|content| {
-                    if let ToolCallContent::ContentBlock(block) = content {
-                        if let acp_thread::ContentBlock::Markdown { markdown } = block {
-                            let source = markdown.read(cx).source().to_string();
-                            if !source.is_empty() {
+        if matches!(status, ToolCallStatus::Failed) {
+            tool_call.content.iter().find_map(|content| {
+                if let ToolCallContent::ContentBlock(block) = content {
+                    if let acp_thread::ContentBlock::Markdown { markdown } = block {
+                        let source = markdown.read(cx).source().to_string();
+                        if !source.is_empty() {
+                            if source == "User canceled" {
+                                return None;
+                            } else {
                                 return Some(SharedString::from(source));
                             }
                         }
                     }
-                    None
-                })
+                }
+                None
             })
+        } else {
+            None
+        }
     }
+
     fn render_rules_item(&self, cx: &Context<Self>) -> Option<AnyElement> {
         let project_context = self
             .as_native_thread(cx)?
