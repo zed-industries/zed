@@ -3,12 +3,12 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: unknown
-last_updated: "2026-03-01T18:06:55.334Z"
+last_updated: "2026-03-01T18:30:00.000Z"
 progress:
   total_phases: 4
   completed_phases: 2
   total_plans: 8
-  completed_plans: 5
+  completed_plans: 6
 ---
 
 # Project State
@@ -23,11 +23,11 @@ See: .planning/PROJECT.md (updated 2026-03-01)
 ## Current Position
 
 Phase: 3 of 4 (Core Write and Restore)
-Plan: 1 of 2 in current phase — plan 03-01 complete
-Status: Phase 3 in progress; Plan 03-01 complete
-Last activity: 2026-03-01 — Plan 03-01 complete: write_undo_history with blob_path_for and compute_content_hash implemented
+Plan: 2 of 2 in current phase — plan 03-02 complete; Phase 3 complete
+Status: Phase 3 complete; ready for Phase 4
+Last activity: 2026-03-01 — Plan 03-02 complete: restore_undo_history wired into added_to_workspace and all four deserialize branches
 
-Progress: [██████░░░░] 62%
+Progress: [███████░░░] 75%
 
 ## Performance Metrics
 
@@ -43,6 +43,7 @@ Progress: [██████░░░░] 62%
 | 01-text-layer-api | 2 | 25min | 12min |
 | 02-persistence-schema-and-settings | 2 | ~15min | ~8min |
 | 03-core-write-and-restore P01 | 1 | ~10min | ~10min |
+| 03-core-write-and-restore P02 | 1 | ~15min | ~15min |
 
 **Recent Trend:**
 - Last 5 plans: 20min, 5min, ~7min, ~8min
@@ -82,6 +83,9 @@ Recent decisions affecting current work:
 - [Plan 03-01]: use settings::Settings as _ scoped inside write_undo_history body — avoids polluting module-level imports with a trait-only import
 - [Plan 03-01]: SHA-256 path hashing uses abs_path.as_os_str().as_encoded_bytes() for cross-platform byte-stable hashing
 - [Plan 03-01]: Rope chunk hashing iterates rope.chunks() feeding chunk.as_bytes() — avoids materializing full string
+- [Plan 03-02]: language::Buffer.restore_history delegates to self.text.restore_history — language::Buffer has Deref but not DerefMut to text::Buffer, so mutable text methods must be wrapped
+- [Plan 03-02]: read_with/update_in in spawn_in closures take cx (not &cx) — cx is already &mut AsyncWindowContext
+- [Plan 03-02]: Hash validation returns Ok(()) on None (no singleton) and on mismatch — only Err propagates task failure
 
 ### Pending Todos
 
@@ -95,5 +99,5 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-03-01
-Stopped at: Completed Plan 03-01 (write_undo_history write path); Phase 3 Plan 1 complete — ready for Plan 03-02 (restore path)
+Stopped at: Completed Plan 03-02 (restore_undo_history restore path); Phase 3 complete — ready for Phase 4 (eviction and settings)
 Resume file: None
