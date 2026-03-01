@@ -84,6 +84,37 @@ fn compute_content_hash(rope: &rope::Rope) -> String {
     hex::encode(hasher.finalize())
 }
 
+fn prune_undo_history(workspace_id: WorkspaceId, cx: &App) -> Task<()> {
+    use settings::Settings as _;
+    if !PersistentUndoSettings::get_global(cx).enabled {
+        return Task::ready(());
+    }
+
+    cx.background_spawn(async move {
+        let paths = match DB.get_undo_history_paths(workspace_id) {
+            Ok(paths) => paths,
+            Err(err) => {
+                log::warn!("Failed to query undo history paths for pruning: {err}");
+                return;
+            }
+        };
+
+        for abs_path in paths {
+            if smol::fs::metadata(&abs_path).await.is_err() {
+                DB.delete_undo_history(workspace_id, Arc::from(abs_path.as_path()))
+                    .await
+                    .log_err();
+                let blob_path = blob_path_for(&abs_path);
+                if let Err(err) = smol::fs::remove_file(&blob_path).await {
+                    if err.kind() != std::io::ErrorKind::NotFound {
+                        log::warn!("Failed to remove undo history blob {blob_path:?}: {err}");
+                    }
+                }
+            }
+        }
+    })
+}
+
 impl FollowableItem for Editor {
     fn remote_id(&self) -> Option<ViewId> {
         self.remote_id
@@ -1157,7 +1188,14 @@ impl SerializableItem for Editor {
         _window: &mut Window,
         cx: &mut App,
     ) -> Task<Result<()>> {
-        workspace::delete_unloaded_items(alive_items, workspace_id, "editors", &DB, cx)
+        let editor_cleanup =
+            workspace::delete_unloaded_items(alive_items, workspace_id, "editors", &DB, cx);
+        let prune = prune_undo_history(workspace_id, cx);
+        cx.background_spawn(async move {
+            editor_cleanup.await?;
+            prune.await;
+            Ok(())
+        })
     }
 
     fn deserialize(

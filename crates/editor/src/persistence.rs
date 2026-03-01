@@ -434,6 +434,16 @@ VALUES {placeholders};
         }
     }
 
+    query! {
+        pub fn get_undo_history_paths(
+            workspace_id: WorkspaceId
+        ) -> Result<Vec<PathBuf>> {
+            SELECT abs_path
+            FROM undo_history
+            WHERE workspace_id = ?1
+        }
+    }
+
     pub async fn save_undo_history_meta(
         &self,
         workspace_id: WorkspaceId,
