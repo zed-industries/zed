@@ -112,7 +112,7 @@ struct WorkflowFile {
 
 enum WorkflowError {
     ParseError(anyhow::Error),
-    ValidationError(WorkflowValidationError),
+    ValidationError(Box<WorkflowValidationError>),
 }
 
 struct WorkflowValidationError {
@@ -173,11 +173,11 @@ fn check_workflow(workflow_file_path: PathBuf) -> Result<(), WorkflowError> {
         load_workflow_file(&workflow_file_path).map_err(WorkflowError::ParseError)?;
 
     check_recursive(&Value::Null, &workflow_file.parsed_content).map_err(|errors| {
-        WorkflowError::ValidationError(WorkflowValidationError {
+        WorkflowError::ValidationError(Box::new(WorkflowValidationError {
             file_path: workflow_file_path,
             contents: workflow_file,
             errors,
-        })
+        }))
     })
 }
 
