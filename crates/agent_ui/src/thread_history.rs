@@ -2,7 +2,7 @@ use crate::ConnectionView;
 use crate::{AgentPanel, RemoveHistory, RemoveSelectedThread};
 use acp_thread::{AgentSessionInfo, AgentSessionList, AgentSessionListRequest, SessionListUpdate};
 use agent_client_protocol as acp;
-use chrono::{DateTime, Datelike as _, Local, NaiveDate, TimeDelta, Utc};
+use chrono::{Datelike as _, Local, NaiveDate, TimeDelta, Utc};
 use editor::{Editor, EditorEvent};
 use fuzzy::StringMatchCandidate;
 use gpui::{
@@ -25,20 +25,6 @@ fn thread_title(entry: &AgentSessionInfo) -> &SharedString {
         .as_ref()
         .filter(|title| !title.is_empty())
         .unwrap_or(DEFAULT_TITLE)
-}
-
-fn format_relative_time(timestamp: DateTime<Utc>) -> String {
-    let now = Utc::now();
-    let duration = now.signed_duration_since(timestamp);
-    if duration.num_days() > 0 {
-        format!("{}d", duration.num_days())
-    } else if duration.num_hours() > 0 {
-        format!("{}h ago", duration.num_hours())
-    } else if duration.num_minutes() > 0 {
-        format!("{}m ago", duration.num_minutes())
-    } else {
-        "Just now".to_string()
-    }
 }
 
 pub struct ThreadHistory {
@@ -82,8 +68,6 @@ impl ListItemType {
 
 pub enum ThreadHistoryEvent {
     Open(AgentSessionInfo),
-    DeleteRequested(acp::SessionId),
-    DeleteAllRequested,
 }
 
 impl EventEmitter<ThreadHistoryEvent> for ThreadHistory {}
@@ -394,14 +378,6 @@ impl ThreadHistory {
         }
     }
 
-    pub(crate) fn delete_sessions(&self, cx: &mut App) -> Task<anyhow::Result<()>> {
-        if let Some(session_list) = self.session_list.as_ref() {
-            session_list.delete_sessions(cx)
-        } else {
-            Task::ready(Ok(()))
-        }
-    }
-
     fn add_list_separators(
         &self,
         entries: Vec<AgentSessionInfo>,
@@ -491,15 +467,10 @@ impl ThreadHistory {
             self.selected_index = 0;
             return;
         }
-        let max_iterations = self.visible_items.len();
-        let mut iterations = 0;
-        while iterations < max_iterations
-            && matches!(
-                self.visible_items.get(index),
-                None | Some(ListItemType::BucketSeparator(..))
-            )
-        {
-            iterations += 1;
+        while matches!(
+            self.visible_items.get(index),
+            None | Some(ListItemType::BucketSeparator(..))
+        ) {
             index = match bias {
                 Bias::Left => {
                     if index == 0 {
@@ -586,19 +557,24 @@ impl ThreadHistory {
         let Some(entry) = self.get_history_entry(visible_item_ix) else {
             return;
         };
-        if !self.supports_delete() {
+        let Some(session_list) = self.session_list.as_ref() else {
+            return;
+        };
+        if !session_list.supports_delete() {
             return;
         }
-        cx.emit(ThreadHistoryEvent::DeleteRequested(
-            entry.session_id.clone(),
-        ));
+        let task = session_list.delete_session(&entry.session_id, cx);
+        task.detach_and_log_err(cx);
     }
 
     fn remove_history(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
-        if !self.supports_delete() {
+        let Some(session_list) = self.session_list.as_ref() else {
+            return;
+        };
+        if !session_list.supports_delete() {
             return;
         }
-        cx.emit(ThreadHistoryEvent::DeleteAllRequested);
+        session_list.delete_sessions(cx).detach_and_log_err(cx);
         self.confirming_delete_history = false;
         cx.notify();
     }
@@ -665,7 +641,13 @@ impl ThreadHistory {
         let hovered = Some(ix) == self.hovered_index;
         let entry_time = entry.updated_at;
         let display_text = match (format, entry_time) {
-            (EntryTimeFormat::DateAndTime, Some(entry_time)) => format_relative_time(entry_time),
+            (EntryTimeFormat::DateAndTime, Some(entry_time)) => {
+                let now = Utc::now();
+                let duration = now.signed_duration_since(entry_time);
+                let days = duration.num_days();
+
+                format!("{}d", days)
+            }
             (EntryTimeFormat::TimeOnly, Some(entry_time)) => {
                 format.format_timestamp(entry_time.timestamp(), self.local_timezone)
             }
@@ -688,22 +670,20 @@ impl ThreadHistory {
                     .toggle_state(selected)
                     .spacing(ListItemSpacing::Sparse)
                     .start_slot(
-                        v_flex().w_full().child(
-                            h_flex()
-                                .w_full()
-                                .gap_2()
-                                .justify_between()
-                                .child(
-                                    HighlightedLabel::new(thread_title(entry), highlight_positions)
-                                        .size(LabelSize::Small)
-                                        .truncate(),
-                                )
-                                .child(
-                                    Label::new(display_text)
-                                        .color(Color::Muted)
-                                        .size(LabelSize::XSmall),
-                                ),
-                        ),
+                        h_flex()
+                            .w_full()
+                            .gap_2()
+                            .justify_between()
+                            .child(
+                                HighlightedLabel::new(thread_title(entry), highlight_positions)
+                                    .size(LabelSize::Small)
+                                    .truncate(),
+                            )
+                            .child(
+                                Label::new(display_text)
+                                    .color(Color::Muted)
+                                    .size(LabelSize::XSmall),
+                            ),
                     )
                     .tooltip(move |_, cx| {
                         Tooltip::with_meta(title.clone(), None, full_date.clone(), cx)
@@ -924,26 +904,37 @@ impl RenderOnce for HistoryEntryElement {
         let formatted_time = self
             .entry
             .updated_at
-            .map(format_relative_time)
-            .unwrap_or_else(|| "—".to_string());
+            .map(|timestamp| {
+                let now = chrono::Utc::now();
+                let duration = now.signed_duration_since(timestamp);
+
+                if duration.num_days() > 0 {
+                    format!("{}d", duration.num_days())
+                } else if duration.num_hours() > 0 {
+                    format!("{}h ago", duration.num_hours())
+                } else if duration.num_minutes() > 0 {
+                    format!("{}m ago", duration.num_minutes())
+                } else {
+                    "Just now".to_string()
+                }
+            })
+            .unwrap_or_else(|| "Unknown".to_string());
 
         ListItem::new(id)
             .rounded()
             .toggle_state(self.selected)
             .spacing(ListItemSpacing::Sparse)
             .start_slot(
-                v_flex().w_full().child(
-                    h_flex()
-                        .w_full()
-                        .gap_2()
-                        .justify_between()
-                        .child(Label::new(title).size(LabelSize::Small).truncate())
-                        .child(
-                            Label::new(formatted_time)
-                                .color(Color::Muted)
-                                .size(LabelSize::XSmall),
-                        ),
-                ),
+                h_flex()
+                    .w_full()
+                    .gap_2()
+                    .justify_between()
+                    .child(Label::new(title).size(LabelSize::Small).truncate())
+                    .child(
+                        Label::new(formatted_time)
+                            .color(Color::Muted)
+                            .size(LabelSize::XSmall),
+                    ),
             )
             .on_hover(self.on_hover)
             .end_slot::<IconButton>(if (self.hovered || self.selected) && self.supports_delete {

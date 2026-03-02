@@ -775,17 +775,6 @@ impl AgentPanel {
                 ThreadHistoryEvent::Open(thread) => {
                     this.load_agent_thread(thread.clone(), window, cx);
                 }
-                ThreadHistoryEvent::DeleteRequested(session_id) => {
-                    let session_id = session_id.clone();
-                    this.acp_history
-                        .update(cx, |history, cx| history.delete_session(&session_id, cx))
-                        .detach_and_log_err(cx);
-                }
-                ThreadHistoryEvent::DeleteAllRequested => {
-                    this.acp_history
-                        .update(cx, |history, cx| history.delete_sessions(cx))
-                        .detach_and_log_err(cx);
-                }
             },
         )
         .detach();

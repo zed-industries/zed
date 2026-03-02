@@ -415,12 +415,12 @@ fn update_command_palette_filter(cx: &mut App) {
             if agent_enabled {
                 filter.show_namespace("agent");
                 filter.show_namespace("agents");
+                filter.show_namespace("assistant");
             } else {
                 filter.hide_namespace("agent");
                 filter.hide_namespace("agents");
+                filter.hide_namespace("assistant");
             }
-
-            filter.show_namespace("assistant");
 
             match edit_prediction_provider {
                 EditPredictionProvider::None => {
@@ -581,7 +581,6 @@ mod tests {
             enabled: true,
             button: true,
             dock: DockPosition::Right,
-
             default_width: px(300.),
             default_height: px(600.),
             default_model: None,
@@ -624,6 +623,10 @@ mod tests {
                 !filter.is_hidden(&NewThread),
                 "NewThread should be visible by default"
             );
+            assert!(
+                !filter.is_hidden(&text_thread_editor::CopyCode),
+                "CopyCode should be visible when agent is enabled"
+            );
         });
 
         // Disable agent
@@ -642,6 +645,10 @@ mod tests {
             assert!(
                 filter.is_hidden(&NewThread),
                 "NewThread should be hidden when agent is disabled"
+            );
+            assert!(
+                filter.is_hidden(&text_thread_editor::CopyCode),
+                "CopyCode should be hidden when agent is disabled"
             );
         });
 
