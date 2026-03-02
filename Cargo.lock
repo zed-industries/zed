@@ -22070,7 +22070,7 @@ dependencies = [
 
 [[package]]
 name = "zed_extension_api"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -22102,7 +22102,7 @@ dependencies = [
 name = "zed_test_extension"
 version = "0.1.0"
 dependencies = [
- "zed_extension_api 0.8.0",
+ "zed_extension_api 0.9.0",
 ]
 
 [[package]]
