@@ -45,6 +45,7 @@ impl ThreadFeedbackState {
             }
         }
         let session_id = thread.read(cx).session_id().clone();
+        let parent_session_id = thread.read(cx).parent_session_id().cloned();
         let agent_telemetry_id = thread.read(cx).connection().telemetry_id();
         let task = telemetry.thread_data(&session_id, cx);
         let rating = match feedback {
@@ -60,6 +61,7 @@ impl ThreadFeedbackState {
                     organization_id: organization.map(|organization| organization.id.clone()),
                     agent: agent_telemetry_id.to_string(),
                     session_id: session_id.to_string(),
+                    parent_session_id: parent_session_id.map(|id| id.to_string()),
                     rating: rating.to_string(),
                     thread,
                 })
@@ -804,6 +806,7 @@ impl ThreadView {
         cx: &mut Context<Self>,
     ) {
         let session_id = self.thread.read(cx).session_id().clone();
+        let parent_session_id = self.thread.read(cx).parent_session_id().cloned();
         let agent_telemetry_id = self.thread.read(cx).connection().telemetry_id();
         let thread = self.thread.downgrade();
 
@@ -858,6 +861,7 @@ impl ThreadView {
                     "Agent Message Sent",
                     agent = agent_telemetry_id,
                     session = session_id,
+                    parent_session_id = parent_session_id.as_ref().map(|id| id.to_string()),
                     model = model_id,
                     mode = mode_id
                 );
@@ -877,6 +881,7 @@ impl ThreadView {
                 "Agent Turn Completed",
                 agent = agent_telemetry_id,
                 session = session_id,
+                parent_session_id = parent_session_id.as_ref().map(|id| id.to_string()),
                 model = model_id,
                 mode = mode_id,
                 status,
@@ -985,11 +990,17 @@ impl ThreadView {
 
         let agent_telemetry_id = self.thread.read(cx).connection().telemetry_id();
         let session_id = self.thread.read(cx).session_id().clone();
+        let parent_session_id = self
+            .thread
+            .read(cx)
+            .parent_session_id()
+            .map(|id| id.to_string());
 
         telemetry::event!(
             "Agent Panel Error Shown",
             agent = agent_telemetry_id,
             session_id = session_id,
+            parent_session_id = parent_session_id,
             kind = error_kind,
             acp_error_code = acp_error_code,
             message = message,
