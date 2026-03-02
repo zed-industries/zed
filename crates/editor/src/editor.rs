@@ -9893,7 +9893,7 @@ impl Editor {
                 bounds: *text_bounds,
             }),
             |window| {
-                window.defer_draw(element, origin, 1);
+                window.defer_draw(element, origin, 1, Some(window.content_mask()));
             },
         );
 
