@@ -1713,6 +1713,7 @@ impl AcpThread {
 
     pub fn resolve_locations(&mut self, id: acp::ToolCallId, cx: &mut Context<Self>) {
         let project = self.project.clone();
+        let should_update_agent_location = self.parent_session_id.is_none();
         let Some((_, tool_call)) = self.tool_call_mut(&id) else {
             return;
         };
@@ -1748,7 +1749,7 @@ impl AcpThread {
                         } else {
                             false
                         };
-                        if !should_ignore {
+                        if !should_ignore && should_update_agent_location {
                             project.set_agent_location(Some(location.into()), cx);
                         }
                     });
@@ -1979,8 +1980,10 @@ impl AcpThread {
                 .await?;
 
             this.update(cx, |this, cx| {
-                this.project
-                    .update(cx, |project, cx| project.set_agent_location(None, cx));
+                if this.parent_session_id.is_none() {
+                    this.project
+                        .update(cx, |project, cx| project.set_agent_location(None, cx));
+                }
                 let Ok(response) = response else {
                     // tx dropped, just return
                     return Ok(None);
@@ -2252,6 +2255,7 @@ impl AcpThread {
         let limit = limit.unwrap_or(u32::MAX);
         let project = self.project.clone();
         let action_log = self.action_log.clone();
+        let should_update_agent_location = self.parent_session_id.is_none();
         cx.spawn(async move |this, cx| {
             let load = project.update(cx, |project, cx| {
                 let path = project
@@ -2302,15 +2306,17 @@ impl AcpThread {
             let start = snapshot.anchor_before(start_position);
             let end = snapshot.anchor_before(Point::new(line.saturating_add(limit), 0));
 
-            project.update(cx, |project, cx| {
-                project.set_agent_location(
-                    Some(AgentLocation {
-                        buffer: buffer.downgrade(),
-                        position: start,
-                    }),
-                    cx,
-                );
-            });
+            if should_update_agent_location {
+                project.update(cx, |project, cx| {
+                    project.set_agent_location(
+                        Some(AgentLocation {
+                            buffer: buffer.downgrade(),
+                            position: start,
+                        }),
+                        cx,
+                    );
+                });
+            }
 
             Ok(snapshot.text_for_range(start..end).collect::<String>())
         })
@@ -2324,6 +2330,7 @@ impl AcpThread {
     ) -> Task<Result<()>> {
         let project = self.project.clone();
         let action_log = self.action_log.clone();
+        let should_update_agent_location = self.parent_session_id.is_none();
         cx.spawn(async move |this, cx| {
             let load = project.update(cx, |project, cx| {
                 let path = project
@@ -2351,18 +2358,20 @@ impl AcpThread {
                 })
                 .await;
 
-            project.update(cx, |project, cx| {
-                project.set_agent_location(
-                    Some(AgentLocation {
-                        buffer: buffer.downgrade(),
-                        position: edits
-                            .last()
-                            .map(|(range, _)| range.end)
-                            .unwrap_or(Anchor::min_for_buffer(buffer.read(cx).remote_id())),
-                    }),
-                    cx,
-                );
-            });
+            if should_update_agent_location {
+                project.update(cx, |project, cx| {
+                    project.set_agent_location(
+                        Some(AgentLocation {
+                            buffer: buffer.downgrade(),
+                            position: edits
+                                .last()
+                                .map(|(range, _)| range.end)
+                                .unwrap_or(Anchor::min_for_buffer(buffer.read(cx).remote_id())),
+                        }),
+                        cx,
+                    );
+                });
+            }
 
             let format_on_save = cx.update(|cx| {
                 action_log.update(cx, |action_log, cx| {
