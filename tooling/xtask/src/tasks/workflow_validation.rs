@@ -59,16 +59,17 @@ pub fn validate(_: WorkflowValidationArgs) -> Result<()> {
         let file_errors = file_errors
             .into_iter()
             .map(|file_error| {
+                let raw_content = &file_error.contents.raw_content;
                 let ranges = file_error.errors.into_iter().flat_map(|error| {
-                    let offset_in_content = file_error
-                        .contents
-                        .raw_content
-                        .find(error.command.lines().next().unwrap())
-                        .unwrap_or_default();
+                    error
+                        .patterns
+                        .into_iter()
+                        .map(move |(line, pattern_range)| {
+                            let offset_in_content = raw_content.find(&line).unwrap_or_default();
 
-                    error.patterns.into_iter().map(move |range| {
-                        range.start + offset_in_content..range.end + offset_in_content
-                    })
+                            pattern_range.start + offset_in_content
+                                ..pattern_range.end + offset_in_content
+                        })
                 });
 
                 Error {
