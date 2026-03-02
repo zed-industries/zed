@@ -536,9 +536,7 @@ impl ActionLog {
     }
 
     pub fn will_delete_buffer(&mut self, buffer: Entity<Buffer>, cx: &mut Context<Self>) {
-        if let Some(linked_action_log) = &mut self.linked_action_log {
-            linked_action_log.update(cx, |log, cx| log.will_delete_buffer(buffer.clone(), cx));
-        }
+        let has_linked_action_log = self.linked_action_log.is_some();
         let tracked_buffer = self.track_buffer_internal(buffer.clone(), false, cx);
         match tracked_buffer.status {
             TrackedBufferStatus::Created { .. } => {
@@ -546,12 +544,24 @@ impl ActionLog {
                 cx.notify();
             }
             TrackedBufferStatus::Modified => {
-                buffer.update(cx, |buffer, cx| buffer.set_text("", cx));
                 tracked_buffer.status = TrackedBufferStatus::Deleted;
-                tracked_buffer.schedule_diff_update(ChangeAuthor::Agent, cx);
+                if !has_linked_action_log {
+                    buffer.update(cx, |buffer, cx| buffer.set_text("", cx));
+                    tracked_buffer.schedule_diff_update(ChangeAuthor::Agent, cx);
+                }
             }
+
             TrackedBufferStatus::Deleted => {}
         }
+
+        if let Some(linked_action_log) = &mut self.linked_action_log {
+            linked_action_log.update(cx, |log, cx| log.will_delete_buffer(buffer.clone(), cx));
+        }
+
+        if has_linked_action_log && let Some(tracked_buffer) = self.tracked_buffers.get(&buffer) {
+            tracked_buffer.schedule_diff_update(ChangeAuthor::Agent, cx);
+        }
+
         cx.notify();
     }
 
