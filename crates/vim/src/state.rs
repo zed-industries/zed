@@ -38,6 +38,9 @@ use util::rel_path::RelPath;
 use workspace::searchable::Direction;
 use workspace::{MultiWorkspace, Workspace, WorkspaceDb, WorkspaceId};
 
+/// Key used to identify Vim's command palette interceptor.
+struct VimCommandInterceptorKey;
+
 #[derive(Clone, Copy, Default, Debug, PartialEq, Serialize, Deserialize)]
 pub enum Mode {
     #[default]
@@ -727,7 +730,7 @@ impl VimGlobals {
                 CommandPaletteFilter::update_global(cx, |filter, _| {
                     filter.show_namespace(Vim::NAMESPACE);
                 });
-                GlobalCommandPaletteInterceptor::set(cx, command_interceptor);
+                GlobalCommandPaletteInterceptor::set::<VimCommandInterceptorKey>(cx, command_interceptor);
                 for window in cx.windows() {
                     if let Some(multi_workspace) = window.downcast::<MultiWorkspace>() {
                         multi_workspace
@@ -746,7 +749,7 @@ impl VimGlobals {
             } else {
                 KeyBinding::set_vim_mode(cx, false);
                 *Vim::globals(cx) = VimGlobals::default();
-                GlobalCommandPaletteInterceptor::clear(cx);
+                GlobalCommandPaletteInterceptor::clear::<VimCommandInterceptorKey>(cx);
                 CommandPaletteFilter::update_global(cx, |filter, _| {
                     filter.hide_namespace(Vim::NAMESPACE);
                 });

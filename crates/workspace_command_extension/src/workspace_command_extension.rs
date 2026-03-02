@@ -26,6 +26,9 @@ use serde::Deserialize;
 use ui::{Label, LabelCommon, ListItem, ListItemSpacing, Toggleable};
 use workspace::{OpenOptions, Workspace};
 
+/// Key used to identify the workspace command extension's command palette interceptor.
+struct WorkspaceCommandInterceptorKey;
+
 /// Initializes workspace command extension support.
 pub fn init(cx: &mut App) {
     let proxy = ExtensionHostProxy::default_global(cx);
@@ -40,7 +43,7 @@ pub fn init(cx: &mut App) {
     // never emitted by window.available_actions(), so we use the interceptor
     // to surface each command by its human-readable name.
     let registry_for_interceptor = registry.clone();
-    GlobalCommandPaletteInterceptor::set(cx, move |query, _workspace, _cx| {
+    GlobalCommandPaletteInterceptor::set::<WorkspaceCommandInterceptorKey>(cx, move |query, _workspace, _cx| {
         let entries = registry_for_interceptor.palette_entries(query);
         Task::ready(CommandInterceptResult {
             results: entries,
@@ -330,17 +333,48 @@ impl WorkspaceCommandRegistry {
     }
 }
 
-/// Returns the byte positions in `text` where `query` characters appear
-/// (case-insensitive substring match).
+/// Returns the byte positions in the *original* `text` where matched characters
+/// begin (case-insensitive substring match, `query_lower` must already be
+/// lower-case).
+///
+/// Each returned value is a char-boundary byte offset into `text`, suitable for
+/// use with [`ui::HighlightedLabel`]. Positions are computed by walking `text`
+/// and its lowercased form in parallel so that characters whose lower-case form
+/// changes the UTF-8 byte length (e.g. `İ` → `i̇`) are mapped back to the
+/// correct boundary in the original string.
 fn match_positions(text: &str, query_lower: &str) -> Vec<usize> {
     if query_lower.is_empty() {
         return vec![];
     }
     let text_lower = text.to_lowercase();
-    match text_lower.find(query_lower) {
-        Some(start) => (start..start + query_lower.len()).collect(),
-        None => vec![],
+    let Some(lower_match_start) = text_lower.find(query_lower) else {
+        return vec![];
+    };
+    let lower_match_end = lower_match_start + query_lower.len();
+
+    let mut orig_offset = 0usize;
+    let mut lower_offset = 0usize;
+    let mut positions = Vec::new();
+
+    for ch in text.chars() {
+        let orig_char_len = ch.len_utf8();
+        let lower_char_len: usize = ch.to_lowercase().map(|c| c.len_utf8()).sum();
+
+        // Include this char's original byte position if its lowercase form
+        // overlaps the matched range in `text_lower`.
+        if lower_offset < lower_match_end && lower_offset + lower_char_len > lower_match_start {
+            positions.push(orig_offset);
+        }
+
+        orig_offset += orig_char_len;
+        lower_offset += lower_char_len;
+
+        if lower_offset >= lower_match_end {
+            break;
+        }
     }
+
+    positions
 }
 
 // ─── Proxy ───────────────────────────────────────────────────────────────────

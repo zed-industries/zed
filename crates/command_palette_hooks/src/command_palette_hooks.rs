@@ -113,41 +113,93 @@ pub struct CommandInterceptResult {
     pub exclusive: bool,
 }
 
-/// An interceptor for the command palette.
-#[derive(Clone)]
-pub struct GlobalCommandPaletteInterceptor(
-    Rc<dyn Fn(&str, WeakEntity<Workspace>, &mut App) -> Task<CommandInterceptResult>>,
-);
+type InterceptorFn =
+    Rc<dyn Fn(&str, WeakEntity<Workspace>, &mut App) -> Task<CommandInterceptResult>>;
 
-impl Global for GlobalCommandPaletteInterceptor {}
+/// Holds all registered command palette interceptors, keyed by [`TypeId`].
+///
+/// Multiple interceptors compose: their results are merged in registration order.
+#[derive(Default)]
+struct GlobalCommandPaletteInterceptors {
+    interceptors: Vec<(TypeId, InterceptorFn)>,
+}
+
+impl Global for GlobalCommandPaletteInterceptors {}
+
+/// Namespace for registering and invoking command palette interceptors.
+///
+/// Multiple interceptors can be registered simultaneously using different key
+/// types `K`. Their results are merged when the command palette queries them,
+/// so registering a new interceptor never silently discards an existing one.
+pub struct GlobalCommandPaletteInterceptor;
 
 impl GlobalCommandPaletteInterceptor {
-    /// Sets the global interceptor.
+    /// Registers (or replaces) the interceptor associated with key `K`.
     ///
-    /// This will override the previous interceptor, if it exists.
-    pub fn set(
+    /// If no interceptor for `K` exists yet it is appended; otherwise the
+    /// existing entry for `K` is updated in place. Interceptors registered
+    /// under different keys are unaffected and will continue to run.
+    pub fn set<K: 'static>(
         cx: &mut App,
         interceptor: impl Fn(&str, WeakEntity<Workspace>, &mut App) -> Task<CommandInterceptResult>
         + 'static,
     ) {
-        cx.set_global(Self(Rc::new(interceptor)));
-    }
-
-    /// Clears the global interceptor.
-    pub fn clear(cx: &mut App) {
-        if cx.has_global::<Self>() {
-            cx.remove_global::<Self>();
+        let key = TypeId::of::<K>();
+        let handler: InterceptorFn = Rc::new(interceptor);
+        let global = cx.default_global::<GlobalCommandPaletteInterceptors>();
+        if let Some(entry) = global.interceptors.iter_mut().find(|(id, _)| *id == key) {
+            entry.1 = handler;
+        } else {
+            global.interceptors.push((key, handler));
         }
     }
 
-    /// Intercepts the given query from the command palette.
+    /// Removes the interceptor registered under key `K`, if any.
+    ///
+    /// Interceptors registered under other keys are unaffected.
+    pub fn clear<K: 'static>(cx: &mut App) {
+        let key = TypeId::of::<K>();
+        if cx.has_global::<GlobalCommandPaletteInterceptors>() {
+            cx.global_mut::<GlobalCommandPaletteInterceptors>()
+                .interceptors
+                .retain(|(id, _)| *id != key);
+        }
+    }
+
+    /// Runs all registered interceptors against `query` and merges their results.
+    ///
+    /// Returns `None` when no interceptors are registered.
     pub fn intercept(
         query: &str,
         workspace: WeakEntity<Workspace>,
         cx: &mut App,
     ) -> Option<Task<CommandInterceptResult>> {
-        let interceptor = cx.try_global::<Self>()?;
-        let handler = interceptor.0.clone();
-        Some(handler(query, workspace, cx))
+        let handlers: Vec<InterceptorFn> = cx
+            .try_global::<GlobalCommandPaletteInterceptors>()?
+            .interceptors
+            .iter()
+            .map(|(_, handler)| handler.clone())
+            .collect();
+
+        if handlers.is_empty() {
+            return None;
+        }
+
+        let tasks: Vec<Task<CommandInterceptResult>> = handlers
+            .iter()
+            .map(|handler| handler(query, workspace.clone(), cx))
+            .collect();
+
+        Some(cx.foreground_executor().spawn(async move {
+            let mut merged = CommandInterceptResult::default();
+            for task in tasks {
+                let result = task.await;
+                merged.results.extend(result.results);
+                if result.exclusive {
+                    merged.exclusive = true;
+                }
+            }
+            merged
+        }))
     }
 }
