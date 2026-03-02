@@ -173,6 +173,8 @@ pub struct EditPredictionModelInput {
     trigger: PredictEditsRequestTrigger,
     diagnostic_search_range: Range<Point>,
     debug_tx: Option<mpsc::UnboundedSender<DebugEvent>>,
+    can_collect_data: bool,
+    is_open_source: bool,
     pub user_actions: Vec<UserActionRecord>,
 }
 
@@ -2058,7 +2060,7 @@ impl EditPredictionStore {
         let stored_events = project_state.events(cx);
         let has_events = !stored_events.is_empty();
         let events: Vec<Arc<zeta_prompt::Event>> =
-            stored_events.into_iter().map(|e| e.event).collect();
+            stored_events.iter().map(|e| e.event.clone()).collect();
         let debug_tx = project_state.debug_tx.clone();
 
         let snapshot = active_buffer.read(cx).snapshot();
@@ -2092,9 +2094,23 @@ impl EditPredictionStore {
 
         let related_files = self.context_for_project(&project, cx);
 
+        let is_open_source = snapshot
+            .file()
+            .map_or(false, |file| self.is_file_open_source(&project, file, cx))
+            && events.iter().all(|event| event.in_open_source_repo())
+            && related_files.iter().all(|file| file.in_open_source_repo);
+
+        let can_collect_data = !cfg!(test)
+            && is_open_source
+            && self.is_data_collection_enabled(cx)
+            && matches!(
+                self.edit_prediction_model,
+                EditPredictionModel::Zeta1 | EditPredictionModel::Zeta2
+            );
+
         let inputs = EditPredictionModelInput {
             project: project.clone(),
-            buffer: active_buffer,
+            buffer: active_buffer.clone(),
             snapshot: snapshot,
             position,
             events,
@@ -2104,7 +2120,22 @@ impl EditPredictionStore {
             diagnostic_search_range: diagnostic_search_range,
             debug_tx,
             user_actions,
+            can_collect_data,
+            is_open_source,
         };
+
+        if can_collect_data && rand::random_ratio(1, 1000) {
+            if let Some(task) = capture_example(
+                project.clone(),
+                active_buffer,
+                position,
+                stored_events,
+                false,
+                cx,
+            ) {
+                task.detach();
+            }
+        }
 
         let task = match self.edit_prediction_model {
             EditPredictionModel::Zeta1 => zeta::request_prediction_with_zeta(

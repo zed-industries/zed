@@ -36,12 +36,18 @@ pub struct ExcerptRanges {
     pub editable_180: Range<usize>,
     /// Editable region computed with a 350-token budget.
     pub editable_350: Range<usize>,
+    /// Editable region computed with a 350-token budget.
+    pub editable_512: Option<Range<usize>>,
     /// Context boundary when using editable_150 with 350 tokens of additional context.
     pub editable_150_context_350: Range<usize>,
     /// Context boundary when using editable_180 with 350 tokens of additional context.
     pub editable_180_context_350: Range<usize>,
     /// Context boundary when using editable_350 with 150 tokens of additional context.
     pub editable_350_context_150: Range<usize>,
+    pub editable_350_context_512: Option<Range<usize>>,
+    pub editable_350_context_1024: Option<Range<usize>>,
+    pub context_4096: Option<Range<usize>>,
+    pub context_8192: Option<Range<usize>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Hash, Serialize, Deserialize)]
