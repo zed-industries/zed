@@ -917,12 +917,16 @@ impl Thread {
         let context_server_registry = parent_thread.read(cx).context_server_registry.clone();
         let templates = parent_thread.read(cx).templates.clone();
         let model = parent_thread.read(cx).model().cloned();
-        let mut thread = Self::new(
+        let parent_action_log = parent_thread.read(cx).action_log().clone();
+        let action_log =
+            cx.new(|_cx| ActionLog::new(project.clone()).with_linked_action_log(parent_action_log));
+        let mut thread = Self::new_internal(
             project,
             project_context,
             context_server_registry,
             templates,
             model,
+            action_log,
             cx,
         );
         thread.subagent_context = Some(SubagentContext {
@@ -940,6 +944,26 @@ impl Thread {
         model: Option<Arc<dyn LanguageModel>>,
         cx: &mut Context<Self>,
     ) -> Self {
+        Self::new_internal(
+            project.clone(),
+            project_context,
+            context_server_registry,
+            templates,
+            model,
+            cx.new(|_cx| ActionLog::new(project)),
+            cx,
+        )
+    }
+
+    fn new_internal(
+        project: Entity<Project>,
+        project_context: Entity<ProjectContext>,
+        context_server_registry: Entity<ContextServerRegistry>,
+        templates: Arc<Templates>,
+        model: Option<Arc<dyn LanguageModel>>,
+        action_log: Entity<ActionLog>,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let settings = AgentSettings::get_global(cx);
         let profile_id = settings.default_profile.clone();
         let enable_thinking = settings
@@ -950,7 +974,6 @@ impl Thread {
             .default_model
             .as_ref()
             .and_then(|model| model.effort.clone());
-        let action_log = cx.new(|_cx| ActionLog::new(project.clone()));
         let (prompt_capabilities_tx, prompt_capabilities_rx) =
             watch::channel(Self::prompt_capabilities(model.as_deref()));
         Self {
