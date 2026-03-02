@@ -8,9 +8,7 @@ use crate::{
 };
 use acp_thread::{MentionUri, UserMessageId};
 use action_log::ActionLog;
-use feature_flags::{
-    FeatureFlagAppExt as _, StreamingEditFileToolFeatureFlag, SubagentsFeatureFlag,
-};
+use feature_flags::{FeatureFlagAppExt as _, StreamingEditFileToolFeatureFlag};
 
 use agent_client_protocol as acp;
 use agent_settings::{
@@ -1387,7 +1385,7 @@ impl Thread {
         self.add_tool(TerminalTool::new(self.project.clone(), environment.clone()));
         self.add_tool(WebSearchTool);
 
-        if cx.has_flag::<SubagentsFeatureFlag>() && self.depth() < MAX_SUBAGENT_DEPTH {
+        if self.depth() < MAX_SUBAGENT_DEPTH {
             self.add_tool(SpawnAgentTool::new(environment));
         }
     }
@@ -1739,6 +1737,9 @@ impl Thread {
             telemetry::event!(
                 "Agent Thread Completion",
                 thread_id = this.read_with(cx, |this, _| this.id.to_string())?,
+                parent_thread_id = this.read_with(cx, |this, _| this
+                    .parent_thread_id()
+                    .map(|id| id.to_string()))?,
                 prompt_id = this.read_with(cx, |this, _| this.prompt_id.to_string())?,
                 model = model.telemetry_id(),
                 model_provider = model.provider_id().to_string(),
@@ -1997,6 +1998,7 @@ impl Thread {
                 telemetry::event!(
                     "Agent Thread Completion Usage Updated",
                     thread_id = self.id.to_string(),
+                    parent_thread_id = self.parent_thread_id().map(|id| id.to_string()),
                     prompt_id = self.prompt_id.to_string(),
                     model = self.model.as_ref().map(|m| m.telemetry_id()),
                     model_provider = self.model.as_ref().map(|m| m.provider_id().to_string()),
@@ -2388,7 +2390,12 @@ impl Thread {
                 anyhow::Ok(())
             };
 
-            if generate.await.context("failed to generate title").is_ok() {
+            if generate
+                .await
+                .context("failed to generate thread title")
+                .log_err()
+                .is_some()
+            {
                 _ = this.update(cx, |this, cx| this.set_title(title.into(), cx));
             }
             _ = this.update(cx, |this, _| this.pending_title_generation = None);

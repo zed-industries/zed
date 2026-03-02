@@ -1326,16 +1326,14 @@ impl GitRepository for RealGitRepository {
                     if path.is_empty() {
                         bail!("empty path has no index text");
                     }
-                    let entry = index
-                        .get_path(path.as_std_path(), STAGE_NORMAL)
-                        .with_context(|| format!("looking up {path:?} in index"))?;
-                    let oid = if entry.mode != GIT_MODE_SYMLINK {
-                        entry.id
-                    } else {
+                    let Some(entry) = index.get_path(path.as_std_path(), STAGE_NORMAL) else {
                         return Ok(None);
                     };
+                    if entry.mode == GIT_MODE_SYMLINK {
+                        return Ok(None);
+                    }
 
-                    let content = repo.find_blob(oid)?.content().to_owned();
+                    let content = repo.find_blob(entry.id)?.content().to_owned();
                     Ok(String::from_utf8(content).ok())
                 }
 
@@ -1353,16 +1351,15 @@ impl GitRepository for RealGitRepository {
             .spawn(async move {
                 fn logic(repo: &git2::Repository, path: &RepoPath) -> Result<Option<String>> {
                     let head = repo.head()?.peel_to_tree()?;
+                    // git2 unwraps internally on empty paths or `.`
                     if path.is_empty() {
                         return Err(anyhow!("empty path has no committed text"));
                     }
-                    // git2 unwraps internally on empty paths or `.`
-                    let entry = head.get_path(path.as_std_path())?;
+                    let Some(entry) = head.get_path(path.as_std_path()).ok() else {
+                        return Ok(None);
+                    };
                     if entry.filemode() == i32::from(git2::FileMode::Link) {
-                        bail!(
-                            "symlink has no
-                committed text"
-                        );
+                        return Ok(None);
                     }
                     let content = repo.find_blob(entry.id())?.content().to_owned();
                     Ok(String::from_utf8(content).ok())
