@@ -4294,7 +4294,6 @@ async fn test_subagent_tool_call_end_to_end(cx: &mut TestAppContext) {
 
             subagent task response
 
-
             ## Assistant
 
             Response
