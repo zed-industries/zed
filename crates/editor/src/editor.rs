@@ -15397,7 +15397,7 @@ impl Editor {
             .into_iter()
             .map(|selection| selection.start..selection.end)
             .collect::<Vec<_>>();
-        self.unfold_ranges(&selections, true, true, cx);
+        self.unfold_ranges(&selections, true, false, cx);
 
         let mut new_selection_ranges = Vec::new();
         {
@@ -15439,7 +15439,7 @@ impl Editor {
                 }
             }
         }
-        self.change_selections(Default::default(), window, cx, |s| {
+        self.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
             s.select_ranges(new_selection_ranges);
         });
     }
