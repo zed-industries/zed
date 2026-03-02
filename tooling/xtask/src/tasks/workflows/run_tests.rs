@@ -6,7 +6,10 @@ use indexmap::IndexMap;
 use indoc::formatdoc;
 
 use crate::tasks::workflows::{
-    steps::{CommonJobConditions, repository_owner_guard_expression, use_clang},
+    steps::{
+        CommonJobConditions, cache_rust_dependencies_namespace, repository_owner_guard_expression,
+        use_clang,
+    },
     vars::{self, PathCondition},
 };
 
@@ -689,6 +692,7 @@ pub(crate) fn check_scripts() -> NamedJob {
             .add_step(run_shellcheck())
             .add_step(download_actionlint().id("get_actionlint"))
             .add_step(run_actionlint())
+            .add_step(cache_rust_dependencies_namespace())
             .add_step(check_xtask_workflows())
             .add_step(check_workflows()),
     )

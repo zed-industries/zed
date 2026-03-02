@@ -260,6 +260,11 @@ jobs:
       run: '"$ACTIONLINT_BIN" -color'
       env:
         ACTIONLINT_BIN: ${{ steps.get_actionlint.outputs.executable }}
+    - name: steps::cache_rust_dependencies_namespace
+      uses: namespacelabs/nscloud-cache-action@v1
+      with:
+        cache: rust
+        path: ~/.rustup
     - name: run_tests::check_scripts::check_xtask_workflows
       run: |
         cargo xtask workflows
