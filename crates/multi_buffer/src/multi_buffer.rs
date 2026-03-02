@@ -6731,18 +6731,22 @@ impl MultiBufferSnapshot {
         include_local: bool,
     ) -> impl 'a + Iterator<Item = (ReplicaId, bool, CursorShape, Selection<Anchor>)> {
         let mut cursor = self.excerpts.cursor::<ExcerptSummary>(());
-        let start_locator = self.excerpt_locator_for_id(range.start.excerpt_id);
-        let end_locator = self.excerpt_locator_for_id(range.end.excerpt_id);
-        cursor.seek(start_locator, Bias::Left);
+        let start_target = self.anchor_seek_target(range.start);
+        let end_target = self.anchor_seek_target(range.end);
+        cursor.seek(&start_target, Bias::Left);
         cursor
-            .take_while(move |excerpt| excerpt.locator <= *end_locator)
+            .take_while(move |excerpt| end_target.cmp_excerpt(&excerpt).is_ge())
             .flat_map(move |excerpt| {
                 let mut query_range = excerpt.range.context.start..excerpt.range.context.end;
-                if excerpt.id == range.start.excerpt_id {
-                    query_range.start = range.start.text_anchor;
+                if excerpt.contains(&range.start)
+                    && let Some((_, text_anchor, _)) = range.start.text_anchor()
+                {
+                    query_range.start = text_anchor;
                 }
-                if excerpt.id == range.end.excerpt_id {
-                    query_range.end = range.end.text_anchor;
+                if excerpt.contains(&range.end)
+                    && let Some((_, text_anchor, _)) = range.end.text_anchor()
+                {
+                    query_range.end = text_anchor;
                 }
 
                 excerpt
@@ -6750,8 +6754,8 @@ impl MultiBufferSnapshot {
                     .selections_in_range(query_range, include_local)
                     .flat_map(move |(replica_id, line_mode, cursor_shape, selections)| {
                         selections.map(move |selection| {
-                            let mut start = Anchor::text(excerpt.id, selection.start);
-                            let mut end = Anchor::text(excerpt.id, selection.end);
+                            let mut start = Anchor::text(excerpt.path_key_index, selection.start);
+                            let mut end = Anchor::text(excerpt.path_key_index, selection.end);
                             if range.start.cmp(&start, self).is_gt() {
                                 start = range.start;
                             }
@@ -7329,7 +7333,9 @@ impl Excerpt {
         let Some((path, text_anchor, _)) = anchor.text_anchor() else {
             return false;
         };
-        self.path_key_index == path && self.range.contains(&text_anchor, &self.buffer)
+        self.path_key_index == path
+            && Some(self.buffer.remote_id()) == text_anchor.buffer_id
+            && self.range.contains(&text_anchor, &self.buffer)
     }
 
     /// The [`Excerpt`]'s start offset in its [`Buffer`]
@@ -7614,6 +7620,12 @@ enum AnchorSeekTarget {
         // None when the buffer no longer exists in the multibuffer
         snapshot: Option<BufferSnapshot>,
     },
+}
+
+impl AnchorSeekTarget {
+    fn cmp_excerpt(&self, excerpt: &Excerpt) -> cmp::Ordering {
+        sum_tree::SeekTarget::cmp(self, &sum_tree::Item::summary(excerpt, ()), ())
+    }
 }
 
 impl sum_tree::SeekTarget<'_, ExcerptSummary, ExcerptSummary> for AnchorSeekTarget {
