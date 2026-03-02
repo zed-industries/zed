@@ -9,7 +9,7 @@ use gpui::{
     App, Entity, EventEmitter, FocusHandle, Focusable, ScrollStrategy, Task,
     UniformListScrollHandle, WeakEntity, Window, uniform_list,
 };
-use std::{fmt::Display, ops::Range, rc::Rc};
+use std::{fmt::Display, ops::Range, path::PathBuf, rc::Rc};
 use text::Bias;
 use time::{OffsetDateTime, UtcOffset};
 use ui::{
@@ -38,6 +38,7 @@ pub struct ThreadHistory {
     visible_items: Vec<ListItemType>,
     local_timezone: UtcOffset,
     confirming_delete_history: bool,
+    cwd: Option<PathBuf>,
     _visible_items_task: Task<()>,
     _refresh_task: Task<()>,
     _watch_task: Option<Task<()>>,
@@ -111,6 +112,7 @@ impl ThreadHistory {
             .unwrap(),
             search_query: SharedString::default(),
             confirming_delete_history: false,
+            cwd: None,
             _subscriptions: vec![search_editor_subscription],
             _visible_items_task: Task::ready(()),
             _refresh_task: Task::ready(()),
@@ -118,6 +120,15 @@ impl ThreadHistory {
         };
         this.set_session_list(session_list, cx);
         this
+    }
+
+    /// Set the working directory to use when filtering sessions.
+    pub fn set_cwd(&mut self, cwd: Option<PathBuf>, cx: &mut Context<Self>) {
+        if self.cwd != cwd {
+            self.cwd = cwd;
+            // Re-fetch sessions with the new filter
+            self.refresh_sessions(true, false, cx);
+        }
     }
 
     fn update_visible_items(&mut self, preserve_selected_item: bool, cx: &mut Context<Self>) {
@@ -272,6 +283,8 @@ impl ThreadHistory {
             return;
         };
 
+        let cwd = self.cwd.clone();
+
         // If a new refresh arrives while pagination is in progress, the previous
         // `_refresh_task` is cancelled. This is intentional (latest refresh wins),
         // but means sessions may be in a partial state until the new refresh completes.
@@ -281,6 +294,7 @@ impl ThreadHistory {
 
             loop {
                 let request = AgentSessionListRequest {
+                    cwd: cwd.clone(),
                     cursor: cursor.clone(),
                     ..Default::default()
                 };
@@ -1682,5 +1696,126 @@ mod tests {
 
         let date = NaiveDate::from_ymd_opt(2022, 12, 28).unwrap();
         assert_eq!(TimeBucket::from_dates(new_year, date), TimeBucket::ThisWeek);
+    }
+
+    #[derive(Clone)]
+    struct CwdCapturingSessionList {
+        sessions: Vec<AgentSessionInfo>,
+        captured_cwds: Arc<Mutex<Vec<Option<PathBuf>>>>,
+        updates_tx: smol::channel::Sender<SessionListUpdate>,
+        updates_rx: smol::channel::Receiver<SessionListUpdate>,
+    }
+
+    impl CwdCapturingSessionList {
+        fn new(sessions: Vec<AgentSessionInfo>) -> Self {
+            let (tx, rx) = smol::channel::unbounded();
+            Self {
+                sessions,
+                captured_cwds: Arc::new(Mutex::new(Vec::new())),
+                updates_tx: tx,
+                updates_rx: rx,
+            }
+        }
+
+        fn captured_cwds(&self) -> Vec<Option<PathBuf>> {
+            self.captured_cwds.lock().unwrap().clone()
+        }
+    }
+
+    impl AgentSessionList for CwdCapturingSessionList {
+        fn list_sessions(
+            &self,
+            request: AgentSessionListRequest,
+            _cx: &mut App,
+        ) -> Task<anyhow::Result<AgentSessionListResponse>> {
+            self.captured_cwds.lock().unwrap().push(request.cwd);
+            Task::ready(Ok(AgentSessionListResponse::new(self.sessions.clone())))
+        }
+
+        fn watch(&self, _cx: &mut App) -> Option<smol::channel::Receiver<SessionListUpdate>> {
+            Some(self.updates_rx.clone())
+        }
+
+        fn notify_refresh(&self) {
+            self.updates_tx.try_send(SessionListUpdate::Refresh).ok();
+        }
+
+        fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
+            self
+        }
+    }
+
+    #[gpui::test]
+    async fn test_cwd_is_passed_to_list_sessions(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let session_list = Rc::new(CwdCapturingSessionList::new(vec![test_session(
+            "session-1",
+            "Test Session",
+        )]));
+
+        let (history, cx) = cx.add_window_view(|window, cx| {
+            ThreadHistory::new(Some(session_list.clone()), window, cx)
+        });
+        cx.run_until_parked();
+
+        // Initial request should have no cwd
+        assert_eq!(session_list.captured_cwds(), vec![None]);
+
+        // Set a cwd and verify it's passed to list_sessions
+        let test_cwd = PathBuf::from("/test/project");
+        history.update(cx, |history, cx| {
+            history.set_cwd(Some(test_cwd.clone()), cx);
+        });
+        cx.run_until_parked();
+
+        assert_eq!(
+            session_list.captured_cwds(),
+            vec![None, Some(test_cwd.clone())]
+        );
+
+        // Refresh should continue to use the same cwd
+        history.update(cx, |history, cx| {
+            history.refresh(cx);
+        });
+        cx.run_until_parked();
+
+        assert_eq!(
+            session_list.captured_cwds(),
+            vec![None, Some(test_cwd.clone()), Some(test_cwd)]
+        );
+    }
+
+    #[gpui::test]
+    async fn test_set_cwd_does_not_refresh_if_unchanged(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let session_list = Rc::new(CwdCapturingSessionList::new(vec![test_session(
+            "session-1",
+            "Test Session",
+        )]));
+
+        let (history, cx) = cx.add_window_view(|window, cx| {
+            ThreadHistory::new(Some(session_list.clone()), window, cx)
+        });
+        cx.run_until_parked();
+
+        let test_cwd = PathBuf::from("/test/project");
+        history.update(cx, |history, cx| {
+            history.set_cwd(Some(test_cwd.clone()), cx);
+        });
+        cx.run_until_parked();
+
+        // Setting the same cwd should not trigger another refresh
+        history.update(cx, |history, cx| {
+            history.set_cwd(Some(test_cwd.clone()), cx);
+        });
+        cx.run_until_parked();
+
+        // Should only have 2 requests: initial (None) + first set_cwd
+        assert_eq!(
+            session_list.captured_cwds(),
+            vec![None, Some(test_cwd)]
+        );
     }
 }

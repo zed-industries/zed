@@ -39,7 +39,7 @@ use prompt_store::{PromptId, PromptStore};
 use rope::Point;
 use settings::{NotifyWhenAgentWaiting, Settings as _, SettingsStore};
 use std::cell::RefCell;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
 use std::{collections::BTreeMap, rc::Rc, time::Duration};
@@ -530,21 +530,16 @@ impl ConnectionView {
         cx.notify();
     }
 
-    fn initial_state(
-        agent: Rc<dyn AgentServer>,
-        resume_thread: Option<AgentSessionInfo>,
-        project: Entity<Project>,
-        initial_content: Option<AgentInitialContent>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> ServerState {
-        if project.read(cx).is_via_collab()
-            && agent.clone().downcast::<NativeAgentServer>().is_none()
-        {
-            return ServerState::LoadError(LoadError::Other(
-                "External agents are not yet supported in shared projects.".into(),
-            ));
-        }
+    /// Compute the working directory for a session.
+    ///
+    /// Uses the resumed session's cwd if it's valid (normalized and within a worktree),
+    /// otherwise falls back to the first non-single-file worktree root,
+    /// or `$HOME` if there are no visible worktrees.
+    fn compute_session_cwd(
+        project: &Entity<Project>,
+        resume_cwd: Option<&PathBuf>,
+        cx: &App,
+    ) -> Arc<Path> {
         let mut worktrees = project.read(cx).visible_worktrees(cx).collect::<Vec<_>>();
         // Pick the first non-single-file worktree for the root directory if there are any,
         // and otherwise the parent of a single-file worktree, falling back to $HOME if there are no visible worktrees.
@@ -564,30 +559,48 @@ impl ConnectionView {
                 }
             })
             .collect();
-        let session_cwd = resume_thread
-            .as_ref()
-            .and_then(|resume| {
-                resume
-                    .cwd
-                    .as_ref()
-                    .filter(|cwd| {
-                        // Validate with the normalized path (rejects `..` traversals),
-                        // but return the original cwd to preserve its path separators.
-                        // On Windows, `normalize_lexically` rebuilds the path with
-                        // backslashes via `PathBuf::push`, which would corrupt
-                        // forward-slash Linux paths used by WSL agents.
-                        util::paths::normalize_lexically(cwd)
-                            .ok()
-                            .is_some_and(|normalized| {
-                                worktree_roots
-                                    .iter()
-                                    .any(|root| normalized.starts_with(root.as_ref()))
-                            })
+
+        // Validate with the normalized path (rejects `..` traversals),
+        // but return the original cwd to preserve its path separators.
+        // On Windows, `normalize_lexically` rebuilds the path with
+        // backslashes via `PathBuf::push`, which would corrupt
+        // forward-slash Linux paths used by WSL agents.
+        resume_cwd
+            .filter(|cwd| {
+                util::paths::normalize_lexically(cwd)
+                    .ok()
+                    .is_some_and(|normalized| {
+                        worktree_roots
+                            .iter()
+                            .any(|root| normalized.starts_with(root.as_ref()))
                     })
-                    .map(|path| Arc::from(path.as_path()))
             })
+            .map(|path| Arc::from(path.as_path()))
             .or_else(|| worktree_roots.first().cloned())
-            .unwrap_or_else(|| paths::home_dir().as_path().into());
+            .unwrap_or_else(|| paths::home_dir().as_path().into())
+    }
+
+    fn initial_state(
+        agent: Rc<dyn AgentServer>,
+        resume_thread: Option<AgentSessionInfo>,
+        project: Entity<Project>,
+        initial_content: Option<AgentInitialContent>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> ServerState {
+        if project.read(cx).is_via_collab()
+            && agent.clone().downcast::<NativeAgentServer>().is_none()
+        {
+            return ServerState::LoadError(LoadError::Other(
+                "External agents are not yet supported in shared projects.".into(),
+            ));
+        }
+
+        let session_cwd = Self::compute_session_cwd(
+            &project,
+            resume_thread.as_ref().and_then(|r| r.cwd.as_ref()),
+            cx,
+        );
 
         let (status_tx, mut status_rx) = watch::channel("Loading…".into());
         let (new_version_available_tx, mut new_version_available_rx) = watch::channel(None);
@@ -812,7 +825,16 @@ impl ConnectionView {
         } else {
             None
         };
+
+        // Compute the working directory for session filtering using the same logic as initial_state.
+        let session_cwd = Self::compute_session_cwd(
+            &self.project,
+            resume_thread.as_ref().and_then(|r| r.cwd.as_ref()),
+            cx,
+        );
+
         self.history.update(cx, |history, cx| {
+            history.set_cwd(Some(session_cwd.to_path_buf()), cx);
             history.set_session_list(session_list, cx);
         });
 
