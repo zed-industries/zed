@@ -543,13 +543,11 @@ pub(crate) fn register_conflict_notification(
         if !AgentSettings::get_global(cx).enabled || !conflicts_changed {
             return;
         }
-        "conflicts updated";
 
         let paths = collect_conflicted_file_paths(workspace, cx);
         let notification_id = merge_conflict_notification_id();
 
         if paths.is_empty() {
-            "dismissing";
             workspace.dismiss_notification(&notification_id, cx);
         } else {
             let file_count = paths.len();
