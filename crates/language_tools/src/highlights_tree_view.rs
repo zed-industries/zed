@@ -397,11 +397,9 @@ impl HighlightsTreeView {
             let end_offset = excerpt_range.context.end.to_offset(buffer_snapshot);
             let range = start_offset..end_offset;
 
-            let captures = buffer_snapshot
-                .syntax
-                .captures(range, buffer_snapshot, |grammar| {
-                    grammar.highlights_config.as_ref().map(|c| &c.query)
-                });
+            let captures = buffer_snapshot.captures(range, |grammar| {
+                grammar.highlights_config.as_ref().map(|c| &c.query)
+            });
             let grammars: Vec<_> = captures.grammars().to_vec();
             let highlight_maps: Vec<_> = grammars.iter().map(|g| g.highlight_map()).collect();
 

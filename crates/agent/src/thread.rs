@@ -8,9 +8,7 @@ use crate::{
 };
 use acp_thread::{MentionUri, UserMessageId};
 use action_log::ActionLog;
-use feature_flags::{
-    FeatureFlagAppExt as _, StreamingEditFileToolFeatureFlag, SubagentsFeatureFlag,
-};
+use feature_flags::{FeatureFlagAppExt as _, StreamingEditFileToolFeatureFlag};
 
 use agent_client_protocol as acp;
 use agent_settings::{
@@ -626,7 +624,12 @@ pub trait TerminalHandle {
 }
 
 pub trait SubagentHandle {
+    /// The session ID of this subagent thread
     fn id(&self) -> acp::SessionId;
+    /// The current number of entries in the thread.
+    /// Useful for knowing where the next turn will begin
+    fn num_entries(&self, cx: &App) -> usize;
+    /// Runs a turn for a given message and returns both the response and the index of that output message.
     fn send(&self, message: String, cx: &AsyncApp) -> Task<Result<String>>;
 }
 
@@ -1345,7 +1348,16 @@ impl Thread {
         cx.notify();
     }
 
-    pub fn last_message(&self) -> Option<Message> {
+    pub fn last_message(&self) -> Option<&Message> {
+        self.messages.last()
+    }
+
+    pub fn num_messages(&self) -> usize {
+        self.messages.len()
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn last_received_or_pending_message(&self) -> Option<Message> {
         if let Some(message) = self.pending_message.clone() {
             Some(Message::Agent(message))
         } else {
@@ -1394,7 +1406,7 @@ impl Thread {
         self.add_tool(TerminalTool::new(self.project.clone(), environment.clone()));
         self.add_tool(WebSearchTool);
 
-        if cx.has_flag::<SubagentsFeatureFlag>() && self.depth() < MAX_SUBAGENT_DEPTH {
+        if self.depth() < MAX_SUBAGENT_DEPTH {
             self.add_tool(SpawnAgentTool::new(environment));
         }
     }
@@ -1746,6 +1758,9 @@ impl Thread {
             telemetry::event!(
                 "Agent Thread Completion",
                 thread_id = this.read_with(cx, |this, _| this.id.to_string())?,
+                parent_thread_id = this.read_with(cx, |this, _| this
+                    .parent_thread_id()
+                    .map(|id| id.to_string()))?,
                 prompt_id = this.read_with(cx, |this, _| this.prompt_id.to_string())?,
                 model = model.telemetry_id(),
                 model_provider = model.provider_id().to_string(),
@@ -2004,6 +2019,7 @@ impl Thread {
                 telemetry::event!(
                     "Agent Thread Completion Usage Updated",
                     thread_id = self.id.to_string(),
+                    parent_thread_id = self.parent_thread_id().map(|id| id.to_string()),
                     prompt_id = self.prompt_id.to_string(),
                     model = self.model.as_ref().map(|m| m.telemetry_id()),
                     model_provider = self.model.as_ref().map(|m| m.provider_id().to_string()),

@@ -139,6 +139,21 @@ jobs:
       uses: crate-ci/typos@2d0ce569feab1f8752f1dde43cc2f2aa53236e06
       with:
         config: ./typos.toml
+    - name: run_tests::fetch_ts_query_ls
+      uses: dsaltares/fetch-gh-release-asset@aa37ae5c44d3c9820bc12fe675e8670ecd93bd1c
+      with:
+        repo: ribru17/ts_query_ls
+        version: tags/v3.15.1
+        file: ts_query_ls-x86_64-unknown-linux-gnu.tar.gz
+    - name: run_tests::run_ts_query_ls
+      run: |-
+        tar -xf ts_query_ls-x86_64-unknown-linux-gnu.tar.gz
+        ./ts_query_ls format --check . || {
+            echo "Found unformatted queries, please format them with ts_query_ls."
+            echo "For easy use, install the Tree-sitter query extension:"
+            echo "zed://extension/tree-sitter-query"
+            false
+        }
     timeout-minutes: 60
   clippy_windows:
     needs:
@@ -175,6 +190,9 @@ jobs:
     - orchestrate
     if: needs.orchestrate.outputs.run_tests == 'true'
     runs-on: namespace-profile-16x32-ubuntu-2204
+    env:
+      CC: clang
+      CXX: clang++
     steps:
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -285,6 +303,9 @@ jobs:
     - orchestrate
     if: needs.orchestrate.outputs.run_tests == 'true'
     runs-on: namespace-profile-16x32-ubuntu-2204
+    env:
+      CC: clang
+      CXX: clang++
     steps:
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -385,6 +406,9 @@ jobs:
     - orchestrate
     if: needs.orchestrate.outputs.run_tests == 'true'
     runs-on: namespace-profile-16x32-ubuntu-2204
+    env:
+      CC: clang
+      CXX: clang++
     steps:
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -428,6 +452,9 @@ jobs:
     - orchestrate
     if: needs.orchestrate.outputs.run_tests == 'true'
     runs-on: namespace-profile-8x16-ubuntu-2204
+    env:
+      CC: clang
+      CXX: clang++
     steps:
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -510,6 +537,9 @@ jobs:
     - orchestrate
     if: needs.orchestrate.outputs.run_tests == 'true'
     runs-on: namespace-profile-2x4-ubuntu-2404
+    env:
+      CC: clang
+      CXX: clang++
     steps:
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -542,6 +572,9 @@ jobs:
     - orchestrate
     if: needs.orchestrate.outputs.run_docs == 'true'
     runs-on: namespace-profile-8x16-ubuntu-2204
+    env:
+      CC: clang
+      CXX: clang++
     steps:
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -667,6 +700,10 @@ jobs:
       with:
         input: crates/proto/proto/
         against: https://github.com/${GITHUB_REPOSITORY}.git#branch=${BUF_BASE_BRANCH},subdir=crates/proto/proto/
+    - name: run_tests::check_postgres_and_protobuf_migrations::buf_lint
+      run: buf lint crates/proto/proto
+    - name: run_tests::check_postgres_and_protobuf_migrations::check_protobuf_formatting
+      run: buf format --diff --exit-code crates/proto/proto
     timeout-minutes: 60
   tests_pass:
     needs:

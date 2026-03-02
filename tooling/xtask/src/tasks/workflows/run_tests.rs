@@ -3,9 +3,10 @@ use gh_workflow::{
     Workflow,
 };
 use indexmap::IndexMap;
+use indoc::formatdoc;
 
 use crate::tasks::workflows::{
-    steps::{CommonJobConditions, repository_owner_guard_expression},
+    steps::{CommonJobConditions, repository_owner_guard_expression, use_clang},
     vars::{self, PathCondition},
 };
 
@@ -267,6 +268,32 @@ pub fn tests_pass(jobs: &[NamedJob]) -> NamedJob {
     named::job(job)
 }
 
+const TS_QUERY_LS_FILE: &str = "ts_query_ls-x86_64-unknown-linux-gnu.tar.gz";
+const CI_TS_QUERY_RELEASE: &str = "tags/v3.15.1";
+
+pub(crate) fn fetch_ts_query_ls() -> Step<Use> {
+    named::uses(
+        "dsaltares",
+        "fetch-gh-release-asset",
+        "aa37ae5c44d3c9820bc12fe675e8670ecd93bd1c",
+    ) // v1.1.1
+    .add_with(("repo", "ribru17/ts_query_ls"))
+    .add_with(("version", CI_TS_QUERY_RELEASE))
+    .add_with(("file", TS_QUERY_LS_FILE))
+}
+
+pub(crate) fn run_ts_query_ls() -> Step<Run> {
+    named::bash(formatdoc!(
+        r#"tar -xf {TS_QUERY_LS_FILE}
+        ./ts_query_ls format --check . || {{
+            echo "Found unformatted queries, please format them with ts_query_ls."
+            echo "For easy use, install the Tree-sitter query extension:"
+            echo "zed://extension/tree-sitter-query"
+            false
+        }}"#
+    ))
+}
+
 fn check_style() -> NamedJob {
     fn check_for_typos() -> Step<Use> {
         named::uses(
@@ -276,6 +303,7 @@ fn check_style() -> NamedJob {
         ) // v1.40.0
         .with(("config", "./typos.toml"))
     }
+
     named::job(
         release_job(&[])
             .runs_on(runners::LINUX_MEDIUM)
@@ -286,7 +314,9 @@ fn check_style() -> NamedJob {
             .add_step(steps::cargo_fmt())
             .add_step(steps::script("./script/check-todos"))
             .add_step(steps::script("./script/check-keymaps"))
-            .add_step(check_for_typos()),
+            .add_step(check_for_typos())
+            .add_step(fetch_ts_query_ls())
+            .add_step(run_ts_query_ls()),
     )
 }
 
@@ -324,7 +354,7 @@ fn check_dependencies() -> NamedJob {
         .with(("license-check", false))
     }
 
-    named::job(
+    named::job(use_clang(
         release_job(&[])
             .runs_on(runners::LINUX_SMALL)
             .add_step(steps::checkout_repo())
@@ -333,7 +363,7 @@ fn check_dependencies() -> NamedJob {
             .add_step(run_cargo_machete())
             .add_step(check_cargo_lock())
             .add_step(check_vulnerable_dependencies()),
-    )
+    ))
 }
 
 fn check_wasm() -> NamedJob {
@@ -369,7 +399,7 @@ fn check_wasm() -> NamedJob {
 }
 
 fn check_workspace_binaries() -> NamedJob {
-    named::job(
+    named::job(use_clang(
         release_job(&[])
             .runs_on(runners::LINUX_LARGE)
             .add_step(steps::checkout_repo())
@@ -381,7 +411,7 @@ fn check_workspace_binaries() -> NamedJob {
             .add_step(steps::script("cargo build --workspace --bins --examples"))
             .add_step(steps::show_sccache_stats(Platform::Linux))
             .add_step(steps::cleanup_cargo_config(Platform::Linux)),
-    )
+    ))
 }
 
 pub(crate) fn clippy(platform: Platform) -> NamedJob {
@@ -390,23 +420,27 @@ pub(crate) fn clippy(platform: Platform) -> NamedJob {
         Platform::Linux => runners::LINUX_DEFAULT,
         Platform::Mac => runners::MAC_DEFAULT,
     };
+    let mut job = release_job(&[])
+        .runs_on(runner)
+        .add_step(steps::checkout_repo())
+        .add_step(steps::setup_cargo_config(platform))
+        .when(
+            platform == Platform::Linux || platform == Platform::Mac,
+            |this| this.add_step(steps::cache_rust_dependencies_namespace()),
+        )
+        .when(
+            platform == Platform::Linux,
+            steps::install_linux_dependencies,
+        )
+        .add_step(steps::setup_sccache(platform))
+        .add_step(steps::clippy(platform))
+        .add_step(steps::show_sccache_stats(platform));
+    if platform == Platform::Linux {
+        job = use_clang(job);
+    }
     NamedJob {
         name: format!("clippy_{platform}"),
-        job: release_job(&[])
-            .runs_on(runner)
-            .add_step(steps::checkout_repo())
-            .add_step(steps::setup_cargo_config(platform))
-            .when(
-                platform == Platform::Linux || platform == Platform::Mac,
-                |this| this.add_step(steps::cache_rust_dependencies_namespace()),
-            )
-            .when(
-                platform == Platform::Linux,
-                steps::install_linux_dependencies,
-            )
-            .add_step(steps::setup_sccache(platform))
-            .add_step(steps::clippy(platform))
-            .add_step(steps::show_sccache_stats(platform)),
+        job,
     }
 }
 
@@ -444,10 +478,12 @@ fn run_platform_tests_impl(platform: Platform, filter_packages: bool) -> NamedJo
             })
             .add_step(steps::checkout_repo())
             .add_step(steps::setup_cargo_config(platform))
-            .when(
-                platform == Platform::Linux || platform == Platform::Mac,
-                |this| this.add_step(steps::cache_rust_dependencies_namespace()),
-            )
+            .when(platform == Platform::Mac, |this| {
+                this.add_step(steps::cache_rust_dependencies_namespace())
+            })
+            .when(platform == Platform::Linux, |this| {
+                use_clang(this.add_step(steps::cache_rust_dependencies_namespace()))
+            })
             .when(
                 platform == Platform::Linux,
                 steps::install_linux_dependencies,
@@ -497,6 +533,14 @@ pub(crate) fn check_postgres_and_protobuf_migrations() -> NamedJob {
             .add_with(("against", "https://github.com/${GITHUB_REPOSITORY}.git#branch=${BUF_BASE_BRANCH},subdir=crates/proto/proto/"))
     }
 
+    fn buf_lint() -> Step<Run> {
+        named::bash("buf lint crates/proto/proto")
+    }
+
+    fn check_protobuf_formatting() -> Step<Run> {
+        named::bash("buf format --diff --exit-code crates/proto/proto")
+    }
+
     named::job(
         release_job(&[])
             .runs_on(runners::LINUX_DEFAULT)
@@ -507,7 +551,9 @@ pub(crate) fn check_postgres_and_protobuf_migrations() -> NamedJob {
             .add_step(steps::checkout_repo().with_full_history())
             .add_step(ensure_fresh_merge())
             .add_step(bufbuild_setup_action())
-            .add_step(bufbuild_breaking_action()),
+            .add_step(bufbuild_breaking_action())
+            .add_step(buf_lint())
+            .add_step(check_protobuf_formatting()),
     )
 }
 
@@ -519,7 +565,7 @@ fn doctests() -> NamedJob {
         .id("run_doctests")
     }
 
-    named::job(
+    named::job(use_clang(
         release_job(&[])
             .runs_on(runners::LINUX_DEFAULT)
             .add_step(steps::checkout_repo())
@@ -530,7 +576,7 @@ fn doctests() -> NamedJob {
             .add_step(run_doctests())
             .add_step(steps::show_sccache_stats(Platform::Linux))
             .add_step(steps::cleanup_cargo_config(Platform::Linux)),
-    )
+    ))
 }
 
 fn check_licenses() -> NamedJob {
@@ -572,7 +618,7 @@ fn check_docs() -> NamedJob {
         "#})
     }
 
-    named::job(
+    named::job(use_clang(
         release_job(&[])
             .runs_on(runners::LINUX_LARGE)
             .add_step(steps::checkout_repo())
@@ -589,7 +635,7 @@ fn check_docs() -> NamedJob {
             .add_step(
                 lychee_link_check("target/deploy/docs"), // check links in generated html
             ),
-    )
+    ))
 }
 
 pub(crate) fn check_scripts() -> NamedJob {

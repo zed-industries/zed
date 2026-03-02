@@ -5,6 +5,7 @@ use gpui::{
     PolychromeSprite, PrimitiveBatch, Quad, ScaledPixels, Scene, Shadow, Size, SubpixelSprite,
     Underline, get_gamma_correction_ratios,
 };
+use log::warn;
 #[cfg(not(target_family = "wasm"))]
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use std::num::NonZeroU64;
@@ -108,8 +109,8 @@ pub struct WgpuRenderer {
     instance_buffer_capacity: u64,
     max_buffer_size: u64,
     storage_buffer_alignment: u64,
-    path_intermediate_texture: wgpu::Texture,
-    path_intermediate_view: wgpu::TextureView,
+    path_intermediate_texture: Option<wgpu::Texture>,
+    path_intermediate_view: Option<wgpu::TextureView>,
     path_msaa_texture: Option<wgpu::Texture>,
     path_msaa_view: Option<wgpu::TextureView>,
     rendering_params: RenderingParameters,
@@ -117,6 +118,7 @@ pub struct WgpuRenderer {
     adapter_info: wgpu::AdapterInfo,
     transparent_alpha_mode: wgpu::CompositeAlphaMode,
     opaque_alpha_mode: wgpu::CompositeAlphaMode,
+    max_texture_size: u32,
 }
 
 impl WgpuRenderer {
@@ -238,11 +240,27 @@ impl WgpuRenderer {
             opaque_alpha_mode
         };
 
+        let device = Arc::clone(&context.device);
+        let max_texture_size = device.limits().max_texture_dimension_2d;
+
+        let requested_width = config.size.width.0 as u32;
+        let requested_height = config.size.height.0 as u32;
+        let clamped_width = requested_width.min(max_texture_size);
+        let clamped_height = requested_height.min(max_texture_size);
+
+        if clamped_width != requested_width || clamped_height != requested_height {
+            warn!(
+                "Requested surface size ({}, {}) exceeds maximum texture dimension {}. \
+                 Clamping to ({}, {}). Window content may not fill the entire window.",
+                requested_width, requested_height, max_texture_size, clamped_width, clamped_height
+            );
+        }
+
         let surface_config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
             format: surface_format,
-            width: config.size.width.0 as u32,
-            height: config.size.height.0 as u32,
+            width: clamped_width.max(1),
+            height: clamped_height.max(1),
             present_mode: wgpu::PresentMode::Fifo,
             desired_maximum_frame_latency: 2,
             alpha_mode,
@@ -250,7 +268,6 @@ impl WgpuRenderer {
         };
         surface.configure(&context.device, &surface_config);
 
-        let device = Arc::clone(&context.device);
         let queue = Arc::clone(&context.queue);
         let dual_source_blending = context.supports_dual_source_blending();
 
@@ -295,23 +312,6 @@ impl WgpuRenderer {
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-
-        let (path_intermediate_texture, path_intermediate_view) = Self::create_path_intermediate(
-            &device,
-            surface_format,
-            config.size.width.0 as u32,
-            config.size.height.0 as u32,
-        );
-
-        let (path_msaa_texture, path_msaa_view) = Self::create_msaa_if_needed(
-            &device,
-            surface_format,
-            config.size.width.0 as u32,
-            config.size.height.0 as u32,
-            rendering_params.path_sample_count,
-        )
-        .map(|(t, v)| (Some(t), Some(v)))
-        .unwrap_or((None, None));
 
         let globals_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("globals_bind_group"),
@@ -379,15 +379,18 @@ impl WgpuRenderer {
             instance_buffer_capacity: initial_instance_buffer_capacity,
             max_buffer_size,
             storage_buffer_alignment,
-            path_intermediate_texture,
-            path_intermediate_view,
-            path_msaa_texture,
-            path_msaa_view,
+            // Defer intermediate texture creation to first draw call via ensure_intermediate_textures().
+            // This avoids panics when the device/surface is in an invalid state during initialization.
+            path_intermediate_texture: None,
+            path_intermediate_view: None,
+            path_msaa_texture: None,
+            path_msaa_view: None,
             rendering_params,
             dual_source_blending,
             adapter_info,
             transparent_alpha_mode,
             opaque_alpha_mode,
+            max_texture_size,
         })
     }
 
@@ -825,32 +828,75 @@ impl WgpuRenderer {
         let height = size.height.0 as u32;
 
         if width != self.surface_config.width || height != self.surface_config.height {
-            self.surface_config.width = width.max(1);
-            self.surface_config.height = height.max(1);
+            let clamped_width = width.min(self.max_texture_size);
+            let clamped_height = height.min(self.max_texture_size);
+
+            if clamped_width != width || clamped_height != height {
+                warn!(
+                    "Requested surface size ({}, {}) exceeds maximum texture dimension {}. \
+                     Clamping to ({}, {}). Window content may not fill the entire window.",
+                    width, height, self.max_texture_size, clamped_width, clamped_height
+                );
+            }
+
+            // Wait for any in-flight GPU work to complete before destroying textures
+            if let Err(e) = self.device.poll(wgpu::PollType::Wait {
+                submission_index: None,
+                timeout: None,
+            }) {
+                warn!("Failed to poll device during resize: {e:?}");
+            }
+
+            // Destroy old textures before allocating new ones to avoid GPU memory spikes
+            if let Some(ref texture) = self.path_intermediate_texture {
+                texture.destroy();
+            }
+            if let Some(ref texture) = self.path_msaa_texture {
+                texture.destroy();
+            }
+
+            self.surface_config.width = clamped_width.max(1);
+            self.surface_config.height = clamped_height.max(1);
             self.surface.configure(&self.device, &self.surface_config);
 
-            let (path_intermediate_texture, path_intermediate_view) =
-                Self::create_path_intermediate(
-                    &self.device,
-                    self.surface_config.format,
-                    self.surface_config.width,
-                    self.surface_config.height,
-                );
-            self.path_intermediate_texture = path_intermediate_texture;
-            self.path_intermediate_view = path_intermediate_view;
+            // Invalidate intermediate textures - they will be lazily recreated
+            // in draw() after we confirm the surface is healthy. This avoids
+            // panics when the device/surface is in an invalid state during resize.
+            self.path_intermediate_texture = None;
+            self.path_intermediate_view = None;
+            self.path_msaa_texture = None;
+            self.path_msaa_view = None;
+        }
+    }
 
-            let (path_msaa_texture, path_msaa_view) = Self::create_msaa_if_needed(
+    fn ensure_intermediate_textures(&mut self) {
+        if self.path_intermediate_texture.is_some() {
+            return;
+        }
+
+        let (path_intermediate_texture, path_intermediate_view) = {
+            let (t, v) = Self::create_path_intermediate(
                 &self.device,
                 self.surface_config.format,
                 self.surface_config.width,
                 self.surface_config.height,
-                self.rendering_params.path_sample_count,
-            )
-            .map(|(t, v)| (Some(t), Some(v)))
-            .unwrap_or((None, None));
-            self.path_msaa_texture = path_msaa_texture;
-            self.path_msaa_view = path_msaa_view;
-        }
+            );
+            (Some(t), Some(v))
+        };
+        self.path_intermediate_texture = path_intermediate_texture;
+        self.path_intermediate_view = path_intermediate_view;
+
+        let (path_msaa_texture, path_msaa_view) = Self::create_msaa_if_needed(
+            &self.device,
+            self.surface_config.format,
+            self.surface_config.width,
+            self.surface_config.height,
+            self.rendering_params.path_sample_count,
+        )
+        .map(|(t, v)| (Some(t), Some(v)))
+        .unwrap_or((None, None));
+        self.path_msaa_texture = path_msaa_texture;
+        self.path_msaa_view = path_msaa_view;
     }
 
     pub fn update_transparency(&mut self, transparent: bool) {
@@ -899,6 +945,10 @@ impl WgpuRenderer {
         }
     }
 
+    pub fn max_texture_size(&self) -> u32 {
+        self.max_texture_size
+    }
+
     pub fn draw(&mut self, scene: &Scene) {
         self.atlas.before_frame();
 
@@ -913,6 +963,10 @@ impl WgpuRenderer {
                 return;
             }
         };
+
+        // Now that we know the surface is healthy, ensure intermediate textures exist
+        self.ensure_intermediate_textures();
+
         let frame_view = frame
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
@@ -1302,11 +1356,15 @@ impl WgpuRenderer {
             vec![PathSprite { bounds }]
         };
 
+        let Some(path_intermediate_view) = self.path_intermediate_view.as_ref() else {
+            return true;
+        };
+
         let sprite_data = unsafe { Self::instance_bytes(&sprites) };
         self.draw_instances_with_texture(
             sprite_data,
             sprites.len() as u32,
-            &self.path_intermediate_view,
+            path_intermediate_view,
             &self.pipelines.paths,
             instance_offset,
             pass,
@@ -1350,10 +1408,14 @@ impl WgpuRenderer {
             }],
         });
 
+        let Some(path_intermediate_view) = self.path_intermediate_view.as_ref() else {
+            return true;
+        };
+
         let (target_view, resolve_target) = if let Some(ref msaa_view) = self.path_msaa_view {
-            (msaa_view, Some(&self.path_intermediate_view))
+            (msaa_view, Some(path_intermediate_view))
         } else {
-            (&self.path_intermediate_view, None)
+            (path_intermediate_view, None)
         };
 
         {

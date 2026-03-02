@@ -253,7 +253,7 @@ impl AgentTool for EditFileTool {
                     error: "thread was dropped".to_string(),
                 })?;
 
-            let (project_path, abs_path, allow_thinking, authorize) =
+            let (project_path, abs_path, allow_thinking, update_agent_location, authorize) =
                 cx.update(|cx| {
                     let project_path = resolve_path(&input, project.clone(), cx).map_err(|err| {
                         EditFileToolOutput::Error {
@@ -271,8 +271,11 @@ impl AgentTool for EditFileTool {
                         .thread
                         .read_with(cx, |thread, _cx| thread.thinking_enabled())
                         .unwrap_or(true);
+
+                    let update_agent_location = self.thread.read_with(cx, |thread, _cx| !thread.is_subagent()).unwrap_or_default();
+
                     let authorize = self.authorize(&input, &event_stream, cx);
-                    Ok::<_, EditFileToolOutput>((project_path, abs_path, allow_thinking, authorize))
+                    Ok::<_, EditFileToolOutput>((project_path, abs_path, allow_thinking, update_agent_location, authorize))
                 })?;
 
             let result: anyhow::Result<EditFileToolOutput> = async {
@@ -293,6 +296,7 @@ impl AgentTool for EditFileTool {
                     self.templates.clone(),
                     edit_format,
                     allow_thinking,
+                    update_agent_location,
                 );
 
                 let buffer = project

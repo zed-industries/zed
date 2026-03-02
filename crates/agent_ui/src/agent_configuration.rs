@@ -1140,7 +1140,34 @@ impl AgentConfiguration {
                     })),
                 )
             }
-            ExternalAgentSource::Custom => None,
+            ExternalAgentSource::Custom => {
+                let fs = self.fs.clone();
+                Some(
+                    IconButton::new(
+                        SharedString::from(format!("uninstall-{}", id)),
+                        IconName::Trash,
+                    )
+                    .icon_color(Color::Muted)
+                    .icon_size(IconSize::Small)
+                    .tooltip(Tooltip::text("Remove Custom Agent"))
+                    .on_click(cx.listener(move |_, _, _window, cx| {
+                        let agent_name = agent_server_name.clone();
+                        update_settings_file(fs.clone(), cx, move |settings, _| {
+                            let Some(agent_servers) = settings.agent_servers.as_mut() else {
+                                return;
+                            };
+                            if let Some(entry) = agent_servers.get(agent_name.0.as_ref())
+                                && matches!(
+                                    entry,
+                                    settings::CustomAgentServerSettings::Custom { .. }
+                                )
+                            {
+                                agent_servers.remove(agent_name.0.as_ref());
+                            }
+                        });
+                    })),
+                )
+            }
         };
 
         h_flex()
