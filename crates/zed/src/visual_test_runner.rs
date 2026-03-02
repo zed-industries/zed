@@ -50,7 +50,6 @@ use {
     agent_servers::{AgentServer, AgentServerDelegate},
     anyhow::{Context as _, Result},
     assets::Assets,
-    chrono::{Duration as ChronoDuration, Utc},
     editor::display_map::DisplayRow,
     feature_flags::FeatureFlagAppExt as _,
     git_ui::project_diff::ProjectDiff,
@@ -60,7 +59,6 @@ use {
     },
     image::RgbaImage,
     project_panel::ProjectPanel,
-    recent_projects::RecentProjectEntry,
     settings::{NotifyWhenAgentWaiting, Settings as _},
     settings_ui::SettingsWindow,
     std::{
@@ -71,7 +69,7 @@ use {
         time::Duration,
     },
     util::ResultExt as _,
-    workspace::{AppState, MultiWorkspace, Workspace, WorkspaceId},
+    workspace::{AppState, MultiWorkspace, Workspace},
     zed_actions::OpenSettingsAt,
 };
 
@@ -2530,16 +2528,6 @@ fn run_multi_workspace_sidebar_visual_tests(
     std::fs::create_dir_all(&workspace1_dir)?;
     std::fs::create_dir_all(&workspace2_dir)?;
 
-    // Create directories for recent projects (they must exist on disk for display)
-    let recent1_dir = canonical_temp.join("tiny-project");
-    let recent2_dir = canonical_temp.join("font-kit");
-    let recent3_dir = canonical_temp.join("ideas");
-    let recent4_dir = canonical_temp.join("tmp");
-    std::fs::create_dir_all(&recent1_dir)?;
-    std::fs::create_dir_all(&recent2_dir)?;
-    std::fs::create_dir_all(&recent3_dir)?;
-    std::fs::create_dir_all(&recent4_dir)?;
-
     // Enable the agent-v2 feature flag so multi-workspace is active
     cx.update(|cx| {
         cx.update_flags(true, vec!["agent-v2".to_string()]);
@@ -2679,83 +2667,76 @@ fn run_multi_workspace_sidebar_visual_tests(
 
     cx.run_until_parked();
 
-    // Inject recent project entries into the sidebar.
-    // We update the sidebar entity directly (not through the MultiWorkspace window update)
-    // to avoid a re-entrant read panic: rebuild_entries reads MultiWorkspace, so we can't
-    // be inside a MultiWorkspace update when that happens.
-    cx.update(|cx| {
-        sidebar.update(cx, |sidebar, cx| {
-            let now = Utc::now();
-            let today_timestamp = now;
-            let yesterday_timestamp = now - ChronoDuration::days(1);
-            let past_week_timestamp = now - ChronoDuration::days(10);
-            let all_timestamp = now - ChronoDuration::days(60);
+    // Save test threads to the ThreadStore for each workspace
+    let save_tasks = multi_workspace_window
+        .update(cx, |multi_workspace, _window, cx| {
+            let thread_store = agent::ThreadStore::global(cx);
+            let workspaces = multi_workspace.workspaces().to_vec();
+            let mut tasks = Vec::new();
 
-            let recent_projects = vec![
-                RecentProjectEntry {
-                    name: "tiny-project".into(),
-                    full_path: recent1_dir.to_string_lossy().to_string().into(),
-                    paths: vec![recent1_dir.clone()],
-                    workspace_id: WorkspaceId::default(),
-                    timestamp: today_timestamp,
-                },
-                RecentProjectEntry {
-                    name: "font-kit".into(),
-                    full_path: recent2_dir.to_string_lossy().to_string().into(),
-                    paths: vec![recent2_dir.clone()],
-                    workspace_id: WorkspaceId::default(),
-                    timestamp: yesterday_timestamp,
-                },
-                RecentProjectEntry {
-                    name: "ideas".into(),
-                    full_path: recent3_dir.to_string_lossy().to_string().into(),
-                    paths: vec![recent3_dir.clone()],
-                    workspace_id: WorkspaceId::default(),
-                    timestamp: past_week_timestamp,
-                },
-                RecentProjectEntry {
-                    name: "tmp".into(),
-                    full_path: recent4_dir.to_string_lossy().to_string().into(),
-                    paths: vec![recent4_dir.clone()],
-                    workspace_id: WorkspaceId::default(),
-                    timestamp: all_timestamp,
-                },
-            ];
-            sidebar.set_test_recent_projects(recent_projects, cx);
-        });
-    });
+            for (index, workspace) in workspaces.iter().enumerate() {
+                let workspace_ref = workspace.read(cx);
+                let mut paths = Vec::new();
+                for worktree in workspace_ref.worktrees(cx) {
+                    let worktree_ref = worktree.read(cx);
+                    if worktree_ref.is_visible() {
+                        paths.push(worktree_ref.abs_path().to_path_buf());
+                    }
+                }
+                let path_list = util::path_list::PathList::new(&paths);
 
-    // Set thread info directly on the sidebar for visual testing
-    cx.update(|cx| {
-        sidebar.update(cx, |sidebar, _cx| {
-            sidebar.set_test_thread_info(
-                0,
-                "Refine thread view scrolling behavior".into(),
-                ui::AgentThreadStatus::Completed,
-            );
-            sidebar.set_test_thread_info(
-                1,
-                "Add line numbers option to FileEditBlock".into(),
-                ui::AgentThreadStatus::Running,
-            );
-        });
-    });
+                let (session_id, title, updated_at) = match index {
+                    0 => (
+                        "visual-test-thread-0",
+                        "Refine thread view scrolling behavior",
+                        chrono::TimeZone::with_ymd_and_hms(&chrono::Utc, 2024, 6, 15, 10, 30, 0)
+                            .unwrap(),
+                    ),
+                    1 => (
+                        "visual-test-thread-1",
+                        "Add line numbers option to FileEditBlock",
+                        chrono::TimeZone::with_ymd_and_hms(&chrono::Utc, 2024, 6, 15, 11, 0, 0)
+                            .unwrap(),
+                    ),
+                    _ => continue,
+                };
 
-    // Set last-worked-on thread titles on some recent projects for visual testing
-    cx.update(|cx| {
-        sidebar.update(cx, |sidebar, cx| {
-            sidebar.set_test_recent_project_thread_title(
-                recent1_dir.to_string_lossy().to_string().into(),
-                "Fix flaky test in CI pipeline".into(),
-                cx,
-            );
-            sidebar.set_test_recent_project_thread_title(
-                recent2_dir.to_string_lossy().to_string().into(),
-                "Upgrade font rendering engine".into(),
-                cx,
-            );
-        });
-    });
+                let task = thread_store.update(cx, |store, cx| {
+                    store.save_thread(
+                        acp::SessionId::new(Arc::from(session_id)),
+                        agent::DbThread {
+                            title: title.to_string().into(),
+                            messages: Vec::new(),
+                            updated_at,
+                            detailed_summary: None,
+                            initial_project_snapshot: None,
+                            cumulative_token_usage: Default::default(),
+                            request_token_usage: Default::default(),
+                            model: None,
+                            profile: None,
+                            imported: false,
+                            subagent_context: None,
+                            speed: None,
+                            thinking_enabled: false,
+                            thinking_effort: None,
+                        },
+                        path_list,
+                        cx,
+                    )
+                });
+                tasks.push(task);
+            }
+            tasks
+        })
+        .context("Failed to create test threads")?;
+
+    cx.background_executor.allow_parking();
+    for task in save_tasks {
+        cx.foreground_executor
+            .block_test(task)
+            .context("Failed to save test thread")?;
+    }
+    cx.background_executor.forbid_parking();
 
     cx.run_until_parked();
 
