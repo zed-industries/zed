@@ -533,6 +533,14 @@ pub(crate) fn check_postgres_and_protobuf_migrations() -> NamedJob {
             .add_with(("against", "https://github.com/${GITHUB_REPOSITORY}.git#branch=${BUF_BASE_BRANCH},subdir=crates/proto/proto/"))
     }
 
+    fn buf_lint() -> Step<Run> {
+        named::bash("buf lint crates/proto/proto")
+    }
+
+    fn check_protobuf_formatting() -> Step<Run> {
+        named::bash("buf format --diff --exit-code crates/proto/proto")
+    }
+
     named::job(
         release_job(&[])
             .runs_on(runners::LINUX_DEFAULT)
@@ -543,7 +551,9 @@ pub(crate) fn check_postgres_and_protobuf_migrations() -> NamedJob {
             .add_step(steps::checkout_repo().with_full_history())
             .add_step(ensure_fresh_merge())
             .add_step(bufbuild_setup_action())
-            .add_step(bufbuild_breaking_action()),
+            .add_step(bufbuild_breaking_action())
+            .add_step(buf_lint())
+            .add_step(check_protobuf_formatting()),
     )
 }
 
