@@ -48,6 +48,10 @@ pub struct ActionLog {
     tracked_buffers: BTreeMap<Entity<Buffer>, TrackedBuffer>,
     /// The project this action log is associated with
     project: Entity<Project>,
+    /// An action log to forward all public methods to
+    /// Useful in cases like subagents, where we want to track individual diffs for this subagent,
+    /// but also want to associate the reads/writes with a parent review experience
+    linked_action_log: Option<Entity<ActionLog>>,
     /// Stores undo information for the most recent reject operation
     last_reject_undo: Option<LastRejectUndo>,
 }
@@ -58,8 +62,14 @@ impl ActionLog {
         Self {
             tracked_buffers: BTreeMap::default(),
             project,
+            linked_action_log: None,
             last_reject_undo: None,
         }
+    }
+
+    pub fn with_linked_action_log(mut self, linked_action_log: Entity<ActionLog>) -> Self {
+        self.linked_action_log = Some(linked_action_log);
+        self
     }
 
     pub fn project(&self) -> &Entity<Project> {
@@ -496,16 +506,25 @@ impl ActionLog {
 
     /// Track a buffer as read by agent, so we can notify the model about user edits.
     pub fn buffer_read(&mut self, buffer: Entity<Buffer>, cx: &mut Context<Self>) {
+        if let Some(linked_action_log) = &mut self.linked_action_log {
+            linked_action_log.update(cx, |log, cx| log.buffer_read(buffer.clone(), cx));
+        }
         self.track_buffer_internal(buffer, false, cx);
     }
 
     /// Mark a buffer as created by agent, so we can refresh it in the context
     pub fn buffer_created(&mut self, buffer: Entity<Buffer>, cx: &mut Context<Self>) {
+        if let Some(linked_action_log) = &mut self.linked_action_log {
+            linked_action_log.update(cx, |log, cx| log.buffer_created(buffer.clone(), cx));
+        }
         self.track_buffer_internal(buffer, true, cx);
     }
 
     /// Mark a buffer as edited by agent, so we can refresh it in the context
     pub fn buffer_edited(&mut self, buffer: Entity<Buffer>, cx: &mut Context<Self>) {
+        if let Some(linked_action_log) = &mut self.linked_action_log {
+            linked_action_log.update(cx, |log, cx| log.buffer_edited(buffer.clone(), cx));
+        }
         let new_version = buffer.read(cx).version();
         let tracked_buffer = self.track_buffer_internal(buffer, false, cx);
         if let TrackedBufferStatus::Deleted = tracked_buffer.status {
@@ -517,6 +536,9 @@ impl ActionLog {
     }
 
     pub fn will_delete_buffer(&mut self, buffer: Entity<Buffer>, cx: &mut Context<Self>) {
+        if let Some(linked_action_log) = &mut self.linked_action_log {
+            linked_action_log.update(cx, |log, cx| log.will_delete_buffer(buffer.clone(), cx));
+        }
         let tracked_buffer = self.track_buffer_internal(buffer.clone(), false, cx);
         match tracked_buffer.status {
             TrackedBufferStatus::Created { .. } => {
@@ -912,15 +934,6 @@ impl ActionLog {
             .filter(|(_, tracked)| tracked.has_edits(cx))
             .map(|(buffer, tracked)| (buffer.clone(), tracked.diff.clone()))
             .collect()
-    }
-
-    /// Returns all tracked buffers for debugging purposes
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn tracked_buffers_for_debug(
-        &self,
-        _cx: &App,
-    ) -> impl Iterator<Item = (&Entity<Buffer>, &TrackedBuffer)> {
-        self.tracked_buffers.iter()
     }
 
     /// Iterate over buffers changed since last read or edited by the model
