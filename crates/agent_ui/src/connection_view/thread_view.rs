@@ -487,6 +487,24 @@ impl ThreadView {
             .thread(acp_thread.session_id(), cx)
     }
 
+    /// Resolves the message editor's contents into content blocks. For profiles
+    /// that do not enable any tools, directory mentions are expanded to inline
+    /// file contents since the agent can't read files on its own.
+    fn resolve_message_contents(
+        &self,
+        message_editor: &Entity<MessageEditor>,
+        cx: &mut App,
+    ) -> Task<Result<(Vec<acp::ContentBlock>, Vec<Entity<Buffer>>)>> {
+        let expand = self.as_native_thread(cx).is_some_and(|thread| {
+            let thread = thread.read(cx);
+            AgentSettings::get_global(cx)
+                .profiles
+                .get(thread.profile())
+                .is_some_and(|profile| profile.tools.is_empty())
+        });
+        message_editor.update(cx, |message_editor, cx| message_editor.contents(expand, cx))
+    }
+
     pub fn current_model_id(&self, cx: &App) -> Option<String> {
         let selector = self.model_selector.as_ref()?;
         let model = selector.read(cx).active_model(cx)?;
@@ -705,19 +723,7 @@ impl ThreadView {
         // content blocks — needed for "Start thread in New Worktree",
         // which must create a workspace before sending the message there.
         if self.thread.read(cx).entries().is_empty() && !message_editor.read(cx).is_empty(cx) {
-            let full_mention_content = self.as_native_thread(cx).is_some_and(|thread| {
-                // Profiles that do not enable any tools can't read files, so expand
-                // directory mentions to inline file contents.
-                let thread = thread.read(cx);
-                AgentSettings::get_global(cx)
-                    .profiles
-                    .get(thread.profile())
-                    .is_some_and(|profile| profile.tools.is_empty())
-            });
-
-            let content_task = message_editor.update(cx, |message_editor, cx| {
-                message_editor.contents(full_mention_content, cx)
-            });
+            let content_task = self.resolve_message_contents(&message_editor, cx);
 
             cx.spawn(async move |this, cx| match content_task.await {
                 Ok((content, _tracked_buffers)) => {
@@ -804,18 +810,7 @@ impl ThreadView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let full_mention_content = self.as_native_thread(cx).is_some_and(|thread| {
-            // Include full contents when using minimal profile
-            let thread = thread.read(cx);
-            AgentSettings::get_global(cx)
-                .profiles
-                .get(thread.profile())
-                .is_some_and(|profile| profile.tools.is_empty())
-        });
-
-        let contents = message_editor.update(cx, |message_editor, cx| {
-            message_editor.contents(full_mention_content, cx)
-        });
+        let contents = self.resolve_message_contents(&message_editor, cx);
 
         self.thread_error.take();
         self.thread_feedback.clear();
@@ -1154,17 +1149,7 @@ impl ThreadView {
             return;
         }
 
-        let full_mention_content = self.as_native_thread(cx).is_some_and(|thread| {
-            let thread = thread.read(cx);
-            AgentSettings::get_global(cx)
-                .profiles
-                .get(thread.profile())
-                .is_some_and(|profile| profile.tools.is_empty())
-        });
-
-        let contents = message_editor.update(cx, |message_editor, cx| {
-            message_editor.contents(full_mention_content, cx)
-        });
+        let contents = self.resolve_message_contents(&message_editor, cx);
 
         cx.spawn_in(window, async move |this, cx| {
             let (content, tracked_buffers) = contents.await?;
