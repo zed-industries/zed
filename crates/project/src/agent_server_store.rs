@@ -1,7 +1,6 @@
 use remote::Interactive;
 use std::{
     any::Any,
-    borrow::Borrow,
     path::{Path, PathBuf},
     sync::Arc,
     time::Duration,
@@ -83,7 +82,7 @@ impl From<ExternalAgentServerName> for SharedString {
     }
 }
 
-impl Borrow<str> for ExternalAgentServerName {
+impl std::borrow::Borrow<str> for ExternalAgentServerName {
     fn borrow(&self) -> &str {
         &self.0
     }
