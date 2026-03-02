@@ -662,6 +662,16 @@ impl MetalRenderer {
                     let block = block.copy();
                     command_buffer.add_completed_handler(&block);
 
+                    // On discrete GPUs (non-unified memory), Managed textures
+                    // require an explicit blit synchronize before the CPU can
+                    // read back the rendered data. Without this, get_bytes
+                    // returns stale zeros.
+                    if !self.is_unified_memory {
+                        let blit = command_buffer.new_blit_command_encoder();
+                        blit.synchronize_resource(&target_texture);
+                        blit.end_encoding();
+                    }
+
                     // Commit and wait for completion
                     command_buffer.commit();
                     command_buffer.wait_until_completed();
