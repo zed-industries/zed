@@ -1,18 +1,13 @@
 use crate::{App, PlatformDispatcher, PlatformScheduler};
 use futures::channel::mpsc;
+use futures::prelude::*;
+use gpui_util::TryFutureExt;
+use scheduler::Instant;
 use scheduler::Scheduler;
-use smol::prelude::*;
 use std::{
-    fmt::Debug,
-    future::Future,
-    marker::PhantomData,
-    mem,
-    pin::Pin,
-    rc::Rc,
-    sync::Arc,
-    time::{Duration, Instant},
+    fmt::Debug, future::Future, marker::PhantomData, mem, pin::Pin, rc::Rc, sync::Arc,
+    time::Duration,
 };
-use util::TryFutureExt;
 
 pub use scheduler::{FallibleTask, ForegroundExecutor as SchedulerForegroundExecutor, Priority};
 
@@ -269,6 +264,7 @@ impl BackgroundExecutor {
     /// Returns a task that will complete after the given duration.
     /// Depending on other concurrent tasks the elapsed duration may be longer
     /// than requested.
+    #[track_caller]
     pub fn timer(&self, duration: Duration) -> Task<()> {
         if duration.is_zero() {
             return Task::ready(());

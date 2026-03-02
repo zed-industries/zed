@@ -38,7 +38,7 @@ pub trait AgentConnection {
     ) -> Task<Result<Entity<AcpThread>>>;
 
     /// Whether this agent supports loading existing sessions.
-    fn supports_load_session(&self, _cx: &App) -> bool {
+    fn supports_load_session(&self) -> bool {
         false
     }
 
@@ -54,7 +54,7 @@ pub trait AgentConnection {
     }
 
     /// Whether this agent supports closing existing sessions.
-    fn supports_close_session(&self, _cx: &App) -> bool {
+    fn supports_close_session(&self) -> bool {
         false
     }
 
@@ -64,7 +64,7 @@ pub trait AgentConnection {
     }
 
     /// Whether this agent supports resuming existing sessions without loading history.
-    fn supports_resume_session(&self, _cx: &App) -> bool {
+    fn supports_resume_session(&self) -> bool {
         false
     }
 
@@ -82,8 +82,8 @@ pub trait AgentConnection {
     }
 
     /// Whether this agent supports showing session history.
-    fn supports_session_history(&self, cx: &App) -> bool {
-        self.supports_load_session(cx) || self.supports_resume_session(cx)
+    fn supports_session_history(&self) -> bool {
+        self.supports_load_session() || self.supports_resume_session()
     }
 
     fn auth_methods(&self) -> &[acp::AuthMethod];

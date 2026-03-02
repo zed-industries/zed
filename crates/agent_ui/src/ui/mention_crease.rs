@@ -3,7 +3,7 @@ use std::time::Duration;
 use gpui::{Animation, AnimationExt, AnyView, IntoElement, Window, pulsating_between};
 use settings::Settings;
 use theme::ThemeSettings;
-use ui::{ButtonLike, TintColor, prelude::*};
+use ui::{ButtonLike, TintColor, Tooltip, prelude::*};
 
 #[derive(IntoElement)]
 pub struct MentionCrease {
@@ -12,6 +12,7 @@ pub struct MentionCrease {
     label: SharedString,
     is_toggled: bool,
     is_loading: bool,
+    tooltip: Option<SharedString>,
     image_preview: Option<Box<dyn Fn(&mut Window, &mut App) -> AnyView + 'static>>,
 }
 
@@ -27,6 +28,7 @@ impl MentionCrease {
             label: label.into(),
             is_toggled: false,
             is_loading: false,
+            tooltip: None,
             image_preview: None,
         }
     }
@@ -38,6 +40,11 @@ impl MentionCrease {
 
     pub fn is_loading(mut self, is_loading: bool) -> Self {
         self.is_loading = is_loading;
+        self
+    }
+
+    pub fn tooltip(mut self, tooltip: impl Into<SharedString>) -> Self {
+        self.tooltip = Some(tooltip.into());
         self
     }
 
@@ -55,6 +62,9 @@ impl RenderOnce for MentionCrease {
         let settings = ThemeSettings::get_global(cx);
         let font_size = settings.agent_buffer_font_size(cx);
         let buffer_font = settings.buffer_font.clone();
+        let is_loading = self.is_loading;
+        let tooltip = self.tooltip;
+        let image_preview = self.image_preview;
 
         let button_height = DefiniteLength::Absolute(AbsoluteLength::Pixels(
             px(window.line_height().into()) - px(1.),
@@ -66,9 +76,6 @@ impl RenderOnce for MentionCrease {
             .height(button_height)
             .selected_style(ButtonStyle::Tinted(TintColor::Accent))
             .toggle_state(self.is_toggled)
-            .when_some(self.image_preview, |this, image_preview| {
-                this.hoverable_tooltip(image_preview)
-            })
             .child(
                 h_flex()
                     .pb_px()
@@ -82,7 +89,7 @@ impl RenderOnce for MentionCrease {
                     )
                     .child(self.label.clone())
                     .map(|this| {
-                        if self.is_loading {
+                        if is_loading {
                             this.with_animation(
                                 "loading-context-crease",
                                 Animation::new(Duration::from_secs(2))
@@ -96,5 +103,14 @@ impl RenderOnce for MentionCrease {
                         }
                     }),
             )
+            .map(|button| {
+                if let Some(image_preview) = image_preview {
+                    button.hoverable_tooltip(image_preview)
+                } else {
+                    button.when_some(tooltip, |this, tooltip_text| {
+                        this.tooltip(Tooltip::text(tooltip_text))
+                    })
+                }
+            })
     }
 }

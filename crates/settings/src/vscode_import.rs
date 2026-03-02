@@ -801,6 +801,7 @@ impl VsCodeSettings {
             starts_open: None,
             sticky_scroll: None,
             auto_open: None,
+            diagnostic_badges: None,
         };
 
         if let (Some(false), Some(false)) = (
@@ -952,6 +953,7 @@ impl VsCodeSettings {
             bottom_dock_layout: None,
             centered_layout: None,
             close_on_file_delete: None,
+            close_panel_on_toggle: None,
             command_aliases: Default::default(),
             confirm_quit: self.read_enum("window.confirmBeforeClose", |s| match s {
                 "always" | "keyboardOnly" => Some(true),

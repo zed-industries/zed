@@ -510,7 +510,7 @@ impl PickerDelegate for CommandPaletteDelegate {
                         .delegate
                         .matches_updated(query, commands, matches, intercept_result, cx)
                 })
-                .log_err();
+                .ok();
         })
     }
 
@@ -543,7 +543,7 @@ impl PickerDelegate for CommandPaletteDelegate {
     fn dismissed(&mut self, _window: &mut Window, cx: &mut Context<Picker<Self>>) {
         self.command_palette
             .update(cx, |_, cx| cx.emit(DismissEvent))
-            .log_err();
+            .ok();
     }
 
     fn confirm(&mut self, secondary: bool, window: &mut Window, cx: &mut Context<Picker<Self>>) {

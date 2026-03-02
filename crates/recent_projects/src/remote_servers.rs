@@ -495,7 +495,7 @@ impl ProjectPicker {
                                 telemetry::event!("SSH Project Created");
                                 Workspace::new(None, project.clone(), app_state.clone(), window, cx)
                             });
-                            cx.new(|cx| MultiWorkspace::new(workspace, cx))
+                            cx.new(|cx| MultiWorkspace::new(workspace, window, cx))
                         })
                         .log_err()?;
 
@@ -1849,6 +1849,7 @@ impl RemoteServerProjects {
     ) {
         let replace_window = window.window_handle().downcast::<MultiWorkspace>();
 
+        let app_state = Arc::downgrade(&app_state);
         cx.spawn_in(window, async move |entity, cx| {
             let (connection, starting_dir) =
                 match start_dev_container_with_config(context, config).await {
@@ -1882,6 +1883,9 @@ impl RemoteServerProjects {
                 })
                 .log_err();
 
+            let Some(app_state) = app_state.upgrade() else {
+                return;
+            };
             let result = open_remote_project(
                 connection.into(),
                 vec![starting_dir].into_iter().map(PathBuf::from).collect(),

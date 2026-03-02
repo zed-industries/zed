@@ -195,15 +195,18 @@ impl<'a> Iterator for CustomHighlightsChunks<'a> {
         let mask = 1u128.unbounded_shl(split_idx as u32).wrapping_sub(1);
         let chars = chunk.chars & mask;
         let tabs = chunk.tabs & mask;
+        let newlines = chunk.newlines & mask;
         let mut prefix = Chunk {
             text: prefix,
             chars,
             tabs,
+            newlines,
             ..chunk.clone()
         };
 
         chunk.chars = chunk.chars.unbounded_shr(split_idx as u32);
         chunk.tabs = chunk.tabs.unbounded_shr(split_idx as u32);
+        chunk.newlines = chunk.newlines.unbounded_shr(split_idx as u32);
         chunk.text = suffix;
         if !self.active_highlights.is_empty() {
             prefix.highlight_style = self
