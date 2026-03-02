@@ -375,6 +375,14 @@ impl KeybindingKeystroke {
     }
 }
 
+/// Returns true for XF86 multimedia key names that should not be displayed
+/// in menus or keybinding hints. These keys exist only on rare legacy
+/// keyboards and their names ("New", "Save", etc.) are confusing when
+/// shown in the UI.
+pub fn is_xf86_key(key: &str) -> bool {
+    matches!(key, "new" | "open" | "save" | "cut" | "copy" | "paste")
+}
+
 fn is_printable_key(key: &str) -> bool {
     !matches!(
         key,
