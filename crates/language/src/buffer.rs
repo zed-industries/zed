@@ -187,7 +187,7 @@ struct BufferBranchState {
 /// state of a buffer.
 pub struct BufferSnapshot {
     pub text: text::BufferSnapshot,
-    pub syntax: SyntaxSnapshot,
+    pub(crate) syntax: SyntaxSnapshot,
     tree_sitter_data: Arc<TreeSitterData>,
     diagnostics: TreeMap<LanguageServerId, DiagnosticSet>,
     remote_selections: TreeMap<ReplicaId, SelectionSet>,
@@ -1776,7 +1776,9 @@ impl Buffer {
         self.syntax_map.lock().contains_unknown_injections()
     }
 
-    #[cfg(any(test, feature = "test-support"))]
+    /// Sets the sync parse timeout for this buffer.
+    ///
+    /// Setting this to `None` disables sync parsing entirely.
     pub fn set_sync_parse_timeout(&mut self, timeout: Option<Duration>) {
         self.sync_parse_timeout = timeout;
     }
@@ -3704,6 +3706,14 @@ impl BufferSnapshot {
             }
         }
         None
+    }
+
+    pub fn captures(
+        &self,
+        range: Range<usize>,
+        query: fn(&Grammar) -> Option<&tree_sitter::Query>,
+    ) -> SyntaxMapCaptures<'_> {
+        self.syntax.captures(range, &self.text, query)
     }
 
     #[ztracing::instrument(skip_all)]

@@ -1,15 +1,15 @@
 use crate::{
-    ActiveDiagnostic, BlockId, CURSORS_VISIBLE_FOR, ChunkRendererContext, ChunkReplacement,
-    CodeActionSource, ColumnarMode, ConflictsOurs, ConflictsOursMarker, ConflictsOuter,
-    ConflictsTheirs, ConflictsTheirsMarker, ContextMenuPlacement, CursorShape, CustomBlockId,
-    DisplayDiffHunk, DisplayPoint, DisplayRow, EditDisplayMode, EditPrediction, Editor, EditorMode,
-    EditorSettings, EditorSnapshot, EditorStyle, FILE_HEADER_HEIGHT, FocusedBlock,
-    GutterDimensions, HalfPageDown, HalfPageUp, HandleInput, HoveredCursor, InlayHintRefreshReason,
-    JumpData, LineDown, LineHighlight, LineUp, MAX_LINE_LEN, MINIMAP_FONT_SIZE,
-    MULTI_BUFFER_EXCERPT_HEADER_HEIGHT, OpenExcerpts, PageDown, PageUp, PhantomBreakpointIndicator,
-    PhantomDiffReviewIndicator, Point, RowExt, RowRangeExt, SelectPhase, Selection,
-    SelectionDragState, SelectionEffects, SizingBehavior, SoftWrap, StickyHeaderExcerpt, ToPoint,
-    ToggleFold, ToggleFoldAll,
+    ActiveDiagnostic, BUFFER_HEADER_PADDING, BlockId, CURSORS_VISIBLE_FOR, ChunkRendererContext,
+    ChunkReplacement, CodeActionSource, ColumnarMode, ConflictsOurs, ConflictsOursMarker,
+    ConflictsOuter, ConflictsTheirs, ConflictsTheirsMarker, ContextMenuPlacement, CursorShape,
+    CustomBlockId, DisplayDiffHunk, DisplayPoint, DisplayRow, EditDisplayMode, EditPrediction,
+    Editor, EditorMode, EditorSettings, EditorSnapshot, EditorStyle, FILE_HEADER_HEIGHT,
+    FocusedBlock, GutterDimensions, HalfPageDown, HalfPageUp, HandleInput, HoveredCursor,
+    InlayHintRefreshReason, JumpData, LineDown, LineHighlight, LineUp, MAX_LINE_LEN,
+    MINIMAP_FONT_SIZE, MULTI_BUFFER_EXCERPT_HEADER_HEIGHT, OpenExcerpts, PageDown, PageUp,
+    PhantomBreakpointIndicator, PhantomDiffReviewIndicator, Point, RowExt, RowRangeExt,
+    SelectPhase, Selection, SelectionDragState, SelectionEffects, SizingBehavior, SoftWrap,
+    StickyHeaderExcerpt, ToPoint, ToggleFold, ToggleFoldAll,
     code_context_menus::{CodeActionsMenu, MENU_ASIDE_MAX_WIDTH, MENU_ASIDE_MIN_WIDTH, MENU_GAP},
     column_pixels,
     display_map::{
@@ -8254,7 +8254,7 @@ pub(crate) fn render_buffer_header(
 
     let header = div()
         .id(("buffer-header", for_excerpt.buffer_id.to_proto()))
-        .p_1()
+        .p(BUFFER_HEADER_PADDING)
         .w_full()
         .h(FILE_HEADER_HEIGHT as f32 * window.line_height())
         .child(
@@ -10959,7 +10959,9 @@ impl Element for EditorElement {
                         .and_then(|headers| headers.lines.last())
                         .map_or(Pixels::ZERO, |last| last.offset + line_height);
 
-                    let sticky_header_height = if sticky_buffer_header.is_some() {
+                    let has_sticky_buffer_header =
+                        sticky_buffer_header.is_some() || sticky_header_excerpt_id.is_some();
+                    let sticky_header_height = if has_sticky_buffer_header {
                         let full_height = FILE_HEADER_HEIGHT as f32 * line_height;
                         let display_row = blocks
                             .iter()
@@ -10978,7 +10980,9 @@ impl Element for EditorElement {
                             }
                             None => full_height,
                         };
-                        sticky_scroll_header_height + offset
+                        let header_bottom_padding =
+                            BUFFER_HEADER_PADDING.to_pixels(window.rem_size());
+                        sticky_scroll_header_height + offset - header_bottom_padding
                     } else {
                         sticky_scroll_header_height
                     };

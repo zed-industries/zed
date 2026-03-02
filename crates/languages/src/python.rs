@@ -507,6 +507,7 @@ impl LspAdapter for PyrightLspAdapter {
     async fn initialization_options(
         self: Arc<Self>,
         _: &Arc<dyn LspAdapterDelegate>,
+        _: &mut AsyncApp,
     ) -> Result<Option<Value>> {
         // Provide minimal initialization options
         // Virtual environment configuration will be handled through workspace configuration
@@ -1972,6 +1973,7 @@ impl LspAdapter for BasedPyrightLspAdapter {
     async fn initialization_options(
         self: Arc<Self>,
         _: &Arc<dyn LspAdapterDelegate>,
+        _: &mut AsyncApp,
     ) -> Result<Option<Value>> {
         // Provide minimal initialization options
         // Virtual environment configuration will be handled through workspace configuration

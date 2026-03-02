@@ -4120,7 +4120,6 @@ dependencies = [
 name = "crashes"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "bincode",
  "cfg-if",
  "crash-handler",
@@ -5001,11 +5000,13 @@ checksum = "bd0c93bb4b0c6d9b77f4435b0ae98c24d17f1c45b2ff844c6151a07256ca923b"
 
 [[package]]
 name = "dispatch2"
-version = "0.3.0"
+version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "89a09f22a6c6069a18470eb92d2298acf25463f14256d24778e1230d789a2aec"
+checksum = "1e0e367e4e7da84520dedcac1901e4da967309406d1e51017ae1abfb97adbd38"
 dependencies = [
  "bitflags 2.10.0",
+ "block2",
+ "libc",
  "objc2",
 ]
 
@@ -7677,7 +7678,6 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-task",
- "bindgen 0.71.1",
  "block",
  "cbindgen",
  "cocoa 0.26.0",
@@ -7689,6 +7689,7 @@ dependencies = [
  "core-video",
  "ctor",
  "derive_more 0.99.20",
+ "dispatch2",
  "etagere",
  "foreign-types 0.5.0",
  "futures 0.3.31",
@@ -8662,7 +8663,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4b0f83760fb341a774ed326568e19f5a863af4a952def8c39f9ab92fd95b88e5"
 dependencies = [
  "equivalent",
- "hashbrown 0.16.1",
+ "hashbrown 0.15.5",
  "serde",
  "serde_core",
 ]
@@ -9696,7 +9697,7 @@ dependencies = [
 [[package]]
 name = "libwebrtc"
 version = "0.3.26"
-source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=9c38d9a0a91951967f8fa84ed86e193626436774#9c38d9a0a91951967f8fa84ed86e193626436774"
+source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=fccf29d1d0d0a139b2e50746b0b9a1bac828fa04#fccf29d1d0d0a139b2e50746b0b9a1bac828fa04"
 dependencies = [
  "cxx",
  "glib",
@@ -9794,7 +9795,7 @@ checksum = "11d3d7f243d5c5a8b9bb5d6dd2b1602c0cb0b9db1621bafc7ed66e35ff9fe092"
 [[package]]
 name = "livekit"
 version = "0.7.32"
-source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=9c38d9a0a91951967f8fa84ed86e193626436774#9c38d9a0a91951967f8fa84ed86e193626436774"
+source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=fccf29d1d0d0a139b2e50746b0b9a1bac828fa04#fccf29d1d0d0a139b2e50746b0b9a1bac828fa04"
 dependencies = [
  "base64 0.22.1",
  "bmrng",
@@ -9820,7 +9821,7 @@ dependencies = [
 [[package]]
 name = "livekit-api"
 version = "0.4.14"
-source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=9c38d9a0a91951967f8fa84ed86e193626436774#9c38d9a0a91951967f8fa84ed86e193626436774"
+source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=fccf29d1d0d0a139b2e50746b0b9a1bac828fa04#fccf29d1d0d0a139b2e50746b0b9a1bac828fa04"
 dependencies = [
  "base64 0.21.7",
  "futures-util",
@@ -9847,7 +9848,7 @@ dependencies = [
 [[package]]
 name = "livekit-protocol"
 version = "0.7.1"
-source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=9c38d9a0a91951967f8fa84ed86e193626436774#9c38d9a0a91951967f8fa84ed86e193626436774"
+source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=fccf29d1d0d0a139b2e50746b0b9a1bac828fa04#fccf29d1d0d0a139b2e50746b0b9a1bac828fa04"
 dependencies = [
  "futures-util",
  "livekit-runtime",
@@ -9863,7 +9864,7 @@ dependencies = [
 [[package]]
 name = "livekit-runtime"
 version = "0.4.0"
-source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=9c38d9a0a91951967f8fa84ed86e193626436774#9c38d9a0a91951967f8fa84ed86e193626436774"
+source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=fccf29d1d0d0a139b2e50746b0b9a1bac828fa04#fccf29d1d0d0a139b2e50746b0b9a1bac828fa04"
 dependencies = [
  "tokio",
  "tokio-stream",
@@ -10172,7 +10173,6 @@ dependencies = [
  "anyhow",
  "async-recursion",
  "collections",
- "crashes",
  "editor",
  "fs",
  "gpui",
@@ -10398,7 +10398,7 @@ dependencies = [
 [[package]]
 name = "mermaid-rs-renderer"
 version = "0.2.0"
-source = "git+https://github.com/zed-industries/mermaid-rs-renderer?rev=9d8360d9cea10dc4bc86d7b8012cc6e9656e6cf2#9d8360d9cea10dc4bc86d7b8012cc6e9656e6cf2"
+source = "git+https://github.com/zed-industries/mermaid-rs-renderer?rev=a1f8fc03bf7293018136fb8e60d83551d2dd5732#a1f8fc03bf7293018136fb8e60d83551d2dd5732"
 dependencies = [
  "anyhow",
  "fontdb 0.16.2",
@@ -17525,6 +17525,7 @@ dependencies = [
  "core-foundation-sys",
  "sys-locale",
  "time",
+ "windows 0.61.3",
 ]
 
 [[package]]
@@ -19880,7 +19881,7 @@ dependencies = [
 [[package]]
 name = "webrtc-sys"
 version = "0.3.23"
-source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=9c38d9a0a91951967f8fa84ed86e193626436774#9c38d9a0a91951967f8fa84ed86e193626436774"
+source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=fccf29d1d0d0a139b2e50746b0b9a1bac828fa04#fccf29d1d0d0a139b2e50746b0b9a1bac828fa04"
 dependencies = [
  "cc",
  "cxx",
@@ -19894,7 +19895,7 @@ dependencies = [
 [[package]]
 name = "webrtc-sys-build"
 version = "0.3.13"
-source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=9c38d9a0a91951967f8fa84ed86e193626436774#9c38d9a0a91951967f8fa84ed86e193626436774"
+source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=fccf29d1d0d0a139b2e50746b0b9a1bac828fa04#fccf29d1d0d0a139b2e50746b0b9a1bac828fa04"
 dependencies = [
  "anyhow",
  "fs2",
