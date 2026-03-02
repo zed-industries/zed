@@ -55,7 +55,15 @@ use util::{paths::PathStyle, truncate_and_trailoff};
 #[cfg(unix)]
 use std::os::unix::process::ExitStatusExt;
 use std::{
-    borrow::Cow, cmp::{self, min}, fmt::Display, i32, ops::{Deref, RangeInclusive}, path::PathBuf, process::ExitStatus, sync::Arc, time::{Duration, Instant}
+    borrow::Cow,
+    cmp::{self, min},
+    fmt::Display,
+    i32,
+    ops::{Deref, RangeInclusive},
+    path::PathBuf,
+    process::ExitStatus,
+    sync::Arc,
+    time::{Duration, Instant},
 };
 use thiserror::Error;
 
@@ -436,15 +444,14 @@ impl TerminalBuilder {
         let version = release_channel::AppVersion::global(cx);
         let background_executor = cx.background_executor().clone();
         let fut = async move {
-
-        if let Some(shlvl) = env.get("SHLVL") {
-            if let Ok(shlvl) = shlvl.parse::<i32>() {
-                let new_shlvl = 0.max(shlvl - 1);
-                env.insert("SHLVL".to_string(), new_shlvl.to_string());
-            } else {
-                env.insert("SHLVL".to_string(), 0.to_string());
+            if let Some(shlvl) = env.get("SHLVL") {
+                if let Ok(shlvl) = shlvl.parse::<i32>() {
+                    let new_shlvl = 0.max(shlvl - 1);
+                    env.insert("SHLVL".to_string(), new_shlvl.to_string());
+                } else {
+                    env.insert("SHLVL".to_string(), 0.to_string());
+                }
             }
-        }
             // If the parent environment doesn't have a locale set
             // (As is the case when launched from a .app on MacOS),
             // and the Project doesn't have a locale set, then
