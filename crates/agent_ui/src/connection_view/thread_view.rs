@@ -4307,6 +4307,8 @@ impl ThreadView {
             })
             .flatten();
 
+        let is_blocked_on_terminal_command =
+            !confirmation && self.is_blocked_on_terminal_command(cx);
         let is_waiting = confirmation || self.thread.read(cx).has_in_progress_tool_calls();
 
         let turn_tokens_label = elapsed_label
@@ -4344,6 +4346,8 @@ impl ThreadView {
                                 .color(Color::Muted),
                         ),
                     )
+                } else if is_blocked_on_terminal_command {
+                    this
                 } else {
                     this.child(SpinnerLabel::new().size(LabelSize::Small))
                 }
@@ -4632,51 +4636,74 @@ impl ThreadView {
         if text.is_empty() { None } else { Some(text) }
     }
 
+    fn is_blocked_on_terminal_command(&self, cx: &App) -> bool {
+        let thread = self.thread.read(cx);
+        if !matches!(thread.status(), ThreadStatus::Generating) {
+            return false;
+        }
+
+        let mut has_running_terminal_call = false;
+
+        for entry in thread.entries().iter().rev() {
+            match entry {
+                AgentThreadEntry::UserMessage(_) => break,
+                AgentThreadEntry::ToolCall(tool_call)
+                    if matches!(
+                        tool_call.status,
+                        ToolCallStatus::InProgress | ToolCallStatus::Pending
+                    ) =>
+                {
+                    if matches!(tool_call.kind, acp::ToolKind::Execute) {
+                        has_running_terminal_call = true;
+                    } else {
+                        return false;
+                    }
+                }
+                AgentThreadEntry::ToolCall(_) | AgentThreadEntry::AssistantMessage(_) => {}
+            }
+        }
+
+        has_running_terminal_call
+    }
+
     fn render_collapsible_command(
         &self,
+        group: SharedString,
         is_preview: bool,
         command_source: &str,
-        tool_call_id: &acp::ToolCallId,
         cx: &Context<Self>,
     ) -> Div {
-        let command_group =
-            SharedString::from(format!("collapsible-command-group-{}", tool_call_id));
-
         v_flex()
-            .group(command_group.clone())
+            .p_1p5()
             .bg(self.tool_card_header_bg(cx))
-            .child(
-                v_flex()
-                    .p_1p5()
-                    .when(is_preview, |this| {
-                        this.pt_1().child(
-                            // Wrapping this label on a container with 24px height to avoid
-                            // layout shift when it changes from being a preview label
-                            // to the actual path where the command will run in
-                            h_flex().h_6().child(
-                                Label::new("Run Command")
-                                    .buffer_font(cx)
-                                    .size(LabelSize::XSmall)
-                                    .color(Color::Muted),
-                            ),
-                        )
-                    })
-                    .children(command_source.lines().map(|line| {
-                        let text: SharedString = if line.is_empty() {
-                            " ".into()
-                        } else {
-                            line.to_string().into()
-                        };
-
-                        Label::new(text).buffer_font(cx).size(LabelSize::Small)
-                    }))
-                    .child(
-                        div().absolute().top_1().right_1().child(
-                            CopyButton::new("copy-command", command_source.to_string())
-                                .tooltip_label("Copy Command")
-                                .visible_on_hover(command_group),
-                        ),
+            .when(is_preview, |this| {
+                this.pt_1().child(
+                    // Wrapping this label on a container with 24px height to avoid
+                    // layout shift when it changes from being a preview label
+                    // to the actual path where the command will run in
+                    h_flex().h_6().child(
+                        Label::new("Run Command")
+                            .buffer_font(cx)
+                            .size(LabelSize::XSmall)
+                            .color(Color::Muted),
                     ),
+                )
+            })
+            .children(command_source.lines().map(|line| {
+                let text: SharedString = if line.is_empty() {
+                    " ".into()
+                } else {
+                    line.to_string().into()
+                };
+
+                Label::new(text).buffer_font(cx).size(LabelSize::Small)
+            }))
+            .child(
+                div().absolute().top_1().right_1().child(
+                    CopyButton::new("copy-command", command_source.to_string())
+                        .tooltip_label("Copy Command")
+                        .visible_on_hover(group),
+                ),
             )
     }
 
@@ -4708,7 +4735,11 @@ impl ThreadView {
         let needs_confirmation = confirmation_options.is_some();
 
         let output = terminal_data.output();
-        let command_finished = output.is_some();
+        let command_finished = output.is_some()
+            && !matches!(
+                tool_call.status,
+                ToolCallStatus::InProgress | ToolCallStatus::Pending
+            );
         let truncated_output =
             output.is_some_and(|output| output.original_content_len > output.content.len());
         let output_line_count = output.map(|output| output.content_line_count).unwrap_or(0);
@@ -4750,14 +4781,15 @@ impl ThreadView {
             .unwrap_or(&command_source);
 
         let command_element =
-            self.render_collapsible_command(false, command_content, &tool_call.id, cx);
+            self.render_collapsible_command(header_group.clone(), false, command_content, cx);
 
         let is_expanded = self.expanded_tool_calls.contains(&tool_call.id);
 
         let header = h_flex()
             .id(header_id)
-            .px_1p5()
             .pt_1()
+            .pl_1p5()
+            .pr_1()
             .flex_none()
             .gap_1()
             .justify_between()
@@ -4775,19 +4807,54 @@ impl ThreadView {
                             .color(Color::Muted),
                     ),
             )
+            .child(
+                Disclosure::new(
+                    SharedString::from(format!(
+                        "terminal-tool-disclosure-{}",
+                        terminal.entity_id()
+                    )),
+                    is_expanded,
+                )
+                .opened_icon(IconName::ChevronUp)
+                .closed_icon(IconName::ChevronDown)
+                .visible_on_hover(&header_group)
+                .on_click(cx.listener({
+                    let id = tool_call.id.clone();
+                    move |this, _event, _window, cx| {
+                        if is_expanded {
+                            this.expanded_tool_calls.remove(&id);
+                        } else {
+                            this.expanded_tool_calls.insert(id.clone());
+                        }
+                        cx.notify();
+                    }
+                })),
+            )
+            .when(time_elapsed > Duration::from_secs(10), |header| {
+                header.child(
+                    Label::new(format!("({})", duration_alt_display(time_elapsed)))
+                        .buffer_font(cx)
+                        .color(Color::Muted)
+                        .size(LabelSize::XSmall),
+                )
+            })
             .when(!command_finished && !needs_confirmation, |header| {
                 header
                     .gap_1p5()
                     .child(
-                        Button::new(
+                        Icon::new(IconName::ArrowCircle)
+                            .size(IconSize::XSmall)
+                            .color(Color::Muted)
+                            .with_rotate_animation(2)
+                    )
+                    .child(div().h(relative(0.6)).ml_1p5().child(Divider::vertical().color(DividerColor::Border)))
+                    .child(
+                        IconButton::new(
                             SharedString::from(format!("stop-terminal-{}", terminal.entity_id())),
-                            "Stop",
+                            IconName::Stop
                         )
-                        .icon(IconName::Stop)
-                        .icon_position(IconPosition::Start)
                         .icon_size(IconSize::Small)
                         .icon_color(Color::Error)
-                        .label_size(LabelSize::Small)
                         .tooltip(move |_window, cx| {
                             Tooltip::with_meta(
                                 "Stop This Command",
@@ -4807,13 +4874,6 @@ impl ThreadView {
                                 }
                             })
                         }),
-                    )
-                    .child(Divider::vertical())
-                    .child(
-                        Icon::new(IconName::ArrowCircle)
-                            .size(IconSize::XSmall)
-                            .color(Color::Info)
-                            .with_rotate_animation(2)
                     )
             })
             .when(truncated_output, |header| {
@@ -4850,14 +4910,6 @@ impl ThreadView {
                         .tooltip(Tooltip::text(tooltip)),
                 )
             })
-            .when(time_elapsed > Duration::from_secs(10), |header| {
-                header.child(
-                    Label::new(format!("({})", duration_alt_display(time_elapsed)))
-                        .buffer_font(cx)
-                        .color(Color::Muted)
-                        .size(LabelSize::XSmall),
-                )
-            })
             .when(tool_failed || command_failed, |header| {
                 header.child(
                     div()
@@ -4875,29 +4927,7 @@ impl ThreadView {
                         }),
                 )
             })
-            .child(
-                Disclosure::new(
-                    SharedString::from(format!(
-                        "terminal-tool-disclosure-{}",
-                        terminal.entity_id()
-                    )),
-                    is_expanded,
-                )
-                .opened_icon(IconName::ChevronUp)
-                .closed_icon(IconName::ChevronDown)
-                .visible_on_hover(&header_group)
-                .on_click(cx.listener({
-                    let id = tool_call.id.clone();
-                    move |this, _event, _window, cx| {
-                        if is_expanded {
-                            this.expanded_tool_calls.remove(&id);
-                        } else {
-                            this.expanded_tool_calls.insert(id.clone());
-                        }
-                        cx.notify();
-                    }
-                })),
-            );
+;
 
         let terminal_view = self
             .entry_view_state
@@ -5294,9 +5324,9 @@ impl ThreadView {
                 if is_terminal_tool {
                     let label_source = tool_call.label.read(cx).source();
                     this.child(self.render_collapsible_command(
+                        card_header_id.clone(),
                         true,
                         label_source,
-                        &tool_call.id,
                         cx,
                     ))
                 } else {
