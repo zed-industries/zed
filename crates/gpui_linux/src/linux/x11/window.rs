@@ -9,7 +9,7 @@ use gpui::{
     Tiling, WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControlArea,
     WindowDecorations, WindowKind, WindowParams, px,
 };
-use gpui_wgpu::{WgpuContext, WgpuRenderer, WgpuSurfaceConfig};
+use gpui_wgpu::{CompositorGpuHint, WgpuContext, WgpuRenderer, WgpuSurfaceConfig};
 
 use collections::FxHashSet;
 use raw_window_handle as rwh;
@@ -392,6 +392,7 @@ impl X11WindowState {
         client: X11ClientStatePtr,
         executor: ForegroundExecutor,
         gpu_context: &mut Option<WgpuContext>,
+        compositor_gpu: Option<CompositorGpuHint>,
         params: WindowParams,
         xcb: &Rc<XCBConnection>,
         client_side_decorations_supported: bool,
@@ -679,7 +680,7 @@ impl X11WindowState {
                     // too
                     transparent: false,
                 };
-                WgpuRenderer::new(gpu_context, &raw_window, config)?
+                WgpuRenderer::new(gpu_context, &raw_window, config, compositor_gpu)?
             };
 
             // Set max window size hints based on the GPU's maximum texture dimension.
@@ -803,6 +804,7 @@ impl X11Window {
         client: X11ClientStatePtr,
         executor: ForegroundExecutor,
         gpu_context: &mut Option<WgpuContext>,
+        compositor_gpu: Option<CompositorGpuHint>,
         params: WindowParams,
         xcb: &Rc<XCBConnection>,
         client_side_decorations_supported: bool,
@@ -819,6 +821,7 @@ impl X11Window {
                 client,
                 executor,
                 gpu_context,
+                compositor_gpu,
                 params,
                 xcb,
                 client_side_decorations_supported,
