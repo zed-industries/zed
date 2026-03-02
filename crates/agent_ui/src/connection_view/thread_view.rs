@@ -1240,36 +1240,13 @@ impl ThreadView {
             return true;
         }
 
-        let existing_message_text = message_editor.read(cx).text(cx);
-        let existing_contents_task =
-            message_editor.update(cx, |editor, cx| editor.contents(false, cx));
-
-        cx.spawn_in(window, async move |_this, cx| {
-            let mut combined_content = match existing_contents_task.await {
-                Ok((existing_content, _tracked_buffers)) => existing_content,
-                Err(error) => {
-                    log::error!(
-                        "failed to read existing message editor contents while appending queued message: {error:#}"
-                    );
-                    vec![existing_message_text.into()]
-                }
-            };
-
-            if !combined_content.is_empty() && !queued_content.is_empty() {
-                combined_content.push("\n\n".to_string().into());
+        message_editor.update(cx, |editor, cx| {
+            editor.append_message(queued_content, Some("\n\n"), window, cx);
+            if let Some(inserted_text) = inserted_text.as_deref() {
+                editor.insert_text(inserted_text, window, cx);
             }
-            combined_content.extend(queued_content);
-
-            message_editor.update_in(cx, |editor, window, cx| {
-                editor.set_message(combined_content, window, cx);
-                if let Some(inserted_text) = inserted_text.as_deref() {
-                    editor.insert_text(inserted_text, window, cx);
-                }
-                editor.focus_handle(cx).focus(window, cx);
-            })?;
-            Ok::<(), anyhow::Error>(())
-        })
-        .detach_and_log_err(cx);
+            editor.focus_handle(cx).focus(window, cx);
+        });
 
         cx.notify();
         true

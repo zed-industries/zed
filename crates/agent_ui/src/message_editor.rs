@@ -187,14 +187,12 @@ impl MessageEditor {
 
         subscriptions.push(cx.subscribe_in(&editor, window, {
             move |this, editor, event, window, cx| {
-                if let EditorEvent::InputHandled { text, .. } = event
-                    && editor.read(cx).read_only(cx)
-                    && !text.is_empty()
-                {
-                    cx.emit(MessageEditorEvent::InputAttempted(text.clone()));
-                }
-
-                if let EditorEvent::InputIgnored { text } = event
+                let input_attempted_text = match event {
+                    EditorEvent::InputHandled { text, .. } => Some(text),
+                    EditorEvent::InputIgnored { text } => Some(text),
+                    _ => None,
+                };
+                if let Some(text) = input_attempted_text
                     && editor.read(cx).read_only(cx)
                     && !text.is_empty()
                 {
@@ -1211,11 +1209,43 @@ impl MessageEditor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.clear(window, cx);
+        self.insert_message_blocks(message, false, window, cx);
+    }
+
+    pub fn append_message(
+        &mut self,
+        message: Vec<acp::ContentBlock>,
+        separator: Option<&str>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if message.is_empty() {
+            return;
+        }
+
+        if let Some(separator) = separator
+            && !separator.is_empty()
+            && !self.is_empty(cx)
+        {
+            self.editor.update(cx, |editor, cx| {
+                editor.insert(separator, window, cx);
+            });
+        }
+
+        self.insert_message_blocks(message, true, window, cx);
+    }
+
+    fn insert_message_blocks(
+        &mut self,
+        message: Vec<acp::ContentBlock>,
+        append_to_existing: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let Some(workspace) = self.workspace.upgrade() else {
             return;
         };
-
-        self.clear(window, cx);
 
         let path_style = workspace.read(cx).project().read(cx).path_style(cx);
         let mut text = String::new();
@@ -1290,13 +1320,31 @@ impl MessageEditor {
             }
         }
 
-        let snapshot = self.editor.update(cx, |editor, cx| {
-            editor.set_text(text, window, cx);
-            editor.buffer().read(cx).snapshot(cx)
-        });
+        if text.is_empty() && mentions.is_empty() {
+            return;
+        }
+
+        let insertion_start = if append_to_existing {
+            self.editor.read(cx).text(cx).len()
+        } else {
+            0
+        };
+
+        let snapshot = if append_to_existing {
+            self.editor.update(cx, |editor, cx| {
+                editor.insert(&text, window, cx);
+                editor.buffer().read(cx).snapshot(cx)
+            })
+        } else {
+            self.editor.update(cx, |editor, cx| {
+                editor.set_text(text, window, cx);
+                editor.buffer().read(cx).snapshot(cx)
+            })
+        };
 
         for (range, mention_uri, mention) in mentions {
-            let anchor = snapshot.anchor_before(MultiBufferOffset(range.start));
+            let adjusted_start = insertion_start + range.start;
+            let anchor = snapshot.anchor_before(MultiBufferOffset(adjusted_start));
             let Some((crease_id, tx)) = insert_crease_for_mention(
                 anchor.excerpt_id,
                 anchor.text_anchor,
@@ -1321,6 +1369,7 @@ impl MessageEditor {
                 )
             });
         }
+
         cx.notify();
     }
 
