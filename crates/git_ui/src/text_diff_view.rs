@@ -88,7 +88,11 @@ impl TextDiffView {
         let source_buffer_snapshot = source_buffer.read(cx).snapshot();
         let mut clipboard_text = diff_data.clipboard_text.clone();
 
-        if !clipboard_text.ends_with("\n") {
+        let range_end_offset = source_buffer_snapshot.point_to_offset(expanded_selection_range.end);
+        let source_text_ends_with_newline = range_end_offset > 0
+            && source_buffer_snapshot.chars_at(range_end_offset - 1).next() == Some('\n');
+
+        if source_text_ends_with_newline && !clipboard_text.ends_with("\n") {
             clipboard_text.push_str("\n");
         }
 
