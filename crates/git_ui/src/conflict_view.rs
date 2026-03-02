@@ -512,7 +512,7 @@ fn collect_conflicted_file_paths(workspace: &Workspace, cx: &App) -> Vec<String>
 
     for repo in git_store.repositories().values() {
         let snapshot = repo.read(cx).snapshot();
-        for repo_path in snapshot.merge.conflicted_paths.iter() {
+        for (repo_path, _) in snapshot.merge.merge_heads_by_conflicted_path.iter() {
             if let Some(project_path) = repo.read(cx).repo_path_to_project_path(repo_path, cx) {
                 paths.push(
                     project_path
@@ -535,11 +535,10 @@ pub(crate) fn register_conflict_notification(
     let git_store = workspace.project().read(cx).git_store().clone();
 
     cx.subscribe(&git_store, |workspace, _git_store, event, cx| {
-        &event;
         let conflicts_changed = matches!(
             event,
             GitStoreEvent::ConflictsUpdated
-                | GitStoreEvent::RepositoryUpdated(_, RepositoryEvent::MergeHeadsChanged, _)
+                | GitStoreEvent::RepositoryUpdated(_, RepositoryEvent::StatusesChanged, _)
         );
         if !AgentSettings::get_global(cx).enabled || !conflicts_changed {
             return;
@@ -549,7 +548,6 @@ pub(crate) fn register_conflict_notification(
         let paths = collect_conflicted_file_paths(workspace, cx);
         let notification_id = merge_conflict_notification_id();
 
-        &paths;
         if paths.is_empty() {
             "dismissing";
             workspace.dismiss_notification(&notification_id, cx);
