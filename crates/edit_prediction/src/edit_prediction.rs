@@ -2129,7 +2129,7 @@ impl EditPredictionStore {
         if can_collect_data && rand::random_ratio(1, 1000) {
             if let Some(task) = capture_example(
                 project.clone(),
-                active_buffer.clone(),
+                active_buffer,
                 position,
                 stored_events,
                 false,
