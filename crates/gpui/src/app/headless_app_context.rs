@@ -4,15 +4,19 @@
 //! implementation backed by `TestPlatform`. Tests supply a real `PlatformTextSystem`
 //! (e.g. `DirectWriteTextSystem` on Windows, `MacTextSystem` on macOS) to get
 //! accurate glyph measurements while keeping everything else deterministic.
+//!
+//! Optionally, a renderer factory can be provided to enable real GPU rendering
+//! and screenshot capture via [`HeadlessAppContext::capture_screenshot`].
 
 use crate::{
     AnyView, AnyWindowHandle, App, AppCell, AppContext, AssetSource, BackgroundExecutor, Bounds,
-    Context, Entity, ForegroundExecutor, Global, Pixels, PlatformTextSystem, Render, Reservation,
-    Size, Task, TestDispatcher, TestPlatform, TextSystem, Window, WindowBounds, WindowHandle,
-    WindowOptions,
+    Context, Entity, ForegroundExecutor, Global, Pixels, PlatformHeadlessRenderer,
+    PlatformTextSystem, Render, Reservation, Size, Task, TestDispatcher, TestPlatform, TextSystem,
+    Window, WindowBounds, WindowHandle, WindowOptions,
     app::{GpuiBorrow, GpuiMode},
 };
 use anyhow::Result;
+use image::RgbaImage;
 use std::{future::Future, rc::Rc, sync::Arc, time::Duration};
 
 /// A cross-platform headless app context for tests that need real text shaping.
@@ -24,15 +28,12 @@ use std::{future::Future, rc::Rc, sync::Arc, time::Duration};
 /// # Usage
 ///
 /// ```ignore
-/// // On Windows:
-/// use gpui_windows::DirectWriteTextSystem;
-/// let text_system = Arc::new(DirectWriteTextSystem::new().unwrap());
-/// let mut cx = HeadlessAppContext::new(text_system);
-///
-/// // On macOS:
-/// use gpui_macos::MacTextSystem;
-/// let text_system = Arc::new(MacTextSystem::new());
-/// let mut cx = HeadlessAppContext::new(text_system);
+/// let text_system = Arc::new(gpui_wgpu::CosmicTextSystem::new("fallback"));
+/// let mut cx = HeadlessAppContext::with_platform(
+///     text_system,
+///     Arc::new(Assets),
+///     || gpui_platform::current_headless_renderer(),
+/// );
 /// ```
 pub struct HeadlessAppContext {
     /// The underlying app cell.
@@ -48,7 +49,7 @@ pub struct HeadlessAppContext {
 impl HeadlessAppContext {
     /// Creates a new headless app context with the given text system.
     pub fn new(platform_text_system: Arc<dyn PlatformTextSystem>) -> Self {
-        Self::build(platform_text_system, Arc::new(()))
+        Self::with_platform(platform_text_system, Arc::new(()), || None)
     }
 
     /// Creates a new headless app context with a custom text system and asset source.
@@ -56,12 +57,15 @@ impl HeadlessAppContext {
         platform_text_system: Arc<dyn PlatformTextSystem>,
         asset_source: Arc<dyn AssetSource>,
     ) -> Self {
-        Self::build(platform_text_system, asset_source)
+        Self::with_platform(platform_text_system, asset_source, || None)
     }
 
-    fn build(
+    /// Creates a new headless app context with the given text system, asset source,
+    /// and an optional renderer factory for screenshot support.
+    pub fn with_platform(
         platform_text_system: Arc<dyn PlatformTextSystem>,
         asset_source: Arc<dyn AssetSource>,
+        renderer_factory: impl Fn() -> Option<Box<dyn PlatformHeadlessRenderer>> + 'static,
     ) -> Self {
         let seed = std::env::var("SEED")
             .ok()
@@ -73,10 +77,13 @@ impl HeadlessAppContext {
         let background_executor = BackgroundExecutor::new(arc_dispatcher.clone());
         let foreground_executor = ForegroundExecutor::new(arc_dispatcher);
 
-        let platform = TestPlatform::with_text_system(
+        let renderer_factory: Box<dyn Fn() -> Option<Box<dyn PlatformHeadlessRenderer>>> =
+            Box::new(renderer_factory);
+        let platform = TestPlatform::with_platform(
             background_executor.clone(),
             foreground_executor.clone(),
             platform_text_system.clone(),
+            Some(renderer_factory),
         );
 
         let text_system = Arc::new(TextSystem::new(platform_text_system));
@@ -152,6 +159,15 @@ impl HeadlessAppContext {
     ) -> Result<R> {
         let mut app = self.app.borrow_mut();
         app.update_window(window, f)
+    }
+
+    /// Captures a screenshot from a window.
+    ///
+    /// Requires that the context was created with a renderer factory that
+    /// returns `Some` via [`HeadlessAppContext::with_platform`].
+    pub fn capture_screenshot(&mut self, window: AnyWindowHandle) -> Result<RgbaImage> {
+        let mut app = self.app.borrow_mut();
+        app.update_window(window, |_, window, _| window.render_to_image())?
     }
 
     /// Returns the text system.

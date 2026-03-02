@@ -144,48 +144,6 @@ impl TestAppContext {
         }
     }
 
-    /// Creates a `TestAppContext` with a custom text system and asset source.
-    ///
-    /// This is useful for tests that need real text shaping (e.g. with
-    /// `gpui_windows::platform_text_system()`) and custom embedded assets.
-    pub fn build_custom(
-        dispatcher: TestDispatcher,
-        fn_name: Option<&'static str>,
-        text_system: Arc<dyn crate::PlatformTextSystem>,
-        asset_source: Arc<dyn crate::AssetSource>,
-    ) -> Self {
-        let arc_dispatcher = Arc::new(dispatcher.clone());
-        let background_executor = BackgroundExecutor::new(arc_dispatcher.clone());
-        let foreground_executor = ForegroundExecutor::new(arc_dispatcher);
-        let platform = TestPlatform::with_text_system(
-            background_executor.clone(),
-            foreground_executor.clone(),
-            text_system,
-        );
-        #[cfg(not(target_family = "wasm"))]
-        let http_client = http_client::FakeHttpClient::with_404_response();
-        let text_system = Arc::new(TextSystem::new(platform.text_system()));
-
-        let app = App::new_app(
-            platform.clone(),
-            asset_source,
-            #[cfg(not(target_family = "wasm"))]
-            http_client,
-        );
-        app.borrow_mut().mode = GpuiMode::test();
-
-        Self {
-            app,
-            background_executor,
-            foreground_executor,
-            dispatcher,
-            test_platform: platform,
-            text_system,
-            fn_name,
-            on_quit: Rc::new(RefCell::new(Vec::default())),
-        }
-    }
-
     /// Skip all drawing operations for the duration of this test.
     pub fn skip_drawing(&mut self) {
         self.app.borrow_mut().mode = GpuiMode::Test { skip_drawing: true };

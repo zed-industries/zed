@@ -555,6 +555,20 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     }
 }
 
+/// A renderer for headless windows that can produce real rendered output.
+#[cfg(any(test, feature = "test-support"))]
+pub trait PlatformHeadlessRenderer {
+    /// Render a scene and return the result as an RGBA image.
+    fn render_scene_to_image(
+        &mut self,
+        scene: &Scene,
+        size: Size<DevicePixels>,
+    ) -> Result<RgbaImage>;
+
+    /// Returns the sprite atlas used by this renderer.
+    fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas>;
+}
+
 /// Type alias for runnables with metadata.
 /// Previously an enum with a single variant, now simplified to a direct type alias.
 #[doc(hidden)]
