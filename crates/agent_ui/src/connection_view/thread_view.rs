@@ -6381,7 +6381,9 @@ impl ThreadView {
 
         let is_running = matches!(
             tool_call.status,
-            ToolCallStatus::Pending | ToolCallStatus::InProgress
+            ToolCallStatus::Pending
+                | ToolCallStatus::InProgress
+                | ToolCallStatus::WaitingForConfirmation { .. }
         );
 
         let is_failed = matches!(
@@ -6596,7 +6598,7 @@ impl ThreadView {
                     .read(cx)
                     .pending_tool_call(thread.read(cx).session_id(), cx);
 
-                if let Some((_, subagent_tool_call_id, _)) = pending_tool_call {
+                if is_running && let Some((_, subagent_tool_call_id, _)) = pending_tool_call {
                     if let Some((entry_ix, tool_call)) =
                         thread.read(cx).tool_call(&subagent_tool_call_id)
                     {
