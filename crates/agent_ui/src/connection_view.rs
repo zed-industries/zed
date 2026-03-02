@@ -6252,4 +6252,86 @@ pub(crate) mod tests {
             assert_eq!(tool_call_id, acp::ToolCallId::new("tc-b"));
         });
     }
+
+    #[gpui::test]
+    async fn test_move_queued_message_to_empty_main_editor(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let (connection_view, cx) =
+            setup_thread_view(StubAgentServer::default_response(), cx).await;
+
+        // Add a plain-text message to the queue directly.
+        active_thread(&connection_view, cx).update_in(cx, |thread, window, cx| {
+            thread.add_to_queue(
+                vec![acp::ContentBlock::Text(acp::TextContent::new(
+                    "queued message".to_string(),
+                ))],
+                vec![],
+                cx,
+            );
+            // Main editor must be empty for this path — it is by default, but
+            // assert to make the precondition explicit.
+            assert!(thread.message_editor.read(cx).is_empty(cx));
+            thread.move_queued_message_to_main_editor(0, None, window, cx);
+        });
+
+        cx.run_until_parked();
+
+        // Queue should now be empty.
+        let queue_len = active_thread(&connection_view, cx)
+            .read_with(cx, |thread, _cx| thread.local_queued_messages.len());
+        assert_eq!(queue_len, 0, "Queue should be empty after move");
+
+        // Main editor should contain the queued message text.
+        let text = message_editor(&connection_view, cx).update(cx, |editor, cx| editor.text(cx));
+        assert_eq!(
+            text, "queued message",
+            "Main editor should contain the moved queued message"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_move_queued_message_to_non_empty_main_editor(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let (connection_view, cx) =
+            setup_thread_view(StubAgentServer::default_response(), cx).await;
+
+        // Seed the main editor with existing content.
+        message_editor(&connection_view, cx).update_in(cx, |editor, window, cx| {
+            editor.set_message(
+                vec![acp::ContentBlock::Text(acp::TextContent::new(
+                    "existing content".to_string(),
+                ))],
+                window,
+                cx,
+            );
+        });
+
+        // Add a plain-text message to the queue.
+        active_thread(&connection_view, cx).update_in(cx, |thread, window, cx| {
+            thread.add_to_queue(
+                vec![acp::ContentBlock::Text(acp::TextContent::new(
+                    "queued message".to_string(),
+                ))],
+                vec![],
+                cx,
+            );
+            thread.move_queued_message_to_main_editor(0, None, window, cx);
+        });
+
+        cx.run_until_parked();
+
+        // Queue should now be empty.
+        let queue_len = active_thread(&connection_view, cx)
+            .read_with(cx, |thread, _cx| thread.local_queued_messages.len());
+        assert_eq!(queue_len, 0, "Queue should be empty after move");
+
+        // Main editor should contain existing content + separator + queued content.
+        let text = message_editor(&connection_view, cx).update(cx, |editor, cx| editor.text(cx));
+        assert_eq!(
+            text, "existing content\n\nqueued message",
+            "Main editor should have existing content and queued message separated by two newlines"
+        );
+    }
 }
