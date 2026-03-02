@@ -3722,7 +3722,9 @@ impl MergeDetails {
         // Clear state for paths that are no longer conflicted and for which the merge heads have changed
         self.merge_heads_by_conflicted_path
             .retain(|path, old_merge_heads| {
-                let keep = current_conflicted_paths.contains(path) || old_merge_heads == &heads;
+                let keep = current_conflicted_paths.contains(path)
+                    || (old_merge_heads == &heads
+                        && old_merge_heads.iter().any(|head| head.is_some()));
                 if !keep {
                     conflicts_changed = true;
                 }
