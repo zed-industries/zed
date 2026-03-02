@@ -78,6 +78,7 @@ pub async fn run_scoring(
         has_isolated_whitespace_changes: false,
         inserted_tokens: 0,
         deleted_tokens: 0,
+        kept_rate: None,
     };
 
     let cursor_path = example.spec.cursor_path.as_ref();
@@ -112,12 +113,14 @@ pub async fn run_scoring(
         let mut best_delta_chr_f = 0.0f32;
         let mut best_expected_cursor: Option<usize> = None;
         let mut best_patch_idx: Option<usize> = None;
+        let mut best_expected_text: Option<&str> = None;
 
         for (idx, expected) in expected_texts.iter().enumerate() {
             let delta_chr_f = metrics::delta_chr_f(original_text, expected, &actual_text) as f32;
             if delta_chr_f > best_delta_chr_f {
                 best_delta_chr_f = delta_chr_f;
                 best_patch_idx = Some(idx);
+                best_expected_text = Some(expected);
             }
         }
 
@@ -176,6 +179,11 @@ pub async fn run_scoring(
             prediction.actual_cursor.as_ref(),
         );
 
+        // Compute kept_rate: how much of the prediction's new content was kept in the final text.
+        let kept_rate = best_expected_text.map(|final_text| {
+            metrics::compute_kept_rate(original_text, &actual_text, final_text).kept_rate
+        });
+
         scores.push(ExampleScore {
             delta_chr_f: best_delta_chr_f,
             braces_disbalance,
@@ -189,6 +197,7 @@ pub async fn run_scoring(
             has_isolated_whitespace_changes,
             inserted_tokens: token_changes.inserted_tokens,
             deleted_tokens: token_changes.deleted_tokens,
+            kept_rate,
         });
     }
 
@@ -247,6 +256,8 @@ pub fn print_report(examples: &[Example], verbose: bool) {
     let mut wrong_editable_region_count: usize = 0;
     let mut wrong_editable_region_total: usize = 0;
     let mut isolated_whitespace_count: usize = 0;
+    let mut kept_rate_sum: f64 = 0.0;
+    let mut kept_rate_count: usize = 0;
     let mut patch_inserted_tokens: Vec<usize> = Vec::new();
     let mut patch_deleted_tokens: Vec<usize> = Vec::new();
     let mut predictions_with_patch: usize = 0;
@@ -339,6 +350,12 @@ pub fn print_report(examples: &[Example], verbose: bool) {
             // Accumulate isolated whitespace metrics
             if score.has_isolated_whitespace_changes {
                 isolated_whitespace_count += 1;
+            }
+
+            // Accumulate kept rate metrics
+            if let Some(kr) = score.kept_rate {
+                kept_rate_sum += kr;
+                kept_rate_count += 1;
             }
 
             // Accumulate token change metrics (only for predictions that produced a patch)
@@ -461,6 +478,16 @@ pub fn print_report(examples: &[Example], verbose: bool) {
             println!("Isolated whitespace changes: {}", isolated_ws_str);
         }
 
+        // Print kept rate metrics
+        if kept_rate_count > 0 {
+            let avg_kept_rate = kept_rate_sum / kept_rate_count as f64;
+            println!(
+                "Kept rate: {:.1}% avg ({} evaluated)",
+                avg_kept_rate * 100.0,
+                kept_rate_count
+            );
+        }
+
         // Print token change percentile summary (only for predictions with a patch)
         if !patch_inserted_tokens.is_empty() {
             patch_inserted_tokens.sort_unstable();
@@ -557,6 +584,8 @@ pub struct SummaryJson {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub wrong_editable_region_rate: Option<f32>,
     pub isolated_whitespace_rate: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub avg_kept_rate: Option<f64>,
 }
 
 pub fn compute_summary(examples: &[Example]) -> SummaryJson {
@@ -578,6 +607,8 @@ pub fn compute_summary(examples: &[Example]) -> SummaryJson {
     let mut wrong_editable_region_count: usize = 0;
     let mut wrong_editable_region_total: usize = 0;
     let mut isolated_whitespace_count: usize = 0;
+    let mut kept_rate_sum: f64 = 0.0;
+    let mut kept_rate_count: usize = 0;
 
     for example in examples {
         for (score_idx, score) in example.score.iter().enumerate() {
@@ -614,6 +645,12 @@ pub fn compute_summary(examples: &[Example]) -> SummaryJson {
             // Accumulate isolated whitespace metrics
             if score.has_isolated_whitespace_changes {
                 isolated_whitespace_count += 1;
+            }
+
+            // Accumulate kept rate metrics
+            if let Some(kr) = score.kept_rate {
+                kept_rate_sum += kr;
+                kept_rate_count += 1;
             }
 
             // Accumulate cursor metrics
@@ -690,6 +727,12 @@ pub fn compute_summary(examples: &[Example]) -> SummaryJson {
         None
     };
 
+    let avg_kept_rate = if kept_rate_count > 0 {
+        Some(kept_rate_sum / kept_rate_count as f64)
+    } else {
+        None
+    };
+
     SummaryJson {
         total_examples: total_scores,
         avg_delta_chr_f,
@@ -708,6 +751,7 @@ pub fn compute_summary(examples: &[Example]) -> SummaryJson {
         cursor_total_evaluated,
         wrong_editable_region_rate,
         isolated_whitespace_rate,
+        avg_kept_rate,
     }
 }
 

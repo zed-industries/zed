@@ -166,6 +166,8 @@ pub struct ExampleScore {
     pub inserted_tokens: usize,
     #[serde(default)]
     pub deleted_tokens: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kept_rate: Option<f64>,
 }
 
 impl Example {
