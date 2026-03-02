@@ -1,0 +1,346 @@
+# CODEOWNERS for zed-industries/zed
+#
+# ┌─────────────────────────────────────────────────────────────────────────────┐
+# │ WARNING: This file is auto-generated. DO NOT EDIT MANUALLY.                │
+# │                                                                             │
+# │ Changes made directly to this file will be overwritten by the next         │
+# │ scheduled workflow run. To modify code ownership, update the               │
+# │ team-membership-rules.yml file in the codeowner-coordinator repo:          │
+# │ https://github.com/zed-industries/codeowner-coordinator                    │
+# └─────────────────────────────────────────────────────────────────────────────┘
+#
+# Coverage: 100% (all paths have an owner)
+#
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# DEFAULT FALLBACK (must be first - CODEOWNERS is last-match-wins)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+* @zed-industries/first-responder
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# ai-team
+# LLM integrations, agents, predictions
+# ═══════════════════════════════════════════════════════════════════════════════
+
+/assets/prompts/ @zed-industries/ai-team
+/crates/acp_thread/ @zed-industries/ai-team
+/crates/acp_tools/ @zed-industries/ai-team
+/crates/agent/ @zed-industries/ai-team
+/crates/agent_servers/ @zed-industries/ai-team
+/crates/agent_settings/ @zed-industries/ai-team
+/crates/agent_ui/ @zed-industries/ai-team
+/crates/ai_onboarding/ @zed-industries/ai-team
+/crates/anthropic/ @zed-industries/ai-team
+/crates/assistant_slash_command/ @zed-industries/ai-team
+/crates/assistant_slash_commands/ @zed-industries/ai-team
+/crates/assistant_text_thread/ @zed-industries/ai-team
+/crates/bedrock/ @zed-industries/ai-team
+/crates/cloud_llm_client/ @zed-industries/ai-team
+/crates/codestral/ @zed-industries/ai-team
+/crates/context_server/ @zed-industries/ai-team
+/crates/copilot/ @zed-industries/ai-team
+/crates/copilot_chat/ @zed-industries/ai-team
+/crates/copilot_ui/ @zed-industries/ai-team
+/crates/deepseek/ @zed-industries/ai-team
+/crates/edit_prediction/ @zed-industries/ai-team
+/crates/edit_prediction_cli/ @zed-industries/ai-team
+/crates/edit_prediction_context/ @zed-industries/ai-team
+/crates/edit_prediction_types/ @zed-industries/ai-team
+/crates/edit_prediction_ui/ @zed-industries/ai-team
+/crates/eval/ @zed-industries/ai-team
+/crates/eval_utils/ @zed-industries/ai-team
+/crates/google_ai/ @zed-industries/ai-team
+/crates/language_model/ @zed-industries/ai-team
+/crates/language_models/ @zed-industries/ai-team
+/crates/lmstudio/ @zed-industries/ai-team
+/crates/mistral/ @zed-industries/ai-team
+/crates/ollama/ @zed-industries/ai-team
+/crates/open_ai/ @zed-industries/ai-team
+/crates/open_router/ @zed-industries/ai-team
+/crates/prompt_store/ @zed-industries/ai-team
+/crates/rules_library/ @zed-industries/ai-team
+# SUGGESTED: Review needed - based on Richard Feldman (2 commits)
+/crates/shell_command_parser/ @zed-industries/ai-team
+/crates/supermaven/ @zed-industries/ai-team
+/crates/supermaven_api/ @zed-industries/ai-team
+/crates/vercel/ @zed-industries/ai-team
+/crates/x_ai/ @zed-industries/ai-team
+/crates/zeta_prompt/ @zed-industries/ai-team
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# collab-team
+# Real-time collaboration, channels, calls, remote development
+# ═══════════════════════════════════════════════════════════════════════════════
+
+/crates/call/ @zed-industries/collab-team
+/crates/channel/ @zed-industries/collab-team
+/crates/client/ @zed-industries/collab-team
+/crates/collab/ @zed-industries/collab-team
+/crates/collab_ui/ @zed-industries/collab-team
+/crates/dev_container/ @zed-industries/collab-team
+/crates/livekit_api/ @zed-industries/collab-team
+/crates/livekit_client/ @zed-industries/collab-team
+/crates/proto/ @zed-industries/collab-team
+/crates/remote/ @zed-industries/collab-team
+/crates/remote_server/ @zed-industries/collab-team
+/crates/rpc/ @zed-industries/collab-team
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# core-team
+# GPUI framework, text editing, vim, buffers, text manipulation
+# ═══════════════════════════════════════════════════════════════════════════════
+
+/crates/action_log/ @zed-industries/core-team
+/crates/breadcrumbs/ @zed-industries/core-team
+/crates/buffer_diff/ @zed-industries/core-team
+/crates/editor/ @zed-industries/core-team
+/crates/encoding_selector/ @zed-industries/core-team
+/crates/go_to_line/ @zed-industries/core-team
+/crates/gpui/ @zed-industries/core-team
+/crates/gpui_macros/ @zed-industries/core-team
+/crates/gpui_tokio/ @zed-industries/core-team
+/crates/html_to_markdown/ @zed-industries/core-team
+/crates/journal/ @zed-industries/core-team
+/crates/line_ending_selector/ @zed-industries/core-team
+/crates/multi_buffer/ @zed-industries/core-team
+/crates/outline/ @zed-industries/core-team
+/crates/outline_panel/ @zed-industries/core-team
+/crates/rich_text/ @zed-industries/core-team
+/crates/rope/ @zed-industries/core-team
+/crates/snippet/ @zed-industries/core-team
+/crates/snippet_provider/ @zed-industries/core-team
+/crates/snippets_ui/ @zed-industries/core-team
+/crates/streaming_diff/ @zed-industries/core-team
+/crates/sum_tree/ @zed-industries/core-team
+/crates/text/ @zed-industries/core-team
+/crates/vim/ @zed-industries/core-team
+/crates/vim_mode_setting/ @zed-industries/core-team
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# developer-tools-team
+# Terminal, REPL, tasks, debugger, DAP, git integration
+# ═══════════════════════════════════════════════════════════════════════════════
+
+/crates/dap/ @zed-industries/developer-tools-team
+/crates/dap_adapters/ @zed-industries/developer-tools-team
+/crates/debug_adapter_extension/ @zed-industries/developer-tools-team
+/crates/debugger_tools/ @zed-industries/developer-tools-team
+/crates/debugger_ui/ @zed-industries/developer-tools-team
+/crates/git/ @zed-industries/developer-tools-team
+# SUGGESTED: Review needed - based on Anthony Eid (4 commits)
+/crates/git_graph/ @zed-industries/developer-tools-team
+/crates/git_hosting_providers/ @zed-industries/developer-tools-team
+/crates/git_ui/ @zed-industries/developer-tools-team
+/crates/inspector_ui/ @zed-industries/developer-tools-team
+/crates/miniprofiler_ui/ @zed-industries/developer-tools-team
+/crates/repl/ @zed-industries/developer-tools-team
+/crates/task/ @zed-industries/developer-tools-team
+/crates/tasks_ui/ @zed-industries/developer-tools-team
+/crates/terminal/ @zed-industries/developer-tools-team
+/crates/terminal_view/ @zed-industries/developer-tools-team
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# ecosystem-team
+# Language support, LSP, Tree-sitter, extensions, extension API
+# ═══════════════════════════════════════════════════════════════════════════════
+
+/crates/extension/ @zed-industries/ecosystem-team
+/crates/extension_api/ @zed-industries/ecosystem-team
+/crates/extension_cli/ @zed-industries/ecosystem-team
+/crates/extension_host/ @zed-industries/ecosystem-team
+/crates/extensions_ui/ @zed-industries/ecosystem-team
+/crates/json_schema_store/ @zed-industries/ecosystem-team
+/crates/language/ @zed-industries/ecosystem-team
+/crates/language_extension/ @zed-industries/ecosystem-team
+/crates/language_onboarding/ @zed-industries/ecosystem-team
+/crates/language_selector/ @zed-industries/ecosystem-team
+/crates/language_tools/ @zed-industries/ecosystem-team
+/crates/languages/ @zed-industries/ecosystem-team
+/crates/lsp/ @zed-industries/ecosystem-team
+/crates/node_runtime/ @zed-industries/ecosystem-team
+/crates/prettier/ @zed-industries/ecosystem-team
+# SUGGESTED: Review needed - based on Piotr Osiewicz (1 commits)
+/crates/remote_connection/ @zed-industries/ecosystem-team
+/crates/toolchain_selector/ @zed-industries/ecosystem-team
+/extensions/ @zed-industries/ecosystem-team
+/extensions/glsl/ @zed-industries/ecosystem-team
+/extensions/html/ @zed-industries/ecosystem-team
+/extensions/proto/ @zed-industries/ecosystem-team
+/extensions/slash-commands-example/ @zed-industries/ecosystem-team
+/extensions/test-extension/ @zed-industries/ecosystem-team
+/extensions/workflows/ @zed-industries/ecosystem-team
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# infrastructure-team
+# Core utilities, networking, database, telemetry, reliability
+# ═══════════════════════════════════════════════════════════════════════════════
+
+/crates/aws_http_client/ @zed-industries/infrastructure-team
+/crates/clock/ @zed-industries/infrastructure-team
+/crates/collections/ @zed-industries/infrastructure-team
+/crates/crashes/ @zed-industries/infrastructure-team
+/crates/credentials_provider/ @zed-industries/infrastructure-team
+/crates/db/ @zed-industries/infrastructure-team
+/crates/denoise/ @zed-industries/infrastructure-team
+/crates/feature_flags/ @zed-industries/infrastructure-team
+/crates/fs/ @zed-industries/infrastructure-team
+/crates/fs_benchmarks/ @zed-industries/infrastructure-team
+/crates/http_client/ @zed-industries/infrastructure-team
+/crates/http_client_tls/ @zed-industries/infrastructure-team
+/crates/nc/ @zed-industries/infrastructure-team
+/crates/net/ @zed-industries/infrastructure-team
+/crates/paths/ @zed-industries/infrastructure-team
+/crates/release_channel/ @zed-industries/infrastructure-team
+/crates/reqwest_client/ @zed-industries/infrastructure-team
+/crates/scheduler/ @zed-industries/infrastructure-team
+/crates/session/ @zed-industries/infrastructure-team
+/crates/sqlez/ @zed-industries/infrastructure-team
+/crates/sqlez_macros/ @zed-industries/infrastructure-team
+/crates/telemetry/ @zed-industries/infrastructure-team
+/crates/telemetry_events/ @zed-industries/infrastructure-team
+/crates/time_format/ @zed-industries/infrastructure-team
+/crates/util/ @zed-industries/infrastructure-team
+/crates/util_macros/ @zed-industries/infrastructure-team
+/crates/watch/ @zed-industries/infrastructure-team
+/crates/web_search/ @zed-industries/infrastructure-team
+/crates/web_search_providers/ @zed-industries/infrastructure-team
+/crates/zlog/ @zed-industries/infrastructure-team
+/crates/zlog_settings/ @zed-industries/infrastructure-team
+/crates/ztracing/ @zed-industries/infrastructure-team
+/crates/ztracing_macro/ @zed-industries/infrastructure-team
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# platform-team
+# App shell, CI/CD, packaging, distribution, build scripts
+# ═══════════════════════════════════════════════════════════════════════════════
+
+/.factory/ @zed-industries/platform-team
+/.zed/ @zed-industries/platform-team
+/assets/badge/ @zed-industries/platform-team
+/assets/settings/ @zed-industries/platform-team
+/ci/ @zed-industries/platform-team
+/crates/askpass/ @zed-industries/platform-team
+/crates/audio/ @zed-industries/platform-team
+/crates/auto_update/ @zed-industries/platform-team
+/crates/auto_update_helper/ @zed-industries/platform-team
+/crates/auto_update_ui/ @zed-industries/platform-team
+/crates/cli/ @zed-industries/platform-team
+/crates/command_palette/ @zed-industries/platform-team
+/crates/command_palette_hooks/ @zed-industries/platform-team
+/crates/docs_preprocessor/ @zed-industries/platform-team
+/crates/feedback/ @zed-industries/platform-team
+/crates/install_cli/ @zed-industries/platform-team
+/crates/keymap_editor/ @zed-industries/platform-team
+/crates/media/ @zed-industries/platform-team
+/crates/migrator/ @zed-industries/platform-team
+/crates/notifications/ @zed-industries/platform-team
+/crates/onboarding/ @zed-industries/platform-team
+# SUGGESTED: Review needed - based on Finn Evers (1 commits)
+/crates/platform_title_bar/ @zed-industries/platform-team
+/crates/schema_generator/ @zed-industries/platform-team
+/crates/settings/ @zed-industries/platform-team
+/crates/settings_content/ @zed-industries/platform-team
+/crates/settings_json/ @zed-industries/platform-team
+/crates/settings_macros/ @zed-industries/platform-team
+/crates/settings_profile_selector/ @zed-industries/platform-team
+/crates/settings_ui/ @zed-industries/platform-team
+# SUGGESTED: Review needed - based on Finn Evers (2 commits)
+/crates/sidebar/ @zed-industries/platform-team
+/crates/system_specs/ @zed-industries/platform-team
+/crates/zed/ @zed-industries/platform-team
+/crates/zed_actions/ @zed-industries/platform-team
+/crates/zed_env_vars/ @zed-industries/platform-team
+/docs/ @zed-industries/platform-team
+/docs/.conventions/ @zed-industries/platform-team
+/docs/.doc-examples/ @zed-industries/platform-team
+/docs/src/ @zed-industries/platform-team
+/docs/theme/ @zed-industries/platform-team
+/nix/ @zed-industries/platform-team
+/script/ @zed-industries/platform-team
+/script/danger/ @zed-industries/platform-team
+/script/flatpak/ @zed-industries/platform-team
+/script/lib/ @zed-industries/platform-team
+/script/licenses/ @zed-industries/platform-team
+/script/terms/ @zed-industries/platform-team
+/script/update_top_ranking_issues/ @zed-industries/platform-team
+/tooling/ @zed-industries/platform-team
+/tooling/perf/ @zed-industries/platform-team
+/tooling/xtask/ @zed-industries/platform-team
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# project-team
+# Project/workspace management, file navigation, search
+# ═══════════════════════════════════════════════════════════════════════════════
+
+/crates/diagnostics/ @zed-industries/project-team
+/crates/explorer_command_injector/ @zed-industries/project-team
+/crates/file_finder/ @zed-industries/project-team
+/crates/file_icons/ @zed-industries/project-team
+/crates/fuzzy/ @zed-industries/project-team
+/crates/project/ @zed-industries/project-team
+/crates/project_benchmarks/ @zed-industries/project-team
+/crates/project_panel/ @zed-industries/project-team
+/crates/project_symbols/ @zed-industries/project-team
+/crates/recent_projects/ @zed-industries/project-team
+/crates/search/ @zed-industries/project-team
+/crates/workspace/ @zed-industries/project-team
+/crates/worktree/ @zed-industries/project-team
+/crates/worktree_benchmarks/ @zed-industries/project-team
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# ui-team
+# UI components, themes, visual design
+# ═══════════════════════════════════════════════════════════════════════════════
+
+/assets/ @zed-industries/ui-team
+/assets/fonts/ @zed-industries/ui-team
+/assets/icons/ @zed-industries/ui-team
+/assets/images/ @zed-industries/ui-team
+/assets/keymaps/ @zed-industries/ui-team
+/assets/sounds/ @zed-industries/ui-team
+/assets/themes/ @zed-industries/ui-team
+/crates/activity_indicator/ @zed-industries/ui-team
+/crates/assets/ @zed-industries/ui-team
+/crates/component/ @zed-industries/ui-team
+/crates/component_preview/ @zed-industries/ui-team
+/crates/icons/ @zed-industries/ui-team
+/crates/image_viewer/ @zed-industries/ui-team
+/crates/markdown/ @zed-industries/ui-team
+/crates/markdown_preview/ @zed-industries/ui-team
+/crates/menu/ @zed-industries/ui-team
+/crates/panel/ @zed-industries/ui-team
+/crates/picker/ @zed-industries/ui-team
+/crates/refineable/ @zed-industries/ui-team
+/crates/story/ @zed-industries/ui-team
+/crates/storybook/ @zed-industries/ui-team
+/crates/svg_preview/ @zed-industries/ui-team
+/crates/tab_switcher/ @zed-industries/ui-team
+/crates/theme/ @zed-industries/ui-team
+/crates/theme_extension/ @zed-industries/ui-team
+/crates/theme_importer/ @zed-industries/ui-team
+/crates/theme_selector/ @zed-industries/ui-team
+/crates/title_bar/ @zed-industries/ui-team
+/crates/ui/ @zed-industries/ui-team
+/crates/ui_input/ @zed-industries/ui-team
+/crates/ui_macros/ @zed-industries/ui-team
+/crates/ui_prompt/ @zed-industries/ui-team
+/crates/which_key/ @zed-industries/ui-team
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# zed-dev-team
+# Zed website, marketing, documentation site
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# SUGGESTED: Review needed - based on Joseph T. Lyons (1 commits)
+/crates/open_path_prompt/ @zed-industries/zed-dev-team
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# DIRECT OVERRIDES
+# Paths with specific owner assignments (not derived from team paths)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+/.cloudflare/ @zed-industries/cloud-team
+/crates/cloud_api_client/ @zed-industries/cloud-team
+/crates/cloud_api_types/ @zed-industries/cloud-team
+/legal/ @zed-industries/bizops-team

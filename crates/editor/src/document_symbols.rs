@@ -453,7 +453,7 @@ mod tests {
     async fn test_lsp_document_symbols_fetches_when_enabled(cx: &mut TestAppContext) {
         init_test(cx, |_| {});
 
-        update_test_language_settings(cx, |settings| {
+        update_test_language_settings(cx, &|settings| {
             settings.defaults.document_symbols = Some(DocumentSymbols::On);
         });
 
@@ -493,7 +493,7 @@ mod tests {
     async fn test_lsp_document_symbols_nested(cx: &mut TestAppContext) {
         init_test(cx, |_| {});
 
-        update_test_language_settings(cx, |settings| {
+        update_test_language_settings(cx, &|settings| {
             settings.defaults.document_symbols = Some(DocumentSymbols::On);
         });
 
@@ -589,7 +589,7 @@ mod tests {
         });
 
         // Step 2: Switch to LSP
-        update_test_language_settings(&mut cx.cx.cx, |settings| {
+        update_test_language_settings(&mut cx.cx.cx, &|settings| {
             settings.defaults.document_symbols = Some(DocumentSymbols::On);
         });
         assert!(symbol_request.next().await.is_some());
@@ -604,7 +604,7 @@ mod tests {
         });
 
         // Step 3: Switch back to tree-sitter
-        update_test_language_settings(&mut cx.cx.cx, |settings| {
+        update_test_language_settings(&mut cx.cx.cx, &|settings| {
             settings.defaults.document_symbols = Some(DocumentSymbols::Off);
         });
         cx.run_until_parked();
@@ -628,7 +628,7 @@ mod tests {
     async fn test_lsp_document_symbols_caches_results(cx: &mut TestAppContext) {
         init_test(cx, |_| {});
 
-        update_test_language_settings(cx, |settings| {
+        update_test_language_settings(cx, &|settings| {
             settings.defaults.document_symbols = Some(DocumentSymbols::On);
         });
 
@@ -686,7 +686,7 @@ mod tests {
     async fn test_lsp_document_symbols_flat_response(cx: &mut TestAppContext) {
         init_test(cx, |_| {});
 
-        update_test_language_settings(cx, |settings| {
+        update_test_language_settings(cx, &|settings| {
             settings.defaults.document_symbols = Some(DocumentSymbols::On);
         });
 
@@ -731,7 +731,7 @@ mod tests {
     async fn test_breadcrumbs_use_lsp_symbols(cx: &mut TestAppContext) {
         init_test(cx, |_| {});
 
-        update_test_language_settings(cx, |settings| {
+        update_test_language_settings(cx, &|settings| {
             settings.defaults.document_symbols = Some(DocumentSymbols::On);
         });
 
@@ -780,7 +780,7 @@ mod tests {
     async fn test_lsp_document_symbols_multibyte_highlights(cx: &mut TestAppContext) {
         init_test(cx, |_| {});
 
-        update_test_language_settings(cx, |settings| {
+        update_test_language_settings(cx, &|settings| {
             settings.defaults.document_symbols = Some(DocumentSymbols::On);
         });
 
@@ -860,7 +860,7 @@ mod tests {
     async fn test_lsp_document_symbols_empty_response(cx: &mut TestAppContext) {
         init_test(cx, |_| {});
 
-        update_test_language_settings(cx, |settings| {
+        update_test_language_settings(cx, &|settings| {
             settings.defaults.document_symbols = Some(DocumentSymbols::On);
         });
 

@@ -5089,7 +5089,7 @@ async fn test_save_as(cx: &mut gpui::TestAppContext) {
         buffer.edit([(0..0, "abc")], None, cx);
         assert!(buffer.is_dirty());
         assert!(!buffer.has_conflict());
-        assert_eq!(buffer.language().unwrap().name(), "Plain Text".into());
+        assert_eq!(buffer.language().unwrap().name(), "Plain Text");
     });
     project
         .update(cx, |project, cx| {
@@ -5112,7 +5112,7 @@ async fn test_save_as(cx: &mut gpui::TestAppContext) {
         );
         assert!(!buffer.is_dirty());
         assert!(!buffer.has_conflict());
-        assert_eq!(buffer.language().unwrap().name(), "Rust".into());
+        assert_eq!(buffer.language().unwrap().name(), "Rust");
     });
 
     let opened_buffer = project
@@ -10409,10 +10409,7 @@ async fn test_ignored_dirs_events(cx: &mut gpui::TestAppContext) {
 
     assert_eq!(
         repository_updates.lock().drain(..).collect::<Vec<_>>(),
-        vec![
-            RepositoryEvent::StatusesChanged,
-            RepositoryEvent::MergeHeadsChanged,
-        ],
+        vec![RepositoryEvent::StatusesChanged,],
         "Initial worktree scan should produce a repo update event"
     );
     assert_eq!(
@@ -10579,7 +10576,6 @@ async fn test_odd_events_for_ignored_dirs(
     assert_eq!(
         repository_updates.lock().drain(..).collect::<Vec<_>>(),
         vec![
-            RepositoryEvent::MergeHeadsChanged,
             RepositoryEvent::BranchChanged,
             RepositoryEvent::StatusesChanged,
             RepositoryEvent::StatusesChanged,

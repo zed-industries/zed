@@ -337,5 +337,5 @@ impl Item for SvgPreviewView {
         Some("svg preview: open")
     }
 
-    fn to_item_events(_event: &Self::Event, _f: impl FnMut(workspace::item::ItemEvent)) {}
+    fn to_item_events(_event: &Self::Event, _f: &mut dyn FnMut(workspace::item::ItemEvent)) {}
 }

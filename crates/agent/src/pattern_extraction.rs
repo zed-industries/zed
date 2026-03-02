@@ -7,28 +7,53 @@ fn normalize_separators(path_str: &str) -> String {
     path_str.replace('\\', "/")
 }
 
-/// Extracts the command name from a shell command using the shell parser.
+/// Returns true if the token looks like a command name or subcommand — i.e. it
+/// contains only alphanumeric characters, hyphens, and underscores, and does not
+/// start with a hyphen (which would make it a flag).
+fn is_plain_command_token(token: &str) -> bool {
+    !token.starts_with('-')
+        && token
+            .chars()
+            .all(|c| c.is_alphanumeric() || c == '-' || c == '_')
+}
+
+struct CommandPrefix {
+    command: String,
+    subcommand: Option<String>,
+}
+
+/// Extracts the command name and optional subcommand from a shell command using
+/// the shell parser.
 ///
-/// This parses the command properly to extract just the command name (first word),
-/// handling shell syntax correctly. Returns `None` if parsing fails or if the
-/// command name contains path separators (for security reasons).
-fn extract_command_name(command: &str) -> Option<String> {
+/// This parses the command properly to extract the command name and optional
+/// subcommand (e.g. "cargo" and "test" from "cargo test -p search"), handling shell
+/// syntax correctly. Returns `None` if parsing fails or if the command name
+/// contains path separators (for security reasons).
+fn extract_command_prefix(command: &str) -> Option<CommandPrefix> {
     let commands = extract_commands(command)?;
     let first_command = commands.first()?;
 
-    let first_token = first_command.split_whitespace().next()?;
+    let mut tokens = first_command.split_whitespace();
+    let first_token = tokens.next()?;
 
     // Only allow alphanumeric commands with hyphens/underscores.
     // Reject paths like "./script.sh" or "/usr/bin/python" to prevent
     // users from accidentally allowing arbitrary script execution.
-    if first_token
-        .chars()
-        .all(|c| c.is_alphanumeric() || c == '-' || c == '_')
-    {
-        Some(first_token.to_string())
-    } else {
-        None
+    if !is_plain_command_token(first_token) {
+        return None;
     }
+
+    // Include the subcommand (second non-flag token) when present, to produce
+    // more specific patterns like "cargo test" instead of just "cargo".
+    let subcommand = tokens
+        .next()
+        .filter(|second_token| is_plain_command_token(second_token))
+        .map(|second_token| second_token.to_string());
+
+    Some(CommandPrefix {
+        command: first_token.to_string(),
+        subcommand,
+    })
 }
 
 /// Extracts a regex pattern from a terminal command based on the first token (command name).
@@ -38,12 +63,26 @@ fn extract_command_name(command: &str) -> Option<String> {
 /// rules for well-known command names (like `cargo`, `npm`, `git`), not for arbitrary
 /// scripts or absolute paths which could be manipulated by an attacker.
 pub fn extract_terminal_pattern(command: &str) -> Option<String> {
-    let command_name = extract_command_name(command)?;
-    Some(format!("^{}\\b", regex::escape(&command_name)))
+    let prefix = extract_command_prefix(command)?;
+    let escaped_command = regex::escape(&prefix.command);
+    Some(match &prefix.subcommand {
+        Some(subcommand) => {
+            format!(
+                "^{}\\s+{}(\\s|$)",
+                escaped_command,
+                regex::escape(subcommand)
+            )
+        }
+        None => format!("^{}\\b", escaped_command),
+    })
 }
 
 pub fn extract_terminal_pattern_display(command: &str) -> Option<String> {
-    extract_command_name(command)
+    let prefix = extract_command_prefix(command)?;
+    match prefix.subcommand {
+        Some(subcommand) => Some(format!("{} {}", prefix.command, subcommand)),
+        None => Some(prefix.command),
+    }
 }
 
 pub fn extract_path_pattern(path: &str) -> Option<String> {
@@ -125,20 +164,51 @@ mod tests {
     fn test_extract_terminal_pattern() {
         assert_eq!(
             extract_terminal_pattern("cargo build --release"),
-            Some("^cargo\\b".to_string())
+            Some("^cargo\\s+build(\\s|$)".to_string())
+        );
+        assert_eq!(
+            extract_terminal_pattern("cargo test -p search"),
+            Some("^cargo\\s+test(\\s|$)".to_string())
         );
         assert_eq!(
             extract_terminal_pattern("npm install"),
-            Some("^npm\\b".to_string())
+            Some("^npm\\s+install(\\s|$)".to_string())
         );
         assert_eq!(
             extract_terminal_pattern("git-lfs pull"),
-            Some("^git\\-lfs\\b".to_string())
+            Some("^git\\-lfs\\s+pull(\\s|$)".to_string())
         );
         assert_eq!(
             extract_terminal_pattern("my_script arg"),
-            Some("^my_script\\b".to_string())
+            Some("^my_script\\s+arg(\\s|$)".to_string())
         );
+
+        // Flags as second token: only the command name is used
+        assert_eq!(
+            extract_terminal_pattern("ls -la"),
+            Some("^ls\\b".to_string())
+        );
+        assert_eq!(
+            extract_terminal_pattern("rm --force foo"),
+            Some("^rm\\b".to_string())
+        );
+
+        // Single-word commands
+        assert_eq!(extract_terminal_pattern("ls"), Some("^ls\\b".to_string()));
+
+        // Subcommand pattern does not match a hyphenated extension of the subcommand
+        // (e.g. approving "cargo build" should not approve "cargo build-foo")
+        assert_eq!(
+            extract_terminal_pattern("cargo build"),
+            Some("^cargo\\s+build(\\s|$)".to_string())
+        );
+        let pattern = regex::Regex::new(&extract_terminal_pattern("cargo build").unwrap()).unwrap();
+        assert!(pattern.is_match("cargo build --release"));
+        assert!(pattern.is_match("cargo build"));
+        assert!(!pattern.is_match("cargo build-foo"));
+        assert!(!pattern.is_match("cargo builder"));
+
+        // Path-like commands are rejected
         assert_eq!(extract_terminal_pattern("./script.sh arg"), None);
         assert_eq!(extract_terminal_pattern("/usr/bin/python arg"), None);
     }
@@ -147,11 +217,23 @@ mod tests {
     fn test_extract_terminal_pattern_display() {
         assert_eq!(
             extract_terminal_pattern_display("cargo build --release"),
-            Some("cargo".to_string())
+            Some("cargo build".to_string())
+        );
+        assert_eq!(
+            extract_terminal_pattern_display("cargo test -p search"),
+            Some("cargo test".to_string())
         );
         assert_eq!(
             extract_terminal_pattern_display("npm install"),
-            Some("npm".to_string())
+            Some("npm install".to_string())
+        );
+        assert_eq!(
+            extract_terminal_pattern_display("ls -la"),
+            Some("ls".to_string())
+        );
+        assert_eq!(
+            extract_terminal_pattern_display("ls"),
+            Some("ls".to_string())
         );
     }
 

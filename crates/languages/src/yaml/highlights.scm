@@ -1,4 +1,5 @@
 (boolean_scalar) @boolean
+
 (null_scalar) @constant.builtin
 
 [
@@ -25,30 +26,31 @@
 
 key: (flow_node
   [
-    (plain_scalar (string_scalar))
+    (plain_scalar
+      (string_scalar))
     (double_quote_scalar)
     (single_quote_scalar)
   ] @property)
 
 [
- ","
- "-"
- ":"
- ">"
- "?"
- "|"
+  ","
+  "-"
+  ":"
+  ">"
+  "?"
+  "|"
 ] @punctuation.delimiter
 
 [
- "["
- "]"
- "{"
- "}"
+  "["
+  "]"
+  "{"
+  "}"
 ] @punctuation.bracket
 
 [
- "*"
- "&"
- "---"
- "..."
+  "*"
+  "&"
+  "---"
+  "..."
 ] @punctuation.special

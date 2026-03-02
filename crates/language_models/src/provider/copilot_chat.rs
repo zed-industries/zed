@@ -20,11 +20,11 @@ use http_client::StatusCode;
 use language::language_settings::all_language_settings;
 use language_model::{
     AuthenticateError, IconOrSvg, LanguageModel, LanguageModelCompletionError,
-    LanguageModelCompletionEvent, LanguageModelId, LanguageModelName, LanguageModelProvider,
-    LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
-    LanguageModelRequest, LanguageModelRequestMessage, LanguageModelToolChoice,
-    LanguageModelToolResultContent, LanguageModelToolSchemaFormat, LanguageModelToolUse,
-    MessageContent, RateLimiter, Role, StopReason, TokenUsage,
+    LanguageModelCompletionEvent, LanguageModelCostInfo, LanguageModelId, LanguageModelName,
+    LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
+    LanguageModelProviderState, LanguageModelRequest, LanguageModelRequestMessage,
+    LanguageModelToolChoice, LanguageModelToolResultContent, LanguageModelToolSchemaFormat,
+    LanguageModelToolUse, MessageContent, RateLimiter, Role, StopReason, TokenUsage,
 };
 use settings::SettingsStore;
 use ui::prelude::*;
@@ -267,6 +267,13 @@ impl LanguageModel for CopilotChatLanguageModel {
             | LanguageModelToolChoice::Any
             | LanguageModelToolChoice::None => self.supports_tools(),
         }
+    }
+
+    fn model_cost_info(&self) -> Option<LanguageModelCostInfo> {
+        LanguageModelCostInfo::RequestCost {
+            cost_per_request: self.model.multiplier(),
+        }
+        .into()
     }
 
     fn telemetry_id(&self) -> String {
@@ -923,6 +930,7 @@ fn into_copilot_responses(
         temperature,
         thinking_allowed: _,
         thinking_effort: _,
+        speed: _,
     } = request;
 
     let mut input_items: Vec<responses::ResponseInputItem> = Vec::new();

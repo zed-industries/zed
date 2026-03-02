@@ -9,6 +9,8 @@ use std::{
     sync::Arc,
 };
 
+use chrono::{DateTime, Utc};
+
 use fs::Fs;
 
 #[cfg(target_os = "windows")]
@@ -16,7 +18,7 @@ mod wsl_picker;
 
 use remote::RemoteConnectionOptions;
 pub use remote_connection::{RemoteConnectionModal, connect};
-pub use remote_connections::open_remote_project;
+pub use remote_connections::{navigate_to_positions, open_remote_project};
 
 use disconnected_overlay::DisconnectedOverlay;
 use fuzzy::{StringMatch, StringMatchCandidate};
@@ -56,6 +58,7 @@ pub struct RecentProjectEntry {
     pub full_path: SharedString,
     pub paths: Vec<PathBuf>,
     pub workspace_id: WorkspaceId,
+    pub timestamp: DateTime<Utc>,
 }
 
 #[derive(Clone, Debug)]
@@ -92,9 +95,9 @@ pub async fn get_recent_projects(
 
     let entries: Vec<RecentProjectEntry> = workspaces
         .into_iter()
-        .filter(|(id, _, _)| Some(*id) != current_workspace_id)
-        .filter(|(_, location, _)| matches!(location, SerializedWorkspaceLocation::Local))
-        .map(|(workspace_id, _, path_list)| {
+        .filter(|(id, _, _, _)| Some(*id) != current_workspace_id)
+        .filter(|(_, location, _, _)| matches!(location, SerializedWorkspaceLocation::Local))
+        .map(|(workspace_id, _, path_list, timestamp)| {
             let paths: Vec<PathBuf> = path_list.paths().to_vec();
             let ordered_paths: Vec<&PathBuf> = path_list.ordered_paths().collect();
 
@@ -123,6 +126,7 @@ pub async fn get_recent_projects(
                 full_path: SharedString::from(full_path),
                 paths,
                 workspace_id,
+                timestamp,
             }
         })
         .collect();
@@ -623,7 +627,12 @@ impl Render for RecentProjects {
 pub struct RecentProjectsDelegate {
     workspace: WeakEntity<Workspace>,
     open_folders: Vec<OpenFolderEntry>,
-    workspaces: Vec<(WorkspaceId, SerializedWorkspaceLocation, PathList)>,
+    workspaces: Vec<(
+        WorkspaceId,
+        SerializedWorkspaceLocation,
+        PathList,
+        DateTime<Utc>,
+    )>,
     filtered_entries: Vec<ProjectPickerEntry>,
     selected_index: usize,
     render_paths: bool,
@@ -666,13 +675,18 @@ impl RecentProjectsDelegate {
 
     pub fn set_workspaces(
         &mut self,
-        workspaces: Vec<(WorkspaceId, SerializedWorkspaceLocation, PathList)>,
+        workspaces: Vec<(
+            WorkspaceId,
+            SerializedWorkspaceLocation,
+            PathList,
+            DateTime<Utc>,
+        )>,
     ) {
         self.workspaces = workspaces;
         let has_non_local_recent = !self
             .workspaces
             .iter()
-            .all(|(_, location, _)| matches!(location, SerializedWorkspaceLocation::Local));
+            .all(|(_, location, _, _)| matches!(location, SerializedWorkspaceLocation::Local));
         self.has_any_non_local_projects =
             self.project_connection_options.is_some() || has_non_local_recent;
     }
@@ -783,8 +797,8 @@ impl PickerDelegate for RecentProjectsDelegate {
             .workspaces
             .iter()
             .enumerate()
-            .filter(|(_, (id, _, paths))| self.is_valid_recent_candidate(*id, paths, cx))
-            .map(|(id, (_, _, paths))| {
+            .filter(|(_, (id, _, paths, _))| self.is_valid_recent_candidate(*id, paths, cx))
+            .map(|(id, (_, _, paths, _))| {
                 let combined_string = paths
                     .ordered_paths()
                     .map(|path| path.compact().to_string_lossy().into_owned())
@@ -839,7 +853,7 @@ impl PickerDelegate for RecentProjectsDelegate {
             entries.push(ProjectPickerEntry::Header("Recent Projects".into()));
 
             if is_empty_query {
-                for (id, (workspace_id, _, paths)) in self.workspaces.iter().enumerate() {
+                for (id, (workspace_id, _, paths, _)) in self.workspaces.iter().enumerate() {
                     if self.is_valid_recent_candidate(*workspace_id, paths, cx) {
                         entries.push(ProjectPickerEntry::RecentProject(StringMatch {
                             candidate_id: id,
@@ -891,6 +905,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                     candidate_workspace_id,
                     candidate_workspace_location,
                     candidate_workspace_paths,
+                    _,
                 )) = self.workspaces.get(selected_match.candidate_id)
                 else {
                     return;
@@ -1095,7 +1110,7 @@ impl PickerDelegate for RecentProjectsDelegate {
             }
             ProjectPickerEntry::RecentProject(hit) => {
                 let popover_style = matches!(self.style, ProjectPickerStyle::Popover);
-                let (_, location, paths) = self.workspaces.get(hit.candidate_id)?;
+                let (_, location, paths, _) = self.workspaces.get(hit.candidate_id)?;
                 let is_local = matches!(location, SerializedWorkspaceLocation::Local);
                 let paths_to_add = paths.paths().to_vec();
                 let tooltip_path: SharedString = paths
@@ -1479,7 +1494,7 @@ impl RecentProjectsDelegate {
         if let Some(ProjectPickerEntry::RecentProject(selected_match)) =
             self.filtered_entries.get(ix)
         {
-            let (workspace_id, _, _) = &self.workspaces[selected_match.candidate_id];
+            let (workspace_id, _, _, _) = &self.workspaces[selected_match.candidate_id];
             let workspace_id = *workspace_id;
             let fs = self
                 .workspace
@@ -1654,6 +1669,7 @@ mod tests {
                         WorkspaceId::default(),
                         SerializedWorkspaceLocation::Local,
                         PathList::new(&[path!("/test/path")]),
+                        Utc::now(),
                     )]);
                     delegate.filtered_entries =
                         vec![ProjectPickerEntry::RecentProject(StringMatch {

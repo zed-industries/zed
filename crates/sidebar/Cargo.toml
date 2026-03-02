@@ -18,10 +18,9 @@ test-support = []
 [dependencies]
 acp_thread.workspace = true
 agent_ui.workspace = true
-db.workspace = true
+chrono.workspace = true
 fs.workspace = true
 fuzzy.workspace = true
-serde_json.workspace = true
 gpui.workspace = true
 picker.workspace = true
 project.workspace = true

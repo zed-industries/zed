@@ -333,13 +333,7 @@ impl LanguageServerState {
                 })
                 .unwrap_or((None, None, None));
 
-            let truncated_message = message.as_ref().and_then(|message| {
-                message
-                    .lines()
-                    .filter(|line| !line.trim().is_empty())
-                    .map(SharedString::new)
-                    .next()
-            });
+            let server_message = message.clone();
 
             let submenu_server_name = server_info.name.clone();
             let submenu_server_info = server_info.clone();
@@ -549,9 +543,9 @@ impl LanguageServerState {
                         submenu = submenu.separator().custom_row({
                             let binary_path = binary_path.clone();
                             let server_version = server_version.clone();
-                            let truncated_message = truncated_message.clone();
+                            let server_message = server_message.clone();
                             let process_memory_cache = process_memory_cache.clone();
-                            move |_, _| {
+                            move |_, cx| {
                                 let memory_usage = process_id.map(|pid| {
                                     process_memory_cache.borrow_mut().get_memory_usage(pid)
                                 });
@@ -567,63 +561,63 @@ impl LanguageServerState {
                                     }
                                 });
 
-                                let metadata_label =
-                                    match (&server_version, &memory_label, &truncated_message) {
-                                        (None, None, None) => None,
-                                        (Some(version), None, None) => {
-                                            Some(format!("v{}", version.as_ref()))
-                                        }
-                                        (None, Some(memory), None) => Some(memory.clone()),
-                                        (Some(version), Some(memory), None) => {
-                                            Some(format!("v{} • {}", version.as_ref(), memory))
-                                        }
-                                        (None, None, Some(message)) => Some(message.to_string()),
-                                        (Some(version), None, Some(message)) => Some(format!(
-                                            "v{}\n\n{}",
-                                            version.as_ref(),
-                                            message.as_ref()
-                                        )),
-                                        (None, Some(memory), Some(message)) => {
-                                            Some(format!("{}\n\n{}", memory, message.as_ref()))
-                                        }
-                                        (Some(version), Some(memory), Some(message)) => {
-                                            Some(format!(
-                                                "v{} • {}\n\n{}",
-                                                version.as_ref(),
-                                                memory,
-                                                message.as_ref()
-                                            ))
-                                        }
-                                    };
+                                let version_label =
+                                    server_version.as_ref().map(|v| format!("v{}", v.as_ref()));
 
-                                h_flex()
+                                let separator_color =
+                                    cx.theme().colors().icon_disabled.opacity(0.8);
+
+                                v_flex()
                                     .id("metadata-container")
-                                    .ml_neg_1()
                                     .gap_1()
-                                    .max_w(rems(164.))
+                                    .when_some(server_message.as_ref(), |this, _| {
+                                        this.w(rems_from_px(240.))
+                                    })
                                     .child(
-                                        Icon::new(IconName::Circle)
-                                            .color(status_color)
-                                            .size(IconSize::Small),
-                                    )
-                                    .child(
-                                        Label::new(status_label)
-                                            .size(LabelSize::Small)
-                                            .color(Color::Muted),
-                                    )
-                                    .when_some(metadata_label.as_ref(), |submenu, metadata| {
-                                        submenu
+                                        h_flex()
+                                            .ml_neg_1()
+                                            .gap_1()
                                             .child(
-                                                Icon::new(IconName::Dash)
-                                                    .color(Color::Disabled)
-                                                    .size(IconSize::XSmall),
+                                                Icon::new(IconName::Circle)
+                                                    .color(status_color)
+                                                    .size(IconSize::Small),
                                             )
                                             .child(
-                                                Label::new(metadata)
+                                                Label::new(status_label)
                                                     .size(LabelSize::Small)
-                                                    .color(Color::Muted)
-                                                    .truncate(),
+                                                    .color(Color::Muted),
                                             )
+                                            .when_some(version_label.as_ref(), |row, version| {
+                                                row.child(
+                                                    Icon::new(IconName::Dash)
+                                                        .color(Color::Custom(separator_color))
+                                                        .size(IconSize::XSmall),
+                                                )
+                                                .child(
+                                                    Label::new(version)
+                                                        .size(LabelSize::Small)
+                                                        .color(Color::Muted),
+                                                )
+                                            })
+                                            .when_some(memory_label.as_ref(), |row, memory| {
+                                                row.child(
+                                                    Icon::new(IconName::Dash)
+                                                        .color(Color::Custom(separator_color))
+                                                        .size(IconSize::XSmall),
+                                                )
+                                                .child(
+                                                    Label::new(memory)
+                                                        .size(LabelSize::Small)
+                                                        .color(Color::Muted),
+                                                )
+                                            }),
+                                    )
+                                    .when_some(server_message.clone(), |container, message| {
+                                        container.child(
+                                            Label::new(message)
+                                                .color(Color::Muted)
+                                                .size(LabelSize::Small),
+                                        )
                                     })
                                     .when_some(binary_path.clone(), |el, path| {
                                         el.tooltip(Tooltip::text(path))

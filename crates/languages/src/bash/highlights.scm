@@ -43,13 +43,17 @@
   (comment) @keyword.directive)
   (#match? @keyword.directive "^#![ \t]*/"))
 
-(function_definition name: (word) @function)
-(command_name (word) @function)
+(function_definition
+  name: (word) @function)
+
+(command_name
+  (word) @function)
 
 (command
   argument: [
     (word) @variable.parameter
-    (_ (word) @variable.parameter)
+    (_
+      (word) @variable.parameter)
   ])
 
 [
@@ -64,7 +68,6 @@
   (process_substitution)
   (expansion)
 ] @embedded
-
 
 [
   "$"
@@ -89,9 +92,7 @@
 
 (test_operator) @keyword.operator
 
-[
-  ";"
-] @punctuation.delimiter
+";" @punctuation.delimiter
 
 [
   "("
@@ -104,6 +105,7 @@
 
 (simple_expansion
   "$" @punctuation.special)
+
 (expansion
   "${" @punctuation.special
   "}" @punctuation.special) @embedded
@@ -112,10 +114,11 @@
   "$(" @punctuation.special
   ")" @punctuation.special)
 
-(
-  (command (_) @constant)
-  (#match? @constant "^-")
-)
+((command
+  (_) @constant)
+  (#match? @constant "^-"))
 
-(case_item value: (_) @string.regex)
+(case_item
+  value: (_) @string.regex)
+
 (special_variable_name) @variable.special
