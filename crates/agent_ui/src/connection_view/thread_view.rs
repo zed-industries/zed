@@ -466,6 +466,7 @@ impl ThreadView {
                 self.cancel_editing(&Default::default(), window, cx);
             }
             MessageEditorEvent::LostFocus => {}
+            MessageEditorEvent::InputAttempted(_) => {}
         }
     }
 
@@ -580,6 +581,7 @@ impl ThreadView {
             ViewEvent::MessageEditorEvent(_editor, MessageEditorEvent::Cancel) => {
                 self.cancel_editing(&Default::default(), window, cx);
             }
+            ViewEvent::MessageEditorEvent(_editor, MessageEditorEvent::InputAttempted(_)) => {}
             ViewEvent::OpenDiffLocation {
                 path,
                 position,
@@ -1209,6 +1211,28 @@ impl ThreadView {
         });
 
         self.send_content(contents_task, window, cx);
+    }
+
+    pub fn move_queued_message_to_main_editor(
+        &mut self,
+        index: usize,
+        inserted_text: Option<&str>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(queued_message) = self.remove_from_queue(index, cx) else {
+            return false;
+        };
+
+        self.message_editor.update(cx, |editor, cx| {
+            editor.set_message(queued_message.content, window, cx);
+            if let Some(inserted_text) = inserted_text {
+                editor.insert_text(inserted_text, window, cx);
+            }
+        });
+        window.focus(&self.message_editor.focus_handle(cx), cx);
+        cx.notify();
+        true
     }
 
     // editor methods
@@ -2667,50 +2691,24 @@ impl ThreadView {
                             .child(if editor_focused {
                                 h_flex()
                                     .gap_1()
-                                    .min_w_40()
+                                    .min_w(rems_from_px(150.))
+                                    .justify_end()
                                     .child(
-                                        IconButton::new(("cancel_edit", index), IconName::Close)
+                                        IconButton::new(("edit", index), IconName::Pencil)
                                             .icon_size(IconSize::Small)
-                                            .icon_color(Color::Error)
-                                            .tooltip({
-                                                let focus_handle = editor.focus_handle(cx);
-                                                move |_window, cx| {
-                                                    Tooltip::for_action_in(
-                                                        "Cancel Edit",
-                                                        &editor::actions::Cancel,
-                                                        &focus_handle,
-                                                        cx,
-                                                    )
-                                                }
+                                            .tooltip(|_window, cx| {
+                                                Tooltip::with_meta(
+                                                    "Edit Queued Message",
+                                                    None,
+                                                    "Type anything to edit",
+                                                    cx,
+                                                )
                                             })
-                                            .on_click({
-                                                let main_editor = self.message_editor.clone();
-                                                cx.listener(move |_, _, window, cx| {
-                                                    window.focus(&main_editor.focus_handle(cx), cx);
-                                                })
-                                            }),
-                                    )
-                                    .child(
-                                        IconButton::new(("save_edit", index), IconName::Check)
-                                            .icon_size(IconSize::Small)
-                                            .icon_color(Color::Success)
-                                            .tooltip({
-                                                let focus_handle = editor.focus_handle(cx);
-                                                move |_window, cx| {
-                                                    Tooltip::for_action_in(
-                                                        "Save Edit",
-                                                        &Chat,
-                                                        &focus_handle,
-                                                        cx,
-                                                    )
-                                                }
-                                            })
-                                            .on_click({
-                                                let main_editor = self.message_editor.clone();
-                                                cx.listener(move |_, _, window, cx| {
-                                                    window.focus(&main_editor.focus_handle(cx), cx);
-                                                })
-                                            }),
+                                            .on_click(cx.listener(move |this, _, window, cx| {
+                                                this.move_queued_message_to_main_editor(
+                                                    index, None, window, cx,
+                                                );
+                                            })),
                                     )
                                     .child(
                                         Button::new(("send_now_focused", index), "Send Now")
@@ -2732,33 +2730,10 @@ impl ThreadView {
                                     )
                             } else {
                                 h_flex()
-                                    .gap_1()
                                     .when(!is_next, |this| this.visible_on_hover("queue_entry"))
-                                    .child(
-                                        IconButton::new(("edit", index), IconName::Pencil)
-                                            .icon_size(IconSize::Small)
-                                            .tooltip({
-                                                let focus_handle = focus_handle.clone();
-                                                move |_window, cx| {
-                                                    if is_next {
-                                                        Tooltip::for_action_in(
-                                                            "Edit",
-                                                            &EditFirstQueuedMessage,
-                                                            &focus_handle,
-                                                            cx,
-                                                        )
-                                                    } else {
-                                                        Tooltip::simple("Edit", cx)
-                                                    }
-                                                }
-                                            })
-                                            .on_click({
-                                                let editor = editor.clone();
-                                                cx.listener(move |_, _, window, cx| {
-                                                    window.focus(&editor.focus_handle(cx), cx);
-                                                })
-                                            }),
-                                    )
+                                    .gap_1()
+                                    .min_w(rems_from_px(150.))
+                                    .justify_end()
                                     .child(
                                         IconButton::new(("delete", index), IconName::Trash)
                                             .icon_size(IconSize::Small)
@@ -2786,8 +2761,33 @@ impl ThreadView {
                                             })),
                                     )
                                     .child(
+                                        IconButton::new(("edit", index), IconName::Pencil)
+                                            .icon_size(IconSize::Small)
+                                            .tooltip({
+                                                let focus_handle = focus_handle.clone();
+                                                move |_window, cx| {
+                                                    if is_next {
+                                                        Tooltip::for_action_in(
+                                                            "Edit",
+                                                            &EditFirstQueuedMessage,
+                                                            &focus_handle,
+                                                            cx,
+                                                        )
+                                                    } else {
+                                                        Tooltip::simple("Edit", cx)
+                                                    }
+                                                }
+                                            })
+                                            .on_click(cx.listener(move |this, _, window, cx| {
+                                                this.move_queued_message_to_main_editor(
+                                                    index, None, window, cx,
+                                                );
+                                            })),
+                                    )
+                                    .child(
                                         Button::new(("send_now", index), "Send Now")
                                             .label_size(LabelSize::Small)
+                                            .when(is_next, |this| this.style(ButtonStyle::Outlined))
                                             .when(is_next && message_editor.is_empty(cx), |this| {
                                                 let action: Box<dyn gpui::Action> =
                                                     if can_fast_track {
@@ -2796,7 +2796,7 @@ impl ThreadView {
                                                         Box::new(SendNextQueuedMessage)
                                                     };
 
-                                                this.style(ButtonStyle::Outlined).key_binding(
+                                                this.key_binding(
                                                     KeyBinding::for_action_in(
                                                         action.as_ref(),
                                                         &focus_handle.clone(),
@@ -2804,9 +2804,6 @@ impl ThreadView {
                                                     )
                                                     .map(|kb| kb.size(keybinding_size)),
                                                 )
-                                            })
-                                            .when(is_next && !message_editor.is_empty(cx), |this| {
-                                                this.style(ButtonStyle::Outlined)
                                             })
                                             .on_click(cx.listener(move |this, _, window, cx| {
                                                 this.send_queued_message_at_index(
@@ -3285,7 +3282,12 @@ impl ThreadView {
                 .on_click(cx.listener(|this, _event, _, cx| this.cancel_generation(cx)))
                 .into_any_element()
         } else {
-            IconButton::new("send-message", IconName::Send)
+            let send_icon = if is_generating {
+                IconName::QueueMessage
+            } else {
+                IconName::Send
+            };
+            IconButton::new("send-message", send_icon)
                 .style(ButtonStyle::Filled)
                 .map(|this| {
                     if is_editor_empty && !is_generating {
@@ -7545,9 +7547,7 @@ impl Render for ThreadView {
                 cx.notify();
             }))
             .on_action(cx.listener(|this, _: &EditFirstQueuedMessage, window, cx| {
-                if let Some(editor) = this.queued_message_editors.first() {
-                    window.focus(&editor.focus_handle(cx), cx);
-                }
+                this.move_queued_message_to_main_editor(0, None, window, cx);
             }))
             .on_action(cx.listener(|this, _: &ClearMessageQueue, _, cx| {
                 this.local_queued_messages.clear();

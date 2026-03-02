@@ -1139,6 +1139,20 @@ impl ConnectionView {
         }
     }
 
+    fn move_queued_message_to_main_editor(
+        &mut self,
+        index: usize,
+        inserted_text: Option<&str>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(active) = self.active_thread() {
+            active.update(cx, |active, cx| {
+                active.move_queued_message_to_main_editor(index, inserted_text, window, cx);
+            });
+        }
+    }
+
     fn handle_thread_event(
         &mut self,
         thread: &Entity<AcpThread>,
@@ -2136,6 +2150,7 @@ impl ConnectionView {
             for (index, editor) in editors.into_iter().enumerate() {
                 if let Some(content) = queued_messages.get(index) {
                     editor.update(cx, |editor, cx| {
+                        editor.set_read_only(true, cx);
                         editor.set_message(content.clone(), window, cx);
                     });
                 }
@@ -2164,6 +2179,7 @@ impl ConnectionView {
                     window,
                     cx,
                 );
+                editor.set_read_only(true, cx);
                 editor.set_message(content, window, cx);
                 editor
             });
@@ -2172,6 +2188,8 @@ impl ConnectionView {
                 &editor,
                 window,
                 move |this, _editor, event, window, cx| match event {
+                    MessageEditorEvent::InputAttempted(text) => this
+                        .move_queued_message_to_main_editor(index, Some(text.as_ref()), window, cx),
                     MessageEditorEvent::LostFocus => {
                         this.save_queued_message_at_index(index, cx);
                     }
