@@ -1817,23 +1817,26 @@ impl ThreadView {
             .when(!plan.is_empty() && !changed_buffers.is_empty(), |this| {
                 this.child(Divider::horizontal().color(DividerColor::Border))
             })
-            .when(!changed_buffers.is_empty(), |this| {
-                this.child(self.render_edits_summary(
-                    &changed_buffers,
-                    edits_expanded,
-                    pending_edits,
-                    cx,
-                ))
-                .when(edits_expanded, |parent| {
-                    parent.child(self.render_edited_files(
-                        action_log,
-                        telemetry.clone(),
+            .when(
+                !changed_buffers.is_empty() && thread.parent_session_id().is_none(),
+                |this| {
+                    this.child(self.render_edits_summary(
                         &changed_buffers,
+                        edits_expanded,
                         pending_edits,
                         cx,
                     ))
-                })
-            })
+                    .when(edits_expanded, |parent| {
+                        parent.child(self.render_edited_files(
+                            action_log,
+                            telemetry.clone(),
+                            &changed_buffers,
+                            pending_edits,
+                            cx,
+                        ))
+                    })
+                },
+            )
             .when(!queue_is_empty, |this| {
                 this.when(!plan.is_empty() || !changed_buffers.is_empty(), |this| {
                     this.child(Divider::horizontal().color(DividerColor::Border))
