@@ -1722,6 +1722,10 @@ impl AgentPanel {
             self.active_view = new_view;
         }
 
+        // Subscribe to the active ThreadView's events (e.g. FirstSendRequested)
+        // so the panel can intercept the first send for worktree creation.
+        // Re-subscribe whenever the ConnectionView changes, since the inner
+        // ThreadView may have been replaced (e.g. navigating between threads).
         self._active_view_observation = match &self.active_view {
             ActiveView::AgentThread { server_view } => {
                 self._thread_view_subscription =
