@@ -26,19 +26,7 @@ use crate::tasks::{
 pub struct WorkflowValidationArgs {}
 
 pub fn validate(_: WorkflowValidationArgs) -> Result<()> {
-    let (parsing_errors, file_errors): (Vec<_>, Vec<_>) = WorkflowType::iter()
-        .map(|workflow_type| workflow_type.folder_path())
-        .flat_map(|folder_path| {
-            fs::read_dir(folder_path).into_iter().flat_map(|entries| {
-                entries
-                    .flat_map(Result::ok)
-                    .map(|entry| entry.path())
-                    .filter(|path| {
-                        path.extension()
-                            .is_some_and(|ext| ext == "yaml" || ext == "yml")
-                    })
-            })
-        })
+    let (parsing_errors, file_errors): (Vec<_>, Vec<_>) = get_all_workflow_files()
         .map(check_workflow)
         .flat_map(Result::err)
         .partition_map(|error| match error {
@@ -131,6 +119,22 @@ struct WorkflowValidationError {
     file_path: PathBuf,
     contents: WorkflowFile,
     errors: Vec<InvalidPatternsErrror>,
+}
+
+fn get_all_workflow_files() -> impl Iterator<Item = PathBuf> {
+    WorkflowType::iter()
+        .map(|workflow_type| workflow_type.folder_path())
+        .flat_map(|folder_path| {
+            fs::read_dir(folder_path).into_iter().flat_map(|entries| {
+                entries
+                    .flat_map(Result::ok)
+                    .map(|entry| entry.path())
+                    .filter(|path| {
+                        path.extension()
+                            .is_some_and(|ext| ext == "yaml" || ext == "yml")
+                    })
+            })
+        })
 }
 
 fn check_workflow(workflow_file_path: PathBuf) -> Result<(), WorkflowError> {
