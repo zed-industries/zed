@@ -107,6 +107,8 @@ jobs:
       run: |
         EXAMPLE_FAILURE=${{ steps.calc-changes.outputs.removed_files }}
 
+        echo "$EXAMPLE_FAILURE"
+
         mkdir -p extension/.github/workflows
         cd extension/.github/workflows
 
