@@ -2057,6 +2057,13 @@ impl AgentPanel {
         format!("agent-{id}")
     }
 
+    /// Partitions the project's visible worktrees into git-backed repositories
+    /// and plain (non-git) paths. Git repos will have worktrees created for
+    /// them; non-git paths are carried over to the new workspace as-is.
+    ///
+    /// When multiple worktrees map to the same repository, the most specific
+    /// match wins (deepest work directory path), with a deterministic
+    /// tie-break on entity id. Each repository appears at most once.
     fn classify_worktrees(
         &self,
         cx: &App,
@@ -2102,6 +2109,12 @@ impl AgentPanel {
         (git_repos, non_git_paths)
     }
 
+    /// Kicks off an async git-worktree creation for each repository. Returns:
+    ///
+    /// - `creation_infos`: a vec of `(repo, new_path, receiver)` tuples—the
+    ///   receiver resolves once the git worktree command finishes.
+    /// - `path_remapping`: `(old_work_dir, new_worktree_path)` pairs used
+    ///   later to remap open editor tabs into the new workspace.
     fn start_worktree_creations(
         git_repos: &[Entity<project::git_store::Repository>],
         branch_name: &str,
@@ -2135,6 +2148,9 @@ impl AgentPanel {
         Ok((creation_infos, path_remapping))
     }
 
+    /// Waits for every in-flight worktree creation to complete. If any
+    /// creation fails, all successfully-created worktrees are rolled back
+    /// (removed) so the project isn't left in a half-migrated state.
     async fn await_and_rollback_on_failure(
         creation_infos: Vec<(
             Entity<project::git_store::Repository>,
