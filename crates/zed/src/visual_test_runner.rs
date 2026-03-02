@@ -551,18 +551,19 @@ fn run_visual_tests(project_path: PathBuf, update_baseline: bool) -> Result<()> 
     // Run Test 11: Thread target selector visual tests
     #[cfg(feature = "visual-tests")]
     {
-        println!("\n--- Test 11: thread_target_selector (6 variants) ---");
-        match run_thread_target_selector_visual_tests(app_state.clone(), &mut cx, update_baseline) {
+        println!("\n--- Test 11: start_thread_in_selector (6 variants) ---");
+        match run_start_thread_in_selector_visual_tests(app_state.clone(), &mut cx, update_baseline)
+        {
             Ok(TestResult::Passed) => {
-                println!("✓ thread_target_selector: PASSED");
+                println!("✓ start_thread_in_selector: PASSED");
                 passed += 1;
             }
             Ok(TestResult::BaselineUpdated(_)) => {
-                println!("✓ thread_target_selector: Baselines updated");
+                println!("✓ start_thread_in_selector: Baselines updated");
                 updated += 1;
             }
             Err(e) => {
-                eprintln!("✗ thread_target_selector: FAILED - {}", e);
+                eprintln!("✗ start_thread_in_selector: FAILED - {}", e);
                 failed += 1;
             }
         }
@@ -3112,12 +3113,12 @@ fn run_git_command(args: &[&str], dir: &std::path::Path) -> Result<()> {
 }
 
 #[cfg(all(target_os = "macos", feature = "visual-tests"))]
-fn run_thread_target_selector_visual_tests(
+fn run_start_thread_in_selector_visual_tests(
     app_state: Arc<AppState>,
     cx: &mut VisualTestAppContext,
     update_baseline: bool,
 ) -> Result<TestResult> {
-    use agent_ui::{AgentPanel, SetThreadTarget, ThreadTarget, WorktreeCreationStatus};
+    use agent_ui::{AgentPanel, SetStartThreadIn, StartThreadIn, WorktreeCreationStatus};
 
     // Enable feature flags so the thread target selector renders
     cx.update(|cx| {
@@ -3415,7 +3416,7 @@ edition = "2021"
     cx.run_until_parked();
 
     let result_default = run_visual_test(
-        "thread_target_selector_default",
+        "start_thread_in_selector_default",
         workspace_window.into(),
         cx,
         update_baseline,
@@ -3424,7 +3425,7 @@ edition = "2021"
     // ---- Screenshot 2: Dropdown open showing menu entries ----
     cx.update_window(workspace_window.into(), |_, window, cx| {
         panel.update(cx, |panel, cx| {
-            panel.open_thread_target_menu_for_tests(window, cx);
+            panel.open_start_thread_in_menu_for_tests(window, cx);
         });
     })?;
     cx.run_until_parked();
@@ -3435,7 +3436,7 @@ edition = "2021"
     cx.run_until_parked();
 
     let result_open_dropdown = run_visual_test(
-        "thread_target_selector_open",
+        "start_thread_in_selector_open",
         workspace_window.into(),
         cx,
         update_baseline,
@@ -3445,14 +3446,14 @@ edition = "2021"
     // First dismiss the dropdown, then change the target so the toolbar label is visible
     cx.update_window(workspace_window.into(), |_, _window, cx| {
         panel.update(cx, |panel, cx| {
-            panel.close_thread_target_menu_for_tests(cx);
+            panel.close_start_thread_in_menu_for_tests(cx);
         });
     })?;
     cx.run_until_parked();
 
     cx.update_window(workspace_window.into(), |_, _window, cx| {
         panel.update(cx, |panel, cx| {
-            panel.set_thread_target_for_tests(ThreadTarget::NewWorktree, cx);
+            panel.set_start_thread_in_for_tests(StartThreadIn::NewWorktree, cx);
         });
     })?;
     cx.run_until_parked();
@@ -3463,7 +3464,7 @@ edition = "2021"
     cx.run_until_parked();
 
     let result_new_worktree = run_visual_test(
-        "thread_target_selector_new_worktree",
+        "start_thread_in_selector_new_worktree",
         workspace_window.into(),
         cx,
         update_baseline,
@@ -3525,7 +3526,7 @@ edition = "2021"
     cx.run_until_parked();
 
     cx.update_window(workspace_window.into(), |_, window, cx| {
-        window.dispatch_action(Box::new(SetThreadTarget::new_worktree()), cx);
+        window.dispatch_action(Box::new(SetStartThreadIn::new_worktree()), cx);
     })?;
     cx.run_until_parked();
 
@@ -3703,7 +3704,7 @@ edition = "2021"
 
     if !failures.is_empty() {
         Err(anyhow::anyhow!(
-            "thread_target_selector failures: {}",
+            "start_thread_in_selector failures: {}",
             failures.join("; ")
         ))
     } else if let Some(p) = has_baseline_update {

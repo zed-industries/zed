@@ -56,7 +56,7 @@ use workspace::Workspace;
 
 use crate::agent_configuration::{ConfigureContextServerModal, ManageProfilesModal};
 pub use crate::agent_panel::{
-    AgentPanel, AgentPanelEvent, ConcreteAssistantPanelDelegate, ThreadTarget,
+    AgentPanel, AgentPanelEvent, ConcreteAssistantPanelDelegate, StartThreadIn,
     WorktreeCreationStatus,
 };
 use crate::agent_registry_ui::AgentRegistryPage;
@@ -225,22 +225,22 @@ impl ExternalAgent {
     }
 }
 
-/// Sets the thread target for new threads (where the thread will run).
+/// Sets where new threads will run.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
-pub enum ThreadTargetKind {
+pub enum StartThreadInKind {
     LocalProject,
     NewWorktree,
     ExistingWorktree,
 }
 
-/// Sets the thread target for new threads (where the thread will run).
+/// Sets where new threads will run.
 #[derive(Clone, PartialEq, Deserialize, JsonSchema, Action)]
 #[action(namespace = agent)]
 #[serde(deny_unknown_fields)]
-pub struct SetThreadTarget {
+pub struct SetStartThreadIn {
     /// The target kind.
-    pub kind: ThreadTargetKind,
+    pub kind: StartThreadInKind,
     /// Path to an existing worktree (only for "existing_worktree" kind).
     #[serde(default)]
     pub path: Option<String>,
@@ -249,10 +249,10 @@ pub struct SetThreadTarget {
     pub branch: Option<String>,
 }
 
-impl SetThreadTarget {
+impl SetStartThreadIn {
     pub fn local_project() -> Self {
         Self {
-            kind: ThreadTargetKind::LocalProject,
+            kind: StartThreadInKind::LocalProject,
             path: None,
             branch: None,
         }
@@ -260,7 +260,7 @@ impl SetThreadTarget {
 
     pub fn new_worktree() -> Self {
         Self {
-            kind: ThreadTargetKind::NewWorktree,
+            kind: StartThreadInKind::NewWorktree,
             path: None,
             branch: None,
         }
@@ -268,7 +268,7 @@ impl SetThreadTarget {
 
     pub fn existing_worktree(path: String, branch: String) -> Self {
         Self {
-            kind: ThreadTargetKind::ExistingWorktree,
+            kind: StartThreadInKind::ExistingWorktree,
             path: Some(path),
             branch: Some(branch),
         }

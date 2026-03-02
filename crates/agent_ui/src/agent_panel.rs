@@ -30,8 +30,8 @@ use crate::ui::{AcpOnboardingModal, ClaudeCodeOnboardingModal};
 use crate::{
     AddContextServer, AgentDiffPane, ConnectionView, CopyThreadToClipboard, Follow,
     InlineAssistant, LoadThreadFromClipboard, NewTextThread, NewThread, OpenActiveThreadAsMarkdown,
-    OpenAgentDiff, OpenHistory, ResetTrialEndUpsell, ResetTrialUpsell, SetThreadTarget,
-    ThreadTargetKind, ToggleNavigationMenu, ToggleNewThreadMenu, ToggleOptionsMenu,
+    OpenAgentDiff, OpenHistory, ResetTrialEndUpsell, ResetTrialUpsell, SetStartThreadIn,
+    StartThreadInKind, ToggleNavigationMenu, ToggleNewThreadMenu, ToggleOptionsMenu,
     agent_configuration::{AgentConfiguration, AssistantConfigurationEvent},
     connection_view::{AcpThreadViewEvent, ThreadView},
     slash_command::SlashCommandCompletionProvider,
@@ -129,7 +129,7 @@ struct SerializedAgentPanel {
     #[serde(default)]
     last_active_thread: Option<SerializedActiveThread>,
     #[serde(default)]
-    thread_target: Option<ThreadTarget>,
+    start_thread_in: Option<StartThreadIn>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -332,10 +332,10 @@ pub fn init(cx: &mut App) {
                         );
                     });
                 })
-                .register_action(|workspace, action: &SetThreadTarget, _window, cx| {
+                .register_action(|workspace, action: &SetStartThreadIn, _window, cx| {
                     if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
                         panel.update(cx, |panel, cx| {
-                            panel.set_thread_target(action, cx);
+                            panel.set_start_thread_in(action, cx);
                         });
                     }
                 });
@@ -411,7 +411,7 @@ impl From<ExternalAgent> for AgentType {
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "kind")]
-pub enum ThreadTarget {
+pub enum StartThreadIn {
     #[default]
     LocalProject,
     NewWorktree,
@@ -421,7 +421,7 @@ pub enum ThreadTarget {
     },
 }
 
-impl ThreadTarget {
+impl StartThreadIn {
     fn label(&self) -> SharedString {
         match self {
             Self::LocalProject => "Local Project".into(),
@@ -566,7 +566,7 @@ pub struct AgentPanel {
     previous_view: Option<ActiveView>,
     _active_view_observation: Option<Subscription>,
     new_thread_menu_handle: PopoverMenuHandle<ContextMenu>,
-    thread_target_menu_handle: PopoverMenuHandle<ContextMenu>,
+    start_thread_in_menu_handle: PopoverMenuHandle<ContextMenu>,
     agent_panel_menu_handle: PopoverMenuHandle<ContextMenu>,
     agent_navigation_menu_handle: PopoverMenuHandle<ContextMenu>,
     agent_navigation_menu: Option<Entity<ContextMenu>>,
@@ -577,7 +577,7 @@ pub struct AgentPanel {
     pending_serialization: Option<Task<Result<()>>>,
     onboarding: Entity<AgentPanelOnboarding>,
     selected_agent: AgentType,
-    thread_target: ThreadTarget,
+    start_thread_in: StartThreadIn,
     worktree_creation_status: Option<WorktreeCreationStatus>,
     _thread_view_subscription: Option<Subscription>,
     _worktree_creation_task: Option<Task<()>>,
@@ -594,7 +594,7 @@ impl AgentPanel {
 
         let width = self.width;
         let selected_agent = self.selected_agent.clone();
-        let thread_target = Some(self.thread_target.clone());
+        let start_thread_in = Some(self.start_thread_in.clone());
 
         let last_active_thread = self.active_agent_thread(cx).map(|thread| {
             let thread = thread.read(cx);
@@ -618,7 +618,7 @@ impl AgentPanel {
                     width,
                     selected_agent: Some(selected_agent),
                     last_active_thread,
-                    thread_target,
+                    start_thread_in,
                 },
             )
             .await?;
@@ -705,23 +705,23 @@ impl AgentPanel {
                         if let Some(selected_agent) = serialized_panel.selected_agent.clone() {
                             panel.selected_agent = selected_agent;
                         }
-                        if let Some(thread_target) = serialized_panel.thread_target.clone() {
+                        if let Some(start_thread_in) = serialized_panel.start_thread_in.clone() {
                             let is_worktree_flag_enabled =
                                 cx.has_flag::<AgentGitWorktreesFeatureFlag>();
-                            let is_valid = match &thread_target {
-                                ThreadTarget::LocalProject => true,
-                                ThreadTarget::NewWorktree => {
+                            let is_valid = match &start_thread_in {
+                                StartThreadIn::LocalProject => true,
+                                StartThreadIn::NewWorktree => {
                                     let project = panel.project.read(cx);
                                     is_worktree_flag_enabled && !project.is_via_collab()
                                 }
-                                ThreadTarget::ExistingWorktree { .. } => is_worktree_flag_enabled,
+                                StartThreadIn::ExistingWorktree { .. } => is_worktree_flag_enabled,
                             };
                             if is_valid {
-                                panel.thread_target = thread_target;
+                                panel.start_thread_in = start_thread_in;
                             } else {
                                 log::info!(
-                                    "deserialized thread target {:?} is no longer valid, falling back to LocalProject",
-                                    thread_target,
+                                    "deserialized start_thread_in {:?} is no longer valid, falling back to LocalProject",
+                                    start_thread_in,
                                 );
                             }
                         }
@@ -731,8 +731,8 @@ impl AgentPanel {
 
                 // Validate ExistingWorktree path asynchronously to avoid
                 // blocking the UI thread with a path.exists() call.
-                if let ThreadTarget::ExistingWorktree { ref path, .. } =
-                    panel.read(cx).thread_target
+                if let StartThreadIn::ExistingWorktree { ref path, .. } =
+                    panel.read(cx).start_thread_in
                 {
                     let path = path.clone();
                     let panel_weak = panel.downgrade();
@@ -745,7 +745,7 @@ impl AgentPanel {
                                     log::info!(
                                         "ExistingWorktree path no longer exists, falling back to LocalProject"
                                     );
-                                    panel.thread_target = ThreadTarget::LocalProject;
+                                    panel.start_thread_in = StartThreadIn::LocalProject;
                                     panel.serialize(cx);
                                     cx.notify();
                                 })
@@ -929,7 +929,7 @@ impl AgentPanel {
             previous_view: None,
             _active_view_observation: None,
             new_thread_menu_handle: PopoverMenuHandle::default(),
-            thread_target_menu_handle: PopoverMenuHandle::default(),
+            start_thread_in_menu_handle: PopoverMenuHandle::default(),
             agent_panel_menu_handle: PopoverMenuHandle::default(),
             agent_navigation_menu_handle: PopoverMenuHandle::default(),
             agent_navigation_menu: None,
@@ -943,7 +943,7 @@ impl AgentPanel {
             text_thread_history,
             thread_store,
             selected_agent: AgentType::default(),
-            thread_target: ThreadTarget::default(),
+            start_thread_in: StartThreadIn::default(),
             worktree_creation_status: None,
             _thread_view_subscription: None,
             _worktree_creation_task: None,
@@ -1901,14 +1901,14 @@ impl AgentPanel {
         })
     }
 
-    pub fn thread_target(&self) -> &ThreadTarget {
-        &self.thread_target
+    pub fn start_thread_in(&self) -> &StartThreadIn {
+        &self.start_thread_in
     }
 
-    fn set_thread_target(&mut self, action: &SetThreadTarget, cx: &mut Context<Self>) {
+    fn set_start_thread_in(&mut self, action: &SetStartThreadIn, cx: &mut Context<Self>) {
         if matches!(
             action.kind,
-            ThreadTargetKind::NewWorktree | ThreadTargetKind::ExistingWorktree
+            StartThreadInKind::NewWorktree | StartThreadInKind::ExistingWorktree
         ) && !cx.has_flag::<AgentGitWorktreesFeatureFlag>()
         {
             return;
@@ -1918,48 +1918,48 @@ impl AgentPanel {
         let has_git_repo = self.project_has_git_repository(cx);
 
         let new_target = match action.kind {
-            ThreadTargetKind::LocalProject => ThreadTarget::LocalProject,
-            ThreadTargetKind::NewWorktree => {
+            StartThreadInKind::LocalProject => StartThreadIn::LocalProject,
+            StartThreadInKind::NewWorktree => {
                 if !has_git_repo {
                     log::error!(
-                        "set_thread_target: cannot use NewWorktree without a git repository"
+                        "set_start_thread_in: cannot use NewWorktree without a git repository"
                     );
                     return;
                 }
                 if is_via_collab {
-                    log::error!("set_thread_target: cannot use NewWorktree in a collab project");
+                    log::error!("set_start_thread_in: cannot use NewWorktree in a collab project");
                     return;
                 }
-                ThreadTarget::NewWorktree
+                StartThreadIn::NewWorktree
             }
-            ThreadTargetKind::ExistingWorktree => {
+            StartThreadInKind::ExistingWorktree => {
                 if !has_git_repo {
                     log::error!(
-                        "set_thread_target: cannot use ExistingWorktree without a git repository"
+                        "set_start_thread_in: cannot use ExistingWorktree without a git repository"
                     );
                     return;
                 }
                 if is_via_collab {
                     log::error!(
-                        "set_thread_target: cannot use ExistingWorktree in a collab project"
+                        "set_start_thread_in: cannot use ExistingWorktree in a collab project"
                     );
                     return;
                 }
                 let Some(path) = action.path.as_ref() else {
-                    log::error!("set_thread_target: missing path for existing_worktree");
+                    log::error!("set_start_thread_in: missing path for existing_worktree");
                     return;
                 };
                 let Some(branch) = action.branch.as_ref() else {
-                    log::error!("set_thread_target: missing branch for existing_worktree");
+                    log::error!("set_start_thread_in: missing branch for existing_worktree");
                     return;
                 };
-                ThreadTarget::ExistingWorktree {
+                StartThreadIn::ExistingWorktree {
                     path: PathBuf::from(path),
                     branch: branch.clone(),
                 }
             }
         };
-        self.thread_target = new_target;
+        self.start_thread_in = new_target;
         self.serialize(cx);
         cx.notify();
     }
@@ -2106,7 +2106,7 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.thread_target == ThreadTarget::NewWorktree {
+        if self.start_thread_in == StartThreadIn::NewWorktree {
             self.handle_worktree_creation_requested(content, window, cx);
         } else {
             cx.defer_in(window, move |_this, window, cx| {
@@ -3019,7 +3019,7 @@ impl AgentPanel {
         !self.project.read(cx).repositories(cx).is_empty()
     }
 
-    fn render_thread_target_selector(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_start_thread_in_selector(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let has_git_repo = self.project_has_git_repository(cx);
         let is_via_collab = self.project.read(cx).is_via_collab();
 
@@ -3028,10 +3028,10 @@ impl AgentPanel {
             Some(WorktreeCreationStatus::Creating)
         );
 
-        let current_target = self.thread_target.clone();
-        let trigger_label = self.thread_target.label();
+        let current_target = self.start_thread_in.clone();
+        let trigger_label = self.start_thread_in.label();
 
-        let icon = if self.thread_target_menu_handle.is_deployed() {
+        let icon = if self.start_thread_in_menu_handle.is_deployed() {
             IconName::ChevronUp
         } else {
             IconName::ChevronDown
@@ -3057,37 +3057,37 @@ impl AgentPanel {
         PopoverMenu::new("thread-target-selector")
             .trigger(trigger_button)
             .anchor(gpui::Corner::BottomRight)
-            .with_handle(self.thread_target_menu_handle.clone())
+            .with_handle(self.start_thread_in_menu_handle.clone())
             .menu(move |window, cx| {
                 let current_target = current_target.clone();
                 Some(ContextMenu::build(window, cx, move |menu, _window, _cx| {
-                    let is_local_selected = current_target == ThreadTarget::LocalProject;
-                    let is_new_worktree_selected = current_target == ThreadTarget::NewWorktree;
+                    let is_local_selected = current_target == StartThreadIn::LocalProject;
+                    let is_new_worktree_selected = current_target == StartThreadIn::NewWorktree;
 
                     let new_worktree_disabled = !has_git_repo || is_via_collab;
 
                     menu.header("Start Thread In…")
                         .item(
                             ContextMenuEntry::new("Local Project")
-                                .icon(ThreadTarget::LocalProject.icon())
+                                .icon(StartThreadIn::LocalProject.icon())
                                 .icon_color(Color::Muted)
                                 .toggleable(IconPosition::End, is_local_selected)
                                 .handler(|window, cx| {
                                     window.dispatch_action(
-                                        Box::new(SetThreadTarget::local_project()),
+                                        Box::new(SetStartThreadIn::local_project()),
                                         cx,
                                     );
                                 }),
                         )
                         .item({
                             let entry = ContextMenuEntry::new("New Worktree")
-                                .icon(ThreadTarget::NewWorktree.icon())
+                                .icon(StartThreadIn::NewWorktree.icon())
                                 .icon_color(Color::Muted)
                                 .toggleable(IconPosition::End, is_new_worktree_selected)
                                 .disabled(new_worktree_disabled)
                                 .handler(|window, cx| {
                                     window.dispatch_action(
-                                        Box::new(SetThreadTarget::new_worktree()),
+                                        Box::new(SetStartThreadIn::new_worktree()),
                                         cx,
                                     );
                                 });
@@ -3534,7 +3534,7 @@ impl AgentPanel {
                         has_v2_flag
                             && cx.has_flag::<AgentGitWorktreesFeatureFlag>()
                             && !self.active_thread_has_messages(cx),
-                        |this| this.child(self.render_thread_target_selector(cx)),
+                        |this| this.child(self.render_start_thread_in_selector(cx)),
                     )
                     .child(new_thread_menu)
                     .when(show_history_menu, |this| {
@@ -4303,12 +4303,12 @@ impl AgentPanel {
         self.active_thread_view()
     }
 
-    /// Sets the thread target directly, bypassing validation.
+    /// Sets the start_thread_in value directly, bypassing validation.
     ///
     /// This is a test-only helper for visual tests that need to show specific
-    /// thread target states without requiring a real git repository.
-    pub fn set_thread_target_for_tests(&mut self, target: ThreadTarget, cx: &mut Context<Self>) {
-        self.thread_target = target;
+    /// start_thread_in states without requiring a real git repository.
+    pub fn set_start_thread_in_for_tests(&mut self, target: StartThreadIn, cx: &mut Context<Self>) {
+        self.start_thread_in = target;
         cx.notify();
     }
 
@@ -4340,22 +4340,22 @@ impl AgentPanel {
         self.open_history(window, cx);
     }
 
-    /// Opens the thread target selector popover menu.
+    /// Opens the start_thread_in selector popover menu.
     ///
     /// This is a test-only helper for visual tests.
-    pub fn open_thread_target_menu_for_tests(
+    pub fn open_start_thread_in_menu_for_tests(
         &mut self,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.thread_target_menu_handle.show(window, cx);
+        self.start_thread_in_menu_handle.show(window, cx);
     }
 
-    /// Dismisses the thread target dropdown menu.
+    /// Dismisses the start_thread_in dropdown menu.
     ///
     /// This is a test-only helper for visual tests.
-    pub fn close_thread_target_menu_for_tests(&mut self, cx: &mut Context<Self>) {
-        self.thread_target_menu_handle.hide(cx);
+    pub fn close_start_thread_in_menu_for_tests(&mut self, cx: &mut Context<Self>) {
+        self.start_thread_in_menu_handle.hide(cx);
     }
 }
 
@@ -4611,8 +4611,8 @@ mod tests {
         // Default thread target should be LocalProject.
         panel.read_with(cx, |panel, _cx| {
             assert_eq!(
-                *panel.thread_target(),
-                ThreadTarget::LocalProject,
+                *panel.start_thread_in(),
+                StartThreadIn::LocalProject,
                 "default thread target should be LocalProject"
             );
         });
@@ -4651,8 +4651,8 @@ mod tests {
         // The thread target should still be LocalProject (unchanged).
         panel.read_with(cx, |panel, _cx| {
             assert_eq!(
-                *panel.thread_target(),
-                ThreadTarget::LocalProject,
+                *panel.start_thread_in(),
+                StartThreadIn::LocalProject,
                 "thread target should remain LocalProject"
             );
         });
@@ -4723,18 +4723,18 @@ mod tests {
 
         // Default should be LocalProject.
         panel.read_with(cx, |panel, _cx| {
-            assert_eq!(*panel.thread_target(), ThreadTarget::LocalProject);
+            assert_eq!(*panel.start_thread_in(), StartThreadIn::LocalProject);
         });
 
         // Change thread target to NewWorktree.
         panel.update(cx, |panel, cx| {
-            panel.set_thread_target(&SetThreadTarget::new_worktree(), cx);
+            panel.set_start_thread_in(&SetStartThreadIn::new_worktree(), cx);
         });
 
         panel.read_with(cx, |panel, _cx| {
             assert_eq!(
-                *panel.thread_target(),
-                ThreadTarget::NewWorktree,
+                *panel.start_thread_in(),
+                StartThreadIn::NewWorktree,
                 "thread target should be NewWorktree after set_thread_target"
             );
         });
@@ -4753,8 +4753,8 @@ mod tests {
 
         loaded_panel.read_with(cx, |panel, _cx| {
             assert_eq!(
-                *panel.thread_target(),
-                ThreadTarget::NewWorktree,
+                *panel.start_thread_in(),
+                StartThreadIn::NewWorktree,
                 "thread target should survive serialization round-trip"
             );
         });
@@ -4818,13 +4818,13 @@ mod tests {
         cx.run_until_parked();
 
         panel.update(cx, |panel, cx| {
-            panel.set_thread_target(&SetThreadTarget::new_worktree(), cx);
+            panel.set_start_thread_in(&SetStartThreadIn::new_worktree(), cx);
         });
 
         panel.read_with(cx, |panel, _cx| {
             assert_eq!(
-                *panel.thread_target(),
-                ThreadTarget::NewWorktree,
+                *panel.start_thread_in(),
+                StartThreadIn::NewWorktree,
                 "thread target should be NewWorktree before reload"
             );
         });
@@ -4847,8 +4847,8 @@ mod tests {
 
         loaded_panel.read_with(cx, |panel, _cx| {
             assert_eq!(
-                *panel.thread_target(),
-                ThreadTarget::LocalProject,
+                *panel.start_thread_in(),
+                StartThreadIn::LocalProject,
                 "thread target should fall back to LocalProject when worktree flag is disabled"
             );
         });
