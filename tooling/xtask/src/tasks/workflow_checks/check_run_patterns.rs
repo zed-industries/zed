@@ -1,36 +1,93 @@
-use std::{ops::Range, path::Path, sync::LazyLock};
+use std::{collections::HashMap, ops::Range, path::PathBuf, sync::LazyLock};
 
 use annotate_snippets::{AnnotationKind, Group, Level, Snippet};
 use regex::Regex;
+use serde_yaml::Value;
 
 static GITHUB_INPUT_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r#"\$\{\{[[:blank:]]*([[:alnum:]]|[[:punct:]])+?[[:blank:]]*\}\}"#)
         .expect("Should compile")
 });
 
-pub struct InvalidPatternsErrror {
-    pub patterns: Vec<(String, Range<usize>)>,
+pub struct WorkflowFile {
+    raw_content: String,
+    pub parsed_content: Value,
 }
 
-pub fn annotations_for_indices<'a>(
-    patterns: impl IntoIterator<Item = Range<usize>>,
-    source: &'a str,
-    file: &Path,
-) -> Group<'a> {
-    Level::ERROR
-        .primary_title("Found GitHub input injection in run command")
-        .element(
-            Snippet::source(source)
-                .path(file.display().to_string())
-                .annotations(patterns.into_iter().map(|range| {
-                    AnnotationKind::Primary
-                        .span(range)
-                        .label("This should be passed via an environment variable")
-                })),
-        )
+impl WorkflowFile {
+    pub fn new(raw_content: String) -> Result<Self, serde_yaml::Error> {
+        serde_yaml::from_str(&raw_content).map(|parsed_content| Self {
+            raw_content,
+            parsed_content,
+        })
+    }
 }
 
-pub fn validate_run_command(command: &str) -> Result<(), InvalidPatternsErrror> {
+pub struct WorkflowValidationError {
+    file_path: PathBuf,
+    contents: WorkflowFile,
+    errors: Vec<RunValidationError>,
+}
+
+impl WorkflowValidationError {
+    pub fn new(
+        errors: Vec<RunValidationError>,
+        contents: WorkflowFile,
+        file_path: PathBuf,
+    ) -> Self {
+        Self {
+            file_path,
+            contents,
+            errors,
+        }
+    }
+
+    pub fn annotation_group<'a>(&'a self) -> Group<'a> {
+        let raw_content = &self.contents.raw_content;
+        let mut identical_lines = HashMap::new();
+
+        let ranges = self
+            .errors
+            .iter()
+            .flat_map(|error| error.found_injection_patterns.iter())
+            .map(|(line, pattern_range)| {
+                let initial_offset = identical_lines
+                    .get(&(line.as_str(), pattern_range.start))
+                    .copied()
+                    .unwrap_or_default();
+
+                let line_start = raw_content[initial_offset..]
+                    .find(line.as_str())
+                    .map(|offset| offset + initial_offset)
+                    .unwrap_or_default();
+
+                let pattern_start = line_start + pattern_range.start;
+                let pattern_end = pattern_start + pattern_range.len();
+
+                identical_lines.insert((line.as_str(), pattern_range.start), pattern_end);
+
+                pattern_start..pattern_end
+            });
+
+        Level::ERROR
+            .primary_title("Found GitHub input injection in run command")
+            .element(
+                Snippet::source(&self.contents.raw_content)
+                    .path(self.file_path.display().to_string())
+                    .annotations(ranges.map(|range| {
+                        AnnotationKind::Primary
+                            .span(range)
+                            .label("This should be passed via an environment variable")
+                    })),
+            )
+    }
+}
+
+pub struct RunValidationError {
+    found_injection_patterns: Vec<(String, Range<usize>)>,
+}
+
+pub fn validate_run_command(command: &str) -> Result<(), RunValidationError> {
     let patterns: Vec<_> = command
         .lines()
         .flat_map(move |line| {
@@ -43,6 +100,8 @@ pub fn validate_run_command(command: &str) -> Result<(), InvalidPatternsErrror> 
     if patterns.is_empty() {
         Ok(())
     } else {
-        Err(InvalidPatternsErrror { patterns })
+        Err(RunValidationError {
+            found_injection_patterns: patterns,
+        })
     }
 }

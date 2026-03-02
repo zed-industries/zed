@@ -1,10 +1,7 @@
 mod check_run_patterns;
 
 use std::{
-    borrow::Cow,
-    collections::HashMap,
     fs,
-    ops::Range,
     path::{Path, PathBuf},
 };
 
@@ -17,7 +14,7 @@ use strum::IntoEnumIterator;
 
 use crate::tasks::{
     workflow_checks::check_run_patterns::{
-        InvalidPatternsErrror, annotations_for_indices, validate_run_command,
+        RunValidationError, WorkflowFile, WorkflowValidationError, validate_run_command,
     },
     workflows::WorkflowType,
 };
@@ -40,59 +37,9 @@ pub fn validate(_: WorkflowValidationArgs) -> Result<()> {
             parsing_errors.into_iter().join("\n")
         ))
     } else if !file_errors.is_empty() {
-        struct Error {
-            raw_content: String,
-            file_path: PathBuf,
-            ranges: Vec<Range<usize>>,
-        }
-
-        let file_errors = file_errors
-            .into_iter()
-            .map(|file_error| {
-                let raw_content = &file_error.contents.raw_content;
-                let mut identical_lines = HashMap::new();
-
-                let ranges = file_error
-                    .errors
-                    .into_iter()
-                    .flat_map(|error| error.patterns.into_iter())
-                    .map(|(line, pattern_range)| {
-                        let initial_offset = identical_lines
-                            .get(&(Cow::Borrowed(line.as_str()), pattern_range.start))
-                            .copied()
-                            .unwrap_or_default();
-
-                        let line_start = raw_content[initial_offset..]
-                            .find(&line)
-                            .map(|offset| offset + initial_offset)
-                            .unwrap_or_default();
-
-                        let pattern_start = line_start + pattern_range.start;
-                        let pattern_end = pattern_start + pattern_range.len();
-
-                        identical_lines
-                            .insert((Cow::Owned(line), pattern_range.start), pattern_end);
-
-                        pattern_start..pattern_end
-                    });
-
-                Error {
-                    file_path: file_error.file_path,
-                    ranges: ranges.collect(),
-                    raw_content: file_error.contents.raw_content,
-                }
-            })
-            .collect::<Vec<_>>();
-
         let errors: Vec<_> = file_errors
             .iter()
-            .map(|error| {
-                annotations_for_indices(
-                    error.ranges.iter().cloned(),
-                    &error.raw_content,
-                    &error.file_path,
-                )
-            })
+            .map(|error| error.annotation_group())
             .collect();
 
         let renderer =
@@ -105,20 +52,9 @@ pub fn validate(_: WorkflowValidationArgs) -> Result<()> {
     }
 }
 
-struct WorkflowFile {
-    raw_content: String,
-    parsed_content: Value,
-}
-
 enum WorkflowError {
     ParseError(anyhow::Error),
     ValidationError(Box<WorkflowValidationError>),
-}
-
-struct WorkflowValidationError {
-    file_path: PathBuf,
-    contents: WorkflowFile,
-    errors: Vec<InvalidPatternsErrror>,
 }
 
 fn get_all_workflow_files() -> impl Iterator<Item = PathBuf> {
@@ -138,7 +74,7 @@ fn get_all_workflow_files() -> impl Iterator<Item = PathBuf> {
 }
 
 fn check_workflow(workflow_file_path: PathBuf) -> Result<(), WorkflowError> {
-    fn check_recursive(key: &Value, value: &Value) -> Result<(), Vec<InvalidPatternsErrror>> {
+    fn check_recursive(key: &Value, value: &Value) -> Result<(), Vec<RunValidationError>> {
         match value {
             Value::Mapping(mapping) => mapping
                 .iter()
@@ -154,9 +90,9 @@ fn check_workflow(workflow_file_path: PathBuf) -> Result<(), WorkflowError> {
     }
 
     fn fold_errors(
-        acc: Result<(), Vec<InvalidPatternsErrror>>,
-        result: Result<(), Vec<InvalidPatternsErrror>>,
-    ) -> Result<(), Vec<InvalidPatternsErrror>> {
+        acc: Result<(), Vec<RunValidationError>>,
+        result: Result<(), Vec<RunValidationError>>,
+    ) -> Result<(), Vec<RunValidationError>> {
         match result {
             Ok(()) => acc,
             Err(mut errors) => match acc {
@@ -169,19 +105,19 @@ fn check_workflow(workflow_file_path: PathBuf) -> Result<(), WorkflowError> {
         }
     }
 
-    let workflow_file =
+    let file_content =
         load_workflow_file(&workflow_file_path).map_err(WorkflowError::ParseError)?;
 
-    check_recursive(&Value::Null, &workflow_file.parsed_content).map_err(|errors| {
-        WorkflowError::ValidationError(Box::new(WorkflowValidationError {
-            file_path: workflow_file_path,
-            contents: workflow_file,
+    check_recursive(&Value::Null, &file_content.parsed_content).map_err(|errors| {
+        WorkflowError::ValidationError(Box::new(WorkflowValidationError::new(
             errors,
-        }))
+            file_content,
+            workflow_file_path,
+        )))
     })
 }
 
-fn check_string(key: &Value, value: &str) -> Result<(), InvalidPatternsErrror> {
+fn check_string(key: &Value, value: &str) -> Result<(), RunValidationError> {
     match key {
         Value::String(key) if key == "run" => validate_run_command(value),
         _ => Ok(()),
@@ -197,11 +133,7 @@ fn load_workflow_file(workflow_file_path: &Path) -> Result<WorkflowFile> {
             )
         })
         .and_then(|file_content| {
-            serde_yaml::from_str(&file_content)
-                .map(|parsed_file| WorkflowFile {
-                    raw_content: file_content,
-                    parsed_content: parsed_file,
-                })
+            WorkflowFile::new(file_content)
                 .map_err(|e| anyhow!("Failed to parse workflow file: {e:?}"))
         })
 }
