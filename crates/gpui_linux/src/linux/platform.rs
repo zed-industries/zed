@@ -1038,6 +1038,46 @@ pub(super) fn capslock_from_xkb(keymap_state: &State) -> gpui::Capslock {
     gpui::Capslock { on }
 }
 
+/// Resolve a Linux `dev_t` to PCI vendor/device IDs via sysfs, returning a
+/// [`CompositorGpuHint`] that the GPU adapter selection code can use to
+/// prioritize the compositor's rendering device.
+#[cfg(any(feature = "wayland", feature = "x11"))]
+pub(super) fn compositor_gpu_hint_from_dev_t(dev: u64) -> Option<gpui_wgpu::CompositorGpuHint> {
+    fn dev_major(dev: u64) -> u32 {
+        ((dev >> 8) & 0xfff) as u32 | (((dev >> 32) & !0xfff) as u32)
+    }
+
+    fn dev_minor(dev: u64) -> u32 {
+        (dev & 0xff) as u32 | (((dev >> 12) & !0xff) as u32)
+    }
+
+    fn read_sysfs_hex_id(path: &str) -> Option<u32> {
+        let content = std::fs::read_to_string(path).ok()?;
+        let trimmed = content.trim().strip_prefix("0x").unwrap_or(content.trim());
+        u32::from_str_radix(trimmed, 16).ok()
+    }
+
+    let major = dev_major(dev);
+    let minor = dev_minor(dev);
+
+    let vendor_path = format!("/sys/dev/char/{major}:{minor}/device/vendor");
+    let device_path = format!("/sys/dev/char/{major}:{minor}/device/device");
+
+    let vendor_id = read_sysfs_hex_id(&vendor_path)?;
+    let device_id = read_sysfs_hex_id(&device_path)?;
+
+    log::info!(
+        "Compositor GPU hint: vendor={:#06x}, device={:#06x} (from dev {major}:{minor})",
+        vendor_id,
+        device_id,
+    );
+
+    Some(gpui_wgpu::CompositorGpuHint {
+        vendor_id,
+        device_id,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
