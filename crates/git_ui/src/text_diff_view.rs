@@ -643,6 +643,28 @@ mod tests {
         .await;
     }
 
+    #[gpui::test]
+    async fn test_diffing_clipboard_with_selection_at_file_end_without_trailing_newline(
+        cx: &mut TestAppContext,
+    ) {
+        base_test(
+            path!("/test"),
+            path!("/test/text.txt"),
+            "line 1\nline 2\nline 3",
+            "«line 1\nline 2\nline 3ˇ»",
+            &unindent(
+                "
+                  ˇline 1
+                  line 2
+                  line 3",
+            ),
+            "Clipboard ↔ text.txt @ L1:1-L3:7",
+            &format!("Clipboard ↔ {} @ L1:1-L3:7", path!("test/text.txt")),
+            cx,
+        )
+        .await;
+    }
+
     async fn base_test(
         project_root: &str,
         file_path: &str,
