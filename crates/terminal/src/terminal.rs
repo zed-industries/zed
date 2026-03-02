@@ -58,7 +58,6 @@ use std::{
     borrow::Cow,
     cmp::{self, min},
     fmt::Display,
-    i32,
     ops::{Deref, RangeInclusive},
     path::PathBuf,
     process::ExitStatus,
