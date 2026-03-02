@@ -90,7 +90,10 @@ impl TextDiffView {
 
         let range_end_offset = source_buffer_snapshot.point_to_offset(expanded_selection_range.end);
         let source_text_ends_with_newline = range_end_offset > 0
-            && source_buffer_snapshot.chars_at(range_end_offset - 1).next() == Some('\n');
+            && source_buffer_snapshot
+                .reversed_chars_at(range_end_offset)
+                .next()
+                == Some('\n');
 
         if source_text_ends_with_newline && !clipboard_text.ends_with("\n") {
             clipboard_text.push_str("\n");
@@ -654,16 +657,16 @@ mod tests {
         base_test(
             path!("/test"),
             path!("/test/text.txt"),
-            "line 1\nline 2\nline 3",
-            "«line 1\nline 2\nline 3ˇ»",
+            "line 1\nline 2\n√√√√√",
+            "«line 1\nline 2\n√√√√√ˇ»",
             &unindent(
                 "
                   ˇline 1
                   line 2
-                  line 3",
+                  √√√√√",
             ),
-            "Clipboard ↔ text.txt @ L1:1-L3:7",
-            &format!("Clipboard ↔ {} @ L1:1-L3:7", path!("test/text.txt")),
+            "Clipboard ↔ text.txt @ L1:1-L3:16",
+            &format!("Clipboard ↔ {} @ L1:1-L3:16", path!("test/text.txt")),
             cx,
         )
         .await;
