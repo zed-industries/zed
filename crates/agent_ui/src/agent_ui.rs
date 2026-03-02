@@ -56,8 +56,7 @@ use workspace::Workspace;
 
 use crate::agent_configuration::{ConfigureContextServerModal, ManageProfilesModal};
 pub use crate::agent_panel::{
-    AgentPanel, AgentPanelEvent, ConcreteAssistantPanelDelegate, StartThreadIn,
-    WorktreeCreationStatus,
+    AgentPanel, AgentPanelEvent, ConcreteAssistantPanelDelegate, WorktreeCreationStatus,
 };
 use crate::agent_registry_ui::AgentRegistryPage;
 pub use crate::inline_assistant::InlineAssistant;
@@ -226,34 +225,15 @@ impl ExternalAgent {
 }
 
 /// Sets where new threads will run.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum StartThreadInKind {
+#[derive(
+    Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Action,
+)]
+#[action(namespace = agent)]
+#[serde(rename_all = "snake_case", tag = "kind")]
+pub enum StartThreadIn {
+    #[default]
     LocalProject,
     NewWorktree,
-}
-
-/// Sets where new threads will run.
-#[derive(Clone, PartialEq, Deserialize, JsonSchema, Action)]
-#[action(namespace = agent)]
-#[serde(deny_unknown_fields)]
-pub struct SetStartThreadIn {
-    /// The target kind.
-    pub kind: StartThreadInKind,
-}
-
-impl SetStartThreadIn {
-    pub fn local_project() -> Self {
-        Self {
-            kind: StartThreadInKind::LocalProject,
-        }
-    }
-
-    pub fn new_worktree() -> Self {
-        Self {
-            kind: StartThreadInKind::NewWorktree,
-        }
-    }
 }
 
 /// Content to initialize new external agent with.

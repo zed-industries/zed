@@ -30,8 +30,8 @@ use crate::ui::{AcpOnboardingModal, ClaudeCodeOnboardingModal};
 use crate::{
     AddContextServer, AgentDiffPane, ConnectionView, CopyThreadToClipboard, Follow,
     InlineAssistant, LoadThreadFromClipboard, NewTextThread, NewThread, OpenActiveThreadAsMarkdown,
-    OpenAgentDiff, OpenHistory, ResetTrialEndUpsell, ResetTrialUpsell, SetStartThreadIn,
-    StartThreadInKind, ToggleNavigationMenu, ToggleNewThreadMenu, ToggleOptionsMenu,
+    OpenAgentDiff, OpenHistory, ResetTrialEndUpsell, ResetTrialUpsell, StartThreadIn,
+    ToggleNavigationMenu, ToggleNewThreadMenu, ToggleOptionsMenu,
     agent_configuration::{AgentConfiguration, AssistantConfigurationEvent},
     connection_view::{AcpThreadViewEvent, ThreadView},
     slash_command::SlashCommandCompletionProvider,
@@ -332,7 +332,7 @@ pub fn init(cx: &mut App) {
                         );
                     });
                 })
-                .register_action(|workspace, action: &SetStartThreadIn, _window, cx| {
+                .register_action(|workspace, action: &StartThreadIn, _window, cx| {
                     if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
                         panel.update(cx, |panel, cx| {
                             panel.set_start_thread_in(action, cx);
@@ -411,14 +411,6 @@ impl From<ExternalAgent> for AgentType {
             ExternalAgent::NativeAgent => Self::NativeAgent,
         }
     }
-}
-
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case", tag = "kind")]
-pub enum StartThreadIn {
-    #[default]
-    LocalProject,
-    NewWorktree,
 }
 
 impl StartThreadIn {
@@ -1868,16 +1860,16 @@ impl AgentPanel {
         &self.start_thread_in
     }
 
-    fn set_start_thread_in(&mut self, action: &SetStartThreadIn, cx: &mut Context<Self>) {
-        if matches!(action.kind, StartThreadInKind::NewWorktree)
+    fn set_start_thread_in(&mut self, action: &StartThreadIn, cx: &mut Context<Self>) {
+        if matches!(action, StartThreadIn::NewWorktree)
             && !cx.has_flag::<AgentGitWorktreesFeatureFlag>()
         {
             return;
         }
 
-        let new_target = match action.kind {
-            StartThreadInKind::LocalProject => StartThreadIn::LocalProject,
-            StartThreadInKind::NewWorktree => {
+        let new_target = match *action {
+            StartThreadIn::LocalProject => StartThreadIn::LocalProject,
+            StartThreadIn::NewWorktree => {
                 if !self.project_has_git_repository(cx) {
                     log::error!(
                         "set_start_thread_in: cannot use NewWorktree without a git repository"
@@ -3005,10 +2997,8 @@ impl AgentPanel {
                                 .icon_color(Color::Muted)
                                 .toggleable(IconPosition::End, is_local_selected)
                                 .handler(|window, cx| {
-                                    window.dispatch_action(
-                                        Box::new(SetStartThreadIn::local_project()),
-                                        cx,
-                                    );
+                                    window
+                                        .dispatch_action(Box::new(StartThreadIn::LocalProject), cx);
                                 }),
                         )
                         .item({
@@ -3018,10 +3008,8 @@ impl AgentPanel {
                                 .toggleable(IconPosition::End, is_new_worktree_selected)
                                 .disabled(new_worktree_disabled)
                                 .handler(|window, cx| {
-                                    window.dispatch_action(
-                                        Box::new(SetStartThreadIn::new_worktree()),
-                                        cx,
-                                    );
+                                    window
+                                        .dispatch_action(Box::new(StartThreadIn::NewWorktree), cx);
                                 });
 
                             if new_worktree_disabled {
@@ -4660,7 +4648,7 @@ mod tests {
 
         // Change thread target to NewWorktree.
         panel.update(cx, |panel, cx| {
-            panel.set_start_thread_in(&SetStartThreadIn::new_worktree(), cx);
+            panel.set_start_thread_in(&StartThreadIn::NewWorktree, cx);
         });
 
         panel.read_with(cx, |panel, _cx| {
@@ -4750,7 +4738,7 @@ mod tests {
         cx.run_until_parked();
 
         panel.update(cx, |panel, cx| {
-            panel.set_start_thread_in(&SetStartThreadIn::new_worktree(), cx);
+            panel.set_start_thread_in(&StartThreadIn::NewWorktree, cx);
         });
 
         panel.read_with(cx, |panel, _cx| {

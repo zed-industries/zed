@@ -3118,7 +3118,7 @@ fn run_start_thread_in_selector_visual_tests(
     cx: &mut VisualTestAppContext,
     update_baseline: bool,
 ) -> Result<TestResult> {
-    use agent_ui::{AgentPanel, SetStartThreadIn, StartThreadIn, WorktreeCreationStatus};
+    use agent_ui::{AgentPanel, StartThreadIn, WorktreeCreationStatus};
 
     // Enable feature flags so the thread target selector renders
     cx.update(|cx| {
@@ -3526,7 +3526,7 @@ edition = "2021"
     cx.run_until_parked();
 
     cx.update_window(workspace_window.into(), |_, window, cx| {
-        window.dispatch_action(Box::new(SetStartThreadIn::new_worktree()), cx);
+        window.dispatch_action(Box::new(StartThreadIn::NewWorktree), cx);
     })?;
     cx.run_until_parked();
 
