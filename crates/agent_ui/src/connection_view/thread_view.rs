@@ -4784,12 +4784,8 @@ impl ThreadView {
             .and_then(|s| s.strip_suffix("\n```"))
             .unwrap_or(&command_source);
 
-        let command_element = self.render_collapsible_command(
-            header_group.clone().into(),
-            false,
-            command_content,
-            cx,
-        );
+        let command_element =
+            self.render_collapsible_command(header_group.clone(), false, command_content, cx);
 
         let is_expanded = self.expanded_tool_calls.contains(&tool_call.id);
 
