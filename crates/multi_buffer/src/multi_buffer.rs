@@ -105,6 +105,8 @@ pub enum Event {
     },
     ExcerptsRemoved {
         ids: Vec<ExcerptId>,
+        /// Contains only buffer IDs for which all excerpts have been removed.
+        /// Buffers that still have remaining excerpts are never included.
         removed_buffer_ids: Vec<BufferId>,
     },
     ExcerptsExpanded {
