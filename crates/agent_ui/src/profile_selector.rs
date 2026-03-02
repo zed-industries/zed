@@ -34,6 +34,7 @@ pub trait ProfileProvider {
 pub struct ProfileSelector {
     profiles: AvailableProfiles,
     pending_refresh: bool,
+    disabled: bool,
     fs: Arc<dyn Fs>,
     provider: Arc<dyn ProfileProvider>,
     picker: Option<Entity<Picker<ProfilePickerDelegate>>>,
@@ -57,6 +58,7 @@ impl ProfileSelector {
         Self {
             profiles: AgentProfile::available_profiles(cx),
             pending_refresh: false,
+            disabled: false,
             fs,
             provider,
             picker: None,
@@ -70,7 +72,19 @@ impl ProfileSelector {
         self.picker_handle.clone()
     }
 
+    pub fn set_disabled(&mut self, disabled: bool) {
+        self.disabled = disabled;
+    }
+
+    pub fn is_disabled(&self) -> bool {
+        self.disabled
+    }
+
     pub fn cycle_profile(&mut self, cx: &mut Context<Self>) {
+        if self.disabled {
+            return;
+        }
+
         if !self.provider.profiles_supported(cx) {
             return;
         }
@@ -175,6 +189,7 @@ impl Render for ProfileSelector {
         };
 
         let trigger_button = Button::new("profile-selector", selected_profile)
+            .disabled(self.disabled)
             .label_size(LabelSize::Small)
             .color(Color::Muted)
             .icon(icon)

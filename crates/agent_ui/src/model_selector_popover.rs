@@ -13,6 +13,7 @@ use crate::{ModelSelector, model_selector::acp_model_selector};
 pub struct ModelSelectorPopover {
     selector: Entity<ModelSelector>,
     menu_handle: PopoverMenuHandle<ModelSelector>,
+    disabled: bool,
 }
 
 impl ModelSelectorPopover {
@@ -30,10 +31,18 @@ impl ModelSelectorPopover {
                 acp_model_selector(selector, agent_server, fs, focus_handle.clone(), window, cx)
             }),
             menu_handle,
+            disabled: false,
         }
     }
 
+    pub fn set_disabled(&mut self, disabled: bool) {
+        self.disabled = disabled;
+    }
+
     pub fn toggle(&self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.disabled {
+            return;
+        }
         self.menu_handle.toggle(window, cx);
     }
 
@@ -42,6 +51,9 @@ impl ModelSelectorPopover {
     }
 
     pub fn cycle_favorite_models(&self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.disabled {
+            return;
+        }
         self.selector.update(cx, |selector, cx| {
             selector.delegate.cycle_favorite_models(window, cx);
         });
@@ -78,6 +90,7 @@ impl Render for ModelSelectorPopover {
         PickerPopoverMenu::new(
             self.selector.clone(),
             ButtonLike::new("active-model")
+                .disabled(self.disabled)
                 .selected_style(ButtonStyle::Tinted(TintColor::Accent))
                 .when_some(model_icon, |this, icon| {
                     this.child(

@@ -2558,6 +2558,14 @@ impl ThreadView {
             return div().into_any_element();
         }
 
+        let is_generating = self.thread.read(cx).status() != ThreadStatus::Idle;
+        if let Some(model_selector) = &self.model_selector {
+            model_selector.update(cx, |selector, _| selector.set_disabled(is_generating));
+        }
+        if let Some(profile_selector) = &self.profile_selector {
+            profile_selector.update(cx, |selector, _| selector.set_disabled(is_generating));
+        }
+
         let focus_handle = self.message_editor.focus_handle(cx);
         let editor_bg_color = cx.theme().colors().editor_background;
         let editor_expanded = self.editor_expanded;
@@ -3075,6 +3083,7 @@ impl ThreadView {
             return None;
         }
 
+        let is_generating = self.thread.read(cx).status() != ThreadStatus::Idle;
         let thinking = thread.thinking_enabled();
 
         let (tooltip_label, icon, color) = if thinking {
@@ -3096,6 +3105,7 @@ impl ThreadView {
         let thinking_toggle = IconButton::new("thinking-mode", icon)
             .icon_size(IconSize::Small)
             .icon_color(color)
+            .disabled(is_generating)
             .tooltip(move |_, cx| {
                 Tooltip::for_action_in(tooltip_label, &ToggleThinkingMode, &focus_handle, cx)
             })
@@ -3129,6 +3139,7 @@ impl ThreadView {
         let right_btn = self.render_effort_selector(
             model.supported_effort_levels(),
             thread.thinking_effort().cloned(),
+            is_generating,
             cx,
         );
 
@@ -3143,6 +3154,7 @@ impl ThreadView {
         &self,
         supported_effort_levels: Vec<LanguageModelEffortLevel>,
         selected_effort: Option<String>,
+        disabled: bool,
         cx: &Context<Self>,
     ) -> impl IntoElement {
         let weak_self = cx.weak_entity();
@@ -3211,6 +3223,7 @@ impl ThreadView {
         PopoverMenu::new("effort-selector")
             .trigger_with_tooltip(
                 ButtonLike::new_rounded_right("effort-selector-trigger")
+                    .disabled(disabled)
                     .selected_style(ButtonStyle::Tinted(TintColor::Accent))
                     .child(Label::new(label).size(LabelSize::Small).color(label_color))
                     .child(Icon::new(icon).size(IconSize::XSmall).color(Color::Muted)),
@@ -7577,6 +7590,9 @@ impl Render for ThreadView {
                 this.toggle_fast_mode(cx);
             }))
             .on_action(cx.listener(|this, _: &ToggleThinkingMode, _window, cx| {
+                if this.thread.read(cx).status() != ThreadStatus::Idle {
+                    return;
+                }
                 if let Some(thread) = this.as_native_thread(cx) {
                     thread.update(cx, |thread, cx| {
                         thread.set_thinking_enabled(!thread.thinking_enabled(), cx);
@@ -7584,9 +7600,19 @@ impl Render for ThreadView {
                 }
             }))
             .on_action(cx.listener(|this, _: &CycleThinkingEffort, _window, cx| {
+                if this.thread.read(cx).status() != ThreadStatus::Idle {
+                    return;
+                }
                 this.cycle_thinking_effort(cx);
             }))
-            .on_action(cx.listener(Self::toggle_thinking_effort_menu))
+            .on_action(
+                cx.listener(|this, action: &ToggleThinkingEffortMenu, window, cx| {
+                    if this.thread.read(cx).status() != ThreadStatus::Idle {
+                        return;
+                    }
+                    this.toggle_thinking_effort_menu(action, window, cx);
+                }),
+            )
             .on_action(cx.listener(|this, _: &SendNextQueuedMessage, window, cx| {
                 this.send_queued_message_at_index(0, true, window, cx);
             }))
@@ -7604,6 +7630,9 @@ impl Render for ThreadView {
                 cx.notify();
             }))
             .on_action(cx.listener(|this, _: &ToggleProfileSelector, window, cx| {
+                if this.thread.read(cx).status() != ThreadStatus::Idle {
+                    return;
+                }
                 if let Some(config_options_view) = this.config_options_view.clone() {
                     let handled = config_options_view.update(cx, |view, cx| {
                         view.toggle_category_picker(
@@ -7624,6 +7653,9 @@ impl Render for ThreadView {
                 }
             }))
             .on_action(cx.listener(|this, _: &CycleModeSelector, window, cx| {
+                if this.thread.read(cx).status() != ThreadStatus::Idle {
+                    return;
+                }
                 if let Some(config_options_view) = this.config_options_view.clone() {
                     let handled = config_options_view.update(cx, |view, cx| {
                         view.cycle_category_option(
@@ -7648,6 +7680,9 @@ impl Render for ThreadView {
                 }
             }))
             .on_action(cx.listener(|this, _: &ToggleModelSelector, window, cx| {
+                if this.thread.read(cx).status() != ThreadStatus::Idle {
+                    return;
+                }
                 if let Some(config_options_view) = this.config_options_view.clone() {
                     let handled = config_options_view.update(cx, |view, cx| {
                         view.toggle_category_picker(
@@ -7667,6 +7702,9 @@ impl Render for ThreadView {
                 }
             }))
             .on_action(cx.listener(|this, _: &CycleFavoriteModels, window, cx| {
+                if this.thread.read(cx).status() != ThreadStatus::Idle {
+                    return;
+                }
                 if let Some(config_options_view) = this.config_options_view.clone() {
                     let handled = config_options_view.update(cx, |view, cx| {
                         view.cycle_category_option(
