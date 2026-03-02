@@ -25,11 +25,16 @@ pub fn compute_excerpt_ranges(
         expand_context_syntactically_then_linewise(snapshot, editable_350.clone(), 512);
     let editable_350_context_1024 =
         expand_context_syntactically_then_linewise(snapshot, editable_350.clone(), 1024);
-    let editable_350_context_4096 =
-        expand_context_syntactically_then_linewise(snapshot, editable_350.clone(), 4096);
+    let context_4096 = expand_context_syntactically_then_linewise(
+        snapshot,
+        editable_350_context_512.clone(),
+        4096 - 512,
+    );
+    let context_8192 =
+        expand_context_syntactically_then_linewise(snapshot, context_4096.clone(), 8192 - 4096);
 
-    let full_start_row = editable_350_context_4096.start.row;
-    let full_end_row = editable_350_context_4096.end.row;
+    let full_start_row = context_8192.start.row;
+    let full_end_row = context_8192.end.row;
 
     let full_context =
         Point::new(full_start_row, 0)..Point::new(full_end_row, snapshot.line_len(full_end_row));
@@ -52,7 +57,8 @@ pub fn compute_excerpt_ranges(
         editable_350_context_150: to_offset(&editable_350_context_150),
         editable_350_context_512: Some(to_offset(&editable_350_context_512)),
         editable_350_context_1024: Some(to_offset(&editable_350_context_1024)),
-        editable_350_context_4096: Some(to_offset(&editable_350_context_4096)),
+        context_4096: Some(to_offset(&context_4096)),
+        context_8192: Some(to_offset(&context_8192)),
     };
 
     (full_context, full_context_offset_range, ranges)

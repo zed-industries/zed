@@ -46,7 +46,8 @@ pub struct ExcerptRanges {
     pub editable_350_context_150: Range<usize>,
     pub editable_350_context_512: Option<Range<usize>>,
     pub editable_350_context_1024: Option<Range<usize>>,
-    pub editable_350_context_4096: Option<Range<usize>>,
+    pub context_4096: Option<Range<usize>>,
+    pub context_8192: Option<Range<usize>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Hash, Serialize, Deserialize)]
