@@ -4898,8 +4898,10 @@ impl Editor {
                         .scope_context(Some(CharScopeContext::LinkedEdit));
                     classifier.is_word(char)
                 });
+                let is_dot = text.as_ref() == ".";
+                let should_apply_linked_edit = is_word_char || is_dot;
 
-                if is_word_char {
+                if should_apply_linked_edit {
                     let anchor_range = start_anchor.text_anchor..anchor.text_anchor;
                     linked_edits.push(&self, anchor_range, text.clone(), cx);
                 } else {

@@ -114,7 +114,7 @@ impl EntryViewState {
                     cx.subscribe(&message_editor, move |_, editor, event, cx| {
                         cx.emit(EntryViewEvent {
                             entry_index: index,
-                            view_event: ViewEvent::MessageEditorEvent(editor, *event),
+                            view_event: ViewEvent::MessageEditorEvent(editor, event.clone()),
                         })
                     })
                     .detach();

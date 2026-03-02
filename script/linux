@@ -91,6 +91,7 @@ if [[ -n $dnf ]] || [[ -n $yum ]]; then
     alsa-lib-devel
     fontconfig-devel
     glib2-devel
+    libva-devel
     wayland-devel
     libxcb-devel
     libxkbcommon-x11-devel
