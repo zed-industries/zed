@@ -141,8 +141,8 @@ impl LanguageModelProvider for AnthropicLanguageModelProvider {
 
     fn recommended_models(&self, _cx: &App) -> Vec<Arc<dyn LanguageModel>> {
         [
-            anthropic::Model::ClaudeSonnet4_5,
-            anthropic::Model::ClaudeSonnet4_5Thinking,
+            anthropic::Model::ClaudeSonnet4_6,
+            anthropic::Model::ClaudeSonnet4_6Thinking,
         ]
         .into_iter()
         .map(|model| self.create_language_model(model))
@@ -370,6 +370,7 @@ pub fn into_anthropic_count_tokens_request(
                 name: tool.name,
                 description: tool.description,
                 input_schema: tool.input_schema,
+                eager_input_streaming: tool.use_input_streaming,
             })
             .collect(),
         tool_choice: request.tool_choice.map(|choice| match choice {
@@ -513,6 +514,10 @@ impl LanguageModel for AnthropicModel {
             | LanguageModelToolChoice::Any
             | LanguageModelToolChoice::None => true,
         }
+    }
+
+    fn supports_thinking(&self) -> bool {
+        matches!(self.model.mode(), AnthropicModelMode::Thinking { .. })
     }
 
     fn telemetry_id(&self) -> String {
@@ -709,6 +714,7 @@ pub fn into_anthropic(
                 name: tool.name,
                 description: tool.description,
                 input_schema: tool.input_schema,
+                eager_input_streaming: tool.use_input_streaming,
             })
             .collect(),
         tool_choice: request.tool_choice.map(|choice| match choice {
@@ -719,6 +725,7 @@ pub fn into_anthropic(
         metadata: None,
         output_config: None,
         stop_sequences: Vec::new(),
+        speed: request.speed.map(From::from),
         temperature: request.temperature.or(Some(default_temperature)),
         top_k: None,
         top_p: None,
@@ -1099,6 +1106,7 @@ mod tests {
             tool_choice: None,
             thinking_allowed: true,
             thinking_effort: None,
+            speed: None,
         };
 
         let anthropic_request = into_anthropic(
@@ -1161,6 +1169,7 @@ mod tests {
             tools: vec![],
             tool_choice: None,
             thinking_allowed: true,
+            speed: None,
         };
         request.messages.push(LanguageModelRequestMessage {
             role: Role::Assistant,

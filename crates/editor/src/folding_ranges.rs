@@ -142,7 +142,7 @@ mod tests {
     async fn test_lsp_folding_ranges_populates_creases(cx: &mut TestAppContext) {
         init_test(cx, |_| {});
 
-        update_test_language_settings(cx, |settings| {
+        update_test_language_settings(cx, &|settings| {
             settings.defaults.document_folding_ranges = Some(DocumentFoldingRanges::On);
         });
 
@@ -270,7 +270,7 @@ mod tests {
     async fn test_lsp_folding_ranges_toggling_off_removes_creases(cx: &mut TestAppContext) {
         init_test(cx, |_| {});
 
-        update_test_language_settings(cx, |settings| {
+        update_test_language_settings(cx, &|settings| {
             settings.defaults.document_folding_ranges = Some(DocumentFoldingRanges::On);
         });
 
@@ -320,7 +320,7 @@ mod tests {
             assert_eq!(editor.display_text(cx), "fn main() ⋯\n",);
         });
 
-        update_test_language_settings(&mut cx.cx.cx, |settings| {
+        update_test_language_settings(&mut cx.cx.cx, &|settings| {
             settings.defaults.document_folding_ranges = Some(DocumentFoldingRanges::Off);
         });
         cx.run_until_parked();
@@ -337,7 +337,7 @@ mod tests {
     async fn test_lsp_folding_ranges_nested_folds(cx: &mut TestAppContext) {
         init_test(cx, |_| {});
 
-        update_test_language_settings(cx, |settings| {
+        update_test_language_settings(cx, &|settings| {
             settings.defaults.document_folding_ranges = Some(DocumentFoldingRanges::On);
         });
 
@@ -427,7 +427,7 @@ mod tests {
     async fn test_lsp_folding_ranges_unsorted_from_server(cx: &mut TestAppContext) {
         init_test(cx, |_| {});
 
-        update_test_language_settings(cx, |settings| {
+        update_test_language_settings(cx, &|settings| {
             settings.defaults.document_folding_ranges = Some(DocumentFoldingRanges::On);
         });
 
@@ -580,7 +580,7 @@ mod tests {
                 },
             );
 
-        update_test_language_settings(&mut cx.cx.cx, |settings| {
+        update_test_language_settings(&mut cx.cx.cx, &|settings| {
             settings.defaults.document_folding_ranges = Some(DocumentFoldingRanges::On);
         });
         assert!(folding_request.next().await.is_some());
@@ -645,7 +645,7 @@ mod tests {
         });
 
         // Phase 3: switch back to tree-sitter by disabling LSP folding ranges.
-        update_test_language_settings(&mut cx.cx.cx, |settings| {
+        update_test_language_settings(&mut cx.cx.cx, &|settings| {
             settings.defaults.document_folding_ranges = Some(DocumentFoldingRanges::Off);
         });
         cx.run_until_parked();
@@ -674,7 +674,7 @@ mod tests {
     async fn test_lsp_folding_ranges_collapsed_text(cx: &mut TestAppContext) {
         init_test(cx, |_| {});
 
-        update_test_language_settings(cx, |settings| {
+        update_test_language_settings(cx, &|settings| {
             settings.defaults.document_folding_ranges = Some(DocumentFoldingRanges::On);
         });
 
@@ -859,7 +859,7 @@ mod tests {
                     "    }\n",
                     "}\n",
                     "\n",
-                    "fn newline() {   … }\n",
+                    "fn newline() { … }\n",
                 ]
                 .concat(),
             );
@@ -996,7 +996,7 @@ mod tests {
                     "\n",
                     "fn outer() { outer… }\n",
                     "\n",
-                    "fn newline() {   … }\n",
+                    "fn newline() { … }\n",
                 ]
                 .concat(),
             );
@@ -1085,7 +1085,7 @@ mod tests {
     async fn test_lsp_folding_ranges_with_multibyte_characters(cx: &mut TestAppContext) {
         init_test(cx, |_| {});
 
-        update_test_language_settings(cx, |settings| {
+        update_test_language_settings(cx, &|settings| {
             settings.defaults.document_folding_ranges = Some(DocumentFoldingRanges::On);
         });
 

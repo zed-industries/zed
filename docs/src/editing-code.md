@@ -32,5 +32,6 @@ For example, you might:
 
 ## Related Features
 
+- [AI Features](./ai/overview.md) — Agentic editing, inline code transformations, and AI code completions
 - [Configuring Languages](./configuring-languages.md) — Set up language servers for your project
 - [Key Bindings](./key-bindings.md) — Customize keyboard shortcuts for editing commands

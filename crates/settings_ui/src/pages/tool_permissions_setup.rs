@@ -1070,7 +1070,7 @@ fn render_global_default_mode_section(current_mode: ToolPermissionMode) -> AnyEl
     let mode_label = current_mode.to_string();
 
     h_flex()
-        .mt_4()
+        .my_4()
         .justify_between()
         .child(
             v_flex()
@@ -1412,7 +1412,7 @@ mod tests {
             "streaming_edit_file",
             // Subagent permission checks happen at the level of individual
             // tool calls within the subagent, not at the spawning level.
-            "subagent",
+            "spawn_agent",
         ];
 
         let tool_info_ids: Vec<&str> = TOOLS.iter().map(|t| t.id).collect();

@@ -1,3 +1,8 @@
+---
+title: PHP
+description: "Configure PHP language support in Zed, including language servers, formatting, and debugging."
+---
+
 # PHP
 
 PHP support is available through the [PHP extension](https://github.com/zed-extensions/php).
@@ -39,7 +44,7 @@ The PHP extension uses [LSP language servers](https://microsoft.github.io/langua
 
 [Intelephense](https://intelephense.com/) is a [proprietary](https://github.com/bmewburn/vscode-intelephense/blob/master/LICENSE.txt#L29) language server for PHP operating under a freemium model. Certain features require purchase of a [premium license](https://intelephense.com/buy).
 
-To use Intelephense, add the following to your `settings.json`:
+Configure language servers in Settings ({#kb zed::OpenSettings}) under Languages > PHP, or add to your settings file:
 
 ```json [settings]
 {
@@ -71,7 +76,7 @@ Alternatively, you can pass the licence key or a path to a file containing the l
 
 [PHP Tools](https://www.devsense.com/) is a proprietary language server that offers free and premium features. You need to [purchase a license](https://www.devsense.com/en/purchase) to activate the premium features.
 
-To use PHP Tools, add the following to your `settings.json`:
+Configure language servers in Settings ({#kb zed::OpenSettings}) under Languages > PHP, or add to your settings file:
 
 ```json [settings]
 {
@@ -107,7 +112,7 @@ Check out the documentation of [PHP Tools for Zed](https://docs.devsense.com/oth
 
 ### Phpactor
 
-To use Phpactor instead of Intelephense or any other tools, add the following to your `settings.json`:
+Configure language servers in Settings ({#kb zed::OpenSettings}) under Languages > PHP, or add to your settings file:
 
 ```json [settings]
 {
@@ -149,8 +154,80 @@ The PHP extension provides a debug adapter for PHP via Xdebug. There are several
 
 These are common troubleshooting tips, in case you run into issues:
 
-- Ensure that you have Xdebug installed for the version of PHP you’re running.
+- Ensure that you have Xdebug installed for the version of PHP you're running.
 - Ensure that Xdebug is configured to run in `debug` mode.
 - Ensure that Xdebug is actually starting a debugging session.
 - Ensure that the host and port matches between Xdebug and Zed.
-- Look at the diagnostics log by using the `xdebug_info()` function in the page you’re trying to debug.
+- Look at the diagnostics log by using the `xdebug_info()` function in the page you're trying to debug.
+
+## Using the Tailwind CSS Language Server with PHP
+
+To get all the features (autocomplete, linting, etc.) from the [Tailwind CSS language server](https://github.com/tailwindlabs/tailwindcss-intellisense/tree/HEAD/packages/tailwindcss-language-server#readme) in PHP files, you need to configure the language server so that it knows about where to look for CSS classes by adding the following to your `settings.json`:
+
+```json [settings]
+{
+  "lsp": {
+    "tailwindcss-language-server": {
+      "settings": {
+        "includeLanguages": {
+          "php": "html"
+        },
+        "experimental": {
+          "classRegex": [
+            "class=\"([^\"]*)\"",
+            "class='([^']*)'",
+            "class=\\\"([^\\\"]*)\\\""
+          ]
+        }
+      }
+    }
+  }
+}
+```
+
+With these settings, you will get completions for Tailwind CSS classes in HTML attributes inside PHP files. Examples:
+
+```php
+<?php
+// PHP file with HTML:
+?>
+<div class="flex items-center <completion here>">
+  <p class="text-lg font-bold <completion here>">Hello World</p>
+</div>
+```
+
+### Laravel/Blade
+
+For Laravel/Blade files, you may need additional configuration to handle Blade directives:
+
+```json [settings]
+{
+  "lsp": {
+    "tailwindcss-language-server": {
+      "settings": {
+        "includeLanguages": {
+          "php": "html",
+          "blade": "html"
+        },
+        "experimental": {
+          "classRegex": [
+            "class=\"([^\"]*)\"",
+            "class='([^']*)'",
+            "class=\\\"([^\\\"]*)\\\"",
+            "@class\\(\\[([^\\]]*)\\]\\)"
+          ]
+        }
+      }
+    }
+  }
+}
+```
+
+This will also provide completions in Blade directives like:
+
+```blade
+{{-- Blade file --}}
+<div class="flex {{ $customClass }} <completion here>">
+  @class(['flex', 'items-center', '<completion here>'])
+</div>
+```

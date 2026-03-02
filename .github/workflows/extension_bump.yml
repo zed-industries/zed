@@ -37,18 +37,18 @@ jobs:
     - id: compare-versions-check
       name: extension_bump::compare_versions
       run: |
-        CURRENT_VERSION="$(sed -n 's/version = \"\(.*\)\"/\1/p' < extension.toml)"
-        PR_PARENT_SHA="${{ github.event.pull_request.head.sha }}"
+        CURRENT_VERSION="$(sed -n 's/^version = \"\(.*\)\"/\1/p' < extension.toml | tr -d '[:space:]')"
 
-        if [[ -n "$PR_PARENT_SHA" ]]; then
-            git checkout "$PR_PARENT_SHA"
+        if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            PR_FORK_POINT="$(git merge-base origin/main HEAD)"
+            git checkout "$PR_FORK_POINT"
         elif BRANCH_PARENT_SHA="$(git merge-base origin/main origin/zed-zippy-autobump)"; then
             git checkout "$BRANCH_PARENT_SHA"
         else
             git checkout "$(git log -1 --format=%H)"~1
         fi
 
-        PARENT_COMMIT_VERSION="$(sed -n 's/version = \"\(.*\)\"/\1/p' < extension.toml)"
+        PARENT_COMMIT_VERSION="$(sed -n 's/^version = \"\(.*\)\"/\1/p' < extension.toml | tr -d '[:space:]')"
 
         [[ "$CURRENT_VERSION" == "$PARENT_COMMIT_VERSION" ]] && \
             echo "version_changed=false" >> "$GITHUB_OUTPUT" || \
@@ -64,7 +64,7 @@ jobs:
     - check_version_changed
     if: |-
       (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions') &&
-      (inputs.force-bump == 'true' || needs.check_version_changed.outputs.version_changed == 'false')
+      (inputs.force-bump == true || needs.check_version_changed.outputs.version_changed == 'false')
     runs-on: namespace-profile-2x4-ubuntu-2404
     steps:
     - id: generate-token
@@ -99,7 +99,7 @@ jobs:
             cargo update --workspace
         fi
 
-        NEW_VERSION="$(sed -n 's/version = \"\(.*\)\"/\1/p' < extension.toml)"
+        NEW_VERSION="$(sed -n 's/^version = \"\(.*\)\"/\1/p' < extension.toml | tr -d '[:space:]')"
 
         echo "new_version=${NEW_VERSION}" >> "$GITHUB_OUTPUT"
     - name: extension_bump::create_pull_request
