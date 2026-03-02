@@ -2,13 +2,41 @@ mod connection;
 mod diff;
 mod mention;
 mod terminal;
+use action_log::{ActionLog, ActionLogTelemetry};
+use agent_client_protocol::{self as acp};
+use anyhow::{Context as _, Result, anyhow};
+use collections::HashSet;
+pub use connection::*;
+pub use diff::*;
+use futures::{FutureExt, channel::oneshot, future::BoxFuture};
+use gpui::{AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString, Task, WeakEntity};
+use itertools::Itertools;
+use language::language_settings::FormatOnSave;
+use language::{Anchor, Buffer, BufferSnapshot, LanguageRegistry, Point, ToPoint, text_diff};
+use markdown::Markdown;
+pub use mention::*;
+use project::lsp_store::{FormatTrigger, LspFormatTarget};
+use project::{AgentLocation, Project, git_store::GitStoreCheckpoint};
+use serde::{Deserialize, Serialize};
+use serde_json::to_string_pretty;
+use std::collections::HashMap;
+use std::error::Error;
+use std::fmt::{Formatter, Write};
+use std::ops::Range;
+use std::process::ExitStatus;
+use std::rc::Rc;
+use std::time::{Duration, Instant};
+use std::{fmt::Display, mem, path::PathBuf, sync::Arc};
+use task::{Shell, ShellBuilder};
+pub use terminal::*;
+use text::Bias;
+use ui::App;
+use util::{ResultExt, get_default_system_shell_preferring_bash, paths::PathStyle};
+use uuid::Uuid;
 
 /// Key used in ACP ToolCall meta to store the tool's programmatic name.
 /// This is a workaround since ACP's ToolCall doesn't have a dedicated name field.
 pub const TOOL_NAME_META_KEY: &str = "tool_name";
-
-/// Key used in ACP ToolCall meta to store the session id when a subagent is spawned.
-pub const SUBAGENT_SESSION_ID_META_KEY: &str = "subagent_session_id";
 
 /// Helper to extract tool name from ACP meta
 pub fn tool_name_from_meta(meta: &Option<acp::Meta>) -> Option<SharedString> {
@@ -18,51 +46,31 @@ pub fn tool_name_from_meta(meta: &Option<acp::Meta>) -> Option<SharedString> {
         .map(|s| SharedString::from(s.to_owned()))
 }
 
-/// Helper to extract subagent session id from ACP meta
-pub fn subagent_session_id_from_meta(meta: &Option<acp::Meta>) -> Option<acp::SessionId> {
-    meta.as_ref()
-        .and_then(|m| m.get(SUBAGENT_SESSION_ID_META_KEY))
-        .and_then(|v| v.as_str())
-        .map(|s| acp::SessionId::from(s.to_string()))
-}
-
 /// Helper to create meta with tool name
 pub fn meta_with_tool_name(tool_name: &str) -> acp::Meta {
     acp::Meta::from_iter([(TOOL_NAME_META_KEY.into(), tool_name.into())])
 }
-use collections::HashSet;
-pub use connection::*;
-pub use diff::*;
-use language::language_settings::FormatOnSave;
-pub use mention::*;
-use project::lsp_store::{FormatTrigger, LspFormatTarget};
-use serde::{Deserialize, Serialize};
-use serde_json::to_string_pretty;
 
-use task::{Shell, ShellBuilder};
-pub use terminal::*;
+/// Key used in ACP ToolCall meta to store the session id and message indexes
+pub const SUBAGENT_SESSION_INFO_META_KEY: &str = "subagent_session_info";
 
-use action_log::{ActionLog, ActionLogTelemetry};
-use agent_client_protocol::{self as acp};
-use anyhow::{Context as _, Result, anyhow};
-use futures::{FutureExt, channel::oneshot, future::BoxFuture};
-use gpui::{AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString, Task, WeakEntity};
-use itertools::Itertools;
-use language::{Anchor, Buffer, BufferSnapshot, LanguageRegistry, Point, ToPoint, text_diff};
-use markdown::Markdown;
-use project::{AgentLocation, Project, git_store::GitStoreCheckpoint};
-use std::collections::HashMap;
-use std::error::Error;
-use std::fmt::{Formatter, Write};
-use std::ops::Range;
-use std::process::ExitStatus;
-use std::rc::Rc;
-use std::time::{Duration, Instant};
-use std::{fmt::Display, mem, path::PathBuf, sync::Arc};
-use text::Bias;
-use ui::App;
-use util::{ResultExt, get_default_system_shell_preferring_bash, paths::PathStyle};
-use uuid::Uuid;
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct SubagentSessionInfo {
+    /// The session id of the subagent sessiont that was spawned
+    pub session_id: acp::SessionId,
+    /// The index of the message of the start of the "turn" run by this tool call
+    pub message_start_index: usize,
+    /// The index of the output of the message that the subagent has returned
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message_end_index: Option<usize>,
+}
+
+/// Helper to extract subagent session id from ACP meta
+pub fn subagent_session_info_from_meta(meta: &Option<acp::Meta>) -> Option<SubagentSessionInfo> {
+    meta.as_ref()
+        .and_then(|m| m.get(SUBAGENT_SESSION_INFO_META_KEY))
+        .and_then(|v| serde_json::from_value(v.clone()).ok())
+}
 
 #[derive(Debug)]
 pub struct UserMessage {
@@ -223,7 +231,7 @@ pub struct ToolCall {
     pub raw_input_markdown: Option<Entity<Markdown>>,
     pub raw_output: Option<serde_json::Value>,
     pub tool_name: Option<SharedString>,
-    pub subagent_session_id: Option<acp::SessionId>,
+    pub subagent_session_info: Option<SubagentSessionInfo>,
 }
 
 impl ToolCall {
@@ -262,7 +270,7 @@ impl ToolCall {
 
         let tool_name = tool_name_from_meta(&tool_call.meta);
 
-        let subagent_session = subagent_session_id_from_meta(&tool_call.meta);
+        let subagent_session_info = subagent_session_info_from_meta(&tool_call.meta);
 
         let result = Self {
             id: tool_call.tool_call_id,
@@ -277,7 +285,7 @@ impl ToolCall {
             raw_input_markdown,
             raw_output: tool_call.raw_output,
             tool_name,
-            subagent_session_id: subagent_session,
+            subagent_session_info,
         };
         Ok(result)
     }
@@ -310,8 +318,8 @@ impl ToolCall {
             self.status = status.into();
         }
 
-        if let Some(subagent_session_id) = subagent_session_id_from_meta(&meta) {
-            self.subagent_session_id = Some(subagent_session_id);
+        if let Some(subagent_session_info) = subagent_session_info_from_meta(&meta) {
+            self.subagent_session_info = Some(subagent_session_info);
         }
 
         if let Some(title) = title {
@@ -402,7 +410,7 @@ impl ToolCall {
 
     pub fn is_subagent(&self) -> bool {
         self.tool_name.as_ref().is_some_and(|s| s == "spawn_agent")
-            || self.subagent_session_id.is_some()
+            || self.subagent_session_info.is_some()
     }
 
     pub fn to_markdown(&self, cx: &App) -> String {
@@ -1528,7 +1536,7 @@ impl AcpThread {
                     raw_input_markdown: None,
                     raw_output: None,
                     tool_name: None,
-                    subagent_session_id: None,
+                    subagent_session_info: None,
                 };
                 self.push_entry(AgentThreadEntry::ToolCall(failed_tool_call), cx);
                 return Ok(());
@@ -1690,10 +1698,14 @@ impl AcpThread {
 
     pub fn tool_call_for_subagent(&self, session_id: &acp::SessionId) -> Option<&ToolCall> {
         self.entries.iter().find_map(|entry| match entry {
-            AgentThreadEntry::ToolCall(tool_call)
-                if tool_call.subagent_session_id.as_ref() == Some(session_id) =>
-            {
-                Some(tool_call)
+            AgentThreadEntry::ToolCall(tool_call) => {
+                if let Some(subagent_session_info) = &tool_call.subagent_session_info
+                    && &subagent_session_info.session_id == session_id
+                {
+                    Some(tool_call)
+                } else {
+                    None
+                }
             }
             _ => None,
         })

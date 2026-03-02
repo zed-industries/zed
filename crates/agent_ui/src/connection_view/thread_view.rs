@@ -3923,7 +3923,7 @@ impl ThreadView {
         let thread = self.thread.clone();
         let comments_editor = self.thread_feedback.comments_editor.clone();
 
-        let primary = if entry_ix == total_entries - 1 {
+        let primary = if entry_ix + 1 == total_entries {
             v_flex()
                 .w_full()
                 .child(primary)
@@ -5002,15 +5002,20 @@ impl ThreadView {
 
         div().w_full().map(|this| {
             if tool_call.is_subagent() {
-                this.child(self.render_subagent_tool_call(
-                    active_session_id,
-                    entry_ix,
-                    tool_call,
-                    tool_call.subagent_session_id.clone(),
-                    focus_handle,
-                    window,
-                    cx,
-                ))
+                this.child(
+                    self.render_subagent_tool_call(
+                        active_session_id,
+                        entry_ix,
+                        tool_call,
+                        tool_call
+                            .subagent_session_info
+                            .as_ref()
+                            .map(|i| i.session_id.clone()),
+                        focus_handle,
+                        window,
+                        cx,
+                    ),
+                )
             } else if has_terminals {
                 this.children(tool_call.terminals().map(|terminal| {
                     self.render_terminal_tool_call(
@@ -6667,6 +6672,34 @@ impl ThreadView {
             .into_any_element()
     }
 
+    /// This will return `true` if there were no other tool calls during the same turn as the given tool call (no concurrent tool calls).
+    fn should_show_subagent_fullscreen(&self, tool_call: &ToolCall, cx: &App) -> bool {
+        let parent_thread = self.thread.read(cx);
+
+        let Some(tool_call_index) = parent_thread
+            .entries()
+            .iter()
+            .position(|e| matches!(e, AgentThreadEntry::ToolCall(tc) if tc.id == tool_call.id))
+        else {
+            return false;
+        };
+
+        if let Some(AgentThreadEntry::ToolCall(_)) =
+            parent_thread.entries().get(tool_call_index + 1)
+        {
+            return false;
+        }
+
+        if let Some(AgentThreadEntry::ToolCall(_)) = parent_thread
+            .entries()
+            .get(tool_call_index.saturating_sub(1))
+        {
+            return false;
+        }
+
+        true
+    }
+
     fn render_subagent_expanded_content(
         &self,
         thread_view: &Entity<ThreadView>,
@@ -6677,29 +6710,7 @@ impl ThreadView {
     ) -> impl IntoElement {
         const MAX_PREVIEW_ENTRIES: usize = 8;
 
-        let parent_thread = self.thread.read(cx);
-        let mut started_subagent_count = 0usize;
-        let mut turn_has_our_call = false;
-        for entry in parent_thread.entries().iter() {
-            match entry {
-                AgentThreadEntry::UserMessage(_) => {
-                    if turn_has_our_call {
-                        break;
-                    }
-                    started_subagent_count = 0;
-                    turn_has_our_call = false;
-                }
-                AgentThreadEntry::ToolCall(tc)
-                    if tc.is_subagent() && !matches!(tc.status, ToolCallStatus::Pending) =>
-                {
-                    started_subagent_count += 1;
-                    if tc.id == tool_call.id {
-                        turn_has_our_call = true;
-                    }
-                }
-                _ => {}
-            }
-        }
+        let should_show_subagent_fullscreen = self.should_show_subagent_fullscreen(tool_call, cx);
 
         let subagent_view = thread_view.read(cx);
         let session_id = subagent_view.thread.read(cx).session_id().clone();
@@ -6725,11 +6736,22 @@ impl ThreadView {
 
         let entries = subagent_view.thread.read(cx).entries();
         let total_entries = entries.len();
-        let start_ix = if started_subagent_count > 1 {
-            total_entries.saturating_sub(MAX_PREVIEW_ENTRIES)
+        let mut entry_range = if let Some(info) = tool_call.subagent_session_info.as_ref() {
+            info.message_start_index
+                ..info
+                    .message_end_index
+                    .map(|i| (i + 1).min(total_entries))
+                    .unwrap_or(total_entries)
         } else {
-            0
+            0..total_entries
         };
+        if !should_show_subagent_fullscreen {
+            entry_range.start = entry_range
+                .end
+                .saturating_sub(MAX_PREVIEW_ENTRIES)
+                .max(entry_range.start);
+        };
+        let start_ix = entry_range.start;
 
         let scroll_handle = self
             .subagent_scroll_handles
@@ -6741,12 +6763,14 @@ impl ThreadView {
             scroll_handle.scroll_to_bottom();
         }
 
-        let rendered_entries: Vec<AnyElement> = entries[start_ix..]
+        let rendered_entries: Vec<AnyElement> = entries
+            .get(entry_range)
+            .unwrap_or_default()
             .iter()
             .enumerate()
             .map(|(i, entry)| {
                 let actual_ix = start_ix + i;
-                subagent_view.render_entry(actual_ix, total_entries + 1, entry, window, cx)
+                subagent_view.render_entry(actual_ix, total_entries, entry, window, cx)
             })
             .collect();
 
@@ -6764,7 +6788,7 @@ impl ThreadView {
                     .track_scroll(&scroll_handle)
                     .children(rendered_entries),
             )
-            .when(started_subagent_count > 1, |this| {
+            .when(!should_show_subagent_fullscreen, |this| {
                 this.h_56().child(overlay)
             })
             .into_any_element()
