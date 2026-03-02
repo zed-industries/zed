@@ -6746,7 +6746,10 @@ impl ThreadView {
             0..total_entries
         };
         if !should_show_subagent_fullscreen {
-            entry_range.start = entry_range.end.saturating_sub(MAX_PREVIEW_ENTRIES);
+            entry_range.start = entry_range
+                .end
+                .saturating_sub(MAX_PREVIEW_ENTRIES)
+                .max(entry_range.start);
         };
         let start_ix = entry_range.start;
 
