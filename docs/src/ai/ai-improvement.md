@@ -57,7 +57,7 @@ For conversations you have explicitly shared with us via rating, Zed may store:
 
 If you do not rate responses, Zed will not store Customer Data (code, conversations, responses) related to your usage of the AI features.
 
-Telemetry related to Zed's AI features is collected. This includes metadata such as the AI feature being used and high-level interactions with the feature to understand performance (e.g., Agent response time, edit acceptance/rejection in the Agent panel or edit completions). You can read more in Zed's [telemetry](../telemetry) documentation.
+Telemetry related to Zed's AI features is collected. This includes metadata such as the AI feature being used and high-level interactions with the feature to understand performance (e.g., Agent response time, edit acceptance/rejection in the Agent panel or edit completions). You can read more in Zed's [telemetry](../telemetry.md) documentation.
 
 Collected data is stored in Snowflake, a private database. We periodically review this data to refine the agent's system prompt and tool use. All data is anonymized and stripped of sensitive information (access tokens, user IDs, email addresses).
 
