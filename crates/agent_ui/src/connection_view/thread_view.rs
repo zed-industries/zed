@@ -1245,7 +1245,6 @@ impl ThreadView {
             if let Some(inserted_text) = inserted_text.as_deref() {
                 editor.insert_text(inserted_text, window, cx);
             }
-            editor.focus_handle(cx).focus(window, cx);
         });
 
         cx.notify();
