@@ -3,6 +3,7 @@ pub mod responses;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::OnceLock;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::Context as _;
 use anyhow::{Result, anyhow};
@@ -422,10 +423,28 @@ impl Global for GlobalCopilotChat {}
 
 pub struct CopilotChat {
     oauth_token: Option<String>,
+    capability_token: Option<CapabilityToken>,
     api_endpoint: Option<String>,
     configuration: CopilotChatConfiguration,
     models: Option<Vec<Model>>,
     client: Arc<dyn HttpClient>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+struct CapabilityToken {
+    token: String,
+    expires_at: u64,
+}
+
+impl CapabilityToken {
+    fn is_expired(&self) -> bool {
+        let current_time = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        // Consider expired if within 2 minutes of expiry
+        self.expires_at <= current_time + 120
+    }
 }
 
 pub fn init(
@@ -488,6 +507,8 @@ impl CopilotChat {
 
                 this.update(cx, |this, cx| {
                     this.oauth_token = oauth_token.clone();
+                    // Clear capability token when OAuth token changes
+                    this.capability_token = None;
                     cx.notify();
                 })?;
 
@@ -501,6 +522,7 @@ impl CopilotChat {
 
         let this = Self {
             oauth_token: std::env::var(COPILOT_OAUTH_ENV_VAR).ok(),
+            capability_token: None,
             api_endpoint: None,
             models: None,
             configuration,
@@ -530,14 +552,102 @@ impl CopilotChat {
         let api_endpoint =
             Self::resolve_api_endpoint(&this, &oauth_token, &configuration, &client, cx).await?;
 
+        // Exchange OAuth token for capability token
+        let capability_token =
+            Self::refresh_capability_token(&this, &oauth_token, &configuration, &client, cx)
+                .await?;
+
         let models_url = configuration.models_url(&api_endpoint);
-        let models = get_models(models_url.into(), oauth_token, client.clone()).await?;
+        let models = get_models(models_url.into(), capability_token, client.clone()).await?;
 
         this.update(cx, |this, cx| {
             this.models = Some(models);
             cx.notify();
         })?;
         anyhow::Ok(())
+    }
+
+    async fn refresh_capability_token(
+        this: &WeakEntity<Self>,
+        oauth_token: &str,
+        configuration: &CopilotChatConfiguration,
+        client: &Arc<dyn HttpClient>,
+        cx: &mut AsyncApp,
+    ) -> Result<String> {
+        // Check if we have a valid capability token cached
+        let cached_token = this.read_with(cx, |this, _| this.capability_token.clone())?;
+
+        if let Some(token) = cached_token {
+            if !token.is_expired() {
+                log::debug!("Using cached capability token");
+                return Ok(token.token);
+            }
+        }
+
+        // Log token source (masked for security)
+        let token_preview = if oauth_token.len() > 8 {
+            format!(
+                "{}...{}",
+                &oauth_token[..4],
+                &oauth_token[oauth_token.len() - 4..]
+            )
+        } else {
+            "***".to_string()
+        };
+        log::info!(
+            "Exchanging OAuth token for capability token (token: {})",
+            token_preview
+        );
+
+        let token_url = if let Some(enterprise_uri) = &configuration.enterprise_uri {
+            let domain = CopilotChatConfiguration::parse_domain(enterprise_uri);
+            format!("https://{}/api/v3/copilot_internal/v2/token", domain)
+        } else {
+            "https://api.github.com/copilot_internal/v2/token".to_string()
+        };
+
+        log::debug!("Token exchange URL: {}", token_url);
+
+        let request = HttpRequest::builder()
+            .method(Method::GET)
+            .uri(&token_url)
+            .header("Authorization", format!("token {}", oauth_token))
+            .body(AsyncBody::empty())?;
+
+        let mut response = client.send(request).await?;
+
+        anyhow::ensure!(
+            response.status().is_success(),
+            "Failed to exchange token: {} - {}. This usually means your GitHub OAuth token is invalid or expired. Please sign in to GitHub Copilot again.",
+            response.status(),
+            response
+                .status()
+                .canonical_reason()
+                .unwrap_or("Unknown error")
+        );
+
+        let mut body = Vec::new();
+        response.body_mut().read_to_end(&mut body).await?;
+
+        let body_str = std::str::from_utf8(&body)?;
+        log::debug!(
+            "Token exchange response body (length: {}): {}",
+            body_str.len(),
+            body_str
+        );
+
+        let capability_token: CapabilityToken =
+            serde_json::from_str(body_str).context("Failed to parse capability token response")?;
+
+        let token_string = capability_token.token.clone();
+
+        this.update(cx, |this, _| {
+            this.capability_token = Some(capability_token);
+        })?;
+
+        log::info!("Successfully obtained capability token");
+
+        Ok(token_string)
     }
 
     pub fn is_authenticated(&self) -> bool {
@@ -617,7 +727,13 @@ impl CopilotChat {
             }
         };
 
-        Ok((client, oauth_token, api_endpoint, configuration))
+        // Exchange OAuth token for capability token
+        let weak = this.downgrade();
+        let capability_token =
+            Self::refresh_capability_token(&weak, &oauth_token, &configuration, &client, cx)
+                .await?;
+
+        Ok((client, capability_token, api_endpoint, configuration))
     }
 
     async fn resolve_api_endpoint(
@@ -655,6 +771,8 @@ impl CopilotChat {
         self.configuration = configuration;
         if !same_configuration {
             self.api_endpoint = None;
+            // Clear capability token when configuration changes
+            self.capability_token = None;
             cx.spawn(async move |this, cx| {
                 Self::update_models(&this, cx).await?;
                 Ok::<_, anyhow::Error>(())
@@ -666,10 +784,10 @@ impl CopilotChat {
 
 async fn get_models(
     models_url: Arc<str>,
-    oauth_token: String,
+    capability_token: String,
     client: Arc<dyn HttpClient>,
 ) -> Result<Vec<Model>> {
-    let all_models = request_models(models_url, oauth_token, client).await?;
+    let all_models = request_models(models_url, capability_token, client).await?;
 
     let mut models: Vec<Model> = all_models
         .into_iter()
@@ -753,12 +871,13 @@ pub(crate) async fn discover_api_endpoint(
 
 pub(crate) fn copilot_request_headers(
     builder: http_client::Builder,
-    oauth_token: &str,
+    capability_token: &str,
     is_user_initiated: Option<bool>,
 ) -> http_client::Builder {
     builder
-        .header("Authorization", format!("Bearer {}", oauth_token))
+        .header("Authorization", format!("Bearer {}", capability_token))
         .header("Content-Type", "application/json")
+        .header("Copilot-Integration-Id", "vscode-chat")
         .header(
             "Editor-Version",
             format!(
@@ -776,14 +895,14 @@ pub(crate) fn copilot_request_headers(
 
 async fn request_models(
     models_url: Arc<str>,
-    oauth_token: String,
+    capability_token: String,
     client: Arc<dyn HttpClient>,
 ) -> Result<Vec<Model>> {
     let request_builder = copilot_request_headers(
         HttpRequest::builder()
             .method(Method::GET)
             .uri(models_url.as_ref()),
-        &oauth_token,
+        &capability_token,
         None,
     )
     .header("x-github-api-version", "2025-05-01");
@@ -808,7 +927,7 @@ async fn request_models(
 }
 
 fn extract_oauth_token(contents: String, domain: &str) -> Option<String> {
-    serde_json::from_str::<serde_json::Value>(&contents)
+    let result = serde_json::from_str::<serde_json::Value>(&contents)
         .map(|v| {
             v.as_object().and_then(|obj| {
                 obj.iter().find_map(|(key, value)| {
@@ -821,12 +940,23 @@ fn extract_oauth_token(contents: String, domain: &str) -> Option<String> {
             })
         })
         .ok()
-        .flatten()
+        .flatten();
+
+    if result.is_some() {
+        log::debug!("Successfully extracted OAuth token for domain: {}", domain);
+    } else {
+        log::warn!(
+            "Failed to extract OAuth token for domain: {}. Check hosts.json or apps.json",
+            domain
+        );
+    }
+
+    result
 }
 
 async fn stream_completion(
     client: Arc<dyn HttpClient>,
-    oauth_token: String,
+    capability_token: String,
     completion_url: Arc<str>,
     request: Request,
     is_user_initiated: bool,
@@ -844,7 +974,7 @@ async fn stream_completion(
         HttpRequest::builder()
             .method(Method::POST)
             .uri(completion_url.as_ref()),
-        &oauth_token,
+        &capability_token,
         Some(is_user_initiated),
     )
     .when(is_vision_request, |builder| {
