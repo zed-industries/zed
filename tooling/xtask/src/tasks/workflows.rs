@@ -4,6 +4,8 @@ use gh_workflow::Workflow;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use crate::tasks::workflow_checks::{self};
+
 mod after_release;
 mod autofix_pr;
 mod bump_patch_version;
@@ -155,5 +157,5 @@ pub fn run_workflows(_: GenerateWorkflowArgs) -> Result<()> {
         workflow_file.generate_file()?;
     }
 
-    Ok(())
+    workflow_checks::validate(Default::default())
 }

@@ -18,7 +18,7 @@ use crate::tasks::{
 
 pub use check_run_patterns::validate_run_command;
 
-#[derive(Parser)]
+#[derive(Default, Parser)]
 pub struct WorkflowValidationArgs {}
 
 pub fn validate(_: WorkflowValidationArgs) -> Result<()> {
@@ -42,10 +42,10 @@ pub fn validate(_: WorkflowValidationArgs) -> Result<()> {
             .collect();
 
         let renderer =
-            Renderer::styled().decor_style(annotate_snippets::renderer::DecorStyle::Unicode);
+            Renderer::styled().decor_style(annotate_snippets::renderer::DecorStyle::Ascii);
         anstream::println!("{}", renderer.render(errors.as_slice()));
 
-        Err(anyhow!("Validation failed"))
+        Err(anyhow!("Workflow checks failed!"))
     } else {
         Ok(())
     }

@@ -273,8 +273,6 @@ jobs:
           echo "Please run 'cargo xtask workflows' locally and commit the changes"
           exit 1
         fi
-    - name: run_tests::check_scripts::check_workflows
-      run: cargo xtask check-workflows
     timeout-minutes: 60
   create_draft_release:
     if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')

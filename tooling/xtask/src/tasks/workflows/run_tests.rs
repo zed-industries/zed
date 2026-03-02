@@ -681,10 +681,6 @@ pub(crate) fn check_scripts() -> NamedJob {
         "#})
     }
 
-    fn check_workflows() -> Step<Run> {
-        named::bash("cargo xtask check-workflows")
-    }
-
     named::job(
         release_job(&[])
             .runs_on(runners::LINUX_SMALL)
@@ -693,7 +689,6 @@ pub(crate) fn check_scripts() -> NamedJob {
             .add_step(download_actionlint().id("get_actionlint"))
             .add_step(run_actionlint())
             .add_step(cache_rust_dependencies_namespace())
-            .add_step(check_xtask_workflows())
-            .add_step(check_workflows()),
+            .add_step(check_xtask_workflows()),
     )
 }
