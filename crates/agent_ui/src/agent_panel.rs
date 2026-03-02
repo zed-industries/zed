@@ -385,6 +385,10 @@ pub enum AgentType {
 }
 
 impl AgentType {
+    pub fn is_native(&self) -> bool {
+        matches!(self, Self::NativeAgent)
+    }
+
     fn label(&self) -> SharedString {
         match self {
             Self::NativeAgent | Self::TextThread => "Zed Agent".into(),
@@ -661,8 +665,7 @@ impl AgentPanel {
                 .as_ref()
                 .and_then(|p| p.last_active_thread.clone())
             {
-                let is_native = matches!(thread_info.agent_type, AgentType::NativeAgent);
-                if is_native {
+                if thread_info.agent_type.is_native() {
                     let session_id = acp::SessionId::new(thread_info.session_id.clone());
                     let load_result = cx.update(|_window, cx| {
                         let thread_store = ThreadStore::global(cx);
