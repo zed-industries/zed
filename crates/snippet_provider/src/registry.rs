@@ -4,6 +4,7 @@ use anyhow::Result;
 use collections::HashMap;
 use gpui::{App, Global, ReadGlobal, UpdateGlobal};
 use parking_lot::RwLock;
+use util::ResultExt;
 
 use crate::{Snippet, SnippetKind, file_stem_to_key};
 
@@ -43,7 +44,9 @@ impl SnippetRegistry {
             .file_stem()
             .and_then(|stem| stem.to_str().and_then(file_stem_to_key));
         let snippets = crate::file_to_snippets(snippets_in_file, file_path);
-        self.snippets.write().insert(kind, snippets);
+        self.snippets
+            .write()
+            .insert(kind, snippets.filter_map(Result::log_err).collect());
 
         Ok(())
     }

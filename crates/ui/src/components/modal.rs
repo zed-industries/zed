@@ -77,7 +77,6 @@ impl RenderOnce for Modal {
                     .w_full()
                     .flex_1()
                     .gap(DynamicSpacing::Base08.rems(cx))
-                    .when(self.footer.is_some(), |this| this.pb_4())
                     .when_some(
                         self.container_scroll_handler,
                         |this, container_scroll_handle| {
@@ -159,10 +158,10 @@ impl RenderOnce for ModalHeader {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let mut children = self.children;
 
-        if self.headline.is_some() {
+        if let Some(headline) = self.headline {
             children.insert(
                 0,
-                Headline::new(self.headline.unwrap())
+                Headline::new(headline)
                     .size(HeadlineSize::XSmall)
                     .color(Color::Muted)
                     .into_any_element(),
@@ -366,15 +365,21 @@ impl RenderOnce for Section {
                         .border_1()
                         .border_color(cx.theme().colors().border)
                         .bg(section_bg)
-                        .py(DynamicSpacing::Base06.rems(cx))
-                        .gap_y(DynamicSpacing::Base04.rems(cx))
-                        .child(div().flex().flex_1().size_full().children(self.children)),
+                        .child(
+                            div()
+                                .flex()
+                                .flex_1()
+                                .pb_2()
+                                .size_full()
+                                .children(self.children),
+                        ),
                 )
         } else {
             v_flex()
                 .w_full()
                 .flex_1()
                 .gap_y(DynamicSpacing::Base04.rems(cx))
+                .pb_2()
                 .when(self.padded, |this| {
                     this.px(DynamicSpacing::Base06.rems(cx) + DynamicSpacing::Base06.rems(cx))
                 })

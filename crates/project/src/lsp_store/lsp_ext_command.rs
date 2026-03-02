@@ -211,10 +211,10 @@ impl LspCommand for OpenDocs {
         _: &Arc<LanguageServer>,
         _: &App,
     ) -> Result<OpenDocsParams> {
+        let uri = lsp::Uri::from_file_path(path)
+            .map_err(|()| anyhow::anyhow!("{path:?} is not a valid URI"))?;
         Ok(OpenDocsParams {
-            text_document: lsp::TextDocumentIdentifier {
-                uri: lsp::Uri::from_file_path(path).unwrap(),
-            },
+            text_document: lsp::TextDocumentIdentifier { uri },
             position: point_to_lsp(self.position),
         })
     }

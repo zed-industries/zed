@@ -324,7 +324,7 @@ pub struct RemoteClient {
 
 #[derive(Debug)]
 pub enum RemoteClientEvent {
-    Disconnected,
+    Disconnected { server_not_running: bool },
 }
 
 impl EventEmitter<RemoteClientEvent> for RemoteClient {}
@@ -442,18 +442,20 @@ impl RemoteClient {
                         return Err(error);
                     }
                     Err(_) => {
-                        let mut error =
-                            "remote client did not become ready within the timeout".to_owned();
+                        let mut error = String::new();
                         if let Some(status) = io_task.now_or_never() {
+                            error.push_str("Client exited with ");
                             match status {
                                 Ok(exit_code) => {
-                                    error.push_str(&format!(", exit_code={exit_code:?}"))
+                                    error.push_str(&format!("exit_code {exit_code:?}"))
                                 }
-                                Err(e) => error.push_str(&format!(", error={e:?}")),
+                                Err(e) => error.push_str(&format!("error {e:?}")),
                             }
+                        } else {
+                            error.push_str("client did not become ready within the timeout");
                         }
                         let error = anyhow::anyhow!("{error}");
-                        log::error!("failed to establish connection: {}", error);
+                        log::error!("failed to establish connection: {error}");
                         return Err(error);
                     }
                 }
@@ -839,8 +841,8 @@ impl RemoteClient {
                                 })?;
                             }
                         }
-                    } else if exit_code > 0 {
-                        log::error!("proxy process terminated unexpectedly");
+                    } else {
+                        log::error!("proxy process terminated unexpectedly: {exit_code}");
                         this.update(cx, |this, cx| {
                             this.reconnect(cx).ok();
                         })?;
@@ -881,7 +883,9 @@ impl RemoteClient {
         self.state.replace(state);
 
         if is_reconnect_exhausted || is_server_not_running {
-            cx.emit(RemoteClientEvent::Disconnected);
+            cx.emit(RemoteClientEvent::Disconnected {
+                server_not_running: is_server_not_running,
+            });
         }
         cx.notify();
     }
@@ -1052,6 +1056,11 @@ impl RemoteClient {
     }
 
     #[cfg(any(test, feature = "test-support"))]
+    pub fn force_server_not_running(&mut self, cx: &mut Context<Self>) {
+        self.set_state(State::ServerNotRunning, cx);
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
     pub fn simulate_disconnect(&self, client_cx: &mut App) -> Task<()> {
         let opts = self.connection_options();
         client_cx.spawn(async move |cx| {
@@ -1096,6 +1105,24 @@ impl RemoteClient {
         (opts.into(), server_client, connect_guard)
     }
 
+    /// Registers a new mock server for existing connection options.
+    ///
+    /// Use this to simulate reconnection: after forcing a disconnect, register
+    /// a new server so the next `connect()` call succeeds.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn fake_server_with_opts(
+        opts: &RemoteConnectionOptions,
+        client_cx: &mut gpui::TestAppContext,
+        server_cx: &mut gpui::TestAppContext,
+    ) -> (AnyProtoClient, ConnectGuard) {
+        use crate::transport::mock::MockConnection;
+        let mock_opts = match opts {
+            RemoteConnectionOptions::Mock(mock_opts) => mock_opts.clone(),
+            _ => panic!("fake_server_with_opts requires Mock connection options"),
+        };
+        MockConnection::new_with_opts(mock_opts, client_cx, server_cx)
+    }
+
     /// Creates a `RemoteClient` connected to a mock server.
     ///
     /// Call `fake_server` first to get the connection options, set up the
@@ -1128,7 +1155,7 @@ impl RemoteClient {
             .unwrap()
     }
 
-    fn remote_connection(&self) -> Option<Arc<dyn RemoteConnection>> {
+    pub fn remote_connection(&self) -> Option<Arc<dyn RemoteConnection>> {
         self.state
             .as_ref()
             .and_then(|state| state.remote_connection())

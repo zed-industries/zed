@@ -28,21 +28,16 @@ jobs:
       run: |
         mkdir -p ./../.cargo
         cp ./.cargo/ci-config.toml ./../.cargo/config.toml
-      shell: bash -euxo pipefail {0}
     - name: steps::setup_linux
       run: ./script/linux
-      shell: bash -euxo pipefail {0}
     - name: steps::install_mold
       run: ./script/install-mold
-      shell: bash -euxo pipefail {0}
     - name: steps::download_wasi_sdk
       run: ./script/download-wasi-sdk
-      shell: bash -euxo pipefail {0}
     - name: compare_perf::run_perf::install_hyperfine
       uses: taiki-e/install-action@hyperfine
     - name: steps::git_checkout
       run: git fetch origin ${{ inputs.base }} && git checkout ${{ inputs.base }}
-      shell: bash -euxo pipefail {0}
     - name: compare_perf::run_perf::cargo_perf_test
       run: |2-
 
@@ -51,10 +46,8 @@ jobs:
                     else
                         cargo perf-test -p vim -- --json=${{ inputs.base }};
                     fi
-      shell: bash -euxo pipefail {0}
     - name: steps::git_checkout
       run: git fetch origin ${{ inputs.head }} && git checkout ${{ inputs.head }}
-      shell: bash -euxo pipefail {0}
     - name: compare_perf::run_perf::cargo_perf_test
       run: |2-
 
@@ -63,10 +56,8 @@ jobs:
                     else
                         cargo perf-test -p vim -- --json=${{ inputs.head }};
                     fi
-      shell: bash -euxo pipefail {0}
     - name: compare_perf::run_perf::compare_runs
       run: cargo perf-compare --save=results.md ${{ inputs.base }} ${{ inputs.head }}
-      shell: bash -euxo pipefail {0}
     - name: '@actions/upload-artifact results.md'
       uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
       with:
@@ -77,4 +68,6 @@ jobs:
       if: always()
       run: |
         rm -rf ./../.cargo
-      shell: bash -euxo pipefail {0}
+defaults:
+  run:
+    shell: bash -euxo pipefail {0}

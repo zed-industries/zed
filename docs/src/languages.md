@@ -1,3 +1,8 @@
+---
+title: Language Support
+description: "Overview of programming language support in Zed, including built-in and extension-based languages."
+---
+
 # Language Support in Zed
 
 Zed supports hundreds of programming languages and text formats.

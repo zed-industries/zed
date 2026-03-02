@@ -40,7 +40,7 @@ use workspace::{SplitDirection, notifications::DetachAndPromptErr};
 use zed_actions::{OpenDocs, RevealTarget};
 
 use crate::{
-    ToggleMarksView, ToggleRegistersView, Vim,
+    ToggleMarksView, ToggleRegistersView, Vim, VimSettings,
     motion::{EndOfDocument, Motion, MotionKind, StartOfDocument},
     normal::{
         JoinLines,
@@ -88,6 +88,7 @@ pub enum VimOption {
     Number(bool),
     RelativeNumber(bool),
     IgnoreCase(bool),
+    GDefault(bool),
 }
 
 impl VimOption {
@@ -134,6 +135,10 @@ impl VimOption {
             (None, VimOption::IgnoreCase(false)),
             (Some("ic"), VimOption::IgnoreCase(true)),
             (Some("noic"), VimOption::IgnoreCase(false)),
+            (None, VimOption::GDefault(true)),
+            (Some("gd"), VimOption::GDefault(true)),
+            (None, VimOption::GDefault(false)),
+            (Some("nogd"), VimOption::GDefault(false)),
         ]
         .into_iter()
         .filter(move |(prefix, option)| prefix.unwrap_or(option.to_string()).starts_with(query))
@@ -160,6 +165,11 @@ impl VimOption {
             "noignorecase" => Some(Self::IgnoreCase(false)),
             "noic" => Some(Self::IgnoreCase(false)),
 
+            "gdefault" => Some(Self::GDefault(true)),
+            "gd" => Some(Self::GDefault(true)),
+            "nogdefault" => Some(Self::GDefault(false)),
+            "nogd" => Some(Self::GDefault(false)),
+
             _ => None,
         }
     }
@@ -174,6 +184,8 @@ impl VimOption {
             VimOption::RelativeNumber(false) => "norelativenumber",
             VimOption::IgnoreCase(true) => "ignorecase",
             VimOption::IgnoreCase(false) => "noignorecase",
+            VimOption::GDefault(true) => "gdefault",
+            VimOption::GDefault(false) => "nogdefault",
         }
     }
 }
@@ -271,7 +283,6 @@ impl Deref for WrappedAction {
 }
 
 pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
-    // Vim::action(editor, cx, |vim, action: &StartOfLine, window, cx| {
     Vim::action(editor, cx, |vim, action: &VimSet, _, cx| {
         for option in action.options.iter() {
             vim.update_editor(cx, |_, editor, cx| match option {
@@ -295,11 +306,19 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
                         store.override_global(settings);
                     });
                 }
+                VimOption::GDefault(enabled) => {
+                    let mut settings = VimSettings::get_global(cx).clone();
+                    settings.gdefault = *enabled;
+
+                    SettingsStore::update(cx, |store, _| {
+                        store.override_global(settings);
+                    })
+                }
             });
         }
     });
     Vim::action(editor, cx, |vim, _: &VisualCommand, window, cx| {
-        let Some(workspace) = vim.workspace(window) else {
+        let Some(workspace) = vim.workspace(window, cx) else {
             return;
         };
         workspace.update(cx, |workspace, cx| {
@@ -308,7 +327,7 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     });
 
     Vim::action(editor, cx, |vim, _: &ShellCommand, window, cx| {
-        let Some(workspace) = vim.workspace(window) else {
+        let Some(workspace) = vim.workspace(window, cx) else {
             return;
         };
         workspace.update(cx, |workspace, cx| {
@@ -327,7 +346,7 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     });
 
     Vim::action(editor, cx, |vim, _: &ShellCommand, window, cx| {
-        let Some(workspace) = vim.workspace(window) else {
+        let Some(workspace) = vim.workspace(window, cx) else {
             return;
         };
         workspace.update(cx, |workspace, cx| {
@@ -379,7 +398,7 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
 
                 if action.filename.is_empty() {
                     if whole_buffer {
-                        if let Some(workspace) = vim.workspace(window) {
+                        if let Some(workspace) = vim.workspace(window, cx) {
                             workspace.update(cx, |workspace, cx| {
                                 workspace
                                     .save_active_item(
@@ -453,7 +472,7 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
             return;
         }
         if action.filename.is_empty() {
-            if let Some(workspace) = vim.workspace(window) {
+            if let Some(workspace) = vim.workspace(window, cx) {
                 workspace.update(cx, |workspace, cx| {
                     workspace
                         .save_active_item(
@@ -530,7 +549,7 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     });
 
     Vim::action(editor, cx, |vim, action: &VimSplit, window, cx| {
-        let Some(workspace) = vim.workspace(window) else {
+        let Some(workspace) = vim.workspace(window, cx) else {
             return;
         };
 
@@ -628,7 +647,7 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
 
     Vim::action(editor, cx, |vim, action: &VimEdit, window, cx| {
         vim.update_editor(cx, |vim, editor, cx| {
-            let Some(workspace) = vim.workspace(window) else {
+            let Some(workspace) = vim.workspace(window, cx) else {
                 return;
             };
             let Some(project) = editor.project().cloned() else {
@@ -795,7 +814,7 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
             }
         };
 
-        let Some(workspace) = vim.workspace(window) else {
+        let Some(workspace) = vim.workspace(window, cx) else {
             return;
         };
         let task = workspace.update(cx, |workspace, cx| {
@@ -836,7 +855,7 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     });
 
     Vim::action(editor, cx, |vim, _: &CountCommand, window, cx| {
-        let Some(workspace) = vim.workspace(window) else {
+        let Some(workspace) = vim.workspace(window, cx) else {
             return;
         };
         let count = Vim::take_count(cx).unwrap_or(1);
@@ -869,7 +888,7 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
             anyhow::Ok(())
         });
         if let Some(e @ Err(_)) = result {
-            let Some(workspace) = vim.workspace(window) else {
+            let Some(workspace) = vim.workspace(window, cx) else {
                 return;
             };
             workspace.update(cx, |workspace, cx| {
@@ -913,7 +932,7 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
         let range = match result {
             None => return,
             Some(e @ Err(_)) => {
-                let Some(workspace) = vim.workspace(window) else {
+                let Some(workspace) = vim.workspace(window, cx) else {
                     return;
                 };
                 workspace.update(cx, |workspace, cx| {
@@ -1166,8 +1185,8 @@ impl VimCommand {
             has_bang,
             has_space: _,
         } = self.get_parsed_query(query.to_string())?;
-        let action = if has_bang && self.bang_action.is_some() {
-            self.bang_action.as_ref().unwrap().boxed_clone()
+        let action = if has_bang && let Some(bang_action) = self.bang_action.as_ref() {
+            bang_action.boxed_clone()
         } else if let Some(action) = self.action.as_ref() {
             action.boxed_clone()
         } else if let Some(action_name) = self.action_name {
@@ -1608,12 +1627,12 @@ fn generate_commands(_: &App) -> Vec<VimCommand> {
         VimCommand::new(("cq", "uit"), zed_actions::Quit),
         VimCommand::new(
             ("bd", "elete"),
-            workspace::CloseActiveItem {
+            workspace::CloseItemInAllPanes {
                 save_intent: Some(SaveIntent::Close),
                 close_pinned: false,
             },
         )
-        .bang(workspace::CloseActiveItem {
+        .bang(workspace::CloseItemInAllPanes {
             save_intent: Some(SaveIntent::Skip),
             close_pinned: true,
         }),
@@ -2113,7 +2132,7 @@ impl OnMatchingLines {
         let range = match result {
             None => return,
             Some(e @ Err(_)) => {
-                let Some(workspace) = vim.workspace(window) else {
+                let Some(workspace) = vim.workspace(window, cx) else {
                     return;
                 };
                 workspace.update(cx, |workspace, cx| {
@@ -2130,7 +2149,7 @@ impl OnMatchingLines {
         let mut regexes = match Regex::new(&self.search) {
             Ok(regex) => vec![(regex, !self.invert)],
             e @ Err(_) => {
-                let Some(workspace) = vim.workspace(window) else {
+                let Some(workspace) = vim.workspace(window, cx) else {
                     return;
                 };
                 workspace.update(cx, |workspace, cx| {
@@ -2328,7 +2347,7 @@ impl Vim {
         cx: &mut Context<Vim>,
     ) {
         self.stop_recording(cx);
-        let Some(workspace) = self.workspace(window) else {
+        let Some(workspace) = self.workspace(window, cx) else {
             return;
         };
         let command = self.update_editor(cx, |_, editor, cx| {
@@ -2336,7 +2355,7 @@ impl Vim {
             let start = editor
                 .selections
                 .newest_display(&editor.display_snapshot(cx));
-            let text_layout_details = editor.text_layout_details(window);
+            let text_layout_details = editor.text_layout_details(window, cx);
             let (mut range, _) = motion
                 .range(
                     &snapshot,
@@ -2377,7 +2396,7 @@ impl Vim {
         cx: &mut Context<Vim>,
     ) {
         self.stop_recording(cx);
-        let Some(workspace) = self.workspace(window) else {
+        let Some(workspace) = self.workspace(window, cx) else {
             return;
         };
         let command = self.update_editor(cx, |_, editor, cx| {
@@ -2429,7 +2448,7 @@ impl ShellExec {
     }
 
     pub fn run(&self, vim: &mut Vim, window: &mut Window, cx: &mut Context<Vim>) {
-        let Some(workspace) = vim.workspace(window) else {
+        let Some(workspace) = vim.workspace(window, cx) else {
             return;
         };
 

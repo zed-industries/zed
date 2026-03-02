@@ -1,0 +1,5 @@
+{"Put":{"state":"ˇfirst\n    \nstill first\n\nsecond"}}
+{"Key":"}"}
+{"Get":{"state":"first\n    \nstill first\nˇ\nsecond","mode":"Normal"}}
+{"Key":"{"}
+{"Get":{"state":"ˇfirst\n    \nstill first\n\nsecond","mode":"Normal"}}

@@ -13,11 +13,10 @@ use gpui::{
 };
 use itertools::Itertools;
 use language::{Buffer, BufferSnapshot, LanguageRegistry};
-use multi_buffer::{Anchor, ExcerptRange, MultiBufferOffset, MultiBufferRow};
+use multi_buffer::{Anchor, ExcerptRange, MultiBufferOffset, MultiBufferRow, PathKey};
 use parking_lot::RwLock;
 use project::{FakeFs, Project};
 use std::{
-    any::TypeId,
     ops::{Deref, DerefMut, Range},
     path::Path,
     sync::{
@@ -129,10 +128,26 @@ impl EditorTestContext {
     ) -> EditorTestContext {
         let mut multibuffer = MultiBuffer::new(language::Capability::ReadWrite);
         let buffer = cx.new(|cx| {
-            for excerpt in excerpts.into_iter() {
+            for (index, excerpt) in excerpts.into_iter().enumerate() {
                 let (text, ranges) = marked_text_ranges(excerpt, false);
                 let buffer = cx.new(|cx| Buffer::local(text, cx));
-                multibuffer.push_excerpts(buffer, ranges.into_iter().map(ExcerptRange::new), cx);
+                let point_ranges: Vec<_> = {
+                    let snapshot = buffer.read(cx);
+                    ranges
+                        .into_iter()
+                        .map(|range| {
+                            snapshot.offset_to_point(range.start)
+                                ..snapshot.offset_to_point(range.end)
+                        })
+                        .collect()
+                };
+                multibuffer.set_excerpts_for_path(
+                    PathKey::sorted(index as u64),
+                    buffer,
+                    point_ranges,
+                    0,
+                    cx,
+                );
             }
             multibuffer
         });
@@ -287,7 +302,7 @@ impl EditorTestContext {
                 .text
                 .line_height_in_pixels(window.rem_size());
             let snapshot = editor.snapshot(window, cx);
-            let details = editor.text_layout_details(window);
+            let details = editor.text_layout_details(window, cx);
 
             let y = pixel_position.y
                 + f32::from(line_height)
@@ -574,13 +589,13 @@ impl EditorTestContext {
     }
 
     #[track_caller]
-    pub fn assert_editor_background_highlights<Tag: 'static>(&mut self, marked_text: &str) {
+    pub fn assert_editor_background_highlights(&mut self, key: HighlightKey, marked_text: &str) {
         let expected_ranges = self.ranges(marked_text);
         let actual_ranges: Vec<Range<usize>> = self.update_editor(|editor, window, cx| {
             let snapshot = editor.snapshot(window, cx);
             editor
                 .background_highlights
-                .get(&HighlightKey::Type(TypeId::of::<Tag>()))
+                .get(&key)
                 .map(|h| h.1.clone())
                 .unwrap_or_default()
                 .iter()
@@ -592,11 +607,11 @@ impl EditorTestContext {
     }
 
     #[track_caller]
-    pub fn assert_editor_text_highlights<Tag: ?Sized + 'static>(&mut self, marked_text: &str) {
+    pub fn assert_editor_text_highlights(&mut self, key: HighlightKey, marked_text: &str) {
         let expected_ranges = self.ranges(marked_text);
         let snapshot = self.update_editor(|editor, window, cx| editor.snapshot(window, cx));
         let actual_ranges: Vec<Range<usize>> = snapshot
-            .text_highlight_ranges::<Tag>()
+            .text_highlight_ranges(key)
             .map(|ranges| ranges.as_ref().clone().1)
             .unwrap_or_default()
             .into_iter()

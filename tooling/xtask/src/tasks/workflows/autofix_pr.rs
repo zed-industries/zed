@@ -169,7 +169,7 @@ fn commit_changes(pr_number: &WorkflowInput, autofix_job: &NamedJob) -> NamedJob
                 autofix_job.name
             )))
             .add_step(authenticate)
-            .add_step(steps::checkout_repo_with_token(&token))
+            .add_step(steps::checkout_repo().with_token(&token))
             .add_step(checkout_pr(pr_number, &token))
             .add_step(download_patch_artifact())
             .add_step(apply_patch())

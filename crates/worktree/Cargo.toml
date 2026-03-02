@@ -8,6 +8,12 @@ license = "GPL-3.0-or-later"
 [lib]
 path = "src/worktree.rs"
 doctest = false
+test = false
+
+[[test]]
+name = "integration"
+required-features = ["test-support"]
+path = "tests/integration/main.rs"
 
 [lints]
 workspace = true
@@ -17,6 +23,7 @@ test-support = [
     "gpui/test-support",
     "http_client/test-support",
     "language/test-support",
+    "pretty_assertions",
     "settings/test-support",
     "text/test-support",
     "util/test-support",
@@ -40,6 +47,7 @@ log.workspace = true
 parking_lot.workspace = true
 paths.workspace = true
 postage.workspace = true
+pretty_assertions = { workspace = true, optional = true }
 rpc = { workspace = true, features = ["gpui"] }
 serde.workspace = true
 serde_json.workspace = true
@@ -59,11 +67,11 @@ git2.workspace = true
 gpui = { workspace = true, features = ["test-support"] }
 http_client.workspace = true
 paths = { workspace = true, features = ["test-support"] }
-pretty_assertions.workspace = true
 rand.workspace = true
 rpc = { workspace = true, features = ["test-support"] }
 settings = { workspace = true, features = ["test-support"] }
 util = { workspace = true, features = ["test-support"] }
+worktree = { workspace = true, features = ["test-support"] }
 zlog.workspace = true
 
 [package.metadata.cargo-machete]

@@ -17,14 +17,14 @@
 /// Logic, related to managing LSP inlay hint inlays.
 pub mod inlay_hints;
 
-use std::{any::TypeId, sync::OnceLock};
+use std::sync::OnceLock;
 
 use gpui::{Context, HighlightStyle, Hsla, Rgba, Task};
 use multi_buffer::Anchor;
 use project::{InlayHint, InlayId};
 use text::Rope;
 
-use crate::{Editor, hover_links::InlayHighlight};
+use crate::{Editor, HighlightKey, hover_links::InlayHighlight};
 
 /// A splice to send into the `inlay_map` for updating the visible inlays on the screen.
 /// "Visible" inlays may not be displayed in the buffer right away, but those are ready to be displayed on further buffer scroll, pane item activations, etc. right away without additional LSP queries or settings changes.
@@ -58,10 +58,12 @@ pub enum InlayContent {
 impl Inlay {
     pub fn hint(id: InlayId, position: Anchor, hint: &InlayHint) -> Self {
         let mut text = hint.text();
-        if hint.padding_right && text.reversed_chars_at(text.len()).next() != Some(' ') {
+        let needs_right_padding = hint.padding_right && !text.ends_with(" ");
+        let needs_left_padding = hint.padding_left && !text.starts_with(" ");
+        if needs_right_padding {
             text.push(" ");
         }
-        if hint.padding_left && text.chars_at(0).next() != Some(' ') {
+        if needs_left_padding {
             text.push_front(" ");
         }
         Self {
@@ -164,15 +166,15 @@ impl Editor {
         cx.notify();
     }
 
-    pub(crate) fn highlight_inlays<T: 'static>(
+    pub(crate) fn highlight_inlays(
         &mut self,
+        key: HighlightKey,
         highlights: Vec<InlayHighlight>,
         style: HighlightStyle,
         cx: &mut Context<Self>,
     ) {
-        self.display_map.update(cx, |map, _| {
-            map.highlight_inlays(TypeId::of::<T>(), highlights, style)
-        });
+        self.display_map
+            .update(cx, |map, _| map.highlight_inlays(key, highlights, style));
         cx.notify();
     }
 

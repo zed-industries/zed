@@ -521,7 +521,7 @@ impl Render for TextThreadHistory {
 
                 if has_no_history {
                     view.justify_center().items_center().child(
-                        Label::new("You don't have any past threads yet.")
+                        Label::new("You don't have any past text threads yet.")
                             .size(LabelSize::Small)
                             .color(Color::Muted),
                     )

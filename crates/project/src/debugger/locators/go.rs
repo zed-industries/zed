@@ -6,19 +6,19 @@ use gpui::{BackgroundExecutor, SharedString};
 use serde::{Deserialize, Serialize};
 use task::{DebugScenario, SpawnInTerminal, TaskTemplate};
 
-pub(crate) struct GoLocator;
+pub struct GoLocator;
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
-struct DelveLaunchRequest {
-    request: String,
-    mode: String,
-    program: String,
+pub struct DelveLaunchRequest {
+    pub request: String,
+    pub mode: String,
+    pub program: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    cwd: Option<String>,
-    args: Vec<String>,
-    build_flags: Vec<String>,
-    env: HashMap<String, String>,
+    pub cwd: Option<String>,
+    pub args: Vec<String>,
+    pub build_flags: Vec<String>,
+    pub env: HashMap<String, String>,
 }
 
 fn is_debug_flag(arg: &str) -> Option<bool> {
@@ -243,203 +243,5 @@ impl DapLocator for GoLocator {
         _executor: BackgroundExecutor,
     ) -> Result<DebugRequest> {
         unreachable!()
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use gpui::TestAppContext;
-    use task::{HideStrategy, RevealStrategy, RevealTarget, Shell, TaskTemplate};
-
-    #[gpui::test]
-    async fn test_create_scenario_for_go_build(_: &mut TestAppContext) {
-        let locator = GoLocator;
-        let task = TaskTemplate {
-            label: "go build".into(),
-            command: "go".into(),
-            args: vec!["build".into(), ".".into()],
-            env: Default::default(),
-            cwd: Some("${ZED_WORKTREE_ROOT}".into()),
-            use_new_terminal: false,
-            allow_concurrent_runs: false,
-            reveal: RevealStrategy::Always,
-            reveal_target: RevealTarget::Dock,
-            hide: HideStrategy::Never,
-            shell: Shell::System,
-            tags: vec![],
-            show_summary: true,
-            show_command: true,
-        };
-
-        let scenario = locator
-            .create_scenario(&task, "test label", &DebugAdapterName("Delve".into()))
-            .await;
-
-        assert!(scenario.is_none());
-    }
-
-    #[gpui::test]
-    async fn test_skip_non_go_commands_with_non_delve_adapter(_: &mut TestAppContext) {
-        let locator = GoLocator;
-        let task = TaskTemplate {
-            label: "cargo build".into(),
-            command: "cargo".into(),
-            args: vec!["build".into()],
-            env: Default::default(),
-            cwd: Some("${ZED_WORKTREE_ROOT}".into()),
-            use_new_terminal: false,
-            allow_concurrent_runs: false,
-            reveal: RevealStrategy::Always,
-            reveal_target: RevealTarget::Dock,
-            hide: HideStrategy::Never,
-            shell: Shell::System,
-            tags: vec![],
-            show_summary: true,
-            show_command: true,
-        };
-
-        let scenario = locator
-            .create_scenario(
-                &task,
-                "test label",
-                &DebugAdapterName("SomeOtherAdapter".into()),
-            )
-            .await;
-        assert!(scenario.is_none());
-
-        let scenario = locator
-            .create_scenario(&task, "test label", &DebugAdapterName("Delve".into()))
-            .await;
-        assert!(scenario.is_none());
-    }
-    #[gpui::test]
-    async fn test_go_locator_run(_: &mut TestAppContext) {
-        let locator = GoLocator;
-        let delve = DebugAdapterName("Delve".into());
-
-        let task = TaskTemplate {
-            label: "go run with flags".into(),
-            command: "go".into(),
-            args: vec![
-                "run".to_string(),
-                "-race".to_string(),
-                "-ldflags".to_string(),
-                "-X main.version=1.0".to_string(),
-                "./cmd/myapp".to_string(),
-                "--config".to_string(),
-                "production.yaml".to_string(),
-                "--verbose".to_string(),
-            ],
-            env: {
-                let mut env = HashMap::default();
-                env.insert("GO_ENV".to_string(), "production".to_string());
-                env
-            },
-            cwd: Some("/project/root".into()),
-            ..Default::default()
-        };
-
-        let scenario = locator
-            .create_scenario(&task, "test run label", &delve)
-            .await
-            .unwrap();
-
-        let config: DelveLaunchRequest = serde_json::from_value(scenario.config).unwrap();
-
-        assert_eq!(
-            config,
-            DelveLaunchRequest {
-                request: "launch".to_string(),
-                mode: "debug".to_string(),
-                program: "./cmd/myapp".to_string(),
-                build_flags: vec![
-                    "-race".to_string(),
-                    "-ldflags".to_string(),
-                    "-X main.version=1.0".to_string()
-                ],
-                args: vec![
-                    "--config".to_string(),
-                    "production.yaml".to_string(),
-                    "--verbose".to_string(),
-                ],
-                env: {
-                    let mut env = HashMap::default();
-                    env.insert("GO_ENV".to_string(), "production".to_string());
-                    env
-                },
-                cwd: Some("/project/root".to_string()),
-            }
-        );
-    }
-
-    #[gpui::test]
-    async fn test_go_locator_test(_: &mut TestAppContext) {
-        let locator = GoLocator;
-        let delve = DebugAdapterName("Delve".into());
-
-        // Test with tags and run flag
-        let task_with_tags = TaskTemplate {
-            label: "test".into(),
-            command: "go".into(),
-            args: vec![
-                "test".to_string(),
-                "-tags".to_string(),
-                "integration,unit".to_string(),
-                "-run".to_string(),
-                "Foo".to_string(),
-                ".".to_string(),
-            ],
-            ..Default::default()
-        };
-        let result = locator
-            .create_scenario(&task_with_tags, "", &delve)
-            .await
-            .unwrap();
-
-        let config: DelveLaunchRequest = serde_json::from_value(result.config).unwrap();
-
-        assert_eq!(
-            config,
-            DelveLaunchRequest {
-                request: "launch".to_string(),
-                mode: "test".to_string(),
-                program: ".".to_string(),
-                build_flags: vec!["-tags".to_string(), "integration,unit".to_string(),],
-                args: vec![
-                    "-test.run".to_string(),
-                    "Foo".to_string(),
-                    "-test.v".to_string()
-                ],
-                env: HashMap::default(),
-                cwd: None,
-            }
-        );
-    }
-
-    #[gpui::test]
-    async fn test_skip_unsupported_go_commands(_: &mut TestAppContext) {
-        let locator = GoLocator;
-        let task = TaskTemplate {
-            label: "go clean".into(),
-            command: "go".into(),
-            args: vec!["clean".into()],
-            env: Default::default(),
-            cwd: Some("${ZED_WORKTREE_ROOT}".into()),
-            use_new_terminal: false,
-            allow_concurrent_runs: false,
-            reveal: RevealStrategy::Always,
-            reveal_target: RevealTarget::Dock,
-            hide: HideStrategy::Never,
-            shell: Shell::System,
-            tags: vec![],
-            show_summary: true,
-            show_command: true,
-        };
-
-        let scenario = locator
-            .create_scenario(&task, "test label", &DebugAdapterName("Delve".into()))
-            .await;
-        assert!(scenario.is_none());
     }
 }

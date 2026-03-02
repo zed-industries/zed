@@ -285,17 +285,6 @@ impl PromptStore {
         metadata_db: heed::Database<SerdeJson<PromptId>, SerdeJson<PromptMetadata>>,
         bodies_db: heed::Database<SerdeJson<PromptId>, Str>,
     ) -> Result<()> {
-        #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, Hash)]
-        pub struct PromptIdV1(Uuid);
-
-        #[derive(Clone, Debug, Serialize, Deserialize)]
-        pub struct PromptMetadataV1 {
-            pub id: PromptIdV1,
-            pub title: Option<SharedString>,
-            pub default: bool,
-            pub saved_at: DateTime<Utc>,
-        }
-
         let mut txn = env.write_txn()?;
         let Some(bodies_v1_db) = env
             .open_database::<SerdeBincode<PromptIdV1>, SerdeBincode<String>>(
@@ -397,6 +386,28 @@ impl PromptStore {
 
             metadata.delete(&mut txn, &id)?;
             bodies.delete(&mut txn, &id)?;
+
+            if let PromptId::User { uuid } = id {
+                let prompt_id_v1 = PromptIdV1::from(uuid);
+
+                if let Some(metadata_v1_db) = db_connection
+                    .open_database::<SerdeBincode<PromptIdV1>, SerdeBincode<()>>(
+                        &txn,
+                        Some("metadata"),
+                    )?
+                {
+                    metadata_v1_db.delete(&mut txn, &prompt_id_v1)?;
+                }
+
+                if let Some(bodies_v1_db) = db_connection
+                    .open_database::<SerdeBincode<PromptIdV1>, SerdeBincode<()>>(
+                        &txn,
+                        Some("bodies"),
+                    )?
+                {
+                    bodies_v1_db.delete(&mut txn, &prompt_id_v1)?;
+                }
+            }
 
             txn.commit()?;
             anyhow::Ok(())
@@ -564,6 +575,25 @@ impl PromptStore {
             anyhow::Ok(())
         })
     }
+}
+
+/// Deprecated: Legacy V1 prompt ID format, used only for migrating data from old databases. Use `PromptId` instead.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, Hash)]
+struct PromptIdV1(Uuid);
+
+impl From<UserPromptId> for PromptIdV1 {
+    fn from(id: UserPromptId) -> Self {
+        PromptIdV1(id.0)
+    }
+}
+
+/// Deprecated: Legacy V1 prompt metadata format, used only for migrating data from old databases. Use `PromptMetadata` instead.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct PromptMetadataV1 {
+    id: PromptIdV1,
+    title: Option<SharedString>,
+    default: bool,
+    saved_at: DateTime<Utc>,
 }
 
 /// Wraps a shared future to a prompt store so it can be assigned as a context global.
@@ -765,6 +795,101 @@ mod tests {
                 .and_then(|m| m.title.as_ref().map(|t| t.as_ref())),
             Some("Good Record"),
             "Valid record should have correct title"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_deleted_prompt_does_not_reappear_after_migration(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        let db_path = temp_dir.path().join("prompts-db-v1-migration");
+        std::fs::create_dir_all(&db_path).unwrap();
+
+        let prompt_uuid: Uuid = "550e8400-e29b-41d4-a716-446655440001".parse().unwrap();
+        let prompt_id_v1 = PromptIdV1(prompt_uuid);
+        let prompt_id_v2 = PromptId::User {
+            uuid: UserPromptId(prompt_uuid),
+        };
+
+        // Create V1 database with a prompt
+        {
+            let db_env = unsafe {
+                heed::EnvOpenOptions::new()
+                    .map_size(1024 * 1024 * 1024)
+                    .max_dbs(4)
+                    .open(&db_path)
+                    .unwrap()
+            };
+
+            let mut txn = db_env.write_txn().unwrap();
+
+            let metadata_v1_db: Database<SerdeBincode<PromptIdV1>, SerdeBincode<PromptMetadataV1>> =
+                db_env.create_database(&mut txn, Some("metadata")).unwrap();
+
+            let bodies_v1_db: Database<SerdeBincode<PromptIdV1>, SerdeBincode<String>> =
+                db_env.create_database(&mut txn, Some("bodies")).unwrap();
+
+            let metadata_v1 = PromptMetadataV1 {
+                id: prompt_id_v1.clone(),
+                title: Some("V1 Prompt".into()),
+                default: false,
+                saved_at: Utc::now(),
+            };
+
+            metadata_v1_db
+                .put(&mut txn, &prompt_id_v1, &metadata_v1)
+                .unwrap();
+            bodies_v1_db
+                .put(&mut txn, &prompt_id_v1, &"V1 prompt body".to_string())
+                .unwrap();
+
+            txn.commit().unwrap();
+        }
+
+        // Migrate V1 to V2 by creating PromptStore
+        let store = cx
+            .update(|cx| PromptStore::new(db_path.clone(), cx))
+            .await
+            .unwrap();
+        let store = cx.new(|_cx| store);
+
+        // Verify the prompt was migrated
+        let metadata = store.read_with(cx, |store, _| store.metadata(prompt_id_v2));
+        assert!(metadata.is_some(), "V1 prompt should be migrated to V2");
+        assert_eq!(
+            metadata
+                .as_ref()
+                .and_then(|m| m.title.as_ref().map(|t| t.as_ref())),
+            Some("V1 Prompt"),
+            "Migrated prompt should have correct title"
+        );
+
+        // Delete the prompt
+        store
+            .update(cx, |store, cx| store.delete(prompt_id_v2, cx))
+            .await
+            .unwrap();
+
+        // Verify prompt is deleted
+        let metadata_after_delete = store.read_with(cx, |store, _| store.metadata(prompt_id_v2));
+        assert!(
+            metadata_after_delete.is_none(),
+            "Prompt should be deleted from V2"
+        );
+
+        drop(store);
+
+        // "Restart" by creating a new PromptStore from the same path
+        let store_after_restart = cx.update(|cx| PromptStore::new(db_path, cx)).await.unwrap();
+        let store_after_restart = cx.new(|_cx| store_after_restart);
+
+        // Test the prompt does not reappear
+        let metadata_after_restart =
+            store_after_restart.read_with(cx, |store, _| store.metadata(prompt_id_v2));
+        assert!(
+            metadata_after_restart.is_none(),
+            "Deleted prompt should NOT reappear after restart/migration"
         );
     }
 }

@@ -1,9 +1,10 @@
 use collections::HashMap;
-use gpui::{AppContext, Context, Window};
+use gpui::{AppContext, Context, Entity, Window};
 use itertools::Itertools;
+use language::Buffer;
 use multi_buffer::MultiBufferOffset;
-use std::{ops::Range, time::Duration};
-use text::{AnchorRangeExt, BufferId, ToPoint};
+use std::{ops::Range, sync::Arc, time::Duration};
+use text::{Anchor, AnchorRangeExt, Bias, BufferId, ToOffset, ToPoint};
 use util::ResultExt;
 
 use crate::Editor;
@@ -11,16 +12,16 @@ use crate::Editor;
 #[derive(Clone, Default)]
 pub(super) struct LinkedEditingRanges(
     /// Ranges are non-overlapping and sorted by .0 (thus, [x + 1].start > [x].end must hold)
-    pub HashMap<BufferId, Vec<(Range<text::Anchor>, Vec<Range<text::Anchor>>)>>,
+    pub HashMap<BufferId, Vec<(Range<Anchor>, Vec<Range<Anchor>>)>>,
 );
 
 impl LinkedEditingRanges {
     pub(super) fn get(
         &self,
         id: BufferId,
-        anchor: Range<text::Anchor>,
+        anchor: Range<Anchor>,
         snapshot: &text::BufferSnapshot,
-    ) -> Option<&(Range<text::Anchor>, Vec<Range<text::Anchor>>)> {
+    ) -> Option<&(Range<Anchor>, Vec<Range<Anchor>>)> {
         let ranges_for_buffer = self.0.get(&id)?;
         let lower_bound = ranges_for_buffer
             .partition_point(|(range, _)| range.start.cmp(&anchor.start, snapshot).is_le());
@@ -49,7 +50,7 @@ pub(super) fn refresh_linked_ranges(
     window: &mut Window,
     cx: &mut Context<Editor>,
 ) -> Option<()> {
-    if editor.ignore_lsp_data() || editor.pending_rename.is_some() {
+    if !editor.mode().is_full() || editor.pending_rename.is_some() {
         return None;
     }
     let project = editor.project()?.downgrade();
@@ -115,9 +116,9 @@ pub(super) fn refresh_linked_ranges(
                         });
                         _current_selection_contains_range?;
                         // Now link every range as each-others sibling.
-                        let mut siblings: HashMap<Range<text::Anchor>, Vec<_>> = Default::default();
+                        let mut siblings: HashMap<Range<Anchor>, Vec<_>> = Default::default();
                         let mut insert_sorted_anchor =
-                            |key: &Range<text::Anchor>, value: &Range<text::Anchor>| {
+                            |key: &Range<Anchor>, value: &Range<Anchor>| {
                                 siblings.entry(key.clone()).or_default().push(value.clone());
                             };
                         for items in edits.into_iter().combinations(2) {
@@ -172,4 +173,172 @@ pub(super) fn refresh_linked_ranges(
         Some(())
     }));
     None
+}
+
+/// Accumulates edits destined for linked editing ranges, for example, matching
+/// HTML/JSX tags, across one or more buffers. Edits are stored as anchor ranges
+/// so they track buffer changes and are only resolved to concrete points at
+/// apply time.
+pub struct LinkedEdits(HashMap<Entity<Buffer>, Vec<(Range<Anchor>, Arc<str>)>>);
+
+impl LinkedEdits {
+    pub fn new() -> Self {
+        Self(HashMap::default())
+    }
+
+    /// Queries the editor's linked editing ranges for the given anchor range and, if any
+    /// are found, records them paired with `text` for later application.
+    pub(crate) fn push(
+        &mut self,
+        editor: &Editor,
+        anchor_range: Range<Anchor>,
+        text: Arc<str>,
+        cx: &gpui::App,
+    ) {
+        if let Some(editing_ranges) = editor.linked_editing_ranges_for(anchor_range, cx) {
+            for (buffer, ranges) in editing_ranges {
+                self.0
+                    .entry(buffer)
+                    .or_default()
+                    .extend(ranges.into_iter().map(|range| (range, text.clone())));
+            }
+        }
+    }
+
+    /// Resolves all stored anchor ranges to points using the current buffer snapshot,
+    /// sorts them, and applies the edits.
+    pub fn apply(self, cx: &mut Context<Editor>) {
+        self.apply_inner(false, cx);
+    }
+
+    /// Like [`apply`](Self::apply), but empty ranges (where start == end) are
+    /// expanded one character to the left before applying. For context, this
+    /// was introduced in order to be available to `backspace` so as to delete a
+    /// character in each linked range even when the selection was a cursor.
+    pub fn apply_with_left_expansion(self, cx: &mut Context<Editor>) {
+        self.apply_inner(true, cx);
+    }
+
+    fn apply_inner(self, expand_empty_ranges_left: bool, cx: &mut Context<Editor>) {
+        for (buffer, ranges_edits) in self.0 {
+            buffer.update(cx, |buffer, cx| {
+                let snapshot = buffer.snapshot();
+                let edits = ranges_edits
+                    .into_iter()
+                    .map(|(range, text)| {
+                        let mut start = range.start.to_point(&snapshot);
+                        let end = range.end.to_point(&snapshot);
+
+                        if expand_empty_ranges_left && start == end {
+                            let offset = range.start.to_offset(&snapshot).saturating_sub(1);
+                            start = snapshot.clip_point(offset.to_point(&snapshot), Bias::Left);
+                        }
+
+                        (start..end, text)
+                    })
+                    .sorted_by_key(|(range, _)| range.start);
+
+                buffer.edit(edits, None, cx);
+            });
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{editor_tests::init_test, test::editor_test_context::EditorTestContext};
+    use gpui::TestAppContext;
+    use text::Point;
+
+    #[gpui::test]
+    async fn test_linked_edits_push_and_apply(cx: &mut TestAppContext) {
+        init_test(cx, |_| {});
+        let mut cx = EditorTestContext::new(cx).await;
+
+        cx.set_state("<diˇv></div>");
+        cx.update_editor(|editor, _window, cx| {
+            editor
+                .set_linked_edit_ranges_for_testing(
+                    vec![(
+                        Point::new(0, 1)..Point::new(0, 4),
+                        vec![Point::new(0, 7)..Point::new(0, 10)],
+                    )],
+                    cx,
+                )
+                .unwrap();
+        });
+
+        cx.simulate_keystroke("x");
+        cx.assert_editor_state("<dixˇv></dixv>");
+    }
+
+    #[gpui::test]
+    async fn test_linked_edits_backspace(cx: &mut TestAppContext) {
+        init_test(cx, |_| {});
+        let mut cx = EditorTestContext::new(cx).await;
+
+        cx.set_state("<divˇ></div>");
+        cx.update_editor(|editor, _window, cx| {
+            editor
+                .set_linked_edit_ranges_for_testing(
+                    vec![(
+                        Point::new(0, 1)..Point::new(0, 4),
+                        vec![Point::new(0, 7)..Point::new(0, 10)],
+                    )],
+                    cx,
+                )
+                .unwrap();
+        });
+
+        cx.update_editor(|editor, window, cx| {
+            editor.backspace(&Default::default(), window, cx);
+        });
+        cx.assert_editor_state("<diˇ></di>");
+    }
+
+    #[gpui::test]
+    async fn test_linked_edits_delete(cx: &mut TestAppContext) {
+        init_test(cx, |_| {});
+        let mut cx = EditorTestContext::new(cx).await;
+
+        cx.set_state("<ˇdiv></div>");
+        cx.update_editor(|editor, _window, cx| {
+            editor
+                .set_linked_edit_ranges_for_testing(
+                    vec![(
+                        Point::new(0, 1)..Point::new(0, 4),
+                        vec![Point::new(0, 7)..Point::new(0, 10)],
+                    )],
+                    cx,
+                )
+                .unwrap();
+        });
+
+        cx.update_editor(|editor, window, cx| {
+            editor.delete(&Default::default(), window, cx);
+        });
+        cx.assert_editor_state("<ˇiv></iv>");
+    }
+
+    #[gpui::test]
+    async fn test_linked_edits_selection(cx: &mut TestAppContext) {
+        init_test(cx, |_| {});
+        let mut cx = EditorTestContext::new(cx).await;
+
+        cx.set_state("<«divˇ»></div>");
+        cx.update_editor(|editor, _window, cx| {
+            editor
+                .set_linked_edit_ranges_for_testing(
+                    vec![(
+                        Point::new(0, 1)..Point::new(0, 4),
+                        vec![Point::new(0, 7)..Point::new(0, 10)],
+                    )],
+                    cx,
+                )
+                .unwrap();
+        });
+
+        cx.simulate_keystrokes("s p a n");
+        cx.assert_editor_state("<spanˇ></span>");
+    }
 }

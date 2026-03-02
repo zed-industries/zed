@@ -203,20 +203,25 @@ fn find_target(
     let start_offset = start.to_offset(snapshot);
     let end_offset = end.to_offset(snapshot);
 
-    let mut offset = start_offset;
     let mut first_char_is_num = snapshot
-        .chars_at(offset)
+        .chars_at(start_offset)
         .next()
         .map_or(false, |ch| ch.is_ascii_hexdigit());
     let mut pre_char = String::new();
 
-    let next_offset = offset
+    let next_offset = start_offset
         + snapshot
             .chars_at(start_offset)
             .next()
             .map_or(0, |ch| ch.len_utf8());
-    // Backward scan to find the start of the number, but stop at start_offset
+    // Backward scan to find the start of the number, but stop at start_offset.
+    // We track `offset` as the start position of the current character. Initialize
+    // to `next_offset` and decrement at the start of each iteration so that `offset`
+    // always lands on a valid character boundary (not in the middle of a multibyte char).
+    let mut offset = next_offset;
     for ch in snapshot.reversed_chars_at(next_offset) {
+        offset -= ch.len_utf8();
+
         // Search boundaries
         if offset.0 == 0 || ch.is_whitespace() || (need_range && offset <= start_offset) {
             break;
@@ -238,7 +243,15 @@ fn find_target(
         }
 
         pre_char.insert(0, ch);
-        offset -= ch.len_utf8();
+    }
+
+    // The backward scan breaks on whitespace, including newlines. Without this
+    // skip, the forward scan would start on the newline and immediately break
+    // (since it also breaks on newlines), finding nothing on the current line.
+    if let Some(ch) = snapshot.chars_at(offset).next() {
+        if ch == '\n' {
+            offset += ch.len_utf8();
+        }
     }
 
     let mut begin = None;
@@ -271,6 +284,21 @@ fn find_target(
             begin = None;
             target = String::new();
         } else if ch == '.' {
+            // When the cursor is on a number followed by a dot and a non-digit
+            // (`ˇ1. item`), terminate the match so the number is incrementable.
+            // Without this, the dot unconditionally resets the scan and the
+            // number is skipped. We only do this when the cursor is on the
+            // number, when it's past (`111.ˇ.2`), we still reset so the forward
+            // scan can find the number after the dots.
+            let next_is_non_digit = chars.peek().map_or(true, |char| !char.is_digit(radix));
+            let on_number =
+                is_num && begin.is_some_and(|begin| begin >= start_offset || start_offset < offset);
+
+            if on_number && next_is_non_digit {
+                end = Some(offset);
+                break;
+            }
+
             is_num = false;
             begin = None;
             target = String::new();
@@ -701,6 +729,7 @@ mod test {
             .assert_matches();
         cx.simulate("ctrl-a", "(ˇ0b10f)").await.assert_matches();
         cx.simulate("ctrl-a", "ˇ-1").await.assert_matches();
+        cx.simulate("ctrl-a", "-ˇ1").await.assert_matches();
         cx.simulate("ctrl-a", "banˇana").await.assert_matches();
     }
 
@@ -845,5 +874,40 @@ mod test {
         cx.simulate_shared_keystrokes("shift-v y p p ctrl-v k k l ctrl-a")
             .await;
         cx.shared_state().await.assert_eq(indoc! {"ˇ144\n144\n144"});
+    }
+
+    #[gpui::test]
+    async fn test_increment_markdown_list_markers_multiline(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        cx.set_shared_state("# Title\nˇ1. item\n2. item\n3. item")
+            .await;
+        cx.simulate_shared_keystrokes("ctrl-a").await;
+        cx.shared_state()
+            .await
+            .assert_eq("# Title\nˇ2. item\n2. item\n3. item");
+        cx.simulate_shared_keystrokes("j").await;
+        cx.shared_state()
+            .await
+            .assert_eq("# Title\n2. item\nˇ2. item\n3. item");
+        cx.simulate_shared_keystrokes("ctrl-a").await;
+        cx.shared_state()
+            .await
+            .assert_eq("# Title\n2. item\nˇ3. item\n3. item");
+        cx.simulate_shared_keystrokes("ctrl-x").await;
+        cx.shared_state()
+            .await
+            .assert_eq("# Title\n2. item\nˇ2. item\n3. item");
+    }
+
+    #[gpui::test]
+    async fn test_increment_with_multibyte_characters(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        // Test cursor after a multibyte character - this would panic before the fix
+        // because the backward scan would land in the middle of the Korean character
+        cx.set_state("지ˇ1", Mode::Normal);
+        cx.simulate_keystrokes("ctrl-a");
+        cx.assert_state("지ˇ2", Mode::Normal);
     }
 }

@@ -1,4 +1,4 @@
-mod signature_help;
+pub mod signature_help;
 
 use crate::{
     CodeAction, CompletionSource, CoreCompletion, CoreCompletionResponse, DocumentColor,
@@ -6,7 +6,7 @@ use crate::{
     InlayHintLabel, InlayHintLabelPart, InlayHintLabelPartTooltip, InlayHintTooltip, Location,
     LocationLink, LspAction, LspPullDiagnostics, MarkupContent, PrepareRenameResponse,
     ProjectTransaction, PulledDiagnostics, ResolveState,
-    lsp_store::{LocalLspStore, LspStore},
+    lsp_store::{LocalLspStore, LspFoldingRange, LspStore},
 };
 use anyhow::{Context as _, Result};
 use async_trait::async_trait;
@@ -14,13 +14,16 @@ use client::proto::{self, PeerId};
 use clock::Global;
 use collections::HashMap;
 use futures::future;
-use gpui::{App, AsyncApp, Entity, SharedString, Task};
+use gpui::{App, AsyncApp, Entity, SharedString, Task, prelude::FluentBuilder};
 use language::{
     Anchor, Bias, Buffer, BufferSnapshot, CachedLspAdapter, CharKind, CharScopeContext,
     OffsetRangeExt, PointUtf16, ToOffset, ToPointUtf16, Transaction, Unclipped,
     language_settings::{InlayHintKind, LanguageSettings, language_settings},
     point_from_lsp, point_to_lsp,
-    proto::{deserialize_anchor, deserialize_version, serialize_anchor, serialize_version},
+    proto::{
+        deserialize_anchor, deserialize_anchor_range, deserialize_version, serialize_anchor,
+        serialize_anchor_range, serialize_version,
+    },
     range_from_lsp, range_to_lsp,
 };
 use lsp::{
@@ -251,11 +254,52 @@ pub(crate) struct InlayHints {
     pub range: Range<Anchor>,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct SemanticTokensFull {
+    pub for_server: Option<LanguageServerId>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct SemanticTokensDelta {
+    pub previous_result_id: SharedString,
+}
+
+#[derive(Debug)]
+pub(crate) enum SemanticTokensResponse {
+    Full {
+        data: Vec<u32>,
+        result_id: Option<SharedString>,
+    },
+    Delta {
+        edits: Vec<SemanticTokensEdit>,
+        result_id: Option<SharedString>,
+    },
+}
+
+impl Default for SemanticTokensResponse {
+    fn default() -> Self {
+        Self::Delta {
+            edits: Vec::new(),
+            result_id: None,
+        }
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct SemanticTokensEdit {
+    pub start: u32,
+    pub delete_count: u32,
+    pub data: Vec<u32>,
+}
+
 #[derive(Debug, Copy, Clone)]
 pub(crate) struct GetCodeLens;
 
 #[derive(Debug, Copy, Clone)]
 pub(crate) struct GetDocumentColor;
+
+#[derive(Debug, Copy, Clone)]
+pub(crate) struct GetFoldingRanges;
 
 impl GetCodeLens {
     pub(crate) fn can_resolve_lens(capabilities: &ServerCapabilities) -> bool {
@@ -273,11 +317,11 @@ pub(crate) struct LinkedEditingRange {
 }
 
 #[derive(Clone, Debug)]
-pub(crate) struct GetDocumentDiagnostics {
+pub struct GetDocumentDiagnostics {
     /// We cannot blindly rely on server's capabilities.diagnostic_provider, as they're a singular field, whereas
     /// a server can register multiple diagnostic providers post-mortem.
     pub registration_id: Option<SharedString>,
-    pub identifier: Option<String>,
+    pub identifier: Option<SharedString>,
     pub previous_result_id: Option<SharedString>,
 }
 
@@ -1662,7 +1706,7 @@ impl LspCommand for GetDocumentSymbols {
             return Ok(Vec::new());
         };
 
-        let symbols: Vec<_> = match lsp_symbols {
+        let symbols = match lsp_symbols {
             lsp::DocumentSymbolResponse::Flat(symbol_information) => symbol_information
                 .into_iter()
                 .map(|lsp_symbol| DocumentSymbol {
@@ -3470,6 +3514,310 @@ impl LspCommand for InlayHints {
 }
 
 #[async_trait(?Send)]
+impl LspCommand for SemanticTokensFull {
+    type Response = SemanticTokensResponse;
+    type LspRequest = lsp::SemanticTokensFullRequest;
+    type ProtoRequest = proto::SemanticTokens;
+
+    fn display_name(&self) -> &str {
+        "Semantic tokens full"
+    }
+
+    fn check_capabilities(&self, capabilities: AdapterServerCapabilities) -> bool {
+        capabilities
+            .server_capabilities
+            .semantic_tokens_provider
+            .as_ref()
+            .is_some_and(|semantic_tokens_provider| {
+                let options = match semantic_tokens_provider {
+                    lsp::SemanticTokensServerCapabilities::SemanticTokensOptions(opts) => opts,
+                    lsp::SemanticTokensServerCapabilities::SemanticTokensRegistrationOptions(
+                        opts,
+                    ) => &opts.semantic_tokens_options,
+                };
+
+                match options.full {
+                    Some(lsp::SemanticTokensFullOptions::Bool(is_supported)) => is_supported,
+                    Some(lsp::SemanticTokensFullOptions::Delta { .. }) => true,
+                    None => false,
+                }
+            })
+    }
+
+    fn to_lsp(
+        &self,
+        path: &Path,
+        _: &Buffer,
+        _: &Arc<LanguageServer>,
+        _: &App,
+    ) -> Result<lsp::SemanticTokensParams> {
+        Ok(lsp::SemanticTokensParams {
+            text_document: lsp::TextDocumentIdentifier {
+                uri: file_path_to_lsp_url(path)?,
+            },
+            partial_result_params: Default::default(),
+            work_done_progress_params: Default::default(),
+        })
+    }
+
+    async fn response_from_lsp(
+        self,
+        message: Option<lsp::SemanticTokensResult>,
+        _: Entity<LspStore>,
+        _: Entity<Buffer>,
+        _: LanguageServerId,
+        _: AsyncApp,
+    ) -> anyhow::Result<SemanticTokensResponse> {
+        match message {
+            Some(lsp::SemanticTokensResult::Tokens(tokens)) => Ok(SemanticTokensResponse::Full {
+                data: tokens.data,
+                result_id: tokens.result_id.map(SharedString::new),
+            }),
+            Some(lsp::SemanticTokensResult::Partial(_)) => {
+                anyhow::bail!(
+                    "Unexpected semantic tokens response with partial result for inlay hints"
+                )
+            }
+            None => Ok(Default::default()),
+        }
+    }
+
+    fn to_proto(&self, project_id: u64, buffer: &Buffer) -> proto::SemanticTokens {
+        proto::SemanticTokens {
+            project_id,
+            buffer_id: buffer.remote_id().into(),
+            version: serialize_version(&buffer.version()),
+            for_server: self.for_server.map(|id| id.to_proto()),
+        }
+    }
+
+    async fn from_proto(
+        message: proto::SemanticTokens,
+        _: Entity<LspStore>,
+        buffer: Entity<Buffer>,
+        mut cx: AsyncApp,
+    ) -> Result<Self> {
+        buffer
+            .update(&mut cx, |buffer, _| {
+                buffer.wait_for_version(deserialize_version(&message.version))
+            })
+            .await?;
+
+        Ok(Self {
+            for_server: message
+                .for_server
+                .map(|id| LanguageServerId::from_proto(id)),
+        })
+    }
+
+    fn response_to_proto(
+        response: SemanticTokensResponse,
+        _: &mut LspStore,
+        _: PeerId,
+        buffer_version: &clock::Global,
+        _: &mut App,
+    ) -> proto::SemanticTokensResponse {
+        match response {
+            SemanticTokensResponse::Full { data, result_id } => proto::SemanticTokensResponse {
+                data,
+                edits: Vec::new(),
+                result_id: result_id.map(|s| s.to_string()),
+                version: serialize_version(buffer_version),
+            },
+            SemanticTokensResponse::Delta { edits, result_id } => proto::SemanticTokensResponse {
+                data: Vec::new(),
+                edits: edits
+                    .into_iter()
+                    .map(|edit| proto::SemanticTokensEdit {
+                        start: edit.start,
+                        delete_count: edit.delete_count,
+                        data: edit.data,
+                    })
+                    .collect(),
+                result_id: result_id.map(|s| s.to_string()),
+                version: serialize_version(buffer_version),
+            },
+        }
+    }
+
+    async fn response_from_proto(
+        self,
+        message: proto::SemanticTokensResponse,
+        _: Entity<LspStore>,
+        buffer: Entity<Buffer>,
+        mut cx: AsyncApp,
+    ) -> anyhow::Result<SemanticTokensResponse> {
+        buffer
+            .update(&mut cx, |buffer, _| {
+                buffer.wait_for_version(deserialize_version(&message.version))
+            })
+            .await?;
+
+        Ok(SemanticTokensResponse::Full {
+            data: message.data,
+            result_id: message.result_id.map(SharedString::new),
+        })
+    }
+
+    fn buffer_id_from_proto(message: &proto::SemanticTokens) -> Result<BufferId> {
+        BufferId::new(message.buffer_id)
+    }
+}
+
+#[async_trait(?Send)]
+impl LspCommand for SemanticTokensDelta {
+    type Response = SemanticTokensResponse;
+    type LspRequest = lsp::SemanticTokensFullDeltaRequest;
+    type ProtoRequest = proto::SemanticTokens;
+
+    fn display_name(&self) -> &str {
+        "Semantic tokens delta"
+    }
+
+    fn check_capabilities(&self, capabilities: AdapterServerCapabilities) -> bool {
+        capabilities
+            .server_capabilities
+            .semantic_tokens_provider
+            .as_ref()
+            .is_some_and(|semantic_tokens_provider| {
+                let options = match semantic_tokens_provider {
+                    lsp::SemanticTokensServerCapabilities::SemanticTokensOptions(opts) => opts,
+                    lsp::SemanticTokensServerCapabilities::SemanticTokensRegistrationOptions(
+                        opts,
+                    ) => &opts.semantic_tokens_options,
+                };
+
+                match options.full {
+                    Some(lsp::SemanticTokensFullOptions::Delta { delta }) => delta.unwrap_or(false),
+                    // `full: true` (instead of `full: { delta: true }`) means no support for delta.
+                    _ => false,
+                }
+            })
+    }
+
+    fn to_lsp(
+        &self,
+        path: &Path,
+        _: &Buffer,
+        _: &Arc<LanguageServer>,
+        _: &App,
+    ) -> Result<lsp::SemanticTokensDeltaParams> {
+        Ok(lsp::SemanticTokensDeltaParams {
+            text_document: lsp::TextDocumentIdentifier {
+                uri: file_path_to_lsp_url(path)?,
+            },
+            previous_result_id: self.previous_result_id.clone().map(|s| s.to_string()),
+            partial_result_params: Default::default(),
+            work_done_progress_params: Default::default(),
+        })
+    }
+
+    async fn response_from_lsp(
+        self,
+        message: Option<lsp::SemanticTokensFullDeltaResult>,
+        _: Entity<LspStore>,
+        _: Entity<Buffer>,
+        _: LanguageServerId,
+        _: AsyncApp,
+    ) -> anyhow::Result<SemanticTokensResponse> {
+        match message {
+            Some(lsp::SemanticTokensFullDeltaResult::Tokens(tokens)) => {
+                Ok(SemanticTokensResponse::Full {
+                    data: tokens.data,
+                    result_id: tokens.result_id.map(SharedString::new),
+                })
+            }
+            Some(lsp::SemanticTokensFullDeltaResult::TokensDelta(delta)) => {
+                Ok(SemanticTokensResponse::Delta {
+                    edits: delta
+                        .edits
+                        .into_iter()
+                        .map(|e| SemanticTokensEdit {
+                            start: e.start,
+                            delete_count: e.delete_count,
+                            data: e.data.unwrap_or_default(),
+                        })
+                        .collect(),
+                    result_id: delta.result_id.map(SharedString::new),
+                })
+            }
+            Some(lsp::SemanticTokensFullDeltaResult::PartialTokensDelta { .. }) => {
+                anyhow::bail!(
+                    "Unexpected semantic tokens response with partial result for inlay hints"
+                )
+            }
+            None => Ok(Default::default()),
+        }
+    }
+
+    fn to_proto(&self, _: u64, _: &Buffer) -> proto::SemanticTokens {
+        unimplemented!("Delta requests are never initialted on the remote client side")
+    }
+
+    async fn from_proto(
+        _: proto::SemanticTokens,
+        _: Entity<LspStore>,
+        _: Entity<Buffer>,
+        _: AsyncApp,
+    ) -> Result<Self> {
+        unimplemented!("Delta requests are never initialted on the remote client side")
+    }
+
+    fn response_to_proto(
+        response: SemanticTokensResponse,
+        _: &mut LspStore,
+        _: PeerId,
+        buffer_version: &clock::Global,
+        _: &mut App,
+    ) -> proto::SemanticTokensResponse {
+        match response {
+            SemanticTokensResponse::Full { data, result_id } => proto::SemanticTokensResponse {
+                data,
+                edits: Vec::new(),
+                result_id: result_id.map(|s| s.to_string()),
+                version: serialize_version(buffer_version),
+            },
+            SemanticTokensResponse::Delta { edits, result_id } => proto::SemanticTokensResponse {
+                data: Vec::new(),
+                edits: edits
+                    .into_iter()
+                    .map(|edit| proto::SemanticTokensEdit {
+                        start: edit.start,
+                        delete_count: edit.delete_count,
+                        data: edit.data,
+                    })
+                    .collect(),
+                result_id: result_id.map(|s| s.to_string()),
+                version: serialize_version(buffer_version),
+            },
+        }
+    }
+
+    async fn response_from_proto(
+        self,
+        message: proto::SemanticTokensResponse,
+        _: Entity<LspStore>,
+        buffer: Entity<Buffer>,
+        mut cx: AsyncApp,
+    ) -> anyhow::Result<SemanticTokensResponse> {
+        buffer
+            .update(&mut cx, |buffer, _| {
+                buffer.wait_for_version(deserialize_version(&message.version))
+            })
+            .await?;
+
+        Ok(SemanticTokensResponse::Full {
+            data: message.data,
+            result_id: message.result_id.map(SharedString::new),
+        })
+    }
+
+    fn buffer_id_from_proto(message: &proto::SemanticTokens) -> Result<BufferId> {
+        BufferId::new(message.buffer_id)
+    }
+}
+
+#[async_trait(?Send)]
 impl LspCommand for GetCodeLens {
     type Response = Vec<CodeAction>;
     type LspRequest = lsp::CodeLensRequest;
@@ -3797,7 +4145,7 @@ impl GetDocumentDiagnostics {
             .collect()
     }
 
-    fn deserialize_lsp_diagnostic(diagnostic: proto::LspDiagnostic) -> Result<lsp::Diagnostic> {
+    pub fn deserialize_lsp_diagnostic(diagnostic: proto::LspDiagnostic) -> Result<lsp::Diagnostic> {
         let start = diagnostic.start.context("invalid start range")?;
         let end = diagnostic.end.context("invalid end range")?;
 
@@ -3871,7 +4219,7 @@ impl GetDocumentDiagnostics {
         })
     }
 
-    fn serialize_lsp_diagnostic(diagnostic: lsp::Diagnostic) -> Result<proto::LspDiagnostic> {
+    pub fn serialize_lsp_diagnostic(diagnostic: lsp::Diagnostic) -> Result<proto::LspDiagnostic> {
         let range = language::range_from_lsp(diagnostic.range);
         let related_information = diagnostic
             .related_information
@@ -4080,8 +4428,8 @@ impl LspCommand for GetDocumentDiagnostics {
             text_document: lsp::TextDocumentIdentifier {
                 uri: file_path_to_lsp_url(path)?,
             },
-            identifier: self.identifier.clone(),
-            previous_result_id: self.previous_result_id.clone().map(|id| id.to_string()),
+            identifier: self.identifier.as_ref().map(ToString::to_string),
+            previous_result_id: self.previous_result_id.as_ref().map(ToString::to_string),
             partial_result_params: Default::default(),
             work_done_progress_params: Default::default(),
         })
@@ -4387,6 +4735,157 @@ impl LspCommand for GetDocumentColor {
     }
 }
 
+#[async_trait(?Send)]
+impl LspCommand for GetFoldingRanges {
+    type Response = Vec<LspFoldingRange>;
+    type LspRequest = lsp::request::FoldingRangeRequest;
+    type ProtoRequest = proto::GetFoldingRanges;
+
+    fn display_name(&self) -> &str {
+        "Folding ranges"
+    }
+
+    fn check_capabilities(&self, server_capabilities: AdapterServerCapabilities) -> bool {
+        server_capabilities
+            .server_capabilities
+            .folding_range_provider
+            .as_ref()
+            .is_some_and(|capability| match capability {
+                lsp::FoldingRangeProviderCapability::Simple(supported) => *supported,
+                lsp::FoldingRangeProviderCapability::FoldingProvider(..)
+                | lsp::FoldingRangeProviderCapability::Options(..) => true,
+            })
+    }
+
+    fn to_lsp(
+        &self,
+        path: &Path,
+        _: &Buffer,
+        _: &Arc<LanguageServer>,
+        _: &App,
+    ) -> Result<lsp::FoldingRangeParams> {
+        Ok(lsp::FoldingRangeParams {
+            text_document: make_text_document_identifier(path)?,
+            work_done_progress_params: Default::default(),
+            partial_result_params: Default::default(),
+        })
+    }
+
+    async fn response_from_lsp(
+        self,
+        message: Option<Vec<lsp::FoldingRange>>,
+        _: Entity<LspStore>,
+        buffer: Entity<Buffer>,
+        _: LanguageServerId,
+        cx: AsyncApp,
+    ) -> Result<Self::Response> {
+        let snapshot = buffer.read_with(&cx, |buffer, _| buffer.snapshot());
+        let max_point = snapshot.max_point_utf16();
+        Ok(message
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|range| range.start_line < range.end_line)
+            .filter(|range| range.start_line <= max_point.row && range.end_line <= max_point.row)
+            .map(|folding_range| {
+                let start_col = folding_range.start_character.unwrap_or(u32::MAX);
+                let end_col = folding_range.end_character.unwrap_or(u32::MAX);
+                let start = snapshot.clip_point_utf16(
+                    Unclipped(PointUtf16::new(folding_range.start_line, start_col)),
+                    Bias::Right,
+                );
+                let end = snapshot.clip_point_utf16(
+                    Unclipped(PointUtf16::new(folding_range.end_line, end_col)),
+                    Bias::Left,
+                );
+                let start = snapshot.anchor_after(start);
+                let end = snapshot.anchor_before(end);
+                let collapsed_text = folding_range
+                    .collapsed_text
+                    .filter(|t| !t.is_empty())
+                    .map(|t| SharedString::from(crate::lsp_store::collapse_newlines(&t, " ")));
+                LspFoldingRange {
+                    range: start..end,
+                    collapsed_text,
+                }
+            })
+            .collect())
+    }
+
+    fn to_proto(&self, project_id: u64, buffer: &Buffer) -> Self::ProtoRequest {
+        proto::GetFoldingRanges {
+            project_id,
+            buffer_id: buffer.remote_id().to_proto(),
+            version: serialize_version(&buffer.version()),
+        }
+    }
+
+    async fn from_proto(
+        _: Self::ProtoRequest,
+        _: Entity<LspStore>,
+        _: Entity<Buffer>,
+        _: AsyncApp,
+    ) -> Result<Self> {
+        Ok(Self)
+    }
+
+    fn response_to_proto(
+        response: Self::Response,
+        _: &mut LspStore,
+        _: PeerId,
+        buffer_version: &clock::Global,
+        _: &mut App,
+    ) -> proto::GetFoldingRangesResponse {
+        let mut ranges = Vec::with_capacity(response.len());
+        let mut collapsed_texts = Vec::with_capacity(response.len());
+        for folding_range in response {
+            ranges.push(serialize_anchor_range(folding_range.range));
+            collapsed_texts.push(
+                folding_range
+                    .collapsed_text
+                    .map(|t| t.to_string())
+                    .unwrap_or_default(),
+            );
+        }
+        proto::GetFoldingRangesResponse {
+            ranges,
+            collapsed_texts,
+            version: serialize_version(buffer_version),
+        }
+    }
+
+    async fn response_from_proto(
+        self,
+        message: proto::GetFoldingRangesResponse,
+        _: Entity<LspStore>,
+        _: Entity<Buffer>,
+        _: AsyncApp,
+    ) -> Result<Self::Response> {
+        message
+            .ranges
+            .into_iter()
+            .zip(
+                message
+                    .collapsed_texts
+                    .into_iter()
+                    .map(Some)
+                    .chain(std::iter::repeat(None)),
+            )
+            .map(|(range, collapsed_text)| {
+                Ok(LspFoldingRange {
+                    range: deserialize_anchor_range(range)?,
+                    collapsed_text: collapsed_text
+                        .filter(|t| !t.is_empty())
+                        .map(SharedString::from),
+                })
+            })
+            .collect()
+    }
+
+    fn buffer_id_from_proto(message: &Self::ProtoRequest) -> Result<BufferId> {
+        BufferId::new(message.buffer_id)
+    }
+}
+
 fn process_related_documents(
     diagnostics: &mut HashMap<lsp::Uri, LspPullDiagnostics>,
     server_id: LanguageServerId,
@@ -4525,134 +5024,5 @@ fn process_full_diagnostics_report(
                 registration_id,
             });
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use lsp::{DiagnosticSeverity, DiagnosticTag};
-    use serde_json::json;
-
-    #[test]
-    fn test_serialize_lsp_diagnostic() {
-        let lsp_diagnostic = lsp::Diagnostic {
-            range: lsp::Range {
-                start: lsp::Position::new(0, 1),
-                end: lsp::Position::new(2, 3),
-            },
-            severity: Some(DiagnosticSeverity::ERROR),
-            code: Some(lsp::NumberOrString::String("E001".to_string())),
-            source: Some("test-source".to_string()),
-            message: "Test error message".to_string(),
-            related_information: None,
-            tags: Some(vec![DiagnosticTag::DEPRECATED]),
-            code_description: None,
-            data: Some(json!({"detail": "test detail"})),
-        };
-
-        let proto_diagnostic = GetDocumentDiagnostics::serialize_lsp_diagnostic(lsp_diagnostic)
-            .expect("Failed to serialize diagnostic");
-
-        let start = proto_diagnostic.start.unwrap();
-        let end = proto_diagnostic.end.unwrap();
-        assert_eq!(start.row, 0);
-        assert_eq!(start.column, 1);
-        assert_eq!(end.row, 2);
-        assert_eq!(end.column, 3);
-        assert_eq!(
-            proto_diagnostic.severity,
-            proto::lsp_diagnostic::Severity::Error as i32
-        );
-        assert_eq!(proto_diagnostic.code, Some("E001".to_string()));
-        assert_eq!(proto_diagnostic.source, Some("test-source".to_string()));
-        assert_eq!(proto_diagnostic.message, "Test error message");
-    }
-
-    #[test]
-    fn test_deserialize_lsp_diagnostic() {
-        let proto_diagnostic = proto::LspDiagnostic {
-            start: Some(proto::PointUtf16 { row: 0, column: 1 }),
-            end: Some(proto::PointUtf16 { row: 2, column: 3 }),
-            severity: proto::lsp_diagnostic::Severity::Warning as i32,
-            code: Some("ERR".to_string()),
-            source: Some("Prism".to_string()),
-            message: "assigned but unused variable - a".to_string(),
-            related_information: vec![],
-            tags: vec![],
-            code_description: None,
-            data: None,
-        };
-
-        let lsp_diagnostic = GetDocumentDiagnostics::deserialize_lsp_diagnostic(proto_diagnostic)
-            .expect("Failed to deserialize diagnostic");
-
-        assert_eq!(lsp_diagnostic.range.start.line, 0);
-        assert_eq!(lsp_diagnostic.range.start.character, 1);
-        assert_eq!(lsp_diagnostic.range.end.line, 2);
-        assert_eq!(lsp_diagnostic.range.end.character, 3);
-        assert_eq!(lsp_diagnostic.severity, Some(DiagnosticSeverity::WARNING));
-        assert_eq!(
-            lsp_diagnostic.code,
-            Some(lsp::NumberOrString::String("ERR".to_string()))
-        );
-        assert_eq!(lsp_diagnostic.source, Some("Prism".to_string()));
-        assert_eq!(lsp_diagnostic.message, "assigned but unused variable - a");
-    }
-
-    #[test]
-    fn test_related_information() {
-        let related_info = lsp::DiagnosticRelatedInformation {
-            location: lsp::Location {
-                uri: lsp::Uri::from_str("file:///test.rs").unwrap(),
-                range: lsp::Range {
-                    start: lsp::Position::new(1, 1),
-                    end: lsp::Position::new(1, 5),
-                },
-            },
-            message: "Related info message".to_string(),
-        };
-
-        let lsp_diagnostic = lsp::Diagnostic {
-            range: lsp::Range {
-                start: lsp::Position::new(0, 0),
-                end: lsp::Position::new(0, 1),
-            },
-            severity: Some(DiagnosticSeverity::INFORMATION),
-            code: None,
-            source: Some("Prism".to_string()),
-            message: "assigned but unused variable - a".to_string(),
-            related_information: Some(vec![related_info]),
-            tags: None,
-            code_description: None,
-            data: None,
-        };
-
-        let proto_diagnostic = GetDocumentDiagnostics::serialize_lsp_diagnostic(lsp_diagnostic)
-            .expect("Failed to serialize diagnostic");
-
-        assert_eq!(proto_diagnostic.related_information.len(), 1);
-        let related = &proto_diagnostic.related_information[0];
-        assert_eq!(related.location_url, Some("file:///test.rs".to_string()));
-        assert_eq!(related.message, "Related info message");
-    }
-
-    #[test]
-    fn test_invalid_ranges() {
-        let proto_diagnostic = proto::LspDiagnostic {
-            start: None,
-            end: Some(proto::PointUtf16 { row: 2, column: 3 }),
-            severity: proto::lsp_diagnostic::Severity::Error as i32,
-            code: None,
-            source: None,
-            message: "Test message".to_string(),
-            related_information: vec![],
-            tags: vec![],
-            code_description: None,
-            data: None,
-        };
-
-        let result = GetDocumentDiagnostics::deserialize_lsp_diagnostic(proto_diagnostic);
-        assert!(result.is_err());
     }
 }
