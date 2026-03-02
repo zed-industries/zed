@@ -2686,8 +2686,9 @@ impl MultiBuffer {
     ) -> Vec<Edit<MultiBufferOffset>> {
         let MultiBufferSnapshot {
             excerpts,
-            buffer_paths: _,
             diffs: buffer_diff,
+            path_keys_by_buffer,
+            path_keys_by_index,
             diff_transforms: _,
             non_text_state_update_count,
             edit_count,
@@ -2734,7 +2735,7 @@ impl MultiBuffer {
             buffer_diff.extend(diffs_to_add);
         }
 
-        let mut excerpts_to_edit = Vec::new();
+        let mut paths_to_edit = Vec::new();
         let mut non_text_state_updated = false;
         let mut edited = false;
         for buffer_state in buffers.values() {
@@ -2745,17 +2746,14 @@ impl MultiBuffer {
             let buffer_edited = version.changed_since(&buffer_state.last_version.borrow());
             let buffer_non_text_state_updated =
                 non_text_state_update_count > buffer_state.last_non_text_state_update_count.get();
-            if buffer_edited || buffer_non_text_state_updated {
+            if (buffer_edited || buffer_non_text_state_updated)
+                && let Some(path_key) = path_keys_by_buffer.get(&buffer.remote_id())
+            {
                 *buffer_state.last_version.borrow_mut() = version;
                 buffer_state
                     .last_non_text_state_update_count
                     .set(non_text_state_update_count);
-                excerpts_to_edit.extend(
-                    buffer_state
-                        .excerpts
-                        .iter()
-                        .map(|locator| (locator, buffer_state.buffer.clone(), buffer_edited)),
-                );
+                paths_to_edit.push((path_key.clone(), buffer_state.buffer.clone(), buffer_edited));
             }
 
             edited |= buffer_edited;
@@ -2773,14 +2771,14 @@ impl MultiBuffer {
             *non_text_state_update_count += 1;
         }
 
-        excerpts_to_edit.sort_unstable_by_key(|&(locator, _, _)| locator);
+        paths_to_edit.sort_unstable_by_key(|(path, _, _)| path);
 
         let mut edits = Vec::new();
         let mut new_excerpts = SumTree::default();
-        let mut cursor = excerpts.cursor::<Dimensions<Option<&Locator>, ExcerptOffset>>(());
+        let mut cursor = excerpts.cursor::<ExcerptSummary>(());
 
-        for (locator, buffer, buffer_edited) in excerpts_to_edit {
-            new_excerpts.append(cursor.slice(&Some(locator), Bias::Left), ());
+        for (path, buffer, buffer_edited) in paths_to_edit {
+            new_excerpts.append(cursor.slice(&path, Bias::Left), ());
             let old_excerpt = cursor.item().unwrap();
             let buffer = buffer.read(cx);
             let buffer_id = buffer.remote_id();
@@ -2808,9 +2806,7 @@ impl MultiBuffer {
                 );
 
                 new_excerpt = Excerpt::new(
-                    old_excerpt.id,
-                    locator.clone(),
-                    buffer_id,
+                    path,
                     Arc::new(buffer.snapshot()),
                     old_excerpt.range.clone(),
                     old_excerpt.has_trailing_newline,
@@ -3741,7 +3737,7 @@ impl MultiBufferSnapshot {
         let anchors = anchors.into_iter();
         let mut result = Vec::with_capacity(anchors.size_hint().0);
         let mut anchors = anchors.peekable();
-        let mut cursor = self.excerpts.cursor::<Option<&Locator>>(());
+        let mut cursor = self.excerpts.cursor::<ExcerptSummary>(());
         'anchors: while let Some(anchor) = anchors.peek() {
             let Some(buffer_id) = anchor.buffer_id else {
                 anchors.next();
@@ -3751,59 +3747,59 @@ impl MultiBufferSnapshot {
             let mut same_buffer_anchors =
                 anchors.peeking_take_while(|a| a.buffer_id.is_some_and(|b| buffer_id == b));
 
-            if let Some(locators) = self.buffer_paths.get(&buffer_id) {
+            if let Some(path) = self.path_keys_by_buffer.get(&buffer_id) {
                 let Some(mut next) = same_buffer_anchors.next() else {
                     continue 'anchors;
                 };
-                'excerpts: for locator in locators.iter() {
-                    if cursor.seek_forward(&Some(locator), Bias::Left)
-                        && let Some(excerpt) = cursor.item()
-                    {
-                        loop {
-                            // anchor is before the first excerpt
-                            if excerpt
-                                .range
-                                .context
-                                .start
-                                .cmp(&next, &excerpt.buffer)
-                                .is_gt()
-                            {
-                                // so we skip it and try the next anchor
-                                result.push(None);
-                                match same_buffer_anchors.next() {
-                                    Some(anchor) => next = anchor,
-                                    None => continue 'anchors,
-                                }
-                            // anchor is within the excerpt
-                            } else if excerpt
-                                .range
-                                .context
-                                .end
-                                .cmp(&next, &excerpt.buffer)
-                                .is_ge()
-                            {
-                                // record it and all following anchors that are within
-                                result.push(Some(Anchor::text(excerpt.id, next)));
-                                result.extend(
-                                    same_buffer_anchors
-                                        .peeking_take_while(|a| {
-                                            excerpt
-                                                .range
-                                                .context
-                                                .end
-                                                .cmp(a, &excerpt.buffer)
-                                                .is_ge()
-                                        })
-                                        .map(|a| Some(Anchor::text(excerpt.id, a))),
-                                );
-                                match same_buffer_anchors.next() {
-                                    Some(anchor) => next = anchor,
-                                    None => continue 'anchors,
-                                }
-                            // anchor is after the excerpt, try the next one
-                            } else {
-                                continue 'excerpts;
+                cursor.seek_forward(path, Bias::Left);
+                'excerpts: loop {
+                    let Some(excerpt) = cursor.item() else {
+                        break;
+                    };
+                    if &excerpt.path_key != path {
+                        break;
+                    }
+
+                    loop {
+                        // anchor is before the first excerpt
+                        if excerpt
+                            .range
+                            .context
+                            .start
+                            .cmp(&next, &excerpt.buffer)
+                            .is_gt()
+                        {
+                            // so we skip it and try the next anchor
+                            result.push(None);
+                            match same_buffer_anchors.next() {
+                                Some(anchor) => next = anchor,
+                                None => continue 'anchors,
                             }
+                        // anchor is within the excerpt
+                        } else if excerpt
+                            .range
+                            .context
+                            .end
+                            .cmp(&next, &excerpt.buffer)
+                            .is_ge()
+                        {
+                            // record it and all following anchors that are within
+                            result.push(Some(Anchor::text(excerpt.id, next)));
+                            result.extend(
+                                same_buffer_anchors
+                                    .peeking_take_while(|a| {
+                                        excerpt.range.context.end.cmp(a, &excerpt.buffer).is_ge()
+                                    })
+                                    .map(|a| Some(Anchor::text(excerpt.id, a))),
+                            );
+                            match same_buffer_anchors.next() {
+                                Some(anchor) => next = anchor,
+                                None => continue 'anchors,
+                            }
+                        // anchor is after the excerpt, try the next one
+                        } else {
+                            cursor.next();
+                            continue 'excerpts;
                         }
                     }
                 }
@@ -5357,7 +5353,7 @@ impl MultiBufferSnapshot {
         I: 'a + IntoIterator<Item = &'a Anchor>,
     {
         let mut anchors = anchors.into_iter().enumerate().peekable();
-        let mut cursor = self.excerpts.cursor::<Option<&Locator>>(());
+        let mut cursor = self.excerpts.cursor::<ExcerptSummary>(());
         cursor.next();
 
         let mut result = Vec::new();
