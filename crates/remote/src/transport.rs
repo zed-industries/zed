@@ -141,7 +141,7 @@ fn handle_rpc_messages_over_child_process_stdio(
                 } else {
                     std::io::stderr()
                         .write_fmt(format_args!(
-                            "(remote) {}",
+                            "(remote) {}\n",
                             String::from_utf8_lossy(content)
                         ))
                         .ok();
