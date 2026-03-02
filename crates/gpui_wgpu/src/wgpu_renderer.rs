@@ -10,6 +10,24 @@ use log::warn;
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use std::num::NonZeroU64;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+
+/// Errors that can occur during rendering.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DrawError {
+    /// The GPU device has been lost and needs to be recreated.
+    DeviceLost,
+}
+
+impl std::fmt::Display for DrawError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            DrawError::DeviceLost => write!(f, "GPU device lost"),
+        }
+    }
+}
+
+impl std::error::Error for DrawError {}
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
@@ -119,6 +137,7 @@ pub struct WgpuRenderer {
     transparent_alpha_mode: wgpu::CompositeAlphaMode,
     opaque_alpha_mode: wgpu::CompositeAlphaMode,
     max_texture_size: u32,
+    device_lost: Arc<AtomicBool>,
 }
 
 impl WgpuRenderer {
@@ -191,6 +210,7 @@ impl WgpuRenderer {
         surface: wgpu::Surface<'static>,
         config: WgpuSurfaceConfig,
     ) -> anyhow::Result<Self> {
+        let device_lost = context.device_lost_flag();
         let surface_caps = surface.get_capabilities(&context.adapter);
         let preferred_formats = [
             wgpu::TextureFormat::Bgra8Unorm,
@@ -391,6 +411,7 @@ impl WgpuRenderer {
             transparent_alpha_mode,
             opaque_alpha_mode,
             max_texture_size,
+            device_lost,
         })
     }
 
@@ -949,18 +970,40 @@ impl WgpuRenderer {
         self.max_texture_size
     }
 
-    pub fn draw(&mut self, scene: &Scene) {
+    /// Returns true if the GPU device has been lost.
+    pub fn is_device_lost(&self) -> bool {
+        self.device_lost.load(Ordering::SeqCst)
+    }
+
+    pub fn draw(&mut self, scene: &Scene) -> Result<(), DrawError> {
+        if self.device_lost.load(Ordering::SeqCst) {
+            return Err(DrawError::DeviceLost);
+        }
+
         self.atlas.before_frame();
 
         let frame = match self.surface.get_current_texture() {
             Ok(frame) => frame,
             Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {
                 self.surface.configure(&self.device, &self.surface_config);
-                return;
+                // Check if reconfigure worked by trying again
+                match self.surface.get_current_texture() {
+                    Ok(frame) => frame,
+                    Err(_) => {
+                        // Persistent surface issues may indicate device loss
+                        if self.device_lost.load(Ordering::SeqCst) {
+                            return Err(DrawError::DeviceLost);
+                        }
+                        return Ok(());
+                    }
+                }
             }
             Err(e) => {
                 log::error!("Failed to acquire surface texture: {e}");
-                return;
+                if self.device_lost.load(Ordering::SeqCst) {
+                    return Err(DrawError::DeviceLost);
+                }
+                return Ok(());
             }
         };
 
@@ -1133,7 +1176,7 @@ impl WgpuRenderer {
                         self.instance_buffer_capacity
                     );
                     frame.present();
-                    return;
+                    return Ok(());
                 }
                 self.grow_instance_buffer();
                 continue;
@@ -1141,7 +1184,7 @@ impl WgpuRenderer {
 
             self.queue.submit(std::iter::once(encoder.finish()));
             frame.present();
-            return;
+            return Ok(());
         }
     }
 
@@ -1480,6 +1523,67 @@ impl WgpuRenderer {
 
     pub fn destroy(&mut self) {
         // wgpu resources are automatically cleaned up when dropped
+    }
+
+    /// Reinitializes the renderer after device loss by recreating all GPU resources.
+    ///
+    /// # Safety
+    /// The caller must ensure that the window handle used to create the original surface
+    /// is still valid.
+    #[cfg(not(target_family = "wasm"))]
+    pub fn reinitialize<W: HasWindowHandle + HasDisplayHandle>(
+        &mut self,
+        gpu_context: &mut Option<crate::WgpuContext>,
+        window: &W,
+        transparent: bool,
+    ) -> anyhow::Result<()> {
+        use anyhow::Context as _;
+
+        let window_handle = window
+            .window_handle()
+            .map_err(|e| anyhow::anyhow!("Failed to get window handle: {e}"))?;
+        let display_handle = window
+            .display_handle()
+            .map_err(|e| anyhow::anyhow!("Failed to get display handle: {e}"))?;
+
+        let target = wgpu::SurfaceTargetUnsafe::RawHandle {
+            raw_display_handle: display_handle.as_raw(),
+            raw_window_handle: window_handle.as_raw(),
+        };
+
+        // The old context is invalid, so we need to create a new one
+        let instance = crate::WgpuContext::instance();
+
+        let surface = unsafe {
+            instance
+                .create_surface_unsafe(target)
+                .map_err(|e| anyhow::anyhow!("Failed to create surface: {e}"))?
+        };
+
+        // Create a new context - the old one is invalid due to device loss
+        *gpu_context = None;
+        let context = gpu_context.insert(
+            crate::WgpuContext::new(instance, &surface)
+                .context("Failed to create new WgpuContext during recovery")?,
+        );
+
+        let config = crate::WgpuSurfaceConfig {
+            size: gpui::Size {
+                width: gpui::DevicePixels(self.surface_config.width as i32),
+                height: gpui::DevicePixels(self.surface_config.height as i32),
+            },
+            transparent,
+        };
+
+        // Create a new renderer with the recovered context
+        let new_renderer = Self::new_with_surface(context, surface, config)
+            .context("Failed to create new renderer during recovery")?;
+
+        // Replace self with the new renderer
+        *self = new_renderer;
+
+        log::info!("WgpuRenderer successfully reinitialized after device loss");
+        Ok(())
     }
 }
 

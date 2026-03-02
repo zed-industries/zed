@@ -3,6 +3,7 @@ use anyhow::Context as _;
 #[cfg(not(target_family = "wasm"))]
 use gpui_util::ResultExt;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 pub struct WgpuContext {
     pub instance: wgpu::Instance,
@@ -10,6 +11,7 @@ pub struct WgpuContext {
     pub device: Arc<wgpu::Device>,
     pub queue: Arc<wgpu::Queue>,
     dual_source_blending: bool,
+    device_lost: Arc<AtomicBool>,
 }
 
 impl WgpuContext {
@@ -52,8 +54,9 @@ impl WgpuContext {
             adapter.get_info().backend
         );
 
+        let device_lost = Arc::new(AtomicBool::new(false));
         let (device, queue, dual_source_blending) =
-            pollster::block_on(Self::create_device(&adapter))?;
+            pollster::block_on(Self::create_device(&adapter, device_lost.clone()))?;
 
         Ok(Self {
             instance,
@@ -61,6 +64,7 @@ impl WgpuContext {
             device: Arc::new(device),
             queue: Arc::new(queue),
             dual_source_blending,
+            device_lost,
         })
     }
 
@@ -88,7 +92,9 @@ impl WgpuContext {
             adapter.get_info().backend
         );
 
-        let (device, queue, dual_source_blending) = Self::create_device(&adapter).await?;
+        let device_lost = Arc::new(AtomicBool::new(false));
+        let (device, queue, dual_source_blending) =
+            Self::create_device(&adapter, device_lost.clone()).await?;
 
         Ok(Self {
             instance,
@@ -96,11 +102,13 @@ impl WgpuContext {
             device: Arc::new(device),
             queue: Arc::new(queue),
             dual_source_blending,
+            device_lost,
         })
     }
 
     async fn create_device(
         adapter: &wgpu::Adapter,
+        device_lost: Arc<AtomicBool>,
     ) -> anyhow::Result<(wgpu::Device, wgpu::Queue, bool)> {
         let dual_source_blending = adapter
             .features()
@@ -129,6 +137,11 @@ impl WgpuContext {
             })
             .await
             .map_err(|e| anyhow::anyhow!("Failed to create wgpu device: {e}"))?;
+
+        device.set_device_lost_callback(move |reason, msg| {
+            log::error!("GPU device lost: {:?} - {}", reason, msg);
+            device_lost.store(true, Ordering::SeqCst);
+        });
 
         Ok((device, queue, dual_source_blending))
     }
@@ -227,6 +240,49 @@ impl WgpuContext {
     pub fn supports_dual_source_blending(&self) -> bool {
         self.dual_source_blending
     }
+
+    pub fn is_device_lost(&self) -> bool {
+        self.device_lost.load(Ordering::SeqCst)
+    }
+
+    pub fn device_lost_flag(&self) -> Arc<AtomicBool> {
+        self.device_lost.clone()
+    }
+}
+
+/// Attempts to recover from device loss by retrying the given function.
+/// Uses shorter delays than Windows since Linux/Vulkan typically recovers faster.
+#[cfg(not(target_family = "wasm"))]
+pub fn try_to_recover_from_device_lost<T>(
+    mut f: impl FnMut() -> anyhow::Result<T>,
+) -> anyhow::Result<T> {
+    use anyhow::Context as _;
+
+    const MAX_ATTEMPTS: usize = 5;
+    const INITIAL_DELAY_MS: u64 = 50;
+
+    for attempt in 0..MAX_ATTEMPTS {
+        if attempt > 0 {
+            std::thread::sleep(std::time::Duration::from_millis(
+                INITIAL_DELAY_MS + (attempt as u64 * 25),
+            ));
+        }
+        match f() {
+            Ok(result) => return Ok(result),
+            Err(e) if attempt == MAX_ATTEMPTS - 1 => {
+                return Err(e)
+                    .context("Failed to recover from device loss after multiple attempts");
+            }
+            Err(e) => {
+                log::warn!(
+                    "Device recovery attempt {} failed: {:?}, retrying...",
+                    attempt + 1,
+                    e
+                );
+            }
+        }
+    }
+    unreachable!()
 }
 
 #[cfg(not(target_family = "wasm"))]

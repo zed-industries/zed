@@ -9,7 +9,9 @@ use gpui::{
     Tiling, WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControlArea,
     WindowDecorations, WindowKind, WindowParams, px,
 };
-use gpui_wgpu::{WgpuContext, WgpuRenderer, WgpuSurfaceConfig};
+use gpui_wgpu::{
+    DrawError, WgpuContext, WgpuRenderer, WgpuSurfaceConfig, try_to_recover_from_device_lost,
+};
 
 use collections::FxHashSet;
 use raw_window_handle as rwh;
@@ -1027,6 +1029,52 @@ impl X11WindowStatePtr {
         !state.children.is_empty()
     }
 
+    /// Checks if the renderer's device has been lost and attempts recovery if needed.
+    /// Returns true if recovery was attempted (successfully or not).
+    pub fn try_recover_from_device_loss(&self) -> bool {
+        let state = self.state.borrow();
+        if !state.renderer.is_device_lost() {
+            return false;
+        }
+        drop(state);
+
+        log::warn!("GPU device loss detected, attempting recovery...");
+
+        let result = try_to_recover_from_device_lost(|| self.reinitialize_renderer());
+
+        match result {
+            Ok(()) => {
+                log::info!("Successfully recovered from GPU device loss");
+                true
+            }
+            Err(e) => {
+                log::error!("Failed to recover from GPU device loss: {:?}", e);
+                true
+            }
+        }
+    }
+
+    fn reinitialize_renderer(&self) -> anyhow::Result<()> {
+        let mut state = self.state.borrow_mut();
+        let Some(client) = state.client.get_client() else {
+            anyhow::bail!("X11 client no longer available");
+        };
+        let mut client_state = client.0.borrow_mut();
+
+        let transparent = state.is_transparent();
+        let raw_window = RawWindow {
+            connection: as_raw_xcb_connection::AsRawXcbConnection::as_raw_xcb_connection(&self.xcb)
+                as *mut _,
+            screen_id: client_state.x_root_index,
+            window_id: self.x_window,
+            visual_id: 0, // Will be determined by wgpu
+        };
+
+        state
+            .renderer
+            .reinitialize(&mut client_state.gpu_context, &raw_window, transparent)
+    }
+
     pub fn close(&self) {
         let state = self.state.borrow();
         let client = state.client.clone();
@@ -1573,8 +1621,19 @@ impl PlatformWindow for X11Window {
     }
 
     fn draw(&self, scene: &Scene) {
+        // Check for device loss and attempt recovery before drawing
+        if self.0.try_recover_from_device_loss() {
+            // Recovery was attempted, skip this frame
+            return;
+        }
+
         let mut inner = self.0.state.borrow_mut();
-        inner.renderer.draw(scene);
+        match inner.renderer.draw(scene) {
+            Ok(()) => {}
+            Err(DrawError::DeviceLost) => {
+                log::error!("GPU device lost during draw, will attempt recovery on next frame");
+            }
+        }
     }
 
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas> {

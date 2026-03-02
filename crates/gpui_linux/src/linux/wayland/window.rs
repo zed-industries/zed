@@ -34,7 +34,9 @@ use gpui::{
     WindowDecorations, WindowKind, WindowParams, layer_shell::LayerShellNotSupportedError, px,
     size,
 };
-use gpui_wgpu::{WgpuContext, WgpuRenderer, WgpuSurfaceConfig};
+use gpui_wgpu::{
+    DrawError, WgpuContext, WgpuRenderer, WgpuSurfaceConfig, try_to_recover_from_device_lost,
+};
 
 #[derive(Default)]
 pub(crate) struct Callbacks {
@@ -565,6 +567,53 @@ impl WaylandWindowStatePtr {
         if let Some(fun) = cb.request_frame.as_mut() {
             fun(Default::default());
         }
+    }
+
+    /// Checks if the renderer's device has been lost and attempts recovery if needed.
+    /// Returns true if recovery was attempted (successfully or not).
+    pub fn try_recover_from_device_loss(&self) -> bool {
+        let state = self.state.borrow();
+        if !state.renderer.is_device_lost() {
+            return false;
+        }
+        drop(state);
+
+        log::warn!("GPU device loss detected, attempting recovery...");
+
+        let result = try_to_recover_from_device_lost(|| self.reinitialize_renderer());
+
+        match result {
+            Ok(()) => {
+                log::info!("Successfully recovered from GPU device loss");
+                true
+            }
+            Err(e) => {
+                log::error!("Failed to recover from GPU device loss: {:?}", e);
+                true
+            }
+        }
+    }
+
+    fn reinitialize_renderer(&self) -> anyhow::Result<()> {
+        let mut state = self.state.borrow_mut();
+        let client = state.client.get_client();
+        let mut client_state = client.borrow_mut();
+
+        let transparent = state.is_transparent();
+        let raw_window = RawWindow {
+            window: state.surface.id().as_ptr().cast::<c_void>(),
+            display: state
+                .surface
+                .backend()
+                .upgrade()
+                .ok_or_else(|| anyhow::anyhow!("Wayland backend no longer available"))?
+                .display_ptr()
+                .cast::<c_void>(),
+        };
+
+        state
+            .renderer
+            .reinitialize(&mut client_state.gpu_context, &raw_window, transparent)
     }
 
     pub fn handle_xdg_surface_event(&self, event: xdg_surface::Event) {
@@ -1324,8 +1373,19 @@ impl PlatformWindow for WaylandWindow {
     }
 
     fn draw(&self, scene: &Scene) {
+        // Check for device loss and attempt recovery before drawing
+        if self.0.try_recover_from_device_loss() {
+            // Recovery was attempted, skip this frame
+            return;
+        }
+
         let mut state = self.borrow_mut();
-        state.renderer.draw(scene);
+        match state.renderer.draw(scene) {
+            Ok(()) => {}
+            Err(DrawError::DeviceLost) => {
+                log::error!("GPU device lost during draw, will attempt recovery on next frame");
+            }
+        }
     }
 
     fn completed_frame(&self) {
