@@ -1,14 +1,14 @@
 use acp_thread::SUBAGENT_SESSION_ID_META_KEY;
 use agent_client_protocol as acp;
 use anyhow::Result;
-use gpui::{App, SharedString, Task, WeakEntity};
+use gpui::{App, SharedString, Task};
 use language_model::LanguageModelToolResultContent;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::rc::Rc;
 use std::sync::Arc;
 
-use crate::{AgentTool, Thread, ThreadEnvironment, ToolCallEventStream, ToolInput};
+use crate::{AgentTool, ThreadEnvironment, ToolCallEventStream, ToolInput};
 
 /// Spawns an agent to perform a delegated task.
 ///
@@ -59,16 +59,12 @@ impl From<SpawnAgentToolOutput> for LanguageModelToolResultContent {
 
 /// Tool that spawns an agent thread to work on a task.
 pub struct SpawnAgentTool {
-    parent_thread: WeakEntity<Thread>,
     environment: Rc<dyn ThreadEnvironment>,
 }
 
 impl SpawnAgentTool {
-    pub fn new(parent_thread: WeakEntity<Thread>, environment: Rc<dyn ThreadEnvironment>) -> Self {
-        Self {
-            parent_thread,
-            environment,
-        }
+    pub fn new(environment: Rc<dyn ThreadEnvironment>) -> Self {
+        Self { environment }
     }
 }
 
@@ -87,9 +83,14 @@ impl AgentTool for SpawnAgentTool {
         input: Result<Self::Input, serde_json::Value>,
         _cx: &mut App,
     ) -> SharedString {
-        input
-            .map(|i| i.label.into())
-            .unwrap_or_else(|_| "Spawning agent".into())
+        match input {
+            Ok(i) => i.label.into(),
+            Err(value) => value
+                .get("label")
+                .and_then(|v| v.as_str())
+                .map(|s| SharedString::from(s.to_owned()))
+                .unwrap_or_else(|| "Spawning agent".into()),
+        }
     }
 
     fn run(
@@ -108,27 +109,10 @@ impl AgentTool for SpawnAgentTool {
                 })?;
 
             let (subagent, subagent_session_id) = cx.update(|cx| {
-                let Some(parent_thread_entity) = self.parent_thread.upgrade() else {
-                    return Err(SpawnAgentToolOutput::Error {
-                        session_id: None,
-                        error: "Parent thread no longer exists".to_string(),
-                    });
-                };
-
                 let subagent = if let Some(session_id) = input.session_id {
-                    self.environment.resume_subagent(
-                        parent_thread_entity,
-                        session_id,
-                        input.message,
-                        cx,
-                    )
+                    self.environment.resume_subagent(session_id, cx)
                 } else {
-                    self.environment.create_subagent(
-                        parent_thread_entity,
-                        input.label,
-                        input.message,
-                        cx,
-                    )
+                    self.environment.create_subagent(input.label, cx)
                 };
                 let subagent = subagent.map_err(|err| SpawnAgentToolOutput::Error {
                     session_id: None,
@@ -146,7 +130,7 @@ impl AgentTool for SpawnAgentTool {
                 Ok((subagent, subagent_session_id))
             })?;
 
-            match subagent.wait_for_output(cx).await {
+            match subagent.send(input.message, cx).await {
                 Ok(output) => {
                     event_stream.update_fields(
                         acp::ToolCallUpdateFields::new().content(vec![output.clone().into()]),
@@ -158,9 +142,13 @@ impl AgentTool for SpawnAgentTool {
                 }
                 Err(e) => {
                     let error = e.to_string();
-                    event_stream.update_fields(
-                        acp::ToolCallUpdateFields::new().content(vec![error.clone().into()]),
-                    );
+                    // workaround for now because the agent loop will always mark this as ToolCallStatus::Failed
+                    let canceled = error == "User canceled";
+                    event_stream.update_fields(acp::ToolCallUpdateFields::new().content(vec![
+                        acp::ToolCallContent::Content(acp::Content::new(error.clone()).meta(
+                            acp::Meta::from_iter([("cancelled".into(), canceled.into())]),
+                        )),
+                    ]));
                     Err(SpawnAgentToolOutput::Error {
                         session_id: Some(subagent_session_id),
                         error,

@@ -40,7 +40,8 @@ use language_model::{
     LanguageModelImage, LanguageModelProviderId, LanguageModelRegistry, LanguageModelRequest,
     LanguageModelRequestMessage, LanguageModelRequestTool, LanguageModelToolResult,
     LanguageModelToolResultContent, LanguageModelToolSchemaFormat, LanguageModelToolUse,
-    LanguageModelToolUseId, Role, SelectedModel, StopReason, TokenUsage, ZED_CLOUD_PROVIDER_ID,
+    LanguageModelToolUseId, Role, SelectedModel, Speed, StopReason, TokenUsage,
+    ZED_CLOUD_PROVIDER_ID,
 };
 use project::Project;
 use prompt_store::ProjectContext;
@@ -605,7 +606,7 @@ pub trait TerminalHandle {
 
 pub trait SubagentHandle {
     fn id(&self) -> acp::SessionId;
-    fn wait_for_output(&self, cx: &AsyncApp) -> Task<Result<String>>;
+    fn send(&self, message: String, cx: &AsyncApp) -> Task<Result<String>>;
 }
 
 pub trait ThreadEnvironment {
@@ -617,19 +618,11 @@ pub trait ThreadEnvironment {
         cx: &mut AsyncApp,
     ) -> Task<Result<Rc<dyn TerminalHandle>>>;
 
-    fn create_subagent(
-        &self,
-        parent_thread: Entity<Thread>,
-        label: String,
-        initial_prompt: String,
-        cx: &mut App,
-    ) -> Result<Rc<dyn SubagentHandle>>;
+    fn create_subagent(&self, label: String, cx: &mut App) -> Result<Rc<dyn SubagentHandle>>;
 
     fn resume_subagent(
         &self,
-        _parent_thread: Entity<Thread>,
         _session_id: acp::SessionId,
-        _follow_up_prompt: String,
         _cx: &mut App,
     ) -> Result<Rc<dyn SubagentHandle>> {
         Err(anyhow::anyhow!(
@@ -892,6 +885,7 @@ pub struct Thread {
     summarization_model: Option<Arc<dyn LanguageModel>>,
     thinking_enabled: bool,
     thinking_effort: Option<String>,
+    speed: Option<Speed>,
     prompt_capabilities_tx: watch::Sender<acp::PromptCapabilities>,
     pub(crate) prompt_capabilities_rx: watch::Receiver<acp::PromptCapabilities>,
     pub(crate) project: Entity<Project>,
@@ -985,6 +979,7 @@ impl Thread {
             model,
             summarization_model: None,
             thinking_enabled: enable_thinking,
+            speed: None,
             thinking_effort,
             prompt_capabilities_tx,
             prompt_capabilities_rx,
@@ -1142,10 +1137,6 @@ impl Thread {
         let profile_id = db_thread
             .profile
             .unwrap_or_else(|| settings.default_profile.clone());
-        let thinking_effort = settings
-            .default_model
-            .as_ref()
-            .and_then(|model| model.effort.clone());
 
         let mut model = LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
             db_thread
@@ -1174,12 +1165,6 @@ impl Thread {
             watch::channel(Self::prompt_capabilities(model.as_deref()));
 
         let action_log = cx.new(|_| ActionLog::new(project.clone()));
-        // TODO: We should serialize the user's configured thinking parameter on `DbThread`
-        // rather than deriving it from the model's capability. A user may have explicitly
-        // toggled thinking off for a model that supports it, and we'd lose that preference here.
-        let enable_thinking = model
-            .as_deref()
-            .is_some_and(|model| model.supports_thinking());
 
         Self {
             id,
@@ -1207,8 +1192,9 @@ impl Thread {
             templates,
             model,
             summarization_model: None,
-            thinking_enabled: enable_thinking,
-            thinking_effort,
+            thinking_enabled: db_thread.thinking_enabled,
+            thinking_effort: db_thread.thinking_effort,
+            speed: db_thread.speed,
             project,
             action_log,
             updated_at: db_thread.updated_at,
@@ -1238,6 +1224,9 @@ impl Thread {
             profile: Some(self.profile_id.clone()),
             imported: self.imported,
             subagent_context: self.subagent_context.clone(),
+            speed: self.speed,
+            thinking_enabled: self.thinking_enabled,
+            thinking_effort: self.thinking_effort.clone(),
         };
 
         cx.background_spawn(async move {
@@ -1326,6 +1315,15 @@ impl Thread {
         cx.notify();
     }
 
+    pub fn speed(&self) -> Option<Speed> {
+        self.speed
+    }
+
+    pub fn set_speed(&mut self, speed: Speed, cx: &mut Context<Self>) {
+        self.speed = Some(speed);
+        cx.notify();
+    }
+
     pub fn last_message(&self) -> Option<Message> {
         if let Some(message) = self.pending_message.clone() {
             Some(Message::Agent(message))
@@ -1376,7 +1374,7 @@ impl Thread {
         self.add_tool(WebSearchTool);
 
         if cx.has_flag::<SubagentsFeatureFlag>() && self.depth() < MAX_SUBAGENT_DEPTH {
-            self.add_tool(SpawnAgentTool::new(cx.weak_entity(), environment));
+            self.add_tool(SpawnAgentTool::new(environment));
         }
     }
 
@@ -2493,6 +2491,7 @@ impl Thread {
             temperature: AgentSettings::temperature_for_model(model, cx),
             thinking_allowed: self.thinking_enabled,
             thinking_effort: self.thinking_effort.clone(),
+            speed: self.speed(),
         };
 
         log::debug!("Completion request built successfully");

@@ -453,6 +453,33 @@ pub struct LanguageModelRequest {
     pub temperature: Option<f32>,
     pub thinking_allowed: bool,
     pub thinking_effort: Option<String>,
+    pub speed: Option<Speed>,
+}
+
+#[derive(Clone, Copy, Default, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum Speed {
+    #[default]
+    Standard,
+    Fast,
+}
+
+impl Speed {
+    pub fn toggle(self) -> Self {
+        match self {
+            Speed::Standard => Speed::Fast,
+            Speed::Fast => Speed::Standard,
+        }
+    }
+}
+
+impl From<Speed> for anthropic::Speed {
+    fn from(speed: Speed) -> Self {
+        match speed {
+            Speed::Standard => anthropic::Speed::Standard,
+            Speed::Fast => anthropic::Speed::Fast,
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]

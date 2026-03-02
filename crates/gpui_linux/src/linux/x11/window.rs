@@ -497,21 +497,6 @@ impl X11WindowState {
                 ),
             )?;
 
-            if let Some(size) = params.window_min_size {
-                let mut size_hints = WmSizeHints::new();
-                let min_size = (f32::from(size.width) as i32, f32::from(size.height) as i32);
-                size_hints.min_size = Some(min_size);
-                check_reply(
-                    || {
-                        format!(
-                            "X11 change of WM_SIZE_HINTS failed. min_size: {:?}",
-                            min_size
-                        )
-                    },
-                    size_hints.set_normal_hints(xcb, x_window),
-                )?;
-            }
-
             let reply = get_reply(|| "X11 GetGeometry failed.", xcb.get_geometry(x_window))?;
             if reply.x == 0 && reply.y == 0 {
                 bounds.origin.x.0 += 2;
@@ -696,6 +681,25 @@ impl X11WindowState {
                 };
                 WgpuRenderer::new(gpu_context, &raw_window, config)?
             };
+
+            // Set max window size hints based on the GPU's maximum texture dimension.
+            // This prevents the window from being resized larger than what the GPU can render.
+            let max_texture_size = renderer.max_texture_size();
+            let mut size_hints = WmSizeHints::new();
+            if let Some(size) = params.window_min_size {
+                size_hints.min_size =
+                    Some((f32::from(size.width) as i32, f32::from(size.height) as i32));
+            }
+            size_hints.max_size = Some((max_texture_size as i32, max_texture_size as i32));
+            check_reply(
+                || {
+                    format!(
+                        "X11 change of WM_SIZE_HINTS failed. max_size: {:?}",
+                        max_texture_size
+                    )
+                },
+                size_hints.set_normal_hints(xcb, x_window),
+            )?;
 
             let display = Rc::new(X11Display::new(xcb, scale_factor, x_screen_index)?);
 

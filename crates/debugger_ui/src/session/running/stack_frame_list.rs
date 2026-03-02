@@ -15,13 +15,13 @@ use util::{
     paths::{PathStyle, is_absolute},
 };
 
-use crate::{StackTraceView, ToggleUserFrames};
+use crate::ToggleUserFrames;
 use language::PointUtf16;
 use project::debugger::breakpoint_store::ActiveStackFrame;
 use project::debugger::session::{Session, SessionEvent, StackFrame, ThreadStatus};
 use project::{ProjectItem, ProjectPath};
 use ui::{Tooltip, WithScrollbar, prelude::*};
-use workspace::{ItemHandle, Workspace, WorkspaceId};
+use workspace::{Workspace, WorkspaceId};
 
 use super::RunningState;
 
@@ -154,6 +154,7 @@ impl StackFrameList {
         &self.entries
     }
 
+    #[cfg(test)]
     pub(crate) fn flatten_entries(
         &self,
         show_collapsed: bool,
@@ -437,14 +438,7 @@ impl StackFrameList {
                             .project_path(cx)
                             .context("Could not select a stack frame for unnamed buffer")?;
 
-                        let open_preview = !workspace
-                            .item_of_type::<StackTraceView>(cx)
-                            .map(|viewer| {
-                                workspace
-                                    .active_item(cx)
-                                    .is_some_and(|item| item.item_id() == viewer.item_id())
-                            })
-                            .unwrap_or_default();
+                        let open_preview = true;
 
                         let active_debug_line_pane = workspace
                             .project()
