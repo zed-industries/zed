@@ -24,6 +24,7 @@ test-support = [
     "http_client/test-support",
     "wayland",
     "x11",
+    "proptest",
 ]
 inspector = ["gpui_macros/inspector"]
 leak-detection = ["backtrace"]
@@ -64,6 +65,7 @@ num_cpus = "1.13"
 parking = "2.0.0"
 parking_lot.workspace = true
 postage.workspace = true
+proptest = { workspace = true, optional = true }
 chrono.workspace = true
 profiling.workspace = true
 rand.workspace = true

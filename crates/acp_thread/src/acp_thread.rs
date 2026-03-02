@@ -4589,4 +4589,9 @@ mod tests {
             );
         });
     }
+
+    #[gpui::property_test]
+    async fn simple_test(x: i32) {
+        assert_eq!(x, x);
+    }
 }

@@ -6,6 +6,7 @@ mod derive_visual_context;
 mod register_action;
 mod styles;
 mod test;
+mod property_test;
 
 #[cfg(any(feature = "inspector", debug_assertions))]
 mod derive_inspector_reflection;
@@ -186,6 +187,12 @@ pub fn box_shadow_style_methods(input: TokenStream) -> TokenStream {
 #[proc_macro_attribute]
 pub fn test(args: TokenStream, function: TokenStream) -> TokenStream {
     test::test(args, function)
+}
+
+/// todo! docs
+#[proc_macro_attribute]
+pub fn property_test(args: TokenStream, function: TokenStream) -> TokenStream {
+    property_test::test(args.into(), function.into()).into()
 }
 
 /// When added to a trait, `#[derive_inspector_reflection]` generates a module which provides
