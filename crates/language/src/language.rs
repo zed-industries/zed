@@ -491,6 +491,7 @@ pub trait LspAdapter: 'static + Send + Sync + DynLspInstaller {
     async fn initialization_options(
         self: Arc<Self>,
         _: &Arc<dyn LspAdapterDelegate>,
+        _cx: &mut AsyncApp,
     ) -> Result<Option<Value>> {
         Ok(None)
     }
@@ -2638,6 +2639,7 @@ impl LspAdapter for FakeLspAdapter {
     async fn initialization_options(
         self: Arc<Self>,
         _: &Arc<dyn LspAdapterDelegate>,
+        _cx: &mut AsyncApp,
     ) -> Result<Option<Value>> {
         Ok(self.initialization_options.clone())
     }
