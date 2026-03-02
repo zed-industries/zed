@@ -441,7 +441,7 @@ impl<T: 'static> PromptEditor<T> {
                 let snapshot = editor.update(cx, |editor, cx| editor.snapshot(window, cx));
 
                 self.mention_set
-                    .update(cx, |mention_set, _cx| mention_set.remove_invalid(&snapshot));
+                    .update(cx, |mention_set, cx| mention_set.remove_invalid(&snapshot, cx));
 
                 if let Some(workspace) = Workspace::for_window(window, cx) {
                     workspace.update(cx, |workspace, cx| {

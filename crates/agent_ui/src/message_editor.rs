@@ -192,7 +192,7 @@ impl MessageEditor {
                     editor.update(cx, |editor, cx| {
                         let snapshot = editor.snapshot(window, cx);
                         this.mention_set
-                            .update(cx, |mention_set, _cx| mention_set.remove_invalid(&snapshot));
+                            .update(cx, |mention_set, cx| mention_set.remove_invalid(&snapshot, cx));
 
                         let new_hints = this
                             .command_hint(snapshot.buffer())
@@ -2253,7 +2253,7 @@ mod tests {
         .to_string();
         editor.update(&mut cx, |editor, cx| {
             let text = editor.text(cx);
-            assert_eq!(text, format!("Lorem [@a/one.txt]({url_one}) "));
+            assert_eq!(text, format!("Lorem [@one.txt]({url_one}) "));
             assert!(!editor.has_visible_completions_menu());
             assert_eq!(fold_ranges(editor, cx).len(), 1);
         });
@@ -2284,7 +2284,7 @@ mod tests {
 
         editor.update(&mut cx, |editor, cx| {
             let text = editor.text(cx);
-            assert_eq!(text, format!("Lorem [@a/one.txt]({url_one})  "));
+            assert_eq!(text, format!("Lorem [@one.txt]({url_one})  "));
             assert!(!editor.has_visible_completions_menu());
             assert_eq!(fold_ranges(editor, cx).len(), 1);
         });
@@ -2293,7 +2293,7 @@ mod tests {
 
         editor.update(&mut cx, |editor, cx| {
             let text = editor.text(cx);
-            assert_eq!(text, format!("Lorem [@a/one.txt]({url_one})  Ipsum "),);
+            assert_eq!(text, format!("Lorem [@one.txt]({url_one})  Ipsum "),);
             assert!(!editor.has_visible_completions_menu());
             assert_eq!(fold_ranges(editor, cx).len(), 1);
         });
@@ -2302,7 +2302,7 @@ mod tests {
 
         editor.update(&mut cx, |editor, cx| {
             let text = editor.text(cx);
-            assert_eq!(text, format!("Lorem [@a/one.txt]({url_one})  Ipsum @file "),);
+            assert_eq!(text, format!("Lorem [@one.txt]({url_one})  Ipsum @file "),);
             assert!(editor.has_visible_completions_menu());
             assert_eq!(fold_ranges(editor, cx).len(), 1);
         });
@@ -2344,7 +2344,7 @@ mod tests {
         editor.update(&mut cx, |editor, cx| {
             assert_eq!(
                 editor.text(cx),
-                format!("Lorem [@a/one.txt]({url_one})  Ipsum [@b/eight.txt]({url_eight}) ")
+                format!("Lorem [@one.txt]({url_one})  Ipsum [@eight.txt]({url_eight}) ")
             );
             assert!(!editor.has_visible_completions_menu());
             assert_eq!(fold_ranges(editor, cx).len(), 2);
@@ -2420,7 +2420,7 @@ mod tests {
         editor.update(&mut cx, |editor, cx| {
             assert_eq!(
                 editor.text(cx),
-                format!("Lorem [@a/one.txt]({url_one})  Ipsum [@b/eight.txt]({url_eight}) @symbol ")
+                format!("Lorem [@one.txt]({url_one})  Ipsum [@eight.txt]({url_eight}) @symbol ")
             );
             assert!(editor.has_visible_completions_menu());
             assert_eq!(current_completion_labels(editor), &["MySymbol one.txt L1"]);
@@ -2461,7 +2461,7 @@ mod tests {
             assert_eq!(
                 editor.text(cx),
                 format!(
-                    "Lorem [@a/one.txt]({url_one})  Ipsum [@b/eight.txt]({url_eight}) [@MySymbol]({}) ",
+                    "Lorem [@one.txt]({url_one})  Ipsum [@eight.txt]({url_eight}) [@MySymbol]({}) ",
                     symbol.to_uri(),
                 )
             );
@@ -2473,7 +2473,7 @@ mod tests {
         editor.update(&mut cx, |editor, cx| {
             assert_eq!(
                 editor.text(cx),
-                format!("Lorem [@a/one.txt]({url_one})  Ipsum [@b/eight.txt]({url_eight}) [@MySymbol]({}) @file x.png", symbol.to_uri())
+                format!("Lorem [@one.txt]({url_one})  Ipsum [@eight.txt]({url_eight}) [@MySymbol]({}) @file x.png", symbol.to_uri())
             );
             assert!(editor.has_visible_completions_menu());
             assert_eq!(current_completion_labels(editor), &["x.png "]);
@@ -2500,7 +2500,7 @@ mod tests {
             assert_eq!(
                 editor.text(cx),
                 format!(
-                    "Lorem [@a/one.txt]({url_one})  Ipsum [@b/eight.txt]({url_eight}) [@MySymbol]({}) ",
+                    "Lorem [@one.txt]({url_one})  Ipsum [@eight.txt]({url_eight}) [@MySymbol]({}) ",
                     symbol.to_uri()
                 )
             );
@@ -2512,7 +2512,7 @@ mod tests {
         editor.update(&mut cx, |editor, cx| {
                     assert_eq!(
                         editor.text(cx),
-                        format!("Lorem [@a/one.txt]({url_one})  Ipsum [@b/eight.txt]({url_eight}) [@MySymbol]({}) @file x.png", symbol.to_uri())
+                        format!("Lorem [@one.txt]({url_one})  Ipsum [@eight.txt]({url_eight}) [@MySymbol]({}) @file x.png", symbol.to_uri())
                     );
                     assert!(editor.has_visible_completions_menu());
                     assert_eq!(current_completion_labels(editor), &["x.png "]);
@@ -2530,7 +2530,7 @@ mod tests {
             assert_eq!(
                 editor.text(cx),
                 format!(
-                    "Lorem [@a/one.txt]({url_one})  Ipsum [@b/eight.txt]({url_eight}) [@MySymbol]({}) ",
+                    "Lorem [@one.txt]({url_one})  Ipsum [@eight.txt]({url_eight}) [@MySymbol]({}) ",
                     symbol.to_uri()
                 )
             );
@@ -3098,7 +3098,7 @@ mod tests {
             content,
             vec![
                 "What is in ".into(),
-                acp::ContentBlock::ResourceLink(acp::ResourceLink::new("src/main.rs", main_rs_uri))
+                acp::ContentBlock::ResourceLink(acp::ResourceLink::new("main.rs", main_rs_uri))
             ]
         );
 

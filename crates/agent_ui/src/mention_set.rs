@@ -26,7 +26,7 @@ use prompt_store::{PromptId, PromptStore};
 use rope::Point;
 use std::{
     cell::RefCell,
-    ffi::OsStr,
+    ffi::{OsStr, OsString},
     fmt::Write,
     ops::{Range, RangeInclusive},
     path::{Path, PathBuf},
@@ -63,6 +63,7 @@ pub struct MentionSet {
     thread_store: Option<Entity<ThreadStore>>,
     prompt_store: Option<Entity<PromptStore>>,
     mentions: HashMap<CreaseId, (MentionUri, MentionTask)>,
+    filename_counts: HashMap<OsString, usize>,
 }
 
 impl MentionSet {
@@ -76,6 +77,7 @@ impl MentionSet {
             thread_store,
             prompt_store,
             mentions: HashMap::default(),
+            filename_counts: HashMap::default(),
         }
     }
 
@@ -106,10 +108,12 @@ impl MentionSet {
         })
     }
 
-    pub fn remove_invalid(&mut self, snapshot: &EditorSnapshot) {
+    pub fn remove_invalid(&mut self, snapshot: &EditorSnapshot, cx: &mut Context<Self>) {
         for (crease_id, crease) in snapshot.crease_snapshot.creases() {
             if !crease.range().start.is_valid(snapshot.buffer_snapshot()) {
-                self.mentions.remove(&crease_id);
+                if let Some((uri, _)) = self.mentions.remove(&crease_id) {
+                    self.decrement_filename_count(&uri, cx);
+                }
             }
         }
     }
@@ -121,7 +125,16 @@ impl MentionSet {
         task: MentionTask,
         cx: &mut Context<Self>,
     ) {
-        self.mentions.insert(crease_id, (uri, task));
+        if let Some(name) = uri.mention_filename() {
+            let count = self.filename_counts.entry(name).or_insert(0);
+            *count += 1;
+            if *count == 2 {
+                cx.notify();
+            }
+        }
+        if let Some((old_uri, _)) = self.mentions.insert(crease_id, (uri, task)) {
+            self.decrement_filename_count(&old_uri, cx);
+        }
         cx.notify();
     }
 
@@ -164,27 +177,29 @@ impl MentionSet {
     }
 
     pub fn remove_mention(&mut self, crease_id: &CreaseId, cx: &mut Context<Self>) {
-        self.mentions.remove(crease_id);
-        cx.notify();
+        if let Some((uri, _)) = self.mentions.remove(crease_id) {
+            self.decrement_filename_count(&uri, cx);
+        }
     }
 
     pub fn has_duplicate_filename(&self, uri: &MentionUri) -> bool {
-        let target_name = match uri {
-            MentionUri::File { abs_path } | MentionUri::Directory { abs_path } => {
-                abs_path.file_name()
-            }
-            _ => return false,
-        };
-        self.mentions
-            .values()
-            .filter(|(mention_uri, _)| match mention_uri {
-                MentionUri::File { abs_path } | MentionUri::Directory { abs_path } => {
-                    abs_path.file_name() == target_name
+        uri.mention_filename()
+            .and_then(|name| self.filename_counts.get(&name))
+            .is_some_and(|&count| count >= 2)
+    }
+
+    fn decrement_filename_count(&mut self, uri: &MentionUri, cx: &mut Context<Self>) {
+        if let Some(name) = uri.mention_filename() {
+            if let Some(count) = self.filename_counts.get_mut(&name) {
+                *count = count.saturating_sub(1);
+                if *count == 1 {
+                    cx.notify();
                 }
-                _ => false,
-            })
-            .nth(1)
-            .is_some()
+                if *count == 0 {
+                    self.filename_counts.remove(&name);
+                }
+            }
+        }
     }
 
     pub fn creases(&self) -> HashSet<CreaseId> {
@@ -332,8 +347,7 @@ impl MentionSet {
         let task = cx
             .spawn(async move |_, _| task.await.map_err(|e| e.to_string()))
             .shared();
-        self.mentions.insert(crease_id, (mention_uri, task.clone()));
-        cx.notify();
+        self.insert_mention(crease_id, mention_uri, task.clone(), cx);
 
         // Notify the user if we failed to load the mentioned context
         let workspace = workspace.downgrade();
@@ -343,10 +357,9 @@ impl MentionSet {
             if result.is_none() {
                 this.update(cx, |this, cx| {
                     editor.update(cx, |editor, cx| {
-                        // Remove mention
                         editor.edit([(start_anchor..end_anchor, "")], cx);
                     });
-                    this.mentions.remove(&crease_id);
+                    this.remove_mention(&crease_id, cx);
                 })
                 .ok();
             }
@@ -530,16 +543,15 @@ impl MentionSet {
                 crease_ids.first().copied().unwrap()
             });
 
-            self.mentions.insert(
+            self.insert_mention(
                 crease_id,
-                (
-                    uri,
-                    Task::ready(Ok(Mention::Text {
-                        content: text,
-                        tracked_buffers: vec![buffer],
-                    }))
-                    .shared(),
-                ),
+                uri,
+                Task::ready(Ok(Mention::Text {
+                    content: text,
+                    tracked_buffers: vec![buffer],
+                }))
+                .shared(),
+                cx,
             );
         }
 
@@ -652,6 +664,53 @@ mod tests {
             theme::init(theme::LoadThemes::JustBase, cx);
             release_channel::init(Version::new(0, 0, 0), cx);
             prompt_store::init(cx);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_has_duplicate_filename(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/project",
+            json!({
+                "a": { "mod.rs": "" },
+                "b": { "mod.rs": "" },
+            }),
+        )
+        .await;
+        let project = Project::test(fs, [Path::new(path!("/project"))], cx).await;
+        let mention_set = cx.new(|_cx| MentionSet::new(project.downgrade(), None, None));
+
+        let uri_a = MentionUri::File {
+            abs_path: PathBuf::from(path!("/project/a/mod.rs")),
+        };
+        let uri_b = MentionUri::File {
+            abs_path: PathBuf::from(path!("/project/b/mod.rs")),
+        };
+
+        let crease_a = CreaseId::from_raw(0);
+        let crease_b = CreaseId::from_raw(1);
+        let task = Task::ready(Ok(Mention::Link)).shared();
+
+        // Single mention — no disambiguation needed
+        mention_set.update(cx, |mention_set, cx| {
+            mention_set.insert_mention(crease_a, uri_a.clone(), task.clone(), cx);
+            assert!(!mention_set.has_duplicate_filename(&uri_a));
+        });
+
+        // Second mention with same filename — both should be flagged as duplicates
+        mention_set.update(cx, |mention_set, cx| {
+            mention_set.insert_mention(crease_b, uri_b.clone(), task.clone(), cx);
+            assert!(mention_set.has_duplicate_filename(&uri_a));
+            assert!(mention_set.has_duplicate_filename(&uri_b));
+        });
+
+        // Remove the second — no longer a duplicate
+        mention_set.update(cx, |mention_set, cx| {
+            mention_set.remove_mention(&crease_b, cx);
+            assert!(!mention_set.has_duplicate_filename(&uri_a));
         });
     }
 
