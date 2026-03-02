@@ -1886,19 +1886,16 @@ impl AgentPanel {
             return;
         }
 
-        let is_via_collab = self.project.read(cx).is_via_collab();
-        let has_git_repo = self.project_has_git_repository(cx);
-
         let new_target = match action.kind {
             StartThreadInKind::LocalProject => StartThreadIn::LocalProject,
             StartThreadInKind::NewWorktree => {
-                if !has_git_repo {
+                if !self.project_has_git_repository(cx) {
                     log::error!(
                         "set_start_thread_in: cannot use NewWorktree without a git repository"
                     );
                     return;
                 }
-                if is_via_collab {
+                if self.project.read(cx).is_via_collab() {
                     log::error!("set_start_thread_in: cannot use NewWorktree in a collab project");
                     return;
                 }
