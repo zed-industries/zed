@@ -45,6 +45,7 @@ impl ThreadFeedbackState {
             }
         }
         let session_id = thread.read(cx).session_id().clone();
+        let parent_session_id = thread.read(cx).parent_session_id().clone();
         let agent_telemetry_id = thread.read(cx).connection().telemetry_id();
         let task = telemetry.thread_data(&session_id, cx);
         let rating = match feedback {
@@ -60,6 +61,7 @@ impl ThreadFeedbackState {
                     organization_id: organization.map(|organization| organization.id.clone()),
                     agent: agent_telemetry_id.to_string(),
                     session_id: session_id.to_string(),
+                    parent_session_id: parent_session_id.map(|id| id.to_string()),
                     rating: rating.to_string(),
                     thread,
                 })
