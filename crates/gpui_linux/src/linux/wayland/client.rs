@@ -1626,7 +1626,14 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
                             );
                         }
                     }
+                    let position = state.mouse_location.unwrap();
+                    let modifiers = state.modifiers;
                     drop(state);
+                    window.handle_input(PlatformInput::MouseMove(MouseMoveEvent {
+                        position,
+                        pressed_button: None,
+                        modifiers,
+                    }));
                     window.set_hovered(true);
                 }
             }
