@@ -1748,7 +1748,7 @@ impl SubagentHandle for NativeSubagentHandle {
         self.session_id.clone()
     }
 
-    fn send(&self, message: String, cx: &AsyncApp) -> Task<Result<String>> {
+    fn send(&self, message: String, cx: &AsyncApp) -> Task<Result<(usize, String)>> {
         let thread = self.subagent_thread.clone();
         let acp_thread = self.acp_thread.clone();
         let subagent_session_id = self.session_id.clone();
@@ -1820,7 +1820,7 @@ impl SubagentHandle for NativeSubagentHandle {
                 SubagentPromptResult::Completed => thread.read_with(cx, |thread, _cx| {
                     thread
                         .last_message()
-                        .and_then(|message| {
+                        .and_then(|(index, message)| {
                             let content = message.as_agent_message()?
                                 .content
                                 .iter()
@@ -1832,7 +1832,7 @@ impl SubagentHandle for NativeSubagentHandle {
                             if content.is_empty() {
                                 None
                             } else {
-                                Some(content)
+                                Some((index, content))
                             }
                         })
                         .context("No response from subagent")

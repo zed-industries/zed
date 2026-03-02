@@ -606,7 +606,7 @@ pub trait TerminalHandle {
 
 pub trait SubagentHandle {
     fn id(&self) -> acp::SessionId;
-    fn send(&self, message: String, cx: &AsyncApp) -> Task<Result<String>>;
+    fn send(&self, message: String, cx: &AsyncApp) -> Task<Result<(usize, String)>>;
 }
 
 pub trait ThreadEnvironment {
@@ -1324,7 +1324,14 @@ impl Thread {
         cx.notify();
     }
 
-    pub fn last_message(&self) -> Option<Message> {
+    pub fn last_message(&self) -> Option<(usize, &Message)> {
+        self.messages
+            .last()
+            .map(|msg| (self.messages.len() - 1, msg))
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn last_received_or_pending_message(&self) -> Option<Message> {
         if let Some(message) = self.pending_message.clone() {
             Some(Message::Agent(message))
         } else {

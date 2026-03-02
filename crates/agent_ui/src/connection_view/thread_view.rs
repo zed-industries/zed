@@ -6742,10 +6742,15 @@ impl ThreadView {
 
         let entries = subagent_view.thread.read(cx).entries();
         let total_entries = entries.len();
+        let end_ix = if let Some(ix) = tool_call.subagent_message_output_index {
+            (ix + 1).min(total_entries)
+        } else {
+            total_entries
+        };
         let start_ix = if should_show_subagent_fullscreen {
             0
         } else {
-            total_entries.saturating_sub(MAX_PREVIEW_ENTRIES)
+            end_ix.saturating_sub(MAX_PREVIEW_ENTRIES)
         };
 
         let scroll_handle = self
@@ -6758,7 +6763,7 @@ impl ThreadView {
             scroll_handle.scroll_to_bottom();
         }
 
-        let rendered_entries: Vec<AnyElement> = entries[start_ix..]
+        let rendered_entries: Vec<AnyElement> = entries[start_ix..end_ix]
             .iter()
             .enumerate()
             .map(|(i, entry)| {

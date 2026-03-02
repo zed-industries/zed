@@ -10,6 +10,9 @@ pub const TOOL_NAME_META_KEY: &str = "tool_name";
 /// Key used in ACP ToolCall meta to store the session id when a subagent is spawned.
 pub const SUBAGENT_SESSION_ID_META_KEY: &str = "subagent_session_id";
 
+/// Key used in ACP ToolCall meta to store the message index of the output message that the subagent has returned.
+pub const SUBAGENT_MESSAGE_OUTPUT_INDEX_META_KEY: &str = "subagent_message_output_index";
+
 /// Helper to extract tool name from ACP meta
 pub fn tool_name_from_meta(meta: &Option<acp::Meta>) -> Option<SharedString> {
     meta.as_ref()
@@ -24,6 +27,14 @@ pub fn subagent_session_id_from_meta(meta: &Option<acp::Meta>) -> Option<acp::Se
         .and_then(|m| m.get(SUBAGENT_SESSION_ID_META_KEY))
         .and_then(|v| v.as_str())
         .map(|s| acp::SessionId::from(s.to_string()))
+}
+
+/// Helper to extract subagent message output index from ACP meta
+pub fn subagent_message_output_index_from_meta(meta: &Option<acp::Meta>) -> Option<usize> {
+    meta.as_ref()
+        .and_then(|m| m.get(SUBAGENT_MESSAGE_OUTPUT_INDEX_META_KEY))
+        .and_then(|v| v.as_u64())
+        .map(|ix| ix as usize)
 }
 
 /// Helper to create meta with tool name
@@ -224,6 +235,7 @@ pub struct ToolCall {
     pub raw_output: Option<serde_json::Value>,
     pub tool_name: Option<SharedString>,
     pub subagent_session_id: Option<acp::SessionId>,
+    pub subagent_message_output_index: Option<usize>,
 }
 
 impl ToolCall {
@@ -263,6 +275,8 @@ impl ToolCall {
         let tool_name = tool_name_from_meta(&tool_call.meta);
 
         let subagent_session = subagent_session_id_from_meta(&tool_call.meta);
+        let subagent_message_output_index =
+            subagent_message_output_index_from_meta(&tool_call.meta);
 
         let result = Self {
             id: tool_call.tool_call_id,
@@ -278,6 +292,7 @@ impl ToolCall {
             raw_output: tool_call.raw_output,
             tool_name,
             subagent_session_id: subagent_session,
+            subagent_message_output_index,
         };
         Ok(result)
     }
@@ -312,6 +327,11 @@ impl ToolCall {
 
         if let Some(subagent_session_id) = subagent_session_id_from_meta(&meta) {
             self.subagent_session_id = Some(subagent_session_id);
+        }
+
+        if let Some(subagent_message_output_index) = subagent_message_output_index_from_meta(&meta)
+        {
+            self.subagent_message_output_index = Some(subagent_message_output_index);
         }
 
         if let Some(title) = title {
@@ -1529,6 +1549,7 @@ impl AcpThread {
                     raw_output: None,
                     tool_name: None,
                     subagent_session_id: None,
+                    subagent_message_output_index: None,
                 };
                 self.push_entry(AgentThreadEntry::ToolCall(failed_tool_call), cx);
                 return Ok(());
