@@ -12,6 +12,30 @@ use sum_tree::Bias;
 use text::BufferId;
 use util::debug_panic;
 
+/// A multibuffer anchor derived from an anchor into a specific excerpted buffer.
+#[derive(Clone, Copy, Eq, PartialEq, Hash)]
+pub(crate) struct ExcerptAnchor {
+    /// The position within the excerpt's underlying buffer. This is a stable
+    /// reference that remains valid as the buffer text is edited.
+    pub(crate) timestamp: clock::Lamport,
+
+    /// The byte offset into the text inserted in the operation
+    /// at `timestamp`.
+    pub(crate) offset: u32,
+    /// Whether this anchor stays attached to the character *before* or *after*
+    /// the offset.
+    pub(crate) bias: Bias,
+    pub(crate) buffer_id: BufferId,
+    /// Refers to the path key that the buffer had when this anchor was created,
+    /// so that ordering is stable when the path key for a buffer changes
+    pub(crate) path: PathKeyIndex,
+    /// When present, indicates this anchor points into deleted text within an
+    /// expanded diff hunk. The anchor references a position in the diff base
+    /// (original) text rather than the current buffer text. This is used when
+    /// displaying inline diffs where deleted lines are shown.
+    pub(crate) diff_base_anchor: Option<text::Anchor>,
+}
+
 /// A stable reference to a position within a [`MultiBuffer`](super::MultiBuffer).
 ///
 /// Unlike simple offsets, anchors remain valid as the text is edited, automatically
@@ -19,95 +43,140 @@ use util::debug_panic;
 #[derive(Clone, Copy, Eq, PartialEq, Hash)]
 pub enum Anchor {
     Min,
+    Excerpt(ExcerptAnchor),
     Max,
-    Text {
-        /// The position within the excerpt's underlying buffer. This is a stable
-        /// reference that remains valid as the buffer text is edited.
-        timestamp: clock::Lamport,
-
-        /// The byte offset into the text inserted in the operation
-        /// at `timestamp`.
-        offset: u32,
-        /// Whether this anchor stays attached to the character *before* or *after*
-        /// the offset.
-        bias: Bias,
-        buffer_id: BufferId,
-        /// Refers to the path key that the buffer had when this anchor was created,
-        /// so that ordering is stable when the path key for a buffer changes
-        path: PathKeyIndex,
-        /// When present, indicates this anchor points into deleted text within an
-        /// expanded diff hunk. The anchor references a position in the diff base
-        /// (original) text rather than the current buffer text. This is used when
-        /// displaying inline diffs where deleted lines are shown.
-        diff_base_anchor: Option<text::Anchor>,
-    },
 }
 
-impl std::fmt::Debug for Anchor {
+impl std::fmt::Debug for ExcerptAnchor {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        if self.is_min() {
-            return write!(f, "Anchor::Min");
-        }
-        if self.is_max() {
-            return write!(f, "Anchor::Max");
-        }
-
         f.debug_struct("Anchor")
-            .field("text_anchor", &self.text_anchor().unwrap())
-            .field("diff_base_anchor", &self.diff_base_anchor())
+            .field("text_anchor", &self.text_anchor())
+            .field("diff_base_anchor", &self.diff_base_anchor)
             .finish()
     }
 }
 
-impl Anchor {
-    pub fn text_anchor(&self) -> Option<(PathKeyIndex, text::Anchor, Option<text::Anchor>)> {
+impl std::fmt::Debug for Anchor {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Min | Self::Max => None,
-            Self::Text {
-                timestamp,
-                offset,
-                bias,
-                buffer_id,
-                path,
-                diff_base_anchor,
-                ..
-            } => Some((
-                *path,
-                text::Anchor::new(*timestamp, *offset, *bias, Some(*buffer_id)),
-                *diff_base_anchor,
-            )),
+            Anchor::Min => write!(f, "Anchor::Min"),
+            Anchor::Max => write!(f, "Anchor::Max"),
+            Anchor::Excerpt(excerpt_anchor) => write!(f, "{excerpt_anchor:?}"),
         }
     }
+}
 
-    pub fn diff_base_anchor(&self) -> Option<text::Anchor> {
-        match self {
-            Self::Min | Self::Max => None,
-            Self::Text {
-                diff_base_anchor, ..
-            } => *diff_base_anchor,
-        }
+impl ExcerptAnchor {
+    fn text_anchor(&self) -> text::Anchor {
+        text::Anchor::new(self.timestamp, self.offset, self.bias, Some(self.buffer_id))
     }
 
-    pub fn with_diff_base_anchor(mut self, diff_base_anchor: text::Anchor) -> Self {
-        match &mut self {
-            Self::Min | Self::Max => {
-                debug_panic!("with_diff_base_anchor called on min or max anchor");
-            }
-            Self::Text {
-                diff_base_anchor: self_diff_base_anchor,
-                ..
-            } => {
-                *self_diff_base_anchor = Some(diff_base_anchor);
-            }
-        };
+    fn with_diff_base_anchor(mut self, diff_base_anchor: text::Anchor) -> Self {
+        self.diff_base_anchor = Some(diff_base_anchor);
         self
     }
 
-    pub fn text(path: PathKeyIndex, text_anchor: text::Anchor) -> Self {
+    fn cmp(&self, other: &Self, snapshot: &MultiBufferSnapshot) -> Ordering {
+        let Some(self_path_key) = snapshot.path_keys_by_index.get(&self.path) else {
+            panic!("anchor's path was never added to multibuffer")
+        };
+        let Some(other_path_key) = snapshot.path_keys_by_index.get(&other.path) else {
+            panic!("anchor's path was never added to multibuffer")
+        };
+
+        if self_path_key.cmp(other_path_key) != Ordering::Equal {
+            return self_path_key.cmp(other_path_key);
+        }
+
+        // in the case that you removed the buffer containing self,
+        // and added the buffer containing other with the same path key
+        // (ordering is arbitrary but consistent)
+        if self.buffer_id != other.buffer_id {
+            return self.buffer_id.cmp(&other.buffer_id);
+        }
+
+        let Some(buffer) = snapshot.buffer_for_path(&self_path_key) else {
+            return Ordering::Equal;
+        };
+        let text_cmp = self.text_anchor().cmp(&other.text_anchor(), buffer);
+        if text_cmp != Ordering::Equal {
+            return text_cmp;
+        }
+
+        if (self.diff_base_anchor.is_some() || other.diff_base_anchor.is_some())
+            && let Some(base_text) = snapshot
+                .diffs
+                .get(&self.buffer_id)
+                .map(|diff| diff.base_text())
+        {
+            let self_anchor = self.diff_base_anchor.filter(|a| a.is_valid(base_text));
+            let other_anchor = other.diff_base_anchor.filter(|a| a.is_valid(base_text));
+            return match (self_anchor, other_anchor) {
+                (Some(a), Some(b)) => a.cmp(&b, base_text),
+                (Some(_), None) => match other.text_anchor().bias {
+                    Bias::Left => Ordering::Greater,
+                    Bias::Right => Ordering::Less,
+                },
+                (None, Some(_)) => match self.text_anchor().bias {
+                    Bias::Left => Ordering::Less,
+                    Bias::Right => Ordering::Greater,
+                },
+                (None, None) => Ordering::Equal,
+            };
+        }
+
+        Ordering::Equal
+    }
+
+    fn bias_left(&self, snapshot: &MultiBufferSnapshot) -> Self {
+        if self.bias == Bias::Left {
+            return *self;
+        }
+        let Some(buffer) = snapshot.buffer_for_id(self.buffer_id) else {
+            return *self;
+        };
+        let text_anchor = self.text_anchor().bias_left(&buffer);
+        let ret = Self::in_buffer(self.path, text_anchor);
+        if let Some(diff_base_anchor) = self.diff_base_anchor {
+            if let Some(diff) = snapshot.diffs.get(&self.buffer_id)
+                && diff_base_anchor.is_valid(&diff.base_text())
+            {
+                ret.with_diff_base_anchor(diff_base_anchor.bias_left(diff.base_text()))
+            } else {
+                ret.with_diff_base_anchor(diff_base_anchor)
+            }
+        } else {
+            ret
+        }
+    }
+
+    fn bias_right(&self, snapshot: &MultiBufferSnapshot) -> Self {
+        if self.bias == Bias::Right {
+            return *self;
+        }
+        let Some(buffer) = snapshot.buffer_for_id(self.buffer_id) else {
+            return *self;
+        };
+        let text_anchor = self.text_anchor().bias_right(&buffer);
+        let ret = Self::in_buffer(self.path, text_anchor);
+        if let Some(diff_base_anchor) = self.diff_base_anchor {
+            if let Some(diff) = snapshot.diffs.get(&self.buffer_id)
+                && diff_base_anchor.is_valid(&diff.base_text())
+            {
+                ret.with_diff_base_anchor(diff_base_anchor.bias_right(diff.base_text()))
+            } else {
+                ret.with_diff_base_anchor(diff_base_anchor)
+            }
+        } else {
+            ret
+        }
+    }
+
+    fn in_buffer(path: PathKeyIndex, text_anchor: text::Anchor) -> Self {
         let Some(buffer_id) = text_anchor.buffer_id else {
             panic!("text_anchor must have a buffer_id");
         };
-        Self::Text {
+        ExcerptAnchor {
             path,
             diff_base_anchor: None,
             timestamp: text_anchor.timestamp(),
@@ -117,18 +186,32 @@ impl Anchor {
         }
     }
 
-    pub fn range_in_buffer(path: PathKeyIndex, range: Range<text::Anchor>) -> Range<Self> {
-        Self::text(path, range.start)..Self::text(path, range.end)
+    fn is_valid(&self, snapshot: &MultiBufferSnapshot) -> bool {
+        let Some(target) = snapshot.try_anchor_seek_target(*self) else {
+            return false;
+        };
+        let mut cursor = snapshot.excerpts.cursor::<ExcerptSummary>(());
+        cursor.seek(&target, Bias::Left);
+        let Some(excerpt) = cursor.item() else {
+            return false;
+        };
+        excerpt.buffer.remote_id() == self.buffer_id
+            && excerpt
+                .range
+                .context
+                .start
+                .cmp(&self.text_anchor(), &excerpt.buffer)
+                .is_le()
+            && excerpt
+                .range
+                .context
+                .end
+                .cmp(&self.text_anchor(), &excerpt.buffer)
+                .is_ge()
     }
+}
 
-    pub fn bias(&self) -> Bias {
-        match self {
-            Self::Min => Bias::Left,
-            Self::Max => Bias::Right,
-            Self::Text { bias, .. } => *bias,
-        }
-    }
-
+impl Anchor {
     pub fn min() -> Self {
         Self::Min
     }
@@ -145,87 +228,33 @@ impl Anchor {
         matches!(self, Self::Max)
     }
 
+    pub fn in_buffer(path: PathKeyIndex, text_anchor: text::Anchor) -> Self {
+        Self::Excerpt(ExcerptAnchor::in_buffer(path, text_anchor))
+    }
+
+    pub fn range_in_buffer(path: PathKeyIndex, range: Range<text::Anchor>) -> Range<Self> {
+        Self::in_buffer(path, range.start)..Self::in_buffer(path, range.end)
+    }
+
     pub fn cmp(&self, other: &Anchor, snapshot: &MultiBufferSnapshot) -> Ordering {
-        let (self_text_anchor, self_path, other_text_anchor, other_path) = match (self, other) {
+        match (self, other) {
             (Anchor::Min, Anchor::Min) => return Ordering::Equal,
             (Anchor::Max, Anchor::Max) => return Ordering::Equal,
             (Anchor::Min, _) => return Ordering::Less,
             (Anchor::Max, _) => return Ordering::Greater,
             (_, Anchor::Max) => return Ordering::Less,
             (_, Anchor::Min) => return Ordering::Greater,
-            (
-                Anchor::Text {
-                    path: self_path, ..
-                },
-                Anchor::Text {
-                    path: other_path, ..
-                },
-            ) => (
-                self.text_anchor().unwrap(),
-                self_path,
-                other.text_anchor().unwrap(),
-                other_path,
-            ),
-        };
-        let self_buffer_id = self_text_anchor.buffer_id.unwrap();
-        let other_buffer_id = other_text_anchor.buffer_id.unwrap();
-
-        let Some(self_path_key) = snapshot.path_keys_by_index.get(&self_path) else {
-            panic!("anchor's path was never added to multibuffer")
-        };
-        let Some(other_path_key) = snapshot.path_keys_by_index.get(&other_path) else {
-            panic!("anchor's path was never added to multibuffer")
-        };
-
-        if self_path_key.cmp(other_path_key) != Ordering::Equal {
-            return self_path_key.cmp(other_path_key);
+            (Anchor::Excerpt(self_excerpt_anchor), Anchor::Excerpt(other_excerpt_anchor)) => {
+                self_excerpt_anchor.cmp(other_excerpt_anchor, snapshot)
+            }
         }
-
-        // in the case that you removed the buffer contianing self,
-        // and added the buffer containing other with the same path key
-        // (ordering is arbitrary but consistent)
-        if self_buffer_id != other_buffer_id {
-            return self_buffer_id.cmp(&other_buffer_id);
-        }
-
-        let Some(buffer) = snapshot.buffer_for_path(&self_path_key) else {
-            return Ordering::Equal;
-        };
-        let text_cmp = self_text_anchor.cmp(&other_text_anchor, buffer);
-        if text_cmp != Ordering::Equal {
-            return text_cmp;
-        }
-
-        if (self.diff_base_anchor().is_some() || other.diff_base_anchor().is_some())
-            && let Some(base_text) = snapshot
-                .diffs
-                .get(&self_buffer_id)
-                .map(|diff| diff.base_text())
-        {
-            let self_anchor = self.diff_base_anchor().filter(|a| a.is_valid(base_text));
-            let other_anchor = other.diff_base_anchor().filter(|a| a.is_valid(base_text));
-            return match (self_anchor, other_anchor) {
-                (Some(a), Some(b)) => a.cmp(&b, base_text),
-                (Some(_), None) => match other_text_anchor.bias {
-                    Bias::Left => Ordering::Greater,
-                    Bias::Right => Ordering::Less,
-                },
-                (None, Some(_)) => match self_text_anchor.bias {
-                    Bias::Left => Ordering::Less,
-                    Bias::Right => Ordering::Greater,
-                },
-                (None, None) => Ordering::Equal,
-            };
-        }
-
-        Ordering::Equal
     }
 
     pub fn bias(&self) -> Bias {
         match self {
             Anchor::Min => Bias::Left,
             Anchor::Max => Bias::Right,
-            Anchor::Text { bias, .. } => *bias,
+            Anchor::Excerpt(anchor) => anchor.bias,
         }
     }
 
@@ -233,65 +262,15 @@ impl Anchor {
         match self {
             Anchor::Min => *self,
             Anchor::Max => snapshot.anchor_before(snapshot.max_point()),
-            Anchor::Text {
-                path,
-                bias,
-                buffer_id,
-                ..
-            } => {
-                if *bias == Bias::Left {
-                    return *self;
-                }
-                let Some(buffer) = snapshot.buffer_for_id(*buffer_id) else {
-                    return *self;
-                };
-                let text_anchor = self.text_anchor().unwrap().bias_left(&buffer);
-                let ret = Self::text(*path, text_anchor);
-                if let Some(diff_base_anchor) = self.diff_base_anchor() {
-                    if let Some(diff) = snapshot.diffs.get(&buffer_id)
-                        && diff_base_anchor.is_valid(&diff.base_text())
-                    {
-                        ret.with_diff_base_anchor(diff_base_anchor.bias_left(diff.base_text()))
-                    } else {
-                        ret.with_diff_base_anchor(diff_base_anchor)
-                    }
-                } else {
-                    ret
-                }
-            }
+            Anchor::Excerpt(anchor) => Anchor::Excerpt(anchor.bias_left(snapshot)),
         }
     }
 
     pub fn bias_right(&self, snapshot: &MultiBufferSnapshot) -> Anchor {
         match self {
-            Anchor::Min => *self,
-            Anchor::Max => snapshot.anchor_after(Point::zero()),
-            Anchor::Text {
-                path,
-                bias,
-                buffer_id,
-                ..
-            } => {
-                if *bias == Bias::Right {
-                    return *self;
-                }
-                let Some(buffer) = snapshot.buffer_for_id(*buffer_id) else {
-                    return *self;
-                };
-                let text_anchor = self.text_anchor().unwrap().bias_right(&buffer);
-                let ret = Self::text(*path, text_anchor);
-                if let Some(diff_base_anchor) = self.diff_base_anchor() {
-                    if let Some(diff) = snapshot.diffs.get(&buffer_id)
-                        && diff_base_anchor.is_valid(&diff.base_text())
-                    {
-                        ret.with_diff_base_anchor(diff_base_anchor.bias_right(diff.base_text()))
-                    } else {
-                        ret.with_diff_base_anchor(diff_base_anchor)
-                    }
-                } else {
-                    ret
-                }
-            }
+            Anchor::Max => *self,
+            Anchor::Min => snapshot.anchor_after(Point::zero()),
+            Anchor::Excerpt(anchor) => Anchor::Excerpt(anchor.bias_right(snapshot)),
         }
     }
 
@@ -309,35 +288,10 @@ impl Anchor {
     }
 
     pub fn is_valid(&self, snapshot: &MultiBufferSnapshot) -> bool {
-        let Some(text_anchor) = self.text_anchor() else {
-            return true;
-        };
-        let Some(buffer_id) = text_anchor.buffer_id else {
-            debug_panic!("missing buffer_id for anchor");
-            return false;
-        };
-
-        let Some(target) = snapshot.anchor_seek_target(*self) else {
-            return false;
-        };
-        let mut cursor = snapshot.excerpts.cursor::<ExcerptSummary>(());
-        cursor.seek(&target, Bias::Left);
-        let Some(excerpt) = cursor.item() else {
-            return false;
-        };
-        excerpt.buffer.remote_id() == buffer_id
-            && excerpt
-                .range
-                .context
-                .start
-                .cmp(&text_anchor, &excerpt.buffer)
-                .is_le()
-            && excerpt
-                .range
-                .context
-                .end
-                .cmp(&text_anchor, &excerpt.buffer)
-                .is_ge()
+        match self {
+            Anchor::Min | Anchor::Max => true,
+            Anchor::Excerpt(excerpt_anchor) => excerpt_anchor.is_valid(snapshot),
+        }
     }
 }
 

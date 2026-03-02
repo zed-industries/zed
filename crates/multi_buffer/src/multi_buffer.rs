@@ -4,6 +4,8 @@ mod multi_buffer_tests;
 mod path_key;
 mod transaction;
 
+use crate::anchor::ExcerptAnchor;
+
 use self::transaction::History;
 
 pub use anchor::{Anchor, AnchorRangeExt};
@@ -6518,21 +6520,20 @@ impl MultiBufferSnapshot {
         ))
     }
 
-    fn anchor_seek_target(&self, anchor: Anchor) -> AnchorSeekTarget {
-        match anchor {
-            Anchor::Min => AnchorSeekTarget::Min,
-            Anchor::Max => AnchorSeekTarget::Max,
-            Anchor::Text { path, .. } => {
-                let path_key = self.path_for_anchor(anchor);
-                let snapshot = self.buffer_for_path(path_key);
+    fn try_anchor_seek_target(&self, anchor: ExcerptAnchor) -> Option<AnchorSeekTarget> {
+        let path_key = self.try_path_for_anchor(anchor)?;
+        let snapshot = self.buffer_for_path(&path_key);
 
-                Some(AnchorSeekTarget::Text {
-                    path_key: path_key.clone(),
-                    anchor: anchor.text_anchor().unwrap(),
-                    snapshot: snapshot.cloned(),
-                })
-            }
-        }
+        Some(AnchorSeekTarget::Text {
+            path_key: path_key.clone(),
+            anchor: anchor.text_anchor(),
+            snapshot: snapshot.cloned(),
+        })
+    }
+
+    fn anchor_seek_target(&self, anchor: Anchor) -> AnchorSeekTarget {
+        self.try_anchor_seek_target(anchor)
+            .expect("invalid anchor: path was never added to multibuffer")
     }
 
     fn excerpt_locator_for_id(&self, id: ExcerptId) -> &Locator {
@@ -6611,25 +6612,11 @@ impl MultiBufferSnapshot {
         self.buffer_for_path(self.path_keys_by_buffer.get(&id)?)
     }
 
-    pub fn try_path_for_anchor(&self, anchor: Anchor) -> Option<PathKey> {
-        match anchor {
-            Anchor::Min => Some(
-                self.excerpts
-                    .first()
-                    .map(|excerpt| excerpt.path_key.clone())
-                    .unwrap_or(PathKey::min()),
-            ),
-            Anchor::Max => Some(
-                self.excerpts
-                    .last()
-                    .map(|excerpt| excerpt.path_key.clone())
-                    .unwrap_or(PathKey::min()),
-            ),
-            Anchor::Text { path, .. } => self.path_keys_by_index.get(&path).cloned(),
-        }
+    fn try_path_for_anchor(&self, anchor: ExcerptAnchor) -> Option<PathKey> {
+        self.path_keys_by_index.get(&anchor.path).cloned()
     }
 
-    pub fn path_for_anchor(&self, anchor: Anchor) -> PathKey {
+    fn path_for_anchor(&self, anchor: ExcerptAnchor) -> PathKey {
         self.try_path_for_anchor(anchor)
             .expect("invalid anchor: path was never added to multibuffer")
     }
