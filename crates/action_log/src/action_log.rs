@@ -2724,7 +2724,7 @@ mod tests {
                 .collect::<Vec<_>>()
         });
         assert_eq!(child_stale, vec![buffer.clone()]);
-        assert_eq!(parent_stale, vec![buffer.clone()]);
+        assert_eq!(parent_stale, vec![buffer]);
     }
 
     #[gpui::test]
@@ -2759,7 +2759,7 @@ mod tests {
         cx.run_until_parked();
 
         let expected_hunks = vec![(
-            buffer.clone(),
+            buffer,
             vec![HunkStatus {
                 range: Point::new(1, 0)..Point::new(2, 0),
                 diff_status: DiffHunkStatusKind::Modified,
