@@ -1,6 +1,7 @@
 mod check_run_patterns;
 
 use std::{
+    collections::HashMap,
     fs,
     ops::Range,
     path::{Path, PathBuf},
@@ -61,11 +62,21 @@ pub fn validate(_: WorkflowValidationArgs) -> Result<()> {
             .map(|file_error| {
                 let raw_content = &file_error.contents.raw_content;
                 let ranges = file_error.errors.into_iter().flat_map(|error| {
+                    let mut identical_patterns = HashMap::new();
                     error
                         .patterns
                         .into_iter()
                         .map(move |(line, pattern_range)| {
-                            let offset_in_content = raw_content.find(&line).unwrap_or_default();
+                            let pattern = &line[pattern_range.clone()];
+                            let initial_offset =
+                                identical_patterns.get(pattern).copied().unwrap_or_default();
+
+                            let offset_in_content = raw_content[initial_offset..]
+                                .find(&line)
+                                .map(|offset| offset + initial_offset)
+                                .unwrap_or_default();
+
+                            identical_patterns.insert(pattern.to_owned(), offset_in_content);
 
                             pattern_range.start + offset_in_content
                                 ..pattern_range.end + offset_in_content

@@ -1,7 +1,6 @@
 use std::{ops::Range, path::Path, sync::LazyLock};
 
 use annotate_snippets::{AnnotationKind, Group, Level, Snippet};
-use itertools::Itertools;
 use regex::Regex;
 
 static GITHUB_INPUT_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
@@ -39,7 +38,6 @@ pub fn validate_run_command(command: &str) -> Result<(), InvalidPatternsErrror> 
                 .find_iter(line)
                 .map(|m| (line.to_owned(), m.range()))
         })
-        .dedup()
         .collect();
 
     if patterns.is_empty() {
