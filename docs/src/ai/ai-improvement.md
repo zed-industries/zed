@@ -6,7 +6,9 @@ description: Zed's opt-in approach to AI data collection for improving the agent
 # Zed AI Features and Privacy
 
 ## Overview
+
 AI features in Zed include:
+
 - [Agent Panel](./agent-panel.md)
 - [Edit Predictions](./edit-prediction.md)
 - [Inline Assist](./inline-assistant.md)
@@ -26,7 +28,6 @@ Zed's Agent Panel can be used via:
 - using an [external agent](./external-agents.md) via ACP
 
 When using Zed's hosted models, we require assurances from our service providers that your user content won't be used for training models.
-
 
 | Provider  | No Training Guarantee                                   | Zero-Data Retention (ZDR)                                                                                                                     |
 | --------- | ------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
