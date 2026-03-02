@@ -1,8 +1,11 @@
 use crash_handler::{CrashEventResult, CrashHandler};
+use futures::future::BoxFuture;
 use log::info;
 use minidumper::{Client, LoopAction, MinidumpBinary};
 use release_channel::{RELEASE_CHANNEL, ReleaseChannel};
 use serde::{Deserialize, Serialize};
+use std::cell::Cell;
+use std::mem;
 
 #[cfg(not(target_os = "windows"))]
 use smol::process::Command;
@@ -13,7 +16,7 @@ use std::{
     env,
     fs::{self, File},
     io,
-    panic::{self, PanicHookInfo},
+    panic::{self, AssertUnwindSafe, PanicHookInfo},
     path::{Path, PathBuf},
     process::{self},
     sync::{
@@ -23,6 +26,31 @@ use std::{
     thread,
     time::Duration,
 };
+
+thread_local! {
+    static ALLOW_UNWIND: Cell<bool> = const { Cell::new(false) };
+}
+
+/// Catch a panic as an error instead of aborting the process. Unlike plain
+/// `catch_unwind`, this bypasses the crash-reporting panic hook which would
+/// normally abort before unwinding can occur.
+///
+/// **Use sparingly.** Prefer this only for isolating third-party code
+/// that is known to panic, where you want to handle the failure gracefully
+/// instead of crashing.
+pub fn recoverable_panic<T>(closure: impl FnOnce() -> T) -> anyhow::Result<T> {
+    ALLOW_UNWIND.with(|flag| flag.set(true));
+    let result = panic::catch_unwind(AssertUnwindSafe(closure));
+    ALLOW_UNWIND.with(|flag| flag.set(false));
+    result.map_err(|payload| {
+        let message = payload
+            .downcast_ref::<&str>()
+            .map(|s| s.to_string())
+            .or_else(|| payload.downcast_ref::<String>().cloned())
+            .unwrap_or_else(|| "unknown panic".to_string());
+        anyhow::anyhow!("panic: {message}")
+    })
+}
 
 // set once the crash handler has initialized and the client has connected to it
 pub static CRASH_HANDLER: OnceLock<Arc<Client>> = OnceLock::new();
@@ -34,43 +62,79 @@ const CRASH_HANDLER_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 #[cfg(target_os = "macos")]
 static PANIC_THREAD_ID: AtomicU32 = AtomicU32::new(0);
 
-pub async fn init(crash_init: InitCrashHandler) {
-    let gen_var = match env::var("ZED_GENERATE_MINIDUMPS") {
-        Ok(v) => {
-            if v == "false" || v == "0" {
-                Some(false)
-            } else {
-                Some(true)
-            }
-        }
-        Err(_) => None,
-    };
-
-    match (gen_var, *RELEASE_CHANNEL) {
-        (Some(false), _) | (None, ReleaseChannel::Dev) => {
-            let old_hook = panic::take_hook();
-            panic::set_hook(Box::new(move |info| {
-                unsafe { env::set_var("RUST_BACKTRACE", "1") };
-                old_hook(info);
-                // prevent the macOS crash dialog from popping up
-                if cfg!(target_os = "macos") {
-                    std::process::exit(1);
-                }
-            }));
-            return;
-        }
-        _ => {
-            panic::set_hook(Box::new(panic_hook));
-        }
+fn should_install_crash_handler() -> bool {
+    if let Ok(value) = env::var("ZED_GENERATE_MINIDUMPS") {
+        return value == "true" || value == "1";
     }
 
+    if *RELEASE_CHANNEL == ReleaseChannel::Dev {
+        return false;
+    }
+
+    true
+}
+
+/// Install crash signal handlers and spawn the crash-handler subprocess.
+///
+/// The synchronous portion (signal handlers, panic hook) runs inline.
+/// The async keepalive task is passed to `spawn` so the caller decides
+/// which executor to schedule it on.
+pub fn init(crash_init: InitCrashHandler, spawn: impl FnOnce(BoxFuture<'static, ()>)) {
+    if !should_install_crash_handler() {
+        let old_hook = panic::take_hook();
+        panic::set_hook(Box::new(move |info| {
+            if ALLOW_UNWIND.with(|flag| flag.get()) {
+                return;
+            }
+            unsafe { env::set_var("RUST_BACKTRACE", "1") };
+            old_hook(info);
+            // prevent the macOS crash dialog from popping up
+            if cfg!(target_os = "macos") {
+                std::process::exit(1);
+            }
+        }));
+        return;
+    }
+
+    panic::set_hook(Box::new(panic_hook));
+
+    let handler = CrashHandler::attach(unsafe {
+        crash_handler::make_crash_event(move |crash_context: &crash_handler::CrashContext| {
+            let Some(client) = CRASH_HANDLER.get() else {
+                return CrashEventResult::Handled(false);
+            };
+
+            // only request a minidump once
+            let res = if REQUESTED_MINIDUMP
+                .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
+                .is_ok()
+            {
+                #[cfg(target_os = "macos")]
+                suspend_all_other_threads();
+
+                // on macos this "ping" is needed to ensure that all our
+                // `client.send_message` calls have been processed before we trigger the
+                // minidump request.
+                client.ping().ok();
+                client.request_dump(crash_context).is_ok()
+            } else {
+                true
+            };
+            CrashEventResult::Handled(res)
+        })
+    })
+    .expect("failed to attach signal handler");
+
+    info!("crash signal handlers installed");
+
+    spawn(Box::pin(connect_and_keepalive(crash_init, handler)));
+}
+
+/// Spawn the crash-handler subprocess, connect the IPC client, and run the
+/// keepalive ping loop. Called on a background executor by [`init`].
+async fn connect_and_keepalive(crash_init: InitCrashHandler, handler: CrashHandler) {
     let exe = env::current_exe().expect("unable to find ourselves");
     let zed_pid = process::id();
-    // TODO: we should be able to get away with using 1 crash-handler process per machine,
-    // but for now we append the PID of the current process which makes it unique per remote
-    // server or interactive zed instance. This solves an issue where occasionally the socket
-    // used by the crash handler isn't destroyed correctly which causes it to stay on the file
-    // system and block further attempts to initialize crash handlers with that socket path.
     let socket_name = paths::temp_dir().join(format!("zed-crash-handler-{zed_pid}"));
     #[cfg(not(target_os = "windows"))]
     let _crash_handler = Command::new(exe)
@@ -82,8 +146,6 @@ pub async fn init(crash_init: InitCrashHandler) {
     #[cfg(target_os = "windows")]
     spawn_crash_handler_windows(&exe, &socket_name);
 
-    #[cfg(target_os = "linux")]
-    let server_pid = _crash_handler.id();
     info!("spawning crash handler process");
 
     let mut elapsed = Duration::ZERO;
@@ -106,36 +168,15 @@ pub async fn init(crash_init: InitCrashHandler) {
         .unwrap();
 
     let client = Arc::new(client);
-    let handler = CrashHandler::attach(unsafe {
-        let client = client.clone();
-        crash_handler::make_crash_event(move |crash_context: &crash_handler::CrashContext| {
-            // only request a minidump once
-            let res = if REQUESTED_MINIDUMP
-                .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
-                .is_ok()
-            {
-                #[cfg(target_os = "macos")]
-                suspend_all_other_threads();
-
-                // on macos this "ping" is needed to ensure that all our
-                // `client.send_message` calls have been processed before we trigger the
-                // minidump request.
-                client.ping().ok();
-                client.request_dump(crash_context).is_ok()
-            } else {
-                true
-            };
-            CrashEventResult::Handled(res)
-        })
-    })
-    .expect("failed to attach signal handler");
 
     #[cfg(target_os = "linux")]
-    {
-        handler.set_ptracer(Some(server_pid));
-    }
+    handler.set_ptracer(Some(_crash_handler.id()));
+
+    // Publishing the client to the OnceLock makes it visible to the signal
+    // handler callback installed earlier.
     CRASH_HANDLER.set(client.clone()).ok();
-    std::mem::forget(handler);
+    // mem::forget so that the drop is not called
+    mem::forget(handler);
     info!("crash handler registered");
 
     loop {
@@ -300,12 +341,6 @@ impl minidumper::ServerHandler for CrashServer {
 }
 
 pub fn panic_hook(info: &PanicHookInfo) {
-    // Don't handle a panic on threads that are not relevant to the main execution.
-    if extension_host::wasm_host::IS_WASM_THREAD.with(|v| v.load(Ordering::Acquire)) {
-        log::error!("wasm thread panicked!");
-        return;
-    }
-
     let message = info.payload_as_str().unwrap_or("Box<Any>").to_owned();
 
     let span = info
@@ -315,6 +350,11 @@ pub fn panic_hook(info: &PanicHookInfo) {
 
     let current_thread = std::thread::current();
     let thread_name = current_thread.name().unwrap_or("<unnamed>");
+
+    if ALLOW_UNWIND.with(|flag| flag.get()) {
+        log::error!("thread '{thread_name}' panicked at {span} (allowing unwind):\n{message}");
+        return;
+    }
 
     // wait 500ms for the crash handler process to start up
     // if it's still not there just write panic info and no minidump

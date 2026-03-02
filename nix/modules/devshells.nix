@@ -18,6 +18,15 @@
 
       # Musl cross-compiler for building remote_server
       muslCross = pkgs.pkgsCross.musl64;
+
+      # Cargo build timings wrapper script
+      wrappedCargo = pkgs.writeShellApplication {
+        name = "cargo";
+        runtimeInputs = [pkgs.nodejs];
+        text = ''
+          NIX_WRAPPER=1 CARGO=${rustToolchain}/bin/cargo ./script/cargo "$@"
+        '';
+      };
     in
     {
       devShells.default = (pkgs.mkShell.override { inherit (zed-editor) stdenv; }) {
@@ -25,6 +34,7 @@
         inputsFrom = [ zed-editor ];
 
         packages = with pkgs; [
+          wrappedCargo  # must be first, to shadow the `cargo` provided by `rustToolchain`
           rustToolchain # cargo, rustc, and rust-toolchain.toml components included
           cargo-nextest
           cargo-hakari

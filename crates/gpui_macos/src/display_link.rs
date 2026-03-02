@@ -1,26 +1,21 @@
-use crate::{
-    dispatch_get_main_queue,
-    dispatcher::dispatch_sys::{
-        _dispatch_source_type_data_add, dispatch_resume, dispatch_set_context,
-        dispatch_source_cancel, dispatch_source_create, dispatch_source_merge_data,
-        dispatch_source_set_event_handler_f, dispatch_source_t, dispatch_suspend,
-    },
-};
 use anyhow::Result;
 use core_graphics::display::CGDirectDisplayID;
+use dispatch2::{
+    _dispatch_source_type_data_add, DispatchObject, DispatchQueue, DispatchRetained, DispatchSource,
+};
 use std::ffi::c_void;
 use util::ResultExt;
 
 pub struct DisplayLink {
     display_link: Option<sys::DisplayLink>,
-    frame_requests: dispatch_source_t,
+    frame_requests: DispatchRetained<DispatchSource>,
 }
 
 impl DisplayLink {
     pub fn new(
         display_id: CGDirectDisplayID,
         data: *mut c_void,
-        callback: unsafe extern "C" fn(*mut c_void),
+        callback: extern "C" fn(*mut c_void),
     ) -> Result<DisplayLink> {
         unsafe extern "C" fn display_link_callback(
             _display_link_out: *mut sys::CVDisplayLink,
@@ -31,31 +26,26 @@ impl DisplayLink {
             frame_requests: *mut c_void,
         ) -> i32 {
             unsafe {
-                let frame_requests = frame_requests as dispatch_source_t;
-                dispatch_source_merge_data(frame_requests, 1);
+                let frame_requests = &*(frame_requests as *const DispatchSource);
+                frame_requests.merge_data(1);
                 0
             }
         }
 
         unsafe {
-            let frame_requests = dispatch_source_create(
-                &_dispatch_source_type_data_add,
+            let frame_requests = DispatchSource::new(
+                &raw const _dispatch_source_type_data_add as *mut _,
                 0,
                 0,
-                dispatch_get_main_queue(),
+                Some(DispatchQueue::main()),
             );
-            dispatch_set_context(
-                crate::dispatch_sys::dispatch_object_t {
-                    _ds: frame_requests,
-                },
-                data,
-            );
-            dispatch_source_set_event_handler_f(frame_requests, Some(callback));
+            frame_requests.set_context(data);
+            frame_requests.set_event_handler_f(callback);
 
             let display_link = sys::DisplayLink::new(
                 display_id,
                 display_link_callback,
-                frame_requests as *mut c_void,
+                &*frame_requests as *const DispatchSource as *mut c_void,
             )?;
 
             Ok(Self {
@@ -67,9 +57,7 @@ impl DisplayLink {
 
     pub fn start(&mut self) -> Result<()> {
         unsafe {
-            dispatch_resume(crate::dispatch_sys::dispatch_object_t {
-                _ds: self.frame_requests,
-            });
+            self.frame_requests.resume();
             self.display_link.as_mut().unwrap().start()?;
         }
         Ok(())
@@ -77,9 +65,7 @@ impl DisplayLink {
 
     pub fn stop(&mut self) -> Result<()> {
         unsafe {
-            dispatch_suspend(crate::dispatch_sys::dispatch_object_t {
-                _ds: self.frame_requests,
-            });
+            self.frame_requests.suspend();
             self.display_link.as_mut().unwrap().stop()?;
         }
         Ok(())
@@ -97,9 +83,9 @@ impl Drop for DisplayLink {
         //
         // We might also want to upgrade to CADisplayLink, but that requires dropping old macOS support.
         std::mem::forget(self.display_link.take());
-        unsafe {
-            dispatch_source_cancel(self.frame_requests);
-        }
+        self.frame_requests.cancel();
+        // A suspended DispatchSource cannot be destroyed.
+        self.frame_requests.resume();
     }
 }
 

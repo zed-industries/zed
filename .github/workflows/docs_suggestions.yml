@@ -17,7 +17,7 @@ on:
       - 'crates/**/*.rs'
       - '!crates/**/*_test.rs'
       - '!crates/**/tests/**'
-  
+
   # Run on cherry-picks to release branches
   pull_request_target:
     types: [opened, synchronize]
@@ -25,7 +25,7 @@ on:
       - 'v0.*'
     paths:
       - 'crates/**/*.rs'
-  
+
   # Manual trigger for testing
   workflow_dispatch:
     inputs:
@@ -42,28 +42,29 @@ on:
           - immediate
         default: batch
 
-permissions:
-  contents: write
-  pull-requests: write
-
 env:
   DROID_MODEL: claude-sonnet-4-5-20250929
   SUGGESTIONS_BRANCH: docs/suggestions-pending
 
 jobs:
   # Job for PRs merged to main - batch suggestions to branch
+  # Only runs for PRs from the same repo (not forks) since secrets aren't available for fork PRs
   batch-suggestions:
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    permissions:
+      contents: write
+      pull-requests: read
     if: |
-      (github.event_name == 'pull_request' && 
+      (github.event_name == 'pull_request' &&
        github.event.pull_request.merged == true &&
-       github.event.pull_request.base.ref == 'main') ||
+       github.event.pull_request.base.ref == 'main' &&
+       github.event.pull_request.head.repo.full_name == github.repository) ||
       (github.event_name == 'workflow_dispatch' && inputs.mode == 'batch')
-    
+
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
         with:
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
@@ -90,35 +91,48 @@ jobs:
 
       - name: Get PR info
         id: pr
+        env:
+          INPUT_PR_NUMBER: ${{ inputs.pr_number }}
+          EVENT_PR_NUMBER: ${{ github.event.pull_request.number }}
+          GH_TOKEN: ${{ github.token }}
         run: |
-          if [ -n "${{ inputs.pr_number }}" ]; then
-            PR_NUM="${{ inputs.pr_number }}"
+          if [ -n "$INPUT_PR_NUMBER" ]; then
+            PR_NUM="$INPUT_PR_NUMBER"
           else
-            PR_NUM="${{ github.event.pull_request.number }}"
+            PR_NUM="$EVENT_PR_NUMBER"
+          fi
+          if ! [[ "$PR_NUM" =~ ^[0-9]+$ ]]; then
+            echo "::error::Invalid PR number: $PR_NUM"
+            exit 1
           fi
           echo "number=$PR_NUM" >> "$GITHUB_OUTPUT"
-          
-          # Get PR title
-          PR_TITLE=$(gh pr view "$PR_NUM" --json title --jq '.title')
-          echo "title=$PR_TITLE" >> "$GITHUB_OUTPUT"
-        env:
-          GH_TOKEN: ${{ github.token }}
+          PR_TITLE=$(gh pr view "$PR_NUM" --json title --jq '.title' | tr -d '\n\r' | head -c 200)
+          EOF_MARKER="EOF_$(openssl rand -hex 8)"
+          {
+            echo "title<<$EOF_MARKER"
+            echo "$PR_TITLE"
+            echo "$EOF_MARKER"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Analyze PR for documentation needs
         id: analyze
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FACTORY_API_KEY: ${{ secrets.FACTORY_API_KEY }}
+          PR_NUMBER: ${{ steps.pr.outputs.number }}
         run: |
           # Ensure gh CLI is authenticated (GH_TOKEN may not be auto-detected)
           # Unset GH_TOKEN first to allow gh auth login to store credentials
           echo "$GH_TOKEN" | (unset GH_TOKEN && gh auth login --with-token)
-          
+
           OUTPUT_FILE=$(mktemp)
-          
+
           # Retry with exponential backoff for transient Factory API failures
           MAX_RETRIES=3
           for i in $(seq 1 "$MAX_RETRIES"); do
             echo "Attempt $i of $MAX_RETRIES to analyze PR..."
             if ./script/docs-suggest \
-              --pr "${{ steps.pr.outputs.number }}" \
+              --pr "$PR_NUMBER" \
               --immediate \
               --preview \
               --output "$OUTPUT_FILE" \
@@ -133,7 +147,7 @@ jobs:
             echo "Retrying in $((i * 5)) seconds..."
             sleep $((i * 5))
           done
-          
+
           # Check if we got actionable suggestions (not "no updates needed")
           if grep -q "Documentation Suggestions" "$OUTPUT_FILE" && \
              ! grep -q "No Documentation Updates Needed" "$OUTPUT_FILE"; then
@@ -144,9 +158,6 @@ jobs:
             echo "No actionable documentation suggestions for this PR"
             cat "$OUTPUT_FILE"
           fi
-        env:
-          GH_TOKEN: ${{ github.token }}
-          FACTORY_API_KEY: ${{ secrets.FACTORY_API_KEY }}
 
       - name: Commit suggestions to queue branch
         if: steps.analyze.outputs.has_suggestions == 'true'
@@ -154,18 +165,19 @@ jobs:
           PR_NUM: ${{ steps.pr.outputs.number }}
           PR_TITLE: ${{ steps.pr.outputs.title }}
           OUTPUT_FILE: ${{ steps.analyze.outputs.output_file }}
+          REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
-          
+
           # Configure git
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          
+
           # Retry loop for handling concurrent pushes
           MAX_RETRIES=3
           for i in $(seq 1 "$MAX_RETRIES"); do
             echo "Attempt $i of $MAX_RETRIES"
-            
+
             # Fetch and checkout suggestions branch (create if doesn't exist)
             if git ls-remote --exit-code --heads origin "$SUGGESTIONS_BRANCH" > /dev/null 2>&1; then
               git fetch origin "$SUGGESTIONS_BRANCH"
@@ -174,7 +186,7 @@ jobs:
               # Create orphan branch for clean history
               git checkout --orphan "$SUGGESTIONS_BRANCH"
               git rm -rf . > /dev/null 2>&1 || true
-              
+
               # Initialize with README
               cat > README.md << 'EOF'
           # Documentation Suggestions Queue
@@ -196,34 +208,34 @@ jobs:
           3. At preview release, suggestions are collected into a docs PR
           4. After docs PR is created, this branch is reset
           EOF
-              
+
               mkdir -p suggestions
               echo '{"suggestions":[]}' > manifest.json
               git add README.md suggestions manifest.json
               git commit -m "Initialize documentation suggestions queue"
             fi
-            
+
             # Create suggestion file
             SUGGESTION_FILE="suggestions/PR-${PR_NUM}.md"
-            
+
             {
               echo "# PR #${PR_NUM}: ${PR_TITLE}"
               echo ""
               echo "_Merged: $(date -u +%Y-%m-%dT%H:%M:%SZ)_"
-              echo "_PR: https://github.com/${{ github.repository }}/pull/${PR_NUM}_"
+              echo "_PR: https://github.com/${REPO}/pull/${PR_NUM}_"
               echo ""
               cat "$OUTPUT_FILE"
             } > "$SUGGESTION_FILE"
-            
+
             # Update manifest
             MANIFEST=$(cat manifest.json)
             NEW_ENTRY="{\"pr\":${PR_NUM},\"title\":$(echo "$PR_TITLE" | jq -R .),\"file\":\"$SUGGESTION_FILE\",\"date\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}"
-            
+
             # Add to manifest if not already present
             if ! echo "$MANIFEST" | jq -e ".suggestions[] | select(.pr == $PR_NUM)" > /dev/null 2>&1; then
               echo "$MANIFEST" | jq ".suggestions += [$NEW_ENTRY]" > manifest.json
             fi
-            
+
             # Commit
             git add "$SUGGESTION_FILE" manifest.json
             git commit -m "docs: Add suggestions for PR #${PR_NUM}
@@ -231,7 +243,7 @@ jobs:
           ${PR_TITLE}
 
           Auto-generated documentation suggestions for review at next preview release."
-            
+
             # Try to push
             if git push origin "$SUGGESTIONS_BRANCH"; then
               echo "Successfully pushed suggestions"
@@ -248,33 +260,47 @@ jobs:
 
       - name: Summary
         if: always()
+        env:
+          HAS_SUGGESTIONS: ${{ steps.analyze.outputs.has_suggestions }}
+          PR_NUM: ${{ steps.pr.outputs.number }}
+          REPO: ${{ github.repository }}
         run: |
           {
             echo "## Documentation Suggestions"
             echo ""
-            if [ "${{ steps.analyze.outputs.has_suggestions }}" == "true" ]; then
-              echo "✅ Suggestions queued for PR #${{ steps.pr.outputs.number }}"
+            if [ "$HAS_SUGGESTIONS" == "true" ]; then
+              echo "✅ Suggestions queued for PR #${PR_NUM}"
               echo ""
-              echo "View pending suggestions: [docs/suggestions-pending branch](https://github.com/${{ github.repository }}/tree/${{ env.SUGGESTIONS_BRANCH }})"
+              echo "View pending suggestions: [docs/suggestions-pending branch](https://github.com/${REPO}/tree/${SUGGESTIONS_BRANCH})"
             else
               echo "No documentation updates needed for this PR."
             fi
           } >> "$GITHUB_STEP_SUMMARY"
 
-  # Job for cherry-picks to release branches - immediate output to step summary
+  # Job for cherry-picks to release branches - immediate output as PR comment
   cherry-pick-suggestions:
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: write
+    concurrency:
+      group: docs-suggestions-${{ github.event.pull_request.number || inputs.pr_number || 'manual' }}
+      cancel-in-progress: true
     if: |
-      (github.event_name == 'pull_request_target' && 
-       startsWith(github.event.pull_request.base.ref, 'v0.')) ||
+      (github.event_name == 'pull_request_target' &&
+       startsWith(github.event.pull_request.base.ref, 'v0.') &&
+       contains(fromJSON('["MEMBER","OWNER"]'),
+                github.event.pull_request.author_association)) ||
       (github.event_name == 'workflow_dispatch' && inputs.mode == 'immediate')
-    
+
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
         with:
           fetch-depth: 0
+          ref: ${{ github.event_name == 'pull_request_target' && github.event.pull_request.base.ref || '' }}
+          persist-credentials: false
 
       - name: Install Droid CLI
         run: |
@@ -298,29 +324,41 @@ jobs:
 
       - name: Get PR number
         id: pr
+        env:
+          INPUT_PR_NUMBER: ${{ inputs.pr_number }}
+          EVENT_PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
-          if [ -n "${{ inputs.pr_number }}" ]; then
-            echo "number=${{ inputs.pr_number }}" >> "$GITHUB_OUTPUT"
+          if [ -n "$INPUT_PR_NUMBER" ]; then
+            PR_NUM="$INPUT_PR_NUMBER"
           else
-            echo "number=${{ github.event.pull_request.number }}" >> "$GITHUB_OUTPUT"
+            PR_NUM="$EVENT_PR_NUMBER"
           fi
+          if ! [[ "$PR_NUM" =~ ^[0-9]+$ ]]; then
+            echo "::error::Invalid PR number: $PR_NUM"
+            exit 1
+          fi
+          echo "number=$PR_NUM" >> "$GITHUB_OUTPUT"
 
       - name: Analyze PR for documentation needs
         id: analyze
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FACTORY_API_KEY: ${{ secrets.FACTORY_API_KEY }}
+          PR_NUMBER: ${{ steps.pr.outputs.number }}
         run: |
           # Ensure gh CLI is authenticated (GH_TOKEN may not be auto-detected)
           # Unset GH_TOKEN first to allow gh auth login to store credentials
           echo "$GH_TOKEN" | (unset GH_TOKEN && gh auth login --with-token)
-          
+
           OUTPUT_FILE="${RUNNER_TEMP}/suggestions.md"
-          
+
           # Cherry-picks don't get preview callout
           # Retry with exponential backoff for transient Factory API failures
           MAX_RETRIES=3
           for i in $(seq 1 "$MAX_RETRIES"); do
             echo "Attempt $i of $MAX_RETRIES to analyze PR..."
             if ./script/docs-suggest \
-              --pr "${{ steps.pr.outputs.number }}" \
+              --pr "$PR_NUMBER" \
               --immediate \
               --no-preview \
               --output "$OUTPUT_FILE" \
@@ -335,7 +373,7 @@ jobs:
             echo "Retrying in $((i * 5)) seconds..."
             sleep $((i * 5))
           done
-          
+
           # Check if we got actionable suggestions
           if [ -s "$OUTPUT_FILE" ] && \
              grep -q "Documentation Suggestions" "$OUTPUT_FILE" && \
@@ -345,48 +383,78 @@ jobs:
           else
             echo "has_suggestions=false" >> "$GITHUB_OUTPUT"
           fi
-        env:
-          GH_TOKEN: ${{ github.token }}
-          FACTORY_API_KEY: ${{ secrets.FACTORY_API_KEY }}
 
       - name: Post suggestions as PR comment
         if: steps.analyze.outputs.has_suggestions == 'true'
-        uses: actions/github-script@v7
+        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v7
         env:
           SUGGESTIONS_FILE: ${{ steps.analyze.outputs.suggestions_file }}
+          PR_NUMBER: ${{ steps.pr.outputs.number }}
         with:
           script: |
             const fs = require('fs');
-            const suggestions = fs.readFileSync(process.env.SUGGESTIONS_FILE, 'utf8');
-            
+
+            // Read suggestions from file
+            const suggestionsRaw = fs.readFileSync(process.env.SUGGESTIONS_FILE, 'utf8');
+
+            // Sanitize AI-generated content
+            let sanitized = suggestionsRaw
+              // Strip HTML tags
+              .replace(/<[^>]*>/g, '')
+              // Strip markdown links but keep display text
+              .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
+              // Strip raw URLs
+              .replace(/https?:\/\/[^\s)>\]]+/g, '[link removed]')
+              // Strip protocol-relative URLs
+              .replace(/\/\/[^\s)>\]]+\.[^\s)>\]]+/g, '[link removed]')
+              // Neutralize @-mentions (preserve JSDoc-style annotations)
+              .replace(/@(?!param\b|returns?\b|throws?\b|typedef\b|type\b|see\b|example\b|since\b|deprecated\b|default\b)(\w+)/g, '`@$1`')
+              // Strip cross-repo references that could be confused with real links
+              .replace(/[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+#\d+/g, '[ref removed]');
+
+            // Truncate to 20,000 characters
+            if (sanitized.length > 20000) {
+              sanitized = sanitized.substring(0, 20000) + '\n\n…(truncated)';
+            }
+
+            // Parse and validate PR number
+            const prNumber = parseInt(process.env.PR_NUMBER, 10);
+            if (isNaN(prNumber) || prNumber <= 0) {
+              core.setFailed(`Invalid PR number: ${process.env.PR_NUMBER}`);
+              return;
+            }
+
             const body = `## 📚 Documentation Suggestions
 
             This cherry-pick contains changes that may need documentation updates.
 
-            ${suggestions}
+            ${sanitized}
 
             ---
+            > **Note:** This comment was generated automatically by an AI model analyzing
+            > code changes. Suggestions may contain inaccuracies — please verify before acting.
+
             <details>
             <summary>About this comment</summary>
 
             This comment was generated automatically by analyzing code changes in this cherry-pick.
-            Cherry-picks typically don't need new documentation since the feature was already 
+            Cherry-picks typically don't need new documentation since the feature was already
             documented when merged to main, but please verify.
 
             </details>`;
-            
+
             // Find existing comment to update (avoid spam)
             const { data: comments } = await github.rest.issues.listComments({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              issue_number: ${{ steps.pr.outputs.number }}
+              issue_number: prNumber
             });
-            
-            const botComment = comments.find(c => 
-              c.user.type === 'Bot' && 
+
+            const botComment = comments.find(c =>
+              c.user.type === 'Bot' &&
               c.body.includes('Documentation Suggestions')
             );
-            
+
             if (botComment) {
               await github.rest.issues.updateComment({
                 owner: context.repo.owner,
@@ -398,21 +466,22 @@ jobs:
               await github.rest.issues.createComment({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
-                issue_number: ${{ steps.pr.outputs.number }},
+                issue_number: prNumber,
                 body: body
               });
             }
 
       - name: Summary
         if: always()
+        env:
+          HAS_SUGGESTIONS: ${{ steps.analyze.outputs.has_suggestions }}
+          PR_NUM: ${{ steps.pr.outputs.number }}
         run: |
           {
             echo "## 📚 Documentation Suggestions (Cherry-pick)"
             echo ""
-            if [ "${{ steps.analyze.outputs.has_suggestions }}" == "true" ]; then
-              echo "Suggestions posted as PR comment."
-              echo ""
-              cat "${{ steps.analyze.outputs.suggestions_file }}"
+            if [ "$HAS_SUGGESTIONS" == "true" ]; then
+              echo "Suggestions posted as PR comment on #${PR_NUM}."
             else
               echo "No documentation suggestions for this cherry-pick."
             fi

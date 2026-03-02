@@ -8,6 +8,7 @@ use collections::{HashMap, IndexMap};
 use futures::{FutureExt, future::Shared};
 use gpui::{BackgroundExecutor, Global, Task};
 use indoc::indoc;
+use language_model::Speed;
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use sqlez::{
@@ -17,22 +18,12 @@ use sqlez::{
 };
 use std::sync::Arc;
 use ui::{App, SharedString};
+use util::path_list::PathList;
 use zed_env_vars::ZED_STATELESS;
 
 pub type DbMessage = crate::Message;
 pub type DbSummary = crate::legacy_thread::DetailedSummaryState;
 pub type DbLanguageModel = crate::legacy_thread::SerializedLanguageModel;
-
-/// Metadata about the git worktree associated with an agent thread.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AgentGitWorktreeInfo {
-    /// The branch name in the git worktree.
-    pub branch: String,
-    /// Absolute path to the git worktree on disk.
-    pub worktree_path: std::path::PathBuf,
-    /// The base branch/commit the worktree was created from.
-    pub base_ref: String,
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DbThreadMetadata {
@@ -41,10 +32,9 @@ pub struct DbThreadMetadata {
     #[serde(alias = "summary")]
     pub title: SharedString,
     pub updated_at: DateTime<Utc>,
-    /// Denormalized from `DbThread::git_worktree_info.branch` for efficient
-    /// listing without decompressing thread data. The blob is the source of
-    /// truth; this column is populated on save for query convenience.
-    pub worktree_branch: Option<String>,
+    /// The workspace folder paths this thread was created against, sorted
+    /// lexicographically. Used for grouping threads by project in the sidebar.
+    pub folder_paths: PathList,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -69,7 +59,11 @@ pub struct DbThread {
     #[serde(default)]
     pub subagent_context: Option<crate::SubagentContext>,
     #[serde(default)]
-    pub git_worktree_info: Option<AgentGitWorktreeInfo>,
+    pub speed: Option<Speed>,
+    #[serde(default)]
+    pub thinking_enabled: bool,
+    #[serde(default)]
+    pub thinking_effort: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -108,7 +102,9 @@ impl SharedThread {
             profile: None,
             imported: true,
             subagent_context: None,
-            git_worktree_info: None,
+            speed: None,
+            thinking_enabled: false,
+            thinking_effort: None,
         }
     }
 
@@ -283,7 +279,9 @@ impl DbThread {
             profile: thread.profile,
             imported: false,
             subagent_context: None,
-            git_worktree_info: None,
+            speed: None,
+            thinking_enabled: false,
+            thinking_effort: None,
         })
     }
 }
@@ -389,7 +387,8 @@ impl ThreadsDatabase {
         }
 
         if let Ok(mut s) = connection.exec(indoc! {"
-            ALTER TABLE threads ADD COLUMN worktree_branch TEXT
+            ALTER TABLE threads ADD COLUMN folder_paths TEXT;
+            ALTER TABLE threads ADD COLUMN folder_paths_order TEXT;
         "})
         {
             s().ok();
@@ -407,6 +406,7 @@ impl ThreadsDatabase {
         connection: &Arc<Mutex<Connection>>,
         id: acp::SessionId,
         thread: DbThread,
+        folder_paths: &PathList,
     ) -> Result<()> {
         const COMPRESSION_LEVEL: i32 = 3;
 
@@ -423,10 +423,16 @@ impl ThreadsDatabase {
             .subagent_context
             .as_ref()
             .map(|ctx| ctx.parent_thread_id.0.clone());
-        let worktree_branch = thread
-            .git_worktree_info
-            .as_ref()
-            .map(|info| info.branch.clone());
+        let serialized_folder_paths = folder_paths.serialize();
+        let (folder_paths_str, folder_paths_order_str): (Option<String>, Option<String>) =
+            if folder_paths.is_empty() {
+                (None, None)
+            } else {
+                (
+                    Some(serialized_folder_paths.paths),
+                    Some(serialized_folder_paths.order),
+                )
+            };
         let json_data = serde_json::to_string(&SerializedThread {
             thread,
             version: DbThread::VERSION,
@@ -438,14 +444,15 @@ impl ThreadsDatabase {
         let data_type = DataType::Zstd;
         let data = compressed;
 
-        let mut insert = connection.exec_bound::<(Arc<str>, Option<Arc<str>>, Option<String>, String, String, DataType, Vec<u8>)>(indoc! {"
-            INSERT OR REPLACE INTO threads (id, parent_id, worktree_branch, summary, updated_at, data_type, data) VALUES (?, ?, ?, ?, ?, ?, ?)
+        let mut insert = connection.exec_bound::<(Arc<str>, Option<Arc<str>>, Option<String>, Option<String>, String, String, DataType, Vec<u8>)>(indoc! {"
+            INSERT OR REPLACE INTO threads (id, parent_id, folder_paths, folder_paths_order, summary, updated_at, data_type, data) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         "})?;
 
         insert((
             id.0,
             parent_id,
-            worktree_branch,
+            folder_paths_str,
+            folder_paths_order_str,
             title,
             updated_at,
             data_type,
@@ -462,20 +469,28 @@ impl ThreadsDatabase {
             let connection = connection.lock();
 
             let mut select = connection
-                .select_bound::<(), (Arc<str>, Option<Arc<str>>, Option<String>, String, String)>(indoc! {"
-                SELECT id, parent_id, worktree_branch, summary, updated_at FROM threads ORDER BY updated_at DESC
+                .select_bound::<(), (Arc<str>, Option<Arc<str>>, Option<String>, Option<String>, String, String)>(indoc! {"
+                SELECT id, parent_id, folder_paths, folder_paths_order, summary, updated_at FROM threads ORDER BY updated_at DESC
             "})?;
 
             let rows = select(())?;
             let mut threads = Vec::new();
 
-            for (id, parent_id, worktree_branch, summary, updated_at) in rows {
+            for (id, parent_id, folder_paths, folder_paths_order, summary, updated_at) in rows {
+                let folder_paths = folder_paths
+                    .map(|paths| {
+                        PathList::deserialize(&util::path_list::SerializedPathList {
+                            paths,
+                            order: folder_paths_order.unwrap_or_default(),
+                        })
+                    })
+                    .unwrap_or_default();
                 threads.push(DbThreadMetadata {
                     id: acp::SessionId::new(id),
                     parent_session_id: parent_id.map(acp::SessionId::new),
                     title: summary.into(),
                     updated_at: DateTime::parse_from_rfc3339(&updated_at)?.with_timezone(&Utc),
-                    worktree_branch,
+                    folder_paths,
                 });
             }
 
@@ -509,11 +524,16 @@ impl ThreadsDatabase {
         })
     }
 
-    pub fn save_thread(&self, id: acp::SessionId, thread: DbThread) -> Task<Result<()>> {
+    pub fn save_thread(
+        &self,
+        id: acp::SessionId,
+        thread: DbThread,
+        folder_paths: PathList,
+    ) -> Task<Result<()>> {
         let connection = self.connection.clone();
 
         self.executor
-            .spawn(async move { Self::save_thread_sync(&connection, id, thread) })
+            .spawn(async move { Self::save_thread_sync(&connection, id, thread, &folder_paths) })
     }
 
     pub fn delete_thread(&self, id: acp::SessionId) -> Task<Result<()>> {
@@ -609,7 +629,9 @@ mod tests {
             profile: None,
             imported: false,
             subagent_context: None,
-            git_worktree_info: None,
+            speed: None,
+            thinking_enabled: false,
+            thinking_effort: None,
         }
     }
 
@@ -630,11 +652,11 @@ mod tests {
         );
 
         database
-            .save_thread(older_id.clone(), older_thread)
+            .save_thread(older_id.clone(), older_thread, PathList::default())
             .await
             .unwrap();
         database
-            .save_thread(newer_id.clone(), newer_thread)
+            .save_thread(newer_id.clone(), newer_thread, PathList::default())
             .await
             .unwrap();
 
@@ -659,11 +681,11 @@ mod tests {
         );
 
         database
-            .save_thread(thread_id.clone(), original_thread)
+            .save_thread(thread_id.clone(), original_thread, PathList::default())
             .await
             .unwrap();
         database
-            .save_thread(thread_id.clone(), updated_thread)
+            .save_thread(thread_id.clone(), updated_thread, PathList::default())
             .await
             .unwrap();
 
@@ -710,7 +732,7 @@ mod tests {
         });
 
         database
-            .save_thread(child_id.clone(), child_thread)
+            .save_thread(child_id.clone(), child_thread, PathList::default())
             .await
             .unwrap();
 
@@ -738,7 +760,7 @@ mod tests {
         );
 
         database
-            .save_thread(thread_id.clone(), thread)
+            .save_thread(thread_id.clone(), thread, PathList::default())
             .await
             .unwrap();
 
@@ -755,92 +777,47 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_git_worktree_info_roundtrip(cx: &mut TestAppContext) {
+    async fn test_folder_paths_roundtrip(cx: &mut TestAppContext) {
         let database = ThreadsDatabase::new(cx.executor()).unwrap();
 
-        let thread_id = session_id("worktree-thread");
-        let mut thread = make_thread(
-            "Worktree Thread",
+        let thread_id = session_id("folder-thread");
+        let thread = make_thread(
+            "Folder Thread",
             Utc.with_ymd_and_hms(2024, 6, 15, 12, 0, 0).unwrap(),
         );
-        thread.git_worktree_info = Some(AgentGitWorktreeInfo {
-            branch: "zed/agent/a4Xiu".to_string(),
-            worktree_path: std::path::PathBuf::from("/repo/worktrees/zed/agent/a4Xiu"),
-            base_ref: "main".to_string(),
-        });
+
+        let folder_paths = PathList::new(&[
+            std::path::PathBuf::from("/home/user/project-a"),
+            std::path::PathBuf::from("/home/user/project-b"),
+        ]);
 
         database
-            .save_thread(thread_id.clone(), thread)
+            .save_thread(thread_id.clone(), thread, folder_paths.clone())
             .await
             .unwrap();
 
-        let loaded = database
-            .load_thread(thread_id)
-            .await
-            .unwrap()
-            .expect("thread should exist");
-
-        let info = loaded
-            .git_worktree_info
-            .expect("git_worktree_info should be restored");
-        assert_eq!(info.branch, "zed/agent/a4Xiu");
-        assert_eq!(
-            info.worktree_path,
-            std::path::PathBuf::from("/repo/worktrees/zed/agent/a4Xiu")
-        );
-        assert_eq!(info.base_ref, "main");
+        let threads = database.list_threads().await.unwrap();
+        assert_eq!(threads.len(), 1);
+        assert_eq!(threads[0].folder_paths, folder_paths);
     }
 
     #[gpui::test]
-    async fn test_session_list_includes_worktree_meta(cx: &mut TestAppContext) {
+    async fn test_folder_paths_empty_when_not_set(cx: &mut TestAppContext) {
         let database = ThreadsDatabase::new(cx.executor()).unwrap();
 
-        // Save a thread with worktree info
-        let worktree_id = session_id("wt-thread");
-        let mut worktree_thread = make_thread(
-            "With Worktree",
+        let thread_id = session_id("no-folder-thread");
+        let thread = make_thread(
+            "No Folder Thread",
             Utc.with_ymd_and_hms(2024, 6, 15, 12, 0, 0).unwrap(),
         );
-        worktree_thread.git_worktree_info = Some(AgentGitWorktreeInfo {
-            branch: "zed/agent/bR9kz".to_string(),
-            worktree_path: std::path::PathBuf::from("/repo/worktrees/zed/agent/bR9kz"),
-            base_ref: "develop".to_string(),
-        });
 
         database
-            .save_thread(worktree_id.clone(), worktree_thread)
+            .save_thread(thread_id.clone(), thread, PathList::default())
             .await
             .unwrap();
 
-        // Save a thread without worktree info
-        let plain_id = session_id("plain-thread");
-        let plain_thread = make_thread(
-            "Without Worktree",
-            Utc.with_ymd_and_hms(2024, 6, 15, 11, 0, 0).unwrap(),
-        );
-
-        database
-            .save_thread(plain_id.clone(), plain_thread)
-            .await
-            .unwrap();
-
-        // List threads and verify worktree_branch is populated correctly
         let threads = database.list_threads().await.unwrap();
-        assert_eq!(threads.len(), 2);
-
-        let wt_entry = threads
-            .iter()
-            .find(|t| t.id == worktree_id)
-            .expect("should find worktree thread");
-        assert_eq!(wt_entry.worktree_branch.as_deref(), Some("zed/agent/bR9kz"));
-
-        let plain_entry = threads
-            .iter()
-            .find(|t| t.id == plain_id)
-            .expect("should find plain thread");
-        assert!(
-            plain_entry.worktree_branch.is_none(),
-            "plain thread should have no worktree_branch"
-        );
+        assert_eq!(threads.len(), 1);
+        assert!(threads[0].folder_paths.is_empty());
     }
 }

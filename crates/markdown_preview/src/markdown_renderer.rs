@@ -133,7 +133,9 @@ impl CachedMermaidDiagram {
         let _task = cx.spawn(async move |this, cx| {
             let value = cx
                 .background_spawn(async move {
-                    let svg_string = mermaid_rs_renderer::render(&contents.contents)?;
+                    let svg_string = crashes::recoverable_panic(|| {
+                        mermaid_rs_renderer::render(&contents.contents)
+                    })??;
                     let scale = contents.scale as f32 / 100.0;
                     svg_renderer
                         .render_single_frame(svg_string.as_bytes(), scale, true)
