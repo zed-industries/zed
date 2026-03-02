@@ -14,6 +14,7 @@ mod tools;
 
 use context_server::ContextServerId;
 pub use db::*;
+use itertools::Itertools;
 pub use native_agent_server::NativeAgentServer;
 pub use pattern_extraction::*;
 pub use shell_command_parser::extract_commands;
@@ -1819,7 +1820,21 @@ impl SubagentHandle for NativeSubagentHandle {
                 SubagentPromptResult::Completed => thread.read_with(cx, |thread, _cx| {
                     thread
                         .last_message()
-                        .map(|m| m.to_markdown())
+                        .and_then(|message| {
+                            let content = message.as_agent_message()?
+                                .content
+                                .iter()
+                                .filter_map(|c| match c {
+                                    AgentMessageContent::Text(text) => Some(text.as_str()),
+                                    _ => None,
+                                })
+                                .join("\n\n");
+                            if content.is_empty() {
+                                None
+                            } else {
+                                Some(content)
+                            }
+                        })
                         .context("No response from subagent")
                 }),
                 SubagentPromptResult::Cancelled => Err(anyhow!("User canceled")),
