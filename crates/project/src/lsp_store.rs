@@ -5106,6 +5106,10 @@ impl LspStore {
             .clone();
         self.semantic_token_config
             .update_rules(new_semantic_token_rules);
+        // Always clear cached stylizers so that changes to language-specific
+        // semantic token rules (e.g. from extension install/uninstall) are
+        // picked up. Stylizers are recreated lazily, so this is cheap.
+        self.semantic_token_config.clear_stylizers();
 
         let new_global_semantic_tokens_mode =
             all_language_settings(None, cx).defaults.semantic_tokens;
