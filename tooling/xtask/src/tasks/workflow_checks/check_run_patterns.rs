@@ -1,8 +1,14 @@
-use std::{collections::HashMap, ops::Range, path::PathBuf, sync::LazyLock};
-
 use annotate_snippets::{AnnotationKind, Group, Level, Snippet};
+use anyhow::{Result, anyhow};
 use regex::Regex;
 use serde_yaml::Value;
+use std::{
+    collections::HashMap,
+    fs,
+    ops::Range,
+    path::{Path, PathBuf},
+    sync::LazyLock,
+};
 
 static GITHUB_INPUT_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r#"\$\{\{[[:blank:]]*([[:alnum:]]|[[:punct:]])+?[[:blank:]]*\}\}"#)
@@ -15,11 +21,22 @@ pub struct WorkflowFile {
 }
 
 impl WorkflowFile {
-    pub fn new(raw_content: String) -> Result<Self, serde_yaml::Error> {
-        serde_yaml::from_str(&raw_content).map(|parsed_content| Self {
-            raw_content,
-            parsed_content,
-        })
+    pub fn load(workflow_file_path: &Path) -> Result<Self> {
+        fs::read_to_string(workflow_file_path)
+            .map_err(|_| {
+                anyhow!(
+                    "Could not read workflow file at {}",
+                    workflow_file_path.display()
+                )
+            })
+            .and_then(|file_content| {
+                serde_yaml::from_str(&file_content)
+                    .map(|parsed_content| Self {
+                        raw_content: file_content,
+                        parsed_content,
+                    })
+                    .map_err(|e| anyhow!("Failed to parse workflow file: {e:?}"))
+            })
     }
 }
 

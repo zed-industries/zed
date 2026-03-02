@@ -1,9 +1,6 @@
 mod check_run_patterns;
 
-use std::{
-    fs,
-    path::{Path, PathBuf},
-};
+use std::{fs, path::PathBuf};
 
 use annotate_snippets::Renderer;
 use anyhow::{Result, anyhow};
@@ -14,10 +11,12 @@ use strum::IntoEnumIterator;
 
 use crate::tasks::{
     workflow_checks::check_run_patterns::{
-        RunValidationError, WorkflowFile, WorkflowValidationError, validate_run_command,
+        RunValidationError, WorkflowFile, WorkflowValidationError,
     },
     workflows::WorkflowType,
 };
+
+pub use check_run_patterns::validate_run_command;
 
 #[derive(Parser)]
 pub struct WorkflowValidationArgs {}
@@ -100,7 +99,7 @@ fn check_workflow(workflow_file_path: PathBuf) -> Result<(), WorkflowError> {
     }
 
     let file_content =
-        load_workflow_file(&workflow_file_path).map_err(WorkflowError::ParseError)?;
+        WorkflowFile::load(&workflow_file_path).map_err(WorkflowError::ParseError)?;
 
     check_recursive(&Value::Null, &file_content.parsed_content).map_err(|errors| {
         WorkflowError::ValidationError(Box::new(WorkflowValidationError::new(
@@ -116,18 +115,4 @@ fn check_string(key: &Value, value: &str) -> Result<(), RunValidationError> {
         Value::String(key) if key == "run" => validate_run_command(value),
         _ => Ok(()),
     }
-}
-
-fn load_workflow_file(workflow_file_path: &Path) -> Result<WorkflowFile> {
-    fs::read_to_string(workflow_file_path)
-        .map_err(|_| {
-            anyhow!(
-                "Could not read workflow file at {}",
-                workflow_file_path.display()
-            )
-        })
-        .and_then(|file_content| {
-            WorkflowFile::new(file_content)
-                .map_err(|e| anyhow!("Failed to parse workflow file: {e:?}"))
-        })
 }
