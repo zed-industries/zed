@@ -1014,63 +1014,71 @@ impl AgentPanel {
 
         let thread_store = self.thread_store.clone();
 
-        cx.spawn_in(window, async move |this, cx| {
-            let ext_agent = match agent_choice {
-                Some(agent) => {
-                    cx.background_spawn({
-                        let agent = agent.clone();
-                        async move {
-                            if let Some(serialized) =
-                                serde_json::to_string(&LastUsedExternalAgent { agent }).log_err()
-                            {
-                                KEY_VALUE_STORE
-                                    .write_kvp(LAST_USED_EXTERNAL_AGENT_KEY.to_string(), serialized)
-                                    .await
-                                    .log_err();
-                            }
-                        }
-                    })
-                    .detach();
-
-                    agent
-                }
-                None => {
-                    if is_via_collab {
-                        ExternalAgent::NativeAgent
-                    } else {
-                        cx.background_spawn(async move {
-                            KEY_VALUE_STORE.read_kvp(LAST_USED_EXTERNAL_AGENT_KEY)
-                        })
-                        .await
-                        .log_err()
-                        .flatten()
-                        .and_then(|value| {
-                            serde_json::from_str::<LastUsedExternalAgent>(&value).log_err()
-                        })
-                        .map(|agent| agent.agent)
-                        .unwrap_or(ExternalAgent::NativeAgent)
+        if let Some(agent) = agent_choice {
+            cx.background_spawn({
+                let agent = agent.clone();
+                async move {
+                    if let Some(serialized) =
+                        serde_json::to_string(&LastUsedExternalAgent { agent }).log_err()
+                    {
+                        KEY_VALUE_STORE
+                            .write_kvp(LAST_USED_EXTERNAL_AGENT_KEY.to_string(), serialized)
+                            .await
+                            .log_err();
                     }
                 }
-            };
+            })
+            .detach();
 
-            let server = ext_agent.server(fs, thread_store);
-            this.update_in(cx, |agent_panel, window, cx| {
-                agent_panel._external_thread(
-                    server,
-                    resume_thread,
-                    initial_content,
-                    workspace,
-                    project,
-                    ext_agent,
-                    focus,
-                    window,
-                    cx,
-                );
-            })?;
+            let server = agent.server(fs, thread_store);
+            self._external_thread(
+                server,
+                resume_thread,
+                initial_content,
+                workspace,
+                project,
+                agent,
+                focus,
+                window,
+                cx,
+            );
+        } else {
+            cx.spawn_in(window, async move |this, cx| {
+                let ext_agent = if is_via_collab {
+                    ExternalAgent::NativeAgent
+                } else {
+                    cx.background_spawn(async move {
+                        KEY_VALUE_STORE.read_kvp(LAST_USED_EXTERNAL_AGENT_KEY)
+                    })
+                    .await
+                    .log_err()
+                    .flatten()
+                    .and_then(|value| {
+                        serde_json::from_str::<LastUsedExternalAgent>(&value).log_err()
+                    })
+                    .map(|agent| agent.agent)
+                    .unwrap_or(ExternalAgent::NativeAgent)
+                };
 
-            anyhow::Ok(())
-        })
-        .detach_and_log_err(cx);
+                let server = ext_agent.server(fs, thread_store);
+                this.update_in(cx, |agent_panel, window, cx| {
+                    agent_panel._external_thread(
+                        server,
+                        resume_thread,
+                        initial_content,
+                        workspace,
+                        project,
+                        ext_agent,
+                        focus,
+                        window,
+                        cx,
+                    );
+                })?;
+
+                anyhow::Ok(())
+            })
+            .detach_and_log_err(cx);
+        }
     }
 
     fn deploy_rules_library(
