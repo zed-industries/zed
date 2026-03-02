@@ -16,6 +16,8 @@ use crate::{AgentTool, ThreadEnvironment, ToolCallEventStream, ToolInput};
 /// - Run multiple tasks in parallel.
 /// - Delegate a self-contained task where you only need the final outcome.
 ///
+/// Do NOT use this tool for tasks you could accomplish directly with one or two tool calls (e.g. reading a file, running a single command).
+///
 /// You will receive only the agent's final message as output.
 ///
 /// **New session** (no session_id): Creates a new agent that does NOT see your conversation history. Include all relevant context (file paths, requirements, constraints) in the message.
