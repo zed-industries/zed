@@ -702,12 +702,12 @@ impl ThreadView {
         let message_editor = self.message_editor.clone();
 
         // Intercept the first send so the agent panel can capture the full
-        // content blocks — needed for New Worktree, which must create a
-        // workspace before sending the message there.
+        // content blocks — needed for "Start thread in New Worktree",
+        // which must create a workspace before sending the message there.
         if self.thread.read(cx).entries().is_empty() && !message_editor.read(cx).is_empty(cx) {
             let full_mention_content = self.as_native_thread(cx).is_some_and(|thread| {
-                // Inline full file contents for profiles without tools,
-                // since file paths will change after worktree creation.
+                // Profiles that do not enable any tools can't read files, so expand
+                // directory mentions to inline file contents.
                 let thread = thread.read(cx);
                 AgentSettings::get_global(cx)
                     .profiles
