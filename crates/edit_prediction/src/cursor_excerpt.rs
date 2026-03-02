@@ -13,7 +13,7 @@ pub fn compute_excerpt_ranges(
     let editable_150 = compute_editable_range(snapshot, position, 150);
     let editable_180 = compute_editable_range(snapshot, position, 180);
     let editable_350 = compute_editable_range(snapshot, position, 350);
-    let full_512 = compute_editable_range(snapshot, position, 512);
+    let editable_512 = compute_editable_range(snapshot, position, 512);
 
     let editable_150_context_350 =
         expand_context_syntactically_then_linewise(snapshot, editable_150.clone(), 350);
@@ -21,14 +21,20 @@ pub fn compute_excerpt_ranges(
         expand_context_syntactically_then_linewise(snapshot, editable_180.clone(), 350);
     let editable_350_context_150 =
         expand_context_syntactically_then_linewise(snapshot, editable_350.clone(), 150);
+    let editable_350_context_512 =
+        expand_context_syntactically_then_linewise(snapshot, editable_350.clone(), 512);
+    let editable_350_context_1024 =
+        expand_context_syntactically_then_linewise(snapshot, editable_350.clone(), 1024);
+    let editable_350_context_4096 =
+        expand_context_syntactically_then_linewise(snapshot, editable_350.clone(), 4096);
 
-    let full_start_row = full_512
+    let full_start_row = editable_512
         .start
         .row
         .min(editable_150_context_350.start.row)
         .min(editable_180_context_350.start.row)
         .min(editable_350_context_150.start.row);
-    let full_end_row = full_512
+    let full_end_row = editable_512
         .end
         .row
         .max(editable_150_context_350.end.row)
@@ -50,9 +56,13 @@ pub fn compute_excerpt_ranges(
         editable_150: to_offset(&editable_150),
         editable_180: to_offset(&editable_180),
         editable_350: to_offset(&editable_350),
+        editable_512: Some(to_offset(&editable_512)),
         editable_150_context_350: to_offset(&editable_150_context_350),
         editable_180_context_350: to_offset(&editable_180_context_350),
         editable_350_context_150: to_offset(&editable_350_context_150),
+        editable_350_context_512: Some(to_offset(&editable_350_context_512)),
+        editable_350_context_1024: Some(to_offset(&editable_350_context_1024)),
+        editable_350_context_4096: Some(to_offset(&editable_350_context_4096)),
     };
 
     (full_context, full_context_offset_range, ranges)
