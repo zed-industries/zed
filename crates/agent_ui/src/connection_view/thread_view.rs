@@ -1223,14 +1223,54 @@ impl ThreadView {
         let Some(queued_message) = self.remove_from_queue(index, cx) else {
             return false;
         };
+        let queued_content = queued_message.content;
+        let message_editor = self.message_editor.clone();
+        let inserted_text = inserted_text.map(ToOwned::to_owned);
 
-        self.message_editor.update(cx, |editor, cx| {
-            editor.set_message(queued_message.content, window, cx);
-            if let Some(inserted_text) = inserted_text {
-                editor.insert_text(inserted_text, window, cx);
+        window.focus(&message_editor.focus_handle(cx), cx);
+
+        if message_editor.read(cx).is_empty(cx) {
+            message_editor.update(cx, |editor, cx| {
+                editor.set_message(queued_content, window, cx);
+                if let Some(inserted_text) = inserted_text.as_deref() {
+                    editor.insert_text(inserted_text, window, cx);
+                }
+            });
+            cx.notify();
+            return true;
+        }
+
+        let existing_message_text = message_editor.read(cx).text(cx);
+        let existing_contents_task =
+            message_editor.update(cx, |editor, cx| editor.contents(false, cx));
+
+        cx.spawn_in(window, async move |_this, cx| {
+            let mut combined_content = match existing_contents_task.await {
+                Ok((existing_content, _tracked_buffers)) => existing_content,
+                Err(error) => {
+                    log::error!(
+                        "failed to read existing message editor contents while appending queued message: {error:#}"
+                    );
+                    vec![existing_message_text.into()]
+                }
+            };
+
+            if !combined_content.is_empty() && !queued_content.is_empty() {
+                combined_content.push("\n\n".to_string().into());
             }
-        });
-        window.focus(&self.message_editor.focus_handle(cx), cx);
+            combined_content.extend(queued_content);
+
+            message_editor.update_in(cx, |editor, window, cx| {
+                editor.set_message(combined_content, window, cx);
+                if let Some(inserted_text) = inserted_text.as_deref() {
+                    editor.insert_text(inserted_text, window, cx);
+                }
+                editor.focus_handle(cx).focus(window, cx);
+            })?;
+            Ok::<(), anyhow::Error>(())
+        })
+        .detach_and_log_err(cx);
+
         cx.notify();
         true
     }
