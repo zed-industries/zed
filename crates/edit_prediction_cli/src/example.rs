@@ -184,6 +184,8 @@ pub struct ExampleScore {
     #[serde(default)]
     pub deleted_tokens: usize,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kept_rate: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cumulative_logprob: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub avg_logprob: Option<f64>,
