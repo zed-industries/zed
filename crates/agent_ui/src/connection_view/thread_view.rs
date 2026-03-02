@@ -235,10 +235,6 @@ pub struct ThreadView {
     pub is_loading_contents: bool,
     pub new_server_version_available: Option<SharedString>,
     pub resumed_without_history: bool,
-    /// Tracks the selected granularity index for each tool call's permission dropdown.
-    /// The index corresponds to the position in the allow_options list.
-    /// Default is the last option (index pointing to "Only this time").
-    pub selected_permission_granularity: HashMap<agent_client_protocol::ToolCallId, usize>,
     pub resume_thread_metadata: Option<AgentSessionInfo>,
     pub _cancel_task: Option<Task<()>>,
     pub skip_queue_processing_count: usize,
@@ -428,7 +424,6 @@ impl ThreadView {
             discarded_partial_edits: HashSet::default(),
             is_loading_contents: false,
             new_server_version_available: None,
-            selected_permission_granularity: HashMap::default(),
             _cancel_task: None,
             skip_queue_processing_count: 0,
             user_interrupted_generation: false,
@@ -1385,19 +1380,6 @@ impl ThreadView {
         );
     }
 
-    pub fn handle_select_permission_granularity(
-        &mut self,
-        action: &SelectPermissionGranularity,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let tool_call_id = acp::ToolCallId::new(action.tool_call_id.clone());
-        self.selected_permission_granularity
-            .insert(tool_call_id, action.index);
-
-        cx.notify();
-    }
-
     fn authorize_pending_with_granularity(
         &mut self,
         is_allow: bool,
@@ -1417,9 +1399,9 @@ impl ThreadView {
 
         // Get selected index, defaulting to last option ("Only this time")
         let selected_index = self
-            .selected_permission_granularity
-            .get(&tool_call_id)
-            .copied()
+            .conversation
+            .read(cx)
+            .selected_permission_granularity(&session_id, &tool_call_id)
             .unwrap_or_else(|| choices.len().saturating_sub(1));
 
         let selected_choice = choices.get(selected_index).or(choices.last())?;
@@ -1817,23 +1799,26 @@ impl ThreadView {
             .when(!plan.is_empty() && !changed_buffers.is_empty(), |this| {
                 this.child(Divider::horizontal().color(DividerColor::Border))
             })
-            .when(!changed_buffers.is_empty(), |this| {
-                this.child(self.render_edits_summary(
-                    &changed_buffers,
-                    edits_expanded,
-                    pending_edits,
-                    cx,
-                ))
-                .when(edits_expanded, |parent| {
-                    parent.child(self.render_edited_files(
-                        action_log,
-                        telemetry.clone(),
+            .when(
+                !changed_buffers.is_empty() && thread.parent_session_id().is_none(),
+                |this| {
+                    this.child(self.render_edits_summary(
                         &changed_buffers,
+                        edits_expanded,
                         pending_edits,
                         cx,
                     ))
-                })
-            })
+                    .when(edits_expanded, |parent| {
+                        parent.child(self.render_edited_files(
+                            action_log,
+                            telemetry.clone(),
+                            &changed_buffers,
+                            pending_edits,
+                            cx,
+                        ))
+                    })
+                },
+            )
             .when(!queue_is_empty, |this| {
                 this.when(!plan.is_empty() || !changed_buffers.is_empty(), |this| {
                     this.child(Divider::horizontal().color(DividerColor::Border))
@@ -3923,7 +3908,7 @@ impl ThreadView {
         let thread = self.thread.clone();
         let comments_editor = self.thread_feedback.comments_editor.clone();
 
-        let primary = if entry_ix == total_entries - 1 {
+        let primary = if entry_ix + 1 == total_entries {
             v_flex()
                 .w_full()
                 .child(primary)
@@ -5002,15 +4987,20 @@ impl ThreadView {
 
         div().w_full().map(|this| {
             if tool_call.is_subagent() {
-                this.child(self.render_subagent_tool_call(
-                    active_session_id,
-                    entry_ix,
-                    tool_call,
-                    tool_call.subagent_session_id.clone(),
-                    focus_handle,
-                    window,
-                    cx,
-                ))
+                this.child(
+                    self.render_subagent_tool_call(
+                        active_session_id,
+                        entry_ix,
+                        tool_call,
+                        tool_call
+                            .subagent_session_info
+                            .as_ref()
+                            .map(|i| i.session_id.clone()),
+                        focus_handle,
+                        window,
+                        cx,
+                    ),
+                )
             } else if has_terminals {
                 this.children(tool_call.terminals().map(|terminal| {
                     self.render_terminal_tool_call(
@@ -5513,9 +5503,9 @@ impl ThreadView {
     ) -> Div {
         // Get the selected granularity index, defaulting to the last option ("Only this time")
         let selected_index = self
-            .selected_permission_granularity
-            .get(&tool_call_id)
-            .copied()
+            .conversation
+            .read(cx)
+            .selected_permission_granularity(&session_id, &tool_call_id)
             .unwrap_or_else(|| choices.len().saturating_sub(1));
 
         let selected_choice = choices.get(selected_index).or(choices.last());
@@ -5603,6 +5593,7 @@ impl ThreadView {
                                 )
                             })
                             .on_click(cx.listener({
+                                let session_id = session_id.clone();
                                 let tool_call_id = tool_call_id.clone();
                                 let option_id = deny_option_id;
                                 let option_kind = deny_option_kind;
@@ -5623,6 +5614,7 @@ impl ThreadView {
                 choices,
                 dropdown_label,
                 entry_ix,
+                session_id,
                 tool_call_id,
                 selected_index,
                 is_first,
@@ -5635,6 +5627,7 @@ impl ThreadView {
         choices: &[PermissionOptionChoice],
         current_label: SharedString,
         entry_ix: usize,
+        session_id: acp::SessionId,
         tool_call_id: acp::ToolCallId,
         selected_index: usize,
         is_first: bool,
@@ -5647,6 +5640,8 @@ impl ThreadView {
             .collect();
 
         let permission_dropdown_handle = self.permission_dropdown_handle.clone();
+
+        let conversation = self.conversation.clone();
 
         PopoverMenu::new(("permission-granularity", entry_ix))
             .with_handle(permission_dropdown_handle)
@@ -5668,6 +5663,8 @@ impl ThreadView {
                     }),
             )
             .menu(move |window, cx| {
+                let session_id = session_id.clone();
+                let conversation = conversation.clone();
                 let tool_call_id = tool_call_id.clone();
                 let options = menu_options.clone();
 
@@ -5675,23 +5672,23 @@ impl ThreadView {
                     for (index, display_name) in options.iter() {
                         let display_name = display_name.clone();
                         let index = *index;
-                        let tool_call_id_for_entry = tool_call_id.clone();
+                        let session_id = session_id.clone();
+                        let conversation = conversation.clone();
+                        let tool_call_id = tool_call_id.clone();
                         let is_selected = index == selected_index;
-
                         menu = menu.toggleable_entry(
                             display_name,
                             is_selected,
                             IconPosition::End,
                             None,
-                            move |window, cx| {
-                                window.dispatch_action(
-                                    SelectPermissionGranularity {
-                                        tool_call_id: tool_call_id_for_entry.0.to_string(),
+                            move |_window, cx| {
+                                conversation.update(cx, |conversation, _cx| {
+                                    conversation.set_selected_permission_granularity(
+                                        session_id.clone(),
+                                        tool_call_id.clone(),
                                         index,
-                                    }
-                                    .boxed_clone(),
-                                    cx,
-                                );
+                                    );
+                                });
                             },
                         );
                     }
@@ -6381,7 +6378,9 @@ impl ThreadView {
 
         let is_running = matches!(
             tool_call.status,
-            ToolCallStatus::Pending | ToolCallStatus::InProgress
+            ToolCallStatus::Pending
+                | ToolCallStatus::InProgress
+                | ToolCallStatus::WaitingForConfirmation { .. }
         );
 
         let is_failed = matches!(
@@ -6596,7 +6595,7 @@ impl ThreadView {
                     .read(cx)
                     .pending_tool_call(thread.read(cx).session_id(), cx);
 
-                if let Some((_, subagent_tool_call_id, _)) = pending_tool_call {
+                if is_running && let Some((_, subagent_tool_call_id, _)) = pending_tool_call {
                     if let Some((entry_ix, tool_call)) =
                         thread.read(cx).tool_call(&subagent_tool_call_id)
                     {
@@ -6665,6 +6664,34 @@ impl ThreadView {
             .into_any_element()
     }
 
+    /// This will return `true` if there were no other tool calls during the same turn as the given tool call (no concurrent tool calls).
+    fn should_show_subagent_fullscreen(&self, tool_call: &ToolCall, cx: &App) -> bool {
+        let parent_thread = self.thread.read(cx);
+
+        let Some(tool_call_index) = parent_thread
+            .entries()
+            .iter()
+            .position(|e| matches!(e, AgentThreadEntry::ToolCall(tc) if tc.id == tool_call.id))
+        else {
+            return false;
+        };
+
+        if let Some(AgentThreadEntry::ToolCall(_)) =
+            parent_thread.entries().get(tool_call_index + 1)
+        {
+            return false;
+        }
+
+        if let Some(AgentThreadEntry::ToolCall(_)) = parent_thread
+            .entries()
+            .get(tool_call_index.saturating_sub(1))
+        {
+            return false;
+        }
+
+        true
+    }
+
     fn render_subagent_expanded_content(
         &self,
         thread_view: &Entity<ThreadView>,
@@ -6675,29 +6702,7 @@ impl ThreadView {
     ) -> impl IntoElement {
         const MAX_PREVIEW_ENTRIES: usize = 8;
 
-        let parent_thread = self.thread.read(cx);
-        let mut started_subagent_count = 0usize;
-        let mut turn_has_our_call = false;
-        for entry in parent_thread.entries().iter() {
-            match entry {
-                AgentThreadEntry::UserMessage(_) => {
-                    if turn_has_our_call {
-                        break;
-                    }
-                    started_subagent_count = 0;
-                    turn_has_our_call = false;
-                }
-                AgentThreadEntry::ToolCall(tc)
-                    if tc.is_subagent() && !matches!(tc.status, ToolCallStatus::Pending) =>
-                {
-                    started_subagent_count += 1;
-                    if tc.id == tool_call.id {
-                        turn_has_our_call = true;
-                    }
-                }
-                _ => {}
-            }
-        }
+        let should_show_subagent_fullscreen = self.should_show_subagent_fullscreen(tool_call, cx);
 
         let subagent_view = thread_view.read(cx);
         let session_id = subagent_view.thread.read(cx).session_id().clone();
@@ -6723,11 +6728,22 @@ impl ThreadView {
 
         let entries = subagent_view.thread.read(cx).entries();
         let total_entries = entries.len();
-        let start_ix = if started_subagent_count > 1 {
-            total_entries.saturating_sub(MAX_PREVIEW_ENTRIES)
+        let mut entry_range = if let Some(info) = tool_call.subagent_session_info.as_ref() {
+            info.message_start_index
+                ..info
+                    .message_end_index
+                    .map(|i| (i + 1).min(total_entries))
+                    .unwrap_or(total_entries)
         } else {
-            0
+            0..total_entries
         };
+        if !should_show_subagent_fullscreen {
+            entry_range.start = entry_range
+                .end
+                .saturating_sub(MAX_PREVIEW_ENTRIES)
+                .max(entry_range.start);
+        };
+        let start_ix = entry_range.start;
 
         let scroll_handle = self
             .subagent_scroll_handles
@@ -6739,12 +6755,14 @@ impl ThreadView {
             scroll_handle.scroll_to_bottom();
         }
 
-        let rendered_entries: Vec<AnyElement> = entries[start_ix..]
+        let rendered_entries: Vec<AnyElement> = entries
+            .get(entry_range)
+            .unwrap_or_default()
             .iter()
             .enumerate()
             .map(|(i, entry)| {
                 let actual_ix = start_ix + i;
-                subagent_view.render_entry(actual_ix, total_entries + 1, entry, window, cx)
+                subagent_view.render_entry(actual_ix, total_entries, entry, window, cx)
             })
             .collect();
 
@@ -6762,7 +6780,7 @@ impl ThreadView {
                     .track_scroll(&scroll_handle)
                     .children(rendered_entries),
             )
-            .when(started_subagent_count > 1, |this| {
+            .when(!should_show_subagent_fullscreen, |this| {
                 this.h_56().child(overlay)
             })
             .into_any_element()
@@ -7494,7 +7512,6 @@ impl Render for ThreadView {
             .on_action(cx.listener(Self::allow_once))
             .on_action(cx.listener(Self::reject_once))
             .on_action(cx.listener(Self::handle_authorize_tool_call))
-            .on_action(cx.listener(Self::handle_select_permission_granularity))
             .on_action(cx.listener(Self::open_permission_dropdown))
             .on_action(cx.listener(Self::open_add_context_menu))
             .on_action(cx.listener(|this, _: &ToggleFastMode, _window, cx| {

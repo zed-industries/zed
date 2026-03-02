@@ -48,6 +48,10 @@ impl TestDispatcher {
         self.session_id
     }
 
+    pub fn drain_tasks(&self) {
+        self.scheduler.drain_tasks();
+    }
+
     pub fn advance_clock(&self, by: Duration) {
         self.scheduler.advance_clock(by);
     }

@@ -220,9 +220,15 @@ impl StreamingEditFileTool {
     }
 
     fn set_agent_location(&self, buffer: WeakEntity<Buffer>, position: text::Anchor, cx: &mut App) {
-        self.project.update(cx, |project, cx| {
-            project.set_agent_location(Some(AgentLocation { buffer, position }), cx);
-        });
+        let should_update_agent_location = self
+            .thread
+            .read_with(cx, |thread, _cx| !thread.is_subagent())
+            .unwrap_or_default();
+        if should_update_agent_location {
+            self.project.update(cx, |project, cx| {
+                project.set_agent_location(Some(AgentLocation { buffer, position }), cx);
+            });
+        }
     }
 }
 

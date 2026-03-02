@@ -109,6 +109,21 @@ jobs:
         mkdir -p /tmp/ext-scratch
         mkdir -p /tmp/ext-output
         ./zed-extension --source-dir . --scratch-dir /tmp/ext-scratch --output-dir /tmp/ext-output
+    - name: run_tests::fetch_ts_query_ls
+      uses: dsaltares/fetch-gh-release-asset@aa37ae5c44d3c9820bc12fe675e8670ecd93bd1c
+      with:
+        repo: ribru17/ts_query_ls
+        version: tags/v3.15.1
+        file: ts_query_ls-x86_64-unknown-linux-gnu.tar.gz
+    - name: run_tests::run_ts_query_ls
+      run: |-
+        tar -xf ts_query_ls-x86_64-unknown-linux-gnu.tar.gz
+        ./ts_query_ls format --check . || {
+            echo "Found unformatted queries, please format them with ts_query_ls."
+            echo "For easy use, install the Tree-sitter query extension:"
+            echo "zed://extension/tree-sitter-query"
+            false
+        }
     - id: compare-versions-check
       name: extension_bump::compare_versions
       run: |
