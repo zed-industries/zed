@@ -73,7 +73,7 @@ fn get_all_workflow_files() -> impl Iterator<Item = PathBuf> {
 }
 
 fn check_workflow(workflow_file_path: PathBuf) -> Result<(), WorkflowError> {
-    fn collect_errors<'a>(
+    fn collect_errors(
         iter: impl Iterator<Item = Result<(), Vec<RunValidationError>>>,
     ) -> Result<(), Vec<RunValidationError>> {
         Some(iter.flat_map(Result::err).flatten().collect::<Vec<_>>())
