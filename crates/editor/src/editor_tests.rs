@@ -8074,7 +8074,7 @@ async fn test_copy_trim_line_mode(cx: &mut TestAppContext) {
 
     cx.set_state(indoc! {"
         «    fn main() {
-                dbg!(1)
+                1
             }ˇ»
     "});
     cx.update_editor(|editor, _window, _cx| editor.selections.set_line_mode(true));
@@ -8082,7 +8082,7 @@ async fn test_copy_trim_line_mode(cx: &mut TestAppContext) {
 
     assert_eq!(
         cx.read_from_clipboard().and_then(|item| item.text()),
-        Some("fn main() {\n    dbg!(1)\n}\n".to_string())
+        Some("fn main() {\n    1\n}\n".to_string())
     );
 
     let clipboard_selections: Vec<ClipboardSelection> = cx
@@ -8099,7 +8099,7 @@ async fn test_copy_trim_line_mode(cx: &mut TestAppContext) {
 
     cx.set_state(indoc! {"
         «fn main() {
-            dbg!(1)
+            1
         }ˇ»
     "});
     cx.update_editor(|editor, _window, _cx| editor.selections.set_line_mode(true));
@@ -8107,7 +8107,7 @@ async fn test_copy_trim_line_mode(cx: &mut TestAppContext) {
 
     assert_eq!(
         cx.read_from_clipboard().and_then(|item| item.text()),
-        Some("fn main() {\n    dbg!(1)\n}\n".to_string())
+        Some("fn main() {\n    1\n}\n".to_string())
     );
 
     let clipboard_selections: Vec<ClipboardSelection> = cx
