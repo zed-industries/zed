@@ -36,13 +36,6 @@ impl PathKey {
         }
     }
 
-    pub fn max() -> Self {
-        Self {
-            sort_prefix: Some(u64::MAX),
-            path: RelPath::empty().into_arc(),
-        }
-    }
-
     pub fn sorted(sort_prefix: u64) -> Self {
         Self {
             sort_prefix: Some(sort_prefix),

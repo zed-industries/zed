@@ -2342,7 +2342,7 @@ impl BufferSnapshot {
     pub fn summaries_for_anchors<'a, D, A>(&'a self, anchors: A) -> impl 'a + Iterator<Item = D>
     where
         D: 'a + TextDimension,
-        A: 'a + IntoIterator<Item = &'a Anchor>,
+        A: 'a + IntoIterator<Item = Anchor>,
     {
         let anchors = anchors.into_iter();
         self.summaries_for_anchors_with_payload::<D, _, ()>(anchors.map(|a| (a, ())))
@@ -2355,7 +2355,7 @@ impl BufferSnapshot {
     ) -> impl 'a + Iterator<Item = (D, T)>
     where
         D: 'a + TextDimension,
-        A: 'a + IntoIterator<Item = (&'a Anchor, T)>,
+        A: 'a + IntoIterator<Item = (Anchor, T)>,
     {
         let anchors = anchors.into_iter();
         let mut fragment_cursor = self
@@ -2371,7 +2371,7 @@ impl BufferSnapshot {
                 return (D::from_text_summary(&self.visible_text.summary()), payload);
             }
 
-            let Some(insertion) = self.try_find_fragment(anchor) else {
+            let Some(insertion) = self.try_find_fragment(&anchor) else {
                 panic!(
                     "invalid insertion for buffer {}@{:?} with anchor {:?}",
                     self.remote_id(),

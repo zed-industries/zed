@@ -920,7 +920,7 @@ impl BufferDiffInner<language::BufferSnapshot> {
             .flat_map(move |hunk| {
                 [
                     (
-                        &hunk.buffer_range.start,
+                        hunk.buffer_range.start,
                         (
                             hunk.buffer_range.start,
                             hunk.diff_base_byte_range.start,
@@ -928,7 +928,7 @@ impl BufferDiffInner<language::BufferSnapshot> {
                         ),
                     ),
                     (
-                        &hunk.buffer_range.end,
+                        hunk.buffer_range.end,
                         (hunk.buffer_range.end, hunk.diff_base_byte_range.end, hunk),
                     ),
                 ]

@@ -60,7 +60,7 @@ impl std::fmt::Debug for Anchor {
 }
 
 impl Anchor {
-    pub fn text_anchor(&self) -> Option<text::Anchor> {
+    pub fn text_anchor(&self) -> Option<(PathKeyIndex, text::Anchor, Option<text::Anchor>)> {
         match self {
             Self::Min | Self::Max => None,
             Self::Text {
@@ -68,12 +68,13 @@ impl Anchor {
                 offset,
                 bias,
                 buffer_id,
+                path,
+                diff_base_anchor,
                 ..
-            } => Some(text::Anchor::new(
-                *timestamp,
-                *offset,
-                *bias,
-                Some(*buffer_id),
+            } => Some((
+                *path,
+                text::Anchor::new(*timestamp, *offset, *bias, Some(*buffer_id)),
+                *diff_base_anchor,
             )),
         }
     }
@@ -118,6 +119,14 @@ impl Anchor {
 
     pub fn range_in_buffer(path: PathKeyIndex, range: Range<text::Anchor>) -> Range<Self> {
         Self::text(path, range.start)..Self::text(path, range.end)
+    }
+
+    pub fn bias(&self) -> Bias {
+        match self {
+            Self::Min => Bias::Left,
+            Self::Max => Bias::Right,
+            Self::Text { bias, .. } => *bias,
+        }
     }
 
     pub fn min() -> Self {
