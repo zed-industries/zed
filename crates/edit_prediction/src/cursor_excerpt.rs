@@ -28,18 +28,8 @@ pub fn compute_excerpt_ranges(
     let editable_350_context_4096 =
         expand_context_syntactically_then_linewise(snapshot, editable_350.clone(), 4096);
 
-    let full_start_row = editable_512
-        .start
-        .row
-        .min(editable_150_context_350.start.row)
-        .min(editable_180_context_350.start.row)
-        .min(editable_350_context_150.start.row);
-    let full_end_row = editable_512
-        .end
-        .row
-        .max(editable_150_context_350.end.row)
-        .max(editable_180_context_350.end.row)
-        .max(editable_350_context_150.end.row);
+    let full_start_row = editable_350_context_4096.start.row;
+    let full_end_row = editable_350_context_4096.end.row;
 
     let full_context =
         Point::new(full_start_row, 0)..Point::new(full_end_row, snapshot.line_len(full_end_row));
