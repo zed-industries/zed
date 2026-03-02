@@ -263,7 +263,12 @@ pub struct X11WindowState {
     pub(crate) last_sync_counter: Option<sync::Int64>,
     bounds: Bounds<Pixels>,
     scale_factor: f32,
+    /// Unlike Wayland layer shell windows, X11 windows always have a known size
+    /// at creation time, so the renderer is created immediately (not lazily).
     renderer: WgpuRenderer,
+    /// Shared atlas from WgpuContext, used for sprite_atlas() to maintain
+    /// consistency with Wayland's lazy renderer pattern.
+    atlas: Arc<dyn PlatformAtlas>,
     display: Rc<dyn PlatformDisplay>,
     input_handler: Option<PlatformInputHandler>,
     appearance: WindowAppearance,
@@ -660,6 +665,12 @@ impl X11WindowState {
 
             xcb_flush(xcb);
 
+            let atlas = gpu_context
+                .as_ref()
+                .expect("GPU context must be initialized before creating an X11 window")
+                .atlas
+                .clone();
+
             let renderer = {
                 let raw_window = RawWindow {
                     connection: as_raw_xcb_connection::AsRawXcbConnection::as_raw_xcb_connection(
@@ -713,6 +724,7 @@ impl X11WindowState {
                 bounds: bounds.to_pixels(scale_factor),
                 scale_factor,
                 renderer,
+                atlas,
                 atoms: *atoms,
                 input_handler: None,
                 active: false,
@@ -1578,8 +1590,7 @@ impl PlatformWindow for X11Window {
     }
 
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas> {
-        let inner = self.0.state.borrow();
-        inner.renderer.sprite_atlas().clone()
+        Arc::clone(&self.0.state.borrow().atlas)
     }
 
     fn show_window_menu(&self, position: Point<Pixels>) {

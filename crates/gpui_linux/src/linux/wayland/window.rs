@@ -31,8 +31,9 @@ use gpui::{
     PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point,
     PromptButton, PromptLevel, RequestFrameOptions, ResizeEdge, Scene, Size, Tiling,
     WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowControls,
-    WindowDecorations, WindowKind, WindowParams, layer_shell::LayerShellNotSupportedError, px,
-    size,
+    WindowDecorations, WindowKind, WindowParams,
+    layer_shell::{Anchor, LayerShellNotSupportedError},
+    px, size,
 };
 use gpui_wgpu::{WgpuContext, WgpuRenderer, WgpuSurfaceConfig};
 
@@ -97,7 +98,12 @@ pub struct WaylandWindowState {
     outputs: HashMap<ObjectId, Output>,
     display: Option<(ObjectId, Output)>,
     globals: Globals,
-    renderer: WgpuRenderer,
+    /// The renderer is created lazily for layer shell windows where the initial
+    /// size is 0x0 (anchored to opposite edges). The compositor provides the
+    /// actual size via configure events, at which point we create the renderer.
+    renderer: Option<WgpuRenderer>,
+    /// Shared atlas from WgpuContext, used when renderer is None and for sprite_atlas().
+    atlas: Arc<dyn PlatformAtlas>,
     bounds: Bounds<Pixels>,
     scale: f32,
     input_handler: Option<PlatformInputHandler>,
@@ -145,9 +151,24 @@ impl WaylandSurfaceState {
                 surface.id(),
             );
 
-            let width = f32::from(params.bounds.size.width);
-            let height = f32::from(params.bounds.size.height);
-            layer_surface.set_size(width as u32, height as u32);
+            // According to wlr-layer-shell protocol, when anchored to opposite edges,
+            // the dimension should be 0 to let the compositor stretch the surface.
+            let anchored_horizontally =
+                options.anchor.contains(Anchor::LEFT) && options.anchor.contains(Anchor::RIGHT);
+            let anchored_vertically =
+                options.anchor.contains(Anchor::TOP) && options.anchor.contains(Anchor::BOTTOM);
+
+            let width = if anchored_horizontally {
+                0
+            } else {
+                f32::from(params.bounds.size.width) as u32
+            };
+            let height = if anchored_vertically {
+                0
+            } else {
+                f32::from(params.bounds.size.height) as u32
+            };
+            layer_surface.set_size(width, height);
 
             layer_surface.set_anchor(super::layer_shell::wayland_anchor(options.anchor));
             layer_surface.set_keyboard_interactivity(
@@ -321,25 +342,29 @@ impl WaylandWindowState {
         options: WindowParams,
         parent: Option<WaylandWindowStatePtr>,
     ) -> anyhow::Result<Self> {
-        let renderer = {
-            let raw_window = RawWindow {
-                window: surface.id().as_ptr().cast::<c_void>(),
-                display: surface
-                    .backend()
-                    .upgrade()
-                    .unwrap()
-                    .display_ptr()
-                    .cast::<c_void>(),
-            };
-            let config = WgpuSurfaceConfig {
-                size: Size {
-                    width: DevicePixels(f32::from(options.bounds.size.width) as i32),
-                    height: DevicePixels(f32::from(options.bounds.size.height) as i32),
-                },
-                transparent: true,
-            };
-            WgpuRenderer::new(gpu_context, &raw_window, config)?
+        // For layer shell windows anchored to opposite edges, the initial size is 0x0.
+        // We still need to initialize the WgpuContext (for the shared atlas), so we
+        // always create a renderer with at least 1x1. If the actual size is 0x0, we
+        // discard the renderer and recreate it lazily in set_size_and_scale() when
+        // the compositor provides the actual dimensions via a configure event.
+        let width = f32::from(options.bounds.size.width) as i32;
+        let height = f32::from(options.bounds.size.height) as i32;
+        let has_valid_size = width > 0 && height > 0;
+
+        let init_renderer =
+            Self::create_renderer(&surface, gpu_context, width.max(1), height.max(1))?;
+
+        let renderer = if has_valid_size {
+            Some(init_renderer)
+        } else {
+            // Drop the bootstrap renderer; a real one will be created in
+            // set_size_and_scale() once the compositor sends the actual size.
+            drop(init_renderer);
+            None
         };
+
+        // gpu_context is guaranteed to be Some after create_renderer.
+        let atlas = gpu_context.as_ref().unwrap().atlas.clone();
 
         if let WaylandSurfaceState::Xdg(ref xdg_state) = surface_state {
             if let Some(title) = options.titlebar.and_then(|titlebar| titlebar.title) {
@@ -366,6 +391,7 @@ impl WaylandWindowState {
             outputs: HashMap::default(),
             display: None,
             renderer,
+            atlas,
             bounds: options.bounds,
             scale: 1.0,
             input_handler: None,
@@ -391,6 +417,34 @@ impl WaylandWindowState {
     pub fn is_transparent(&self) -> bool {
         self.decorations == WindowDecorations::Client
             || self.background_appearance != WindowBackgroundAppearance::Opaque
+    }
+
+    /// Creates the WgpuRenderer for this window. Called lazily when we have a valid size.
+    fn create_renderer(
+        surface: &wl_surface::WlSurface,
+        gpu_context: &mut Option<WgpuContext>,
+        width: i32,
+        height: i32,
+    ) -> anyhow::Result<WgpuRenderer> {
+        let backend = surface
+            .backend()
+            .upgrade()
+            .ok_or_else(|| anyhow::anyhow!("Wayland backend has been dropped"))?;
+
+        let raw_window = RawWindow {
+            window: surface.id().as_ptr().cast::<c_void>(),
+            display: backend.display_ptr().cast::<c_void>(),
+        };
+
+        let config = WgpuSurfaceConfig {
+            size: Size {
+                width: DevicePixels(width),
+                height: DevicePixels(height),
+            },
+            transparent: true,
+        };
+
+        WgpuRenderer::new(gpu_context, &raw_window, config)
     }
 
     pub fn primary_output_scale(&mut self) -> i32 {
@@ -436,7 +490,9 @@ impl Drop for WaylandWindow {
 
         let client = state.client.clone();
 
-        state.renderer.destroy();
+        if let Some(renderer) = &mut state.renderer {
+            renderer.destroy();
+        }
 
         // Destroy blur first, this has no dependencies.
         if let Some(blur) = &state.blur {
@@ -926,7 +982,33 @@ impl WaylandWindowStatePtr {
                 state.scale = scale;
             }
             let device_bounds = state.bounds.to_device_pixels(state.scale);
-            state.renderer.update_drawable_size(device_bounds.size);
+            let width = device_bounds.size.width.0 as i32;
+            let height = device_bounds.size.height.0 as i32;
+
+            // Create renderer lazily when we have a valid size (layer shell windows
+            // start with 0x0 until compositor sends configure event)
+            if let Some(renderer) = &mut state.renderer {
+                renderer.update_drawable_size(device_bounds.size);
+            } else if width > 0 && height > 0 {
+                let client = state.client.get_client();
+                let mut client_state = client.borrow_mut();
+                match WaylandWindowState::create_renderer(
+                    &state.surface,
+                    &mut client_state.gpu_context,
+                    width,
+                    height,
+                ) {
+                    Ok(mut renderer) => {
+                        let opaque = !state.is_transparent();
+                        renderer.update_transparency(!opaque);
+                        state.renderer = Some(renderer);
+                    }
+                    Err(err) => {
+                        log::error!("Failed to create renderer: {:?}", err);
+                    }
+                }
+            }
+
             (state.bounds.size, state.scale)
         };
 
@@ -936,11 +1018,14 @@ impl WaylandWindowStatePtr {
             self.callbacks.borrow_mut().resize = Some(fun);
         }
 
-        {
-            let state = self.state.borrow();
-            if let Some(viewport) = &state.viewport {
-                viewport
-                    .set_destination(f32::from(size.width) as i32, f32::from(size.height) as i32);
+        // Only set viewport destination when we have a valid size.
+        // For layer shell windows, the initial size may be 0x0 until the
+        // compositor sends a configure event with the actual dimensions.
+        let width = f32::from(size.width) as i32;
+        let height = f32::from(size.height) as i32;
+        if width > 0 && height > 0 {
+            if let Some(viewport) = &self.state.borrow().viewport {
+                viewport.set_destination(width, height);
             }
         }
     }
@@ -1325,7 +1410,9 @@ impl PlatformWindow for WaylandWindow {
 
     fn draw(&self, scene: &Scene) {
         let mut state = self.borrow_mut();
-        state.renderer.draw(scene);
+        if let Some(renderer) = &mut state.renderer {
+            renderer.draw(scene);
+        }
     }
 
     fn completed_frame(&self) {
@@ -1334,8 +1421,7 @@ impl PlatformWindow for WaylandWindow {
     }
 
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas> {
-        let state = self.borrow();
-        state.renderer.sprite_atlas().clone()
+        Arc::clone(&self.borrow().atlas)
     }
 
     fn show_window_menu(&self, position: Point<Pixels>) {
@@ -1418,14 +1504,19 @@ impl PlatformWindow for WaylandWindow {
     }
 
     fn gpu_specs(&self) -> Option<GpuSpecs> {
-        self.borrow().renderer.gpu_specs().into()
+        self.borrow()
+            .renderer
+            .as_ref()
+            .map(|renderer| renderer.gpu_specs())
     }
 }
 
 fn update_window(mut state: RefMut<WaylandWindowState>) {
     let opaque = !state.is_transparent();
 
-    state.renderer.update_transparency(!opaque);
+    if let Some(renderer) = &mut state.renderer {
+        renderer.update_transparency(!opaque);
+    }
     let opaque_area = state.window_bounds.map(|v| f32::from(v) as i32);
     opaque_area.inset(f32::from(state.inset()) as i32);
 

@@ -282,7 +282,8 @@ impl WgpuRenderer {
             dual_source_blending,
         );
 
-        let atlas = Arc::new(WgpuAtlas::new(Arc::clone(&device), Arc::clone(&queue)));
+        // Use the shared atlas from the context
+        let atlas = Arc::clone(&context.atlas);
         let atlas_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("atlas_sampler"),
             mag_filter: wgpu::FilterMode::Linear,
@@ -928,6 +929,10 @@ impl WgpuRenderer {
         }
     }
 
+    /// Returns the shared sprite atlas.
+    /// Note: On Linux (Wayland/X11), the atlas is accessed directly from WgpuContext
+    /// to support lazy renderer creation. This method is kept for macOS compatibility.
+    #[allow(dead_code)]
     pub fn sprite_atlas(&self) -> &Arc<WgpuAtlas> {
         &self.atlas
     }
@@ -1479,7 +1484,8 @@ impl WgpuRenderer {
     }
 
     pub fn destroy(&mut self) {
-        // wgpu resources are automatically cleaned up when dropped
+        // Atlas is shared and managed by WgpuContext.
+        // Other wgpu resources are automatically cleaned up when dropped.
     }
 }
 
