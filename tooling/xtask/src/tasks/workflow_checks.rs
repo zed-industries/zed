@@ -16,7 +16,7 @@ use serde_yaml::Value;
 use strum::IntoEnumIterator;
 
 use crate::tasks::{
-    workflow_validation::check_run_patterns::{
+    workflow_checks::check_run_patterns::{
         InvalidPatternsErrror, annotations_for_indices, validate_run_command,
     },
     workflows::WorkflowType,
