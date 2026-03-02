@@ -1,4 +1,4 @@
-use crate::cursor_excerpt::{compute_excerpt_ranges, excerpt_ranges_to_byte_offsets};
+use crate::cursor_excerpt::compute_excerpt_ranges;
 use crate::prediction::EditPredictionResult;
 use crate::{
     CurrentEditPrediction, DebugEvent, EditPredictionFinishedDebugEvent, EditPredictionId,
@@ -11,7 +11,7 @@ use edit_prediction_types::PredictedCursorPosition;
 use futures::AsyncReadExt as _;
 use gpui::{App, AppContext as _, Task, http_client, prelude::*};
 use language::language_settings::{OpenAiCompatibleEditPredictionSettings, all_language_settings};
-use language::{BufferSnapshot, OffsetRangeExt as _, ToOffset as _, ToPoint, text_diff};
+use language::{BufferSnapshot, ToOffset as _, ToPoint, text_diff};
 use release_channel::AppVersion;
 use text::{Anchor, Bias};
 
@@ -23,19 +23,6 @@ use zeta_prompt::{
     format_zeta_prompt, get_prefill, prompt_input_contains_special_tokens,
     zeta1::{self, EDITABLE_REGION_END_MARKER},
 };
-
-pub const MAX_CONTEXT_TOKENS: usize = 350;
-
-pub fn max_editable_tokens(format: ZetaFormat) -> usize {
-    match format {
-        ZetaFormat::V0112MiddleAtEnd | ZetaFormat::V0113Ordered => 150,
-        ZetaFormat::V0114180EditableRegion => 180,
-        ZetaFormat::V0120GitMergeMarkers => 180,
-        ZetaFormat::V0131GitMergeMarkersPrefix => 180,
-        ZetaFormat::V0211Prefill => 180,
-        ZetaFormat::V0211SeedCoder => 180,
-    }
-}
 
 pub fn request_prediction_with_zeta(
     store: &mut EditPredictionStore,
@@ -92,7 +79,8 @@ pub fn request_prediction_with_zeta(
                 .unwrap_or(ZetaFormat::default());
 
             let cursor_offset = position.to_offset(&snapshot);
-            let (editable_offset_range, prompt_input) = zeta2_prompt_input(
+            let editable_range_in_excerpt: Range<usize>;
+            let (full_context_offset_range, prompt_input) = zeta2_prompt_input(
                 &snapshot,
                 related_files,
                 events,
@@ -137,119 +125,136 @@ pub fn request_prediction_with_zeta(
 
             log::trace!("Sending edit prediction request");
 
-            let (request_id, output_text, usage) =
-                if let Some(custom_settings) = &custom_server_settings {
-                    let max_tokens = custom_settings.max_output_tokens * 4;
+            let (request_id, output_text, model_version, usage) = if let Some(custom_settings) =
+                &custom_server_settings
+            {
+                let max_tokens = custom_settings.max_output_tokens * 4;
 
-                    if is_zeta1 {
-                        let ranges = excerpt_ranges;
-                        let prompt = zeta1::format_zeta1_from_input(
-                            &prompt_input,
-                            ranges.editable_350.clone(),
-                            ranges.editable_350_context_150.clone(),
-                        );
-                        let stop_tokens = vec![
-                            EDITABLE_REGION_END_MARKER.to_string(),
-                            format!("{EDITABLE_REGION_END_MARKER}\n"),
-                            format!("{EDITABLE_REGION_END_MARKER}\n\n"),
-                            format!("{EDITABLE_REGION_END_MARKER}\n\n\n"),
-                        ];
+                if is_zeta1 {
+                    let ranges = excerpt_ranges;
+                    let prompt = zeta1::format_zeta1_from_input(
+                        &prompt_input,
+                        ranges.editable_350.clone(),
+                        ranges.editable_350_context_150.clone(),
+                    );
+                    editable_range_in_excerpt = ranges.editable_350.clone();
+                    let stop_tokens = vec![
+                        EDITABLE_REGION_END_MARKER.to_string(),
+                        format!("{EDITABLE_REGION_END_MARKER}\n"),
+                        format!("{EDITABLE_REGION_END_MARKER}\n\n"),
+                        format!("{EDITABLE_REGION_END_MARKER}\n\n\n"),
+                    ];
 
-                        let (response_text, request_id) = send_custom_server_request(
-                            provider,
-                            custom_settings,
-                            prompt,
-                            max_tokens,
-                            stop_tokens,
-                            &http_client,
-                        )
-                        .await?;
-
-                        let request_id = EditPredictionId(request_id.into());
-                        let output_text = zeta1::clean_zeta1_model_output(&response_text);
-
-                        (request_id, output_text, None)
-                    } else {
-                        let prompt = format_zeta_prompt(&prompt_input, zeta_version);
-                        let prefill = get_prefill(&prompt_input, zeta_version);
-                        let prompt = format!("{prompt}{prefill}");
-
-                        let (response_text, request_id) = send_custom_server_request(
-                            provider,
-                            custom_settings,
-                            prompt,
-                            max_tokens,
-                            vec![],
-                            &http_client,
-                        )
-                        .await?;
-
-                        let request_id = EditPredictionId(request_id.into());
-                        let output_text = if response_text.is_empty() {
-                            None
-                        } else {
-                            let output = format!("{prefill}{response_text}");
-                            Some(clean_zeta2_model_output(&output, zeta_version).to_string())
-                        };
-
-                        (request_id, output_text, None)
-                    }
-                } else if let Some(config) = &raw_config {
-                    let prompt = format_zeta_prompt(&prompt_input, config.format);
-                    let prefill = get_prefill(&prompt_input, config.format);
-                    let prompt = format!("{prompt}{prefill}");
-                    let request = RawCompletionRequest {
-                        model: config.model_id.clone().unwrap_or_default(),
+                    let (response_text, request_id) = send_custom_server_request(
+                        provider,
+                        custom_settings,
                         prompt,
-                        temperature: None,
-                        stop: vec![],
-                        max_tokens: Some(2048),
-                        environment: Some(config.format.to_string().to_lowercase()),
-                    };
-
-                    let (mut response, usage) = EditPredictionStore::send_raw_llm_request(
-                        request,
-                        client,
-                        None,
-                        llm_token,
-                        app_version,
+                        max_tokens,
+                        stop_tokens,
+                        &http_client,
                     )
                     .await?;
 
-                    let request_id = EditPredictionId(response.id.clone().into());
-                    let output_text = response.choices.pop().map(|choice| {
-                        let response = &choice.text;
-                        let output = format!("{prefill}{response}");
-                        clean_zeta2_model_output(&output, config.format).to_string()
-                    });
+                    let request_id = EditPredictionId(request_id.into());
+                    let output_text = zeta1::clean_zeta1_model_output(&response_text);
 
-                    (request_id, output_text, usage)
+                    (request_id, output_text, None, None)
                 } else {
-                    // Use V3 endpoint - server handles model/version selection and suffix stripping
-                    let (response, usage) = EditPredictionStore::send_v3_request(
-                        prompt_input.clone(),
-                        client,
-                        llm_token,
-                        app_version,
-                        trigger,
+                    let prompt = format_zeta_prompt(&prompt_input, zeta_version);
+                    let prefill = get_prefill(&prompt_input, zeta_version);
+                    let prompt = format!("{prompt}{prefill}");
+
+                    editable_range_in_excerpt = prompt_input
+                        .excerpt_ranges
+                        .as_ref()
+                        .map(|ranges| zeta_prompt::excerpt_range_for_format(zeta_version, ranges).0)
+                        .unwrap_or(prompt_input.editable_range_in_excerpt.clone());
+
+                    let (response_text, request_id) = send_custom_server_request(
+                        provider,
+                        custom_settings,
+                        prompt,
+                        max_tokens,
+                        vec![],
+                        &http_client,
                     )
                     .await?;
 
-                    let request_id = EditPredictionId(response.request_id.into());
-                    let output_text = if response.output.is_empty() {
+                    let request_id = EditPredictionId(request_id.into());
+                    let output_text = if response_text.is_empty() {
                         None
                     } else {
-                        Some(response.output)
+                        let output = format!("{prefill}{response_text}");
+                        Some(clean_zeta2_model_output(&output, zeta_version).to_string())
                     };
-                    (request_id, output_text, usage)
+
+                    (request_id, output_text, None, None)
+                }
+            } else if let Some(config) = &raw_config {
+                let prompt = format_zeta_prompt(&prompt_input, config.format);
+                let prefill = get_prefill(&prompt_input, config.format);
+                let prompt = format!("{prompt}{prefill}");
+                let request = RawCompletionRequest {
+                    model: config.model_id.clone().unwrap_or_default(),
+                    prompt,
+                    temperature: None,
+                    stop: vec![],
+                    max_tokens: Some(2048),
+                    environment: Some(config.format.to_string().to_lowercase()),
                 };
+
+                editable_range_in_excerpt = prompt_input
+                    .excerpt_ranges
+                    .as_ref()
+                    .map(|ranges| zeta_prompt::excerpt_range_for_format(config.format, ranges).1)
+                    .unwrap_or(prompt_input.editable_range_in_excerpt.clone());
+
+                let (mut response, usage) = EditPredictionStore::send_raw_llm_request(
+                    request,
+                    client,
+                    None,
+                    llm_token,
+                    app_version,
+                )
+                .await?;
+
+                let request_id = EditPredictionId(response.id.clone().into());
+                let output_text = response.choices.pop().map(|choice| {
+                    let response = &choice.text;
+                    let output = format!("{prefill}{response}");
+                    clean_zeta2_model_output(&output, config.format).to_string()
+                });
+
+                (request_id, output_text, None, usage)
+            } else {
+                // Use V3 endpoint - server handles model/version selection and suffix stripping
+                let (response, usage) = EditPredictionStore::send_v3_request(
+                    prompt_input.clone(),
+                    client,
+                    llm_token,
+                    app_version,
+                    trigger,
+                )
+                .await?;
+
+                let request_id = EditPredictionId(response.request_id.into());
+                let output_text = if response.output.is_empty() {
+                    None
+                } else {
+                    Some(response.output)
+                };
+                editable_range_in_excerpt = response.editable_range;
+                let model_version = response.model_version;
+
+                (request_id, output_text, model_version, usage)
+            };
 
             let received_response_at = Instant::now();
 
             log::trace!("Got edit prediction response");
 
             let Some(mut output_text) = output_text else {
-                return Ok((Some((request_id, None)), usage));
+                return Ok((Some((request_id, None, model_version)), usage));
             };
 
             // Client-side cursor marker processing (applies to both raw and v3 responses)
@@ -271,8 +276,12 @@ pub fn request_prediction_with_zeta(
                     .ok();
             }
 
+            let editable_range_in_buffer = editable_range_in_excerpt.start
+                + full_context_offset_range.start
+                ..editable_range_in_excerpt.end + full_context_offset_range.start;
+
             let mut old_text = snapshot
-                .text_for_range(editable_offset_range.clone())
+                .text_for_range(editable_range_in_buffer.clone())
                 .collect::<String>();
 
             if !output_text.is_empty() && !output_text.ends_with('\n') {
@@ -285,7 +294,7 @@ pub fn request_prediction_with_zeta(
             let (edits, cursor_position) = compute_edits_and_cursor_position(
                 old_text,
                 &output_text,
-                editable_offset_range.start,
+                editable_range_in_buffer.start,
                 cursor_offset_in_output,
                 &snapshot,
             );
@@ -300,7 +309,9 @@ pub fn request_prediction_with_zeta(
                         edits,
                         cursor_position,
                         received_response_at,
+                        editable_range_in_buffer,
                     )),
+                    model_version,
                 )),
                 usage,
             ))
@@ -308,7 +319,7 @@ pub fn request_prediction_with_zeta(
     });
 
     cx.spawn(async move |this, cx| {
-        let Some((id, prediction)) =
+        let Some((id, prediction, model_version)) =
             EditPredictionStore::handle_api_response(&this, request_task.await, cx)?
         else {
             return Ok(None);
@@ -321,6 +332,7 @@ pub fn request_prediction_with_zeta(
             edits,
             cursor_position,
             received_response_at,
+            editable_range_in_buffer,
         )) = prediction
         else {
             return Ok(Some(EditPredictionResult {
@@ -328,6 +340,20 @@ pub fn request_prediction_with_zeta(
                 prediction: Err(EditPredictionRejectReason::Empty),
             }));
         };
+
+        if can_collect_data {
+            this.update(cx, |this, cx| {
+                this.enqueue_settled_prediction(
+                    id.clone(),
+                    &project,
+                    &edited_buffer,
+                    &edited_buffer_snapshot,
+                    editable_range_in_buffer,
+                    cx,
+                );
+            })
+            .ok();
+        }
 
         Ok(Some(
             EditPredictionResult::new(
@@ -339,6 +365,7 @@ pub fn request_prediction_with_zeta(
                 buffer_snapshotted_at,
                 received_response_at,
                 inputs,
+                model_version,
                 cx,
             )
             .await,
@@ -356,10 +383,11 @@ pub fn zeta2_prompt_input(
     preferred_model: Option<EditPredictionModelKind>,
     is_open_source: bool,
     can_collect_data: bool,
-) -> (std::ops::Range<usize>, zeta_prompt::ZetaPromptInput) {
+) -> (Range<usize>, zeta_prompt::ZetaPromptInput) {
     let cursor_point = cursor_offset.to_point(snapshot);
 
-    let (full_context, range_points) = compute_excerpt_ranges(cursor_point, snapshot);
+    let (full_context, full_context_offset_range, excerpt_ranges) =
+        compute_excerpt_ranges(cursor_point, snapshot);
 
     let related_files = crate::filter_redundant_excerpts(
         related_files,
@@ -367,24 +395,15 @@ pub fn zeta2_prompt_input(
         full_context.start.row..full_context.end.row,
     );
 
-    let full_context_start_offset = full_context.start.to_offset(snapshot);
+    let full_context_start_offset = full_context_offset_range.start;
     let full_context_start_row = full_context.start.row;
 
-    let excerpt_ranges =
-        excerpt_ranges_to_byte_offsets(&range_points, full_context_start_offset, snapshot);
-
-    let editable_range = match preferred_model {
-        Some(EditPredictionModelKind::Zeta1) => &range_points.editable_350,
-        _ => match zeta_format {
-            ZetaFormat::V0112MiddleAtEnd | ZetaFormat::V0113Ordered => &range_points.editable_150,
-            _ => &range_points.editable_180,
-        },
+    let editable_offset_range = match preferred_model {
+        Some(EditPredictionModelKind::Zeta1) => excerpt_ranges.editable_350.clone(),
+        _ => zeta_prompt::excerpt_range_for_format(zeta_format, &excerpt_ranges).0,
     };
 
-    let editable_offset_range = editable_range.to_offset(snapshot);
     let cursor_offset_in_excerpt = cursor_offset - full_context_start_offset;
-    let editable_range_in_excerpt = (editable_offset_range.start - full_context_start_offset)
-        ..(editable_offset_range.end - full_context_start_offset);
 
     let prompt_input = zeta_prompt::ZetaPromptInput {
         cursor_path: excerpt_path,
@@ -392,7 +411,7 @@ pub fn zeta2_prompt_input(
             .text_for_range(full_context)
             .collect::<String>()
             .into(),
-        editable_range_in_excerpt,
+        editable_range_in_excerpt: editable_offset_range,
         cursor_offset_in_excerpt,
         excerpt_start_row: Some(full_context_start_row),
         events,
@@ -402,7 +421,7 @@ pub fn zeta2_prompt_input(
         in_open_source_repo: is_open_source,
         can_collect_data,
     };
-    (editable_offset_range, prompt_input)
+    (full_context_offset_range, prompt_input)
 }
 
 pub(crate) async fn send_custom_server_request(
@@ -476,6 +495,7 @@ pub(crate) fn edit_prediction_accepted(
     }
 
     let request_id = current_prediction.prediction.id.to_string();
+    let model_version = current_prediction.prediction.model_version;
     let require_auth = custom_accept_url.is_none();
     let client = store.client.clone();
     let llm_token = store.llm_token.clone();
@@ -495,6 +515,7 @@ pub(crate) fn edit_prediction_accepted(
                 let req = builder.uri(url.as_ref()).body(
                     serde_json::to_string(&AcceptEditPredictionBody {
                         request_id: request_id.clone(),
+                        model_version: model_version.clone(),
                     })?
                     .into(),
                 );

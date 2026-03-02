@@ -653,8 +653,8 @@ impl ServerSemanticTokens {
 
     pub(crate) fn apply(&mut self, edits: &[SemanticTokensEdit]) {
         for edit in edits {
-            let start = edit.start as usize;
-            let end = start + edit.delete_count as usize;
+            let start = (edit.start as usize).min(self.data.len());
+            let end = (start + edit.delete_count as usize).min(self.data.len());
             self.data.splice(start..end, edit.data.iter().copied());
         }
     }
@@ -999,5 +999,39 @@ mod tests {
                 }
             ]
         );
+    }
+
+    #[test]
+    fn applies_out_of_bounds_delta_edit_without_panic() {
+        let mut tokens = ServerSemanticTokens::from_full(vec![2, 5, 3, 0, 3, 0, 5, 4, 1, 0], None);
+
+        // start beyond data length
+        tokens.apply(&[SemanticTokensEdit {
+            start: 100,
+            delete_count: 5,
+            data: vec![1, 2, 3, 4, 5],
+        }]);
+        assert_eq!(
+            tokens.data,
+            vec![2, 5, 3, 0, 3, 0, 5, 4, 1, 0, 1, 2, 3, 4, 5]
+        );
+
+        // delete_count extends past data length
+        let mut tokens = ServerSemanticTokens::from_full(vec![2, 5, 3, 0, 3], None);
+        tokens.apply(&[SemanticTokensEdit {
+            start: 3,
+            delete_count: 100,
+            data: vec![9, 9],
+        }]);
+        assert_eq!(tokens.data, vec![2, 5, 3, 9, 9]);
+
+        // empty data
+        let mut tokens = ServerSemanticTokens::from_full(Vec::new(), None);
+        tokens.apply(&[SemanticTokensEdit {
+            start: 0,
+            delete_count: 5,
+            data: vec![1, 2, 3, 4, 5],
+        }]);
+        assert_eq!(tokens.data, vec![1, 2, 3, 4, 5]);
     }
 }

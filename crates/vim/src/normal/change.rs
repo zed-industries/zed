@@ -205,7 +205,8 @@ fn expand_changed_word_selection(
 mod test {
     use indoc::indoc;
 
-    use crate::test::NeovimBackedTestContext;
+    use crate::state::Mode;
+    use crate::test::{NeovimBackedTestContext, VimTestContext};
 
     #[gpui::test]
     async fn test_change_h(cx: &mut gpui::TestAppContext) {
@@ -702,5 +703,35 @@ mod test {
             .await
             .assert_matches();
         }
+    }
+
+    #[gpui::test]
+    async fn test_change_with_selection_spanning_expanded_diff_hunk(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        let diff_base = indoc! {"
+            fn main() {
+                println!(\"old\");
+            }
+        "};
+
+        cx.set_state(
+            indoc! {"
+                fn main() {
+                    ˇprintln!(\"new\");
+                }
+            "},
+            Mode::Normal,
+        );
+        cx.set_head_text(diff_base);
+        cx.update_editor(|editor, window, cx| {
+            editor.expand_all_diff_hunks(&editor::actions::ExpandAllDiffHunks, window, cx);
+        });
+
+        // Enter visual mode and move up so the selection spans from the
+        // insertion (current line) into the deletion (diff base line).
+        // Then press `c` which in visual mode dispatches `vim::Substitute`,
+        // performing the change operation across the insertion/deletion boundary.
+        cx.simulate_keystrokes("v k c");
     }
 }

@@ -2,10 +2,9 @@ use crate::{
     ItemNavHistory, WorkspaceId,
     item::{Item, ItemEvent},
 };
-use call::{RemoteVideoTrack, RemoteVideoTrackView, Room};
 use client::{User, proto::PeerId};
 use gpui::{
-    AppContext as _, Entity, EventEmitter, FocusHandle, Focusable, InteractiveElement,
+    AnyView, AppContext as _, Entity, EventEmitter, FocusHandle, Focusable, InteractiveElement,
     ParentElement, Render, SharedString, Styled, Task, div,
 };
 use std::sync::Arc;
@@ -19,45 +18,26 @@ pub struct SharedScreen {
     pub peer_id: PeerId,
     user: Arc<User>,
     nav_history: Option<ItemNavHistory>,
-    view: Entity<RemoteVideoTrackView>,
+    view: AnyView,
+    clone_view: fn(&AnyView, &mut Window, &mut App) -> AnyView,
     focus: FocusHandle,
 }
 
 impl SharedScreen {
     pub fn new(
-        track: RemoteVideoTrack,
         peer_id: PeerId,
         user: Arc<User>,
-        room: Entity<Room>,
-        window: &mut Window,
+        view: AnyView,
+        clone_view: fn(&AnyView, &mut Window, &mut App) -> AnyView,
         cx: &mut Context<Self>,
     ) -> Self {
-        let my_sid = track.sid();
-        cx.subscribe(&room, move |_, _, ev, cx| {
-            if let call::room::Event::RemoteVideoTrackUnsubscribed { sid } = ev
-                && sid == &my_sid
-            {
-                cx.emit(Event::Close)
-            }
-        })
-        .detach();
-
-        cx.observe_release(&room, |_, _, cx| {
-            cx.emit(Event::Close);
-        })
-        .detach();
-
-        let view = cx.new(|cx| RemoteVideoTrackView::new(track.clone(), window, cx));
-        cx.subscribe(&view, |_, _, ev, cx| match ev {
-            call::RemoteVideoTrackViewEvent::Close => cx.emit(Event::Close),
-        })
-        .detach();
         Self {
             view,
             peer_id,
             user,
             nav_history: Default::default(),
             focus: cx.focus_handle(),
+            clone_view,
         }
     }
 }
@@ -124,12 +104,15 @@ impl Item for SharedScreen {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Option<Entity<Self>>> {
+        let clone_view = self.clone_view;
+        let cloned_view = clone_view(&self.view, window, cx);
         Task::ready(Some(cx.new(|cx| Self {
-            view: self.view.update(cx, |view, cx| view.clone(window, cx)),
+            view: cloned_view,
             peer_id: self.peer_id,
             user: self.user.clone(),
             nav_history: Default::default(),
             focus: cx.focus_handle(),
+            clone_view,
         })))
     }
 
