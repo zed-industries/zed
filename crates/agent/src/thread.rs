@@ -8,9 +8,7 @@ use crate::{
 };
 use acp_thread::{MentionUri, UserMessageId};
 use action_log::ActionLog;
-use feature_flags::{
-    FeatureFlagAppExt as _, StreamingEditFileToolFeatureFlag, SubagentsFeatureFlag,
-};
+use feature_flags::{FeatureFlagAppExt as _, StreamingEditFileToolFeatureFlag};
 
 use agent_client_protocol as acp;
 use agent_settings::{
@@ -1387,7 +1385,7 @@ impl Thread {
         self.add_tool(TerminalTool::new(self.project.clone(), environment.clone()));
         self.add_tool(WebSearchTool);
 
-        if cx.has_flag::<SubagentsFeatureFlag>() && self.depth() < MAX_SUBAGENT_DEPTH {
+        if self.depth() < MAX_SUBAGENT_DEPTH {
             self.add_tool(SpawnAgentTool::new(environment));
         }
     }
