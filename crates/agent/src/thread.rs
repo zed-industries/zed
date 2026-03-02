@@ -2390,7 +2390,12 @@ impl Thread {
                 anyhow::Ok(())
             };
 
-            if generate.await.context("failed to generate title").is_ok() {
+            if generate
+                .await
+                .context("failed to generate thread title")
+                .log_err()
+                .is_some()
+            {
                 _ = this.update(cx, |this, cx| this.set_title(title.into(), cx));
             }
             _ = this.update(cx, |this, _| this.pending_title_generation = None);
