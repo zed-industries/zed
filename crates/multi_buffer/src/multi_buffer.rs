@@ -4959,7 +4959,7 @@ impl MultiBufferSnapshot {
         MBD::TextDimension: Sub<Output = MBD::TextDimension> + Ord,
     {
         let target = self.anchor_seek_target(*anchor);
-        let Some((_, text_anchor)) = anchor.text_anchor() else {
+        let Some((_, text_anchor, _)) = anchor.text_anchor() else {
             if anchor.is_min() {
                 return MBD::default();
             } else {
@@ -5181,19 +5181,24 @@ impl MultiBufferSnapshot {
     }
 
     fn excerpt_offset_for_anchor(&self, anchor: &Anchor) -> ExcerptOffset {
-        let mut cursor = self
-            .excerpts
-            .cursor::<Dimensions<Option<&Locator>, ExcerptOffset>>(());
-        let locator = self.excerpt_locator_for_id(anchor.excerpt_id);
+        let Some((_, text_anchor, _)) = anchor.text_anchor() else {
+            if anchor.is_min() {
+                return ExcerptOffset::default();
+            } else {
+                return self.excerpts.summary().len();
+            }
+        };
+        let mut cursor = self.excerpts.cursor::<ExcerptSummary>(());
+        let target = self.anchor_seek_target(*anchor);
 
-        cursor.seek(&Some(locator), Bias::Left);
-        if cursor.item().is_none() && anchor.excerpt_id == ExcerptId::max() {
+        cursor.seek(&target, Bias::Left);
+        if cursor.item().is_none() && anchor.is_max() {
             cursor.prev();
         }
 
-        let mut position = cursor.start().1;
+        let mut position = cursor.start().len();
         if let Some(excerpt) = cursor.item()
-            && (excerpt.id == anchor.excerpt_id || anchor.excerpt_id == ExcerptId::max())
+            && (excerpt.contains(anchor) || anchor.is_max())
         {
             let excerpt_buffer_start = excerpt
                 .buffer
@@ -5201,7 +5206,7 @@ impl MultiBufferSnapshot {
             let excerpt_buffer_end = excerpt.buffer.offset_for_anchor(&excerpt.range.context.end);
             let buffer_position = cmp::min(
                 excerpt_buffer_end,
-                excerpt.buffer.offset_for_anchor(&anchor.text_anchor),
+                excerpt.buffer.offset_for_anchor(&text_anchor),
             );
             if buffer_position > excerpt_buffer_start {
                 position += buffer_position - excerpt_buffer_start;
