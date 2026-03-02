@@ -76,7 +76,7 @@ This data is processed transiently to generate predictions and is not retained a
 
 ### Third-Party Providers
 
-When using third-party providers like GitHub Copilot, **Zed does not control how your data is handled** by that provider. You should consult their acceptable use policies directly (see [Acceptable Use Policies](https://zed.dev/acceptable-use-policies)).
+When using third-party providers like GitHub Copilot, **Zed does not control how your data is handled** by that provider. You should consult their Terms and Conditions directly.
 
 Note: Zed's `disabled_globs` settings will prevent predictions from being requested, but third-party providers may receive file content when files are opened.
 
@@ -84,7 +84,7 @@ Note: Zed's `disabled_globs` settings will prevent predictions from being reques
 
 Zed does not collect training data for our edit prediction model unless the following conditions are met:
 
-1. **You opt in** – Toggle "Training Data Collection" under the **Privacy** section of the edit prediction status bar menu (click the edit prediction icon in the status bar). Consent is per-project.
+1. **You opt in** – Toggle "Training Data Collection" under the **Privacy** section of the edit prediction status bar menu (click the edit prediction icon in the status bar).
 2. **The project is open source** — detected via LICENSE file ([see detection logic](https://github.com/zed-industries/zed/blob/main/crates/edit_prediction/src/license_detection.rs))
 3. **The file isn't excluded** — via `disabled_globs`
 
