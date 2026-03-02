@@ -194,13 +194,6 @@ pub enum AcpThreadViewEvent {
     FirstSendRequested { content: Vec<acp::ContentBlock> },
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum FirstSendPolicy {
-    #[default]
-    SendNormally,
-    InterceptAndEmitRequested,
-}
-
 impl EventEmitter<AcpThreadViewEvent> for ThreadView {}
 
 pub struct ThreadView {
@@ -267,7 +260,6 @@ pub struct ThreadView {
     pub show_codex_windows_warning: bool,
     pub history: Entity<ThreadHistory>,
     pub _history_subscription: Subscription,
-    pub first_send_policy: FirstSendPolicy,
 }
 impl Focusable for ThreadView {
     fn focus_handle(&self, cx: &App) -> FocusHandle {
@@ -455,11 +447,9 @@ impl ThreadView {
             history,
             _history_subscription: history_subscription,
             show_codex_windows_warning,
-            first_send_policy: FirstSendPolicy::default(),
         };
         if should_auto_submit {
-            let message_editor = this.message_editor.clone();
-            this.send_impl(message_editor, window, cx);
+            this.send(window, cx);
         }
         this
     }
@@ -711,10 +701,7 @@ impl ThreadView {
 
         let message_editor = self.message_editor.clone();
 
-        if self.first_send_policy == FirstSendPolicy::InterceptAndEmitRequested
-            && self.thread.read(cx).entries().is_empty()
-            && !message_editor.read(cx).is_empty(cx)
-        {
+        if self.thread.read(cx).entries().is_empty() && !message_editor.read(cx).is_empty(cx) {
             let full_mention_content = self.as_native_thread(cx).is_some_and(|thread| {
                 // Include full contents when using minimal profile
                 let thread = thread.read(cx);
@@ -805,10 +792,6 @@ impl ThreadView {
         }
 
         self.send_impl(message_editor, window, cx)
-    }
-
-    pub fn set_first_send_policy(&mut self, policy: FirstSendPolicy) {
-        self.first_send_policy = policy;
     }
 
     pub fn send_impl(

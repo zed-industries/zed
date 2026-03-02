@@ -33,7 +33,7 @@ use crate::{
     OpenAgentDiff, OpenHistory, ResetTrialEndUpsell, ResetTrialUpsell, SetThreadTarget,
     ThreadTargetKind, ToggleNavigationMenu, ToggleNewThreadMenu, ToggleOptionsMenu,
     agent_configuration::{AgentConfiguration, AssistantConfigurationEvent},
-    connection_view::{AcpThreadViewEvent, FirstSendPolicy, ThreadView},
+    connection_view::{AcpThreadViewEvent, ThreadView},
     slash_command::SlashCommandCompletionProvider,
     text_thread_editor::{AgentPanelDelegate, TextThreadEditor, make_lsp_adapter_delegate},
     ui::EndTrialUpsell,
@@ -1760,7 +1760,6 @@ impl AgentPanel {
                     cx.observe_in(server_view, window, |this, server_view, window, cx| {
                         this._thread_view_subscription =
                             Self::subscribe_to_active_thread_view(&server_view, window, cx);
-                        this.sync_active_thread_first_send_policy(cx);
                         cx.emit(AgentPanelEvent::ActiveViewChanged);
                         this.serialize(cx);
                         cx.notify();
@@ -1772,8 +1771,6 @@ impl AgentPanel {
                 None
             }
         };
-
-        self.sync_active_thread_first_send_policy(cx);
 
         let is_in_agent_history = matches!(
             self.active_view,
@@ -1908,24 +1905,6 @@ impl AgentPanel {
         &self.thread_target
     }
 
-    fn first_send_policy_for_thread_target(&self) -> FirstSendPolicy {
-        match self.thread_target {
-            ThreadTarget::NewWorktree => FirstSendPolicy::InterceptAndEmitRequested,
-            ThreadTarget::LocalProject | ThreadTarget::ExistingWorktree { .. } => {
-                FirstSendPolicy::SendNormally
-            }
-        }
-    }
-
-    fn sync_active_thread_first_send_policy(&mut self, cx: &mut Context<Self>) {
-        let policy = self.first_send_policy_for_thread_target();
-        if let Some(thread_view) = self.as_active_thread_view(cx) {
-            thread_view.update(cx, |thread_view, _| {
-                thread_view.set_first_send_policy(policy);
-            });
-        }
-    }
-
     fn set_thread_target(&mut self, action: &SetThreadTarget, cx: &mut Context<Self>) {
         if matches!(
             action.kind,
@@ -1981,7 +1960,6 @@ impl AgentPanel {
             }
         };
         self.thread_target = new_target;
-        self.sync_active_thread_first_send_policy(cx);
         self.serialize(cx);
         cx.notify();
     }
@@ -2133,7 +2111,8 @@ impl AgentPanel {
         } else {
             cx.defer_in(window, move |_this, window, cx| {
                 thread_view.update(cx, |thread_view, cx| {
-                    thread_view.send(window, cx);
+                    let editor = thread_view.message_editor.clone();
+                    thread_view.send_impl(editor, window, cx);
                 });
             });
         }
