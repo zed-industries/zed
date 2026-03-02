@@ -1,0 +1,60 @@
+# Plan: Add "worktree creation succeeded" visual test
+
+## Goal
+
+Add a 6th screenshot to the thread target selector visual tests that exercises the real worktree creation flow end-to-end via UI actions, and verify the result shows a second Workspace Sidebar entry for the new worktree alongside the original buffers and agent panel.
+
+## How the real flow works
+
+1. User selects "New Worktree" from the thread target dropdown (dispatches `SetThreadTarget` action)
+2. User types a message and hits send
+3. `handle_first_send_requested` sees `ThreadTarget::NewWorktree` and calls `handle_worktree_creation_requested`
+4. That runs `git worktree add` via the repository, creating a real branch + worktree on disk
+5. On success, it calls `Workspace::new_local` to create a new workspace pointing at the worktree path
+6. The new workspace is added to the `MultiWorkspace` and activated
+7. The sidebar now shows two workspace entries
+8. The creation status banner is cleared
+
+## What the test should do
+
+### Setup (already done by existing test)
+- Real git repo with committed files in a temp dir
+- `MultiWorkspace` window with sidebar, project panel, editor open to `main.rs`, agent panel with stub server and thread open
+- `agent-v2` and `agent-git-worktrees` feature flags enabled
+
+### New screenshot steps
+
+After the existing Screenshot 5 (error banner), add:
+
+1. **Clear the error status** so we're back to a clean state with "New Worktree" selected as the thread target.
+
+2. **Dispatch `SetThreadTarget::new_worktree()`** action via `window.dispatch_action(...)` — same as the user clicking it in the dropdown. (It may already be set from screenshot 3, but re-dispatch to be safe.)
+
+3. **Type into the message editor and submit.** The agent panel has a message editor. Use the real submit path — find the active thread view's message editor and insert text, then dispatch the send action. This triggers `handle_first_send_requested`, which sees `NewWorktree` and kicks off `handle_worktree_creation_requested`.
+
+4. **Wait for worktree creation to complete.** Use `cx.background_executor.allow_parking()` + repeated `cx.run_until_parked()` / `cx.advance_clock(...)` cycles to let the async git worktree creation, workspace opening, and panel loading all finish. The signal that it's done: `worktree_creation_status` is `None` and `multi_workspace.workspaces().len() == 2`.
+
+5. **Take Screenshot 6: `worktree_creation_succeeded`**. This should show:
+   - The workspace sidebar on the left with **two entries** — the original project and the new worktree
+   - The new worktree's workspace is active (it gets activated at the end of the creation flow)
+   - The agent panel is visible and focused (the creation flow calls `workspace.focus_panel::<AgentPanel>`)
+   - The editor area showing the remapped files from the original workspace
+   - No creation status banner (it's cleared on success)
+
+6. **Read the PNG** and verify the above are all visible.
+
+### Add to results array
+
+Add `("succeeded", result_succeeded)` to the results array at the bottom of the function so failures are reported.
+
+## Key gotchas
+
+- The git repo needs a real committed file so there's something to remap into the new worktree. The existing test already has `src/main.rs` committed — that should work.
+- `allow_parking()` is needed because `git worktree add` does real filesystem I/O.
+- The stub agent server connection is on the original workspace's agent panel. The new workspace will get its own agent panel loaded via the panels task. The creation flow calls `panel.external_thread(...)` on the new workspace's agent panel with the user's message as `auto_submit: true`. The stub server won't actually respond, but that's fine — we just need the UI state to be correct.
+- The `worktree_directory` setting controls where git worktrees are created. The default puts them in a `.worktrees` directory next to the repo. Make sure the temp dir structure allows this (it should, since we control the whole temp dir).
+
+## Files to change
+
+- `crates/zed/src/visual_test_runner.rs` — add Screenshot 6 to `run_thread_target_selector_visual_tests`
+- `crates/zed/test_fixtures/visual_tests/` — new baseline PNG after running with `UPDATE_BASELINE=1`
