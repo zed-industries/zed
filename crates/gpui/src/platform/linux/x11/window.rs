@@ -1,7 +1,7 @@
 use anyhow::{Context as _, anyhow};
 use x11rb::connection::RequestConnection;
 
-use crate::platform::wgpu::{WgpuContext, WgpuRenderer, WgpuSurfaceConfig};
+use crate::platform::wgpu::{CompositorGpuHint, WgpuContext, WgpuRenderer, WgpuSurfaceConfig};
 use crate::{
     AnyWindowHandle, Bounds, Decorations, DevicePixels, ForegroundExecutor, GpuSpecs, Modifiers,
     Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow,
@@ -393,6 +393,7 @@ impl X11WindowState {
         client: X11ClientStatePtr,
         executor: ForegroundExecutor,
         gpu_context: &mut Option<WgpuContext>,
+        compositor_gpu: Option<CompositorGpuHint>,
         params: WindowParams,
         xcb: &Rc<XCBConnection>,
         client_side_decorations_supported: bool,
@@ -695,7 +696,7 @@ impl X11WindowState {
                     // too
                     transparent: false,
                 };
-                WgpuRenderer::new(gpu_context, &raw_window, config)?
+                WgpuRenderer::new(gpu_context, &raw_window, config, compositor_gpu)?
             };
 
             let display = Rc::new(X11Display::new(xcb, scale_factor, x_screen_index)?);
@@ -800,6 +801,7 @@ impl X11Window {
         client: X11ClientStatePtr,
         executor: ForegroundExecutor,
         gpu_context: &mut Option<WgpuContext>,
+        compositor_gpu: Option<CompositorGpuHint>,
         params: WindowParams,
         xcb: &Rc<XCBConnection>,
         client_side_decorations_supported: bool,
@@ -816,6 +818,7 @@ impl X11Window {
                 client,
                 executor,
                 gpu_context,
+                compositor_gpu,
                 params,
                 xcb,
                 client_side_decorations_supported,
