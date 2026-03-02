@@ -74,34 +74,28 @@ fn get_all_workflow_files() -> impl Iterator<Item = PathBuf> {
 }
 
 fn check_workflow(workflow_file_path: PathBuf) -> Result<(), WorkflowError> {
-    fn check_recursive(key: &Value, value: &Value) -> Result<(), Vec<RunValidationError>> {
-        match value {
-            Value::Mapping(mapping) => mapping
-                .iter()
-                .map(|(key, value)| check_recursive(key, value))
-                .fold(Ok(()), fold_errors),
-            Value::Sequence(sequence) => sequence
-                .iter()
-                .map(|value| check_recursive(key, value))
-                .fold(Ok(()), fold_errors),
-            Value::String(string) => check_string(key, string).map_err(|error| vec![error]),
-            Value::Null | Value::Bool(_) | Value::Number(_) | Value::Tagged(_) => Ok(()),
-        }
+    fn collect_errors<'a>(
+        iter: impl Iterator<Item = Result<(), Vec<RunValidationError>>>,
+    ) -> Result<(), Vec<RunValidationError>> {
+        Some(iter.flat_map(Result::err).flatten().collect::<Vec<_>>())
+            .filter(|errors| !errors.is_empty())
+            .map_or(Ok(()), Err)
     }
 
-    fn fold_errors(
-        acc: Result<(), Vec<RunValidationError>>,
-        result: Result<(), Vec<RunValidationError>>,
-    ) -> Result<(), Vec<RunValidationError>> {
-        match result {
-            Ok(()) => acc,
-            Err(mut errors) => match acc {
-                Ok(_) => Err(errors),
-                Err(mut existing_errors) => {
-                    existing_errors.append(&mut errors);
-                    Err(existing_errors)
-                }
-            },
+    fn check_recursive(key: &Value, value: &Value) -> Result<(), Vec<RunValidationError>> {
+        match value {
+            Value::Mapping(mapping) => collect_errors(
+                mapping
+                    .into_iter()
+                    .map(|(key, value)| check_recursive(key, value)),
+            ),
+            Value::Sequence(sequence) => collect_errors(
+                sequence
+                    .into_iter()
+                    .map(|value| check_recursive(key, value)),
+            ),
+            Value::String(string) => check_string(key, string).map_err(|error| vec![error]),
+            Value::Null | Value::Bool(_) | Value::Number(_) | Value::Tagged(_) => Ok(()),
         }
     }
 
