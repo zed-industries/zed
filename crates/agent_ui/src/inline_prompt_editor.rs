@@ -1632,6 +1632,7 @@ fn insert_message_creases(
             crease_for_mention(
                 crease.label.clone(),
                 crease.icon_path.clone(),
+                None,
                 start..end,
                 cx.weak_entity(),
             )
