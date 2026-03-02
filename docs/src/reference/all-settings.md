@@ -5038,7 +5038,7 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
 
 **Options**
 
-1. Natural soring
+1. Natural sorting
 
 ```json [settings]
 {
