@@ -12,9 +12,19 @@ pub struct WgpuContext {
     dual_source_blending: bool,
 }
 
+#[cfg(not(target_family = "wasm"))]
+pub struct CompositorGpuHint {
+    pub vendor_id: u32,
+    pub device_id: u32,
+}
+
 impl WgpuContext {
     #[cfg(not(target_family = "wasm"))]
-    pub fn new(instance: wgpu::Instance, surface: &wgpu::Surface<'_>) -> anyhow::Result<Self> {
+    pub fn new(
+        instance: wgpu::Instance,
+        surface: &wgpu::Surface<'_>,
+        compositor_gpu: Option<CompositorGpuHint>,
+    ) -> anyhow::Result<Self> {
         let device_id_filter = match std::env::var("ZED_DEVICE_ID") {
             Ok(val) => parse_pci_id(&val)
                 .context("Failed to parse device ID from `ZED_DEVICE_ID` environment variable")
@@ -29,9 +39,13 @@ impl WgpuContext {
 
         // Select an adapter by actually testing surface configuration with the real device.
         // This is the only reliable way to determine compatibility on hybrid GPU systems.
-        let (adapter, device, queue, dual_source_blending) = pollster::block_on(
-            Self::select_adapter_and_device(&instance, device_id_filter, surface),
-        )?;
+        let (adapter, device, queue, dual_source_blending) =
+            pollster::block_on(Self::select_adapter_and_device(
+                &instance,
+                device_id_filter,
+                surface,
+                compositor_gpu.as_ref(),
+            ))?;
 
         log::info!(
             "Selected GPU adapter: {:?} ({:?})",
@@ -152,6 +166,7 @@ impl WgpuContext {
         instance: &wgpu::Instance,
         device_id_filter: Option<u32>,
         surface: &wgpu::Surface<'_>,
+        compositor_gpu: Option<&CompositorGpuHint>,
     ) -> anyhow::Result<(wgpu::Adapter, wgpu::Device, wgpu::Queue, bool)> {
         let mut adapters: Vec<_> = instance.enumerate_adapters(wgpu::Backends::all()).await;
 
@@ -159,28 +174,62 @@ impl WgpuContext {
             anyhow::bail!("No GPU adapters found");
         }
 
-        // Sort adapters by preference:
-        // 1. Discrete GPUs first (high performance)
-        // 2. Integrated GPUs second
-        // 3. Virtual GPUs third
-        // 4. CPU/software rendering last
-        // Within each category, prefer Vulkan over other backends
+        if let Some(device_id) = device_id_filter {
+            log::info!("ZED_DEVICE_ID filter: {:#06x}", device_id);
+        }
+
+        // Sort adapters into a single priority order. Tiers (from highest to lowest):
+        //
+        // 1. ZED_DEVICE_ID match — explicit user override
+        // 2. Compositor GPU match — the GPU the display server is rendering on
+        // 3. Device type — WGPU HighPerformance order (Discrete > Integrated >
+        //    Other > Virtual > Cpu). "Other" ranks above "Virtual" because
+        //    backends like OpenGL may report real hardware as "Other".
+        // 4. Backend — prefer Vulkan/Metal/Dx12 over GL/etc.
         adapters.sort_by_key(|adapter| {
             let info = adapter.get_info();
-            let type_priority = match info.device_type {
+
+            // Backends like OpenGL report device=0 for all adapters, so
+            // device-based matching is only meaningful when non-zero.
+            let device_known = info.device != 0;
+
+            let user_override: u8 = match device_id_filter {
+                Some(id) if device_known && info.device == id => 0,
+                _ => 1,
+            };
+
+            let compositor_match: u8 = match compositor_gpu {
+                Some(hint)
+                    if device_known
+                        && info.vendor == hint.vendor_id
+                        && info.device == hint.device_id =>
+                {
+                    0
+                }
+                _ => 1,
+            };
+
+            let type_priority: u8 = match info.device_type {
                 wgpu::DeviceType::DiscreteGpu => 0,
                 wgpu::DeviceType::IntegratedGpu => 1,
-                wgpu::DeviceType::VirtualGpu => 2,
-                wgpu::DeviceType::Cpu => 3,
-                wgpu::DeviceType::Other => 4,
+                wgpu::DeviceType::Other => 2,
+                wgpu::DeviceType::VirtualGpu => 3,
+                wgpu::DeviceType::Cpu => 4,
             };
-            let backend_priority = match info.backend {
+
+            let backend_priority: u8 = match info.backend {
                 wgpu::Backend::Vulkan => 0,
                 wgpu::Backend::Metal => 0,
                 wgpu::Backend::Dx12 => 0,
                 _ => 1,
             };
-            (type_priority, backend_priority)
+
+            (
+                user_override,
+                compositor_match,
+                type_priority,
+                backend_priority,
+            )
         });
 
         // Log all available adapters (in sorted order)
@@ -188,49 +237,13 @@ impl WgpuContext {
         for adapter in &adapters {
             let info = adapter.get_info();
             log::info!(
-                "  - {} (device_id={:#06x}, backend={:?}, type={:?})",
+                "  - {} (vendor={:#06x}, device={:#06x}, backend={:?}, type={:?})",
                 info.name,
+                info.vendor,
                 info.device,
                 info.backend,
                 info.device_type,
             );
-        }
-
-        // If a specific device ID was requested via ZED_DEVICE_ID, try it first
-        if let Some(device_id) = device_id_filter {
-            if let Some(index) = adapters
-                .iter()
-                .position(|a| a.get_info().device == device_id)
-            {
-                let info = adapters[index].get_info();
-                log::info!(
-                    "Testing adapter matching ZED_DEVICE_ID={:#06x}: {} ({:?})...",
-                    device_id,
-                    info.name,
-                    info.backend
-                );
-                match Self::try_adapter_with_surface(&adapters[index], surface).await {
-                    Ok((device, queue, dual_source_blending)) => {
-                        log::info!(
-                            "Selected GPU matching ZED_DEVICE_ID={:#06x}: {} ({:?})",
-                            device_id,
-                            info.name,
-                            info.backend
-                        );
-                        let adapter = adapters.swap_remove(index);
-                        return Ok((adapter, device, queue, dual_source_blending));
-                    }
-                    Err(e) => {
-                        log::warn!(
-                            "GPU matching ZED_DEVICE_ID={:#06x} ({}) failed: {}. \
-                             Falling back to auto-selection.",
-                            device_id,
-                            info.name,
-                            e
-                        );
-                    }
-                }
-            }
         }
 
         // Test each adapter by creating a device and configuring the surface
@@ -254,6 +267,8 @@ impl WgpuContext {
                         info.backend,
                         e
                     );
+
+                    anyhow::bail!("Failing for test purposes...")
                 }
             }
         }

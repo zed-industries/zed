@@ -1,3 +1,5 @@
+#[cfg(not(target_family = "wasm"))]
+use crate::CompositorGpuHint;
 use crate::{WgpuAtlas, WgpuContext};
 use bytemuck::{Pod, Zeroable};
 use gpui::{
@@ -133,6 +135,7 @@ impl WgpuRenderer {
         gpu_context: &mut Option<WgpuContext>,
         window: &W,
         config: WgpuSurfaceConfig,
+        compositor_gpu: Option<CompositorGpuHint>,
     ) -> anyhow::Result<Self> {
         let window_handle = window
             .window_handle()
@@ -168,7 +171,7 @@ impl WgpuRenderer {
                 context.check_compatible_with_surface(&surface)?;
                 context
             }
-            None => gpu_context.insert(WgpuContext::new(instance, &surface)?),
+            None => gpu_context.insert(WgpuContext::new(instance, &surface, compositor_gpu)?),
         };
 
         Self::new_with_surface(context, surface, config)
@@ -187,7 +190,7 @@ impl WgpuRenderer {
         Self::new_with_surface(context, surface, config)
     }
 
-    pub fn new_with_surface(
+    fn new_with_surface(
         context: &WgpuContext,
         surface: wgpu::Surface<'static>,
         config: WgpuSurfaceConfig,
