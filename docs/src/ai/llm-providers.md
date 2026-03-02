@@ -1,6 +1,6 @@
 ---
 title: LLM Providers - Use Your Own API Keys in Zed
-description: Bring your own API keys to Zed. Set up Anthropic, OpenAI, Google AI, Ollama, DeepSeek, Mistral, OpenRouter, and more.
+description: Bring your own API keys to Zed. Set up Anthropic, OpenAI, Google AI, Ollama, DeepSeek, Mistral, OpenRouter, Vercel AI Gateway, and more.
 ---
 
 # LLM Providers
@@ -32,6 +32,7 @@ Zed supports these providers with your own API keys:
 - [OpenAI](#openai)
 - [OpenAI API Compatible](#openai-api-compatible)
 - [OpenRouter](#openrouter)
+- [Vercel AI Gateway](#vercel-ai-gateway)
 - [Vercel](#vercel-v0)
 - [xAI](#xai)
 
@@ -737,6 +738,30 @@ Example adding routing preferences to a model:
 ```
 
 These routing controls let you fine‑tune cost, capability, and reliability trade‑offs without changing the model name you select in the UI.
+
+### Vercel AI Gateway {#vercel-ai-gateway}
+
+[Vercel AI Gateway](https://vercel.com/ai-gateway) provides access to many models through a single OpenAI-compatible endpoint.
+
+1. Create an API key from your [Vercel AI Gateway keys page](https://vercel.com/d?to=%2F%5Bteam%5D%2F%7E%2Fai%2Fapi-keys&title=Go+to+AI+Gateway)
+2. Open the settings view (`agent: open settings`) and go to the **Vercel AI Gateway** section
+3. Enter your Vercel AI Gateway API key
+
+The Vercel AI Gateway API key will be saved in your keychain.
+
+Zed will also use the `VERCEL_AI_GATEWAY_API_KEY` environment variable if it's defined.
+
+You can also set a custom endpoint for Vercel AI Gateway in your settings file:
+
+```json [settings]
+{
+  "language_models": {
+    "vercel_ai_gateway": {
+      "api_url": "https://ai-gateway.vercel.sh/v1"
+    }
+  }
+}
+```
 
 ### Vercel v0 {#vercel-v0}
 

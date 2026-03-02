@@ -736,3 +736,17 @@ pub mod preview {
         );
     }
 }
+
+pub mod notebook {
+    use gpui::actions;
+
+    actions!(
+        notebook,
+        [
+            /// Move to down in cells
+            NotebookMoveDown,
+            /// Move to up in cells
+            NotebookMoveUp,
+        ]
+    );
+}

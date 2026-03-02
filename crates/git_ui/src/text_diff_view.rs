@@ -145,11 +145,7 @@ impl TextDiffView {
         let multibuffer = cx.new(|cx| {
             let mut multibuffer = MultiBuffer::new(language::Capability::ReadWrite);
 
-            multibuffer.push_excerpts(
-                source_buffer.clone(),
-                [editor::ExcerptRange::new(source_range)],
-                cx,
-            );
+            multibuffer.set_excerpts_for_buffer(source_buffer.clone(), [source_range], 0, cx);
 
             multibuffer.add_diff(diff_buffer.clone(), cx);
             multibuffer

@@ -1,17 +1,33 @@
 (identifier) @variable
+
 (metavariable) @variable
+
 (type_identifier) @type
+
 (fragment_specifier) @type
+
 (primitive_type) @type.builtin
+
 (self) @variable.special
+
 (field_identifier) @property
+
 (shorthand_field_identifier) @property
 
-(trait_item name: (type_identifier) @type.interface)
-(impl_item trait: (type_identifier) @type.interface)
-(abstract_type trait: (type_identifier) @type.interface)
-(dynamic_type trait: (type_identifier) @type.interface)
-(trait_bounds (type_identifier) @type.interface)
+(trait_item
+  name: (type_identifier) @type.interface)
+
+(impl_item
+  trait: (type_identifier) @type.interface)
+
+(abstract_type
+  trait: (type_identifier) @type.interface)
+
+(dynamic_type
+  trait: (type_identifier) @type.interface)
+
+(trait_bounds
+  (type_identifier) @type.interface)
 
 (call_expression
   function: [
@@ -31,8 +47,11 @@
       field: (field_identifier) @function.method)
   ])
 
-(function_item name: (identifier) @function.definition)
-(function_signature_item name: (identifier) @function.definition)
+(function_item
+  name: (identifier) @function.definition)
+
+(function_signature_item
+  name: (identifier) @function.definition)
 
 (macro_invocation
   macro: [
@@ -48,17 +67,17 @@
   name: (identifier) @function.special.definition)
 
 ; Identifier conventions
-
 ; Assume uppercase names are types/enum-constructors
 ((identifier) @type
- (#match? @type "^[A-Z]"))
+  (#match? @type "^[A-Z]"))
 
 ; Assume all-caps names are constants
 ((identifier) @constant
- (#match? @constant "^_*[A-Z][A-Z\\d_]*$"))
+  (#match? @constant "^_*[A-Z][A-Z\\d_]*$"))
 
 ; Ensure enum variants are highlighted correctly regardless of naming convention
-(enum_variant name: (identifier) @type)
+(enum_variant
+  name: (identifier) @type)
 
 [
   "("
@@ -81,9 +100,7 @@
   "::"
 ] @punctuation.delimiter
 
-[
-  "#"
-] @punctuation.special
+"#" @punctuation.special
 
 [
   "as"
@@ -131,7 +148,7 @@
 ] @keyword.control
 
 (for_expression
-  ("for" @keyword.control))
+  "for" @keyword.control)
 
 [
   (string_literal)
@@ -154,8 +171,10 @@
 ] @comment
 
 [
-  (line_comment (doc_comment))
-  (block_comment (doc_comment))
+  (line_comment
+    (doc_comment))
+  (block_comment
+    (doc_comment))
 ] @comment.doc
 
 [
@@ -198,25 +217,44 @@
 ] @operator
 
 ; Avoid highlighting these as operators when used in doc comments.
-(unary_expression "!" @operator)
+(unary_expression
+  "!" @operator)
+
 operator: "/" @operator
 
 (lifetime
   "'" @lifetime
   (identifier) @lifetime)
 
-(parameter (identifier) @variable.parameter)
+(parameter
+  (identifier) @variable.parameter)
 
-(attribute_item (attribute [
-  (identifier) @attribute
-  (scoped_identifier name: (identifier) @attribute)
-  (token_tree (identifier) @attribute (#match? @attribute "^[a-z\\d_]*$"))
-  (token_tree (identifier) @none "::" (#match? @none "^[a-z\\d_]*$"))
-]))
+(attribute_item
+  (attribute
+    [
+      (identifier) @attribute
+      (scoped_identifier
+        name: (identifier) @attribute)
+      (token_tree
+        (identifier) @attribute
+        (#match? @attribute "^[a-z\\d_]*$"))
+      (token_tree
+        (identifier) @none
+        "::"
+        (#match? @none "^[a-z\\d_]*$"))
+    ]))
 
-(inner_attribute_item (attribute [
-  (identifier) @attribute
-  (scoped_identifier name: (identifier) @attribute)
-  (token_tree (identifier) @attribute (#match? @attribute "^[a-z\\d_]*$"))
-  (token_tree (identifier) @none "::" (#match? @none "^[a-z\\d_]*$"))
-]))
+(inner_attribute_item
+  (attribute
+    [
+      (identifier) @attribute
+      (scoped_identifier
+        name: (identifier) @attribute)
+      (token_tree
+        (identifier) @attribute
+        (#match? @attribute "^[a-z\\d_]*$"))
+      (token_tree
+        (identifier) @none
+        "::"
+        (#match? @none "^[a-z\\d_]*$"))
+    ]))

@@ -1390,7 +1390,9 @@ mod tests {
         (branch_list, cx)
     }
 
-    async fn init_fake_repository(cx: &mut TestAppContext) -> Entity<Repository> {
+    async fn init_fake_repository(
+        cx: &mut TestAppContext,
+    ) -> (Entity<Project>, Entity<Repository>) {
         let fs = FakeFs::new(cx.executor());
         fs.insert_tree(
             path!("/dir"),
@@ -1413,7 +1415,7 @@ mod tests {
         let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
         let repository = cx.read(|cx| project.read(cx).active_repository(cx));
 
-        repository.unwrap()
+        (project, repository.unwrap())
     }
 
     #[gpui::test]
@@ -1476,7 +1478,7 @@ mod tests {
     #[gpui::test]
     async fn test_delete_branch(cx: &mut TestAppContext) {
         init_test(cx);
-        let repository = init_fake_repository(cx).await;
+        let (_project, repository) = init_fake_repository(cx).await;
 
         let branches = create_test_branches();
 
@@ -1534,7 +1536,7 @@ mod tests {
     #[gpui::test]
     async fn test_delete_remote(cx: &mut TestAppContext) {
         init_test(cx);
-        let repository = init_fake_repository(cx).await;
+        let (_project, repository) = init_fake_repository(cx).await;
         let branches = vec![
             create_test_branch("main", true, Some("origin"), Some(1000)),
             create_test_branch("feature-auth", false, Some("origin"), Some(900)),
@@ -1721,7 +1723,7 @@ mod tests {
         const NEW_BRANCH: &str = "new-feature-branch";
 
         init_test(test_cx);
-        let repository = init_fake_repository(test_cx).await;
+        let (_project, repository) = init_fake_repository(test_cx).await;
 
         let branches = vec![
             create_test_branch(MAIN_BRANCH, true, None, Some(1000)),
@@ -1785,7 +1787,7 @@ mod tests {
     #[gpui::test]
     async fn test_remote_url_detection_https(cx: &mut TestAppContext) {
         init_test(cx);
-        let repository = init_fake_repository(cx).await;
+        let (_project, repository) = init_fake_repository(cx).await;
         let branches = vec![create_test_branch("main", true, None, Some(1000))];
 
         let (branch_list, mut ctx) = init_branch_list_test(repository.into(), branches, cx).await;
