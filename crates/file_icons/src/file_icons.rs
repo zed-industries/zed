@@ -30,6 +30,40 @@ impl FileIcons {
         // TODO: Associate a type with the languages and have the file's language
         //       override these associations
 
+        // Check if file is a Helm/Helmfile configuration by verifying:
+        // 1. File is in a templates/ subdirectory with Chart.yaml in parent directory
+        // 2. File is in a helmfile.d/ subdirectory (Helmfile modular configuration)
+        let path_str = path.to_str();
+        let extension = path.extension().and_then(|e| e.to_str());
+
+        // Check for helmfile.d directory pattern (Helmfile modular configuration)
+        if path_str.map_or(false, |p| p.contains("/helmfile.d/"))
+            && (extension == Some("yaml") || extension == Some("yml"))
+        {
+            if let Some(helm_icon) = this.get_icon_for_type("helm", cx) {
+                return Some(helm_icon);
+            }
+        }
+
+        // Check for templates directory pattern (Helm Charts)
+        if path_str.map_or(false, |p| p.contains("/templates/"))
+            && (extension == Some("yaml") || extension == Some("yml") || extension == Some("tpl"))
+        {
+            // Walk up the directory tree to find Chart.yaml
+            let mut current = path.parent();
+            while let Some(dir) = current {
+                let chart_yaml = dir.join("Chart.yaml");
+                let chart_yml = dir.join("Chart.yml");
+                if chart_yaml.exists() || chart_yml.exists() {
+                    if let Some(helm_icon) = this.get_icon_for_type("helm", cx) {
+                        return Some(helm_icon);
+                    }
+                    break;
+                }
+                current = dir.parent();
+            }
+        }
+
         if let Some(mut typ) = path.file_name().and_then(|typ| typ.to_str()) {
             // check if file name is in suffixes
             // e.g. catch file named `eslint.config.js` instead of `.eslint.config.js`
