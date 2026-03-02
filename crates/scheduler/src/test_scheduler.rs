@@ -57,7 +57,7 @@ impl TestScheduler {
             .map(|seed| seed.parse().unwrap())
             .unwrap_or(0);
 
-        (seed..num_iterations as u64)
+        (seed..seed + num_iterations as u64)
             .map(|seed| {
                 let mut unwind_safe_f = AssertUnwindSafe(&mut f);
                 eprintln!("Running seed: {seed}");
