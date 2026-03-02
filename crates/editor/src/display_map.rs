@@ -1498,7 +1498,7 @@ impl<'a> HighlightedChunk<'a> {
         self,
         editor_style: &'a EditorStyle,
     ) -> impl Iterator<Item = Self> + 'a {
-        let mut chars = self.text.chars().peekable();
+        let mut chunks = self.text.graphemes(true).peekable();
         let mut text = self.text;
         let style = self.style;
         let is_tab = self.is_tab;
@@ -1506,10 +1506,12 @@ impl<'a> HighlightedChunk<'a> {
         let is_inlay = self.is_inlay;
         iter::from_fn(move || {
             let mut prefix_len = 0;
-            while let Some(&ch) = chars.peek() {
-                if !is_invisible(ch) {
-                    prefix_len += ch.len_utf8();
-                    chars.next();
+            while let Some(&chunk) = chunks.peek() {
+                let mut chars = chunk.chars();
+                let Some(ch) = chars.next() else { break };
+                if chunk.len() != ch.len_utf8() || !is_invisible(ch) {
+                    prefix_len += chunk.len();
+                    chunks.next();
                     continue;
                 }
                 if prefix_len > 0 {
@@ -1523,8 +1525,8 @@ impl<'a> HighlightedChunk<'a> {
                         replacement: renderer.clone(),
                     });
                 }
-                chars.next();
-                let (prefix, suffix) = text.split_at(ch.len_utf8());
+                chunks.next();
+                let (prefix, suffix) = text.split_at(chunk.len());
                 text = suffix;
                 if let Some(replacement) = replacement(ch) {
                     let invisible_highlight = HighlightStyle {
@@ -4123,5 +4125,36 @@ pub mod tests {
         assert_eq!(ranges.len(), 1);
         assert_eq!(ranges[0].start, DisplayPoint::new(DisplayRow(0), 10));
         assert_eq!(ranges[0].end, DisplayPoint::new(DisplayRow(0), 14));
+    }
+
+    #[test]
+    fn test_highlight_invisibles_preserves_compound_emojis() {
+        let editor_style = EditorStyle::default();
+
+        let pilot_emoji = "🧑\u{200d}✈\u{fe0f}";
+        let chunk = HighlightedChunk {
+            text: pilot_emoji,
+            style: None,
+            is_tab: false,
+            is_inlay: false,
+            replacement: None,
+        };
+
+        let chunks: Vec<_> = chunk
+            .highlight_invisibles(&editor_style)
+            .map(|chunk| chunk.text.to_string())
+            .collect();
+
+        assert_eq!(
+            chunks.concat(),
+            pilot_emoji,
+            "all text bytes must be preserved"
+        );
+        assert_eq!(
+            chunks.len(),
+            1,
+            "compound emoji should not be split into multiple chunks, got: {:?}",
+            chunks,
+        );
     }
 }
