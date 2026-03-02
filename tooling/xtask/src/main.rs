@@ -21,6 +21,7 @@ enum CliCommand {
     /// Publishes GPUI and its dependencies to crates.io.
     PublishGpui(tasks::publish_gpui::PublishGpuiArgs),
     Workflows(tasks::workflows::GenerateWorkflowArgs),
+    ValidateWorkflows(tasks::workflow_validation::WorkflowValidationArgs),
 }
 
 fn main() -> Result<()> {
@@ -34,5 +35,6 @@ fn main() -> Result<()> {
         }
         CliCommand::PublishGpui(args) => tasks::publish_gpui::run_publish_gpui(args),
         CliCommand::Workflows(args) => tasks::workflows::run_workflows(args),
+        CliCommand::ValidateWorkflows(args) => tasks::workflow_validation::validate(args),
     }
 }

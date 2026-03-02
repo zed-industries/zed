@@ -87,8 +87,8 @@ impl WorkflowFile {
     }
 }
 
-#[derive(PartialEq, Eq)]
-enum WorkflowType {
+#[derive(PartialEq, Eq, strum::EnumIter)]
+pub enum WorkflowType {
     /// Workflows living in the Zed repository
     Zed,
     /// Workflows living in the `zed-extensions/workflows` repository that are
@@ -113,7 +113,7 @@ impl WorkflowType {
         )
     }
 
-    fn folder_path(&self) -> PathBuf {
+    pub fn folder_path(&self) -> PathBuf {
         match self {
             WorkflowType::Zed => PathBuf::from(".github/workflows"),
             WorkflowType::ExtensionCi => PathBuf::from("extensions/workflows"),
