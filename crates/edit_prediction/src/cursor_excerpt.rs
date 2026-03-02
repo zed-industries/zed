@@ -27,8 +27,8 @@ pub fn compute_excerpt_ranges(
         expand_context_syntactically_then_linewise(snapshot, editable_350.clone(), 1024);
     let context_4096 = expand_context_syntactically_then_linewise(
         snapshot,
-        editable_350_context_512.clone(),
-        4096 - 512,
+        editable_350_context_1024.clone(),
+        4096 - 1024,
     );
     let context_8192 =
         expand_context_syntactically_then_linewise(snapshot, context_4096.clone(), 8192 - 4096);
