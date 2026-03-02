@@ -1,4 +1,4 @@
-use acp_thread::SUBAGENT_SESSION_ID_META_KEY;
+use acp_thread::{SUBAGENT_MESSAGE_OUTPUT_INDEX_META_KEY, SUBAGENT_SESSION_ID_META_KEY};
 use agent_client_protocol as acp;
 use anyhow::Result;
 use gpui::{App, SharedString, Task};
@@ -40,6 +40,7 @@ pub enum SpawnAgentToolOutput {
     Success {
         session_id: acp::SessionId,
         output: String,
+        message_output_index: u64,
     },
     Error {
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -51,9 +52,20 @@ pub enum SpawnAgentToolOutput {
 
 impl From<SpawnAgentToolOutput> for LanguageModelToolResultContent {
     fn from(output: SpawnAgentToolOutput) -> Self {
-        serde_json::to_string(&output)
+        match output {
+            SpawnAgentToolOutput::Success {
+                session_id,
+                output,
+                message_output_index: _, // Don't show this to the model
+            } => serde_json::to_string(
+                &serde_json::json!({ "session_id": session_id, "output": output }),
+            )
             .unwrap_or_else(|e| format!("Failed to serialize spawn_agent output: {e}"))
-            .into()
+            .into(),
+            err => serde_json::to_string(&err)
+                .unwrap_or_else(|e| format!("Failed to serialize spawn_agent output: {e}"))
+                .into(),
+        }
     }
 }
 
@@ -131,29 +143,27 @@ impl AgentTool for SpawnAgentTool {
             })?;
 
             match subagent.send(input.message, cx).await {
-                Ok(output) => {
-                    event_stream.update_fields(
+                Ok((index, output)) => {
+                    event_stream.update_fields_with_meta(
                         acp::ToolCallUpdateFields::new().content(vec![output.clone().into()]),
+                        Some(acp::Meta::from_iter([
+                            (
+                                SUBAGENT_SESSION_ID_META_KEY.into(),
+                                subagent_session_id.to_string().into(),
+                            ),
+                            (SUBAGENT_MESSAGE_OUTPUT_INDEX_META_KEY.into(), index.into()),
+                        ])),
                     );
                     Ok(SpawnAgentToolOutput::Success {
                         session_id: subagent_session_id,
+                        message_output_index: index as u64,
                         output,
                     })
                 }
-                Err(e) => {
-                    let error = e.to_string();
-                    // workaround for now because the agent loop will always mark this as ToolCallStatus::Failed
-                    let canceled = error == "User canceled";
-                    event_stream.update_fields(acp::ToolCallUpdateFields::new().content(vec![
-                        acp::ToolCallContent::Content(acp::Content::new(error.clone()).meta(
-                            acp::Meta::from_iter([("cancelled".into(), canceled.into())]),
-                        )),
-                    ]));
-                    Err(SpawnAgentToolOutput::Error {
-                        session_id: Some(subagent_session_id),
-                        error,
-                    })
-                }
+                Err(e) => Err(SpawnAgentToolOutput::Error {
+                    session_id: Some(subagent_session_id),
+                    error: e.to_string(),
+                }),
             }
         })
     }
@@ -170,12 +180,25 @@ impl AgentTool for SpawnAgentTool {
             SpawnAgentToolOutput::Error { session_id, .. } => session_id.as_ref(),
         };
 
+        let message_output_index = match &output {
+            SpawnAgentToolOutput::Success {
+                message_output_index,
+                ..
+            } => Some(*message_output_index),
+            SpawnAgentToolOutput::Error { .. } => None,
+        };
+
         if let Some(session_id) = session_id {
-            event_stream.subagent_spawned(session_id.clone());
-            let meta = acp::Meta::from_iter([(
+            let mut meta = acp::Meta::from_iter([(
                 SUBAGENT_SESSION_ID_META_KEY.into(),
                 session_id.to_string().into(),
             )]);
+            if let Some(message_output_index) = message_output_index {
+                meta.insert(
+                    SUBAGENT_MESSAGE_OUTPUT_INDEX_META_KEY.into(),
+                    message_output_index.to_string().into(),
+                );
+            }
             event_stream.update_fields_with_meta(acp::ToolCallUpdateFields::new(), Some(meta));
         }
 
