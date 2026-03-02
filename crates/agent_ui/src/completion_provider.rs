@@ -406,7 +406,7 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
             snippet_deduplication_key: None,
             insert_text_mode: None,
             confirm: Some(confirm_completion_callback(
-                uri.name().into(),
+                file_name,
                 source_range.start,
                 new_text_len - 1,
                 uri,
@@ -630,7 +630,7 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
                                     });
 
                                     mention_set
-                                        .update(cx, |mention_set, _| {
+                                        .update(cx, |mention_set, cx| {
                                             mention_set.insert_mention(
                                                 crease_id,
                                                 mention_uri.clone(),
@@ -641,6 +641,7 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
                                                     },
                                                 ))
                                                 .shared(),
+                                                cx,
                                             );
                                         })
                                         .ok();

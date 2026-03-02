@@ -13,7 +13,7 @@ use editor::{
 use futures::{AsyncReadExt as _, FutureExt as _, future::Shared};
 use gpui::{
     AppContext, ClipboardEntry, Context, Empty, Entity, EntityId, Image, ImageFormat, Img,
-    SharedString, Task, WeakEntity,
+    SharedString, Subscription, Task, WeakEntity,
 };
 use http_client::{AsyncBody, HttpClientWithUrl};
 use itertools::Either;
@@ -114,8 +114,15 @@ impl MentionSet {
         }
     }
 
-    pub fn insert_mention(&mut self, crease_id: CreaseId, uri: MentionUri, task: MentionTask) {
+    pub fn insert_mention(
+        &mut self,
+        crease_id: CreaseId,
+        uri: MentionUri,
+        task: MentionTask,
+        cx: &mut Context<Self>,
+    ) {
         self.mentions.insert(crease_id, (uri, task));
+        cx.notify();
     }
 
     /// Creates the appropriate confirmation task for a mention based on its URI type.
@@ -156,8 +163,28 @@ impl MentionSet {
         }
     }
 
-    pub fn remove_mention(&mut self, crease_id: &CreaseId) {
+    pub fn remove_mention(&mut self, crease_id: &CreaseId, cx: &mut Context<Self>) {
         self.mentions.remove(crease_id);
+        cx.notify();
+    }
+
+    pub fn has_duplicate_filename(&self, uri: &MentionUri) -> bool {
+        let target_name = match uri {
+            MentionUri::File { abs_path } | MentionUri::Directory { abs_path } => {
+                abs_path.file_name()
+            }
+            _ => return false,
+        };
+        self.mentions
+            .values()
+            .filter(|(mention_uri, _)| match mention_uri {
+                MentionUri::File { abs_path } | MentionUri::Directory { abs_path } => {
+                    abs_path.file_name() == target_name
+                }
+                _ => false,
+            })
+            .nth(1)
+            .is_some()
     }
 
     pub fn creases(&self) -> HashSet<CreaseId> {
@@ -235,6 +262,8 @@ impl MentionSet {
                 IconName::Image.path().into(),
                 mention_uri.tooltip_text(),
                 Some(image),
+                cx.weak_entity(),
+                mention_uri.clone(),
                 editor.clone(),
                 window,
                 cx,
@@ -248,6 +277,8 @@ impl MentionSet {
                 mention_uri.icon_path(cx),
                 mention_uri.tooltip_text(),
                 None,
+                cx.weak_entity(),
+                mention_uri.clone(),
                 editor.clone(),
                 window,
                 cx,
@@ -302,6 +333,7 @@ impl MentionSet {
             .spawn(async move |_, _| task.await.map_err(|e| e.to_string()))
             .shared();
         self.mentions.insert(crease_id, (mention_uri, task.clone()));
+        cx.notify();
 
         // Notify the user if we failed to load the mentioned context
         let workspace = workspace.downgrade();
@@ -700,6 +732,8 @@ pub(crate) async fn insert_images_as_context(
                 IconName::Image.path().into(),
                 None,
                 Some(Task::ready(Ok(image.clone())).shared()),
+                mention_set.downgrade(),
+                MentionUri::PastedImage,
                 editor.clone(),
                 window,
                 cx,
@@ -725,8 +759,8 @@ pub(crate) async fn insert_images_as_context(
             })
             .shared();
 
-        mention_set.update(cx, |mention_set, _cx| {
-            mention_set.insert_mention(crease_id, MentionUri::PastedImage, task.clone())
+        mention_set.update(cx, |mention_set, cx| {
+            mention_set.insert_mention(crease_id, MentionUri::PastedImage, task.clone(), cx)
         });
 
         if task
@@ -737,8 +771,8 @@ pub(crate) async fn insert_images_as_context(
             editor.update(cx, |editor, cx| {
                 editor.edit([(start_anchor..end_anchor, "")], cx);
             });
-            mention_set.update(cx, |mention_set, _cx| {
-                mention_set.remove_mention(&crease_id)
+            mention_set.update(cx, |mention_set, cx| {
+                mention_set.remove_mention(&crease_id, cx)
             });
         }
     }
@@ -811,6 +845,8 @@ pub(crate) fn insert_crease_for_mention(
     crease_icon: SharedString,
     crease_tooltip: Option<SharedString>,
     image: Option<Shared<Task<Result<Arc<Image>, String>>>>,
+    mention_set: WeakEntity<MentionSet>,
+    mention_uri: MentionUri,
     editor: Entity<Editor>,
     window: &mut Window,
     cx: &mut App,
@@ -834,6 +870,8 @@ pub(crate) fn insert_crease_for_mention(
                 rx,
                 image,
                 cx.weak_entity(),
+                mention_set,
+                mention_uri,
                 cx,
             ),
             merge_adjacent: false,
@@ -1033,8 +1071,11 @@ fn render_mention_fold_button(
     mut loading_finished: postage::barrier::Receiver,
     image_task: Option<Shared<Task<Result<Arc<Image>, String>>>>,
     editor: WeakEntity<Editor>,
+    mention_set: WeakEntity<MentionSet>,
+    mention_uri: MentionUri,
     cx: &mut App,
 ) -> Arc<dyn Send + Sync + Fn(FoldId, Range<Anchor>, &mut App) -> AnyElement> {
+    let disambiguated_label: SharedString = mention_uri.disambiguated_name().into();
     let loading = cx.new(|cx| {
         let loading = cx.spawn(async move |this, cx| {
             loading_finished.recv().await;
@@ -1044,15 +1085,22 @@ fn render_mention_fold_button(
             })
             .ok();
         });
+        let _mention_set_subscription = mention_set
+            .upgrade()
+            .map(|entity| cx.observe(&entity, |_, _, cx| cx.notify()));
         LoadingContext {
             id: cx.entity_id(),
             label,
+            disambiguated_label,
             icon,
             tooltip,
             range,
             editor,
+            mention_set,
+            mention_uri,
             loading: Some(loading),
             image: image_task.clone(),
+            _mention_set_subscription,
         }
     });
     Arc::new(move |_fold_id, _fold_range, _cx| loading.clone().into_any_element())
@@ -1061,12 +1109,16 @@ fn render_mention_fold_button(
 struct LoadingContext {
     id: EntityId,
     label: SharedString,
+    disambiguated_label: SharedString,
     icon: SharedString,
     tooltip: Option<SharedString>,
     range: Range<Anchor>,
     editor: WeakEntity<Editor>,
+    mention_set: WeakEntity<MentionSet>,
+    mention_uri: MentionUri,
     loading: Option<Task<()>>,
     image: Option<Shared<Task<Result<Arc<Image>, String>>>>,
+    _mention_set_subscription: Option<Subscription>,
 }
 
 impl Render for LoadingContext {
@@ -1078,7 +1130,19 @@ impl Render for LoadingContext {
 
         let id = ElementId::from(("loading_context", self.id));
 
-        MentionCrease::new(id, self.icon.clone(), self.label.clone())
+        let label = if self
+            .mention_set
+            .read_with(cx, |mention_set, _| {
+                mention_set.has_duplicate_filename(&self.mention_uri)
+            })
+            .unwrap_or(false)
+        {
+            self.disambiguated_label.clone()
+        } else {
+            self.label.clone()
+        };
+
+        MentionCrease::new(id, self.icon.clone(), label)
             .is_toggled(is_in_text_selection)
             .is_loading(self.loading.is_some())
             .when_some(self.tooltip.clone(), |this, tooltip_text| {

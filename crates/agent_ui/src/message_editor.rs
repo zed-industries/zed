@@ -692,6 +692,8 @@ impl MessageEditor {
                         mention_uri.icon_path(cx),
                         mention_uri.tooltip_text(),
                         None,
+                        self.mention_set.downgrade(),
+                        mention_uri.clone(),
                         self.editor.clone(),
                         window,
                         cx,
@@ -730,8 +732,8 @@ impl MessageEditor {
                         })
                         .shared();
 
-                    self.mention_set.update(cx, |mention_set, _cx| {
-                        mention_set.insert_mention(crease_id, mention_uri.clone(), mention_task)
+                    self.mention_set.update(cx, |mention_set, cx| {
+                        mention_set.insert_mention(crease_id, mention_uri.clone(), mention_task, cx)
                     });
                 }
             }
@@ -803,6 +805,8 @@ impl MessageEditor {
                             mention_uri.icon_path(cx),
                             mention_uri.tooltip_text(),
                             None,
+                            self.mention_set.downgrade(),
+                            mention_uri.clone(),
                             self.editor.clone(),
                             window,
                             cx,
@@ -824,8 +828,8 @@ impl MessageEditor {
                             .spawn(async move |_, _| task.await.map_err(|e| e.to_string()))
                             .shared();
 
-                        self.mention_set.update(cx, |mention_set, _cx| {
-                            mention_set.insert_mention(crease_id, mention_uri.clone(), task.clone())
+                        self.mention_set.update(cx, |mention_set, cx| {
+                            mention_set.insert_mention(crease_id, mention_uri.clone(), task.clone(), cx)
                         });
 
                         // Drop the tx after inserting to signal the crease is ready
@@ -984,6 +988,8 @@ impl MessageEditor {
             mention_uri.icon_path(cx),
             mention_uri.tooltip_text(),
             None,
+            self.mention_set.downgrade(),
+            mention_uri.clone(),
             self.editor.clone(),
             window,
             cx,
@@ -998,8 +1004,8 @@ impl MessageEditor {
         }))
         .shared();
 
-        self.mention_set.update(cx, |mention_set, _| {
-            mention_set.insert_mention(crease_id, mention_uri, mention_task);
+        self.mention_set.update(cx, |mention_set, cx| {
+            mention_set.insert_mention(crease_id, mention_uri, mention_task, cx);
         });
     }
 
@@ -1290,6 +1296,8 @@ impl MessageEditor {
                 mention_uri.icon_path(cx),
                 mention_uri.tooltip_text(),
                 None,
+                self.mention_set.downgrade(),
+                mention_uri.clone(),
                 self.editor.clone(),
                 window,
                 cx,
@@ -1298,11 +1306,12 @@ impl MessageEditor {
             };
             drop(tx);
 
-            self.mention_set.update(cx, |mention_set, _cx| {
+            self.mention_set.update(cx, |mention_set, cx| {
                 mention_set.insert_mention(
                     crease_id,
                     mention_uri.clone(),
                     Task::ready(Ok(mention)).shared(),
+                    cx,
                 )
             });
         }
