@@ -9893,7 +9893,14 @@ impl Editor {
 
         origin.x -= BORDER_WIDTH;
 
-        window.defer_draw(element, origin, 1);
+        window.with_content_mask(
+            Some(gpui::ContentMask {
+                bounds: *text_bounds,
+            }),
+            |window| {
+                window.defer_draw(element, origin, 1, Some(window.content_mask()));
+            },
+        );
 
         // Do not return an element, since it will already be drawn due to defer_draw.
         None
