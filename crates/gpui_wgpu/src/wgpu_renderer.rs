@@ -11,7 +11,7 @@ use log::warn;
 #[cfg(not(target_family = "wasm"))]
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use std::num::NonZeroU64;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
@@ -122,6 +122,8 @@ pub struct WgpuRenderer {
     transparent_alpha_mode: wgpu::CompositeAlphaMode,
     opaque_alpha_mode: wgpu::CompositeAlphaMode,
     max_texture_size: u32,
+    last_error: Arc<Mutex<Option<String>>>,
+    failed_frame_count: u32,
 }
 
 impl WgpuRenderer {
@@ -367,6 +369,13 @@ impl WgpuRenderer {
 
         let adapter_info = context.adapter.get_info();
 
+        let last_error: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+        let last_error_clone = Arc::clone(&last_error);
+        device.on_uncaptured_error(Arc::new(move |error| {
+            let mut guard = last_error_clone.lock().unwrap();
+            *guard = Some(error.to_string());
+        }));
+
         Ok(Self {
             device,
             queue,
@@ -398,6 +407,8 @@ impl WgpuRenderer {
             transparent_alpha_mode,
             opaque_alpha_mode,
             max_texture_size,
+            last_error,
+            failed_frame_count: 0,
         })
     }
 
@@ -961,6 +972,20 @@ impl WgpuRenderer {
     }
 
     pub fn draw(&mut self, scene: &Scene) {
+        let last_error = self.last_error.lock().unwrap().take();
+        if let Some(error) = last_error {
+            self.failed_frame_count += 1;
+            log::error!(
+                "GPU error during frame (failure {} of 20): {error}",
+                self.failed_frame_count
+            );
+            if self.failed_frame_count > 20 {
+                panic!("Too many consecutive GPU errors. Last error: {error}");
+            }
+        } else {
+            self.failed_frame_count = 0;
+        }
+
         self.atlas.before_frame();
 
         let frame = match self.surface.get_current_texture() {
