@@ -404,3 +404,87 @@ impl ExtensionWorkspaceCommandProxy for WorkspaceCommandRegistryProxy {
             .retain(|e| e.extension_id != extension_id);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_match_positions_empty_query() {
+        assert_eq!(match_positions("Switch to Companion File", ""), Vec::<usize>::new());
+    }
+
+    #[test]
+    fn test_match_positions_no_match() {
+        assert_eq!(
+            match_positions("Switch to Companion File", "xyz"),
+            Vec::<usize>::new()
+        );
+    }
+
+    #[test]
+    fn test_match_positions_ascii() {
+        // "swi" matches at byte 0; chars 'S','w','i' start at 0,1,2
+        let positions = match_positions("Switch to Companion File", "swi");
+        assert_eq!(positions, vec![0, 1, 2]);
+        for &pos in &positions {
+            assert!("Switch to Companion File".is_char_boundary(pos));
+        }
+    }
+
+    #[test]
+    fn test_match_positions_multibyte_ascii_lowercase_same_length() {
+        // "ü" (2 bytes) lowercases to "ü" (2 bytes) — length unchanged
+        let text = "Über cool";
+        let positions = match_positions(text, "üb");
+        // 'Ü' is at byte 0 (2 bytes), 'b' at byte 2
+        assert_eq!(positions, vec![0, 2]);
+        for &pos in &positions {
+            assert!(text.is_char_boundary(pos));
+        }
+    }
+
+    #[test]
+    fn test_match_positions_dotted_capital_i_prefix() {
+        // 'İ' (U+0130) is 2 bytes in UTF-8; its lowercase is 'i' + U+0307
+        // (combining dot above), which is 3 bytes. A character *before* the
+        // match with a different-length lowercase form shifts the byte offset
+        // in the lowercased string away from the char boundary in the original.
+        //
+        // "İü" lowercases to "i̇ü" (5 bytes). "ü" is found at offset 3 in
+        // the lowercased string, but 'ü' starts at offset 2 in the original.
+        // The old code would emit [3, 4], where byte 3 inside "İü" is the
+        // second byte of 'ü' (not a char boundary) — a guaranteed panic.
+        let text = "İü";
+        let query_lower = "ü";
+        let positions = match_positions(text, query_lower);
+        for &pos in &positions {
+            assert!(
+                text.is_char_boundary(pos),
+                "position {pos} is not a char boundary in {text:?}"
+            );
+        }
+        // 'ü' starts at byte 2 in "İü" (after the 2-byte 'İ').
+        assert_eq!(positions, vec![2usize]);
+    }
+
+    #[test]
+    fn test_match_positions_returns_char_boundaries_only() {
+        // General property: every returned index must be a char boundary.
+        let cases = [
+            ("Switch to Companion File", "comp"),
+            ("Über alles", "über"),
+            ("İstanbul", "ist"),
+            ("café", "caf"),
+        ];
+        for (text, query) in cases {
+            let positions = match_positions(text, query);
+            for &pos in &positions {
+                assert!(
+                    text.is_char_boundary(pos),
+                    "position {pos} is not a char boundary in {text:?} (query={query:?})"
+                );
+            }
+        }
+    }
+}
