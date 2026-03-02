@@ -1389,10 +1389,6 @@ impl Thread {
         self.messages.last()
     }
 
-    pub fn num_messages(&self) -> usize {
-        self.messages.len()
-    }
-
     #[cfg(any(test, feature = "test-support"))]
     pub fn last_received_or_pending_message(&self) -> Option<Message> {
         if let Some(message) = self.pending_message.clone() {
