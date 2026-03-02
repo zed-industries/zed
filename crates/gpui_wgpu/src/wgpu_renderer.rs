@@ -122,7 +122,7 @@ pub struct WgpuRenderer {
     transparent_alpha_mode: wgpu::CompositeAlphaMode,
     opaque_alpha_mode: wgpu::CompositeAlphaMode,
     max_texture_size: u32,
-    last_error: Arc<Mutex<Option<wgpu::Error>>>,
+    last_error: Arc<Mutex<Option<String>>>,
     failed_frame_count: u32,
 }
 
@@ -369,11 +369,11 @@ impl WgpuRenderer {
 
         let adapter_info = context.adapter.get_info();
 
-        let last_error: Arc<Mutex<Option<wgpu::Error>>> = Arc::new(Mutex::new(None));
+        let last_error: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
         let last_error_clone = Arc::clone(&last_error);
         device.on_uncaptured_error(Arc::new(move |error| {
             let mut guard = last_error_clone.lock().unwrap();
-            *guard = Some(error);
+            *guard = Some(error.to_string());
         }));
 
         Ok(Self {
