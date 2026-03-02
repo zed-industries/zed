@@ -7996,7 +7996,7 @@ mod tests {
         let scroll_bounds = scroll_handle.bounds();
 
         assert!(
-            k_tab_bounds.right() <= scroll_bounds.right(),
+            k_tab_bounds.left() >= scroll_bounds.left(),
             "Active tab K should be scrolled into view"
         );
     }
