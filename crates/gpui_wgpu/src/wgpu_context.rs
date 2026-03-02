@@ -267,8 +267,6 @@ impl WgpuContext {
                         info.backend,
                         e
                     );
-
-                    anyhow::bail!("Failing for test purposes...")
                 }
             }
         }
