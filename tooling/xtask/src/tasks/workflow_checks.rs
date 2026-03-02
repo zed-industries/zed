@@ -43,7 +43,7 @@ pub fn validate(_: WorkflowValidationArgs) -> Result<()> {
 
         let renderer =
             Renderer::styled().decor_style(annotate_snippets::renderer::DecorStyle::Ascii);
-        anstream::println!("{}", renderer.render(errors.as_slice()));
+        println!("{}", renderer.render(errors.as_slice()));
 
         Err(anyhow!("Workflow checks failed!"))
     } else {

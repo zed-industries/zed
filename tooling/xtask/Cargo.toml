@@ -10,7 +10,6 @@ workspace = true
 
 [dependencies]
 annotate-snippets = "0.12.1"
-anstream = "0.6.21"
 anyhow.workspace = true
 backtrace.workspace = true
 cargo_metadata.workspace = true

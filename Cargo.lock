@@ -21556,7 +21556,6 @@ name = "xtask"
 version = "0.1.0"
 dependencies = [
  "annotate-snippets",
- "anstream",
  "anyhow",
  "backtrace",
  "cargo_metadata",
