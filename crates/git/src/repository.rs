@@ -1311,67 +1311,85 @@ impl GitRepository for RealGitRepository {
     }
 
     fn load_index_text(&self, path: RepoPath) -> BoxFuture<'_, Option<String>> {
-        // https://git-scm.com/book/en/v2/Git-Internals-Git-Objects
-        const GIT_MODE_SYMLINK: u32 = 0o120000;
-
-        let repo = self.repository.clone();
+        let working_directory = self.working_directory();
+        let git_binary_path = self.any_git_binary_path.clone();
+        let executor = self.executor.clone();
         self.executor
             .spawn(async move {
-                fn logic(repo: &git2::Repository, path: &RepoPath) -> Result<Option<String>> {
-                    // This check is required because index.get_path() unwraps internally :(
-                    let mut index = repo.index()?;
-                    index.read(false)?;
+                let working_directory = match working_directory {
+                    Ok(dir) => dir,
+                    Err(err) => {
+                        log::error!("Error getting working directory: {:?}", err);
+                        return None;
+                    }
+                };
 
-                    const STAGE_NORMAL: i32 = 0;
-                    let path = path.as_std_path();
-                    // `RepoPath` contains a `RelPath` which normalizes `.` into an empty path
-                    // `get_path` unwraps on empty paths though, so undo that normalization here
-                    let path = if path.components().next().is_none() {
-                        ".".as_ref()
-                    } else {
-                        path
-                    };
-                    let oid = match index.get_path(path, STAGE_NORMAL) {
-                        Some(entry) if entry.mode != GIT_MODE_SYMLINK => entry.id,
-                        _ => return Ok(None),
-                    };
+                let git = GitBinary::new(git_binary_path, working_directory, executor);
 
-                    let content = repo.find_blob(oid)?.content().to_owned();
-                    Ok(String::from_utf8(content).ok())
+                // Use `git show :0:<path>` to read file content from the index (stage 0).
+                // This uses the git CLI instead of libgit2 to avoid memory access crashes
+                // that can occur when pack files are modified by concurrent git operations.
+                let index_path = format!(":0:{}", path.as_unix_str());
+                match git.run(&["--no-optional-locks", "show", &index_path]).await {
+                    Ok(content) => Some(content),
+                    Err(err) => {
+                        // File not in index, or other error - this is normal for untracked files
+                        log::debug!("Could not read index text for {:?}: {:?}", path, err);
+                        None
+                    }
                 }
-
-                match logic(&repo.lock(), &path) {
-                    Ok(value) => return value,
-                    Err(err) => log::error!("Error loading index text: {:?}", err),
-                }
-                None
             })
             .boxed()
     }
 
     fn load_committed_text(&self, path: RepoPath) -> BoxFuture<'_, Option<String>> {
-        let repo = self.repository.clone();
+        let working_directory = self.working_directory();
+        let git_binary_path = self.any_git_binary_path.clone();
+        let executor = self.executor.clone();
         self.executor
             .spawn(async move {
-                let repo = repo.lock();
-                let head = repo.head().ok()?.peel_to_tree().log_err()?;
-                let entry = head.get_path(path.as_std_path()).ok()?;
-                if entry.filemode() == i32::from(git2::FileMode::Link) {
-                    return None;
+                let working_directory = match working_directory {
+                    Ok(dir) => dir,
+                    Err(err) => {
+                        log::error!("Error getting working directory: {:?}", err);
+                        return None;
+                    }
+                };
+
+                let git = GitBinary::new(git_binary_path, working_directory, executor);
+
+                // Use `git show HEAD:<path>` to read file content from HEAD.
+                // This uses the git CLI instead of libgit2 to avoid memory access crashes
+                // that can occur when pack files are modified by concurrent git operations.
+                let head_path = format!("HEAD:{}", path.as_unix_str());
+                match git.run(&["--no-optional-locks", "show", &head_path]).await {
+                    Ok(content) => Some(content),
+                    Err(err) => {
+                        // File not in HEAD, or other error
+                        log::debug!("Could not read committed text for {:?}: {:?}", path, err);
+                        None
+                    }
                 }
-                let content = repo.find_blob(entry.id()).log_err()?.content().to_owned();
-                String::from_utf8(content).ok()
             })
             .boxed()
     }
 
     fn load_blob_content(&self, oid: Oid) -> BoxFuture<'_, Result<String>> {
-        let repo = self.repository.clone();
+        let working_directory = self.working_directory();
+        let git_binary_path = self.any_git_binary_path.clone();
+        let executor = self.executor.clone();
         self.executor
             .spawn(async move {
-                let repo = repo.lock();
-                let content = repo.find_blob(oid.0)?.content().to_owned();
-                Ok(String::from_utf8(content)?)
+                let working_directory = working_directory?;
+                let git = GitBinary::new(git_binary_path, working_directory, executor);
+
+                // Use `git cat-file blob <oid>` to read blob content.
+                // This uses the git CLI instead of libgit2 to avoid memory access crashes
+                // that can occur when pack files are modified by concurrent git operations.
+                let content = git
+                    .run(&["--no-optional-locks", "cat-file", "blob", &oid.to_string()])
+                    .await?;
+                Ok(content)
             })
             .boxed()
     }
@@ -4345,5 +4363,73 @@ mod tests {
                 })
                 .boxed()
         }
+    }
+
+    #[gpui::test]
+    async fn test_load_index_and_committed_text(cx: &mut TestAppContext) {
+        disable_git_global_config();
+        cx.executor().allow_parking();
+
+        let repo_dir = tempfile::tempdir().unwrap();
+        git2::Repository::init(repo_dir.path()).unwrap();
+
+        let repo = RealGitRepository::new(
+            &repo_dir.path().join(".git"),
+            None,
+            Some("git".into()),
+            cx.executor(),
+        )
+        .unwrap();
+
+        // Create a file and commit it
+        let test_content = "initial content";
+        smol::fs::write(repo_dir.path().join("test.txt"), test_content)
+            .await
+            .unwrap();
+
+        repo.stage_paths(vec![repo_path("test.txt")], Arc::new(HashMap::default()))
+            .await
+            .unwrap();
+        repo.commit(
+            "Initial commit".into(),
+            None,
+            CommitOptions::default(),
+            AskPassDelegate::new(&mut cx.to_async(), |_, _, _| {}),
+            Arc::new(checkpoint_author_envs()),
+        )
+        .await
+        .unwrap();
+
+        // Test load_committed_text returns the committed content
+        let committed_text = repo.load_committed_text(repo_path("test.txt")).await;
+        assert_eq!(committed_text, Some(test_content.to_string()));
+
+        // Test load_index_text returns the indexed content (same as committed after fresh commit)
+        let index_text = repo.load_index_text(repo_path("test.txt")).await;
+        assert_eq!(index_text, Some(test_content.to_string()));
+
+        // Modify the file and stage it
+        let modified_content = "modified content";
+        smol::fs::write(repo_dir.path().join("test.txt"), modified_content)
+            .await
+            .unwrap();
+        repo.stage_paths(vec![repo_path("test.txt")], Arc::new(HashMap::default()))
+            .await
+            .unwrap();
+
+        // load_index_text should return the staged content
+        let index_text = repo.load_index_text(repo_path("test.txt")).await;
+        assert_eq!(index_text, Some(modified_content.to_string()));
+
+        // load_committed_text should still return the original committed content
+        let committed_text = repo.load_committed_text(repo_path("test.txt")).await;
+        assert_eq!(committed_text, Some(test_content.to_string()));
+
+        // Test that non-existent files return None
+        let missing_index = repo.load_index_text(repo_path("nonexistent.txt")).await;
+        assert_eq!(missing_index, None);
+
+        let missing_committed = repo.load_committed_text(repo_path("nonexistent.txt")).await;
+        assert_eq!(missing_committed, None);
     }
 }
