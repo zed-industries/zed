@@ -1,6 +1,7 @@
 mod check_run_patterns;
 
 use std::{
+    borrow::Cow,
     collections::HashMap,
     fs,
     ops::Range,
@@ -61,27 +62,31 @@ pub fn validate(_: WorkflowValidationArgs) -> Result<()> {
             .into_iter()
             .map(|file_error| {
                 let raw_content = &file_error.contents.raw_content;
-                let ranges = file_error.errors.into_iter().flat_map(|error| {
-                    let mut identical_patterns = HashMap::new();
-                    error
-                        .patterns
-                        .into_iter()
-                        .map(move |(line, pattern_range)| {
-                            let pattern = &line[pattern_range.clone()];
-                            let initial_offset =
-                                identical_patterns.get(pattern).copied().unwrap_or_default();
+                let mut identical_lines = HashMap::new();
 
-                            let offset_in_content = raw_content[initial_offset..]
-                                .find(&line)
-                                .map(|offset| offset + initial_offset)
-                                .unwrap_or_default();
+                let ranges = file_error
+                    .errors
+                    .into_iter()
+                    .flat_map(|error| error.patterns.into_iter())
+                    .map(|(line, pattern_range)| {
+                        let initial_offset = identical_lines
+                            .get(&(Cow::Borrowed(line.as_str()), pattern_range.start))
+                            .copied()
+                            .unwrap_or_default();
 
-                            identical_patterns.insert(pattern.to_owned(), offset_in_content);
+                        let line_start = raw_content[initial_offset..]
+                            .find(&line)
+                            .map(|offset| offset + initial_offset)
+                            .unwrap_or_default();
 
-                            pattern_range.start + offset_in_content
-                                ..pattern_range.end + offset_in_content
-                        })
-                });
+                        let pattern_start = line_start + pattern_range.start;
+                        let pattern_end = pattern_start + pattern_range.len();
+
+                        identical_lines
+                            .insert((Cow::Owned(line), pattern_range.start), pattern_end);
+
+                        pattern_start..pattern_end
+                    });
 
                 Error {
                     file_path: file_error.file_path,
