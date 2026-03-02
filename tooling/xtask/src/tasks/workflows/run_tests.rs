@@ -657,7 +657,7 @@ pub(crate) fn check_scripts() -> NamedJob {
     }
 
     fn run_actionlint() -> Step<Run> {
-        named::bash("$ACTIONLINT_BIN -color").add_env((
+        named::bash(r#""$ACTIONLINT_BIN" -color"#).add_env((
             "ACTIONLINT_BIN",
             "${{ steps.get_actionlint.outputs.executable }}",
         ))

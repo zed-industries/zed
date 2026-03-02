@@ -28,7 +28,7 @@ fn publish_job() -> NamedJob {
     }
 
     fn upload_binary() -> Step<Run> {
-        named::bash("script/upload-extension-cli $GITHUB_SHA")
+        named::bash(r#"script/upload-extension-cli "$GITHUB_SHA""#)
             .add_env((
                 "DIGITALOCEAN_SPACES_ACCESS_KEY",
                 vars::DIGITALOCEAN_SPACES_ACCESS_KEY,

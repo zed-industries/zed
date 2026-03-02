@@ -503,7 +503,7 @@ pub mod named {
 }
 
 pub fn git_checkout(ref_name: &dyn std::fmt::Display) -> Step<Run> {
-    named::bash("git fetch origin $REF_NAME && git checkout $REF_NAME")
+    named::bash(r#"git fetch origin "$REF_NAME" && git checkout "$REF_NAME""#)
         .add_env(("REF_NAME", ref_name.to_string()))
 }
 

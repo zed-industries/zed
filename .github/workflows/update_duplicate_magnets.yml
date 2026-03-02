@@ -25,5 +25,5 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           python script/github-find-top-duplicated-bugs.py \
-            --github-token $GITHUB_TOKEN \
+            --github-token "$GITHUB_TOKEN" \
             --issue-number 46355

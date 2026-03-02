@@ -22,7 +22,7 @@ jobs:
       with:
         clean: false
     - name: autofix_pr::run_autofix::checkout_pr
-      run: gh pr checkout $PR_NUMBER
+      run: gh pr checkout "$PR_NUMBER"
       env:
         PR_NUMBER: ${{ inputs.pr_number }}
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -105,7 +105,7 @@ jobs:
         clean: false
         token: ${{ steps.get-app-token.outputs.token }}
     - name: autofix_pr::commit_changes::checkout_pr
-      run: gh pr checkout $PR_NUMBER
+      run: gh pr checkout "$PR_NUMBER"
       env:
         PR_NUMBER: ${{ inputs.pr_number }}
         GITHUB_TOKEN: ${{ steps.get-app-token.outputs.token }}

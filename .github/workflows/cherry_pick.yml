@@ -36,7 +36,7 @@ jobs:
         app-id: ${{ secrets.ZED_ZIPPY_APP_ID }}
         private-key: ${{ secrets.ZED_ZIPPY_APP_PRIVATE_KEY }}
     - name: cherry_pick::run_cherry_pick::cherry_pick
-      run: ./script/cherry-pick $BRANCH $COMMIT $CHANNEL
+      run: ./script/cherry-pick "$BRANCH" "$COMMIT" "$CHANNEL"
       env:
         BRANCH: ${{ inputs.branch }}
         COMMIT: ${{ inputs.commit }}

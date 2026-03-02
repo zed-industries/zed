@@ -46,7 +46,7 @@ pub fn run_perf(
     }
 
     fn compare_runs(head: &WorkflowInput, base: &WorkflowInput) -> Step<Run> {
-        named::bash("cargo perf-compare --save=results.md $BASE $HEAD")
+        named::bash(r#"cargo perf-compare --save=results.md "$BASE" "$HEAD""#)
             .add_env(("BASE", base.to_string()))
             .add_env(("HEAD", head.to_string()))
     }

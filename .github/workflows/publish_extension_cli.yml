@@ -27,7 +27,7 @@ jobs:
     - name: publish_extension_cli::publish_job::build_extension_cli
       run: cargo build --release --package extension_cli
     - name: publish_extension_cli::publish_job::upload_binary
-      run: script/upload-extension-cli $GITHUB_SHA
+      run: script/upload-extension-cli "$GITHUB_SHA"
       env:
         DIGITALOCEAN_SPACES_ACCESS_KEY: ${{ secrets.DIGITALOCEAN_SPACES_ACCESS_KEY }}
         DIGITALOCEAN_SPACES_SECRET_KEY: ${{ secrets.DIGITALOCEAN_SPACES_SECRET_KEY }}

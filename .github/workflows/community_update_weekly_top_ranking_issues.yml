@@ -24,4 +24,4 @@ jobs:
       - name: Run script
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: uv run --project script/update_top_ranking_issues script/update_top_ranking_issues/main.py --github-token $GITHUB_TOKEN --issue-reference-number 6952 --query-day-interval 7
+        run: uv run --project script/update_top_ranking_issues script/update_top_ranking_issues/main.py --github-token "$GITHUB_TOKEN" --issue-reference-number 6952 --query-day-interval 7

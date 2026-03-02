@@ -55,7 +55,7 @@ fn download_patch_artifact() -> Step<Use> {
 
 fn run_autofix(pr_number: &WorkflowInput, run_clippy: &WorkflowInput) -> NamedJob {
     fn checkout_pr(pr_number: &WorkflowInput) -> Step<Run> {
-        named::bash("gh pr checkout $PR_NUMBER")
+        named::bash(r#"gh pr checkout "$PR_NUMBER""#)
             .add_env(("PR_NUMBER", pr_number.to_string()))
             .add_env(("GITHUB_TOKEN", vars::GITHUB_TOKEN))
     }
@@ -134,7 +134,7 @@ fn run_autofix(pr_number: &WorkflowInput, run_clippy: &WorkflowInput) -> NamedJo
 
 fn commit_changes(pr_number: &WorkflowInput, autofix_job: &NamedJob) -> NamedJob {
     fn checkout_pr(pr_number: &WorkflowInput, token: &StepOutput) -> Step<Run> {
-        named::bash("gh pr checkout $PR_NUMBER")
+        named::bash(r#"gh pr checkout "$PR_NUMBER""#)
             .add_env(("PR_NUMBER", pr_number.to_string()))
             .add_env(("GITHUB_TOKEN", token))
     }

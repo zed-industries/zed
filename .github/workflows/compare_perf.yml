@@ -37,7 +37,7 @@ jobs:
     - name: compare_perf::run_perf::install_hyperfine
       uses: taiki-e/install-action@hyperfine
     - name: steps::git_checkout
-      run: git fetch origin $REF_NAME && git checkout $REF_NAME
+      run: git fetch origin "$REF_NAME" && git checkout "$REF_NAME"
       env:
         REF_NAME: ${{ inputs.base }}
     - name: compare_perf::run_perf::cargo_perf_test
@@ -52,7 +52,7 @@ jobs:
         REF_NAME: ${{ inputs.base }}
         CRATE_NAME: ${{ inputs.crate_name }}
     - name: steps::git_checkout
-      run: git fetch origin $REF_NAME && git checkout $REF_NAME
+      run: git fetch origin "$REF_NAME" && git checkout "$REF_NAME"
       env:
         REF_NAME: ${{ inputs.head }}
     - name: compare_perf::run_perf::cargo_perf_test
@@ -67,7 +67,7 @@ jobs:
         REF_NAME: ${{ inputs.head }}
         CRATE_NAME: ${{ inputs.crate_name }}
     - name: compare_perf::run_perf::compare_runs
-      run: cargo perf-compare --save=results.md $BASE $HEAD
+      run: cargo perf-compare --save=results.md "$BASE" "$HEAD"
       env:
         BASE: ${{ inputs.base }}
         HEAD: ${{ inputs.head }}

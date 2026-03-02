@@ -653,7 +653,7 @@ jobs:
       name: run_tests::check_scripts::download_actionlint
       run: bash <(curl https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash)
     - name: run_tests::check_scripts::run_actionlint
-      run: $ACTIONLINT_BIN -color
+      run: '"$ACTIONLINT_BIN" -color'
       env:
         ACTIONLINT_BIN: ${{ steps.get_actionlint.outputs.executable }}
     - name: run_tests::check_scripts::check_xtask_workflows
@@ -664,6 +664,8 @@ jobs:
           echo "Please run 'cargo xtask workflows' locally and commit the changes"
           exit 1
         fi
+    - name: run_tests::check_scripts::check_workflows
+      run: cargo xtask check-workflows
     timeout-minutes: 60
   check_postgres_and_protobuf_migrations:
     needs:
