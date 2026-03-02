@@ -167,6 +167,10 @@ impl SubagentHandle for FakeSubagentHandle {
         self.session_id.clone()
     }
 
+    fn num_entries(&self, _cx: &App) -> usize {
+        unimplemented!()
+    }
+
     fn send(&self, _message: String, cx: &AsyncApp) -> Task<Result<(usize, String)>> {
         let task = self.send_task.clone();
         cx.background_spawn(async move { Ok(task.await) })

@@ -1748,6 +1748,10 @@ impl SubagentHandle for NativeSubagentHandle {
         self.session_id.clone()
     }
 
+    fn num_entries(&self, cx: &App) -> usize {
+        self.subagent_thread.read(cx).num_messages()
+    }
+
     fn send(&self, message: String, cx: &AsyncApp) -> Task<Result<(usize, String)>> {
         let thread = self.subagent_thread.clone();
         let acp_thread = self.acp_thread.clone();

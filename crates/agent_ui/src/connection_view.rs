@@ -872,7 +872,10 @@ impl ConnectionView {
             .entries()
             .iter()
             .filter_map(|entry| match entry {
-                AgentThreadEntry::ToolCall(call) => call.subagent_session_id.clone(),
+                AgentThreadEntry::ToolCall(call) => call
+                    .subagent_session_info
+                    .as_ref()
+                    .map(|i| i.session_id.clone()),
                 _ => None,
             })
             .collect::<Vec<_>>();

@@ -3923,7 +3923,7 @@ impl ThreadView {
         let thread = self.thread.clone();
         let comments_editor = self.thread_feedback.comments_editor.clone();
 
-        let primary = if entry_ix == total_entries - 1 {
+        let primary = if entry_ix + 1 == total_entries {
             v_flex()
                 .w_full()
                 .child(primary)
@@ -5002,15 +5002,20 @@ impl ThreadView {
 
         div().w_full().map(|this| {
             if tool_call.is_subagent() {
-                this.child(self.render_subagent_tool_call(
-                    active_session_id,
-                    entry_ix,
-                    tool_call,
-                    tool_call.subagent_session_id.clone(),
-                    focus_handle,
-                    window,
-                    cx,
-                ))
+                this.child(
+                    self.render_subagent_tool_call(
+                        active_session_id,
+                        entry_ix,
+                        tool_call,
+                        tool_call
+                            .subagent_session_info
+                            .as_ref()
+                            .map(|i| i.session_id.clone()),
+                        focus_handle,
+                        window,
+                        cx,
+                    ),
+                )
             } else if has_terminals {
                 this.children(tool_call.terminals().map(|terminal| {
                     self.render_terminal_tool_call(
@@ -6679,28 +6684,17 @@ impl ThreadView {
             return false;
         };
 
-        if tool_call_index < parent_thread.entries().len() {
-            for entry in parent_thread.entries()[tool_call_index + 1..].iter() {
-                match entry {
-                    AgentThreadEntry::UserMessage(_) | AgentThreadEntry::AssistantMessage(_) => {
-                        break;
-                    }
-                    AgentThreadEntry::ToolCall(_) => {
-                        return false;
-                    }
-                }
-            }
+        if let Some(AgentThreadEntry::ToolCall(_)) =
+            parent_thread.entries().get(tool_call_index + 1)
+        {
+            return false;
         }
 
-        for entry in parent_thread.entries()[..tool_call_index].iter().rev() {
-            match entry {
-                AgentThreadEntry::UserMessage(_) | AgentThreadEntry::AssistantMessage(_) => {
-                    break;
-                }
-                AgentThreadEntry::ToolCall(_) => {
-                    return false;
-                }
-            }
+        if let Some(AgentThreadEntry::ToolCall(_)) = parent_thread
+            .entries()
+            .get(tool_call_index.saturating_sub(1))
+        {
+            return false;
         }
 
         true
@@ -6742,16 +6736,19 @@ impl ThreadView {
 
         let entries = subagent_view.thread.read(cx).entries();
         let total_entries = entries.len();
-        let end_ix = if let Some(ix) = tool_call.subagent_message_output_index {
-            (ix + 1).min(total_entries)
+        let mut entry_range = if let Some(info) = tool_call.subagent_session_info.as_ref() {
+            info.message_start_index
+                ..info
+                    .message_end_index
+                    .map(|i| (i + 1).min(total_entries))
+                    .unwrap_or(total_entries)
         } else {
-            total_entries
+            0..total_entries
         };
-        let start_ix = if should_show_subagent_fullscreen {
-            0
-        } else {
-            end_ix.saturating_sub(MAX_PREVIEW_ENTRIES)
+        if !should_show_subagent_fullscreen {
+            entry_range.start = entry_range.end.saturating_sub(MAX_PREVIEW_ENTRIES);
         };
+        let start_ix = entry_range.start;
 
         let scroll_handle = self
             .subagent_scroll_handles
@@ -6763,12 +6760,14 @@ impl ThreadView {
             scroll_handle.scroll_to_bottom();
         }
 
-        let rendered_entries: Vec<AnyElement> = entries[start_ix..end_ix]
+        let rendered_entries: Vec<AnyElement> = entries
+            .get(entry_range)
+            .unwrap_or_default()
             .iter()
             .enumerate()
             .map(|(i, entry)| {
                 let actual_ix = start_ix + i;
-                subagent_view.render_entry(actual_ix, total_entries + 1, entry, window, cx)
+                subagent_view.render_entry(actual_ix, total_entries, entry, window, cx)
             })
             .collect();
 

@@ -605,7 +605,12 @@ pub trait TerminalHandle {
 }
 
 pub trait SubagentHandle {
+    /// The session ID of this subagent thread
     fn id(&self) -> acp::SessionId;
+    /// The current number of entries in the thread.
+    /// Useful for knowing where the next turn will begin
+    fn num_entries(&self, cx: &App) -> usize;
+    /// Runs a turn for a given message and returns both the response and the index of that output message.
     fn send(&self, message: String, cx: &AsyncApp) -> Task<Result<(usize, String)>>;
 }
 
@@ -1328,6 +1333,10 @@ impl Thread {
         self.messages
             .last()
             .map(|msg| (self.messages.len() - 1, msg))
+    }
+
+    pub fn num_messages(&self) -> usize {
+        self.messages.len()
     }
 
     #[cfg(any(test, feature = "test-support"))]
