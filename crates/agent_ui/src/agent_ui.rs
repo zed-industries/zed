@@ -231,7 +231,6 @@ impl ExternalAgent {
 pub enum StartThreadInKind {
     LocalProject,
     NewWorktree,
-    ExistingWorktree,
 }
 
 /// Sets where new threads will run.
@@ -241,36 +240,18 @@ pub enum StartThreadInKind {
 pub struct SetStartThreadIn {
     /// The target kind.
     pub kind: StartThreadInKind,
-    /// Path to an existing worktree (only for "existing_worktree" kind).
-    #[serde(default)]
-    pub path: Option<String>,
-    /// Branch name in the worktree (only for "existing_worktree" kind).
-    #[serde(default)]
-    pub branch: Option<String>,
 }
 
 impl SetStartThreadIn {
     pub fn local_project() -> Self {
         Self {
             kind: StartThreadInKind::LocalProject,
-            path: None,
-            branch: None,
         }
     }
 
     pub fn new_worktree() -> Self {
         Self {
             kind: StartThreadInKind::NewWorktree,
-            path: None,
-            branch: None,
-        }
-    }
-
-    pub fn existing_worktree(path: String, branch: String) -> Self {
-        Self {
-            kind: StartThreadInKind::ExistingWorktree,
-            path: Some(path),
-            branch: Some(branch),
         }
     }
 }

@@ -415,10 +415,6 @@ pub enum StartThreadIn {
     #[default]
     LocalProject,
     NewWorktree,
-    ExistingWorktree {
-        path: PathBuf,
-        branch: String,
-    },
 }
 
 impl StartThreadIn {
@@ -426,7 +422,6 @@ impl StartThreadIn {
         match self {
             Self::LocalProject => "Local Project".into(),
             Self::NewWorktree => "New Worktree".into(),
-            Self::ExistingWorktree { branch, .. } => branch.clone().into(),
         }
     }
 
@@ -434,7 +429,6 @@ impl StartThreadIn {
         match self {
             Self::LocalProject => IconName::Screen,
             Self::NewWorktree => IconName::GitBranchPlus,
-            Self::ExistingWorktree { .. } => IconName::GitBranchAlt,
         }
     }
 }
@@ -714,7 +708,6 @@ impl AgentPanel {
                                     let project = panel.project.read(cx);
                                     is_worktree_flag_enabled && !project.is_via_collab()
                                 }
-                                StartThreadIn::ExistingWorktree { .. } => is_worktree_flag_enabled,
                             };
                             if is_valid {
                                 panel.start_thread_in = start_thread_in;
@@ -727,32 +720,6 @@ impl AgentPanel {
                         }
                         cx.notify();
                     });
-                }
-
-                // Validate ExistingWorktree path asynchronously to avoid
-                // blocking the UI thread with a path.exists() call.
-                if let StartThreadIn::ExistingWorktree { ref path, .. } =
-                    panel.read(cx).start_thread_in
-                {
-                    let path = path.clone();
-                    let panel_weak = panel.downgrade();
-                    let validation_task = cx.background_spawn(async move { path.exists() });
-                    cx.spawn(async move |_window, cx| {
-                        let exists = validation_task.await;
-                        if !exists {
-                            panel_weak
-                                .update(cx, |panel, cx| {
-                                    log::info!(
-                                        "ExistingWorktree path no longer exists, falling back to LocalProject"
-                                    );
-                                    panel.start_thread_in = StartThreadIn::LocalProject;
-                                    panel.serialize(cx);
-                                    cx.notify();
-                                })
-                                .ok();
-                        }
-                    })
-                    .detach();
                 }
 
                 if let Some(thread_info) = last_active_thread {
@@ -1906,10 +1873,8 @@ impl AgentPanel {
     }
 
     fn set_start_thread_in(&mut self, action: &SetStartThreadIn, cx: &mut Context<Self>) {
-        if matches!(
-            action.kind,
-            StartThreadInKind::NewWorktree | StartThreadInKind::ExistingWorktree
-        ) && !cx.has_flag::<AgentGitWorktreesFeatureFlag>()
+        if matches!(action.kind, StartThreadInKind::NewWorktree)
+            && !cx.has_flag::<AgentGitWorktreesFeatureFlag>()
         {
             return;
         }
@@ -1931,32 +1896,6 @@ impl AgentPanel {
                     return;
                 }
                 StartThreadIn::NewWorktree
-            }
-            StartThreadInKind::ExistingWorktree => {
-                if !has_git_repo {
-                    log::error!(
-                        "set_start_thread_in: cannot use ExistingWorktree without a git repository"
-                    );
-                    return;
-                }
-                if is_via_collab {
-                    log::error!(
-                        "set_start_thread_in: cannot use ExistingWorktree in a collab project"
-                    );
-                    return;
-                }
-                let Some(path) = action.path.as_ref() else {
-                    log::error!("set_start_thread_in: missing path for existing_worktree");
-                    return;
-                };
-                let Some(branch) = action.branch.as_ref() else {
-                    log::error!("set_start_thread_in: missing branch for existing_worktree");
-                    return;
-                };
-                StartThreadIn::ExistingWorktree {
-                    path: PathBuf::from(path),
-                    branch: branch.clone(),
-                }
             }
         };
         self.start_thread_in = new_target;
