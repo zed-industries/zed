@@ -977,7 +977,7 @@ fn detect_compositor_gpu() -> Option<CompositorGpuHint> {
     feedback.destroy();
     dmabuf.destroy();
 
-    crate::linux::compositor_gpu_hint_from_dev_t(state.device?)
+    super::compositor_gpu_hint_from_dev_t(state.device?)
 }
 
 impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for WaylandClientStatePtr {

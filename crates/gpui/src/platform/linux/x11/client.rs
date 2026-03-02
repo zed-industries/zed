@@ -58,7 +58,6 @@ use crate::platform::{
         reveal_path_internal,
         xdg_desktop_portal::{Event as XDPEvent, XDPEventSource},
     },
-    wgpu::WgpuContext,
 };
 use crate::{
     AnyWindowHandle, Bounds, ClipboardItem, CursorStyle, DisplayId, FileDropEvent, Keystroke,
@@ -1993,7 +1992,7 @@ fn detect_compositor_gpu(
     let path = format!("/proc/self/fd/{}", fd.as_raw_fd());
     let metadata = std::fs::metadata(&path).ok()?;
 
-    crate::linux::compositor_gpu_hint_from_dev_t(metadata.rdev())
+    super::compositor_gpu_hint_from_dev_t(metadata.rdev())
 }
 
 fn check_compositor_present(xcb_connection: &XCBConnection, root: xproto::Window) -> bool {
