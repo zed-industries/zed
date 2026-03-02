@@ -114,7 +114,7 @@ fn orchestrate_impl(rules: &[&PathCondition], include_package_filter: bool) -> N
           git fetch origin "$GITHUB_BASE_REF" --depth=350
           COMPARE_REV="$(git merge-base "origin/${GITHUB_BASE_REF}" HEAD)"
         fi
-        CHANGED_FILES="$(git diff --name-only "$COMPARE_REV" ${{ github.sha }})"
+        CHANGED_FILES="$(git diff --name-only "$COMPARE_REV" "$GITHUB_SHA")"
 
         check_pattern() {
           local output_name="$1"
@@ -238,15 +238,20 @@ pub fn tests_pass(jobs: &[NamedJob]) -> NamedJob {
 
     "#});
 
+    let env_entries: Vec<_> = jobs
+        .iter()
+        .map(|job| {
+            let env_name = format!("RESULT_{}", job.name.to_uppercase());
+            let env_value = format!("${{{{ needs.{}.result }}}}", job.name);
+            (env_name, env_value)
+        })
+        .collect();
+
     script.push_str(
         &jobs
             .iter()
-            .map(|job| {
-                format!(
-                    "check_result \"{}\" \"${{{{ needs.{}.result }}}}\"",
-                    job.name, job.name
-                )
-            })
+            .zip(env_entries.iter())
+            .map(|(job, (env_name, _))| format!("check_result \"{}\" \"${}\"", job.name, env_name))
             .collect::<Vec<_>>()
             .join("\n"),
     );
@@ -261,7 +266,13 @@ pub fn tests_pass(jobs: &[NamedJob]) -> NamedJob {
                 .collect::<Vec<String>>(),
         )
         .cond(repository_owner_guard_expression(true))
-        .add_step(named::bash(&script));
+        .add_step(
+            env_entries
+                .into_iter()
+                .fold(named::bash(&script), |step, env_item| {
+                    step.add_env(env_item)
+                }),
+        );
 
     named::job(job)
 }
@@ -567,9 +578,10 @@ pub(crate) fn check_scripts() -> NamedJob {
     }
 
     fn run_actionlint() -> Step<Run> {
-        named::bash(indoc::indoc! {r#"
-            ${{ steps.get_actionlint.outputs.executable }} -color
-        "#})
+        named::bash("$ACTIONLINT_BIN -color").add_env((
+            "ACTIONLINT_BIN",
+            "${{ steps.get_actionlint.outputs.executable }}",
+        ))
     }
 
     fn run_shellcheck() -> Step<Run> {

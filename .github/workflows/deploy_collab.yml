@@ -119,8 +119,9 @@ jobs:
       with:
         token: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
     - name: deploy_collab::deploy::sign_into_kubernetes
-      run: |
-        doctl kubernetes cluster kubeconfig save --expiry-seconds 600 ${{ secrets.CLUSTER_NAME }}
+      run: doctl kubernetes cluster kubeconfig save --expiry-seconds 600 $CLUSTER_NAME
+      env:
+        CLUSTER_NAME: ${{ secrets.CLUSTER_NAME }}
     - name: deploy_collab::deploy::start_rollout
       run: |
         set -eu

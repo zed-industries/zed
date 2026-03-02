@@ -1,5 +1,5 @@
 use gh_workflow::{Container, Event, Port, Push, Run, Step, Use, Workflow};
-use indoc::{formatdoc, indoc};
+use indoc::indoc;
 
 use crate::tasks::workflows::runners::{self, Platform};
 use crate::tasks::workflows::steps::{
@@ -115,9 +115,8 @@ fn deploy(deps: &[&NamedJob]) -> NamedJob {
     }
 
     fn sign_into_kubernetes() -> Step<Run> {
-        named::bash(formatdoc! {r#"
-            doctl kubernetes cluster kubeconfig save --expiry-seconds 600 {cluster_name}
-        "#, cluster_name = vars::CLUSTER_NAME})
+        named::bash("doctl kubernetes cluster kubeconfig save --expiry-seconds 600 $CLUSTER_NAME")
+            .add_env(("CLUSTER_NAME", vars::CLUSTER_NAME))
     }
 
     fn start_rollout() -> Step<Run> {
