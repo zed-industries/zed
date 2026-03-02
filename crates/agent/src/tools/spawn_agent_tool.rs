@@ -160,8 +160,9 @@ impl AgentTool for SpawnAgentTool {
             })?;
 
             match subagent.send(input.message, cx).await {
-                Ok((index, output)) => {
-                    session_info.message_end_index = Some(index);
+                Ok(output) => {
+                    session_info.message_end_index =
+                        cx.update(|cx| Some(subagent.num_entries(cx).saturating_sub(1)));
                     event_stream.update_fields_with_meta(
                         acp::ToolCallUpdateFields::new().content(vec![output.clone().into()]),
                         Some(acp::Meta::from_iter([(

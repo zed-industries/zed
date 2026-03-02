@@ -159,7 +159,7 @@ impl crate::TerminalHandle for FakeTerminalHandle {
 
 struct FakeSubagentHandle {
     session_id: acp::SessionId,
-    send_task: Shared<Task<(usize, String)>>,
+    send_task: Shared<Task<String>>,
 }
 
 impl SubagentHandle for FakeSubagentHandle {
@@ -171,7 +171,7 @@ impl SubagentHandle for FakeSubagentHandle {
         unimplemented!()
     }
 
-    fn send(&self, _message: String, cx: &AsyncApp) -> Task<Result<(usize, String)>> {
+    fn send(&self, _message: String, cx: &AsyncApp) -> Task<Result<String>> {
         let task = self.send_task.clone();
         cx.background_spawn(async move { Ok(task.await) })
     }

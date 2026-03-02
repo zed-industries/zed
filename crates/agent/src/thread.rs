@@ -611,7 +611,7 @@ pub trait SubagentHandle {
     /// Useful for knowing where the next turn will begin
     fn num_entries(&self, cx: &App) -> usize;
     /// Runs a turn for a given message and returns both the response and the index of that output message.
-    fn send(&self, message: String, cx: &AsyncApp) -> Task<Result<(usize, String)>>;
+    fn send(&self, message: String, cx: &AsyncApp) -> Task<Result<String>>;
 }
 
 pub trait ThreadEnvironment {
@@ -1329,10 +1329,8 @@ impl Thread {
         cx.notify();
     }
 
-    pub fn last_message(&self) -> Option<(usize, &Message)> {
-        self.messages
-            .last()
-            .map(|msg| (self.messages.len() - 1, msg))
+    pub fn last_message(&self) -> Option<&Message> {
+        self.messages.last()
     }
 
     pub fn num_messages(&self) -> usize {
