@@ -2613,7 +2613,7 @@ mod tests {
     use super::*;
     use anyhow::anyhow;
     use futures::{channel::mpsc, future::LocalBoxFuture, select};
-    use gpui::{App, AsyncApp, TestAppContext, WeakEntity};
+    use gpui::{App, AsyncApp, BackgroundExecutor, TestAppContext, WeakEntity};
     use indoc::indoc;
     use project::{FakeFs, Fs};
     use rand::{distr, prelude::*};
@@ -4589,9 +4589,20 @@ mod tests {
             );
         });
     }
+    #[gpui::property_test]
+    fn simple_test(x: i32, y: String) {
+        assert_eq!(x, x);
+        assert_eq!(y, y);
+    }
 
     #[gpui::property_test]
-    async fn simple_test(x: i32) {
+    async fn simple_async_test(x: i32, y: String) {
+        assert_eq!(x, x);
+        assert_eq!(y, y);
+    }
+
+    #[gpui::property_test]
+    async fn multiple_cxs(_cx1: &mut TestAppContext, _cx2: &TestAppContext, _bg: BackgroundExecutor, x: i32) {
         assert_eq!(x, x);
     }
 }

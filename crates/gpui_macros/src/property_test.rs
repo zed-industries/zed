@@ -32,7 +32,7 @@ pub fn test(args: TokenStream, item: TokenStream) -> TokenStream {
     let run_test_body = match &asyncness {
         None => quote! { 
             #cx_vars
-            #inner_fn_name(#inner_args) 
+            #inner_fn_name(#inner_args);
             #cx_teardowns
         },
         Some(_) => quote! { 
@@ -113,8 +113,8 @@ fn remove_cxs(parsed: &mut ParsedArgs, args: &mut Vec<FnArg>, test_name: &Ident)
             dispatcher.run_until_parked();
         ));
 
-        parsed.inner_fn_decl_args.extend(arg.to_token_stream());
-        parsed.inner_fn_args.extend(quote!(&mut cx_varname));
+        parsed.inner_fn_decl_args.extend(quote!(#arg,));
+        parsed.inner_fn_args.extend(quote!(&mut #cx_varname,));
 
         false
     });
@@ -130,7 +130,7 @@ fn remove_std_rng(parsed: &mut ParsedArgs, args: &mut Vec<FnArg>) {
             compile_error!("`StdRng` is not allowed in a property test. Consider implementing `Arbitrary`, or implementing a custom `Strategy`. https://altsysrq.github.io/proptest-book/proptest/tutorial/strategy-basics.html");
         });
 
-        return false;
+        false
     });
 }
 
@@ -140,12 +140,12 @@ fn remove_background_executor(parsed: &mut ParsedArgs, args: &mut Vec<FnArg>) {
             return true;
         }
 
-        parsed.inner_fn_decl_args.extend(arg.to_token_stream());
+        parsed.inner_fn_decl_args.extend(quote!(#arg,));
         parsed.inner_fn_args.extend(quote!(
             gpui::BackgroundExecutor::new(std::sync::Arc::new(dispatcher.clone())),
         ));
 
-        return true;
+        false
     });
 }
 
