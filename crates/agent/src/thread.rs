@@ -1277,13 +1277,20 @@ impl Thread {
 
     pub fn set_model(&mut self, model: Arc<dyn LanguageModel>, cx: &mut Context<Self>) {
         let old_usage = self.latest_token_usage();
-        self.model = Some(model);
+        self.model = Some(model.clone());
         let new_caps = Self::prompt_capabilities(self.model.as_deref());
         let new_usage = self.latest_token_usage();
         if old_usage != new_usage {
             cx.emit(TokenUsageUpdated(new_usage));
         }
         self.prompt_capabilities_tx.send(new_caps).log_err();
+
+        for subagent in &self.running_subagents {
+            subagent
+                .update(cx, |thread, cx| thread.set_model(model.clone(), cx))
+                .ok();
+        }
+
         cx.notify()
     }
 
@@ -1296,7 +1303,15 @@ impl Thread {
         model: Option<Arc<dyn LanguageModel>>,
         cx: &mut Context<Self>,
     ) {
-        self.summarization_model = model;
+        self.summarization_model = model.clone();
+
+        for subagent in &self.running_subagents {
+            subagent
+                .update(cx, |thread, cx| {
+                    thread.set_summarization_model(model.clone(), cx)
+                })
+                .ok();
+        }
         cx.notify()
     }
 
@@ -1306,6 +1321,12 @@ impl Thread {
 
     pub fn set_thinking_enabled(&mut self, enabled: bool, cx: &mut Context<Self>) {
         self.thinking_enabled = enabled;
+
+        for subagent in &self.running_subagents {
+            subagent
+                .update(cx, |thread, cx| thread.set_thinking_enabled(enabled, cx))
+                .ok();
+        }
         cx.notify();
     }
 
@@ -1314,7 +1335,15 @@ impl Thread {
     }
 
     pub fn set_thinking_effort(&mut self, effort: Option<String>, cx: &mut Context<Self>) {
-        self.thinking_effort = effort;
+        self.thinking_effort = effort.clone();
+
+        for subagent in &self.running_subagents {
+            subagent
+                .update(cx, |thread, cx| {
+                    thread.set_thinking_effort(effort.clone(), cx)
+                })
+                .ok();
+        }
         cx.notify();
     }
 
@@ -1324,6 +1353,12 @@ impl Thread {
 
     pub fn set_speed(&mut self, speed: Speed, cx: &mut Context<Self>) {
         self.speed = Some(speed);
+
+        for subagent in &self.running_subagents {
+            subagent
+                .update(cx, |thread, cx| thread.set_speed(speed, cx))
+                .ok();
+        }
         cx.notify();
     }
 
@@ -1399,6 +1434,7 @@ impl Thread {
         self.tools.insert(T::NAME.into(), tool.erase());
     }
 
+    #[cfg(any(test, feature = "test-support"))]
     pub fn remove_tool(&mut self, name: &str) -> bool {
         self.tools.remove(name).is_some()
     }
@@ -1412,11 +1448,17 @@ impl Thread {
             return;
         }
 
-        self.profile_id = profile_id;
+        self.profile_id = profile_id.clone();
 
         // Swap to the profile's preferred model when available.
         if let Some(model) = Self::resolve_profile_model(&self.profile_id, cx) {
             self.set_model(model, cx);
+        }
+
+        for subagent in &self.running_subagents {
+            subagent
+                .update(cx, |thread, cx| thread.set_profile(profile_id.clone(), cx))
+                .ok();
         }
     }
 
@@ -3776,6 +3818,7 @@ mod tests {
     use super::*;
     use gpui::TestAppContext;
     use language_model::LanguageModelToolUseId;
+    use language_model::fake_provider::FakeLanguageModel;
     use serde_json::json;
     use std::sync::Arc;
 
@@ -3811,6 +3854,181 @@ mod tests {
 
             (thread, event_stream)
         })
+    }
+
+    fn setup_parent_with_subagents(
+        cx: &mut TestAppContext,
+        parent: &Entity<Thread>,
+        count: usize,
+    ) -> Vec<Entity<Thread>> {
+        cx.update(|cx| {
+            let mut subagents = Vec::new();
+            for _ in 0..count {
+                let subagent = cx.new(|cx| Thread::new_subagent(parent, cx));
+                parent.update(cx, |thread, _cx| {
+                    thread.register_running_subagent(subagent.downgrade());
+                });
+                subagents.push(subagent);
+            }
+            subagents
+        })
+    }
+
+    #[gpui::test]
+    async fn test_set_model_propagates_to_subagents(cx: &mut TestAppContext) {
+        let (parent, _event_stream) = setup_thread_for_test(cx).await;
+        let subagents = setup_parent_with_subagents(cx, &parent, 2);
+
+        let new_model: Arc<dyn LanguageModel> = Arc::new(FakeLanguageModel::with_id_and_thinking(
+            "test-provider",
+            "new-model",
+            "New Model",
+            false,
+        ));
+
+        cx.update(|cx| {
+            parent.update(cx, |thread, cx| {
+                thread.set_model(new_model, cx);
+            });
+
+            for subagent in &subagents {
+                let subagent_model_id = subagent.read(cx).model().unwrap().id();
+                assert_eq!(
+                    subagent_model_id.0.as_ref(),
+                    "new-model",
+                    "Subagent model should match parent model after set_model"
+                );
+            }
+        });
+    }
+
+    #[gpui::test]
+    async fn test_set_summarization_model_propagates_to_subagents(cx: &mut TestAppContext) {
+        let (parent, _event_stream) = setup_thread_for_test(cx).await;
+        let subagents = setup_parent_with_subagents(cx, &parent, 2);
+
+        let summary_model: Arc<dyn LanguageModel> =
+            Arc::new(FakeLanguageModel::with_id_and_thinking(
+                "test-provider",
+                "summary-model",
+                "Summary Model",
+                false,
+            ));
+
+        cx.update(|cx| {
+            parent.update(cx, |thread, cx| {
+                thread.set_summarization_model(Some(summary_model), cx);
+            });
+
+            for subagent in &subagents {
+                let subagent_summary_id = subagent.read(cx).summarization_model().unwrap().id();
+                assert_eq!(
+                    subagent_summary_id.0.as_ref(),
+                    "summary-model",
+                    "Subagent summarization model should match parent after set_summarization_model"
+                );
+            }
+        });
+    }
+
+    #[gpui::test]
+    async fn test_set_thinking_enabled_propagates_to_subagents(cx: &mut TestAppContext) {
+        let (parent, _event_stream) = setup_thread_for_test(cx).await;
+        let subagents = setup_parent_with_subagents(cx, &parent, 2);
+
+        cx.update(|cx| {
+            parent.update(cx, |thread, cx| {
+                thread.set_thinking_enabled(true, cx);
+            });
+
+            for subagent in &subagents {
+                assert!(
+                    subagent.read(cx).thinking_enabled(),
+                    "Subagent thinking should be enabled after parent enables it"
+                );
+            }
+
+            parent.update(cx, |thread, cx| {
+                thread.set_thinking_enabled(false, cx);
+            });
+
+            for subagent in &subagents {
+                assert!(
+                    !subagent.read(cx).thinking_enabled(),
+                    "Subagent thinking should be disabled after parent disables it"
+                );
+            }
+        });
+    }
+
+    #[gpui::test]
+    async fn test_set_thinking_effort_propagates_to_subagents(cx: &mut TestAppContext) {
+        let (parent, _event_stream) = setup_thread_for_test(cx).await;
+        let subagents = setup_parent_with_subagents(cx, &parent, 2);
+
+        cx.update(|cx| {
+            parent.update(cx, |thread, cx| {
+                thread.set_thinking_effort(Some("high".to_string()), cx);
+            });
+
+            for subagent in &subagents {
+                assert_eq!(
+                    subagent.read(cx).thinking_effort().map(|s| s.as_str()),
+                    Some("high"),
+                    "Subagent thinking effort should match parent"
+                );
+            }
+
+            parent.update(cx, |thread, cx| {
+                thread.set_thinking_effort(None, cx);
+            });
+
+            for subagent in &subagents {
+                assert_eq!(
+                    subagent.read(cx).thinking_effort(),
+                    None,
+                    "Subagent thinking effort should be None after parent clears it"
+                );
+            }
+        });
+    }
+
+    #[gpui::test]
+    async fn test_set_speed_propagates_to_subagents(cx: &mut TestAppContext) {
+        let (parent, _event_stream) = setup_thread_for_test(cx).await;
+        let subagents = setup_parent_with_subagents(cx, &parent, 2);
+
+        cx.update(|cx| {
+            parent.update(cx, |thread, cx| {
+                thread.set_speed(Speed::Fast, cx);
+            });
+
+            for subagent in &subagents {
+                assert_eq!(
+                    subagent.read(cx).speed(),
+                    Some(Speed::Fast),
+                    "Subagent speed should match parent after set_speed"
+                );
+            }
+        });
+    }
+
+    #[gpui::test]
+    async fn test_dropped_subagent_does_not_panic(cx: &mut TestAppContext) {
+        let (parent, _event_stream) = setup_thread_for_test(cx).await;
+        let subagents = setup_parent_with_subagents(cx, &parent, 1);
+
+        // Drop the subagent so the WeakEntity can no longer be upgraded
+        drop(subagents);
+
+        // Should not panic even though the subagent was dropped
+        cx.update(|cx| {
+            parent.update(cx, |thread, cx| {
+                thread.set_thinking_enabled(true, cx);
+                thread.set_speed(Speed::Fast, cx);
+                thread.set_thinking_effort(Some("high".to_string()), cx);
+            });
+        });
     }
 
     #[gpui::test]
