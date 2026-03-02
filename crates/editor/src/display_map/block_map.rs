@@ -867,7 +867,7 @@ impl BlockMap {
             edits = edits.compose(merged_edits);
         }
 
-        let edits = edits.into_inner();
+        let mut edits = edits.into_inner();
         if edits.is_empty() {
             return;
         }
@@ -877,13 +877,37 @@ impl BlockMap {
         let mut cursor = transforms.cursor::<WrapRow>(());
         let mut last_block_ix = 0;
         let mut blocks_in_edit = Vec::new();
-        let mut edits = edits.into_iter().peekable();
 
         let mut inlay_point_cursor = wrap_snapshot.inlay_point_cursor();
         let mut tab_point_cursor = wrap_snapshot.tab_point_cursor();
         let mut fold_point_cursor = wrap_snapshot.fold_point_cursor();
         let mut wrap_point_cursor = wrap_snapshot.wrap_point_cursor();
 
+        if companion_view.is_some() {
+            for edit in &mut edits {
+                if edit.new.start > wrap_snapshot.max_point().row() {
+                    continue;
+                }
+                let rows_before =
+                    edit.new.start - wrap_snapshot.prev_excerpt_boundary(edit.new.start);
+                edit.new.start -= rows_before;
+                edit.old.start = edit.old.start.saturating_sub(rows_before);
+            }
+
+            let mut unmerged_edits = std::mem::take(&mut edits).into_iter().peekable();
+            while let Some(mut edit) = unmerged_edits.next() {
+                while let Some(next_edit) = unmerged_edits.peek()
+                    && (next_edit.old.start <= edit.old.end || next_edit.new.start <= edit.new.end)
+                {
+                    edit.old.end = next_edit.old.end.max(edit.old.end);
+                    edit.new.end = next_edit.new.end.max(edit.new.end);
+                    unmerged_edits.next();
+                }
+                edits.push(edit);
+            }
+        }
+
+        let mut edits = edits.into_iter().peekable();
         while let Some(edit) = edits.next() {
             let span = ztracing::debug_span!("while edits", edit = ?edit);
             let _enter = span.enter();
