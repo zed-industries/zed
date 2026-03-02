@@ -140,6 +140,8 @@ fn rollout_workflows_to_extension(fetch_repos_job: &NamedJob) -> NamedJob {
         named::bash(indoc::indoc! {r#"
             EXAMPLE_FAILURE=${{ steps.calc-changes.outputs.removed_files }}
 
+            echo "$EXAMPLE_FAILURE"
+
             mkdir -p extension/.github/workflows
             cd extension/.github/workflows
 
