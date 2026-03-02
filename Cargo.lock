@@ -4120,7 +4120,6 @@ dependencies = [
 name = "crashes"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "bincode",
  "cfg-if",
  "crash-handler",
@@ -8664,7 +8663,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4b0f83760fb341a774ed326568e19f5a863af4a952def8c39f9ab92fd95b88e5"
 dependencies = [
  "equivalent",
- "hashbrown 0.16.1",
+ "hashbrown 0.15.5",
  "serde",
  "serde_core",
 ]
@@ -10174,7 +10173,6 @@ dependencies = [
  "anyhow",
  "async-recursion",
  "collections",
- "crashes",
  "editor",
  "fs",
  "gpui",
@@ -10400,7 +10398,7 @@ dependencies = [
 [[package]]
 name = "mermaid-rs-renderer"
 version = "0.2.0"
-source = "git+https://github.com/zed-industries/mermaid-rs-renderer?rev=9d8360d9cea10dc4bc86d7b8012cc6e9656e6cf2#9d8360d9cea10dc4bc86d7b8012cc6e9656e6cf2"
+source = "git+https://github.com/zed-industries/mermaid-rs-renderer?rev=a1f8fc03bf7293018136fb8e60d83551d2dd5732#a1f8fc03bf7293018136fb8e60d83551d2dd5732"
 dependencies = [
  "anyhow",
  "fontdb 0.16.2",
