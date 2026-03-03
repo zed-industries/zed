@@ -12,14 +12,14 @@ use crate::{
 
 pub enum RowIdentDisplayMode {
     /// E.g
-    /// ```
+    /// ```text
     /// 1
     /// ...
     /// 5
     /// ```
     Vertical,
     /// E.g.
-    /// ```
+    /// ```text
     /// 1-5
     /// ```
     Horizontal,
