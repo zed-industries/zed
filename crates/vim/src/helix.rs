@@ -859,8 +859,10 @@ impl Vim {
 
 #[cfg(test)]
 mod test {
+    use editor::{Inlay, ToPoint};
     use gpui::{UpdateGlobal, VisualTestContext};
     use indoc::indoc;
+    use multi_buffer::MultiBufferRow;
     use project::FakeFs;
     use search::{ProjectSearchView, project_search};
     use serde_json::json;
@@ -1446,6 +1448,244 @@ mod test {
             line four
             ˇ»line five"},
             Mode::HelixNormal,
+        );
+    }
+
+    #[gpui::test]
+    async fn test_helix_select_lines_with_inlay_hint_near_eof(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.enable_helix();
+        cx.set_state(
+            indoc! {"
+            fn test_new() {
+                assert!(true);
+            }ˇ
+            }
+
+            "},
+            Mode::HelixNormal,
+        );
+
+        cx.update_editor(|editor, _window, cx| {
+            let range = editor.selections.newest_anchor().range();
+            let snapshot = editor.buffer().read(cx).snapshot(cx);
+            let cursor_point = range.start.to_point(&snapshot);
+            let end_of_line = snapshot.anchor_after(language::Point::new(
+                cursor_point.row,
+                snapshot.line_len(MultiBufferRow(cursor_point.row)),
+            ));
+            let inlay = Inlay::mock_hint(1, end_of_line, " mod test");
+            editor.splice_inlays(&[], vec![inlay], cx);
+        });
+
+        cx.simulate_keystrokes("x");
+        cx.assert_state(
+            indoc! {"
+            fn test_new() {
+                assert!(true);
+            «}
+            ˇ»}
+
+            "},
+            Mode::HelixNormal,
+        );
+    }
+
+    #[gpui::test]
+    async fn test_helix_move_down_with_inlay_hint_near_eof(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.enable_helix();
+        cx.set_state(
+            indoc! {"
+            fn test_new() {
+                assert!(true);
+            }ˇ
+            }
+
+            "},
+            Mode::HelixNormal,
+        );
+
+        cx.update_editor(|editor, _window, cx| {
+            let range = editor.selections.newest_anchor().range();
+            let snapshot = editor.buffer().read(cx).snapshot(cx);
+            let cursor_point = range.start.to_point(&snapshot);
+            let end_of_line = snapshot.anchor_after(language::Point::new(
+                cursor_point.row,
+                snapshot.line_len(MultiBufferRow(cursor_point.row)),
+            ));
+            let inlay = Inlay::mock_hint(1, end_of_line, " mod test");
+            editor.splice_inlays(&[], vec![inlay], cx);
+        });
+
+        cx.simulate_keystrokes("j");
+        cx.assert_state(
+            indoc! {"
+            fn test_new() {
+                assert!(true);
+            }
+            }ˇ
+
+            "},
+            Mode::HelixNormal,
+        );
+    }
+
+    #[gpui::test]
+    async fn test_helix_select_line_after_move_down_with_inlay_hint_near_eof(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.enable_helix();
+        cx.set_state(
+            indoc! {"
+            fn test_new() {
+                assert!(true);ˇ
+            }
+            }
+
+            "},
+            Mode::HelixNormal,
+        );
+
+        cx.update_editor(|editor, _window, cx| {
+            let snapshot = editor.buffer().read(cx).snapshot(cx);
+            let hint_position = snapshot.anchor_after(language::Point::new(
+                2,
+                snapshot.line_len(MultiBufferRow(2)),
+            ));
+            let inlay = Inlay::mock_hint(1, hint_position, " mod test");
+            editor.splice_inlays(&[], vec![inlay], cx);
+        });
+
+        cx.simulate_keystrokes("j x");
+        cx.assert_state(
+            indoc! {"
+            fn test_new() {
+                assert!(true);
+            «}
+            ˇ»}
+
+            "},
+            Mode::HelixNormal,
+        );
+    }
+
+    #[gpui::test]
+    async fn test_helix_move_down_with_inlay_on_second_to_last_line(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.enable_helix();
+        cx.set_state(
+            indoc! {"
+            fn test_new() {
+                assert!(true);ˇ
+            }
+
+            tail
+            "},
+            Mode::HelixNormal,
+        );
+
+        cx.update_editor(|editor, _window, cx| {
+            let snapshot = editor.buffer().read(cx).snapshot(cx);
+            let hint_position = snapshot.anchor_after(language::Point::new(
+                2,
+                snapshot.line_len(MultiBufferRow(2)),
+            ));
+            let inlay = Inlay::mock_hint(1, hint_position, " mod test");
+            editor.splice_inlays(&[], vec![inlay], cx);
+        });
+
+        cx.simulate_keystrokes("j");
+        cx.assert_state(
+            indoc! {"
+            fn test_new() {
+                assert!(true);
+            }ˇ
+
+            tail
+            "},
+            Mode::HelixNormal,
+        );
+    }
+
+    #[gpui::test]
+    async fn test_helix_select_line_with_inlay_on_second_to_last_line(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.enable_helix();
+        cx.set_state(
+            indoc! {"
+            fn test_new() {
+                assert!(true);
+            }ˇ
+
+            tail
+            "},
+            Mode::HelixNormal,
+        );
+
+        cx.update_editor(|editor, _window, cx| {
+            let snapshot = editor.buffer().read(cx).snapshot(cx);
+            let hint_position = snapshot.anchor_after(language::Point::new(
+                2,
+                snapshot.line_len(MultiBufferRow(2)),
+            ));
+            let inlay = Inlay::mock_hint(1, hint_position, " mod test");
+            editor.splice_inlays(&[], vec![inlay], cx);
+        });
+
+        cx.simulate_keystrokes("x");
+        cx.assert_state(
+            indoc! {"
+            fn test_new() {
+                assert!(true);
+            «}
+            ˇ»
+            tail
+            "},
+            Mode::HelixNormal,
+        );
+    }
+
+    #[gpui::test]
+    async fn test_helix_visual_line_with_inlay_on_second_to_last_line(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.enable_helix();
+        cx.set_state(
+            indoc! {"
+            fn test_new() {
+                assert!(true);
+            }ˇ
+
+            tail
+            "},
+            Mode::HelixNormal,
+        );
+
+        cx.update_editor(|editor, _window, cx| {
+            let snapshot = editor.buffer().read(cx).snapshot(cx);
+            let hint_position = snapshot.anchor_after(language::Point::new(
+                2,
+                snapshot.line_len(MultiBufferRow(2)),
+            ));
+            let inlay = Inlay::mock_hint(1, hint_position, " mod test");
+            editor.splice_inlays(&[], vec![inlay], cx);
+        });
+
+        cx.simulate_keystrokes("shift-v");
+        cx.assert_state(
+            indoc! {"
+            fn test_new() {
+                assert!(true);
+            «}ˇ»
+
+            tail
+            "},
+            Mode::VisualLine,
         );
     }
 

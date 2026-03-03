@@ -38,7 +38,7 @@ use language::{
 };
 pub use mode_indicator::ModeIndicator;
 use motion::Motion;
-use multi_buffer::ToPoint as _;
+use multi_buffer::{MultiBufferRow, ToPoint as _};
 use normal::search::SearchSubmit;
 use object::Object;
 use schemars::JsonSchema;
@@ -1273,6 +1273,15 @@ impl Vim {
                         selection.collapse_to(point, selection.goal)
                     } else if !last_mode.is_visual() && mode.is_visual() {
                         if selection.is_empty() {
+                            if last_mode == Mode::HelixNormal && mode == Mode::VisualLine {
+                                let point = selection.start.to_point(map);
+                                let line_length =
+                                    map.buffer_snapshot().line_len(MultiBufferRow(point.row));
+                                if point.column == line_length && point.column > 0 {
+                                    selection.start =
+                                        movement::saturating_left(map, selection.start);
+                                }
+                            }
                             selection.end = movement::right(map, selection.start);
                         }
                     }
