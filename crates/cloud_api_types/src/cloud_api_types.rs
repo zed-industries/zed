@@ -62,6 +62,7 @@ pub struct SubmitAgentThreadFeedbackBody {
     pub organization_id: Option<OrganizationId>,
     pub agent: String,
     pub session_id: String,
+    pub parent_session_id: Option<String>,
     pub rating: String,
     pub thread: serde_json::Value,
 }

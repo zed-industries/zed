@@ -79,7 +79,10 @@ pub use pane_group::{
 use persistence::{DB, SerializedWindowBounds, model::SerializedWorkspace};
 pub use persistence::{
     DB as WORKSPACE_DB, WorkspaceDb, delete_unloaded_items,
-    model::{ItemId, SerializedMultiWorkspace, SerializedWorkspaceLocation, SessionWorkspace},
+    model::{
+        DockStructure, ItemId, SerializedMultiWorkspace, SerializedWorkspaceLocation,
+        SessionWorkspace,
+    },
     read_serialized_multi_workspaces,
 };
 use postage::stream::Stream;
@@ -149,7 +152,7 @@ use crate::{item::ItemBufferKind, notifications::NotificationId};
 use crate::{
     persistence::{
         SerializedAxis,
-        model::{DockData, DockStructure, SerializedItem, SerializedPane, SerializedPaneGroup},
+        model::{DockData, SerializedItem, SerializedPane, SerializedPaneGroup},
     },
     security_modal::SecurityModal,
 };
@@ -628,7 +631,7 @@ fn prompt_and_open_paths(app_state: Arc<AppState>, options: PathPromptOptions, c
             })
             .ok();
     } else {
-        let task = Workspace::new_local(Vec::new(), app_state.clone(), None, None, None, cx);
+        let task = Workspace::new_local(Vec::new(), app_state.clone(), None, None, None, true, cx);
         cx.spawn(async move |cx| {
             let (window, _) = task.await?;
             window.update(cx, |multi_workspace, window, cx| {
@@ -1290,6 +1293,7 @@ pub struct Workspace {
     scheduled_tasks: Vec<Task<()>>,
     last_open_dock_positions: Vec<DockPosition>,
     removing: bool,
+    _panels_task: Option<Task<Result<()>>>,
 }
 
 impl EventEmitter<Event> for Workspace {}
@@ -1660,6 +1664,7 @@ impl Workspace {
             left_dock,
             bottom_dock,
             right_dock,
+            _panels_task: None,
             project: project.clone(),
             follower_states: Default::default(),
             last_leaders_by_pane: Default::default(),
@@ -1703,6 +1708,7 @@ impl Workspace {
         requesting_window: Option<WindowHandle<MultiWorkspace>>,
         env: Option<HashMap<String, String>>,
         init: Option<Box<dyn FnOnce(&mut Workspace, &mut Window, &mut Context<Workspace>) + Send>>,
+        activate: bool,
         cx: &mut App,
     ) -> Task<
         anyhow::Result<(
@@ -1830,7 +1836,11 @@ impl Workspace {
 
                             workspace
                         });
-                        multi_workspace.activate(workspace.clone(), cx);
+                        if activate {
+                            multi_workspace.activate(workspace.clone(), cx);
+                        } else {
+                            multi_workspace.add_workspace(workspace.clone(), cx);
+                        }
                         workspace
                     })?;
                     (window, workspace)
@@ -1984,6 +1994,76 @@ impl Workspace {
         [&self.left_dock, &self.bottom_dock, &self.right_dock]
     }
 
+    pub fn capture_dock_state(&self, _window: &Window, cx: &App) -> DockStructure {
+        let left_dock = self.left_dock.read(cx);
+        let left_visible = left_dock.is_open();
+        let left_active_panel = left_dock
+            .active_panel()
+            .map(|panel| panel.persistent_name().to_string());
+        // `zoomed_position` is kept in sync with individual panel zoom state
+        // by the dock code in `Dock::new` and `Dock::add_panel`.
+        let left_dock_zoom = self.zoomed_position == Some(DockPosition::Left);
+
+        let right_dock = self.right_dock.read(cx);
+        let right_visible = right_dock.is_open();
+        let right_active_panel = right_dock
+            .active_panel()
+            .map(|panel| panel.persistent_name().to_string());
+        let right_dock_zoom = self.zoomed_position == Some(DockPosition::Right);
+
+        let bottom_dock = self.bottom_dock.read(cx);
+        let bottom_visible = bottom_dock.is_open();
+        let bottom_active_panel = bottom_dock
+            .active_panel()
+            .map(|panel| panel.persistent_name().to_string());
+        let bottom_dock_zoom = self.zoomed_position == Some(DockPosition::Bottom);
+
+        DockStructure {
+            left: DockData {
+                visible: left_visible,
+                active_panel: left_active_panel,
+                zoom: left_dock_zoom,
+            },
+            right: DockData {
+                visible: right_visible,
+                active_panel: right_active_panel,
+                zoom: right_dock_zoom,
+            },
+            bottom: DockData {
+                visible: bottom_visible,
+                active_panel: bottom_active_panel,
+                zoom: bottom_dock_zoom,
+            },
+        }
+    }
+
+    pub fn set_dock_structure(
+        &self,
+        docks: DockStructure,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        for (dock, data) in [
+            (&self.left_dock, docks.left),
+            (&self.bottom_dock, docks.bottom),
+            (&self.right_dock, docks.right),
+        ] {
+            dock.update(cx, |dock, cx| {
+                dock.serialized_dock = Some(data);
+                dock.restore_state(window, cx);
+            });
+        }
+    }
+
+    pub fn open_item_abs_paths(&self, cx: &App) -> Vec<PathBuf> {
+        self.items(cx)
+            .filter_map(|item| {
+                let project_path = item.project_path(cx)?;
+                self.project.read(cx).absolute_path(&project_path, cx)
+            })
+            .collect()
+    }
+
     pub fn dock_at_position(&self, position: DockPosition) -> &Entity<Dock> {
         match position {
             DockPosition::Left => &self.left_dock,
@@ -2041,6 +2121,14 @@ impl Workspace {
 
     pub fn app_state(&self) -> &Arc<AppState> {
         &self.app_state
+    }
+
+    pub fn set_panels_task(&mut self, task: Task<Result<()>>) {
+        self._panels_task = Some(task);
+    }
+
+    pub fn take_panels_task(&mut self) -> Option<Task<Result<()>>> {
+        self._panels_task.take()
     }
 
     pub fn user_store(&self) -> &Entity<UserStore> {
@@ -2548,7 +2636,15 @@ impl Workspace {
             Task::ready(Ok(callback(self, window, cx)))
         } else {
             let env = self.project.read(cx).cli_environment(cx);
-            let task = Self::new_local(Vec::new(), self.app_state.clone(), None, env, None, cx);
+            let task = Self::new_local(
+                Vec::new(),
+                self.app_state.clone(),
+                None,
+                env,
+                None,
+                true,
+                cx,
+            );
             cx.spawn_in(window, async move |_vh, cx| {
                 let (multi_workspace_window, _) = task.await?;
                 multi_workspace_window.update(cx, |multi_workspace, window, cx| {
@@ -2578,7 +2674,15 @@ impl Workspace {
             Task::ready(Ok(callback(self, window, cx)))
         } else {
             let env = self.project.read(cx).cli_environment(cx);
-            let task = Self::new_local(Vec::new(), self.app_state.clone(), None, env, None, cx);
+            let task = Self::new_local(
+                Vec::new(),
+                self.app_state.clone(),
+                None,
+                env,
+                None,
+                true,
+                cx,
+            );
             cx.spawn_in(window, async move |_vh, cx| {
                 let (multi_workspace_window, _) = task.await?;
                 multi_workspace_window.update(cx, |multi_workspace, window, cx| {
@@ -6012,53 +6116,7 @@ impl Workspace {
             window: &mut Window,
             cx: &mut App,
         ) -> DockStructure {
-            let left_dock = this.left_dock.read(cx);
-            let left_visible = left_dock.is_open();
-            let left_active_panel = left_dock
-                .active_panel()
-                .map(|panel| panel.persistent_name().to_string());
-            let left_dock_zoom = left_dock
-                .active_panel()
-                .map(|panel| panel.is_zoomed(window, cx))
-                .unwrap_or(false);
-
-            let right_dock = this.right_dock.read(cx);
-            let right_visible = right_dock.is_open();
-            let right_active_panel = right_dock
-                .active_panel()
-                .map(|panel| panel.persistent_name().to_string());
-            let right_dock_zoom = right_dock
-                .active_panel()
-                .map(|panel| panel.is_zoomed(window, cx))
-                .unwrap_or(false);
-
-            let bottom_dock = this.bottom_dock.read(cx);
-            let bottom_visible = bottom_dock.is_open();
-            let bottom_active_panel = bottom_dock
-                .active_panel()
-                .map(|panel| panel.persistent_name().to_string());
-            let bottom_dock_zoom = bottom_dock
-                .active_panel()
-                .map(|panel| panel.is_zoomed(window, cx))
-                .unwrap_or(false);
-
-            DockStructure {
-                left: DockData {
-                    visible: left_visible,
-                    active_panel: left_active_panel,
-                    zoom: left_dock_zoom,
-                },
-                right: DockData {
-                    visible: right_visible,
-                    active_panel: right_active_panel,
-                    zoom: right_dock_zoom,
-                },
-                bottom: DockData {
-                    visible: bottom_visible,
-                    active_panel: bottom_active_panel,
-                    zoom: bottom_dock_zoom,
-                },
-            }
+            this.capture_dock_state(window, cx)
         }
 
         match self.workspace_location(cx) {
@@ -8087,6 +8145,7 @@ pub async fn restore_multiworkspace(
                     None,
                     None,
                     None,
+                    true,
                     cx,
                 )
             })
@@ -8116,6 +8175,7 @@ pub async fn restore_multiworkspace(
                     Some(window_handle),
                     None,
                     None,
+                    true,
                     cx,
                 )
             })
@@ -8385,6 +8445,7 @@ pub fn join_channel(
                         requesting_window,
                         None,
                         None,
+                        true,
                         cx,
                     )
                 })
@@ -8457,7 +8518,7 @@ pub async fn get_any_active_multi_workspace(
     // find an existing workspace to focus and show call controls
     let active_window = activate_any_workspace_window(&mut cx);
     if active_window.is_none() {
-        cx.update(|cx| Workspace::new_local(vec![], app_state.clone(), None, None, None, cx))
+        cx.update(|cx| Workspace::new_local(vec![], app_state.clone(), None, None, None, true, cx))
             .await?;
     }
     activate_any_workspace_window(&mut cx).context("could not open zed")
@@ -8845,6 +8906,7 @@ pub fn open_paths(
                         open_options.replace_window,
                         open_options.env,
                         None,
+                        true,
                         cx,
                     )
                 })
@@ -8908,6 +8970,7 @@ pub fn open_new(
         open_options.replace_window,
         open_options.env,
         Some(Box::new(init)),
+        true,
         cx,
     );
     cx.spawn(async move |cx| {

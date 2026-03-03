@@ -1174,3 +1174,122 @@ mod git_traversal {
         pretty_assertions::assert_eq!(found_statuses, expected_statuses);
     }
 }
+
+mod git_worktrees {
+    use std::path::PathBuf;
+
+    use fs::FakeFs;
+    use gpui::TestAppContext;
+    use serde_json::json;
+    use settings::SettingsStore;
+    use util::path;
+
+    fn init_test(cx: &mut gpui::TestAppContext) {
+        zlog::init_test();
+
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_git_worktrees_list_and_create(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/root"),
+            json!({
+                ".git": {},
+                "file.txt": "content",
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+        cx.executor().run_until_parked();
+
+        let repository = project.read_with(cx, |project, cx| {
+            project.repositories(cx).values().next().unwrap().clone()
+        });
+
+        let worktrees = cx
+            .update(|cx| repository.update(cx, |repository, _| repository.worktrees()))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(worktrees.len(), 1);
+        assert_eq!(worktrees[0].path, PathBuf::from(path!("/root")));
+
+        let worktree_directory = PathBuf::from(path!("/root"));
+        cx.update(|cx| {
+            repository.update(cx, |repository, _| {
+                repository.create_worktree(
+                    "feature-branch".to_string(),
+                    worktree_directory.clone(),
+                    Some("abc123".to_string()),
+                )
+            })
+        })
+        .await
+        .unwrap()
+        .unwrap();
+
+        cx.executor().run_until_parked();
+
+        let worktrees = cx
+            .update(|cx| repository.update(cx, |repository, _| repository.worktrees()))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(worktrees.len(), 2);
+        assert_eq!(worktrees[0].path, PathBuf::from(path!("/root")));
+        assert_eq!(worktrees[1].path, worktree_directory.join("feature-branch"));
+        assert_eq!(worktrees[1].ref_name.as_ref(), "refs/heads/feature-branch");
+        assert_eq!(worktrees[1].sha.as_ref(), "abc123");
+
+        cx.update(|cx| {
+            repository.update(cx, |repository, _| {
+                repository.create_worktree(
+                    "bugfix-branch".to_string(),
+                    worktree_directory.clone(),
+                    None,
+                )
+            })
+        })
+        .await
+        .unwrap()
+        .unwrap();
+
+        cx.executor().run_until_parked();
+
+        // List worktrees — should now have main + two created
+        let worktrees = cx
+            .update(|cx| repository.update(cx, |repository, _| repository.worktrees()))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(worktrees.len(), 3);
+
+        let feature_worktree = worktrees
+            .iter()
+            .find(|worktree| worktree.ref_name.as_ref() == "refs/heads/feature-branch")
+            .expect("should find feature-branch worktree");
+        assert_eq!(
+            feature_worktree.path,
+            worktree_directory.join("feature-branch")
+        );
+
+        let bugfix_worktree = worktrees
+            .iter()
+            .find(|worktree| worktree.ref_name.as_ref() == "refs/heads/bugfix-branch")
+            .expect("should find bugfix-branch worktree");
+        assert_eq!(
+            bugfix_worktree.path,
+            worktree_directory.join("bugfix-branch")
+        );
+        assert_eq!(bugfix_worktree.sha.as_ref(), "fake-sha");
+    }
+
+    use crate::Project;
+}

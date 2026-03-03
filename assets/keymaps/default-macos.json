@@ -449,6 +449,13 @@
     },
   },
   {
+    "context": "BufferSearchBar || ProjectSearchBar",
+    "use_key_equivalents": true,
+    "bindings": {
+      "ctrl-enter": "editor::Newline",
+    },
+  },
+  {
     "context": "ProjectSearchBar",
     "use_key_equivalents": true,
     "bindings": {
