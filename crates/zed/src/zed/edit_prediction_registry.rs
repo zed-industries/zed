@@ -78,9 +78,6 @@ pub fn init(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut App) {
     .detach();
 
     cx.observe_global::<SettingsStore>({
-        let editors = editors.clone();
-        let client = client.clone();
-        let user_store = user_store.clone();
         let mut previous_config = edit_prediction_provider_config_for_settings(cx);
         move |cx| {
             let new_provider_config = edit_prediction_provider_config_for_settings(cx);
