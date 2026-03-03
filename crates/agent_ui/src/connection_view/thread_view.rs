@@ -248,7 +248,8 @@ pub struct ThreadView {
     pub resumed_without_history: bool,
     pub resume_thread_metadata: Option<AgentSessionInfo>,
     pub _cancel_task: Option<Task<()>>,
-    _draft_save_task: Option<Task<()>>,
+    _save_task: Option<Task<()>>,
+    _draft_resolve_task: Option<Task<()>>,
     pub skip_queue_processing_count: usize,
     pub user_interrupted_generation: bool,
     pub can_fast_track_queue: bool,
@@ -396,7 +397,7 @@ impl ThreadView {
             } else {
                 Some(editor.update(cx, |editor, cx| editor.draft_contents(cx)))
             };
-            this._draft_save_task = Some(cx.spawn(async move |this, cx| {
+            this._draft_resolve_task = Some(cx.spawn(async move |this, cx| {
                 let draft = if let Some(task) = draft_contents_task {
                     let blocks = task.await.ok().filter(|b| !b.is_empty());
                     blocks
@@ -407,15 +408,7 @@ impl ThreadView {
                     this.thread.update(cx, |thread, _cx| {
                         thread.set_draft_prompt(draft);
                     });
-                })
-                .ok();
-                cx.background_executor()
-                    .timer(SERIALIZATION_THROTTLE_TIME)
-                    .await;
-                this.update(cx, |this, cx| {
-                    if let Some(thread) = this.as_native_thread(cx) {
-                        thread.update(cx, |_thread, cx| cx.notify());
-                    }
+                    this.schedule_save(cx);
                 })
                 .ok();
             }));
@@ -471,7 +464,8 @@ impl ThreadView {
             is_loading_contents: false,
             new_server_version_available: None,
             _cancel_task: None,
-            _draft_save_task: None,
+            _save_task: None,
+            _draft_resolve_task: None,
             skip_queue_processing_count: 0,
             user_interrupted_generation: false,
             can_fast_track_queue: false,
@@ -487,10 +481,48 @@ impl ThreadView {
             _history_subscription: history_subscription,
             show_codex_windows_warning,
         };
+        let list_state_for_scroll = this.list_state.clone();
+        let thread_view = cx.entity().downgrade();
+        this.list_state
+            .set_scroll_handler(move |_event, _window, cx| {
+                let list_state = list_state_for_scroll.clone();
+                let thread_view = thread_view.clone();
+                // N.B. We must defer because the scroll handler is called while the
+                // ListState's RefCell is mutably borrowed. Reading logical_scroll_top()
+                // directly would panic from a double borrow.
+                cx.defer(move |cx| {
+                    let scroll_top = list_state.logical_scroll_top();
+                    let _ = thread_view.update(cx, |this, cx| {
+                        if let Some(thread) = this.as_native_thread(cx) {
+                            thread.update(cx, |thread, _cx| {
+                                thread.set_ui_scroll_position(Some(scroll_top));
+                            });
+                        }
+                        this.schedule_save(cx);
+                    });
+                });
+            });
+
         if should_auto_submit {
             this.send(window, cx);
         }
         this
+    }
+
+    /// Schedule a throttled save of the thread state (draft prompt, scroll position, etc.).
+    /// Multiple calls within `SERIALIZATION_THROTTLE_TIME` are coalesced into a single save.
+    fn schedule_save(&mut self, cx: &mut Context<Self>) {
+        self._save_task = Some(cx.spawn(async move |this, cx| {
+            cx.background_executor()
+                .timer(SERIALIZATION_THROTTLE_TIME)
+                .await;
+            this.update(cx, |this, cx| {
+                if let Some(thread) = this.as_native_thread(cx) {
+                    thread.update(cx, |_thread, cx| cx.notify());
+                }
+            })
+            .ok();
+        }));
     }
 
     pub fn handle_message_editor_event(
