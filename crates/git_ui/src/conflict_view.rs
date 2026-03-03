@@ -290,7 +290,7 @@ fn conflicts_updated(
         blocks.push(BlockProperties {
             placement: BlockPlacement::Above(anchor),
             height: Some(1),
-            style: BlockStyle::Fixed,
+            style: BlockStyle::Sticky,
             render: Arc::new({
                 let conflict = conflict.clone();
                 move |cx| render_conflict_buttons(&conflict, excerpt_id, editor_handle.clone(), cx)

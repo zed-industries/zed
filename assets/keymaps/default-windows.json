@@ -335,6 +335,7 @@
       "ctrl-alt-k": "agent::ToggleThinkingMode",
       "ctrl-alt-'": "agent::ToggleThinkingEffortMenu",
       "ctrl-'": "agent::CycleThinkingEffort",
+      "ctrl-alt-.": "agent::ToggleFastMode",
     },
   },
   {

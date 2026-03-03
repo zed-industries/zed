@@ -34,7 +34,7 @@ use gpui::{
     WindowDecorations, WindowKind, WindowParams, layer_shell::LayerShellNotSupportedError, px,
     size,
 };
-use gpui_wgpu::{WgpuContext, WgpuRenderer, WgpuSurfaceConfig};
+use gpui_wgpu::{CompositorGpuHint, WgpuContext, WgpuRenderer, WgpuSurfaceConfig};
 
 #[derive(Default)]
 pub(crate) struct Callbacks {
@@ -317,7 +317,8 @@ impl WaylandWindowState {
         viewport: Option<wp_viewport::WpViewport>,
         client: WaylandClientStatePtr,
         globals: Globals,
-        gpu_context: &WgpuContext,
+        gpu_context: &mut Option<WgpuContext>,
+        compositor_gpu: Option<CompositorGpuHint>,
         options: WindowParams,
         parent: Option<WaylandWindowStatePtr>,
     ) -> anyhow::Result<Self> {
@@ -338,13 +339,19 @@ impl WaylandWindowState {
                 },
                 transparent: true,
             };
-            WgpuRenderer::new(gpu_context, &raw_window, config)?
+            WgpuRenderer::new(gpu_context, &raw_window, config, compositor_gpu)?
         };
 
         if let WaylandSurfaceState::Xdg(ref xdg_state) = surface_state {
             if let Some(title) = options.titlebar.and_then(|titlebar| titlebar.title) {
                 xdg_state.toplevel.set_title(title.to_string());
             }
+            // Set max window size based on the GPU's maximum texture dimension.
+            // This prevents the window from being resized larger than what the GPU can render.
+            let max_texture_size = renderer.max_texture_size() as i32;
+            xdg_state
+                .toplevel
+                .set_max_size(max_texture_size, max_texture_size);
         }
 
         Ok(Self {
@@ -481,7 +488,8 @@ impl WaylandWindow {
     pub fn new(
         handle: AnyWindowHandle,
         globals: Globals,
-        gpu_context: &WgpuContext,
+        gpu_context: &mut Option<WgpuContext>,
+        compositor_gpu: Option<CompositorGpuHint>,
         client: WaylandClientStatePtr,
         params: WindowParams,
         appearance: WindowAppearance,
@@ -509,6 +517,7 @@ impl WaylandWindow {
                 client,
                 globals,
                 gpu_context,
+                compositor_gpu,
                 params,
                 parent,
             )?)),
@@ -640,19 +649,19 @@ impl WaylandWindowStatePtr {
             match mode {
                 WEnum::Value(zxdg_toplevel_decoration_v1::Mode::ServerSide) => {
                     self.state.borrow_mut().decorations = WindowDecorations::Server;
-                    if let Some(appearance_changed) =
-                        self.callbacks.borrow_mut().appearance_changed.as_mut()
-                    {
-                        appearance_changed();
+                    let callback = self.callbacks.borrow_mut().appearance_changed.take();
+                    if let Some(mut fun) = callback {
+                        fun();
+                        self.callbacks.borrow_mut().appearance_changed = Some(fun);
                     }
                 }
                 WEnum::Value(zxdg_toplevel_decoration_v1::Mode::ClientSide) => {
                     self.state.borrow_mut().decorations = WindowDecorations::Client;
                     // Update background to be transparent
-                    if let Some(appearance_changed) =
-                        self.callbacks.borrow_mut().appearance_changed.as_mut()
-                    {
-                        appearance_changed();
+                    let callback = self.callbacks.borrow_mut().appearance_changed.take();
+                    if let Some(mut fun) = callback {
+                        fun();
+                        self.callbacks.borrow_mut().appearance_changed = Some(fun);
                     }
                 }
                 WEnum::Value(_) => {
@@ -924,8 +933,10 @@ impl WaylandWindowStatePtr {
             (state.bounds.size, state.scale)
         };
 
-        if let Some(ref mut fun) = self.callbacks.borrow_mut().resize {
+        let callback = self.callbacks.borrow_mut().resize.take();
+        if let Some(mut fun) = callback {
             fun(size, scale);
+            self.callbacks.borrow_mut().resize = Some(fun);
         }
 
         {
@@ -971,10 +982,13 @@ impl WaylandWindowStatePtr {
         if self.is_blocked() {
             return;
         }
-        if let Some(ref mut fun) = self.callbacks.borrow_mut().input
-            && !fun(input.clone()).propagate
-        {
-            return;
+        let callback = self.callbacks.borrow_mut().input.take();
+        if let Some(mut fun) = callback {
+            let result = fun(input.clone());
+            self.callbacks.borrow_mut().input = Some(fun);
+            if !result.propagate {
+                return;
+            }
         }
         if let PlatformInput::KeyDown(event) = input
             && event.keystroke.modifiers.is_subset_of(&Modifiers::shift())
@@ -991,23 +1005,28 @@ impl WaylandWindowStatePtr {
 
     pub fn set_focused(&self, focus: bool) {
         self.state.borrow_mut().active = focus;
-        if let Some(ref mut fun) = self.callbacks.borrow_mut().active_status_change {
+        let callback = self.callbacks.borrow_mut().active_status_change.take();
+        if let Some(mut fun) = callback {
             fun(focus);
+            self.callbacks.borrow_mut().active_status_change = Some(fun);
         }
     }
 
     pub fn set_hovered(&self, focus: bool) {
-        if let Some(ref mut fun) = self.callbacks.borrow_mut().hover_status_change {
+        let callback = self.callbacks.borrow_mut().hover_status_change.take();
+        if let Some(mut fun) = callback {
             fun(focus);
+            self.callbacks.borrow_mut().hover_status_change = Some(fun);
         }
     }
 
     pub fn set_appearance(&mut self, appearance: WindowAppearance) {
         self.state.borrow_mut().appearance = appearance;
 
-        let mut callbacks = self.callbacks.borrow_mut();
-        if let Some(ref mut fun) = callbacks.appearance_changed {
-            (fun)()
+        let callback = self.callbacks.borrow_mut().appearance_changed.take();
+        if let Some(mut fun) = callback {
+            fun();
+            self.callbacks.borrow_mut().appearance_changed = Some(fun);
         }
     }
 
@@ -1230,7 +1249,10 @@ impl PlatformWindow for WaylandWindow {
     fn is_subpixel_rendering_supported(&self) -> bool {
         let client = self.borrow().client.get_client();
         let state = client.borrow();
-        state.gpu_context.supports_dual_source_blending()
+        state
+            .gpu_context
+            .as_ref()
+            .is_some_and(|ctx| ctx.supports_dual_source_blending())
     }
 
     fn minimize(&self) {

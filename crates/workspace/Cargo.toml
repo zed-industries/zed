@@ -30,7 +30,6 @@ test-support = [
 any_vec.workspace = true
 anyhow.workspace = true
 async-recursion.workspace = true
-call.workspace = true
 client.workspace = true
 chrono.workspace = true
 clock.workspace = true

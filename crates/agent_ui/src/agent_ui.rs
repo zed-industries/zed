@@ -1,4 +1,3 @@
-pub mod acp;
 mod agent_configuration;
 mod agent_diff;
 mod agent_model_selector;
@@ -6,13 +5,20 @@ mod agent_panel;
 mod agent_registry_ui;
 mod buffer_codegen;
 mod completion_provider;
+mod config_options;
+pub(crate) mod connection_view;
 mod context;
 mod context_server_configuration;
+mod entry_view_state;
 mod favorite_models;
 mod inline_assistant;
 mod inline_prompt_editor;
 mod language_model_selector;
 mod mention_set;
+mod message_editor;
+mod mode_selector;
+mod model_selector;
+mod model_selector_popover;
 mod profile_selector;
 mod slash_command;
 mod slash_command_picker;
@@ -20,12 +26,12 @@ mod terminal_codegen;
 mod terminal_inline_assistant;
 mod text_thread_editor;
 mod text_thread_history;
+mod thread_history;
 mod ui;
 
 use std::rc::Rc;
 use std::sync::Arc;
 
-// Another comment
 use agent_settings::{AgentProfileId, AgentSettings};
 use assistant_slash_command::SlashCommandRegistry;
 use client::Client;
@@ -49,11 +55,18 @@ use std::any::TypeId;
 use workspace::Workspace;
 
 use crate::agent_configuration::{ConfigureContextServerModal, ManageProfilesModal};
-pub use crate::agent_panel::{AgentPanel, AgentPanelEvent, ConcreteAssistantPanelDelegate};
+pub use crate::agent_panel::{
+    AgentPanel, AgentPanelEvent, ConcreteAssistantPanelDelegate, WorktreeCreationStatus,
+};
 use crate::agent_registry_ui::AgentRegistryPage;
 pub use crate::inline_assistant::InlineAssistant;
 pub use agent_diff::{AgentDiffPane, AgentDiffToolbar};
+pub(crate) use connection_view::ConnectionView;
+pub(crate) use mode_selector::ModeSelector;
+pub(crate) use model_selector::ModelSelector;
+pub(crate) use model_selector_popover::ModelSelectorPopover;
 pub use text_thread_editor::{AgentPanelDelegate, TextThreadEditor};
+pub(crate) use thread_history::*;
 use zed_actions;
 
 actions!(
@@ -149,6 +162,8 @@ actions!(
         CycleThinkingEffort,
         /// Toggles the thinking effort selector menu open or closed.
         ToggleThinkingEffortMenu,
+        /// Toggles fast mode for models that support it.
+        ToggleFastMode,
     ]
 );
 
@@ -164,18 +179,6 @@ pub struct AuthorizeToolCall {
     pub option_id: String,
     /// The kind of permission option (serialized as string).
     pub option_kind: String,
-}
-
-/// Action to select a permission granularity option from the dropdown.
-/// This updates the selected granularity without triggering authorization.
-#[derive(Clone, PartialEq, Deserialize, JsonSchema, Action)]
-#[action(namespace = agent)]
-#[serde(deny_unknown_fields)]
-pub struct SelectPermissionGranularity {
-    /// The tool call ID for which to select the granularity.
-    pub tool_call_id: String,
-    /// The index of the selected granularity option.
-    pub index: usize,
 }
 
 /// Creates a new conversation thread, optionally based on an existing thread.
@@ -204,9 +207,6 @@ pub struct NewNativeAgentThreadFromSummary {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ExternalAgent {
-    Gemini,
-    ClaudeCode,
-    Codex,
     NativeAgent,
     Custom { name: SharedString },
 }
@@ -218,13 +218,22 @@ impl ExternalAgent {
         thread_store: Entity<agent::ThreadStore>,
     ) -> Rc<dyn agent_servers::AgentServer> {
         match self {
-            Self::Gemini => Rc::new(agent_servers::Gemini),
-            Self::ClaudeCode => Rc::new(agent_servers::ClaudeCode),
-            Self::Codex => Rc::new(agent_servers::Codex),
             Self::NativeAgent => Rc::new(agent::NativeAgentServer::new(fs, thread_store)),
             Self::Custom { name } => Rc::new(agent_servers::CustomAgentServer::new(name.clone())),
         }
     }
+}
+
+/// Sets where new threads will run.
+#[derive(
+    Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Action,
+)]
+#[action(namespace = agent)]
+#[serde(rename_all = "snake_case", tag = "kind")]
+pub enum StartThreadIn {
+    #[default]
+    LocalProject,
+    NewWorktree,
 }
 
 /// Content to initialize new external agent with.
@@ -310,6 +319,10 @@ pub fn init(
                     .find_map(|item| item.downcast::<AgentRegistryPage>());
 
                 if let Some(existing) = existing {
+                    existing.update(cx, |_, cx| {
+                        project::AgentRegistryStore::global(cx)
+                            .update(cx, |store, cx| store.refresh(cx));
+                    });
                     workspace.activate_item(&existing, true, true, window, cx);
                 } else {
                     let registry_page = AgentRegistryPage::new(workspace, window, cx);
@@ -372,7 +385,6 @@ fn update_command_palette_filter(cx: &mut App) {
             filter.hide_namespace("agents");
             filter.hide_namespace("assistant");
             filter.hide_namespace("copilot");
-            filter.hide_namespace("supermaven");
             filter.hide_namespace("zed_predict_onboarding");
             filter.hide_namespace("edit_prediction");
 
@@ -393,19 +405,11 @@ fn update_command_palette_filter(cx: &mut App) {
                 EditPredictionProvider::None => {
                     filter.hide_namespace("edit_prediction");
                     filter.hide_namespace("copilot");
-                    filter.hide_namespace("supermaven");
                     filter.hide_action_types(&edit_prediction_actions);
                 }
                 EditPredictionProvider::Copilot => {
                     filter.show_namespace("edit_prediction");
                     filter.show_namespace("copilot");
-                    filter.hide_namespace("supermaven");
-                    filter.show_action_types(edit_prediction_actions.iter());
-                }
-                EditPredictionProvider::Supermaven => {
-                    filter.show_namespace("edit_prediction");
-                    filter.hide_namespace("copilot");
-                    filter.show_namespace("supermaven");
                     filter.show_action_types(edit_prediction_actions.iter());
                 }
                 EditPredictionProvider::Zed
@@ -417,7 +421,6 @@ fn update_command_palette_filter(cx: &mut App) {
                 | EditPredictionProvider::Experimental(_) => {
                     filter.show_namespace("edit_prediction");
                     filter.hide_namespace("copilot");
-                    filter.hide_namespace("supermaven");
                     filter.show_action_types(edit_prediction_actions.iter());
                 }
             }
