@@ -1,4 +1,3 @@
-#![allow(unused, dead_code)]
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -791,12 +790,6 @@ impl CodeCell {
         !self.outputs.is_empty()
     }
 
-    fn outputs_are_images_only(&self) -> bool {
-        self.outputs
-            .iter()
-            .all(|output| matches!(output, Output::Image { .. }))
-    }
-
     pub fn clear_outputs(&mut self) {
         self.outputs.clear();
         self.execution_duration = None;
@@ -1208,37 +1201,7 @@ impl Render for CodeCell {
                                                     div.max_h(max_height).overflow_y_scroll()
                                                 })
                                                 .children(self.outputs.iter().map(|output| {
-                                                    let content = match output {
-                                                        Output::Plain { content, .. } => {
-                                                            Some(content.clone().into_any_element())
-                                                        }
-                                                        Output::Markdown { content, .. } => {
-                                                            Some(content.clone().into_any_element())
-                                                        }
-                                                        Output::Stream { content, .. } => {
-                                                            Some(content.clone().into_any_element())
-                                                        }
-                                                        Output::Image { content, .. } => {
-                                                            Some(content.clone().into_any_element())
-                                                        }
-                                                        Output::Message(message) => Some(
-                                                            div()
-                                                                .child(message.clone())
-                                                                .into_any_element(),
-                                                        ),
-                                                        Output::Table { content, .. } => {
-                                                            Some(content.clone().into_any_element())
-                                                        }
-                                                        Output::Json { content, .. } => {
-                                                            Some(content.clone().into_any_element())
-                                                        }
-                                                        Output::ErrorOutput(error_view) => {
-                                                            error_view.render(window, cx)
-                                                        }
-                                                        Output::ClearOutputWaitMarker => None,
-                                                    };
-
-                                                    div().children(content)
+                                                    div().children(output.content(window, cx))
                                                 })),
                                         ),
                                 ),

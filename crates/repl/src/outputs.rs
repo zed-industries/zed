@@ -249,15 +249,8 @@ impl Output {
         )
     }
 
-    pub fn render(
-        &self,
-        workspace: WeakEntity<Workspace>,
-        window: &mut Window,
-        cx: &mut Context<ExecutionView>,
-    ) -> impl IntoElement + use<> {
-        let max_width =
-            plain::max_width_for_columns(ReplSettings::get_global(cx).max_columns, window, cx);
-        let content = match self {
+    fn content(&self, window: &mut Window, cx: &mut Context<ExecutionView>) -> Option<AnyElement> {
+        match self {
             Self::Plain { content, .. } => Some(content.clone().into_any_element()),
             Self::Markdown { content, .. } => Some(content.clone().into_any_element()),
             Self::Stream { content, .. } => Some(content.clone().into_any_element()),
@@ -268,14 +261,28 @@ impl Output {
             Self::ErrorOutput(error_view) => error_view.render(window, cx),
             Self::ClearOutputWaitMarker => None,
         };
+    }
+
+    pub fn render(
+        &self,
+        workspace: WeakEntity<Workspace>,
+        window: &mut Window,
+        cx: &mut Context<ExecutionView>,
+    ) -> impl IntoElement + use<> {
+        let max_width =
+            plain::max_width_for_columns(ReplSettings::get_global(cx).max_columns, window, cx);
+        let content = self.content(window, cx);
 
         let needs_horizontal_scroll = matches!(self, Self::Table { .. });
 
         h_flex()
             .id("output-content")
             .w_full()
-            .when(needs_horizontal_scroll, |this| this.overflow_x_scroll())
-            .when(!needs_horizontal_scroll, |this| this.overflow_x_hidden())
+            .when_else(
+                needs_horizontal_scroll,
+                |this| this.overflow_x_scroll(),
+                |this| this.overflow_x_hidden(),
+            )
             .items_start()
             .child(
                 div()
