@@ -490,6 +490,8 @@ impl Sidebar {
             .px_2()
             .py_1()
             .gap_1()
+            .hover(|style| style.bg(cx.theme().colors().ghost_element_hover))
+            .active(|style| style.bg(cx.theme().colors().ghost_element_active))
             .when(is_selected, |this| {
                 this.bg(cx.theme().colors().ghost_element_selected)
             })
@@ -726,6 +728,8 @@ impl Sidebar {
             .px_2()
             .py_1()
             .gap_2()
+            .hover(|style| style.bg(cx.theme().colors().ghost_element_hover))
+            .active(|style| style.bg(cx.theme().colors().ghost_element_active))
             .when(is_selected, |this| {
                 this.bg(cx.theme().colors().ghost_element_selected)
             })
@@ -779,6 +783,8 @@ impl Sidebar {
             .w_full()
             .px_2()
             .py_1()
+            .hover(|style| style.bg(cx.theme().colors().ghost_element_hover))
+            .active(|style| style.bg(cx.theme().colors().ghost_element_active))
             .when(is_selected, |this| {
                 this.bg(cx.theme().colors().ghost_element_selected)
             })
