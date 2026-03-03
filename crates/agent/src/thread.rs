@@ -900,7 +900,7 @@ pub struct Thread {
     /// If this is a subagent thread, contains context about the parent
     subagent_context: Option<SubagentContext>,
     /// The user's unsent prompt text, persisted so it can be restored when reloading the thread.
-    draft_prompt: Option<String>,
+    draft_prompt: Option<Vec<acp::ContentBlock>>,
     /// Weak references to running subagent threads for cancellation propagation
     running_subagents: Vec<WeakEntity<Thread>>,
 }
@@ -1299,11 +1299,11 @@ impl Thread {
         self.messages.is_empty() && self.title.is_none()
     }
 
-    pub fn draft_prompt(&self) -> Option<&str> {
+    pub fn draft_prompt(&self) -> Option<&[acp::ContentBlock]> {
         self.draft_prompt.as_deref()
     }
 
-    pub fn set_draft_prompt(&mut self, prompt: Option<String>) {
+    pub fn set_draft_prompt(&mut self, prompt: Option<Vec<acp::ContentBlock>>) {
         self.draft_prompt = prompt;
     }
 

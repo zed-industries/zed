@@ -351,7 +351,7 @@ impl NativeAgent {
         let session_id = thread.id().clone();
         let parent_session_id = thread.parent_thread_id();
         let title = thread.title();
-        let draft_prompt = thread.draft_prompt().map(String::from);
+        let draft_prompt = thread.draft_prompt().map(Vec::from);
         let project = thread.project.clone();
         let action_log = thread.action_log.clone();
         let prompt_capabilities_rx = thread.prompt_capabilities_rx.clone();
@@ -861,7 +861,7 @@ impl NativeAgent {
                 .collect::<Vec<_>>(),
         );
 
-        let draft_prompt = session.acp_thread.read(cx).draft_prompt().map(String::from);
+        let draft_prompt = session.acp_thread.read(cx).draft_prompt().map(Vec::from);
         let database_future = ThreadsDatabase::connect(cx);
         let db_thread = thread.update(cx, |thread, cx| {
             thread.set_draft_prompt(draft_prompt);
@@ -2578,6 +2578,18 @@ mod internal_tests {
 
         cx.run_until_parked();
 
+        // Set a draft prompt with rich content blocks before saving.
+        let draft_blocks = vec![
+            acp::ContentBlock::Text(acp::TextContent::new("Check out ")),
+            acp::ContentBlock::ResourceLink(acp::ResourceLink::new("b.md", uri.to_string())),
+            acp::ContentBlock::Text(acp::TextContent::new(" please")),
+        ];
+        acp_thread.update(cx, |thread, _cx| {
+            thread.set_draft_prompt(Some(draft_blocks.clone()));
+        });
+        thread.update(cx, |_thread, cx| cx.notify());
+        cx.run_until_parked();
+
         // Close the session so it can be reloaded from disk.
         cx.update(|cx| connection.clone().close_session(&session_id, cx))
             .await
@@ -2614,6 +2626,11 @@ mod internal_tests {
 
                 "}
             )
+        });
+
+        // Ensure the draft prompt with rich content blocks survived the round-trip.
+        acp_thread.read_with(cx, |thread, _| {
+            assert_eq!(thread.draft_prompt(), Some(draft_blocks.as_slice()));
         });
     }
 

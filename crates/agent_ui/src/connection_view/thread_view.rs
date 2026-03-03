@@ -5,6 +5,7 @@ use gpui::{Corner, List};
 use language_model::{LanguageModelEffortLevel, Speed};
 use settings::update_settings_file;
 use ui::{ButtonLike, SplitButton, SplitButtonStyle, Tab};
+use workspace::SERIALIZATION_THROTTLE_TIME;
 
 use super::*;
 
@@ -347,13 +348,7 @@ impl ThreadView {
                     }
                 }
             } else if let Some(draft) = thread.read(cx).draft_prompt() {
-                editor.set_message(
-                    vec![acp::ContentBlock::Text(acp::TextContent::new(
-                        draft.to_string(),
-                    ))],
-                    window,
-                    cx,
-                );
+                editor.set_message(draft.to_vec(), window, cx);
             }
             editor
         });
@@ -387,14 +382,27 @@ impl ThreadView {
         ));
 
         subscriptions.push(cx.observe(&message_editor, |this, editor, cx| {
-            let text = editor.read(cx).text(cx);
-            let draft = if text.is_empty() { None } else { Some(text) };
-            this.thread.update(cx, |thread, _cx| {
-                thread.set_draft_prompt(draft);
-            });
+            let is_empty = editor.read(cx).text(cx).is_empty();
+            let draft_contents_task = if is_empty {
+                None
+            } else {
+                Some(editor.update(cx, |editor, cx| editor.draft_contents(cx)))
+            };
             this._draft_save_task = Some(cx.spawn(async move |this, cx| {
+                let draft = if let Some(task) = draft_contents_task {
+                    let blocks = task.await.ok().filter(|b| !b.is_empty());
+                    blocks
+                } else {
+                    None
+                };
+                this.update(cx, |this, cx| {
+                    this.thread.update(cx, |thread, _cx| {
+                        thread.set_draft_prompt(draft);
+                    });
+                })
+                .ok();
                 cx.background_executor()
-                    .timer(Duration::from_millis(500))
+                    .timer(SERIALIZATION_THROTTLE_TIME)
                     .await;
                 this.update(cx, |this, cx| {
                     if let Some(thread) = this.as_native_thread(cx) {

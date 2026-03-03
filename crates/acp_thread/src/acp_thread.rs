@@ -971,7 +971,7 @@ pub struct AcpThread {
     pending_terminal_exit: HashMap<acp::TerminalId, acp::TerminalExitStatus>,
     had_error: bool,
     /// The user's unsent prompt text, persisted so it can be restored when reloading the thread.
-    draft_prompt: Option<String>,
+    draft_prompt: Option<Vec<acp::ContentBlock>>,
 }
 
 impl From<&AcpThread> for ActionLogTelemetry {
@@ -1221,11 +1221,11 @@ impl AcpThread {
         self.prompt_capabilities.clone()
     }
 
-    pub fn draft_prompt(&self) -> Option<&str> {
+    pub fn draft_prompt(&self) -> Option<&[acp::ContentBlock]> {
         self.draft_prompt.as_deref()
     }
 
-    pub fn set_draft_prompt(&mut self, prompt: Option<String>) {
+    pub fn set_draft_prompt(&mut self, prompt: Option<Vec<acp::ContentBlock>>) {
         self.draft_prompt = prompt;
     }
 
