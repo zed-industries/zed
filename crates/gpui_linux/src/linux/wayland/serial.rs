@@ -57,12 +57,10 @@ impl SerialTracker {
     /// reject the request.
     ///
     /// Returns 0 only if no serial of any kind has been received yet.
-    ///
-    /// [`set_selection`]: wayland_client::protocol::wl_data_device::WlDataDevice::set_selection
     pub fn get_latest(&self) -> u32 {
         self.serials
             .values()
-            .map(|sd| sd.serial)
+            .map(|serial_data| serial_data.serial)
             .max()
             .unwrap_or(0)
     }
