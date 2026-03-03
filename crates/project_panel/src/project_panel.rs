@@ -157,7 +157,6 @@ pub struct ProjectPanel {
     last_reported_update: Instant,
     update_visible_entries_task: UpdateVisibleEntriesTask,
     undo_stack: Vec<ProjectPanelOperation>,
-    redo_stack: Vec<ProjectPanelOperation>,
     state: State,
 }
 
@@ -397,8 +396,6 @@ actions!(
         CompareMarkedFiles,
         /// Undoes the last file operation.
         Undo,
-        /// Redoes the last undone file operation.
-        Redo,
     ]
 );
 
@@ -608,10 +605,6 @@ pub enum Event {
 
 pub enum ProjectPanelOperation {
     Batch(Vec<ProjectPanelOperation>),
-    Trash {
-        worktree_id: WorktreeId,
-        entry: worktree::TrashedEntry,
-    },
     Create {
         is_directory: bool,
         project_path: ProjectPath,
@@ -915,7 +908,6 @@ impl ProjectPanel {
                 },
                 update_visible_entries_task: Default::default(),
                 undo_stack: Default::default(),
-                redo_stack: Default::default(),
             };
             this.update_visible_entries(None, false, false, window, cx);
 
@@ -2224,27 +2216,11 @@ impl ProjectPanel {
     pub fn undo(&mut self, _: &Undo, _window: &mut Window, cx: &mut Context<Self>) {
         if let Some(operation) = self.undo_stack.pop() {
             let task = self.revert_operation(operation, cx);
-            cx.spawn(async move |this, cx| {
-                let reverse_operation = task.await?;
-                this.update(cx, |this, _cx| this.redo_stack.push(reverse_operation))
-            })
-            .detach();
-        }
-    }
-
-    fn redo(&mut self, _: &Redo, _window: &mut Window, cx: &mut Context<Self>) -> () {
-        if let Some(operation) = self.redo_stack.pop() {
-            let task = self.revert_operation(operation, cx);
-            cx.spawn(async |this, cx| {
-                let reverse_operation = task.await?;
-                this.update(cx, |this, _cx| this.undo_stack.push(reverse_operation))
-            })
-            .detach();
+            cx.spawn(async |_, _| task.await).detach_and_log_err(cx);
         }
     }
 
     fn record_operation(&mut self, operation: ProjectPanelOperation) {
-        self.redo_stack.clear();
         self.undo_stack.push(operation);
     }
 
@@ -2252,7 +2228,7 @@ impl ProjectPanel {
         &self,
         operation: ProjectPanelOperation,
         cx: &mut Context<'_, Self>,
-    ) -> Task<Result<ProjectPanelOperation>> {
+    ) -> Task<Result<()>> {
         match operation {
             ProjectPanelOperation::Rename { old_path, new_path } => {
                 let Some(entry_id) = self
@@ -2268,10 +2244,7 @@ impl ProjectPanel {
                 });
                 cx.spawn(async move |_, _| {
                     task.await?;
-                    Ok(ProjectPanelOperation::Rename {
-                        old_path: new_path,
-                        new_path: old_path,
-                    })
+                    Ok(())
                 })
             }
             ProjectPanelOperation::Create {
@@ -2288,36 +2261,13 @@ impl ProjectPanel {
                 };
                 let Some(task) = self
                     .project
-                    .update(cx, |project, cx| project.trash_entry(entry_id, cx))
+                    .update(cx, |project, cx| project.delete_entry(entry_id, true, cx))
                 else {
                     return Task::ready(Err(anyhow!("failed to trash entry")));
                 };
                 cx.spawn(async move |_, _cx| {
-                    let entry = task.await?;
-                    Ok(ProjectPanelOperation::Trash {
-                        worktree_id: project_path.worktree_id,
-                        entry,
-                    })
-                })
-            }
-            ProjectPanelOperation::Trash { worktree_id, entry } => {
-                let is_directory = entry.trash_item.is_dir;
-                let project_path = ProjectPath {
-                    worktree_id,
-                    path: entry.path.clone(),
-                };
-                let Some(task) = self.project.update(cx, |project, cx| {
-                    project.restore_entry(worktree_id, entry, cx)
-                }) else {
-                    return Task::ready(Err(anyhow!("failed to restore entry")));
-                };
-
-                cx.spawn(async move |_, _cx| {
                     task.await?;
-                    Ok(ProjectPanelOperation::Create {
-                        is_directory,
-                        project_path,
-                    })
+                    Ok(())
                 })
             }
             ProjectPanelOperation::Batch(operations) => {
@@ -2327,11 +2277,10 @@ impl ProjectPanel {
                     .collect();
 
                 cx.spawn(async move |_, _| {
-                    let mut reversed = Vec::with_capacity(tasks.len());
                     for task in tasks {
-                        reversed.push(task.await?);
+                        task.await?;
                     }
-                    Ok(ProjectPanelOperation::Batch(reversed))
+                    Ok(())
                 })
             }
         }
@@ -2606,33 +2555,15 @@ impl ProjectPanel {
                 {
                     return anyhow::Ok(());
                 }
-                for (entry_id, project_path, _, _is_dir) in file_paths {
-                    if trash {
-                        let trashed_entry = panel
-                            .update(cx, |panel, cx| {
-                                panel
-                                    .project
-                                    .update(cx, |project, cx| project.trash_entry(entry_id, cx))
-                                    .context("no such entry")
-                            })??
-                            .await?;
-
-                        panel.update(cx, |panel, _| {
-                            panel.record_operation(ProjectPanelOperation::Trash {
-                                worktree_id: project_path.worktree_id,
-                                entry: trashed_entry,
-                            });
-                        })?;
-                    } else {
-                        panel
-                            .update(cx, |panel, cx| {
-                                panel
-                                    .project
-                                    .update(cx, |project, cx| project.delete_entry(entry_id, cx))
-                                    .context("no such entry")
-                            })??
-                            .await?;
-                    }
+                for (entry_id, _, _, _is_dir) in file_paths {
+                    panel
+                        .update(cx, |panel, cx| {
+                            panel
+                                .project
+                                .update(cx, |project, cx| project.delete_entry(entry_id, trash, cx))
+                                .context("no such entry")
+                        })??
+                        .await?;
                 }
                 panel.update_in(cx, |panel, window, cx| {
                     if let Some(next_selection) = next_selection {
@@ -6690,7 +6621,6 @@ impl Render for ProjectPanel {
                 .on_action(cx.listener(Self::remove_from_project))
                 .on_action(cx.listener(Self::compare_marked_files))
                 .on_action(cx.listener(Self::undo))
-                .on_action(cx.listener(Self::redo))
                 .when(!project.is_read_only(cx), |el| {
                     el.on_action(cx.listener(Self::new_file))
                         .on_action(cx.listener(Self::new_directory))
