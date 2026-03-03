@@ -3,17 +3,18 @@ use gpui::{Pixels, Point};
 /// Critically-damped harmonic oscillator for smooth cursor draw-origin interpolation.
 ///
 /// Uses the closed-form solution so there are no iterative sub-steps and the result
-/// is unconditionally stable for any positive `omega` and any `dt <= 0.05`.
+/// is unconditionally stable for any positive `omega` and any `dt` up to 50 ms.
 ///
 /// # Spring tuning
 /// `omega` is the natural angular frequency in rad/s.
-/// * 20–25  → silky, slightly laggy (notebook feel)
-/// * 30–40  → snappy, similar to macOS text cursor
-/// * 50+    → almost instant; mainly useful for testing
+///
+/// * 20 to 25  -> silky, slightly laggy (notebook feel)
+/// * 30 to 40  -> snappy, similar to the macOS text cursor
+/// * 50+       -> almost instant; mainly useful for testing
 ///
 /// # Teleport threshold
-/// Jumps larger than `teleport_distance` pixels snap the cursor instantly, covering
-/// Ctrl+G / jump-to-definition style navigation without visible smear.
+/// Jumps larger than `teleport_distance` pixels snap the cursor instantly.
+/// This covers Ctrl+G and jump-to-definition without visible smear across the screen.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SmoothCursor {
     pub current: Point<Pixels>,
@@ -36,7 +37,7 @@ impl SmoothCursor {
         }
     }
 
-    /// Move the target; teleports if the distance exceeds the configured threshold.
+    /// Move the target. Teleports if the distance exceeds the configured threshold.
     #[inline]
     pub fn set_target(&mut self, new_target: Point<Pixels>) {
         let dx = (self.current.x - new_target.x).0;
@@ -48,7 +49,7 @@ impl SmoothCursor {
         self.target = new_target;
     }
 
-    /// Unconditionally snap current position to `pos` and zero velocity.
+    /// Snap the current position to `pos` and zero out velocity.
     #[inline]
     pub fn teleport_to(&mut self, pos: Point<Pixels>) {
         self.current = pos;
@@ -58,7 +59,7 @@ impl SmoothCursor {
 
     /// Advance the spring simulation by `dt` seconds.
     ///
-    /// Safe to call with `dt == 0`; clamps at 50 ms to absorb tab-switch spikes.
+    /// Safe to call with `dt == 0`. Clamps at 50 ms to absorb stalls from tab switches.
     pub fn tick(&mut self, dt: f32) {
         if dt <= 0.0 {
             return;
@@ -66,15 +67,16 @@ impl SmoothCursor {
         let dt = dt.min(0.05);
         let w = self.omega;
         if w <= 0.0 {
+            // Zero stiffness means instant snap.
             self.current = self.target;
             self.velocity = Point::default();
             return;
         }
 
-        // Closed-form critically-damped spring (ζ = 1):
-        //   x(t) = x_target + (x₀ + (v₀ + ω·x₀)·t)·e^(−ω·t)
-        //   v(t) =            (v₀ − (v₀ + ω·x₀)·ω·t)·e^(−ω·t)
-        // where x₀ = current − target, v₀ = velocity.
+        // Closed-form critically-damped spring (zeta = 1):
+        //   x(t) = x_target + (x0 + (v0 + w*x0)*t) * e^(-w*t)
+        //   v(t) =            (v0 - (v0 + w*x0)*w*t) * e^(-w*t)
+        // where x0 = current - target, v0 = velocity.
         let e = (-w * dt).exp();
 
         let dx = (self.current.x - self.target.x).0;
@@ -90,10 +92,10 @@ impl SmoothCursor {
         self.velocity.y = Pixels((vy - cy * (w * dt)) * e);
     }
 
-    /// Returns `true` once position and velocity are both below the perceptible threshold.
+    /// Returns true once position and velocity are both below the perceptible threshold.
     ///
-    /// The thresholds (1e-4 px² for position, 1e-4 px²/s² for velocity) are well below
-    /// a single sub-pixel so the cursor renders identically to its target before settling.
+    /// Both thresholds are 1e-4 px^2, which is well below a single sub-pixel.
+    /// The cursor renders identically to its target before this returns true.
     #[inline]
     pub fn is_settled(&self) -> bool {
         let dx = (self.current.x - self.target.x).0;
@@ -123,7 +125,6 @@ mod tests {
             sc.tick(1.0 / 60.0);
         }
         assert!(sc.is_settled(), "did not settle: {sc:?}");
-        // Must end up within 0.01 px of target
         assert!((sc.current.x.0 - 100.0).abs() < 0.01);
         assert!((sc.current.y.0 - 50.0).abs() < 0.01);
     }
@@ -131,7 +132,7 @@ mod tests {
     #[test]
     fn teleports_on_large_jump() {
         let mut sc = SmoothCursor::new(pt(0.0, 0.0), 30.0, 300.0);
-        sc.set_target(pt(400.0, 0.0)); // 400 > 300 threshold
+        sc.set_target(pt(400.0, 0.0)); // 400 px > 300 px threshold
         assert_eq!(sc.current, pt(400.0, 0.0));
         assert!(sc.is_settled());
     }
@@ -139,7 +140,6 @@ mod tests {
     #[test]
     fn no_motion_when_already_at_target() {
         let mut sc = SmoothCursor::new(pt(50.0, 50.0), 30.0, 300.0);
-        // target == current from construction
         sc.tick(1.0 / 60.0);
         assert!(sc.is_settled());
     }
@@ -153,10 +153,10 @@ mod tests {
     }
 
     #[test]
-    fn large_dt_clamped_stable() {
+    fn large_dt_does_not_produce_nan() {
         let mut sc = SmoothCursor::new(pt(0.0, 0.0), 30.0, 999.0);
         sc.set_target(pt(100.0, 0.0));
-        // Simulate a 5-second stall; should not produce NaN / explode
+        // Simulate a multi-second stall; should not explode.
         sc.tick(5.0);
         assert!(sc.current.x.0.is_finite());
         assert!(sc.current.y.0.is_finite());
