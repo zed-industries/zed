@@ -95,7 +95,7 @@ impl ExcerptAnchor {
         self
     }
 
-    fn cmp(&self, other: &Self, snapshot: &MultiBufferSnapshot) -> Ordering {
+    pub(crate) fn cmp(&self, other: &Self, snapshot: &MultiBufferSnapshot) -> Ordering {
         let Some(self_path_key) = snapshot.path_keys_by_index.get(&self.path) else {
             panic!("anchor's path was never added to multibuffer")
         };
@@ -206,7 +206,7 @@ impl ExcerptAnchor {
     }
 
     fn is_valid(&self, snapshot: &MultiBufferSnapshot) -> bool {
-        let Some(target) = snapshot.try_anchor_seek_target(*self) else {
+        let Some(target) = self.try_seek_target(snapshot) else {
             return false;
         };
         let mut cursor = snapshot.excerpts.cursor::<ExcerptSummary>(());
@@ -230,13 +230,21 @@ impl ExcerptAnchor {
     }
 
     pub(crate) fn seek_target(&self, snapshot: &MultiBufferSnapshot) -> AnchorSeekTarget {
-        let path_key = snapshot.path_for_anchor(*self);
+        self.try_seek_target(snapshot)
+            .expect("anchor is from different multi-buffer")
+    }
+
+    pub(crate) fn try_seek_target(
+        &self,
+        snapshot: &MultiBufferSnapshot,
+    ) -> Option<AnchorSeekTarget> {
+        let path_key = snapshot.try_path_for_anchor(*self)?;
         let buffer = snapshot.buffer_for_path(&path_key).cloned();
-        AnchorSeekTarget::Excerpt {
+        Some(AnchorSeekTarget::Excerpt {
             path_key,
             anchor: *self,
             snapshot: buffer,
-        }
+        })
     }
 }
 
@@ -338,12 +346,14 @@ impl Anchor {
         }
     }
 
-    pub(crate) fn try_seek_target(&self, arg: &MultiBufferSnapshot) -> Option<AnchorSeekTarget> {
-        todo!()
+    pub(crate) fn try_seek_target(
+        &self,
+        snapshot: &MultiBufferSnapshot,
+    ) -> Option<AnchorSeekTarget> {
         match self {
-            Anchor::Min => AnchorSeekTarget::Min,
-            Anchor::Excerpt(excerpt_anchor) => excerpt_anchor.seek_target(snapshot),
-            Anchor::Max => AnchorSeekTarget::Max,
+            Anchor::Min => Some(AnchorSeekTarget::Min),
+            Anchor::Excerpt(excerpt_anchor) => excerpt_anchor.try_seek_target(snapshot),
+            Anchor::Max => Some(AnchorSeekTarget::Max),
         }
     }
 }

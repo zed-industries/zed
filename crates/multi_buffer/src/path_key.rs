@@ -5,20 +5,17 @@ use std::{
     sync::Arc,
 };
 
-use collections::HashSet;
 use gpui::{App, AppContext, Context, Entity};
-use itertools::Itertools;
 use language::{Buffer, BufferSnapshot};
 use rope::Point;
 use sum_tree::{Dimensions, SumTree};
-use text::{Bias, BufferId, Edit, OffsetRangeExt, Patch};
+use text::{Bias, Edit, OffsetRangeExt, Patch};
 use util::rel_path::RelPath;
 use ztracing::instrument;
 
 use crate::{
     Anchor, BufferState, DiffChangeKind, Event, Excerpt, ExcerptOffset, ExcerptRange,
-    ExcerptSummary, ExpandExcerptDirection, MultiBuffer, MultiBufferOffset, PathKeyIndex,
-    build_excerpt_ranges,
+    ExcerptSummary, ExpandExcerptDirection, MultiBuffer, PathKeyIndex, build_excerpt_ranges,
 };
 
 #[derive(PartialEq, Eq, Ord, PartialOrd, Clone, Hash, Debug)]
@@ -64,31 +61,19 @@ impl PathKey {
 }
 
 impl MultiBuffer {
-    pub fn paths(&self) -> impl Iterator<Item = &PathKey> + '_ {
-        self.excerpts_by_path.keys()
-    }
-
-    pub fn excerpts_for_path(&self, path: &PathKey) -> impl '_ + Iterator<Item = ExcerptId> {
-        self.excerpts_by_path
-            .get(path)
-            .map(|excerpts| excerpts.as_slice())
-            .unwrap_or_default()
-            .iter()
-            .copied()
-    }
-
     pub fn buffer_for_path(&self, path: &PathKey, cx: &App) -> Option<Entity<Buffer>> {
-        let excerpt_id = self.excerpts_by_path.get(path)?.first()?;
-        let snapshot = self.read(cx);
-        let excerpt = snapshot.excerpt(*excerpt_id)?;
+        let snapshot = self.snapshot(cx);
+        let excerpt = snapshot.excerpts_for_path(path).next()?;
         self.buffer(excerpt.buffer_id)
     }
 
     pub fn location_for_path(&self, path: &PathKey, cx: &App) -> Option<Anchor> {
-        let excerpt_id = self.excerpts_by_path.get(path)?.first()?;
-        let snapshot = self.read(cx);
-        let excerpt = snapshot.excerpt(*excerpt_id)?;
-        Some(Anchor::text(excerpt.id, excerpt.range.context.start))
+        let snapshot = self.snapshot(cx);
+        let excerpt = snapshot.excerpts_for_path(path).next()?;
+        Some(Anchor::in_buffer(
+            excerpt.path_key_index,
+            excerpt.range.context.start,
+        ))
     }
 
     pub fn set_excerpts_for_buffer(
@@ -118,12 +103,14 @@ impl MultiBuffer {
             build_excerpt_ranges(ranges.clone(), context_line_count, &buffer_snapshot);
 
         let (new, _) = Self::merge_excerpt_ranges(&excerpt_ranges);
-        let inserted =
+        let (inserted, path_key_index) =
             self.set_merged_excerpt_ranges_for_path(path, buffer, &buffer_snapshot, new, cx);
         // todo!() move this into the callers that care
         let anchors = ranges
             .into_iter()
-            .map(|range| Anchor::range_in_buffer(buffer_snapshot.anchor_range_around(range)))
+            .map(|range| {
+                Anchor::range_in_buffer(path_key_index, buffer_snapshot.anchor_range_around(range))
+            })
             .collect::<Vec<_>>();
         (anchors, inserted)
     }
@@ -137,13 +124,16 @@ impl MultiBuffer {
         cx: &mut Context<Self>,
     ) -> (Vec<Range<Anchor>>, bool) {
         let (new, counts) = Self::merge_excerpt_ranges(&excerpt_ranges);
-        let inserted =
+        let (inserted, path_key_index) =
             self.set_merged_excerpt_ranges_for_path(path, buffer, buffer_snapshot, new, cx);
         // todo!() move this into the callers that care
         let anchors = excerpt_ranges
             .into_iter()
             .map(|range| {
-                Anchor::range_in_buffer(buffer_snapshot.anchor_range_around(range.primary))
+                Anchor::range_in_buffer(
+                    path_key_index,
+                    buffer_snapshot.anchor_range_around(range.primary),
+                )
             })
             .collect::<Vec<_>>();
         (anchors, inserted)
@@ -174,7 +164,7 @@ impl MultiBuffer {
 
             multi_buffer
                 .update(&mut app, move |multi_buffer, cx| {
-                    multi_buffer.set_merged_excerpt_ranges_for_path(
+                    let (_, path_key_index) = multi_buffer.set_merged_excerpt_ranges_for_path(
                         path_key,
                         buffer,
                         &buffer_snapshot,
@@ -183,7 +173,7 @@ impl MultiBuffer {
                     );
                     ranges
                         .into_iter()
-                        .map(|range| Anchor::range_in_buffer(range))
+                        .map(|range| Anchor::range_in_buffer(path_key_index, range))
                         .collect()
                 })
                 .ok()
@@ -199,7 +189,10 @@ impl MultiBuffer {
         cx: &mut Context<Self>,
     ) {
         let snapshot = self.snapshot(cx);
-        let mut sorted_anchors = anchors.into_iter().collect::<Vec<_>>();
+        let mut sorted_anchors = anchors
+            .into_iter()
+            .filter_map(|anchor| anchor.excerpt_anchor())
+            .collect::<Vec<_>>();
         sorted_anchors.sort_by(|a, b| a.cmp(b, &snapshot));
         let mut cursor = snapshot.excerpts.cursor::<ExcerptSummary>(());
         let mut sorted_anchors = sorted_anchors.into_iter().peekable();
@@ -217,9 +210,7 @@ impl MultiBuffer {
                 && snapshot.path_for_anchor(anchor) == path
             {
                 sorted_anchors.next();
-                let Some(target) = snapshot.anchor_seek_target(anchor) else {
-                    continue;
-                };
+                let target = anchor.seek_target(&snapshot);
                 // Move to the next excerpt to be expanded, and push unchanged ranges for intervening excerpts
                 expanded_ranges.extend(
                     cursor
@@ -295,7 +286,7 @@ impl MultiBuffer {
         buffer_snapshot: &BufferSnapshot,
         new: Vec<ExcerptRange<Point>>,
         cx: &mut Context<Self>,
-    ) -> bool {
+    ) -> (bool, PathKeyIndex) {
         let anchor_ranges = new
             .into_iter()
             .map(|r| ExcerptRange {
@@ -306,6 +297,29 @@ impl MultiBuffer {
         self.update_path_excerpts(path, buffer, buffer_snapshot, &anchor_ranges, cx)
     }
 
+    fn get_or_create_path_key_index(&mut self, path_key: &PathKey) -> PathKeyIndex {
+        let mut snapshot = self.snapshot.borrow_mut();
+        let existing = snapshot
+            .path_keys_by_index
+            .iter()
+            // todo!() perf? (but ExcerptIdMapping was doing this)
+            .find(|(_, existing_path)| existing_path == &path_key)
+            .map(|(index, _)| *index);
+
+        if let Some(existing) = existing {
+            return existing;
+        }
+
+        let index = snapshot
+            .path_keys_by_index
+            .last()
+            .map(|(index, _)| PathKeyIndex(index.0 + 1))
+            .unwrap_or(PathKeyIndex(0));
+        snapshot.path_keys_by_index.insert(index, path_key.clone());
+        index
+    }
+
+    // todo!() re-instate nonshrinking version for project diff / diagnostics
     pub fn update_path_excerpts<'a>(
         &mut self,
         path_key: PathKey,
@@ -313,25 +327,27 @@ impl MultiBuffer {
         buffer_snapshot: &BufferSnapshot,
         to_insert: &Vec<ExcerptRange<text::Anchor>>,
         cx: &mut Context<Self>,
-    ) -> bool {
+    ) -> (bool, PathKeyIndex) {
+        let path_key_index = self.get_or_create_path_key_index(&path_key);
+        if let Some(old_path_key) = self
+            .snapshot(cx)
+            .path_for_buffer(buffer_snapshot.remote_id())
+            && old_path_key != &path_key
+        {
+            self.remove_excerpts_for_path(old_path_key.clone(), cx);
+        }
+
         if to_insert.len() == 0 {
             self.remove_excerpts_for_path(path_key.clone(), cx);
-            if let Some(old_path_key) = self
-                .snapshot(cx)
-                .path_for_buffer(buffer_snapshot.remote_id())
-                && old_path_key != &path_key
-            {
-                self.remove_excerpts_for_path(old_path_key.clone(), cx);
-            }
 
-            return false;
+            return (false, path_key_index);
         }
         assert_eq!(self.history.transaction_depth(), 0);
         self.sync_mut(cx);
 
         let buffer_snapshot = buffer.read(cx).snapshot();
         let buffer_id = buffer_snapshot.remote_id();
-        let buffer_state = self.buffers.entry(buffer_id).or_insert_with(|| {
+        self.buffers.entry(buffer_id).or_insert_with(|| {
             self.buffer_changed_since_sync.replace(true);
             buffer.update(cx, |buffer, _| {
                 buffer.record_changes(Rc::downgrade(&self.buffer_changed_since_sync));
@@ -359,39 +375,6 @@ impl MultiBuffer {
         let mut patch = Patch::empty();
         let mut added_new_excerpt = false;
 
-        let path_key_index = snapshot
-            .path_keys_by_index
-            .iter()
-            // todo!() perf? (but ExcerptIdMapping was doing this)
-            .find(|(_, existing_path)| existing_path == &&path_key)
-            .map(|(index, _)| *index);
-        let path_key_index = path_key_index.unwrap_or_else(|| {
-            let index = snapshot
-                .path_keys_by_index
-                .last()
-                .map(|(index, _)| PathKeyIndex(index.0 + 1))
-                .unwrap_or(PathKeyIndex(0));
-            snapshot.path_keys_by_index.insert(index, path_key.clone());
-            index
-        });
-        let old_path_key = snapshot
-            .path_keys_by_buffer
-            .insert_or_replace(buffer_id, path_key.clone());
-        // handle the case where the buffer's path key has changed by
-        // removing any old excerpts for the buffer
-        if let Some(old_path_key) = &old_path_key
-            && old_path_key < &path_key
-        {
-            new_excerpts.append(cursor.slice(old_path_key, Bias::Left), ());
-            let before = cursor.position.1;
-            cursor.seek_forward(old_path_key, Bias::Right);
-            let after = cursor.position.1;
-            patch.push(Edit {
-                old: before..after,
-                new: new_excerpts.summary().len()..new_excerpts.summary().len(),
-            });
-        }
-
         new_excerpts.append(cursor.slice(&path_key, Bias::Left), ());
 
         // handle the case where the path key used to be associated
@@ -417,7 +400,7 @@ impl MultiBuffer {
             let Some(next_excerpt) = to_insert.peek() else {
                 break;
             };
-            if &&excerpt.range == next_excerpt {
+            if &excerpt.range == *next_excerpt {
                 new_excerpts.push(excerpt.clone(), ());
                 to_insert.next();
                 cursor.next();
@@ -447,6 +430,7 @@ impl MultiBuffer {
                 new_excerpts.push(
                     Excerpt::new(
                         path_key.clone(),
+                        path_key_index,
                         buffer_snapshot.clone(),
                         next_excerpt.clone(),
                         to_insert.peek().is_some(),
@@ -470,28 +454,9 @@ impl MultiBuffer {
             new: new_excerpts.summary().len()..new_excerpts.summary().len(),
         });
 
-        // handle the case where the buffer's path key has changed by
-        // removing any old excerpts for the buffer
-        if let Some(old_path_key) = &old_path_key
-            && old_path_key > &path_key
-        {
-            new_excerpts.append(cursor.slice(old_path_key, Bias::Left), ());
-            let before = cursor.position.1;
-            cursor.seek_forward(old_path_key, Bias::Right);
-            let after = cursor.position.1;
-            patch.push(Edit {
-                old: before..after,
-                new: new_excerpts.summary().len()..new_excerpts.summary().len(),
-            });
-        }
-
         let suffix = cursor.suffix();
         let changed_trailing_excerpt = suffix.is_empty();
         new_excerpts.append(suffix, ());
-        let new_ranges = snapshot
-            .excerpt_ranges_for_path(&path_key)
-            .map(|range| range.context)
-            .collect();
         drop(cursor);
         snapshot.excerpts = new_excerpts;
         if changed_trailing_excerpt {
@@ -513,73 +478,62 @@ impl MultiBuffer {
         cx.emit(Event::BufferUpdated {
             buffer,
             path_key: path_key.clone(),
-            ranges: new_ranges,
+            ranges: to_insert.map(|range| range.context.clone()).collect(),
         });
         cx.notify();
 
-        added_new_excerpt
+        (added_new_excerpt, path_key_index)
     }
 
     pub fn remove_excerpts_for_path(&mut self, path: PathKey, cx: &mut Context<Self>) {
-        let mut patch = Patch::empty();
+        assert_eq!(self.history.transaction_depth(), 0);
+        self.sync_mut(cx);
 
         let mut snapshot = self.snapshot.get_mut();
         let mut cursor = snapshot
             .excerpts
             .cursor::<Dimensions<PathKey, ExcerptOffset>>(());
         let mut new_excerpts = SumTree::new(());
-
-        if let Some(old_path_key) = old_path_key
-            && old_path_key < path_key
+        new_excerpts.append(cursor.slice(&path, Bias::Left), ());
+        let edit_start = cursor.position.1;
+        let mut buffer_id = None;
+        if let Some(excerpt) = cursor.item()
+            && excerpt.path_key == path
         {
-            new_excerpts.append(cursor.slice(&old_path_key, Bias::Left), ());
-            let before = cursor.position.1;
-            cursor.seek_forward(&old_path_key, Bias::Right);
-            let after = cursor.position.1;
-            patch.push(Edit {
-                old: before..after,
-                new: new_excerpts.summary().len()..new_excerpts.summary().len(),
-            });
+            buffer_id = Some(excerpt.buffer.remote_id());
         }
-
+        cursor.seek(&path, Bias::Right);
+        let edit_end = cursor.position.1;
         let suffix = cursor.suffix();
         let changed_trailing_excerpt = suffix.is_empty();
         new_excerpts.append(suffix, ());
 
-        for buffer_id in removed_excerpts_for_buffers {
-            match self.buffers.get(&buffer_id) {
-                Some(buffer_state) => {
-                    snapshot
-                        .buffer_locators
-                        .insert(buffer_id, buffer_state.excerpts.iter().cloned().collect());
-                }
-                None => {
-                    snapshot.buffer_locators.remove(&buffer_id);
-                }
-            }
+        let edit = Edit {
+            old: edit_start..edit_end,
+            new: edit_start..edit_start,
+        };
+
+        if let Some(buffer_id) = buffer_id {
+            snapshot.path_keys_by_buffer.remove(&buffer_id);
+            self.buffers.remove(&buffer_id);
+            cx.emit(Event::BuffersRemoved {
+                removed_buffer_ids: vec![buffer_id],
+            })
         }
+        drop(cursor);
         snapshot.excerpts = new_excerpts;
         if changed_trailing_excerpt {
             snapshot.trailing_excerpt_update_count += 1;
         }
 
-        let edits = Self::sync_diff_transforms(
-            &mut snapshot,
-            patch.into_inner(),
-            DiffChangeKind::BufferEdited,
-        );
+        let edits =
+            Self::sync_diff_transforms(&mut snapshot, vec![edit], DiffChangeKind::BufferEdited);
         if !edits.is_empty() {
             self.subscriptions.publish(edits);
         }
 
         cx.emit(Event::Edited {
             edited_buffer: None,
-        });
-        // todo!() is this right? different event?
-        cx.emit(Event::BufferUpdated {
-            buffer,
-            path_key: path.clone(),
-            ranges: Vec::new(),
         });
         cx.notify();
     }

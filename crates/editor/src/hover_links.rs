@@ -365,7 +365,7 @@ pub fn show_link_definition(
                         this.read_with(cx, |_, _| {
                             let range = maybe!({
                                 let range =
-                                    snapshot.anchor_range_in_excerpt(excerpt_id, url_range)?;
+                                    snapshot.anchor_range_in_buffer(excerpt_id, url_range)?;
                                 Some(RangeInEditor::Text(range))
                             });
                             (range, vec![HoverLink::Url(url)])
@@ -376,7 +376,7 @@ pub fn show_link_definition(
                     {
                         let range = maybe!({
                             let range =
-                                snapshot.anchor_range_in_excerpt(excerpt_id, filename_range)?;
+                                snapshot.anchor_range_in_buffer(excerpt_id, filename_range)?;
                             Some(RangeInEditor::Text(range))
                         });
 
@@ -390,7 +390,7 @@ pub fn show_link_definition(
                                 (
                                     definition_result.iter().find_map(|link| {
                                         link.origin.as_ref().and_then(|origin| {
-                                            let range = snapshot.anchor_range_in_excerpt(
+                                            let range = snapshot.anchor_range_in_buffer(
                                                 excerpt_id,
                                                 origin.range.clone(),
                                             )?;

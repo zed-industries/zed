@@ -3332,7 +3332,7 @@ impl OutlinePanel {
             .flat_map(|excerpt| excerpt.iter_outlines())
             .flat_map(|outline| {
                 let range = multi_buffer_snapshot
-                    .anchor_range_in_excerpt(excerpt_id, outline.range.clone())?;
+                    .anchor_range_in_buffer(excerpt_id, outline.range.clone())?;
                 Some((
                     range.start.to_display_point(&editor_snapshot)
                         ..range.end.to_display_point(&editor_snapshot),

@@ -8620,7 +8620,7 @@ impl Editor {
             .into_iter()
             .flat_map(|(range, new_text)| {
                 Some((
-                    multibuffer.anchor_range_in_excerpt(excerpt_id, range)?,
+                    multibuffer.anchor_range_in_buffer(excerpt_id, range)?,
                     new_text,
                 ))
             })
@@ -24114,14 +24114,14 @@ impl Editor {
                     excerpts: excerpts.clone(),
                 });
             }
-            multi_buffer::Event::BuffersRemoved {
-                ids,
-                removed_buffer_ids,
-            } => {
+            multi_buffer::Event::BuffersRemoved { removed_buffer_ids } => {
                 if let Some(inlay_hints) = &mut self.inlay_hints {
                     inlay_hints.remove_inlay_chunk_data(removed_buffer_ids);
                 }
-                self.refresh_inlay_hints(InlayHintRefreshReason::ExcerptsRemoved(ids.clone()), cx);
+                self.refresh_inlay_hints(
+                    InlayHintRefreshReason::ExcerptsRemoved(removed_buffer_ids.clone()),
+                    cx,
+                );
                 for buffer_id in removed_buffer_ids {
                     self.registered_buffers.remove(buffer_id);
                     self.tasks
@@ -24687,7 +24687,7 @@ impl Editor {
                                         let range = buffer_snapshot.anchor_before(range.start)
                                             ..buffer_snapshot.anchor_after(range.end);
                                         multibuffer_snapshot
-                                            .anchor_range_in_excerpt(excerpt_id, range)
+                                            .anchor_range_in_buffer(excerpt_id, range)
                                             .unwrap()
                                     }));
                                 },

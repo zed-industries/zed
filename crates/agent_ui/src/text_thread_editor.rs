@@ -740,7 +740,7 @@ impl TextThreadEditor {
                             };
 
                             let range = buffer
-                                .anchor_range_in_excerpt(excerpt_id, command.source_range.clone())
+                                .anchor_range_in_buffer(excerpt_id, command.source_range.clone())
                                 .unwrap();
                             Crease::inline(range, placeholder, render_toggle, render_trailer)
                         }),
@@ -813,7 +813,7 @@ impl TextThreadEditor {
                     let (excerpt_id, _buffer_id, _buffer_snapshot) = buffer.as_singleton().unwrap();
 
                     let range = buffer
-                        .anchor_range_in_excerpt(excerpt_id, invoked_slash_command.range.clone())
+                        .anchor_range_in_buffer(excerpt_id, invoked_slash_command.range.clone())
                         .unwrap();
                     editor.remove_folds_with_type(
                         &[range],
@@ -833,7 +833,7 @@ impl TextThreadEditor {
                     let (excerpt_id, _buffer_id, _buffer_snapshot) = buffer.as_singleton().unwrap();
                     let context = self.text_thread.downgrade();
                     let range = buffer
-                        .anchor_range_in_excerpt(excerpt_id, invoked_slash_command.range.clone())
+                        .anchor_range_in_buffer(excerpt_id, invoked_slash_command.range.clone())
                         .unwrap();
                     let crease = Crease::inline(
                         range,
@@ -875,7 +875,7 @@ impl TextThreadEditor {
             let mut creases = Vec::new();
             for (section, status) in sections {
                 let range = buffer
-                    .anchor_range_in_excerpt(excerpt_id, section.range)
+                    .anchor_range_in_buffer(excerpt_id, section.range)
                     .unwrap();
                 let buffer_row = MultiBufferRow(range.start.to_point(&buffer).row);
                 buffer_rows_to_fold.insert(buffer_row);
@@ -924,7 +924,7 @@ impl TextThreadEditor {
             let mut creases = Vec::new();
             for section in sections {
                 let range = buffer
-                    .anchor_range_in_excerpt(excerpt_id, section.range)
+                    .anchor_range_in_buffer(excerpt_id, section.range)
                     .unwrap();
                 let buffer_row = MultiBufferRow(range.start.to_point(&buffer).row);
                 buffer_rows_to_fold.insert(buffer_row);

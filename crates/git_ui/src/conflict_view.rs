@@ -237,7 +237,7 @@ fn conflicts_updated(
                 continue;
             };
             let excerpt_id = *excerpt_id;
-            let Some(range) = snapshot.anchor_range_in_excerpt(excerpt_id, conflict_range) else {
+            let Some(range) = snapshot.anchor_range_in_buffer(excerpt_id, conflict_range) else {
                 continue;
             };
             removed_highlighted_ranges.push(range.clone());
@@ -324,9 +324,9 @@ fn update_conflict_highlighting(
 ) -> Option<()> {
     log::debug!("update conflict highlighting for {conflict:?}");
 
-    let outer = buffer.anchor_range_in_excerpt(excerpt_id, conflict.range.clone())?;
-    let ours = buffer.anchor_range_in_excerpt(excerpt_id, conflict.ours.clone())?;
-    let theirs = buffer.anchor_range_in_excerpt(excerpt_id, conflict.theirs.clone())?;
+    let outer = buffer.anchor_range_in_buffer(excerpt_id, conflict.range.clone())?;
+    let ours = buffer.anchor_range_in_buffer(excerpt_id, conflict.ours.clone())?;
+    let theirs = buffer.anchor_range_in_buffer(excerpt_id, conflict.theirs.clone())?;
 
     let ours_background = cx.theme().colors().version_control_conflict_marker_ours;
     let theirs_background = cx.theme().colors().version_control_conflict_marker_theirs;
@@ -470,8 +470,7 @@ pub(crate) fn resolve_conflict(
                     })
                     .ok()?;
                 let &(_, block_id) = &state.block_ids[ix];
-                let range =
-                    snapshot.anchor_range_in_excerpt(excerpt_id, resolved_conflict.range)?;
+                let range = snapshot.anchor_range_in_buffer(excerpt_id, resolved_conflict.range)?;
 
                 editor.remove_gutter_highlights::<ConflictsOuter>(vec![range.clone()], cx);
 

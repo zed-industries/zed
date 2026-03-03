@@ -254,7 +254,7 @@ impl Editor {
                                         buffer_snapshot.clip_point_utf16(color_end, Bias::Right),
                                     );
                                     let Some(range) = multi_buffer_snapshot
-                                        .anchor_range_in_excerpt(*excerpt_id, start..end)
+                                        .anchor_range_in_buffer(*excerpt_id, start..end)
                                     else {
                                         continue;
                                     };

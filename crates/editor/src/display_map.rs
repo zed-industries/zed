@@ -1054,9 +1054,9 @@ impl DisplayMap {
 
         let base_placeholder = self.fold_placeholder.clone();
         let creases = ranges.into_iter().filter_map(|folding_range| {
-            let mb_range = excerpt_ids.iter().find_map(|&id| {
-                snapshot.anchor_range_in_excerpt(id, folding_range.range.clone())
-            })?;
+            let mb_range = excerpt_ids
+                .iter()
+                .find_map(|&id| snapshot.anchor_range_in_buffer(id, folding_range.range.clone()))?;
             let placeholder = if let Some(collapsed_text) = folding_range.collapsed_text {
                 FoldPlaceholder {
                     render: Arc::new({
@@ -1989,7 +1989,7 @@ impl DisplaySnapshot {
                 let start_anchor = buffer.anchor_before(buffer_range.start);
                 let end_anchor = buffer.anchor_after(buffer_range.end);
                 let mb_range =
-                    multibuffer.anchor_range_in_excerpt(excerpt_id, start_anchor..end_anchor)?;
+                    multibuffer.anchor_range_in_buffer(excerpt_id, start_anchor..end_anchor)?;
                 Some(mb_range.start.to_offset(multibuffer)..mb_range.end.to_offset(multibuffer))
             });
 
