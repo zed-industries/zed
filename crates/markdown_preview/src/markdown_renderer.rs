@@ -891,6 +891,24 @@ fn render_markdown_text(parsed_new: &MarkdownParagraph, cx: &mut RenderContext) 
     for parsed_region in parsed_new {
         match parsed_region {
             MarkdownParagraphChunk::Text(parsed) => {
+                let trimmed = parsed.contents.trim();
+                if trimmed == "[x]" || trimmed == "[X]" || trimmed == "[ ]" {
+                    let checked = trimmed != "[ ]";
+                    let element = div()
+                        .child(MarkdownCheckbox::new(
+                            cx.next_id(&parsed.source_range),
+                            if checked {
+                                ToggleState::Selected
+                            } else {
+                                ToggleState::Unselected
+                            },
+                            cx.clone(),
+                        ))
+                        .into_any();
+                    any_element.push(element);
+                    continue;
+                }
+
                 let element_id = cx.next_id(&parsed.source_range);
 
                 let highlights = gpui::combine_highlights(
