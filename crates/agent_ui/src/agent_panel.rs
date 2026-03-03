@@ -3837,7 +3837,6 @@ mod tests {
         open_thread_with_connection(&panel, connection_a, &mut cx);
         send_message(&panel, &mut cx);
 
-        let session_id_a = active_session_id(&panel, &cx);
         let weak_view_a = panel.read_with(&cx, |panel, _cx| {
             panel.active_thread_view().unwrap().downgrade()
         });
