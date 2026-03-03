@@ -1115,11 +1115,8 @@ fn build_settled_example(
     requested_format: ZetaFormat,
     zed_version: Option<String>,
 ) -> Example {
-    let requested_editable_range = input
-        .excerpt_ranges
-        .as_ref()
-        .map(|ranges| excerpt_range_for_format(requested_format, ranges).0)
-        .unwrap_or_else(|| input.editable_range_in_excerpt.clone());
+    let requested_editable_range =
+        excerpt_range_for_format(requested_format, &input.excerpt_ranges).0;
 
     let base_cursor_excerpt = input.cursor_excerpt.to_string();
 
@@ -1268,7 +1265,7 @@ fn build_rejected_example(
     let rejected_patch = build_output_patch(
         &input.cursor_path,
         input.cursor_excerpt.as_ref(),
-        &input.editable_range_in_excerpt,
+        &input.excerpt_ranges.editable_350,
         &output,
     );
     let mut example = build_example_from_snowflake(
