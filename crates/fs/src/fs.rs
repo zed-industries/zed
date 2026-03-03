@@ -2562,7 +2562,6 @@ impl Fs for FakeFs {
 
                 let mut state = self.state.lock();
                 state.trash.push((trashed_entry.clone(), fake_entry));
-                state.emit_event([(path, Some(PathEventKind::Removed))]);
                 Ok(trashed_entry)
             }
             None => anyhow::bail!("{normalized_path:?} does not exist"),
@@ -2588,7 +2587,6 @@ impl Fs for FakeFs {
 
                 let mut state = self.state.lock();
                 state.trash.push((trashed_entry.clone(), fake_entry));
-                state.emit_event([(path, Some(PathEventKind::Removed))]);
                 Ok(trashed_entry)
             }
             None => anyhow::bail!("{normalized_path:?} does not exist"),
