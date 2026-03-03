@@ -3944,6 +3944,11 @@ impl Pane {
         {
             return;
         }
+        if self.active_item().is_some_and(|active_item| {
+            active_item.handle_external_paths_drop(paths.paths(), window, cx)
+        }) {
+            return;
+        }
         let mut to_pane = cx.entity();
         let mut split_direction = self.drag_split_direction;
         let paths = paths.paths().to_vec();
@@ -4833,11 +4838,98 @@ mod tests {
         Member,
         item::test::{TestItem, TestProjectItem},
     };
-    use gpui::{AppContext, Axis, TestAppContext, VisualTestContext, size};
+    use gpui::{
+        AppContext, Axis, FocusHandle, SharedString, TestAppContext, VisualTestContext, size,
+    };
     use project::FakeFs;
+    use serde_json::json;
     use settings::SettingsStore;
     use theme::LoadThemes;
-    use util::TryFutureExt;
+    use util::{TryFutureExt, path};
+
+    struct ExternalPathsDropTestItem {
+        consume_external_paths_drop: bool,
+        dropped_paths: Vec<PathBuf>,
+        focus_handle: FocusHandle,
+    }
+
+    impl ExternalPathsDropTestItem {
+        fn new(consume_external_paths_drop: bool, cx: &mut Context<Self>) -> Self {
+            Self {
+                consume_external_paths_drop,
+                dropped_paths: Vec::new(),
+                focus_handle: cx.focus_handle(),
+            }
+        }
+    }
+
+    impl Render for ExternalPathsDropTestItem {
+        fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            div().track_focus(&self.focus_handle(cx))
+        }
+    }
+
+    impl EventEmitter<ItemEvent> for ExternalPathsDropTestItem {}
+
+    impl Focusable for ExternalPathsDropTestItem {
+        fn focus_handle(&self, _cx: &App) -> FocusHandle {
+            self.focus_handle.clone()
+        }
+    }
+
+    impl Item for ExternalPathsDropTestItem {
+        type Event = ItemEvent;
+
+        fn tab_content_text(&self, _detail: usize, _cx: &App) -> SharedString {
+            "drop-target".into()
+        }
+
+        fn to_item_events(event: &Self::Event, f: &mut dyn FnMut(ItemEvent)) {
+            f(*event)
+        }
+
+        fn handle_external_paths_drop(
+            &mut self,
+            paths: &[PathBuf],
+            _window: &mut Window,
+            _cx: &mut Context<Self>,
+        ) -> bool {
+            self.dropped_paths = paths.to_vec();
+            self.consume_external_paths_drop
+        }
+    }
+
+    #[gpui::test]
+    async fn test_external_paths_drop_can_be_handled_by_active_item(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/root"), json!({ "drop-target.txt": "contents" }))
+            .await;
+
+        let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+        let item = pane.update_in(cx, |pane, window, cx| {
+            let item = cx.new(|cx| ExternalPathsDropTestItem::new(true, cx));
+            pane.add_item(Box::new(item.clone()), false, false, None, window, cx);
+            item
+        });
+
+        let dropped_path = path!("/root/drop-target.txt").to_path_buf();
+        let external_paths = ExternalPaths(vec![dropped_path.clone()].into());
+        pane.update_in(cx, |pane, window, cx| {
+            pane.handle_external_paths_drop(&external_paths, window, cx);
+        });
+        cx.run_until_parked();
+
+        item.read_with(cx, |item, _| {
+            assert_eq!(item.dropped_paths, vec![dropped_path.clone()]);
+        });
+        pane.read_with(cx, |pane, _| {
+            assert_eq!(pane.items_len(), 1);
+        });
+    }
 
     #[gpui::test]
     async fn test_add_item_capped_to_max_tabs(cx: &mut TestAppContext) {

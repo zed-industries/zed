@@ -26,7 +26,7 @@ use std::{
     any::{Any, TypeId},
     cell::RefCell,
     ops::Range,
-    path::Path,
+    path::{Path, PathBuf},
     rc::Rc,
     sync::Arc,
     time::Duration,
@@ -225,6 +225,14 @@ pub trait Item: Focusable + EventEmitter<Self::Event> + Render + Sized {
         _: Arc<dyn Any + Send>,
         _window: &mut Window,
         _: &mut Context<Self>,
+    ) -> bool {
+        false
+    }
+    fn handle_external_paths_drop(
+        &mut self,
+        _paths: &[PathBuf],
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
     ) -> bool {
         false
     }
@@ -472,6 +480,12 @@ pub trait ItemHandle: 'static + Send {
     fn project_entry_ids(&self, cx: &App) -> SmallVec<[ProjectEntryId; 3]>;
     fn project_paths(&self, cx: &App) -> SmallVec<[ProjectPath; 3]>;
     fn project_item_model_ids(&self, cx: &App) -> SmallVec<[EntityId; 3]>;
+    fn handle_external_paths_drop(
+        &self,
+        paths: &[PathBuf],
+        window: &mut Window,
+        cx: &mut App,
+    ) -> bool;
     fn for_each_project_item(
         &self,
         _: &App,
@@ -683,6 +697,17 @@ impl<T: Item> ItemHandle for Entity<T> {
             result.push(id);
         });
         result
+    }
+
+    fn handle_external_paths_drop(
+        &self,
+        paths: &[PathBuf],
+        window: &mut Window,
+        cx: &mut App,
+    ) -> bool {
+        self.update(cx, |item, cx| {
+            item.handle_external_paths_drop(paths, window, cx)
+        })
     }
 
     fn for_each_project_item(

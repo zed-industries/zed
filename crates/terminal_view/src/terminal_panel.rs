@@ -1382,18 +1382,8 @@ fn add_paths_to_terminal(
     window: &mut Window,
     cx: &mut Context<Pane>,
 ) {
-    if let Some(terminal_view) = pane
-        .active_item()
-        .and_then(|item| item.downcast::<TerminalView>())
-    {
-        window.focus(&terminal_view.focus_handle(cx), cx);
-        let mut new_text = paths.iter().map(|path| format!(" {path:?}")).join("");
-        new_text.push(' ');
-        terminal_view.update(cx, |terminal_view, cx| {
-            terminal_view.terminal().update(cx, |terminal, _| {
-                terminal.paste(&new_text);
-            });
-        });
+    if let Some(active_item) = pane.active_item() {
+        active_item.handle_external_paths_drop(paths, window, cx);
     }
 }
 

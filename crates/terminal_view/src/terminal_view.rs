@@ -1425,6 +1425,33 @@ impl Item for TerminalView {
         }
     }
 
+    fn handle_external_paths_drop(
+        &mut self,
+        paths: &[PathBuf],
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(project) = self.project.upgrade() else {
+            return false;
+        };
+        if !project.read(cx).is_local() {
+            return false;
+        }
+
+        window.focus(&self.focus_handle(cx), cx);
+        let mut pasted_text = String::new();
+        for path in paths {
+            pasted_text.push(' ');
+            pasted_text.push_str(&format!("{path:?}"));
+        }
+        pasted_text.push(' ');
+
+        self.terminal.update(cx, |terminal, _cx| {
+            terminal.paste(&pasted_text);
+        });
+        true
+    }
+
     fn buffer_kind(&self, _: &App) -> workspace::item::ItemBufferKind {
         workspace::item::ItemBufferKind::Singleton
     }
