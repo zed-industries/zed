@@ -734,12 +734,27 @@ impl Database {
                         .await?;
                     let mut removed_statuses = Vec::new();
                     let mut updated_statuses = Vec::new();
+                    let mut updated_diff_stats = Vec::new();
+                    let mut removed_diff_stats = Vec::new();
 
                     while let Some(db_status) = db_statuses.next().await {
                         let db_status: project_repository_statuses::Model = db_status?;
                         if db_status.is_deleted {
-                            removed_statuses.push(db_status.repo_path);
+                            removed_statuses.push(db_status.repo_path.clone());
+                            if db_status.lines_added.is_some() || db_status.lines_deleted.is_some()
+                            {
+                                removed_diff_stats.push(db_status.repo_path);
+                            }
                         } else {
+                            if let (Some(added), Some(deleted)) =
+                                (db_status.lines_added, db_status.lines_deleted)
+                            {
+                                updated_diff_stats.push(proto::GitDiffStatEntry {
+                                    path: db_status.repo_path.clone(),
+                                    added: added as u32,
+                                    deleted: deleted as u32,
+                                });
+                            }
                             updated_statuses.push(db_status_to_proto(db_status)?);
                         }
                     }
@@ -798,9 +813,8 @@ impl Database {
                             stash_entries: Vec::new(),
                             remote_upstream_url: db_repository.remote_upstream_url.clone(),
                             remote_origin_url: db_repository.remote_origin_url.clone(),
-                            // todo! integrate diff stats into database
-                            updated_diff_stats: Vec::new(),
-                            removed_diff_stats: Vec::new(),
+                            updated_diff_stats,
+                            removed_diff_stats,
                         });
                     }
                 }

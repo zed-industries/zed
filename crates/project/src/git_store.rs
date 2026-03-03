@@ -6827,7 +6827,6 @@ async fn compute_snapshot(
     prev_snapshot: RepositorySnapshot,
     backend: Arc<dyn GitRepository>,
 ) -> Result<(RepositorySnapshot, Vec<RepositoryEvent>)> {
-    let first_now = std::time::Instant::now();
     let mut events = Vec::new();
     let branches = backend.branches().await?;
     let branch = branches.into_iter().find(|branch| branch.is_head);
@@ -6899,8 +6898,6 @@ async fn compute_snapshot(
         remote_upstream_url,
         stash_entries,
     };
-
-    dbg!("Time generate snapshot: {}", first_now.elapsed());
 
     Ok((snapshot, events))
 }
