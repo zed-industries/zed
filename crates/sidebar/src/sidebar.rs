@@ -2,7 +2,7 @@ use acp_thread::ThreadStatus;
 use agent::ThreadStore;
 use agent_client_protocol as acp;
 use agent_ui::{AgentPanel, AgentPanelEvent};
-use chrono::{DateTime, Utc};
+use chrono::Utc;
 use gpui::{
     AnyElement, App, Context, Entity, EventEmitter, FocusHandle, Focusable, ListState, Pixels,
     Render, SharedString, Subscription, Window, actions, list, prelude::*, px,
@@ -44,6 +44,18 @@ struct ActiveThreadInfo {
     is_background: bool,
 }
 
+impl From<&ActiveThreadInfo> for acp_thread::AgentSessionInfo {
+    fn from(info: &ActiveThreadInfo) -> Self {
+        Self {
+            session_id: info.session_id.clone(),
+            cwd: None,
+            title: Some(info.title.clone()),
+            updated_at: Some(Utc::now()),
+            meta: None,
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 #[allow(dead_code)]
 enum ListEntry {
@@ -52,11 +64,9 @@ enum ListEntry {
         label: SharedString,
     },
     Thread {
-        session_id: acp::SessionId,
-        title: SharedString,
+        session_info: acp_thread::AgentSessionInfo,
         icon: IconName,
         status: AgentThreadStatus,
-        updated_at: DateTime<Utc>,
         diff_stats: Option<(usize, usize)>,
         workspace_index: Option<usize>,
         is_background: bool,
@@ -67,18 +77,10 @@ enum ListEntry {
     },
 }
 
+#[derive(Default)]
 struct SidebarContents {
     entries: Vec<ListEntry>,
     notified_threads: HashSet<acp::SessionId>,
-}
-
-impl Default for SidebarContents {
-    fn default() -> Self {
-        Self {
-            entries: Vec::new(),
-            notified_threads: HashSet::new(),
-        }
-    }
 }
 
 impl SidebarContents {
@@ -298,10 +300,10 @@ impl Sidebar {
             .filter_map(|entry| match entry {
                 ListEntry::Thread {
                     workspace_index: Some(_),
-                    session_id,
+                    session_info,
                     status,
                     ..
-                } => Some((session_id.clone(), *status)),
+                } => Some((session_info.session_id.clone(), *status)),
                 _ => None,
             })
             .collect();
@@ -326,11 +328,9 @@ impl Sidebar {
             if let Some(ref thread_store) = thread_store {
                 for meta in thread_store.read(cx).threads_for_paths(&path_list) {
                     threads.push(ListEntry::Thread {
-                        session_id: meta.id.clone(),
-                        title: meta.title.clone(),
+                        session_info: meta.into(),
                         icon: IconName::ZedAgent,
                         status: AgentThreadStatus::default(),
-                        updated_at: meta.updated_at,
                         diff_stats: None,
                         workspace_index: None,
                         is_background: false,
@@ -342,32 +342,30 @@ impl Sidebar {
 
             for info in &live_infos {
                 let existing = threads.iter_mut().find(|t| {
-                    matches!(t, ListEntry::Thread { session_id, .. } if session_id == &info.session_id)
+                    matches!(t, ListEntry::Thread { session_info, .. } if session_info.session_id == info.session_id)
                 });
 
                 if let Some(existing) = existing {
                     if let ListEntry::Thread {
+                        session_info,
                         status,
                         icon,
                         workspace_index,
-                        title,
                         is_background,
                         ..
                     } = existing
                     {
+                        session_info.title = Some(info.title.clone());
                         *status = info.status;
                         *icon = info.icon;
                         *workspace_index = Some(index);
-                        *title = info.title.clone();
                         *is_background = info.is_background;
                     }
                 } else {
                     threads.push(ListEntry::Thread {
-                        session_id: info.session_id.clone(),
-                        title: info.title.clone(),
+                        session_info: info.into(),
                         icon: info.icon,
                         status: info.status,
-                        updated_at: Utc::now(),
                         diff_stats: None,
                         workspace_index: Some(index),
                         is_background: info.is_background,
@@ -379,12 +377,13 @@ impl Sidebar {
             for thread in &threads {
                 if let ListEntry::Thread {
                     workspace_index: Some(workspace_idx),
-                    session_id,
+                    session_info,
                     status,
                     is_background,
                     ..
                 } = thread
                 {
+                    let session_id = &session_info.session_id;
                     if *is_background && *status == AgentThreadStatus::Completed {
                         notified_threads.insert(session_id.clone());
                     } else if *status == AgentThreadStatus::Completed
@@ -402,14 +401,14 @@ impl Sidebar {
 
             threads.sort_by(|a, b| {
                 let a_time = match a {
-                    ListEntry::Thread { updated_at, .. } => updated_at,
+                    ListEntry::Thread { session_info, .. } => session_info.updated_at,
                     _ => unreachable!(),
                 };
                 let b_time = match b {
-                    ListEntry::Thread { updated_at, .. } => updated_at,
+                    ListEntry::Thread { session_info, .. } => session_info.updated_at,
                     _ => unreachable!(),
                 };
-                b_time.cmp(a_time)
+                b_time.cmp(&a_time)
             });
 
             let total = threads.len();
@@ -436,7 +435,7 @@ impl Sidebar {
         let current_session_ids: HashSet<&acp::SessionId> = entries
             .iter()
             .filter_map(|e| match e {
-                ListEntry::Thread { session_id, .. } => Some(session_id),
+                ListEntry::Thread { session_info, .. } => Some(&session_info.session_id),
                 _ => None,
             })
             .collect();
@@ -495,16 +494,14 @@ impl Sidebar {
                 self.render_project_header(ix, path_list, label, is_selected, cx)
             }
             ListEntry::Thread {
-                session_id,
-                title,
+                session_info,
                 icon,
                 status,
                 workspace_index,
                 ..
             } => self.render_thread(
                 ix,
-                session_id,
-                title,
+                session_info,
                 *icon,
                 *status,
                 *workspace_index,
@@ -639,13 +636,13 @@ impl Sidebar {
                 self.toggle_collapse(&path_list, window, cx);
             }
             ListEntry::Thread {
-                session_id,
+                session_info,
                 workspace_index,
                 ..
             } => {
-                let session_id = session_id.clone();
+                let session_info = session_info.clone();
                 let workspace_index = *workspace_index;
-                self.activate_thread(&session_id, workspace_index, window, cx);
+                self.activate_thread(session_info, workspace_index, window, cx);
             }
             ListEntry::ViewMore { path_list, .. } => {
                 let path_list = path_list.clone();
@@ -657,7 +654,7 @@ impl Sidebar {
 
     fn activate_thread(
         &mut self,
-        session_id: &acp::SessionId,
+        session_info: acp_thread::AgentSessionInfo,
         workspace_index: Option<usize>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -666,7 +663,6 @@ impl Sidebar {
             return;
         };
         let multi_workspace = self.multi_workspace.clone();
-        let session_id = session_id.clone();
 
         multi_workspace.update(cx, |multi_workspace, cx| {
             multi_workspace.activate_index(target_index, window, cx);
@@ -675,17 +671,7 @@ impl Sidebar {
         if let Some(workspace) = workspaces.get(target_index) {
             if let Some(agent_panel) = workspace.read(cx).panel::<AgentPanel>(cx) {
                 agent_panel.update(cx, |panel, cx| {
-                    panel.load_agent_thread(
-                        acp_thread::AgentSessionInfo {
-                            session_id,
-                            cwd: None,
-                            title: None,
-                            updated_at: None,
-                            meta: None,
-                        },
-                        window,
-                        cx,
-                    );
+                    panel.load_agent_thread(session_info, window, cx);
                 });
             }
         }
@@ -751,8 +737,7 @@ impl Sidebar {
     fn render_thread(
         &self,
         ix: usize,
-        session_id: &acp::SessionId,
-        title: &SharedString,
+        session_info: &acp_thread::AgentSessionInfo,
         icon: IconName,
         status: AgentThreadStatus,
         workspace_index: Option<usize>,
@@ -764,11 +749,15 @@ impl Sidebar {
             AgentThreadStatus::Running | AgentThreadStatus::WaitingForConfirmation
         );
 
-        let has_notification = self.contents.is_thread_notified(session_id);
+        let has_notification = self.contents.is_thread_notified(&session_info.session_id);
 
         let is_active = workspace_index.is_some();
 
-        let session_id = session_id.clone();
+        let title: SharedString = session_info
+            .title
+            .clone()
+            .unwrap_or_else(|| "Untitled".into());
+        let session_info = session_info.clone();
 
         h_flex()
             .id(SharedString::from(format!("thread-entry-{}", ix)))
@@ -790,7 +779,7 @@ impl Sidebar {
             }))
             .child(
                 div().flex_1().overflow_hidden().child(
-                    Label::new(title.clone())
+                    Label::new(title)
                         .size(LabelSize::Small)
                         .single_line()
                         .color(if is_active {
@@ -811,7 +800,7 @@ impl Sidebar {
                 this.child(div().size_2().rounded_full().bg(cx.theme().status().info))
             })
             .on_click(cx.listener(move |this, _, window, cx| {
-                this.activate_thread(&session_id, workspace_index, window, cx);
+                this.activate_thread(session_info.clone(), workspace_index, window, cx);
             }))
             .into_any_element()
     }
@@ -988,6 +977,7 @@ mod tests {
     use agent::ThreadStore;
     use agent_ui::test_support::{active_session_id, open_thread_with_connection, send_message};
     use assistant_text_thread::TextThreadStore;
+    use chrono::DateTime;
     use feature_flags::FeatureFlagAppExt as _;
     use fs::FakeFs;
     use gpui::TestAppContext;
@@ -1080,12 +1070,16 @@ mod tests {
                             format!("{} [{}]{}", icon, label, selected)
                         }
                         ListEntry::Thread {
-                            title,
+                            session_info,
                             status,
-                            session_id,
                             workspace_index,
                             ..
                         } => {
+                            let title = session_info
+                                .title
+                                .as_ref()
+                                .map(|s| s.as_ref())
+                                .unwrap_or("Untitled");
                             let active = if workspace_index.is_some() { " *" } else { "" };
                             let status_str = match status {
                                 AgentThreadStatus::Running => " (running)",
@@ -1093,7 +1087,10 @@ mod tests {
                                 AgentThreadStatus::WaitingForConfirmation => " (waiting)",
                                 _ => "",
                             };
-                            let notified = if sidebar.contents.is_thread_notified(session_id) {
+                            let notified = if sidebar
+                                .contents
+                                .is_thread_notified(&session_info.session_id)
+                            {
                                 " (!)"
                             } else {
                                 ""
@@ -1354,55 +1351,75 @@ mod tests {
                 },
                 // Thread with default (Completed) status, not active
                 ListEntry::Thread {
-                    session_id: acp::SessionId::new(Arc::from("t-1")),
-                    title: "Completed thread".into(),
+                    session_info: acp_thread::AgentSessionInfo {
+                        session_id: acp::SessionId::new(Arc::from("t-1")),
+                        cwd: None,
+                        title: Some("Completed thread".into()),
+                        updated_at: Some(Utc::now()),
+                        meta: None,
+                    },
                     icon: IconName::ZedAgent,
                     status: AgentThreadStatus::Completed,
-                    updated_at: Utc::now(),
                     diff_stats: None,
                     workspace_index: None,
                     is_background: false,
                 },
                 // Active thread with Running status
                 ListEntry::Thread {
-                    session_id: acp::SessionId::new(Arc::from("t-2")),
-                    title: "Running thread".into(),
+                    session_info: acp_thread::AgentSessionInfo {
+                        session_id: acp::SessionId::new(Arc::from("t-2")),
+                        cwd: None,
+                        title: Some("Running thread".into()),
+                        updated_at: Some(Utc::now()),
+                        meta: None,
+                    },
                     icon: IconName::ZedAgent,
                     status: AgentThreadStatus::Running,
-                    updated_at: Utc::now(),
                     diff_stats: None,
                     workspace_index: Some(0),
                     is_background: false,
                 },
                 // Active thread with Error status
                 ListEntry::Thread {
-                    session_id: acp::SessionId::new(Arc::from("t-3")),
-                    title: "Error thread".into(),
+                    session_info: acp_thread::AgentSessionInfo {
+                        session_id: acp::SessionId::new(Arc::from("t-3")),
+                        cwd: None,
+                        title: Some("Error thread".into()),
+                        updated_at: Some(Utc::now()),
+                        meta: None,
+                    },
                     icon: IconName::ZedAgent,
                     status: AgentThreadStatus::Error,
-                    updated_at: Utc::now(),
                     diff_stats: None,
                     workspace_index: Some(1),
                     is_background: false,
                 },
                 // Thread with WaitingForConfirmation status, not active
                 ListEntry::Thread {
-                    session_id: acp::SessionId::new(Arc::from("t-4")),
-                    title: "Waiting thread".into(),
+                    session_info: acp_thread::AgentSessionInfo {
+                        session_id: acp::SessionId::new(Arc::from("t-4")),
+                        cwd: None,
+                        title: Some("Waiting thread".into()),
+                        updated_at: Some(Utc::now()),
+                        meta: None,
+                    },
                     icon: IconName::ZedAgent,
                     status: AgentThreadStatus::WaitingForConfirmation,
-                    updated_at: Utc::now(),
                     diff_stats: None,
                     workspace_index: None,
                     is_background: false,
                 },
                 // Background thread that completed (should show notification)
                 ListEntry::Thread {
-                    session_id: acp::SessionId::new(Arc::from("t-5")),
-                    title: "Notified thread".into(),
+                    session_info: acp_thread::AgentSessionInfo {
+                        session_id: acp::SessionId::new(Arc::from("t-5")),
+                        cwd: None,
+                        title: Some("Notified thread".into()),
+                        updated_at: Some(Utc::now()),
+                        meta: None,
+                    },
                     icon: IconName::ZedAgent,
                     status: AgentThreadStatus::Completed,
-                    updated_at: Utc::now(),
                     diff_stats: None,
                     workspace_index: Some(1),
                     is_background: true,

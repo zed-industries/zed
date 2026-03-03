@@ -1,0 +1,6 @@
+- [x] Review the agent generated code
+  - Hot spots for bugs: update_entries, and data source subscriptions
+- [x] Figure out parallel agents
+- [ ] to change: active_thread_info_for_workspace(
+- [ ] Figure out synchronized spinners approach
+- [ ] Move the subscriptions out to per-resource watchers, use detach for automatic management

@@ -37,6 +37,18 @@ pub struct DbThreadMetadata {
     pub folder_paths: PathList,
 }
 
+impl From<&DbThreadMetadata> for acp_thread::AgentSessionInfo {
+    fn from(meta: &DbThreadMetadata) -> Self {
+        Self {
+            session_id: meta.id.clone(),
+            cwd: None,
+            title: Some(meta.title.clone()),
+            updated_at: Some(meta.updated_at),
+            meta: None,
+        }
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct DbThread {
     pub title: SharedString,
