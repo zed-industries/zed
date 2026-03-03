@@ -309,7 +309,7 @@ fn assign_edit_prediction_provider(
 
             if let Some(project) = editor.project() {
                 ep_store.update(cx, |ep_store, cx| {
-                    ep_store.set_edit_prediction_model(model, cx);
+                    ep_store.set_edit_prediction_model(model);
                     if let Some(buffer) = &singleton_buffer {
                         ep_store.register_buffer(buffer, project, cx);
                     }

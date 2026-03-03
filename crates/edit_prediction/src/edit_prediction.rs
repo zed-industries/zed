@@ -757,11 +757,7 @@ impl EditPredictionStore {
         Some(Zeta2RawConfig { model_id, format })
     }
 
-    pub fn set_edit_prediction_model(
-        &mut self,
-        model: EditPredictionModel,
-        _cx: &mut Context<Self>,
-    ) {
+    pub fn set_edit_prediction_model(&mut self, model: EditPredictionModel) {
         self.edit_prediction_model = model;
     }
 

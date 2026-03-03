@@ -108,7 +108,7 @@ pub async fn run_prediction(
         .update(|cx| EditPredictionStore::try_global(cx))
         .context("EditPredictionStore not initialized")?;
 
-    ep_store.update(&mut cx, |store, cx| {
+    ep_store.update(&mut cx, |store, _cx| {
         let model = match provider {
             PredictionProvider::Zeta1 => edit_prediction::EditPredictionModel::Zeta,
             PredictionProvider::Zeta2(_) => edit_prediction::EditPredictionModel::Zeta,
@@ -120,7 +120,7 @@ pub async fn run_prediction(
                 unreachable!()
             }
         };
-        store.set_edit_prediction_model(model, cx);
+        store.set_edit_prediction_model(model);
 
         // If user specified a non-default Zeta2 version, configure raw endpoint.
         // ZED_ZETA_MODEL env var is optional.
