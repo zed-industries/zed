@@ -1960,8 +1960,12 @@ impl Editor {
         );
         let my_snapshot = self.display_map.update(cx, |display_map, cx| {
             let snapshot = display_map.snapshot(cx);
-            clone.display_map.update(cx, |display_map, cx| {
-                display_map.set_state(&snapshot, cx);
+            let disabled_headers = display_map.buffers_with_disabled_headers().clone();
+            clone.display_map.update(cx, |clone_display_map, cx| {
+                clone_display_map.set_state(&snapshot, cx);
+                for buffer_id in disabled_headers {
+                    clone_display_map.disable_header_for_buffer(buffer_id, cx);
+                }
             });
             snapshot
         });
@@ -1973,6 +1977,8 @@ impl Editor {
             .clone_state(&self.scroll_manager, &my_snapshot, &clone_snapshot, cx);
         clone.searchable = self.searchable;
         clone.read_only = self.read_only;
+        clone.buffers_with_disabled_indent_guides =
+            self.buffers_with_disabled_indent_guides.clone();
         clone
     }
 

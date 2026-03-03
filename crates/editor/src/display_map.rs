@@ -1003,6 +1003,10 @@ impl DisplayMap {
         &self.block_map.folded_buffers
     }
 
+    pub(crate) fn buffers_with_disabled_headers(&self) -> &HashSet<BufferId> {
+        &self.block_map.buffers_with_disabled_headers
+    }
+
     #[instrument(skip_all)]
     pub fn insert_creases(
         &mut self,

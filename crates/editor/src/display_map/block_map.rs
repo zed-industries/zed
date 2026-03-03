@@ -44,7 +44,7 @@ pub struct BlockMap {
     buffer_header_height: u32,
     excerpt_header_height: u32,
     pub(super) folded_buffers: HashSet<BufferId>,
-    buffers_with_disabled_headers: HashSet<BufferId>,
+    pub(super) buffers_with_disabled_headers: HashSet<BufferId>,
     pub(super) deferred_edits: Cell<Patch<WrapRow>>,
 }
 
