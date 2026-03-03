@@ -4124,6 +4124,7 @@ mod tests {
             r#"{
     "agent_servers": {
         "codex": {
+            "args": ["--config", "~/.codex/config.toml"],
             "env": {"OPENAI_API_KEY": "sk-123"},
             "default_mode": "read-only",
             "default_model": "o4-mini",
@@ -4138,6 +4139,10 @@ mod tests {
     "agent_servers": {
         "codex-acp": {
             "type": "registry",
+            "args": [
+                "--config",
+                "~/.codex/config.toml"
+            ],
             "env": {
                 "OPENAI_API_KEY": "sk-123"
             },

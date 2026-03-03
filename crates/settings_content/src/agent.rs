@@ -421,6 +421,13 @@ pub enum CustomAgentServerSettings {
         favorite_config_option_values: HashMap<String, Vec<String>>,
     },
     Registry {
+        /// Additional command-line arguments to pass to the agent.
+        ///
+        /// These are appended after the registry-provided arguments.
+        ///
+        /// Default: []
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        args: Vec<String>,
         /// Additional environment variables to pass to the agent.
         ///
         /// Default: {}

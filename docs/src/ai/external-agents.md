@@ -173,6 +173,18 @@ If you are already logged in and want to change your authentication method, type
 
 If you want to use a third-party provider with Codex, you can configure that with your [Codex config.toml](https://github.com/openai/codex/blob/main/docs/config.md#model-selection) or pass extra [args/env variables](https://github.com/openai/codex/blob/main/docs/config.md#model-selection) to your Codex agent servers settings.
 
+```json
+{
+  "agent_servers": {
+    "codex-acp": {
+      "type": "registry",
+      "args": ["--config", "/absolute/path/to/.codex/config.toml"],
+      "env": {}
+    }
+  }
+}
+```
+
 #### Installation
 
 The first time you create a Codex thread, Zed will install [codex-acp](https://github.com/zed-industries/codex-acp).
@@ -240,7 +252,7 @@ You can also add agents through your settings file ([how to edit](../configuring
 
 This can be useful if you're in the middle of developing a new agent that speaks the protocol and you want to debug it.
 
-It's also possible to customize environment variables for registry-installed agents like Claude Agent, Codex, and Gemini CLI by using their registry names (`claude-acp`, `codex-acp`, `gemini`) with `"type": "registry"` in your settings.
+It's also possible to customize arguments and environment variables for registry-installed agents like Claude Agent, Codex, and Gemini CLI by using their registry names (`claude-acp`, `codex-acp`, `gemini`) with `"type": "registry"` in your settings.
 
 ## Debugging Agents
 
