@@ -569,11 +569,20 @@ struct DockerInspectConfig {
     labels: DockerConfigLabels,
 }
 
+#[derive(Debug, Clone, Deserialize, Serialize, Eq, PartialEq, Default)]
+struct DockerComposeService {
+    image: Option<String>,
+    entrypoint: Option<Vec<String>>,
+    cap_add: Option<Vec<String>>,
+    security_opt: Option<Vec<String>>,
+    labels: Option<Vec<String>>,
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize, Eq, PartialEq)]
-#[serde(rename_all = "PascalCase")]
 struct DockerComposeConfig {
-    name: String,
-    services: HashMap<String, Value>, // TODO need more here
+    #[serde(skip_serializing_if = "Option::is_none")]
+    name: Option<String>,
+    services: HashMap<String, DockerComposeService>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, Eq, PartialEq)]
@@ -694,12 +703,29 @@ pub(crate) async fn spawn_dev_container_v2(
             .parent()
             .expect("TODO, this should actually combine the dockerfile property with the parent");
         if &devcontainer.build_type() == &DevContainerBuildType::DockerCompose {
-            let docker_compose_files =
-                build_and_extend_compose_files(http_client, &devcontainer, devcontainer_dir)
-                    .await?;
+            log::info!("Using docker compose. Building extended compose files");
+            let docker_compose_files = build_and_extend_compose_files(
+                http_client,
+                &devcontainer,
+                devcontainer_dir,
+                &labels,
+            )
+            .await?;
 
-            let running_container =
-                run_docker_compose(docker_compose_files, &labels, &local_project_path).await?;
+            log::info!(
+                "Created {} docker_compose files",
+                &docker_compose_files.len()
+            );
+
+            let running_container = run_docker_compose(
+                docker_compose_files,
+                &labels,
+                &local_project_path,
+                &devcontainer,
+            )
+            .await?;
+
+            dbg!(&running_container);
 
             let remote_user = get_remote_user_from_config(&running_container, &devcontainer)?;
             let remote_workspace_folder = get_remote_dir_from_config(
@@ -752,10 +778,42 @@ pub(crate) async fn spawn_dev_container_v2(
 }
 
 async fn run_docker_compose(
-    _docker_compose_files: Vec<String>,
-    _labels: &Vec<(&str, String)>,
+    docker_compose_files: Vec<String>,
+    labels: &Vec<(&str, String)>,
     _local_project_path: &Arc<&Path>,
+    _devcontainer: &DevContainer,
 ) -> Result<DockerInspect, RenameMeError> {
+    let mut command = Command::new(docker_cli());
+    // TODO project name how
+    command.args(&["compose", "--project-name", "rustwebstarter_devcontainer"]);
+    for docker_compose_file in docker_compose_files {
+        command.args(&["-f", &docker_compose_file]);
+    }
+    command.args(&["up", "-d"]);
+
+    dbg!(&command);
+
+    let output = command.output().await.map_err(|e| {
+        log::error!("Error running docker compose up: {e}");
+        RenameMeError::UnmappedError
+    })?;
+
+    if !output.status.success() {
+        log::error!("Non-success status from docker compose up");
+        return Err(RenameMeError::UnmappedError);
+    }
+
+    if let Some(docker_ps) = check_for_existing_container(&labels).await? {
+        log::info!("Dev container already found. Proceeding with it");
+        //     2. If exists and running, return it
+        //
+        let docker_inspect = inspect_running_container(&docker_ps).await?;
+
+        return Ok(docker_inspect);
+    }
+
+    log::error!("Could not find existing container after docker compose up");
+
     Err(RenameMeError::UnmappedError)
 }
 
@@ -763,17 +821,20 @@ async fn build_and_extend_compose_files(
     http_client: Arc<dyn HttpClient + 'static>,
     devcontainer: &DevContainer,
     devcontainer_dir: &Path,
+    labels: &Vec<(&str, String)>,
 ) -> Result<Vec<String>, RenameMeError> {
     let Some(docker_compose_files) = devcontainer.docker_compose_file.clone() else {
         return Err(RenameMeError::UnmappedError);
     };
-    let docker_compose_full_paths = docker_compose_files
+    let mut docker_compose_full_paths = docker_compose_files
         .iter()
         .map(|relative| devcontainer_dir.join(relative).display().to_string())
         .collect::<Vec<String>>();
 
     let mut docker_compose_config_command =
-        create_docker_compose_config_command(docker_compose_full_paths)?;
+        create_docker_compose_config_command(&docker_compose_full_paths)?;
+
+    dbg!(&docker_compose_config_command);
 
     let output = docker_compose_config_command.output().await.map_err(|e| {
         log::error!("Error building docker image: {e}");
@@ -786,12 +847,44 @@ async fn build_and_extend_compose_files(
         return Err(RenameMeError::UnmappedError);
     };
 
-    let _main_service = find_primary_service(&docker_compose_config, devcontainer)?;
-    // Ok, from here can I re-use the other stuff
+    dbg!(&docker_compose_config);
+
+    let (main_service_name, main_service) =
+        find_primary_service(&docker_compose_config, devcontainer)?;
+    if let Some(image) = &main_service.image {
+        // if no features
+        if devcontainer
+            .features
+            .as_ref()
+            .is_none_or(|features| features.is_empty())
+        {
+            // Do the build here also though
+            let docker_image = inspect_image(image).await?;
+            let runtime_override_file = build_runtime_override_file(
+                &main_service_name,
+                &docker_image,
+                devcontainer,
+                labels,
+            )?;
+
+            dbg!(&runtime_override_file);
+
+            docker_compose_full_paths.push(runtime_override_file);
+        }
+        // //build the runtime override
+        // Return existing compose files + runtime override
+        //
+        // If features
+        // // build the build override
+        // // build the runtime override
+        // // return all compose files
+    }
     // If main_service.uses_image and dev_container.no_features:
     // // Build the runtime override
     // // Return existing compose files + runtime override
-    //
+    // if main_service uses dockerfile
+    // // Build the buildtime override
+    // // build the runtime override
 
     // TODO
     // The CLI determines the image user from `imageDetails.Config.User || 'root'`.
@@ -815,21 +908,109 @@ async fn build_and_extend_compose_files(
     // Execute the build, assert success
     // Construct the runtime override, return the files
 
-    Err(RenameMeError::UnmappedError)
+    dbg!(&docker_compose_full_paths);
+
+    Ok(docker_compose_full_paths)
 }
 
-// TODO
-fn find_primary_service(
-    _docker_compose_config: &DockerComposeConfig,
-    _devcontainer: &DevContainer,
+fn build_runtime_override_file(
+    main_service_name: &str,
+    docker_image: &DockerInspect,
+    devcontainer: &DevContainer,
+    labels: &Vec<(&str, String)>,
 ) -> Result<String, RenameMeError> {
-    Err(RenameMeError::UnmappedError)
+    let config = build_runtime_override(main_service_name, docker_image, devcontainer, labels)?;
+    let temp_base = std::env::temp_dir().join("devcontainer-zed");
+    let config_location = temp_base.join("docker_compose_runtime.yml");
+
+    let config_json = serde_json_lenient::to_string(&config).map_err(|e| {
+        log::error!("Error serializing docker compose runtime override: {e}");
+        RenameMeError::UnmappedError
+    })?;
+
+    std::fs::write(&config_location, config_json).map_err(|e| {
+        log::error!("Error writing the runtime override file: {e}");
+        RenameMeError::UnmappedError
+    })?;
+
+    Ok(config_location.display().to_string())
+}
+
+fn build_runtime_override(
+    main_service_name: &str,
+    docker_image: &DockerInspect,
+    devcontainer: &DevContainer,
+    labels: &Vec<(&str, String)>,
+) -> Result<DockerComposeConfig, RenameMeError> {
+    let mut runtime_labels = vec![];
+
+    if let Some(metadata) = &docker_image.config.labels.metadata {
+        let serialized_metadata = serde_json_lenient::to_string(metadata).map_err(|e| {
+            log::error!("Error serializing docker image metadata: {e}");
+            RenameMeError::UnmappedError
+        })?;
+
+        runtime_labels.push(format!(
+            "{}={}",
+            "devcontainer.metadata", serialized_metadata
+        ));
+    }
+
+    for (k, v) in labels {
+        runtime_labels.push(format!("{}={}", k, v));
+    }
+
+    let mut new_docker_compose_config = DockerComposeConfig {
+        name: None,
+        services: HashMap::from([(
+            main_service_name.to_string(),
+            DockerComposeService {
+                entrypoint: Some(vec![
+                    "/bin/sh".to_string(),
+                    "-c".to_string(),
+                    "
+echo Container started
+trap \"exit 0\" 15
+exec \"$@\"
+while sleep 1 & wait $!; do :; done"
+                        .to_string(),
+                    "-".to_string(),
+                ]),
+                cap_add: Some(vec!["SYS_PTRACE".to_string()]),
+                security_opt: Some(vec!["seccomp=unconfined".to_string()]),
+                labels: Some(runtime_labels),
+                ..Default::default() // This is what we need
+            },
+        )]),
+    };
+
+    Ok(new_docker_compose_config)
+}
+
+fn find_primary_service(
+    docker_compose_config: &DockerComposeConfig,
+    devcontainer: &DevContainer,
+) -> Result<(String, DockerComposeService), RenameMeError> {
+    let Some(service_name) = &devcontainer.service else {
+        return Err(RenameMeError::UnmappedError);
+    };
+
+    match docker_compose_config.services.get(service_name) {
+        Some(service) => Ok((service_name.clone(), service.clone())),
+        None => Err(RenameMeError::UnmappedError),
+    }
 }
 
 fn create_docker_compose_config_command(
-    _docker_compose_full_paths: Vec<String>,
+    docker_compose_full_paths: &Vec<String>,
 ) -> Result<Command, RenameMeError> {
-    todo!()
+    let mut command = smol::process::Command::new(docker_cli());
+    command.arg("compose");
+    for file_path in docker_compose_full_paths {
+        command.args(&["-f", &file_path]);
+    }
+    command.args(&["config", "--format", "json"]);
+    Ok(command)
 }
 
 async fn run_docker_image(
@@ -857,10 +1038,16 @@ async fn run_docker_image(
     inspect_running_container(&docker_ps).await
 }
 
-async fn inspect_image(devcontainer: &DevContainer) -> Result<DockerInspect, RenameMeError> {
+async fn inspect_dev_container_image(
+    devcontainer: &DevContainer,
+) -> Result<DockerInspect, RenameMeError> {
     let Some(image) = &devcontainer.image else {
         return Err(RenameMeError::UnmappedError);
     };
+    inspect_image(image).await
+}
+
+async fn inspect_image(image: &String) -> Result<DockerInspect, RenameMeError> {
     let mut command = create_docker_inspect(image)?;
 
     let output = command.output().await.map_err(|e| {
@@ -1481,7 +1668,7 @@ async fn build_docker_image(
 ) -> Result<DockerInspect, RenameMeError> {
     match dev_container.build_type() {
         DevContainerBuildType::Image => {
-            let base_image = inspect_image(dev_container).await?;
+            let base_image = inspect_dev_container_image(dev_container).await?;
             if dev_container
                 .features
                 .as_ref()
@@ -1865,14 +2052,16 @@ mod test {
     use http_client::{FakeHttpClient, HttpClient};
 
     use crate::model::{
-        ContainerBuild, DevContainer, DevContainerBuildType, DockerConfigLabels, DockerInspect,
-        DockerInspectConfig, DockerPs, FeatureOptionValue, FeatureOptions, FeaturesBuildInfo,
-        ForwardPort, HostRequirements, LifecycleCommand, LifecyleScript, MountDefinition,
-        OnAutoForward, PortAttributeProtocol, PortAttributes, RenameMeError, ShutdownAction,
-        UserEnvProbe, construct_features_build_resources, create_docker_build,
-        create_docker_inspect, create_docker_run_command, deserialize_devcontainer_json,
-        deserialize_json_output, extract_feature_id, generate_dockerfile_extended,
-        get_remote_dir_from_config, get_remote_user_from_config, get_safe_id,
+        ContainerBuild, DevContainer, DevContainerBuildType, DockerComposeConfig,
+        DockerComposeService, DockerConfigLabels, DockerInspect, DockerInspectConfig, DockerPs,
+        FeatureOptionValue, FeatureOptions, FeaturesBuildInfo, ForwardPort, HostRequirements,
+        LifecycleCommand, LifecyleScript, MountDefinition, OnAutoForward, PortAttributeProtocol,
+        PortAttributes, RenameMeError, ShutdownAction, UserEnvProbe, build_runtime_override,
+        construct_features_build_resources, create_docker_build,
+        create_docker_compose_config_command, create_docker_inspect, create_docker_run_command,
+        deserialize_devcontainer_json, deserialize_json_output, docker_cli, extract_feature_id,
+        find_primary_service, generate_dockerfile_extended, get_remote_dir_from_config,
+        get_remote_user_from_config, get_safe_id,
     };
 
     fn fake_http_client() -> Arc<dyn HttpClient> {
@@ -3628,7 +3817,233 @@ USER $_DEV_CONTAINERS_IMAGE_USER
         );
     }
 
-    // Next, create relevant docker command
-    //
-    // Next, create appropriate response to user
+    #[test]
+    fn should_create_docker_compose_command() {
+        let docker_compose_files = vec![
+            "/var/test/docker-compose.yml".to_string(),
+            "/var/other/docker-compose2.yml".to_string(),
+        ];
+
+        let command = create_docker_compose_config_command(&docker_compose_files).unwrap();
+
+        assert_eq!(command.get_program(), OsStr::new(docker_cli()));
+
+        assert_eq!(
+            command.get_args().collect::<Vec<&OsStr>>(),
+            vec![
+                OsStr::new("compose"),
+                OsStr::new("-f"),
+                OsStr::new("/var/test/docker-compose.yml"),
+                OsStr::new("-f"),
+                OsStr::new("/var/other/docker-compose2.yml"),
+                OsStr::new("config"),
+                OsStr::new("--format"),
+                OsStr::new("json"),
+            ]
+        )
+    }
+
+    #[test]
+    fn should_deserialize_docker_compose_config() {
+        let given_config = r#"
+{
+    "name": "devcontainer",
+    "networks": {
+    "default": {
+        "name": "devcontainer_default",
+        "ipam": {}
+    }
+    },
+    "services": {
+        "app": {
+            "command": [
+            "sleep",
+            "infinity"
+            ],
+            "depends_on": {
+            "db": {
+                "condition": "service_started",
+                "restart": true,
+                "required": true
+            }
+            },
+            "entrypoint": null,
+            "environment": {
+            "POSTGRES_DB": "postgres",
+            "POSTGRES_HOSTNAME": "localhost",
+            "POSTGRES_PASSWORD": "postgres",
+            "POSTGRES_PORT": "5432",
+            "POSTGRES_USER": "postgres"
+            },
+            "image": "mcr.microsoft.com/devcontainers/rust:2-1-bookworm",
+            "network_mode": "service:db",
+            "volumes": [
+            {
+                "type": "bind",
+                "source": "/Users/kylebarton/Source",
+                "target": "/workspaces",
+                "bind": {
+                "create_host_path": true
+                }
+            }
+            ]
+        },
+        "db": {
+            "command": null,
+            "entrypoint": null,
+            "environment": {
+            "POSTGRES_DB": "postgres",
+            "POSTGRES_HOSTNAME": "localhost",
+            "POSTGRES_PASSWORD": "postgres",
+            "POSTGRES_PORT": "5432",
+            "POSTGRES_USER": "postgres"
+            },
+            "image": "postgres:14.1",
+            "networks": {
+            "default": null
+            },
+            "restart": "unless-stopped",
+            "volumes": [
+            {
+                "type": "volume",
+                "source": "postgres-data",
+                "target": "/var/lib/postgresql/data",
+                "volume": {}
+            }
+            ]
+        }
+    },
+    "volumes": {
+    "postgres-data": {
+        "name": "devcontainer_postgres-data"
+    }
+    }
+}
+            "#;
+
+        let docker_compose_config: DockerComposeConfig =
+            serde_json_lenient::from_str(given_config).unwrap();
+
+        let expected_config = DockerComposeConfig {
+            name: Some("devcontainer".to_string()),
+            services: HashMap::from([
+                (
+                    "app".to_string(),
+                    DockerComposeService {
+                        image: Some(
+                            "mcr.microsoft.com/devcontainers/rust:2-1-bookworm".to_string(),
+                        ),
+                        ..Default::default()
+                    },
+                ),
+                (
+                    "db".to_string(),
+                    DockerComposeService {
+                        image: Some("postgres:14.1".to_string()),
+                        ..Default::default()
+                    },
+                ),
+            ]),
+        };
+
+        assert_eq!(docker_compose_config, expected_config);
+    }
+
+    #[test]
+    fn should_find_primary_service_in_docker_compose() {
+        // State where service not defined in dev container
+        let given_dev_container = DevContainer {
+            ..Default::default()
+        };
+        let given_docker_compose_config = DockerComposeConfig {
+            name: Some("devcontainers".to_string()),
+            services: HashMap::new(),
+        };
+
+        let bad_result = find_primary_service(&given_docker_compose_config, &given_dev_container);
+
+        assert!(bad_result.is_err());
+
+        // State where service defined in devcontainer, not found in DockerCompose config
+        let given_dev_container = DevContainer {
+            service: Some("not_found_service".to_string()),
+            ..Default::default()
+        };
+        let given_docker_compose_config = DockerComposeConfig {
+            name: Some("devcontainers".to_string()),
+            services: HashMap::new(),
+        };
+
+        let bad_result = find_primary_service(&given_docker_compose_config, &given_dev_container);
+
+        assert!(bad_result.is_err());
+        // State where service defined in devcontainer and in DockerCompose config
+        let given_dev_container = DevContainer {
+            service: Some("found_service".to_string()),
+            ..Default::default()
+        };
+        let given_docker_compose_config = DockerComposeConfig {
+            name: Some("devcontainers".to_string()),
+            services: HashMap::from([(
+                "found_service".to_string(),
+                DockerComposeService {
+                    ..Default::default()
+                },
+            )]),
+        };
+
+        let (service_name, _) =
+            find_primary_service(&given_docker_compose_config, &given_dev_container).unwrap();
+
+        assert_eq!(service_name, "found_service".to_string());
+    }
+
+    #[test]
+    fn should_build_runtime_override() {
+        let given_dev_container = DevContainer {
+            service: Some("app".to_string()),
+            ..Default::default()
+        };
+
+        let docker_image = DockerInspect {
+            id: "id".to_string(),
+            // Todo add some labels and make this test pass
+            config: DockerInspectConfig {
+                labels: DockerConfigLabels { metadata: None },
+            },
+            mounts: None,
+        };
+
+        let given_labels = vec![("label1", "label1val".to_string())];
+
+        let runtime_override =
+            build_runtime_override("app", &docker_image, &given_dev_container, &given_labels)
+                .unwrap();
+
+        // ugh how are we going to do labels
+        let expected_runtime_override = DockerComposeConfig {
+            name: None,
+            services: HashMap::from([(
+                "app".to_string(),
+                DockerComposeService {
+                    entrypoint: Some(vec![
+                        "/bin/sh".to_string(),
+                        "-c".to_string(),
+                        "
+echo Container started
+trap \"exit 0\" 15
+exec \"$@\"
+while sleep 1 & wait $!; do :; done"
+                            .to_string(),
+                    ]),
+                    cap_add: Some(vec!["SYS_PTRACE".to_string()]),
+                    security_opt: Some(vec!["seccomp=unconfined".to_string()]),
+                    labels: Some(vec!["label1=label1val".to_string()]),
+                    ..Default::default()
+                },
+            )]),
+        };
+
+        assert_eq!(runtime_override, expected_runtime_override)
+    }
 }
