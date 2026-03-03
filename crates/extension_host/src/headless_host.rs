@@ -1,4 +1,7 @@
-use std::{path::PathBuf, sync::Arc};
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 use anyhow::{Context as _, Result};
 use client::{TypedEnvelope, proto};
@@ -35,6 +38,12 @@ pub struct HeadlessExtensionStore {
 }
 
 impl HeadlessExtensionStore {
+    fn normalize_manifest_path(path: &Path) -> PathBuf {
+        // Manifests serialized on Windows may contain `\` separators. On POSIX remotes,
+        // those are treated as literal characters instead of path separators.
+        PathBuf::from(path.to_string_lossy().replace('\\', "/"))
+    }
+
     pub fn new(
         fs: Arc<dyn Fs>,
         http_client: Arc<dyn HttpClient>,
@@ -137,7 +146,8 @@ impl HeadlessExtensionStore {
         }
 
         for language_path in &manifest.languages {
-            let language_path = extension_dir.join(language_path);
+            let language_path =
+                extension_dir.join(Self::normalize_manifest_path(language_path.as_path()));
             let config = fs.load(&language_path.join("config.toml")).await?;
             let mut config = ::toml::from_str::<LanguageConfig>(&config)?;
 
@@ -192,7 +202,9 @@ impl HeadlessExtensionStore {
         }
 
         for (debug_adapter, meta) in &manifest.debug_adapters {
-            let schema_path = extension::build_debug_adapter_schema_path(debug_adapter, meta);
+            let schema_path = Self::normalize_manifest_path(
+                extension::build_debug_adapter_schema_path(debug_adapter, meta).as_path(),
+            );
 
             this.update(cx, |this, _cx| {
                 this.proxy.register_debug_adapter(
