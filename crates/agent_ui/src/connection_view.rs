@@ -845,13 +845,8 @@ impl ConnectionView {
             );
         });
 
-        let scroll_position = thread.read(cx).scroll_position();
-        dbg!("scroll_position: restoring in UI", &scroll_position);
-        if let Some((item_ix, offset_in_item)) = scroll_position {
-            list_state.scroll_to(ListOffset {
-                item_ix,
-                offset_in_item: px(offset_in_item),
-            });
+        if let Some(scroll_position) = thread.read(cx).ui_scroll_position() {
+            list_state.scroll_to(scroll_position);
         }
 
         AgentDiff::set_active_thread(&self.workspace, thread.clone(), window, cx);

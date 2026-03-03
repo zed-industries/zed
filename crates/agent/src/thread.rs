@@ -901,7 +901,7 @@ pub struct Thread {
     subagent_context: Option<SubagentContext>,
     /// The user's unsent prompt text, persisted so it can be restored when reloading the thread.
     draft_prompt: Option<Vec<acp::ContentBlock>>,
-    ui_scroll_position: Option<crate::db::SerializedScrollPosition>,
+    ui_scroll_position: Option<gpui::ListOffset>,
     /// Weak references to running subagent threads for cancellation propagation
     running_subagents: Vec<WeakEntity<Thread>>,
 }
@@ -1197,7 +1197,7 @@ impl Thread {
 
         let action_log = cx.new(|_| ActionLog::new(project.clone()));
 
-        let thread = Self {
+        Self {
             id,
             prompt_id: PromptId::new(),
             title: if db_thread.title.is_empty() {
@@ -1235,11 +1235,12 @@ impl Thread {
             imported: db_thread.imported,
             subagent_context: db_thread.subagent_context,
             draft_prompt: db_thread.draft_prompt,
-            ui_scroll_position: db_thread.ui_scroll_position,
+            ui_scroll_position: db_thread.ui_scroll_position.map(|sp| gpui::ListOffset {
+                item_ix: sp.item_ix,
+                offset_in_item: gpui::px(sp.offset_in_item),
+            }),
             running_subagents: Vec::new(),
-        };
-        dbg!("scroll_position: from_db", &thread.ui_scroll_position);
-        thread
+        }
     }
 
     pub fn to_db(&self, cx: &App) -> Task<DbThread> {
@@ -1263,9 +1264,13 @@ impl Thread {
             thinking_enabled: self.thinking_enabled,
             thinking_effort: self.thinking_effort.clone(),
             draft_prompt: self.draft_prompt.clone(),
-            ui_scroll_position: self.ui_scroll_position,
+            ui_scroll_position: self.ui_scroll_position.map(|lo| {
+                crate::db::SerializedScrollPosition {
+                    item_ix: lo.item_ix,
+                    offset_in_item: lo.offset_in_item.as_f32(),
+                }
+            }),
         };
-        dbg!("scroll_position: to_db", &thread.ui_scroll_position);
 
         cx.background_spawn(async move {
             let initial_project_snapshot = initial_project_snapshot.await;
@@ -1314,14 +1319,11 @@ impl Thread {
         self.draft_prompt = prompt;
     }
 
-    pub fn ui_scroll_position(&self) -> Option<crate::db::SerializedScrollPosition> {
+    pub fn ui_scroll_position(&self) -> Option<gpui::ListOffset> {
         self.ui_scroll_position
     }
 
-    pub fn set_ui_scroll_position(
-        &mut self,
-        position: Option<crate::db::SerializedScrollPosition>,
-    ) {
+    pub fn set_ui_scroll_position(&mut self, position: Option<gpui::ListOffset>) {
         self.ui_scroll_position = position;
     }
 

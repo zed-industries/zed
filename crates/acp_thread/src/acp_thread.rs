@@ -972,8 +972,8 @@ pub struct AcpThread {
     had_error: bool,
     /// The user's unsent prompt text, persisted so it can be restored when reloading the thread.
     draft_prompt: Option<Vec<acp::ContentBlock>>,
-    /// The scroll position of the thread view, stored as (item_index, pixel_offset).
-    ui_scroll_position: Option<(usize, f32)>,
+    /// The initial scroll position for the thread view, set during session registration.
+    ui_scroll_position: Option<gpui::ListOffset>,
 }
 
 impl From<&AcpThread> for ActionLogTelemetry {
@@ -1232,11 +1232,11 @@ impl AcpThread {
         self.draft_prompt = prompt;
     }
 
-    pub fn scroll_position(&self) -> Option<(usize, f32)> {
+    pub fn ui_scroll_position(&self) -> Option<gpui::ListOffset> {
         self.ui_scroll_position
     }
 
-    pub fn set_scroll_position(&mut self, position: Option<(usize, f32)>) {
+    pub fn set_ui_scroll_position(&mut self, position: Option<gpui::ListOffset>) {
         self.ui_scroll_position = position;
     }
 

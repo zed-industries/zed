@@ -352,13 +352,7 @@ impl NativeAgent {
         let parent_session_id = thread.parent_thread_id();
         let title = thread.title();
         let draft_prompt = thread.draft_prompt().map(Vec::from);
-        let scroll_position = thread
-            .ui_scroll_position()
-            .map(|sp| (sp.item_ix, sp.offset_in_item));
-        dbg!(
-            "scroll_position: register_session: from Thread",
-            &scroll_position
-        );
+        let scroll_position = thread.ui_scroll_position();
         let token_usage = thread.latest_token_usage();
         let project = thread.project.clone();
         let action_log = thread.action_log.clone();
@@ -375,7 +369,7 @@ impl NativeAgent {
                 cx,
             );
             acp_thread.set_draft_prompt(draft_prompt);
-            acp_thread.set_scroll_position(scroll_position);
+            acp_thread.set_ui_scroll_position(scroll_position);
             acp_thread.update_token_usage(token_usage, cx);
             acp_thread
         });
@@ -871,28 +865,10 @@ impl NativeAgent {
                 .collect::<Vec<_>>(),
         );
 
-        let acp_thread = session.acp_thread.read(cx);
-        let draft_prompt = acp_thread.draft_prompt().map(Vec::from);
-        let scroll_position = acp_thread
-            .scroll_position()
-            .map(
-                |(item_ix, offset_in_item)| crate::db::SerializedScrollPosition {
-                    item_ix,
-                    offset_in_item,
-                },
-            );
-        dbg!(
-            "scroll_position: save_thread: from AcpThread",
-            &scroll_position
-        );
+        let draft_prompt = session.acp_thread.read(cx).draft_prompt().map(Vec::from);
         let database_future = ThreadsDatabase::connect(cx);
         let db_thread = thread.update(cx, |thread, cx| {
             thread.set_draft_prompt(draft_prompt);
-            thread.set_ui_scroll_position(scroll_position);
-            dbg!(
-                "scroll_position: save_thread: written to Thread",
-                thread.ui_scroll_position()
-            );
             thread.to_db(cx)
         });
         let thread_store = self.thread_store.clone();
@@ -2624,8 +2600,11 @@ mod internal_tests {
         acp_thread.update(cx, |thread, _cx| {
             thread.set_draft_prompt(Some(draft_blocks.clone()));
         });
-        acp_thread.update(cx, |thread, _cx| {
-            thread.set_scroll_position(Some((5, 12.5)));
+        thread.update(cx, |thread, _cx| {
+            thread.set_ui_scroll_position(Some(gpui::ListOffset {
+                item_ix: 5,
+                offset_in_item: gpui::px(12.5),
+            }));
         });
         thread.update(cx, |_thread, cx| cx.notify());
         cx.run_until_parked();
@@ -2684,11 +2663,11 @@ mod internal_tests {
 
         // Ensure scroll position survived the round-trip.
         acp_thread.read_with(cx, |thread, _| {
-            let (item_ix, offset) = thread
-                .scroll_position()
+            let scroll = thread
+                .ui_scroll_position()
                 .expect("scroll position should be restored after reload");
-            assert_eq!(item_ix, 5);
-            assert!((offset - 12.5).abs() < f32::EPSILON);
+            assert_eq!(scroll.item_ix, 5);
+            assert_eq!(scroll.offset_in_item, gpui::px(12.5));
         });
     }
 

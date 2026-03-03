@@ -487,15 +487,17 @@ impl ThreadView {
             .set_scroll_handler(move |_event, _window, cx| {
                 let list_state = list_state_for_scroll.clone();
                 let thread_view = thread_view.clone();
+                // N.B. We must defer because the scroll handler is called while the
+                // ListState's RefCell is mutably borrowed. Reading logical_scroll_top()
+                // directly would panic from a double borrow.
                 cx.defer(move |cx| {
                     let scroll_top = list_state.logical_scroll_top();
                     let _ = thread_view.update(cx, |this, cx| {
-                        this.thread.update(cx, |thread, _cx| {
-                            thread.set_scroll_position(Some((
-                                scroll_top.item_ix,
-                                scroll_top.offset_in_item.as_f32(),
-                            )));
-                        });
+                        if let Some(thread) = this.as_native_thread(cx) {
+                            thread.update(cx, |thread, _cx| {
+                                thread.set_ui_scroll_position(Some(scroll_top));
+                            });
+                        }
                         this.schedule_save(cx);
                     });
                 });
