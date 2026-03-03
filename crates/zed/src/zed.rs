@@ -4809,6 +4809,7 @@ mod tests {
                 "console",
                 "context_server",
                 "copilot",
+                "csv",
                 "debug_panel",
                 "debugger",
                 "dev",
