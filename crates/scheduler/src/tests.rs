@@ -291,6 +291,31 @@ fn test_helper_methods() {
 }
 
 #[test]
+fn test_many_with_arbitrary_seed() {
+    for seed in [0u64, 1, 5, 42] {
+        let mut seeds_seen = Vec::new();
+        let iterations = 3usize;
+
+        for current_seed in seed..seed + iterations as u64 {
+            let scheduler = Arc::new(TestScheduler::new(TestSchedulerConfig::with_seed(
+                current_seed,
+            )));
+            let captured_seed = current_seed;
+            scheduler
+                .foreground()
+                .block_on(async { seeds_seen.push(captured_seed) });
+            scheduler.run();
+        }
+
+        assert_eq!(
+            seeds_seen,
+            (seed..seed + iterations as u64).collect::<Vec<_>>(),
+            "Expected {iterations} iterations starting at seed {seed}"
+        );
+    }
+}
+
+#[test]
 fn test_block_with_timeout() {
     // Test case: future completes within timeout
     TestScheduler::once(async |scheduler| {

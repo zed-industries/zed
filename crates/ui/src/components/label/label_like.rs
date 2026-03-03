@@ -1,11 +1,11 @@
 use crate::prelude::*;
-use gpui::{FontWeight, StyleRefinement, UnderlineStyle};
+use gpui::{FontWeight, Rems, StyleRefinement, UnderlineStyle};
 use settings::Settings;
 use smallvec::SmallVec;
 use theme::ThemeSettings;
 
 /// Sets the size of a label
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, Default)]
+#[derive(Debug, PartialEq, Clone, Copy, Default)]
 pub enum LabelSize {
     /// The default size of a label.
     #[default]
@@ -16,6 +16,8 @@ pub enum LabelSize {
     Small,
     /// The extra small size of a label.
     XSmall,
+    /// An arbitrary custom size specified in rems.
+    Custom(Rems),
 }
 
 /// Sets the line height of a label
@@ -225,6 +227,7 @@ impl RenderOnce for LabelLike {
                 LabelSize::Default => this.text_ui(cx),
                 LabelSize::Small => this.text_ui_sm(cx),
                 LabelSize::XSmall => this.text_ui_xs(cx),
+                LabelSize::Custom(size) => this.text_size(size),
             })
             .when(self.line_height_style == LineHeightStyle::UiLabel, |this| {
                 this.line_height(relative(1.))

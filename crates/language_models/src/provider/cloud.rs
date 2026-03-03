@@ -571,6 +571,10 @@ impl LanguageModel for CloudLanguageModel {
         self.model.supports_thinking
     }
 
+    fn supports_fast_mode(&self) -> bool {
+        self.model.supports_fast_mode
+    }
+
     fn supported_effort_levels(&self) -> Vec<LanguageModelEffortLevel> {
         self.model
             .supported_effort_levels

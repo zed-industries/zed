@@ -1163,7 +1163,9 @@ fn render_settings_item(
         .child(
             v_flex()
                 .relative()
-                .w_3_4()
+                .w_full()
+                .max_w_2_3()
+                .min_w_0()
                 .child(
                     h_flex()
                         .w_full()
@@ -1572,8 +1574,10 @@ impl SettingsWindow {
                 };
 
                 this_weak
-                    .update(cx, |this, cx| {
-                        this.fetch_files(window, cx);
+                    .update(cx, |_, cx| {
+                        cx.defer_in(window, |settings_window, window, cx| {
+                            settings_window.fetch_files(window, cx)
+                        });
                         cx.observe_release_in(&project, window, |_, _, window, cx| {
                             cx.defer_in(window, |this, window, cx| this.fetch_files(window, cx));
                         })

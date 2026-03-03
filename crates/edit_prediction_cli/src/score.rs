@@ -30,11 +30,11 @@ pub async fn run_scoring(
     let progress = example_progress.start(Step::Score);
 
     progress.set_substatus("applying patches");
-    let original_text = &example
+    let prompt_inputs = example
         .prompt_inputs
         .as_ref()
-        .context("prompt_inputs is required for scoring - run prediction first or ensure JSON includes prompt_inputs")?
-        .content;
+        .context("prompt_inputs is required for scoring - run prediction first or ensure JSON includes prompt_inputs")?;
+    let original_text: &str = prompt_inputs.cursor_excerpt.as_ref();
     let expected_patches_with_cursors = example.spec.expected_patches_with_cursor_positions();
 
     let expected_texts: Vec<String> = expected_patches_with_cursors
@@ -80,7 +80,6 @@ pub async fn run_scoring(
         deleted_tokens: 0,
     };
 
-    let prompt_inputs = example.prompt_inputs.as_ref().unwrap();
     let cursor_path = example.spec.cursor_path.as_ref();
 
     progress.set_substatus("computing metrics");
@@ -218,7 +217,8 @@ fn compute_cursor_metrics(
     }
 }
 
-pub fn print_report(examples: &[Example]) {
+pub fn print_report(examples: &[Example], verbose: bool) {
+    const MAX_EXAMPLES_DEFAULT: usize = 20;
     use crate::metrics::ClassificationMetrics;
 
     const LINE_WIDTH: usize = 101;
@@ -250,6 +250,9 @@ pub fn print_report(examples: &[Example]) {
     let mut patch_inserted_tokens: Vec<usize> = Vec::new();
     let mut patch_deleted_tokens: Vec<usize> = Vec::new();
     let mut predictions_with_patch: usize = 0;
+
+    let mut printed_lines: usize = 0;
+    let mut skipped_lines: usize = 0;
 
     for example in examples {
         for (score_idx, score) in example.score.iter().enumerate() {
@@ -285,18 +288,23 @@ pub fn print_report(examples: &[Example]) {
                 (None, _) => "-".to_string(),
             };
 
-            println!(
-                "{:<40} {:>8.2} {:>5} {:>6.1}% {:>6.1}% {:>7} {:>7} {:>6} {:>5}",
-                truncate_name(&example.spec.name, 40),
-                score.delta_chr_f,
-                score.braces_disbalance,
-                exact_lines.f1() * 100.0,
-                score.reversal_ratio * 100.0,
-                qa_reverts_str,
-                qa_conf_str,
-                cursor_str,
-                wrong_er_str
-            );
+            if verbose || printed_lines < MAX_EXAMPLES_DEFAULT {
+                println!(
+                    "{:<40} {:>8.2} {:>5} {:>6.1}% {:>6.1}% {:>7} {:>7} {:>6} {:>5}",
+                    truncate_name(&example.spec.name, 40),
+                    score.delta_chr_f,
+                    score.braces_disbalance,
+                    exact_lines.f1() * 100.0,
+                    score.reversal_ratio * 100.0,
+                    qa_reverts_str,
+                    qa_conf_str,
+                    cursor_str,
+                    wrong_er_str
+                );
+                printed_lines += 1;
+            } else {
+                skipped_lines += 1;
+            }
 
             all_delta_chr_f_scores.push(score.delta_chr_f);
             all_reversal_ratios.push(score.reversal_ratio);
@@ -359,6 +367,13 @@ pub fn print_report(examples: &[Example]) {
         }
     }
 
+    if skipped_lines > 0 {
+        println!(
+            "{:<40} (use --verbose to see all {} examples)",
+            format!("... and {} more", skipped_lines),
+            printed_lines + skipped_lines
+        );
+    }
     println!("{}", separator);
 
     if !all_delta_chr_f_scores.is_empty() {

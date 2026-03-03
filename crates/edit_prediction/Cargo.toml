@@ -21,6 +21,7 @@ arrayvec.workspace = true
 brotli.workspace = true
 buffer_diff.workspace = true
 client.workspace = true
+clock.workspace = true
 cloud_api_types.workspace = true
 cloud_llm_client.workspace = true
 collections.workspace = true

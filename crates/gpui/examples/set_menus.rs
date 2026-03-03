@@ -1,3 +1,5 @@
+#![cfg_attr(target_family = "wasm", no_main)]
+
 use gpui::{
     App, Context, Global, Menu, MenuItem, SharedString, SystemMenuType, Window, WindowOptions,
     actions, div, prelude::*, rgb,
@@ -20,7 +22,7 @@ impl Render for SetMenus {
     }
 }
 
-fn main() {
+fn run_example() {
     application().run(|cx: &mut App| {
         cx.set_global(AppState::new());
 
@@ -34,6 +36,18 @@ fn main() {
         cx.open_window(WindowOptions::default(), |_, cx| cx.new(|_| SetMenus {}))
             .unwrap();
     });
+}
+
+#[cfg(not(target_family = "wasm"))]
+fn main() {
+    run_example();
+}
+
+#[cfg(target_family = "wasm")]
+#[wasm_bindgen::prelude::wasm_bindgen(start)]
+pub fn start() {
+    gpui_platform::web_init();
+    run_example();
 }
 
 #[derive(PartialEq)]

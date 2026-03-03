@@ -24,8 +24,6 @@ A glob "pattern" is used to match a file name or complete file path. For example
 
 ### Multiple Patterns
 
-> **Changed in Preview (v0.225).** See [release notes](/releases#0.225).
-
 You can specify multiple glob patterns in Project Search filters by separating them with commas. When using comma-separated patterns, Zed correctly handles braces within individual patterns:
 
 - `*.ts, *.tsx` — Match TypeScript and TSX files

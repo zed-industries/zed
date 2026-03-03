@@ -377,6 +377,7 @@
       "cmd-alt-k": "agent::ToggleThinkingMode",
       "cmd-alt-'": "agent::ToggleThinkingEffortMenu",
       "ctrl-'": "agent::CycleThinkingEffort",
+      "cmd-alt-.": "agent::ToggleFastMode",
     },
   },
   {
@@ -445,6 +446,13 @@
     "bindings": {
       "up": "search::PreviousHistoryQuery",
       "down": "search::NextHistoryQuery",
+    },
+  },
+  {
+    "context": "BufferSearchBar || ProjectSearchBar",
+    "use_key_equivalents": true,
+    "bindings": {
+      "ctrl-enter": "editor::Newline",
     },
   },
   {

@@ -1,7 +1,7 @@
 use crate::{
-    Anchor, Autoscroll, BufferSerialization, Capability, Editor, EditorEvent, EditorSettings,
-    ExcerptId, ExcerptRange, FormatTarget, MultiBuffer, MultiBufferSnapshot, NavigationData,
-    ReportEditorEvent, SelectionEffects, ToPoint as _,
+    ActiveDebugLine, Anchor, Autoscroll, BufferSerialization, Capability, Editor, EditorEvent,
+    EditorSettings, ExcerptId, ExcerptRange, FormatTarget, MultiBuffer, MultiBufferSnapshot,
+    NavigationData, ReportEditorEvent, SelectionEffects, ToPoint as _,
     display_map::HighlightKey,
     editor_settings::SeedQuerySetting,
     persistence::{DB, SerializedEditor},
@@ -735,10 +735,13 @@ impl Item for Editor {
         h_flex()
             .gap_2()
             .child(
-                Label::new(self.title(cx).to_string())
-                    .color(label_color)
-                    .when(params.preview, |this| this.italic())
-                    .when(was_deleted, |this| this.strikethrough()),
+                Label::new(util::truncate_and_trailoff(
+                    &self.title(cx),
+                    MAX_TAB_TITLE_LEN,
+                ))
+                .color(label_color)
+                .when(params.preview, |this| this.italic())
+                .when(was_deleted, |this| this.strikethrough()),
             )
             .when_some(description, |this, description| {
                 this.child(
@@ -1024,6 +1027,19 @@ impl Item for Editor {
             {
                 self.load_folds_from_db(workspace_id, file_path, window, cx);
             }
+        }
+    }
+
+    fn pane_changed(&mut self, new_pane_id: EntityId, cx: &mut Context<Self>) {
+        if self
+            .highlighted_rows
+            .get(&TypeId::of::<ActiveDebugLine>())
+            .is_some_and(|lines| !lines.is_empty())
+            && let Some(breakpoint_store) = self.breakpoint_store.as_ref()
+        {
+            breakpoint_store.update(cx, |store, _cx| {
+                store.set_active_debug_pane_id(new_pane_id);
+            });
         }
     }
 

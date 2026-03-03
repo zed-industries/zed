@@ -3,7 +3,9 @@ use indoc::{formatdoc, indoc};
 
 use crate::tasks::workflows::{
     extension_bump::compare_versions,
-    run_tests::{orchestrate_without_package_filter, tests_pass},
+    run_tests::{
+        fetch_ts_query_ls, orchestrate_without_package_filter, run_ts_query_ls, tests_pass,
+    },
     runners,
     steps::{
         self, CommonJobConditions, FluentBuilder, NamedJob, cache_rust_dependencies_namespace,
@@ -89,11 +91,13 @@ pub(crate) fn check_extension() -> NamedJob {
         .with_repository_owner_guard()
         .runs_on(runners::LINUX_LARGE_RAM)
         .timeout_minutes(6u32)
-        .add_step(steps::checkout_repo().with_deep_history_on_non_main())
+        .add_step(steps::checkout_repo().with_full_history())
         .add_step(cache_download)
         .add_step(download_zed_extension_cli(cache_hit))
         .add_step(cache_rust_dependencies_namespace()) // Extensions can compile Rust, so provide the cache if needed.
         .add_step(check())
+        .add_step(fetch_ts_query_ls())
+        .add_step(run_ts_query_ls())
         .add_step(check_version_job)
         .add_step(verify_version_did_not_change(version_changed));
 

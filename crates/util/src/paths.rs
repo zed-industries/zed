@@ -1,4 +1,3 @@
-use anyhow::Context;
 use globset::{GlobBuilder, GlobSet, GlobSetBuilder};
 use itertools::Itertools;
 use regex::Regex;
@@ -9,20 +8,19 @@ use std::error::Error;
 use std::fmt::{Display, Formatter};
 use std::mem;
 use std::path::StripPrefixError;
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 use std::{
     ffi::OsStr,
     path::{Path, PathBuf},
     sync::LazyLock,
 };
 
+use crate::rel_path::RelPath;
 use crate::rel_path::RelPathBuf;
-use crate::{rel_path::RelPath, shell::ShellKind};
-
-static HOME_DIR: OnceLock<PathBuf> = OnceLock::new();
 
 /// Returns the path to the user's home directory.
 pub fn home_dir() -> &'static PathBuf {
+    static HOME_DIR: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
     HOME_DIR.get_or_init(|| {
         if cfg!(any(test, feature = "test-support")) {
             if cfg!(target_os = "macos") {
@@ -56,6 +54,13 @@ pub trait PathExt {
     where
         Self: From<&'a Path>,
     {
+        #[cfg(target_family = "wasm")]
+        {
+            std::str::from_utf8(bytes)
+                .map(Path::new)
+                .map(Into::into)
+                .map_err(Into::into)
+        }
         #[cfg(unix)]
         {
             use std::os::unix::prelude::OsStrExt;
@@ -63,6 +68,7 @@ pub trait PathExt {
         }
         #[cfg(windows)]
         {
+            use anyhow::Context;
             use tendril::fmt::{Format, WTF8};
             WTF8::validate(bytes)
                 .then(|| {
@@ -86,11 +92,17 @@ pub trait PathExt {
     fn multiple_extensions(&self) -> Option<String>;
 
     /// Try to make a shell-safe representation of the path.
-    fn try_shell_safe(&self, shell_kind: ShellKind) -> anyhow::Result<String>;
+    #[cfg(not(target_family = "wasm"))]
+    fn try_shell_safe(&self, shell_kind: crate::shell::ShellKind) -> anyhow::Result<String>;
 }
 
 impl<T: AsRef<Path>> PathExt for T {
     fn compact(&self) -> PathBuf {
+        #[cfg(target_family = "wasm")]
+        {
+            self.as_ref().to_path_buf()
+        }
+        #[cfg(not(target_family = "wasm"))]
         if cfg!(any(target_os = "linux", target_os = "freebsd")) || cfg!(target_os = "macos") {
             match self.as_ref().strip_prefix(home_dir().as_path()) {
                 Ok(relative_path) => {
@@ -164,7 +176,9 @@ impl<T: AsRef<Path>> PathExt for T {
         Some(parts.into_iter().join("."))
     }
 
-    fn try_shell_safe(&self, shell_kind: ShellKind) -> anyhow::Result<String> {
+    #[cfg(not(target_family = "wasm"))]
+    fn try_shell_safe(&self, shell_kind: crate::shell::ShellKind) -> anyhow::Result<String> {
+        use anyhow::Context;
         let path_str = self
             .as_ref()
             .to_str()

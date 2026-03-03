@@ -39,6 +39,7 @@ use zeta_prompt::ZetaFormat;
 
 use reqwest_client::ReqwestClient;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use std::env;
 use std::fmt::Display;
 use std::fs::{File, OpenOptions};
 use std::hash::{Hash, Hasher};
@@ -54,6 +55,7 @@ use crate::load_project::run_load_project;
 use crate::paths::{FAILED_EXAMPLES_DIR, RUN_DIR};
 use crate::predict::run_prediction;
 use crate::progress::Progress;
+use crate::pull_examples::{fetch_settled_examples_after, parse_settled_after_input};
 use crate::retrieve_context::run_context_retrieval;
 use crate::score::run_scoring;
 use crate::split_commit::SplitCommitArgs;
@@ -131,6 +133,10 @@ Inputs can be file paths or special specifiers:
       Fetch rejected edit predictions from Snowflake after the given RFC3339 timestamp.
       These are predictions that were shown to users but rejected (useful for DPO training).
 
+  settled-after:{timestamp}
+      Fetch settled stream examples from Snowflake after the given RFC3339 timestamp.
+      These are examples from the edit prediction settled stream.
+
   rated-after:{timestamp}
       Fetch user-rated edit predictions from Snowflake after the given RFC3339 timestamp.
       These are predictions that users explicitly rated as positive or negative via the
@@ -164,6 +170,9 @@ Examples:
 
   # Read user-rated predictions
   ep read rated-after:2025-01-01T00:00:00Z -o rated.jsonl
+
+  # Read settled stream examples
+  ep read settled-after:2025-01-01T00:00:00Z -o settled.jsonl
 
   # Read only positively rated predictions
   ep read rated-positive-after:2025-01-01T00:00:00Z -o positive.jsonl
@@ -294,6 +303,9 @@ struct EvalArgs {
     /// Path to write summary scores as JSON
     #[clap(long)]
     summary_json: Option<PathBuf>,
+    /// Print all individual example lines (default: up to 20)
+    #[clap(long)]
+    verbose: bool,
 }
 
 #[derive(Clone, Copy, Default, Debug, PartialEq, Eq, Hash)]
@@ -346,6 +358,7 @@ enum PredictionProvider {
     Mercury,
     Zeta1,
     Zeta2(ZetaFormat),
+    Baseten(ZetaFormat),
     Teacher(TeacherBackend),
     TeacherNonBatching(TeacherBackend),
     Repair,
@@ -364,6 +377,7 @@ impl std::fmt::Display for PredictionProvider {
             PredictionProvider::Mercury => write!(f, "mercury"),
             PredictionProvider::Zeta1 => write!(f, "zeta1"),
             PredictionProvider::Zeta2(format) => write!(f, "zeta2:{format}"),
+            PredictionProvider::Baseten(format) => write!(f, "baseten:{format}"),
             PredictionProvider::Teacher(backend) => write!(f, "teacher:{backend}"),
             PredictionProvider::TeacherNonBatching(backend) => {
                 write!(f, "teacher-non-batching:{backend}")
@@ -403,6 +417,13 @@ impl std::str::FromStr for PredictionProvider {
                 Ok(PredictionProvider::TeacherNonBatching(backend))
             }
             "repair" => Ok(PredictionProvider::Repair),
+            "baseten" => {
+                let format = arg
+                    .map(ZetaFormat::parse)
+                    .transpose()?
+                    .unwrap_or(ZetaFormat::default());
+                Ok(PredictionProvider::Baseten(format))
+            }
             _ => {
                 anyhow::bail!(
                     "unknown provider `{provider}`. Valid options: sweep, mercury, zeta1, zeta2, zeta2:<version>, teacher, teacher:<backend>, teacher-non-batching, repair\n\
@@ -631,6 +652,7 @@ async fn load_examples(
     let mut captured_after_timestamps = Vec::new();
     let mut rejected_after_timestamps = Vec::new();
     let mut requested_after_timestamps = Vec::new();
+    let mut settled_after_timestamps = Vec::new();
     let mut rated_after_inputs: Vec<(String, Option<telemetry_events::EditPredictionRating>)> =
         Vec::new();
     let mut file_inputs = Vec::new();
@@ -647,6 +669,8 @@ async fn load_examples(
             pull_examples::parse_requested_after_input(input_string.as_ref())
         {
             requested_after_timestamps.push(timestamp.to_string());
+        } else if let Some(timestamp) = parse_settled_after_input(input_string.as_ref()) {
+            settled_after_timestamps.push(timestamp.to_string());
         } else if let Some((timestamp, rating_filter)) =
             pull_examples::parse_rated_after_input(input_string.as_ref())
         {
@@ -684,21 +708,6 @@ async fn load_examples(
     } else {
         let max_rows_per_timestamp = remaining_limit_for_snowflake.unwrap_or(5000);
 
-        if !captured_after_timestamps.is_empty() {
-            captured_after_timestamps.sort();
-
-            let mut captured_examples = pull_examples::fetch_captured_examples_after(
-                http_client.clone(),
-                &captured_after_timestamps,
-                max_rows_per_timestamp,
-                remaining_offset,
-                background_executor.clone(),
-                Some(MIN_CAPTURE_VERSION),
-            )
-            .await?;
-            examples.append(&mut captured_examples);
-        }
-
         if !rejected_after_timestamps.is_empty() {
             rejected_after_timestamps.sort();
 
@@ -727,6 +736,21 @@ async fn load_examples(
             )
             .await?;
             examples.append(&mut requested_examples);
+        }
+
+        if !settled_after_timestamps.is_empty() {
+            settled_after_timestamps.sort();
+
+            let mut settled_examples = fetch_settled_examples_after(
+                http_client.clone(),
+                &settled_after_timestamps,
+                max_rows_per_timestamp,
+                remaining_offset,
+                background_executor.clone(),
+                Some(MIN_CAPTURE_VERSION),
+            )
+            .await?;
+            examples.append(&mut settled_examples);
         }
 
         if !rated_after_inputs.is_empty() {
@@ -912,8 +936,18 @@ fn main() {
         }
 
         Command::Synthesize(synth_args) => {
-            let Some(output_dir) = args.output else {
-                panic!("output dir is required");
+            let output_dir = if let Some(output_dir) = args.output {
+                output_dir
+            } else {
+                let default_output_dir = env::current_dir()
+                    .unwrap()
+                    .join("crates/edit_prediction_cli/evals-generated");
+                if default_output_dir.parent().unwrap().exists() {
+                    std::fs::create_dir(&default_output_dir).ok();
+                    default_output_dir
+                } else {
+                    panic!("output dir is required");
+                }
             };
             let config = SynthesizeConfig {
                 repo_urls: synth_args.repos.clone(),
@@ -1253,7 +1287,7 @@ fn main() {
                 match &command {
                     Command::Eval(args) => {
                         let examples = finished_examples.lock().unwrap();
-                        score::print_report(&examples);
+                        score::print_report(&examples, args.verbose);
                         if let Some(summary_path) = &args.summary_json {
                             score::write_summary_json(&examples, summary_path)?;
                         }
