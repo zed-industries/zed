@@ -21,6 +21,7 @@ use text::LineEnding;
 
 use std::collections::HashSet;
 use std::ffi::{OsStr, OsString};
+use std::sync::atomic::AtomicBool;
 
 use std::process::ExitStatus;
 use std::str::FromStr;
@@ -961,6 +962,9 @@ pub trait GitRepository: Send + Sync {
     ) -> BoxFuture<'_, Result<()>>;
 
     fn commit_data_reader(&self) -> Result<CommitDataReader>;
+
+    fn set_trusted(&self, trusted: bool);
+    fn is_trusted(&self) -> bool;
 }
 
 pub enum DiffType {
@@ -987,6 +991,7 @@ pub struct RealGitRepository {
     pub any_git_binary_path: PathBuf,
     any_git_binary_help_output: Arc<Mutex<Option<SharedString>>>,
     executor: BackgroundExecutor,
+    is_trusted: Arc<AtomicBool>,
 }
 
 impl RealGitRepository {
@@ -1005,6 +1010,7 @@ impl RealGitRepository {
             any_git_binary_path,
             executor,
             any_git_binary_help_output: Arc::new(Mutex::new(None)),
+            is_trusted: Arc::new(AtomicBool::new(false)),
         })
     }
 
@@ -2932,6 +2938,15 @@ impl GitRepository for RealGitRepository {
             request_tx,
             _task: task,
         })
+    }
+
+    fn set_trusted(&self, trusted: bool) {
+        self.is_trusted
+            .store(trusted, std::sync::atomic::Ordering::Release);
+    }
+
+    fn is_trusted(&self) -> bool {
+        self.is_trusted.load(std::sync::atomic::Ordering::Acquire)
     }
 }
 

@@ -20,7 +20,7 @@ use ignore::gitignore::GitignoreBuilder;
 use parking_lot::Mutex;
 use rope::Rope;
 use smol::{channel::Sender, future::FutureExt as _};
-use std::{path::PathBuf, sync::Arc};
+use std::{path::PathBuf, sync::Arc, sync::atomic::AtomicBool};
 use text::LineEnding;
 use util::{paths::PathStyle, rel_path::RelPath};
 
@@ -32,6 +32,7 @@ pub struct FakeGitRepository {
     pub(crate) dot_git_path: PathBuf,
     pub(crate) repository_dir_path: PathBuf,
     pub(crate) common_dir_path: PathBuf,
+    pub(crate) is_trusted: Arc<AtomicBool>,
 }
 
 #[derive(Debug, Clone)]
@@ -1034,5 +1035,14 @@ impl GitRepository for FakeGitRepository {
 
     fn commit_data_reader(&self) -> Result<CommitDataReader> {
         anyhow::bail!("commit_data_reader not supported for FakeGitRepository")
+    }
+
+    fn set_trusted(&self, trusted: bool) {
+        self.is_trusted
+            .store(trusted, std::sync::atomic::Ordering::Release);
+    }
+
+    fn is_trusted(&self) -> bool {
+        self.is_trusted.load(std::sync::atomic::Ordering::Acquire)
     }
 }
