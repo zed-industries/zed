@@ -741,9 +741,9 @@ impl DatabasePanel {
                 .unwrap_or(DatabaseType::Sqlite);
             let quoted = quote_identifier(table_name, &db_type);
             let is_sqlite = db_type == DatabaseType::Sqlite;
-            let is_virtual = self.is_virtual_table(table_name, cx);
+            let is_view_or_virtual = self.is_view_or_virtual_table(table_name, cx);
 
-            let query = if !is_sqlite || is_virtual {
+            let query = if !is_sqlite || is_view_or_virtual {
                 format!("SELECT * FROM {}", quoted)
             } else {
                 format!("SELECT rowid, * FROM {}", quoted)
@@ -764,7 +764,7 @@ impl DatabasePanel {
         manager.active_entry().map(|e| e.config.database_type.clone())
     }
 
-    fn is_virtual_table(&self, table_name: &str, cx: &App) -> bool {
+    fn is_view_or_virtual_table(&self, table_name: &str, cx: &App) -> bool {
         let manager = self.connection_manager.read(cx);
         let Some(schema) = manager.active_schema() else {
             return false;
@@ -772,7 +772,7 @@ impl DatabasePanel {
         schema
             .tables
             .iter()
-            .any(|t| t.name == table_name && t.is_virtual)
+            .any(|t| t.name == table_name && t.table_kind != database_core::TableKind::Table)
     }
 
     fn rebuild_flattened_nodes(&mut self, cx: &App) {

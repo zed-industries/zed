@@ -27,31 +27,23 @@ impl Default for NumberFormatSettings {
 }
 
 #[derive(Debug, RegisterSetting)]
+#[allow(dead_code)]
 pub struct DatabasePanelSettings {
     pub button: bool,
     pub dock: DockPosition,
     pub default_width: Pixels,
     pub max_cell_display_chars: usize,
-    #[allow(dead_code)]
     pub max_query_history: usize,
     pub default_column_width: f32,
     pub row_height: f32,
     pub header_height: f32,
-    #[allow(dead_code)]
     pub default_rows_per_page: usize,
-    #[allow(dead_code)]
     pub auto_commit: bool,
-    #[allow(dead_code)]
     pub show_null_indicator: bool,
-    #[allow(dead_code)]
     pub grid_font_family: Option<String>,
-    #[allow(dead_code)]
     pub grid_font_size: Option<f32>,
-    #[allow(dead_code)]
     pub default_export_format: String,
-    #[allow(dead_code)]
     pub sort_mode: SortMode,
-    #[allow(dead_code)]
     pub number_format: NumberFormatSettings,
 }
 

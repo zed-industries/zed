@@ -378,9 +378,9 @@ impl ConnectionManager {
             const MAX_BACKOFF: Duration = Duration::from_secs(30);
 
             loop {
-                cx.background_spawn({
-                    async move { std::thread::sleep(PING_INTERVAL); }
-                }).await;
+                cx.background_executor()
+                    .timer(PING_INTERVAL)
+                    .await;
 
                 let ping_results = this
                     .update(cx, |this, cx| {
@@ -473,10 +473,9 @@ impl ConnectionManager {
                                         "database_viewer: reconnect attempt failed for connection {}: {:#}",
                                         index, error
                                     );
-                                    cx.background_spawn({
-                                        let delay = backoff;
-                                        async move { std::thread::sleep(delay); }
-                                    }).await;
+                                    cx.background_executor()
+                                        .timer(backoff)
+                                        .await;
                                     backoff = (backoff * 2).min(MAX_BACKOFF);
                                 }
                             }

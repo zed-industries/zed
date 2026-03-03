@@ -306,6 +306,7 @@ pub struct ResultGrid {
     show_dml_preview: bool,
 
     foreign_keys: Vec<ForeignKeyInfo>,
+    fk_column_indices: HashSet<usize>,
     active_filters: Vec<FilterClause>,
 
     show_where_filter: bool,
@@ -342,6 +343,7 @@ impl ResultGrid {
             record_view_row: 0,
             show_dml_preview: false,
             foreign_keys: Vec::new(),
+            fk_column_indices: HashSet::new(),
             active_filters: Vec::new(),
             show_where_filter: false,
             where_clause: String::new(),
@@ -355,6 +357,7 @@ impl ResultGrid {
 
     pub fn set_result(&mut self, result: QueryResult, cx: &mut Context<Self>) {
         self.result = Some(result);
+        self.rebuild_fk_column_cache();
         self.cancel_edit();
         cx.notify();
     }
@@ -383,6 +386,7 @@ impl ResultGrid {
     #[allow(dead_code)]
     pub fn set_foreign_keys(&mut self, foreign_keys: Vec<ForeignKeyInfo>) {
         self.foreign_keys = foreign_keys;
+        self.rebuild_fk_column_cache();
     }
 
     #[allow(dead_code)]
@@ -1004,12 +1008,18 @@ impl ResultGrid {
 
         match operation {
             EditOperation::CellEdit { row, col, old, new } => {
-                self.pending_edits.push(PendingEdit {
-                    row,
-                    col,
-                    original_value: old,
-                    new_value: new.clone(),
-                });
+                let existing_index =
+                    self.pending_edits.iter().position(|e| e.row == row && e.col == col);
+                if let Some(index) = existing_index {
+                    self.pending_edits[index].new_value = new.clone();
+                } else {
+                    self.pending_edits.push(PendingEdit {
+                        row,
+                        col,
+                        original_value: old,
+                        new_value: new.clone(),
+                    });
+                }
                 if let Some(result) = &mut self.result {
                     if let Some(cell) = result.rows.get_mut(row).and_then(|r| r.get_mut(col)) {
                         *cell = new;
@@ -1164,8 +1174,19 @@ impl ResultGrid {
         self.clear_edit_subscriptions();
     }
 
+    fn rebuild_fk_column_cache(&mut self) {
+        self.fk_column_indices = if let Some(result) = &self.result {
+            self.foreign_keys
+                .iter()
+                .filter_map(|fk| result.columns.iter().position(|c| c == &fk.from_column))
+                .collect()
+        } else {
+            HashSet::new()
+        };
+    }
+
     fn clear_edit_subscriptions(&mut self) {
-        self._subscriptions.retain(|_| false);
+        self._subscriptions.clear();
     }
 
     #[allow(dead_code)]
@@ -1424,14 +1445,10 @@ impl ResultGrid {
         let page_offset = self.page_offset;
         let selected_cell = self.selection.primary_cell();
 
-        let fk_columns: HashSet<usize> = self.foreign_keys.iter().filter_map(|fk| {
-            result.columns.iter().position(|c| c == &fk.from_column)
-        }).collect();
-
         let config = TableConfig {
             column_widths: self.column_widths.clone(),
             default_column_width: self.default_column_width,
-            fk_columns,
+            fk_columns: self.fk_column_indices.clone(),
             ..Default::default()
         };
 

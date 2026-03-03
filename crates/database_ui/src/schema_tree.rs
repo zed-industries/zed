@@ -5,11 +5,12 @@ use gpui::{div, prelude::*, px, App, ClickEvent, IntoElement, MouseButton, Mouse
 use serde::{Deserialize, Serialize};
 use ui::{prelude::*, Icon, IconName, Label};
 
-use database_core::{DatabaseSchema, TableInfo};
+use database_core::{DatabaseSchema, TableInfo, TableKind};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum SchemaNodeId {
     TablesHeader,
+    ViewsHeader,
     Table(String),
     ColumnsHeader(String),
     Column(String, String),
@@ -47,21 +48,27 @@ pub fn flatten_schema(
     let filter_lower = filter.trim().to_lowercase();
     let has_filter = !filter_lower.is_empty();
 
-    let filtered_tables: Vec<&TableInfo> = if has_filter {
-        schema
-            .tables
-            .iter()
-            .filter(|table| {
-                table.name.to_lowercase().contains(&filter_lower)
-                    || table
-                        .columns
-                        .iter()
-                        .any(|col| col.name.to_lowercase().contains(&filter_lower))
-            })
-            .collect()
-    } else {
-        schema.tables.iter().collect()
+    let matches_filter = |table: &&TableInfo| -> bool {
+        table.name.to_lowercase().contains(&filter_lower)
+            || table
+                .columns
+                .iter()
+                .any(|col| col.name.to_lowercase().contains(&filter_lower))
     };
+
+    let filtered_tables: Vec<&TableInfo> = schema
+        .tables
+        .iter()
+        .filter(|table| table.table_kind == TableKind::Table || table.table_kind == TableKind::VirtualTable)
+        .filter(|table| !has_filter || matches_filter(table))
+        .collect();
+
+    let filtered_views: Vec<&TableInfo> = schema
+        .tables
+        .iter()
+        .filter(|table| table.table_kind.is_view_like())
+        .filter(|table| !has_filter || matches_filter(table))
+        .collect();
 
     let tables_header_expanded = has_filter || expanded.contains(&SchemaNodeId::TablesHeader);
     nodes.push(FlattenedNode {
@@ -80,6 +87,25 @@ pub fn flatten_schema(
         }
     }
 
+    if !filtered_views.is_empty() || !has_filter {
+        let views_header_expanded = has_filter || expanded.contains(&SchemaNodeId::ViewsHeader);
+        nodes.push(FlattenedNode {
+            id: SchemaNodeId::ViewsHeader,
+            depth: 0,
+            label: SharedString::from(format!("Views ({})", filtered_views.len())),
+            icon: IconName::FolderOpen,
+            expandable: true,
+            expanded: views_header_expanded,
+            detail: None,
+        });
+
+        if views_header_expanded {
+            for view in &filtered_views {
+                flatten_table(&mut nodes, view, expanded, has_filter);
+            }
+        }
+    }
+
     nodes
 }
 
@@ -95,11 +121,17 @@ fn flatten_table(
         .row_count
         .map(|count| SharedString::from(format!("{} rows", count)));
 
+    let icon = if table.table_kind.is_view_like() {
+        IconName::Eye
+    } else {
+        IconName::DatabaseZap
+    };
+
     nodes.push(FlattenedNode {
         id: table_id.clone(),
         depth: 1,
         label: SharedString::from(table.name.clone()),
-        icon: IconName::DatabaseZap,
+        icon,
         expandable: true,
         expanded: table_expanded,
         detail: row_count_text,
@@ -330,7 +362,7 @@ pub fn render_schema_tree(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use database_core::{ColumnInfo, ForeignKeyInfo, IndexInfo};
+    use database_core::{ColumnInfo, ForeignKeyInfo, IndexInfo, TableKind};
 
     fn test_schema() -> DatabaseSchema {
         DatabaseSchema {
@@ -360,7 +392,7 @@ mod tests {
                     }],
                     foreign_keys: vec![],
                     row_count: Some(10),
-                    is_virtual: false,
+                    table_kind: TableKind::Table,
                     ddl: None,
                 },
                 TableInfo {
@@ -379,7 +411,7 @@ mod tests {
                         to_column: "id".to_string(),
                     }],
                     row_count: Some(5),
-                    is_virtual: false,
+                    table_kind: TableKind::Table,
                     ddl: None,
                 },
             ],
@@ -392,9 +424,12 @@ mod tests {
         let expanded = HashSet::default();
         let nodes = flatten_schema(&schema, &expanded, "");
 
-        assert_eq!(nodes.len(), 1);
+        // TablesHeader + ViewsHeader (always shown when no filter)
+        assert_eq!(nodes.len(), 2);
         assert_eq!(nodes[0].id, SchemaNodeId::TablesHeader);
         assert!(!nodes[0].expanded);
+        assert_eq!(nodes[1].id, SchemaNodeId::ViewsHeader);
+        assert!(!nodes[1].expanded);
     }
 
     #[test]
@@ -404,10 +439,12 @@ mod tests {
         expanded.insert(SchemaNodeId::TablesHeader);
         let nodes = flatten_schema(&schema, &expanded, "");
 
-        assert_eq!(nodes.len(), 3);
+        // TablesHeader + users + orders + ViewsHeader
+        assert_eq!(nodes.len(), 4);
         assert_eq!(nodes[0].id, SchemaNodeId::TablesHeader);
         assert_eq!(nodes[1].id, SchemaNodeId::Table("users".to_string()));
         assert_eq!(nodes[2].id, SchemaNodeId::Table("orders".to_string()));
+        assert_eq!(nodes[3].id, SchemaNodeId::ViewsHeader);
     }
 
     #[test]
@@ -420,8 +457,8 @@ mod tests {
         expanded.insert(SchemaNodeId::IndexesHeader("users".to_string()));
         let nodes = flatten_schema(&schema, &expanded, "");
 
-        // TablesHeader + users + ColumnsHeader + 2 columns + IndexesHeader + 1 index + orders = 8
-        assert_eq!(nodes.len(), 8);
+        // TablesHeader + users + ColumnsHeader + 2 columns + IndexesHeader + 1 index + orders + ViewsHeader = 9
+        assert_eq!(nodes.len(), 9);
 
         assert_eq!(nodes[3].id, SchemaNodeId::Column("users".to_string(), "id".to_string()));
         assert_eq!(nodes[3].depth, 3);

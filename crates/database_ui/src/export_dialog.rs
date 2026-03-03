@@ -4,6 +4,7 @@ use gpui::{
     actions, prelude::*, px, App, ClipboardItem, Context, DismissEvent, EventEmitter, FocusHandle,
     Focusable, SharedString, Task, Window,
 };
+use util::ResultExt as _;
 use ui::{prelude::*, Banner, Button, ButtonStyle, Label, Severity, Tooltip};
 use workspace::ModalView;
 
@@ -202,7 +203,7 @@ impl ExportDialog {
                                     Some(Err(format!("File dialog error: {:#}", error)));
                                 cx.notify();
                             })
-                            .ok();
+                            .log_err();
                             return;
                         }
                         Err(_) => return,
@@ -217,7 +218,7 @@ impl ExportDialog {
                                 )));
                                 cx.notify();
                             })
-                            .ok();
+                            .log_err();
                         }
                         Err(error) => {
                             this.update(cx, |this, cx| {
@@ -225,7 +226,7 @@ impl ExportDialog {
                                     Some(Err(format!("Failed to write file: {:#}", error)));
                                 cx.notify();
                             })
-                            .ok();
+                            .log_err();
                         }
                     }
                 });
