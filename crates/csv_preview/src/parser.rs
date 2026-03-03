@@ -105,16 +105,14 @@ pub fn from_buffer(buffer_snapshot: &BufferSnapshot) -> TableLikeContent {
     if parsed_cells_with_positions.is_empty() {
         return TableLikeContent::default();
     }
+    let raw_headers = parsed_cells_with_positions[0].clone();
 
     // Calculating the longest row, as CSV might have less headers than max row width
-    let max_number_of_cols = parsed_cells_with_positions
-        .iter()
-        .map(|r| r.len())
-        .max()
-        .expect("Expected non-empty array to have max() value");
+    let Some(max_number_of_cols) = parsed_cells_with_positions.iter().map(|r| r.len()).max() else {
+        return TableLikeContent::default();
+    };
 
     // Convert to TableCell objects with buffer positions
-    let raw_headers = parsed_cells_with_positions[0].clone();
     let headers = create_table_row(&buffer_snapshot, max_number_of_cols, raw_headers);
 
     let rows = parsed_cells_with_positions

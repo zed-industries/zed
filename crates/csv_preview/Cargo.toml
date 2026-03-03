@@ -6,7 +6,6 @@ edition.workspace = true
 
 [lib]
 path = "src/csv_preview.rs"
-doctest = false
 
 [dependencies]
 anyhow.workspace = true
