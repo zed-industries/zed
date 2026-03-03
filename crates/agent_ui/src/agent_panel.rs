@@ -3530,6 +3530,7 @@ impl AgentPanel {
 mod tests {
     use super::*;
     use crate::connection_view::tests::{StubAgentServer, init_test};
+    use acp_thread::{StubAgentConnection, ThreadStatus};
     use assistant_text_thread::TextThreadStore;
     use feature_flags::FeatureFlagAppExt;
     use fs::FakeFs;
@@ -3718,5 +3719,215 @@ mod tests {
         });
 
         cx.run_until_parked();
+    }
+
+    async fn setup_panel(cx: &mut TestAppContext) -> (Entity<AgentPanel>, VisualTestContext) {
+        init_test(cx);
+        cx.update(|cx| {
+            cx.update_flags(true, vec!["agent-v2".to_string()]);
+            agent::ThreadStore::init_global(cx);
+            language_model::LanguageModelRegistry::test(cx);
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs.clone(), [], cx).await;
+
+        let multi_workspace =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+
+        let workspace = multi_workspace
+            .read_with(cx, |mw, _cx| mw.workspace().clone())
+            .unwrap();
+
+        let mut cx = VisualTestContext::from_window(multi_workspace.into(), cx);
+
+        let panel = workspace.update_in(&mut cx, |workspace, window, cx| {
+            let text_thread_store = cx.new(|cx| TextThreadStore::fake(project.clone(), cx));
+            cx.new(|cx| AgentPanel::new(workspace, text_thread_store, None, window, cx))
+        });
+
+        (panel, cx)
+    }
+
+    fn open_thread_with_connection(
+        panel: &Entity<AgentPanel>,
+        connection: StubAgentConnection,
+        cx: &mut VisualTestContext,
+    ) {
+        panel.update_in(cx, |panel, window, cx| {
+            panel.open_external_thread_with_server(
+                Rc::new(StubAgentServer::new(connection)),
+                window,
+                cx,
+            );
+        });
+        cx.run_until_parked();
+    }
+
+    fn send_message(panel: &Entity<AgentPanel>, cx: &mut VisualTestContext) {
+        let thread_view = panel.read_with(cx, |panel, cx| panel.as_active_thread_view(cx).unwrap());
+
+        let message_editor = thread_view.read_with(cx, |view, _cx| view.message_editor.clone());
+        message_editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("Hello", window, cx);
+        });
+        thread_view.update_in(cx, |view, window, cx| view.send(window, cx));
+        cx.run_until_parked();
+    }
+
+    fn active_session_id(panel: &Entity<AgentPanel>, cx: &VisualTestContext) -> acp::SessionId {
+        panel.read_with(cx, |panel, cx| {
+            let thread = panel.active_agent_thread(cx).unwrap();
+            thread.read(cx).session_id().clone()
+        })
+    }
+
+    #[gpui::test]
+    async fn test_running_thread_retained_when_navigating_away(cx: &mut TestAppContext) {
+        let (panel, mut cx) = setup_panel(cx).await;
+
+        let connection_a = StubAgentConnection::new();
+        open_thread_with_connection(&panel, connection_a.clone(), &mut cx);
+        send_message(&panel, &mut cx);
+
+        let session_id_a = active_session_id(&panel, &cx);
+
+        // Send a chunk to keep thread A generating (don't end the turn).
+        cx.update(|_, cx| {
+            connection_a.send_update(
+                session_id_a.clone(),
+                acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk::new("chunk".into())),
+                cx,
+            );
+        });
+        cx.run_until_parked();
+
+        // Verify thread A is generating.
+        panel.read_with(&cx, |panel, cx| {
+            let thread = panel.active_agent_thread(cx).unwrap();
+            assert_eq!(thread.read(cx).status(), ThreadStatus::Generating);
+            assert!(panel.background_views.is_empty());
+        });
+
+        // Open a new thread B — thread A should be retained in background.
+        let connection_b = StubAgentConnection::new();
+        open_thread_with_connection(&panel, connection_b, &mut cx);
+
+        panel.read_with(&cx, |panel, _cx| {
+            assert_eq!(
+                panel.background_views.len(),
+                1,
+                "Running thread A should be retained in background_views"
+            );
+            assert!(
+                panel.background_views.contains_key(&session_id_a),
+                "Background view should be keyed by thread A's session ID"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_idle_thread_dropped_when_navigating_away(cx: &mut TestAppContext) {
+        let (panel, mut cx) = setup_panel(cx).await;
+
+        let connection_a = StubAgentConnection::new();
+        connection_a.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
+            acp::ContentChunk::new("Response".into()),
+        )]);
+        open_thread_with_connection(&panel, connection_a, &mut cx);
+        send_message(&panel, &mut cx);
+
+        let session_id_a = active_session_id(&panel, &cx);
+        let weak_view_a = panel.read_with(&cx, |panel, _cx| {
+            panel.active_thread_view().unwrap().downgrade()
+        });
+
+        // Thread A should be idle (auto-completed via set_next_prompt_updates).
+        panel.read_with(&cx, |panel, cx| {
+            let thread = panel.active_agent_thread(cx).unwrap();
+            assert_eq!(thread.read(cx).status(), ThreadStatus::Idle);
+        });
+
+        // Open a new thread B — thread A should NOT be retained.
+        let connection_b = StubAgentConnection::new();
+        open_thread_with_connection(&panel, connection_b, &mut cx);
+
+        panel.read_with(&cx, |panel, _cx| {
+            assert!(
+                panel.background_views.is_empty(),
+                "Idle thread A should not be retained in background_views"
+            );
+        });
+
+        // Verify the old ConnectionView entity was dropped (no strong references remain).
+        assert!(
+            weak_view_a.upgrade().is_none(),
+            "Idle ConnectionView should have been dropped"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_background_thread_promoted_via_load(cx: &mut TestAppContext) {
+        let (panel, mut cx) = setup_panel(cx).await;
+
+        let connection_a = StubAgentConnection::new();
+        open_thread_with_connection(&panel, connection_a.clone(), &mut cx);
+        send_message(&panel, &mut cx);
+
+        let session_id_a = active_session_id(&panel, &cx);
+
+        // Keep thread A generating.
+        cx.update(|_, cx| {
+            connection_a.send_update(
+                session_id_a.clone(),
+                acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk::new("chunk".into())),
+                cx,
+            );
+        });
+        cx.run_until_parked();
+
+        // Open thread B — thread A goes to background.
+        let connection_b = StubAgentConnection::new();
+        open_thread_with_connection(&panel, connection_b, &mut cx);
+
+        let session_id_b = active_session_id(&panel, &cx);
+
+        panel.read_with(&cx, |panel, _cx| {
+            assert_eq!(panel.background_views.len(), 1);
+            assert!(panel.background_views.contains_key(&session_id_a));
+        });
+
+        // Load thread A back via load_agent_thread — should promote from background.
+        panel.update_in(&mut cx, |panel, window, cx| {
+            panel.load_agent_thread(
+                AgentSessionInfo {
+                    session_id: session_id_a.clone(),
+                    cwd: None,
+                    title: None,
+                    updated_at: None,
+                    meta: None,
+                },
+                window,
+                cx,
+            );
+        });
+
+        // Thread A should now be the active view, promoted from background.
+        let active_session = active_session_id(&panel, &cx);
+        assert_eq!(
+            active_session, session_id_a,
+            "Thread A should be the active thread after promotion"
+        );
+
+        panel.read_with(&cx, |panel, _cx| {
+            assert!(
+                !panel.background_views.contains_key(&session_id_a),
+                "Promoted thread A should no longer be in background_views"
+            );
+            assert!(
+                !panel.background_views.contains_key(&session_id_b),
+                "Thread B (idle) should not have been retained in background_views"
+            );
+        });
     }
 }
