@@ -1046,20 +1046,20 @@ pub mod hashline {
 
     /// A single edit command parsed from the model output.
     #[derive(Debug)]
-    enum EditCommand {
+    enum EditCommand<'a> {
         /// Replace a single line.
-        SetLine { target: LineRef, content: String },
+        SetLine { target: LineRef, content: &'a str },
         /// Replace a range of lines (inclusive on both ends).
         SetRange {
             start: LineRef,
             end: LineRef,
-            content: String,
+            content: &'a str,
         },
         /// Insert new lines after the given line, or before the first line if
         /// `after` is `None`.
         Insert {
             after: Option<LineRef>,
-            content: String,
+            content: &'a str,
         },
     }
 
@@ -1072,23 +1072,61 @@ pub mod hashline {
     }
 
     /// Parse the model output into a list of `EditCommand`s.
-    fn parse_edit_commands(model_output: &str) -> Vec<EditCommand> {
+    fn parse_edit_commands(model_output: &str) -> Vec<EditCommand<'_>> {
         let mut commands = Vec::new();
-        let mut lines = model_output.lines().peekable();
+        let mut offset = 0usize;
 
-        while let Some(line) = lines.next() {
+        while offset < model_output.len() {
+            let next_nl = model_output[offset..]
+                .find('\n')
+                .map(|i| offset + i)
+                .unwrap_or(model_output.len());
+            let line = &model_output[offset..next_nl];
+            let line_end = if next_nl < model_output.len() {
+                next_nl + 1
+            } else {
+                next_nl
+            };
+
             let trimmed = line.trim();
-            if trimmed.starts_with("<|set|>") {
-                let specifier = trimmed.strip_prefix("<|set|>").unwrap_or("");
-                let mut content_lines: Vec<&str> = Vec::new();
-                while let Some(&next) = lines.peek() {
-                    if next.trim().starts_with("<|set|>") || next.trim().starts_with("<|insert|>") {
-                        break;
-                    }
-                    content_lines.push(lines.next().unwrap());
-                }
-                let content = content_lines.join("\n");
+            let (is_set, specifier) = if let Some(spec) = trimmed.strip_prefix("<|set|>") {
+                (true, spec)
+            } else if let Some(spec) = trimmed.strip_prefix("<|insert|>") {
+                (false, spec)
+            } else {
+                offset = line_end;
+                continue;
+            };
 
+            let mut content_start = line_end;
+            let mut content_end = line_end;
+            let mut scan = line_end;
+
+            while scan < model_output.len() {
+                let body_nl = model_output[scan..]
+                    .find('\n')
+                    .map(|i| scan + i)
+                    .unwrap_or(model_output.len());
+                let body_line = &model_output[scan..body_nl];
+                if body_line.trim().starts_with("<|set|>")
+                    || body_line.trim().starts_with("<|insert|>")
+                {
+                    break;
+                }
+                content_end = body_nl;
+                scan = if body_nl < model_output.len() {
+                    body_nl + 1
+                } else {
+                    body_nl
+                };
+            }
+
+            if content_end < content_start {
+                content_start = content_end;
+            }
+            let content = &model_output[content_start..content_end];
+
+            if is_set {
                 if let Some((start_str, end_str)) = specifier.split_once('-') {
                     if let (Some(start), Some(end)) =
                         (parse_line_ref(start_str), parse_line_ref(end_str))
@@ -1102,19 +1140,12 @@ pub mod hashline {
                 } else if let Some(target) = parse_line_ref(specifier) {
                     commands.push(EditCommand::SetLine { target, content });
                 }
-            } else if trimmed.starts_with("<|insert|>") {
-                let specifier = trimmed.strip_prefix("<|insert|>").unwrap_or("");
-                let mut content_lines: Vec<&str> = Vec::new();
-                while let Some(&next) = lines.peek() {
-                    if next.trim().starts_with("<|set|>") || next.trim().starts_with("<|insert|>") {
-                        break;
-                    }
-                    content_lines.push(lines.next().unwrap());
-                }
-                let content = content_lines.join("\n");
+            } else {
                 let after = parse_line_ref(specifier);
                 commands.push(EditCommand::Insert { after, content });
             }
+
+            offset = scan;
         }
 
         commands
@@ -1149,38 +1180,25 @@ pub mod hashline {
     /// Returns the full replacement text for the editable region.
     pub fn apply_edit_commands(editable_region: &str, model_output: &str) -> String {
         let original_lines: Vec<&str> = editable_region.lines().collect();
-
-        // Build a lookup of (index, hash) for each original line so we can
-        // validate the hash references from the model.
-        let indexed_lines: Vec<(usize, u8, &str)> = original_lines
+        let old_hashes: Vec<u8> = original_lines
             .iter()
-            .enumerate()
-            .map(|(i, line)| (i, hash_line(line.as_bytes()), *line))
+            .map(|line| hash_line(line.as_bytes()))
             .collect();
 
         let commands = parse_edit_commands(model_output);
 
-        // We process commands by walking the original lines and applying
-        // set/insert operations. First, build maps for quick lookup.
-        //
-        // For set operations: map from start line index → (end line index, content)
-        // For insert operations: map from line index → vec of content to insert after
-        //   (None key means insert before line 0)
-
-        use std::collections::BTreeMap;
-
-        let mut set_ops: BTreeMap<usize, (usize, String)> = BTreeMap::new();
-        let mut insert_before_first: Vec<String> = Vec::new();
-        let mut insert_after: BTreeMap<usize, Vec<String>> = BTreeMap::new();
+        // For set operations: indexed by start line → Some((end line index, content))
+        // For insert operations: indexed by line index → vec of content to insert after
+        // Insert-before-first is tracked separately.
+        let mut set_ops: Vec<Option<(usize, &str)>> = vec![None; original_lines.len()];
+        let mut insert_before_first: Vec<&str> = Vec::new();
+        let mut insert_after: Vec<Vec<&str>> = vec![Vec::new(); original_lines.len()];
 
         for command in &commands {
             match command {
                 EditCommand::SetLine { target, content } => {
-                    // Validate the hash matches if the line index is in range
-                    if target.index < indexed_lines.len()
-                        && indexed_lines[target.index].1 == target.hash
-                    {
-                        set_ops.insert(target.index, (target.index, content.clone()));
+                    if target.index < old_hashes.len() && old_hashes[target.index] == target.hash {
+                        set_ops[target.index] = Some((target.index, *content));
                     }
                 }
                 EditCommand::SetRange {
@@ -1188,27 +1206,22 @@ pub mod hashline {
                     end,
                     content,
                 } => {
-                    if start.index < indexed_lines.len()
-                        && end.index < indexed_lines.len()
+                    if start.index < old_hashes.len()
+                        && end.index < old_hashes.len()
                         && start.index <= end.index
-                        && indexed_lines[start.index].1 == start.hash
-                        && indexed_lines[end.index].1 == end.hash
+                        && old_hashes[start.index] == start.hash
+                        && old_hashes[end.index] == end.hash
                     {
-                        set_ops.insert(start.index, (end.index, content.clone()));
+                        set_ops[start.index] = Some((end.index, *content));
                     }
                 }
                 EditCommand::Insert { after, content } => match after {
-                    None => {
-                        insert_before_first.push(content.clone());
-                    }
+                    None => insert_before_first.push(*content),
                     Some(line_ref) => {
-                        if line_ref.index < indexed_lines.len()
-                            && indexed_lines[line_ref.index].1 == line_ref.hash
+                        if line_ref.index < old_hashes.len()
+                            && old_hashes[line_ref.index] == line_ref.hash
                         {
-                            insert_after
-                                .entry(line_ref.index)
-                                .or_default()
-                                .push(content.clone());
+                            insert_after[line_ref.index].push(*content);
                         }
                     }
                 },
@@ -1225,15 +1238,15 @@ pub mod hashline {
 
         let mut i = 0;
         while i < original_lines.len() {
-            if let Some((end_index, replacement)) = set_ops.get(&i) {
+            if let Some((end_index, replacement)) = set_ops[i].as_ref() {
                 // Replace lines i..=end_index with the replacement content
                 result.push_str(replacement);
                 if !replacement.is_empty() {
                     result.push('\n');
                 }
                 // Emit any insertions after the end of this set range
-                if let Some(inserts) = insert_after.get(end_index) {
-                    for content in inserts {
+                if *end_index < insert_after.len() {
+                    for content in &insert_after[*end_index] {
                         result.push_str(content);
                         result.push('\n');
                     }
@@ -1244,11 +1257,9 @@ pub mod hashline {
                 result.push_str(original_lines[i]);
                 result.push('\n');
                 // Emit any insertions after this line
-                if let Some(inserts) = insert_after.get(&i) {
-                    for content in inserts {
-                        result.push_str(content);
-                        result.push('\n');
-                    }
+                for content in &insert_after[i] {
+                    result.push_str(content);
+                    result.push('\n');
                 }
                 i += 1;
             }

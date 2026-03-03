@@ -13,8 +13,7 @@ use std::ops::Range;
 use std::sync::Arc;
 use zeta_prompt::{
     ZetaFormat, encode_patch_as_output_for_format, excerpt_range_for_format, format_zeta_prompt,
-    needs_output_newline_end_marker_for_format, output_end_marker_for_format,
-    resolve_cursor_region,
+    output_end_marker_for_format, resolve_cursor_region,
 };
 
 pub async fn run_format_prompt(
@@ -128,7 +127,6 @@ pub fn zeta2_output_for_patch(
         result.insert_str(offset, zeta_prompt::CURSOR_MARKER);
     }
 
-    if needs_output_newline_end_marker_for_format(version) && !result.ends_with('\n') {}
     if let Some(end_marker) = output_end_marker_for_format(version) {
         if !result.ends_with('\n') {
             result.push('\n');
