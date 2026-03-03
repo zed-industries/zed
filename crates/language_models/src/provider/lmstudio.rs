@@ -421,6 +421,10 @@ impl LanguageModel for LmStudioLanguageModel {
             }
     }
 
+    fn supports_streaming_tools(&self) -> bool {
+        true
+    }
+
     fn supports_images(&self) -> bool {
         self.model.supports_images
     }
@@ -538,6 +542,23 @@ impl LmStudioEventMapper {
 
                     if let Some(arguments) = function.arguments {
                         entry.arguments.push_str(&arguments);
+                    }
+                }
+
+                if !entry.id.is_empty() && !entry.name.is_empty() {
+                    if let Ok(input) = serde_json::from_str::<serde_json::Value>(
+                        &partial_json_fixer::fix_json(&entry.arguments),
+                    ) {
+                        events.push(Ok(LanguageModelCompletionEvent::ToolUse(
+                            LanguageModelToolUse {
+                                id: entry.id.clone().into(),
+                                name: entry.name.as_str().into(),
+                                is_input_complete: false,
+                                input,
+                                raw_input: entry.arguments.clone(),
+                                thought_signature: None,
+                            },
+                        )));
                     }
                 }
             }

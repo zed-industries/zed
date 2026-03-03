@@ -257,6 +257,10 @@ impl LanguageModel for XAiLanguageModel {
         self.model.supports_images()
     }
 
+    fn supports_streaming_tools(&self) -> bool {
+        true
+    }
+
     fn supports_tool_choice(&self, choice: LanguageModelToolChoice) -> bool {
         match choice {
             LanguageModelToolChoice::Auto
