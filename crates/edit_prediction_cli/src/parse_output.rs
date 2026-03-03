@@ -6,7 +6,11 @@ use crate::{
 };
 use anyhow::{Context as _, Result};
 use edit_prediction::example_spec::encode_cursor_in_patch;
-use zeta_prompt::{CURSOR_MARKER, ZetaFormat};
+use zeta_prompt::{
+    CURSOR_MARKER, ZetaFormat, clean_extracted_region_for_format,
+    current_region_markers_for_format, output_end_marker_for_format,
+    output_with_context_for_format,
+};
 
 pub fn run_parse_output(example: &mut Example) -> Result<()> {
     example
@@ -51,8 +55,7 @@ pub fn parse_prediction_output(
 }
 
 fn extract_zeta2_current_region(prompt: &str, format: ZetaFormat) -> Result<String> {
-    let spec = format.spec();
-    let (current_marker, end_marker) = spec.current_region_markers();
+    let (current_marker, end_marker) = current_region_markers_for_format(format);
 
     let start = prompt.find(current_marker).with_context(|| {
         format!(
@@ -68,7 +71,7 @@ fn extract_zeta2_current_region(prompt: &str, format: ZetaFormat) -> Result<Stri
 
     let region = &prompt[start..end];
     let region = region.replace(CURSOR_MARKER, "");
-    Ok(spec.clean_extracted_region(&region))
+    Ok(clean_extracted_region_for_format(format, &region))
 }
 
 fn parse_zeta2_output(
@@ -85,7 +88,7 @@ fn parse_zeta2_output(
     let old_text = extract_zeta2_current_region(prompt, format)?;
 
     let mut new_text = actual_output.to_string();
-    if let Some(transformed) = format.spec().output_with_context(&old_text, &new_text)? {
+    if let Some(transformed) = output_with_context_for_format(format, &old_text, &new_text)? {
         new_text = transformed;
     }
     let cursor_offset = if let Some(offset) = new_text.find(CURSOR_MARKER) {
@@ -95,7 +98,12 @@ fn parse_zeta2_output(
         None
     };
 
-    new_text = format.spec().post_process_output(&new_text).to_string();
+    if let Some(marker) = output_end_marker_for_format(format) {
+        new_text = new_text
+            .strip_suffix(marker)
+            .unwrap_or(&new_text)
+            .to_string();
+    }
 
     let mut old_text_normalized = old_text.clone();
     if !new_text.is_empty() && !new_text.ends_with('\n') {

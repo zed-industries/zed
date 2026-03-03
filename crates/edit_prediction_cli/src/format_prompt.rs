@@ -12,7 +12,9 @@ use similar::DiffableStr;
 use std::ops::Range;
 use std::sync::Arc;
 use zeta_prompt::{
-    ZetaFormat, excerpt_range_for_format, format_zeta_prompt, resolve_cursor_region,
+    ZetaFormat, encode_patch_as_output_for_format, excerpt_range_for_format, format_zeta_prompt,
+    needs_output_newline_end_marker_for_format, output_end_marker_for_format,
+    resolve_cursor_region,
 };
 
 pub async fn run_format_prompt(
@@ -102,9 +104,7 @@ pub fn zeta2_output_for_patch(
     }
 
     if let Some(encoded_output) =
-        version
-            .spec()
-            .encode_patch_as_output(&old_editable_region, patch, cursor_offset)?
+        encode_patch_as_output_for_format(version, &old_editable_region, patch, cursor_offset)?
     {
         return Ok(encoded_output);
     }
@@ -128,7 +128,8 @@ pub fn zeta2_output_for_patch(
         result.insert_str(offset, zeta_prompt::CURSOR_MARKER);
     }
 
-    if let Some(end_marker) = version.spec().output_end_marker() {
+    if needs_output_newline_end_marker_for_format(version) && !result.ends_with('\n') {}
+    if let Some(end_marker) = output_end_marker_for_format(version) {
         if !result.ends_with('\n') {
             result.push('\n');
         }
