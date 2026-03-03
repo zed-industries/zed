@@ -1150,7 +1150,7 @@ mod tests {
             excerpt_ranges: ExcerptRanges {
                 editable_150: editable_range.clone(),
                 editable_180: editable_range.clone(),
-                editable_350: editable_range.clone(),
+                editable_350: editable_range,
                 editable_150_context_350: context_range.clone(),
                 editable_180_context_350: context_range.clone(),
                 editable_350_context_150: context_range,
