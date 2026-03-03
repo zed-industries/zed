@@ -95,4 +95,9 @@ impl SearchHistory {
     pub fn len(&self) -> usize {
         self.history.len()
     }
+
+    /// Iterate over history entries from newest to oldest.
+    pub fn iter(&self) -> impl Iterator<Item = &str> {
+        self.history.iter().rev().map(|s| s.as_str())
+    }
 }

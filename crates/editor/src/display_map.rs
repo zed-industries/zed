@@ -165,6 +165,7 @@ pub enum HighlightKey {
     MatchingBracket,
     PendingInput,
     ProjectSearchView,
+    QuickSearchView,
     Rename,
     SearchWithinRange,
     SelectedTextHighlight,
