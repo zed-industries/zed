@@ -93,21 +93,18 @@ pub async fn run_load_project(
         let cursor_offset_in_excerpt = cursor_offset - full_context_offset_range.start;
         let excerpt_start_row = Some(full_context_point_range.start.row);
 
-        let editable_range_in_excerpt = excerpt_ranges.editable_350.clone();
-
         (
             ZetaPromptInput {
                 cursor_path: example.spec.cursor_path.clone(),
                 cursor_excerpt,
-                editable_range_in_excerpt,
                 cursor_offset_in_excerpt,
                 excerpt_start_row,
                 events,
                 related_files: existing_related_files,
-                excerpt_ranges: Some(excerpt_ranges),
-                preferred_model: None,
+                excerpt_ranges,
                 in_open_source_repo: false,
                 can_collect_data: false,
+                experiment: None,
             },
             language_name,
         )

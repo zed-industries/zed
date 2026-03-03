@@ -735,10 +735,13 @@ impl Item for Editor {
         h_flex()
             .gap_2()
             .child(
-                Label::new(self.title(cx).to_string())
-                    .color(label_color)
-                    .when(params.preview, |this| this.italic())
-                    .when(was_deleted, |this| this.strikethrough()),
+                Label::new(util::truncate_and_trailoff(
+                    &self.title(cx),
+                    MAX_TAB_TITLE_LEN,
+                ))
+                .color(label_color)
+                .when(params.preview, |this| this.italic())
+                .when(was_deleted, |this| this.strikethrough()),
             )
             .when_some(description, |this, description| {
                 this.child(

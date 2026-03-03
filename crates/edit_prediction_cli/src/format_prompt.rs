@@ -36,12 +36,8 @@ pub async fn run_format_prompt(
             step_progress.set_substatus("formatting teacher prompt");
 
             let zeta_format = ZetaFormat::default();
-            let excerpt_ranges = prompt_inputs
-                .excerpt_ranges
-                .as_ref()
-                .context("prompt_inputs must have excerpt_ranges")?;
             let (editable_range, context_range) =
-                excerpt_range_for_format(zeta_format, excerpt_ranges);
+                excerpt_range_for_format(zeta_format, &prompt_inputs.excerpt_ranges);
 
             let prompt = TeacherPrompt::format_prompt(example, editable_range, context_range);
             example.prompt = Some(ExamplePrompt {
