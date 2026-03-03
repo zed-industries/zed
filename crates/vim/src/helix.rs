@@ -153,7 +153,29 @@ impl Vim {
                         current_head = movement::left(map, selection.end)
                     }
 
+                    if matches!(motion, Motion::StartOfLine { .. } | Motion::EndOfLine { .. }) {
+                        let current_char = map
+                            .buffer_chars_at(current_head.to_offset(map, Bias::Left))
+                            .next()
+                            .map(|(ch, _)| ch);
+                        if current_char == Some('\n') {
+                            current_head = movement::saturating_left(map, current_head);
+                        }
+                    }
+
                     let (new_head, goal) = match motion {
+                        Motion::EndOfLine { .. } => {
+                            let (point, _goal) = motion
+                                .move_point(
+                                    map,
+                                    current_head,
+                                    selection.goal,
+                                    times,
+                                    &text_layout_details,
+                                )
+                                .unwrap_or((current_head, selection.goal));
+                            (movement::saturating_left(map, point), SelectionGoal::None)
+                        }
                         // Going to next word start is special cased
                         // since Vim differs from Helix in that motion
                         // Vim: `w` goes to the first character of a word
@@ -859,6 +881,7 @@ impl Vim {
 
 #[cfg(test)]
 mod test {
+    use editor::MultiBufferOffset;
     use gpui::{UpdateGlobal, VisualTestContext};
     use indoc::indoc;
     use project::FakeFs;
@@ -1459,6 +1482,55 @@ mod test {
         cx.set_state("ˇhello", Mode::HelixNormal);
         cx.simulate_keystrokes("l v l l");
         cx.assert_state("h«ellˇ»o", Mode::HelixSelect);
+    }
+
+    #[gpui::test]
+    async fn test_helix_select_start_of_line_when_newline_selected(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.enable_helix();
+
+        cx.set_state("my text«\nˇ»next", Mode::HelixSelect);
+
+        let initial_head = cx.update_editor(|editor, _, cx| {
+            editor
+                .selections
+                .newest::<MultiBufferOffset>(&editor.display_snapshot(cx))
+                .head()
+        });
+
+        cx.simulate_keystrokes("^");
+
+        let head_after_start_of_line = cx.update_editor(|editor, _, cx| {
+            editor
+                .selections
+                .newest::<MultiBufferOffset>(&editor.display_snapshot(cx))
+                .head()
+        });
+
+        assert_ne!(head_after_start_of_line, initial_head);
+        assert_eq!(head_after_start_of_line, MultiBufferOffset(0));
+        assert_eq!(cx.mode(), Mode::HelixSelect);
+    }
+
+    #[gpui::test]
+    async fn test_helix_select_end_of_line_when_newline_selected(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.enable_helix();
+
+        cx.set_state("my text«\nˇ»next", Mode::HelixSelect);
+        cx.simulate_keystrokes("$");
+
+        let head_after_end_of_line = cx.update_editor(|editor, _, cx| {
+            editor
+                .selections
+                .newest::<MultiBufferOffset>(&editor.display_snapshot(cx))
+                .head()
+        });
+
+        assert_eq!(head_after_end_of_line, MultiBufferOffset(6));
+        assert_eq!(cx.mode(), Mode::HelixSelect);
     }
 
     #[gpui::test]
