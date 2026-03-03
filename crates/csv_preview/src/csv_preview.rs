@@ -172,7 +172,7 @@ impl CsvPreviewView {
                     .read(cx)
                     .file()
                     .and_then(|file| file.path().extension())
-                    .map(|ext| ext == "csv")
+                    .map(|ext| ext.eq_ignore_ascii_case("csv"))
             })
             .unwrap_or(false)
     }
