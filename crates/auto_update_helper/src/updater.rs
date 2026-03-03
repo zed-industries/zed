@@ -279,19 +279,22 @@ pub(crate) fn perform_update(app_dir: &Path, hwnd: Option<isize>, launch: bool) 
                     unsafe { PostMessageW(hwnd, WM_JOB_UPDATED, WPARAM(0), LPARAM(0))? };
                     break;
                 }
-                Err(err) => {
-                    // Check if it's a "not found" error
-                    let io_err = err.downcast_ref::<std::io::Error>().unwrap();
-                    if io_err.kind() == std::io::ErrorKind::NotFound {
-                        log::warn!("File or folder not found.");
-                        last_successful_job = Some(i);
-                        unsafe { PostMessageW(hwnd, WM_JOB_UPDATED, WPARAM(0), LPARAM(0))? };
-                        break;
+                Err(err) => match err.downcast_ref::<std::io::Error>() {
+                    Some(io_err) => match io_err.kind() {
+                        std::io::ErrorKind::NotFound => {
+                            log::error!("Operation failed with file not found, aborting: {}", err);
+                            break 'outer;
+                        }
+                        _ => {
+                            log::error!("Operation failed (retrying): {}", err);
+                            std::thread::sleep(Duration::from_millis(50));
+                        }
+                    },
+                    None => {
+                        log::error!("Operation failed with unexpected error, aborting: {}", err);
+                        break 'outer;
                     }
-
-                    log::error!("Operation failed: {} ({:?})", err, io_err.kind());
-                    std::thread::sleep(Duration::from_millis(50));
-                }
+                },
             }
         }
     }
