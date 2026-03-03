@@ -1667,7 +1667,11 @@ impl EditorElement {
             .map(|hunk| (hunk, None))
             .collect::<Vec<_>>();
         let git_gutter_setting = ProjectSettings::get_global(cx).git.git_gutter;
-        if let GitGutterSetting::TrackedFiles = git_gutter_setting {
+        let show_git_gutter_diff_hunks = matches!(
+            git_gutter_setting,
+            GitGutterSetting::TrackedFiles | GitGutterSetting::TrackedFilesWithSigns
+        );
+        if show_git_gutter_diff_hunks {
             for (hunk, hitbox) in &mut display_hunks {
                 if matches!(hunk, DisplayDiffHunk::Unfolded { .. }) {
                     let hunk_bounds = Self::diff_hunk_bounds(
@@ -2805,13 +2809,13 @@ impl EditorElement {
                     + point(
                         gutter.hitbox.size.width
                             - shaped_line.width
+                            - gutter.dimensions.diff_hunk_signs_width
                             - gutter.dimensions.right_padding,
                         ix as f32 * gutter.line_height
                             - Pixels::from(
                                 scroll_top % ScrollPixelOffset::from(gutter.line_height),
                             ),
                     );
-
                 #[cfg(not(test))]
                 let hitbox = Some(window.insert_hitbox(
                     Bounds::new(line_origin, size(shaped_line.width, gutter.line_height)),
@@ -2847,6 +2851,72 @@ impl EditorElement {
                 .push(segment);
         }
         Arc::new(line_numbers)
+    }
+
+    fn layout_gutter_diff_hunk_signs(
+        &self,
+        gutter: &Gutter,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Arc<HashMap<MultiBufferRow, DiffHunkSignLayout>> {
+        let show_git_gutter = gutter.snapshot.show_git_diff_gutter.unwrap_or_else(|| {
+            matches!(
+                ProjectSettings::get_global(cx).git.git_gutter,
+                GitGutterSetting::TrackedFiles | GitGutterSetting::TrackedFilesWithSigns
+            )
+        });
+        let show_git_gutter_signs = show_git_gutter
+            && gutter
+                .snapshot
+                .show_git_diff_hunk_signs_gutter
+                .unwrap_or_else(|| {
+                    matches!(
+                        ProjectSettings::get_global(cx).git.git_gutter,
+                        GitGutterSetting::TrackedFilesWithSigns
+                    )
+                });
+        if !show_git_gutter_signs {
+            return Arc::default();
+        }
+        let mut diff_hunk_signs: HashMap<MultiBufferRow, DiffHunkSignLayout> = HashMap::default();
+        let scroll_top = gutter.scroll_position.y * ScrollPixelOffset::from(gutter.line_height);
+        for (ix, row_info) in gutter.row_infos.iter().enumerate() {
+            let Some(diff_status) = row_info.diff_status else {
+                continue;
+            };
+            let (diff_sign, color) = match diff_status.kind {
+                DiffHunkStatusKind::Added => ("+", cx.theme().colors().version_control_added),
+                DiffHunkStatusKind::Modified => ("~", cx.theme().colors().version_control_modified),
+                DiffHunkStatusKind::Deleted => ("-", cx.theme().colors().version_control_deleted),
+            };
+            let shaped_line = self.shape_line_number(SharedString::from(diff_sign), color, window);
+            let line_origin = gutter.hitbox.origin
+                + point(
+                    gutter.hitbox.size.width
+                        - gutter.dimensions.right_padding
+                        - gutter.dimensions.diff_hunk_signs_width
+                        + (gutter.dimensions.diff_hunk_signs_width - shaped_line.width) / 2.0,
+                    ix as f32 * gutter.line_height
+                        - Pixels::from(scroll_top % ScrollPixelOffset::from(gutter.line_height)),
+                );
+
+            let display_row = DisplayRow(gutter.range.start.0 + ix as u32);
+            let buffer_row = DisplayPoint::new(display_row, 0)
+                .to_point(gutter.snapshot)
+                .row;
+            let multi_buffer_row = MultiBufferRow(buffer_row);
+
+            diff_hunk_signs.insert(
+                multi_buffer_row,
+                DiffHunkSignLayout {
+                    segment: DiffHunkSignSegment {
+                        shaped_line,
+                        origin: line_origin,
+                    },
+                },
+            );
+        }
+        Arc::new(diff_hunk_signs)
     }
 
     fn layout_crease_toggles(
@@ -5206,6 +5276,24 @@ impl EditorElement {
         }
     }
 
+    fn paint_gutter_diff_hunk_signs(
+        &mut self,
+        layout: &mut EditorLayout,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        let line_height = layout.position_map.line_height;
+        for diff_hunk_sign_layout in layout.diff_hunk_signs.values() {
+            let DiffHunkSignSegment {
+                shaped_line,
+                origin,
+            } = &diff_hunk_sign_layout.segment;
+            shaped_line
+                .paint(*origin, line_height, TextAlign::Left, None, window, cx)
+                .log_err();
+        }
+    }
+
     fn paint_gutter_diff_hunks(
         &self,
         layout: &mut EditorLayout,
@@ -5457,7 +5545,7 @@ impl EditorElement {
             .unwrap_or_else(|| {
                 matches!(
                     ProjectSettings::get_global(cx).git.git_gutter,
-                    GitGutterSetting::TrackedFiles
+                    GitGutterSetting::TrackedFiles | GitGutterSetting::TrackedFilesWithSigns
                 )
             });
         if show_git_gutter {
@@ -8488,6 +8576,8 @@ impl Element for EditorElement {
                         cx,
                     );
 
+                    let diff_hunk_signs = self.layout_gutter_diff_hunk_signs(&gutter, window, cx);
+
                     let mut expand_toggles =
                         window.with_element_namespace("expand_toggles", |window| {
                             self.layout_expand_toggles(
@@ -9413,6 +9503,7 @@ impl Element for EditorElement {
                         document_colors,
                         line_elements,
                         line_numbers,
+                        diff_hunk_signs,
                         blamed_display_rows,
                         inline_diagnostics,
                         inline_blame_layout,
@@ -9512,6 +9603,7 @@ impl Element for EditorElement {
                         if layout.gutter_hitbox.size.width > Pixels::ZERO {
                             self.paint_blamed_display_rows(layout, window, cx);
                             self.paint_line_numbers(layout, window, cx);
+                            self.paint_gutter_diff_hunk_signs(layout, window, cx);
                         }
 
                         self.paint_text(layout, window, cx);
@@ -9627,6 +9719,7 @@ pub struct EditorLayout {
     highlighted_rows: BTreeMap<DisplayRow, LineHighlight>,
     line_elements: SmallVec<[AnyElement; 1]>,
     line_numbers: Arc<HashMap<MultiBufferRow, LineNumberLayout>>,
+    diff_hunk_signs: Arc<HashMap<MultiBufferRow, DiffHunkSignLayout>>,
     display_hunks: Vec<(DisplayDiffHunk, Option<Hitbox>)>,
     blamed_display_rows: Option<Vec<AnyElement>>,
     inline_diagnostics: HashMap<DisplayRow, AnyElement>,
@@ -9675,6 +9768,17 @@ struct LineNumberSegment {
 #[derive(Debug)]
 struct LineNumberLayout {
     segments: SmallVec<[LineNumberSegment; 1]>,
+}
+
+#[derive(Debug)]
+struct DiffHunkSignSegment {
+    shaped_line: ShapedLine,
+    origin: gpui::Point<Pixels>,
+}
+
+#[derive(Debug)]
+struct DiffHunkSignLayout {
+    segment: DiffHunkSignSegment,
 }
 
 struct ColoredRange<T> {
@@ -10717,7 +10821,7 @@ mod tests {
         display_map::{BlockPlacement, BlockProperties, DisplayMap},
         editor_tests::{init_test, update_test_language_settings},
     };
-    use gpui::{TestAppContext, VisualTestContext, font};
+    use gpui::{TestAppContext, UpdateGlobal, VisualTestContext, font};
     use language::{Buffer, SelectionGoal, language_settings, tree_sitter_python};
     use log::info;
     use rand::{RngCore, rngs::StdRng};
@@ -10783,6 +10887,7 @@ mod tests {
             width: px(30.0),
             margin: Pixels::ZERO,
             git_blame_entries_width: None,
+            diff_hunk_signs_width: Pixels::ZERO,
         };
         const EMPTY_ROW_INFO: RowInfo = RowInfo {
             buffer_id: None,
@@ -11258,6 +11363,148 @@ mod tests {
             layouts.get(&MultiBufferRow(DELETED_LINE)).is_none(),
             "Deleted line should not have a line number"
         );
+    }
+
+    #[gpui::test]
+    fn test_layout_diff_hunk_signs_enabled_and_disabled(cx: &mut TestAppContext) {
+        init_test(cx, |_| {});
+        cx.update(|cx| {
+            settings::SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.git.get_or_insert_default().git_gutter =
+                        Some(settings::GitGutterSetting::TrackedFilesWithSigns);
+                });
+            });
+        });
+
+        let window = cx.add_window(|window, cx| {
+            let buffer = MultiBuffer::build_simple(&sample_text(4, 4, 'a'), cx);
+            Editor::new(EditorMode::full(), buffer, None, window, cx)
+        });
+
+        let editor = window.root(cx).unwrap();
+        let style = editor.update(cx, |editor, cx| editor.style(cx).clone());
+        let line_height = window
+            .update(cx, |_, window, _| {
+                style.text.line_height_in_pixels(window.rem_size())
+            })
+            .unwrap();
+        let element = EditorElement::new(&editor, style);
+        let snapshot = window
+            .update(cx, |editor, window, cx| editor.snapshot(window, cx))
+            .unwrap();
+
+        let diff_hunk_signs_enabled = cx
+            .update_window(*window, |_, window, cx| {
+                let dimensions = GutterDimensions {
+                    left_padding: Pixels::ZERO,
+                    right_padding: px(20.),
+                    diff_hunk_signs_width: px(20.),
+                    width: px(80.),
+                    margin: Pixels::ZERO,
+                    git_blame_entries_width: None,
+                };
+                let row_infos = (0..4)
+                    .map(|row| RowInfo {
+                        buffer_row: Some(row),
+                        diff_status: match row {
+                            0 => Some(DiffHunkStatus::added_none()),
+                            1 => Some(DiffHunkStatus::modified_none()),
+                            2 => Some(DiffHunkStatus::deleted(
+                                buffer_diff::DiffHunkSecondaryStatus::NoSecondaryHunk,
+                            )),
+                            _ => None,
+                        },
+                        ..Default::default()
+                    })
+                    .collect::<Vec<_>>();
+                let diff_hunk_signs = element.layout_gutter_diff_hunk_signs(
+                    &Gutter {
+                        dimensions: &dimensions,
+                        row_infos: &row_infos,
+                        range: DisplayRow(0)..DisplayRow(4),
+                        ..test_gutter(line_height, &snapshot)
+                    },
+                    window,
+                    cx,
+                );
+                diff_hunk_signs
+            })
+            .unwrap();
+        assert_eq!(diff_hunk_signs_enabled.len(), 3);
+        assert_eq!(
+            diff_hunk_signs_enabled[&MultiBufferRow(0)]
+                .segment
+                .shaped_line
+                .text
+                .as_ref(),
+            "+"
+        );
+        assert_eq!(
+            diff_hunk_signs_enabled[&MultiBufferRow(1)]
+                .segment
+                .shaped_line
+                .text
+                .as_ref(),
+            "~"
+        );
+        assert_eq!(
+            diff_hunk_signs_enabled[&MultiBufferRow(2)]
+                .segment
+                .shaped_line
+                .text
+                .as_ref(),
+            "-"
+        );
+        assert!(diff_hunk_signs_enabled.get(&MultiBufferRow(3)).is_none());
+
+        cx.update(|cx| {
+            settings::SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.git.get_or_insert_default().git_gutter =
+                        Some(settings::GitGutterSetting::TrackedFiles);
+                });
+            });
+        });
+        let diff_hunk_signs_disabled = cx
+            .update_window(*window, |_, window, cx| {
+                let dimensions = GutterDimensions {
+                    left_padding: Pixels::ZERO,
+                    right_padding: px(20.),
+                    diff_hunk_signs_width: px(20.),
+                    width: px(80.),
+                    margin: Pixels::ZERO,
+                    git_blame_entries_width: None,
+                };
+                let row_infos = (0..4)
+                    .map(|row| RowInfo {
+                        buffer_row: Some(row),
+                        diff_status: match row {
+                            0 => Some(DiffHunkStatus::added_none()),
+                            1 => Some(DiffHunkStatus::modified_none()),
+                            2 => Some(DiffHunkStatus::deleted(
+                                buffer_diff::DiffHunkSecondaryStatus::NoSecondaryHunk,
+                            )),
+                            _ => None,
+                        },
+                        ..Default::default()
+                    })
+                    .collect::<Vec<_>>();
+                let diff_hunk_signs = element.layout_gutter_diff_hunk_signs(
+                    &Gutter {
+                        line_height,
+                        dimensions: &dimensions,
+                        row_infos: &row_infos,
+                        range: DisplayRow(0)..DisplayRow(4),
+                        ..test_gutter(line_height, &snapshot)
+                    },
+                    window,
+                    cx,
+                );
+                diff_hunk_signs
+            })
+            .unwrap();
+        assert!(diff_hunk_signs_disabled.is_empty());
     }
 
     #[gpui::test]
