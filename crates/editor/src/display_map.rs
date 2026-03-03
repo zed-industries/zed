@@ -789,6 +789,9 @@ impl DisplayMap {
                 .collect(),
             cx,
         );
+        for buffer_id in &other.block_snapshot.buffers_with_disabled_headers {
+            self.disable_header_for_buffer(*buffer_id, cx);
+        }
     }
 
     /// Creates folds for the given creases.
@@ -1003,10 +1006,7 @@ impl DisplayMap {
         &self.block_map.folded_buffers
     }
 
-    pub(crate) fn buffers_with_disabled_headers(&self) -> &HashSet<BufferId> {
-        &self.block_map.buffers_with_disabled_headers
-    }
-  
+    #[instrument(skip_all)]
     pub(super) fn clear_folded_buffer(&mut self, buffer_id: language::BufferId) {
         self.block_map.folded_buffers.remove(&buffer_id);
     }

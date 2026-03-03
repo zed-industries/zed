@@ -1960,12 +1960,8 @@ impl Editor {
         );
         let my_snapshot = self.display_map.update(cx, |display_map, cx| {
             let snapshot = display_map.snapshot(cx);
-            let disabled_headers = display_map.buffers_with_disabled_headers().clone();
-            clone.display_map.update(cx, |clone_display_map, cx| {
-                clone_display_map.set_state(&snapshot, cx);
-                for buffer_id in disabled_headers {
-                    clone_display_map.disable_header_for_buffer(buffer_id, cx);
-                }
+            clone.display_map.update(cx, |display_map, cx| {
+                display_map.set_state(&snapshot, cx);
             });
             snapshot
         });
