@@ -637,7 +637,6 @@ pub fn parse_numstat(output: &str) -> GitDiffStat {
         };
         entries.push((path, DiffStat { added, deleted }));
     }
-    // todo! do we need this?
     entries.sort_by(|(a, _), (b, _)| a.cmp(b));
     entries.dedup_by(|(a, _), (b, _)| a == b);
 

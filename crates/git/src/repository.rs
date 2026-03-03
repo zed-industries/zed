@@ -3045,7 +3045,6 @@ fn git_status_args(path_prefixes: &[RepoPath]) -> Vec<OsString> {
         OsString::from("--no-renames"),
         OsString::from("-z"),
     ];
-    // todo! figure out why args are duplicated
     args.extend(
         path_prefixes
             .iter()
