@@ -925,10 +925,10 @@ impl<T: Item> ItemHandle for Entity<T> {
                 },
             ));
 
-            cx.on_blur(
+            cx.on_focus_out(
                 &self.read(cx).focus_handle(cx),
                 window,
-                move |workspace, window, cx| {
+                move |workspace, _event, window, cx| {
                     if let Some(item) = weak_item.upgrade()
                         && item.workspace_settings(cx).autosave == AutosaveSetting::OnFocusChange
                     {
