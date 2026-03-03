@@ -182,7 +182,7 @@ fn parse_csv_with_positions(
                     field_start_offset = current_offset;
                 }
                 current_row.push((
-                    current_field.trim().to_string().into(),
+                    current_field.clone().into(),
                     field_start_offset..field_end_offset,
                 ));
                 current_field.clear();
@@ -197,7 +197,7 @@ fn parse_csv_with_positions(
                         field_start_offset = 0;
                     }
                     current_row.push((
-                        current_field.trim().to_string().into(),
+                        current_field.clone().into(),
                         field_start_offset..field_end_offset,
                     ));
                     current_field.clear();
@@ -235,7 +235,7 @@ fn parse_csv_with_positions(
                         // Row separator (only when not inside quotes)
                         let field_end_offset = current_offset;
                         current_row.push((
-                            current_field.trim().to_string().into(),
+                            current_field.clone().into(),
                             field_start_offset..field_end_offset,
                         ));
                         current_field.clear();
@@ -277,7 +277,7 @@ fn parse_csv_with_positions(
     if !current_field.is_empty() || !current_row.is_empty() {
         let field_end_offset = current_offset;
         current_row.push((
-            current_field.trim().to_string().into(),
+            current_field.clone().into(),
             field_start_offset..field_end_offset,
         ));
     }
