@@ -12,7 +12,7 @@ document.addEventListener("DOMContentLoaded", () => {
   const { consentStore } = getOrCreateConsentRuntime({
     mode: "c15t",
     backendURL: consentInstance,
-    consentCategories: ["necessary", "measurement"],
+    consentCategories: ["necessary", "measurement", "marketing"],
     storageConfig: {
       crossSubdomain: true,
     },
