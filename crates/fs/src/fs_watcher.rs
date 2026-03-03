@@ -1,7 +1,9 @@
 use notify::EventKind;
 use parking_lot::Mutex;
+#[cfg(target_os = "linux")]
+use std::collections::HashSet;
 use std::{
-    collections::{BTreeMap, HashMap, HashSet},
+    collections::{BTreeMap, HashMap},
     ops::DerefMut,
     sync::{Arc, OnceLock},
 };
