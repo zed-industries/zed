@@ -4,7 +4,6 @@ use context_server::ContextServerCommand;
 use dap::adapters::DebugAdapterName;
 use fs::Fs;
 use futures::StreamExt as _;
-use git::repository::DEFAULT_WORKTREE_DIRECTORY;
 use gpui::{AsyncApp, BorrowAppContext, Context, Entity, EventEmitter, Subscription, Task};
 use lsp::{DEFAULT_LSP_REQUEST_TIMEOUT_SECS, LanguageServerName};
 use paths::{
@@ -460,8 +459,11 @@ pub struct GitSettings {
     /// root, the project's directory name is automatically appended so that
     /// sibling repos don't collide.
     ///
-    /// Default: ../worktrees
-    pub worktree_directory: String,
+    /// When unset, auto-detects: bare clone layouts use the bare repo's parent
+    /// directory, normal repos use "../worktrees".
+    ///
+    /// Default: None (auto-detect)
+    pub worktree_directory: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -651,10 +653,7 @@ impl Settings for ProjectSettings {
             },
             hunk_style: git.hunk_style.unwrap(),
             path_style: git.path_style.unwrap().into(),
-            worktree_directory: git
-                .worktree_directory
-                .clone()
-                .unwrap_or_else(|| DEFAULT_WORKTREE_DIRECTORY.to_string()),
+            worktree_directory: git.worktree_directory.clone(),
         };
         Self {
             context_servers: project

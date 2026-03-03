@@ -2,7 +2,7 @@ use anyhow::Context as _;
 use collections::HashSet;
 use fuzzy::StringMatchCandidate;
 
-use git::repository::{Worktree as GitWorktree, validate_worktree_directory};
+use git::repository::{Worktree as GitWorktree, resolve_worktree_directory_auto};
 use gpui::{
     Action, App, AsyncWindowContext, Context, DismissEvent, Entity, EventEmitter, FocusHandle,
     Focusable, InteractiveElement, IntoElement, Modifiers, ModifiersChangedEvent, ParentElement,
@@ -198,10 +198,10 @@ impl Render for WorktreeList {
             .w(self.width)
             .on_modifiers_changed(cx.listener(Self::handle_modifiers_changed))
             .on_action(cx.listener(|this, _: &WorktreeFromDefault, w, cx| {
-                this.handle_new_worktree(false, w, cx)
+                this.handle_new_worktree(true, w, cx)
             }))
             .on_action(cx.listener(|this, _: &WorktreeFromDefaultOnWindow, w, cx| {
-                this.handle_new_worktree(true, w, cx)
+                this.handle_new_worktree(false, w, cx)
             }))
             .child(self.picker.clone())
             .when(!self.embedded, |el| {
@@ -275,9 +275,14 @@ impl WorktreeListDelegate {
                     .git
                     .worktree_directory
                     .clone();
-                let work_dir = repo.work_directory_abs_path.clone();
-                let directory =
-                    validate_worktree_directory(&work_dir, &worktree_directory_setting)?;
+                let snapshot = repo.snapshot();
+                let work_dir = snapshot.work_directory_abs_path.clone();
+                let common_dir = snapshot.common_dir_abs_path.as_deref();
+                let directory = resolve_worktree_directory_auto(
+                    &work_dir,
+                    common_dir,
+                    worktree_directory_setting.as_deref(),
+                )?;
                 let new_worktree_path = directory.join(&branch);
                 let receiver = repo.create_worktree(branch.clone(), directory, commit);
                 anyhow::Ok((receiver, new_worktree_path))

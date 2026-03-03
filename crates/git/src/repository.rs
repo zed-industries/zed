@@ -146,6 +146,39 @@ pub fn worktree_path_for_branch(
     resolve_worktree_directory(working_directory, worktree_directory_setting).join(branch)
 }
 
+/// Resolves the worktree directory, auto-detecting bare clone layouts when
+/// `worktree_directory_setting` is `None`.
+///
+/// For linked worktrees (where `.git` is a file), `common_dir` points to
+/// the shared git data directory. When no explicit setting is provided,
+/// new worktrees are created as siblings in `common_dir.parent()`.
+///
+/// When an explicit setting is provided, falls through to
+/// `validate_worktree_directory` with the standard resolution logic.
+pub fn resolve_worktree_directory_auto(
+    working_directory: &Path,
+    common_dir: Option<&Path>,
+    worktree_directory_setting: Option<&str>,
+) -> Result<PathBuf> {
+    if let Some(setting) = worktree_directory_setting {
+        return validate_worktree_directory(working_directory, setting);
+    }
+
+    // Auto-detect: if common_dir differs from working_directory's .git,
+    // we're in a linked worktree (bare clone or non-bare with worktrees).
+    // Place new worktrees as siblings in common_dir's parent.
+    if let Some(common_dir) = common_dir {
+        let expected_git_dir = working_directory.join(".git");
+        if common_dir.as_os_str() != expected_git_dir.as_os_str() {
+            if let Some(parent) = common_dir.parent() {
+                return Ok(parent.to_path_buf());
+            }
+        }
+    }
+
+    validate_worktree_directory(working_directory, DEFAULT_WORKTREE_DIRECTORY)
+}
+
 /// Commit data needed for the git graph visualization.
 #[derive(Debug, Clone)]
 pub struct GraphCommitData {
@@ -4334,6 +4367,67 @@ mod tests {
         assert_eq!(
             worktree_path_for_branch(work_dir, "my-worktrees/", "branch"),
             PathBuf::from("/code/my-project/my-worktrees/branch")
+        );
+    }
+
+    #[test]
+    fn test_resolve_worktree_directory_auto() {
+        // === Bare clone pattern ===
+        // .bare is the bare repo, worktrees are siblings.
+        let bare = Path::new("/projects/myrepo/.bare");
+        let wt_main = Path::new("/projects/myrepo/main");
+        let wt_feature = Path::new("/projects/myrepo/feature-x");
+
+        // From the prime worktree, no setting → auto-detect → myrepo/
+        assert_eq!(
+            resolve_worktree_directory_auto(wt_main, Some(bare), None).unwrap(),
+            PathBuf::from("/projects/myrepo")
+        );
+
+        // From another worktree, same result
+        assert_eq!(
+            resolve_worktree_directory_auto(wt_feature, Some(bare), None).unwrap(),
+            PathBuf::from("/projects/myrepo")
+        );
+
+        // === Bare clone with explicit setting ===
+        // Explicit setting always wins, even for bare clones.
+        assert_eq!(
+            resolve_worktree_directory_auto(wt_main, Some(bare), Some("../worktrees")).unwrap(),
+            PathBuf::from("/projects/myrepo/worktrees/main")
+        );
+
+        // === Non-bare repo (normal checkout) ===
+        // common_dir == work_dir/.git → not a linked worktree → default fallback
+        let normal_git = Path::new("/code/my-project/.git");
+        let normal_dir = Path::new("/code/my-project");
+
+        assert_eq!(
+            resolve_worktree_directory_auto(normal_dir, Some(normal_git), None).unwrap(),
+            PathBuf::from("/code/worktrees/my-project")
+        );
+
+        // === Non-bare with linked worktrees ===
+        // Parent repo at /code/myrepo/.git, linked worktree nested inside
+        let main_git = Path::new("/code/myrepo/.git");
+        let wt_nested = Path::new("/code/myrepo/sub/wt-feature");
+
+        // common_dir != wt_nested/.git → auto-detect → myrepo/
+        assert_eq!(
+            resolve_worktree_directory_auto(wt_nested, Some(main_git), None).unwrap(),
+            PathBuf::from("/code/myrepo")
+        );
+
+        // === No git at all ===
+        assert_eq!(
+            resolve_worktree_directory_auto(normal_dir, None, None).unwrap(),
+            PathBuf::from("/code/worktrees/my-project")
+        );
+
+        // === Explicit setting with no git ===
+        assert_eq!(
+            resolve_worktree_directory_auto(normal_dir, None, Some("my-worktrees")).unwrap(),
+            PathBuf::from("/code/my-project/my-worktrees")
         );
     }
 

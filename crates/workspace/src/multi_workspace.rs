@@ -100,6 +100,9 @@ pub struct MultiWorkspace {
     window_id: WindowId,
     workspaces: Vec<Entity<Workspace>>,
     active_workspace_index: usize,
+    /// Sidebar-sorted workspace indices for next/previous cycling.
+    /// When set, next/previous workspace follows this order instead of insertion order.
+    display_order: Vec<usize>,
     sidebar: Option<Box<dyn SidebarHandle>>,
     sidebar_open: bool,
     _sidebar_subscription: Option<Subscription>,
@@ -134,6 +137,7 @@ impl MultiWorkspace {
             window_id: window.window_handle().window_id(),
             workspaces: vec![workspace],
             active_workspace_index: 0,
+            display_order: vec![0],
             sidebar: None,
             sidebar_open: false,
             _sidebar_subscription: None,
@@ -339,8 +343,10 @@ impl MultiWorkspace {
             }
             Self::subscribe_to_workspace(&workspace, cx);
             self.workspaces.push(workspace);
+            let new_index = self.workspaces.len() - 1;
+            self.display_order.push(new_index);
             cx.notify();
-            self.workspaces.len() - 1
+            new_index
         }
     }
 
@@ -355,21 +361,43 @@ impl MultiWorkspace {
         cx.notify();
     }
 
+    pub fn set_display_order(&mut self, order: Vec<usize>) {
+        self.display_order = order;
+    }
+
+    pub fn display_order(&self) -> &[usize] {
+        &self.display_order
+    }
+
     pub fn activate_next_workspace(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.workspaces.len() > 1 {
-            let next_index = (self.active_workspace_index + 1) % self.workspaces.len();
-            self.activate_index(next_index, window, cx);
+            let order = self.effective_display_order();
+            let pos = order.iter()
+                .position(|&i| i == self.active_workspace_index)
+                .unwrap_or(0);
+            let next_pos = (pos + 1) % order.len();
+            self.activate_index(order[next_pos], window, cx);
         }
     }
 
     pub fn activate_previous_workspace(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.workspaces.len() > 1 {
-            let prev_index = if self.active_workspace_index == 0 {
-                self.workspaces.len() - 1
-            } else {
-                self.active_workspace_index - 1
-            };
-            self.activate_index(prev_index, window, cx);
+            let order = self.effective_display_order();
+            let pos = order.iter()
+                .position(|&i| i == self.active_workspace_index)
+                .unwrap_or(0);
+            let prev_pos = if pos == 0 { order.len() - 1 } else { pos - 1 };
+            self.activate_index(order[prev_pos], window, cx);
+        }
+    }
+
+    fn effective_display_order(&self) -> Vec<usize> {
+        if self.display_order.len() == self.workspaces.len()
+            && self.display_order.iter().all(|&i| i < self.workspaces.len())
+        {
+            self.display_order.clone()
+        } else {
+            (0..self.workspaces.len()).collect()
         }
     }
 
@@ -613,6 +641,14 @@ impl MultiWorkspace {
         }
 
         let removed_workspace = self.workspaces.remove(index);
+
+        // Update display_order: remove the index and adjust remaining indices
+        self.display_order.retain(|&i| i != index);
+        for i in self.display_order.iter_mut() {
+            if *i > index {
+                *i -= 1;
+            }
+        }
 
         if self.active_workspace_index >= self.workspaces.len() {
             self.active_workspace_index = self.workspaces.len() - 1;
