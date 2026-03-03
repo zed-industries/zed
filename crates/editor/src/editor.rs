@@ -1187,6 +1187,7 @@ pub struct Editor {
     show_line_numbers: Option<bool>,
     use_relative_line_numbers: Option<bool>,
     show_git_diff_gutter: Option<bool>,
+    show_git_diff_hunk_signs_gutter: Option<bool>,
     show_code_actions: Option<bool>,
     show_runnables: Option<bool>,
     show_breakpoints: Option<bool>,
@@ -1400,6 +1401,7 @@ pub struct EditorSnapshot {
     show_line_numbers: Option<bool>,
     number_deleted_lines: bool,
     show_git_diff_gutter: Option<bool>,
+    show_git_diff_hunk_signs_gutter: Option<bool>,
     show_code_actions: Option<bool>,
     show_runnables: Option<bool>,
     show_breakpoints: Option<bool>,
@@ -1421,6 +1423,7 @@ pub struct GutterDimensions {
     pub width: Pixels,
     pub margin: Pixels,
     pub git_blame_entries_width: Option<Pixels>,
+    pub diff_hunk_signs_width: Pixels,
 }
 
 impl GutterDimensions {
@@ -2426,6 +2429,7 @@ impl Editor {
             enable_lsp_data: true,
             enable_runnables: true,
             show_git_diff_gutter: None,
+            show_git_diff_hunk_signs_gutter: None,
             show_code_actions: None,
             show_runnables: None,
             show_breakpoints: None,
@@ -3177,6 +3181,7 @@ impl Editor {
             show_line_numbers: self.show_line_numbers,
             number_deleted_lines: self.number_deleted_lines,
             show_git_diff_gutter: self.show_git_diff_gutter,
+            show_git_diff_hunk_signs_gutter: self.show_git_diff_hunk_signs_gutter,
             semantic_tokens_enabled: self.semantic_token_state.enabled(),
             show_code_actions: self.show_code_actions,
             show_runnables: self.show_runnables,
@@ -21555,6 +21560,15 @@ impl Editor {
         cx.notify();
     }
 
+    pub fn set_show_git_diff_hunk_signs_gutter(
+        &mut self,
+        show_git_diff_hunk_signs_gutter: bool,
+        cx: &mut Context<Self>,
+    ) {
+        self.show_git_diff_hunk_signs_gutter = Some(show_git_diff_hunk_signs_gutter);
+        cx.notify();
+    }
+
     pub fn set_show_code_actions(&mut self, show_code_actions: bool, cx: &mut Context<Self>) {
         self.show_code_actions = Some(show_code_actions);
         cx.notify();
@@ -27776,9 +27790,18 @@ impl EditorSnapshot {
             let show_git_gutter = self.show_git_diff_gutter.unwrap_or_else(|| {
                 matches!(
                     ProjectSettings::get_global(cx).git.git_gutter,
-                    GitGutterSetting::TrackedFiles
+                    GitGutterSetting::TrackedFiles | GitGutterSetting::TrackedFilesWithSigns
                 )
             });
+
+            let show_diff_hunk_signs_gutter = show_git_gutter
+                && self.show_git_diff_hunk_signs_gutter.unwrap_or_else(|| {
+                    matches!(
+                        ProjectSettings::get_global(cx).git.git_gutter,
+                        GitGutterSetting::TrackedFilesWithSigns
+                    )
+                });
+
             let gutter_settings = EditorSettings::get_global(cx).gutter;
             let show_line_numbers = self
                 .show_line_numbers
@@ -27831,6 +27854,12 @@ impl EditorSnapshot {
 
             let shows_folds = is_singleton && gutter_settings.folds;
 
+            let diff_hunk_signs_gutter_width = if show_diff_hunk_signs_gutter {
+                ch_width * 2.0 + px(2.0)
+            } else {
+                px(0.)
+            };
+
             let right_padding = if shows_folds && show_line_numbers {
                 ch_width * 4.0
             } else if shows_folds || (!is_singleton && show_line_numbers) {
@@ -27844,9 +27873,13 @@ impl EditorSnapshot {
             GutterDimensions {
                 left_padding,
                 right_padding,
-                width: line_gutter_width + left_padding + right_padding,
+                width: line_gutter_width
+                    + diff_hunk_signs_gutter_width
+                    + left_padding
+                    + right_padding,
                 margin: GutterDimensions::default_gutter_margin(font_id, font_size, cx),
                 git_blame_entries_width,
+                diff_hunk_signs_width: diff_hunk_signs_gutter_width,
             }
         } else if self.offset_content {
             GutterDimensions::default_with_margin(font_id, font_size, cx)
