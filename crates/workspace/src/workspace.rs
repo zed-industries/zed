@@ -4542,31 +4542,68 @@ impl Workspace {
         if self.last_active_center_pane.is_none() {
             self.last_active_center_pane = Some(pane.downgrade());
         }
+        let pane_has_focus = pane.read(cx).has_focus(window, cx);
 
         // If this pane is in a dock, preserve that dock when dismissing zoomed items.
         // This prevents the dock from closing when focus events fire during window activation.
         // We also preserve any dock whose active panel itself has focus — this covers
         // panels like AgentPanel that don't implement `pane()` but can still be zoomed.
-        let dock_to_preserve = self.all_docks().iter().find_map(|dock| {
+        let mut dock_to_preserve = self.all_docks().iter().find_map(|dock| {
             let dock_read = dock.read(cx);
+            let dock_position = dock_read.position();
+            let dock_has_focus = dock_read.focus_handle(cx).contains_focused(window, cx);
             if let Some(panel) = dock_read.active_panel() {
-                if panel.pane(cx).is_some_and(|dock_pane| dock_pane == pane)
-                    || panel.panel_focus_handle(cx).contains_focused(window, cx)
-                {
-                    return Some(dock_read.position());
+                let pane_matches = panel.pane(cx).is_some_and(|dock_pane| dock_pane == pane);
+                let panel_has_focus = panel.panel_focus_handle(cx).contains_focused(window, cx);
+                let should_preserve = pane_matches || panel_has_focus || dock_has_focus;
+
+                if should_preserve {
+                    return Some(dock_position);
                 }
             }
             None
         });
+        let zoomed_dock_panel = self.all_docks().iter().find_map(|dock| {
+            let dock_read = dock.read(cx);
+            let panel = dock_read.active_panel()?;
+            panel.is_zoomed(window, cx).then_some(dock_read.position())
+        });
+        if dock_to_preserve.is_none() && (!pane_has_focus || zoomed_dock_panel.is_some()) {
+            dock_to_preserve = self.zoomed_position.or(zoomed_dock_panel);
+        }
+
+        let preserved_zoomed_panel = dock_to_preserve
+            .filter(|position| zoomed_dock_panel == Some(*position))
+            .and_then(|position| {
+                self.all_docks().iter().find_map(|dock| {
+                    let dock_read = dock.read(cx);
+                    if dock_read.position() != position {
+                        return None;
+                    }
+                    let panel = dock_read.active_panel()?;
+                    panel
+                        .is_zoomed(window, cx)
+                        .then(|| panel.to_any().downgrade())
+                })
+            });
+        if let (Some(position), Some(zoomed_panel)) = (dock_to_preserve, preserved_zoomed_panel)
+            && (self.zoomed_position != Some(position) || self.zoomed.is_none())
+        {
+            self.zoomed = Some(zoomed_panel);
+            self.zoomed_position = Some(position);
+            cx.emit(Event::ZoomChanged);
+        }
+
+        let keep_preserved_dock_zoom_tracking =
+            dock_to_preserve.is_some() && self.zoomed_position == dock_to_preserve;
 
         self.dismiss_zoomed_items_to_reveal(dock_to_preserve, window, cx);
-        if pane.read(cx).is_zoomed() {
-            self.zoomed = Some(pane.downgrade().into());
-        } else {
-            self.zoomed = None;
+        if !keep_preserved_dock_zoom_tracking {
+            let pane_is_zoomed = pane.read(cx).is_zoomed();
+            self.zoomed = pane_is_zoomed.then(|| pane.downgrade().into());
+            self.zoomed_position = None;
+            cx.emit(Event::ZoomChanged);
         }
-        self.zoomed_position = None;
-        cx.emit(Event::ZoomChanged);
         self.update_active_view_for_followers(window, cx);
         pane.update(cx, |pane, _| {
             pane.track_alternate_file_items();
