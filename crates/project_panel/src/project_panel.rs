@@ -4563,6 +4563,23 @@ impl ProjectPanel {
                 (info, folded_entries)
             };
 
+            // Capture old paths before moving so we can record undo operations.
+            let old_paths: HashMap<ProjectEntryId, ProjectPath> = {
+                let project = self.project.read(cx);
+                entries
+                    .iter()
+                    .filter_map(|entry| {
+                        let path = project.path_for_entry(entry.entry_id, cx)?;
+                        Some((entry.entry_id, path))
+                    })
+                    .collect()
+            };
+            let destination_worktree_id = self
+                .project
+                .read(cx)
+                .worktree_for_entry(target_entry_id, cx)
+                .map(|wt| wt.read(cx).id());
+
             // Collect move tasks paired with their source entry ID so we can correlate
             // results with folded selections that need refreshing.
             let mut move_tasks: Vec<(ProjectEntryId, Task<Result<CreatedEntry>>)> = Vec::new();
@@ -4577,21 +4594,70 @@ impl ProjectPanel {
             }
 
             if folded_selection_info.is_empty() {
-                for (_, task) in move_tasks {
-                    task.detach_and_log_err(cx);
-                }
+                cx.spawn_in(window, async move |project_panel, cx| {
+                    let mut operations = Vec::new();
+                    for (entry_id, task) in move_tasks {
+                        if let Some(CreatedEntry::Included(new_entry)) = task.await.log_err() {
+                            if let (Some(old_path), Some(worktree_id)) =
+                                (old_paths.get(&entry_id), destination_worktree_id)
+                            {
+                                operations.push(ProjectPanelOperation::Rename {
+                                    old_path: old_path.clone(),
+                                    new_path: (worktree_id, new_entry.path).into(),
+                                });
+                            }
+                        }
+                    }
+                    if !operations.is_empty() {
+                        project_panel
+                            .update(cx, |this, _| {
+                                if operations.len() == 1 {
+                                    this.record_operation(operations.pop().unwrap());
+                                } else {
+                                    this.record_operation(ProjectPanelOperation::Batch(
+                                        operations,
+                                    ));
+                                }
+                            })
+                            .ok();
+                    }
+                })
+                .detach();
             } else {
                 cx.spawn_in(window, async move |project_panel, cx| {
                     // Await all move tasks and collect successful results
                     let mut move_results: Vec<(ProjectEntryId, Entry)> = Vec::new();
+                    let mut operations = Vec::new();
                     for (entry_id, task) in move_tasks {
                         if let Some(CreatedEntry::Included(new_entry)) = task.await.log_err() {
+                            if let (Some(old_path), Some(worktree_id)) =
+                                (old_paths.get(&entry_id), destination_worktree_id)
+                            {
+                                operations.push(ProjectPanelOperation::Rename {
+                                    old_path: old_path.clone(),
+                                    new_path: (worktree_id, new_entry.path.clone()).into(),
+                                });
+                            }
                             move_results.push((entry_id, new_entry));
                         }
                     }
 
                     if move_results.is_empty() {
                         return;
+                    }
+
+                    if !operations.is_empty() {
+                        project_panel
+                            .update(cx, |this, _| {
+                                if operations.len() == 1 {
+                                    this.record_operation(operations.pop().unwrap());
+                                } else {
+                                    this.record_operation(ProjectPanelOperation::Batch(
+                                        operations,
+                                    ));
+                                }
+                            })
+                            .ok();
                     }
 
                     // For folded selections, we need to refresh the leaf paths (with suffixes)
