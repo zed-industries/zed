@@ -303,6 +303,7 @@ impl Branch {
 pub struct Worktree {
     pub path: PathBuf,
     pub ref_name: SharedString,
+    // todo(git_worktree) This type should be a Oid
     pub sha: SharedString,
 }
 
@@ -340,6 +341,8 @@ pub fn parse_worktrees_from_str<T: AsRef<str>>(raw_worktrees: T) -> Vec<Worktree
             // Ignore other lines: detached, bare, locked, prunable, etc.
         }
 
+        // todo(git_worktree) We should add a test for detach head state
+        // a detach head will have ref_name as none so we would skip it
         if let (Some(path), Some(sha), Some(ref_name)) = (path, sha, ref_name) {
             worktrees.push(Worktree {
                 path: PathBuf::from(path),
