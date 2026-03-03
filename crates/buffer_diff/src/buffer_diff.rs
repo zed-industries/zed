@@ -112,11 +112,11 @@ pub struct DiffHunk {
 
 /// We store [`InternalDiffHunk`]s internally so we don't need to store the additional row range.
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct InternalDiffHunk {
-    buffer_range: Range<Anchor>,
-    diff_base_byte_range: Range<usize>,
-    base_word_diffs: Vec<Range<usize>>,
-    buffer_word_diffs: Vec<Range<Anchor>>,
+pub struct InternalDiffHunk {
+    pub buffer_range: Range<Anchor>,
+    pub diff_base_byte_range: Range<usize>,
+    pub base_word_diffs: Vec<Range<usize>>,
+    pub buffer_word_diffs: Vec<Range<Anchor>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1640,6 +1640,31 @@ impl BufferDiff {
         base_text: Option<Arc<str>>,
         base_text_change: Option<bool>,
         language: Option<Arc<Language>>,
+        cx: &App,
+    ) -> Task<BufferDiffUpdate> {
+        self.update_diff_impl(
+            buffer,
+            base_text,
+            base_text_change,
+            language,
+            compute_hunks,
+            cx,
+        )
+    }
+
+    pub fn update_diff_impl(
+        &self,
+        buffer: text::BufferSnapshot,
+        base_text: Option<Arc<str>>,
+        base_text_change: Option<bool>,
+        language: Option<Arc<Language>>,
+        compute_hunks: impl FnOnce(
+            Option<(Arc<str>, Rope)>,
+            &text::BufferSnapshot,
+            Option<DiffOptions>,
+        ) -> SumTree<InternalDiffHunk>
+        + Send
+        + 'static,
         cx: &App,
     ) -> Task<BufferDiffUpdate> {
         let prev_base_text = self.base_text(cx).as_rope().clone();

@@ -1,12 +1,14 @@
 use anyhow::Result;
-use buffer_diff::BufferDiff;
-use gpui::{App, AppContext, AsyncApp, Context, Entity, Subscription, Task};
+use buffer_diff::{BufferDiff, InternalDiffHunk};
+use gpui::{App, AppContext, AsyncApp, Context, Entity, Task};
 use itertools::Itertools;
 use language::{
     Anchor, Buffer, Capability, LanguageRegistry, OffsetRangeExt as _, Point, TextBuffer,
 };
 use multi_buffer::{MultiBuffer, PathKey, excerpt_context_lines};
 use std::{cmp::Reverse, ops::Range, path::Path, sync::Arc};
+use streaming_diff::LineOperation;
+use sum_tree::SumTree;
 use util::ResultExt;
 
 pub enum Diff {
@@ -102,6 +104,7 @@ impl Diff {
 
         let multibuffer = cx.new(|cx| {
             let mut multibuffer = MultiBuffer::without_headers(Capability::ReadOnly);
+            multibuffer.set_all_diff_hunks_expanded(cx);
             multibuffer.add_diff(buffer_diff.clone(), cx);
             multibuffer
         });
@@ -109,15 +112,17 @@ impl Diff {
         Self::Pending(PendingDiff {
             multibuffer,
             base_text: Arc::from(buffer_text_snapshot.text().as_str()),
-            _subscription: cx.observe(&buffer, |this, _, cx| {
-                if let Diff::Pending(diff) = this {
-                    diff.update(cx);
-                }
-            }),
+            // _subscription: cx.observe(&buffer, |this, _, cx| {
+            //     if let Diff::Pending(diff) = this {
+            //         diff.update(cx);
+            //     }
+            // }),
             new_buffer: buffer,
             diff: buffer_diff,
             revealed_ranges: Vec::new(),
             update_diff: Task::ready(Ok(())),
+            pending_update: None,
+            is_updating: false,
         })
     }
 
@@ -214,6 +219,18 @@ impl Diff {
             }
         }
     }
+
+    pub fn update_pending(
+        &mut self,
+        operations: Vec<LineOperation>,
+        snapshot: text::BufferSnapshot,
+        cx: &mut Context<Diff>,
+    ) {
+        match self {
+            Diff::Pending(diff) => diff.update(operations, snapshot, cx),
+            Diff::Finalized(_) => {}
+        }
+    }
 }
 
 pub struct PendingDiff {
@@ -222,35 +239,179 @@ pub struct PendingDiff {
     new_buffer: Entity<Buffer>,
     diff: Entity<BufferDiff>,
     revealed_ranges: Vec<Range<Anchor>>,
-    _subscription: Subscription,
+    // _subscription: Subscription,
     update_diff: Task<Result<()>>,
+    // The latest update waiting to be processed. Storing only the latest means
+    // intermediate chunks are coalesced when the worker task can't keep up.
+    pending_update: Option<PendingUpdate>,
+    is_updating: bool,
+}
+
+struct PendingUpdate {
+    operations: Vec<LineOperation>,
+    base_snapshot: text::BufferSnapshot,
+    text_snapshot: text::BufferSnapshot,
+}
+
+fn compute_hunks(
+    diff_base: &text::BufferSnapshot,
+    buffer: &text::BufferSnapshot,
+    line_operations: Vec<LineOperation>,
+) -> SumTree<buffer_diff::InternalDiffHunk> {
+    let mut tree = SumTree::new(buffer);
+
+    let mut old_row = 0u32;
+    let mut new_row = 0u32;
+
+    // Merge adjacent Delete+Insert into a single Modified hunk
+    let mut pending_delete_lines: Option<u32> = None;
+
+    let flush_delete = |pending_delete_lines: &mut Option<u32>,
+                        old_row: &mut u32,
+                        new_row: u32,
+                        tree: &mut SumTree<InternalDiffHunk>,
+                        diff_base: &text::BufferSnapshot,
+                        buffer: &text::BufferSnapshot| {
+        if let Some(del_lines) = pending_delete_lines.take() {
+            let old_start =
+                diff_base.point_to_offset(Point::new(*old_row, 0).min(diff_base.max_point()));
+            let old_end = diff_base
+                .point_to_offset(Point::new(*old_row + del_lines, 0).min(diff_base.max_point()));
+            let new_pos = buffer.anchor_before(Point::new(new_row, 0).min(buffer.max_point()));
+            tree.push(
+                InternalDiffHunk {
+                    buffer_range: new_pos..new_pos,
+                    diff_base_byte_range: old_start..old_end,
+                    base_word_diffs: Vec::new(),
+                    buffer_word_diffs: Vec::new(),
+                },
+                buffer,
+            );
+            *old_row += del_lines;
+        }
+    };
+
+    for operation in line_operations {
+        match operation {
+            LineOperation::Delete { lines } => {
+                // Accumulate deletions — they might be followed by an Insert (= modification)
+                *pending_delete_lines.get_or_insert(0) += lines;
+            }
+            LineOperation::Insert { lines } => {
+                let old_start =
+                    diff_base.point_to_offset(Point::new(old_row, 0).min(diff_base.max_point()));
+                let (old_end, del_lines) = if let Some(del_lines) = pending_delete_lines.take() {
+                    // Delete followed by Insert = Modified hunk
+                    let old_end = diff_base.point_to_offset(
+                        Point::new(old_row + del_lines, 0).min(diff_base.max_point()),
+                    );
+                    (old_end, del_lines)
+                } else {
+                    // Pure insertion
+                    (old_start, 0)
+                };
+                let new_start =
+                    buffer.anchor_before(Point::new(new_row, 0).min(buffer.max_point()));
+                let new_end =
+                    buffer.anchor_before(Point::new(new_row + lines, 0).min(buffer.max_point()));
+                tree.push(
+                    InternalDiffHunk {
+                        buffer_range: new_start..new_end,
+                        diff_base_byte_range: old_start..old_end,
+                        base_word_diffs: Vec::new(),
+                        buffer_word_diffs: Vec::new(),
+                    },
+                    buffer,
+                );
+                old_row += del_lines;
+                new_row += lines;
+            }
+            LineOperation::Keep { lines } => {
+                // Flush any pending deletion before a Keep
+                flush_delete(
+                    &mut pending_delete_lines,
+                    &mut old_row,
+                    new_row,
+                    &mut tree,
+                    diff_base,
+                    buffer,
+                );
+                // Keep = unchanged, no hunk to push
+                old_row += lines;
+                new_row += lines;
+            }
+        }
+    }
+
+    // Flush any trailing deletion
+    flush_delete(
+        &mut pending_delete_lines,
+        &mut old_row,
+        new_row,
+        &mut tree,
+        diff_base,
+        buffer,
+    );
+
+    tree
 }
 
 impl PendingDiff {
-    pub fn update(&mut self, cx: &mut Context<Diff>) {
-        let buffer = self.new_buffer.clone();
+    pub fn update(
+        &mut self,
+        operations: Vec<LineOperation>,
+        base_snapshot: text::BufferSnapshot,
+        cx: &mut Context<Diff>,
+    ) {
+        // Capture the buffer snapshot now, synchronously, so it matches the
+        // line operations. Capturing it inside the spawned task would race with
+        // subsequent chunks arriving before the task starts.
+        let text_snapshot = self.new_buffer.read(cx).text_snapshot();
+        self.pending_update = Some(PendingUpdate {
+            operations,
+            base_snapshot,
+            text_snapshot,
+        });
+        if !self.is_updating {
+            self.flush_pending_update(cx);
+        }
+    }
+
+    fn flush_pending_update(&mut self, cx: &mut Context<Diff>) {
+        let Some(PendingUpdate {
+            operations,
+            base_snapshot,
+            text_snapshot,
+        }) = self.pending_update.take()
+        else {
+            self.is_updating = false;
+            return;
+        };
+        self.is_updating = true;
+
         let buffer_diff = self.diff.clone();
         let base_text = self.base_text.clone();
+        let language = self.new_buffer.read(cx).language().cloned();
         self.update_diff = cx.spawn(async move |diff, cx| {
-            let text_snapshot = buffer.read_with(cx, |buffer, _| buffer.text_snapshot());
-            let language = buffer.read_with(cx, |buffer, _| buffer.language().cloned());
+            let snapshot = text_snapshot.clone();
             let update = buffer_diff
                 .update(cx, |diff, cx| {
-                    diff.update_diff(
+                    diff.update_diff_impl(
                         text_snapshot.clone(),
                         Some(base_text.clone()),
                         None,
                         language,
+                        move |_d, _b, _o| compute_hunks(&base_snapshot, &text_snapshot, operations),
                         cx,
                     )
                 })
                 .await;
             let (task1, task2) = buffer_diff.update(cx, |diff, cx| {
-                let task1 = diff.set_snapshot(update.clone(), &text_snapshot, cx);
+                let task1 = diff.set_snapshot(update.clone(), &snapshot, cx);
                 let task2 = diff
                     .secondary_diff()
                     .unwrap()
-                    .update(cx, |diff, cx| diff.set_snapshot(update, &text_snapshot, cx));
+                    .update(cx, |diff, cx| diff.set_snapshot(update, &snapshot, cx));
                 (task1, task2)
             });
             task1.await;
@@ -258,6 +419,8 @@ impl PendingDiff {
             diff.update(cx, |diff, cx| {
                 if let Diff::Pending(diff) = diff {
                     diff.update_visible_ranges(cx);
+                    // Pick up any update that arrived while this task was running.
+                    diff.flush_pending_update(cx);
                 }
             })
         });
