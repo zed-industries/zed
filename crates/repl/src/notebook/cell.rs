@@ -5,7 +5,7 @@ use editor::{Editor, EditorMode, MultiBuffer};
 use futures::future::Shared;
 use gpui::{
     App, Entity, EventEmitter, Focusable, Hsla, InteractiveElement, RetainAllImageCache,
-    StatefulInteractiveElement, Task, TextStyleRefinement, image_cache, prelude::*,
+    StatefulInteractiveElement, Task, TextStyleRefinement, prelude::*,
 };
 use language::{Buffer, Language, LanguageRegistry};
 use markdown::{Markdown, MarkdownElement, MarkdownStyle};
@@ -234,7 +234,7 @@ pub trait RenderableCell: Render {
     fn source(&self) -> &String;
     fn selected(&self) -> bool;
     fn set_selected(&mut self, selected: bool) -> &mut Self;
-    fn selected_bg_color(&self, window: &mut Window, cx: &mut Context<Self>) -> Hsla {
+    fn selected_bg_color(&self, _window: &mut Window, cx: &mut Context<Self>) -> Hsla {
         if self.selected() {
             let mut color = cx.theme().colors().element_hover;
             color.fade_out(0.5);
@@ -251,7 +251,7 @@ pub trait RenderableCell: Render {
     fn cell_position_spacer(
         &self,
         is_first: bool,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<impl IntoElement> {
         let cell_position = self.cell_position();
@@ -326,7 +326,6 @@ pub struct MarkdownCell {
     editing: bool,
     selected: bool,
     cell_position: Option<CellPosition>,
-    languages: Arc<LanguageRegistry>,
     _editor_subscription: gpui::Subscription,
 }
 
@@ -382,7 +381,6 @@ impl MarkdownCell {
 
         let markdown = cx.new(|cx| Markdown::new(source.clone().into(), None, None, cx));
 
-        let cell_id = id.clone();
         let editor_subscription =
             cx.subscribe(&editor, move |this, _editor, event, cx| match event {
                 editor::EditorEvent::Blurred => {
@@ -406,7 +404,6 @@ impl MarkdownCell {
             editing: start_editing,
             selected: false,
             cell_position: None,
-            languages,
             _editor_subscription: editor_subscription,
         }
     }
@@ -457,8 +454,6 @@ impl MarkdownCell {
             .unwrap_or_default();
 
         self.source = source.clone();
-        let languages = self.languages.clone();
-
         self.markdown.update(cx, |markdown, cx| {
             markdown.reset(source.into(), cx);
         });
@@ -602,7 +597,7 @@ pub struct CodeCell {
     outputs: Vec<Output>,
     selected: bool,
     cell_position: Option<CellPosition>,
-    language_task: Task<()>,
+    _language_task: Task<()>,
     execution_start_time: Option<Instant>,
     execution_duration: Option<Duration>,
     is_executing: bool,
@@ -664,10 +659,10 @@ impl CodeCell {
             outputs: Vec::new(),
             selected: false,
             cell_position: None,
-            language_task,
             execution_start_time: None,
             execution_duration: None,
             is_executing: false,
+            _language_task: language_task,
         }
     }
 
@@ -740,10 +735,10 @@ impl CodeCell {
             outputs,
             selected: false,
             cell_position: None,
-            language_task,
             execution_start_time: None,
             execution_duration: None,
             is_executing: false,
+            _language_task: language_task,
         }
     }
 
@@ -871,15 +866,7 @@ impl CodeCell {
         cx.notify();
     }
 
-    fn output_control(&self) -> Option<CellControlType> {
-        if self.has_outputs() {
-            Some(CellControlType::ClearCell)
-        } else {
-            None
-        }
-    }
-
-    pub fn gutter_output(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    pub fn gutter_output(&self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let is_selected = self.selected();
 
         div()
@@ -940,7 +927,7 @@ impl RenderableCell for CodeCell {
         &self.source
     }
 
-    fn control(&self, window: &mut Window, cx: &mut Context<Self>) -> Option<CellControl> {
+    fn control(&self, _window: &mut Window, cx: &mut Context<Self>) -> Option<CellControl> {
         let control_type = if self.has_outputs() {
             CellControlType::RerunCell
         } else {
@@ -1030,8 +1017,7 @@ impl RenderableCell for CodeCell {
 }
 
 impl RunnableCell for CodeCell {
-    fn run(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        println!("Running code cell: {}", self.id);
+    fn run(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
         cx.emit(CellEvent::Run(self.id.clone()));
     }
 

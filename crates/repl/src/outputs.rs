@@ -249,7 +249,7 @@ impl Output {
         )
     }
 
-    fn content(&self, window: &mut Window, cx: &mut Context<ExecutionView>) -> Option<AnyElement> {
+    pub fn content(&self, window: &mut Window, cx: &mut App) -> Option<AnyElement> {
         match self {
             Self::Plain { content, .. } => Some(content.clone().into_any_element()),
             Self::Markdown { content, .. } => Some(content.clone().into_any_element()),
@@ -260,7 +260,7 @@ impl Output {
             Self::Json { content, .. } => Some(content.clone().into_any_element()),
             Self::ErrorOutput(error_view) => error_view.render(window, cx),
             Self::ClearOutputWaitMarker => None,
-        };
+        }
     }
 
     pub fn render(
