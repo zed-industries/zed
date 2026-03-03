@@ -24,7 +24,7 @@ use zeta_prompt::{ParsedOutput, ZetaPromptInput};
 use std::{env, ops::Range, path::Path, sync::Arc, time::Instant};
 use zeta_prompt::{
     CURSOR_MARKER, ZetaFormat, format_zeta_prompt, get_prefill, parse_zeta2_model_output,
-    prompt_input_contains_special_tokens,
+    prompt_input_contains_special_tokens, stop_tokens_for_format,
     zeta1::{self, EDITABLE_REGION_END_MARKER},
 };
 
@@ -192,7 +192,10 @@ pub fn request_prediction_with_zeta(
                                 custom_settings,
                                 prompt,
                                 max_tokens,
-                                vec![],
+                                stop_tokens_for_format(zeta_version)
+                                    .iter()
+                                    .map(|token| token.to_string())
+                                    .collect(),
                                 open_ai_compatible_api_key.clone(),
                                 &http_client,
                             )
@@ -226,7 +229,10 @@ pub fn request_prediction_with_zeta(
                         model: config.model_id.clone().unwrap_or_default(),
                         prompt,
                         temperature: None,
-                        stop: vec![],
+                        stop: stop_tokens_for_format(config.format)
+                            .iter()
+                            .map(|token| std::borrow::Cow::Borrowed(*token))
+                            .collect(),
                         max_tokens: Some(2048),
                         environment,
                     };
