@@ -1,0 +1,2870 @@
+use std::collections::HashMap;
+use std::ffi::CStr;
+use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
+use std::time::Instant;
+
+use anyhow::{Context as _, Result, bail};
+use percent_encoding::percent_decode_str;
+use serde::{Deserialize, Serialize};
+use sqlez::connection::Connection;
+use sqlez::statement::{SqlType, Statement};
+use tokio::sync::Mutex as TokioMutex;
+
+use crate::query_result::{CellValue, QueryResult};
+use crate::schema::{ColumnInfo, DatabaseSchema, ForeignKeyInfo, IndexInfo, IntrospectionLevel, TableInfo};
+
+fn url_decode(input: &str) -> String {
+    percent_decode_str(input)
+        .decode_utf8()
+        .map(|decoded| decoded.into_owned())
+        .unwrap_or_else(|_| input.to_string())
+}
+
+pub fn escape_sqlite_identifier(name: &str) -> String {
+    name.replace('"', "\"\"")
+}
+
+pub fn quote_identifier(name: &str, database_type: &DatabaseType) -> String {
+    match database_type {
+        DatabaseType::MySql => {
+            let escaped = name.replace('`', "``");
+            format!("`{}`", escaped)
+        }
+        DatabaseType::Sqlite | DatabaseType::PostgreSql => {
+            let escaped = name.replace('"', "\"\"");
+            format!("\"{}\"", escaped)
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
+pub enum DatabaseType {
+    Sqlite,
+    PostgreSql,
+    MySql,
+}
+
+impl std::fmt::Display for DatabaseType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            DatabaseType::Sqlite => write!(f, "SQLite"),
+            DatabaseType::PostgreSql => write!(f, "PostgreSQL"),
+            DatabaseType::MySql => write!(f, "MySQL"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConnectionConfig {
+    #[serde(default = "ConnectionConfig::generate_id")]
+    pub id: String,
+    pub name: String,
+    pub database_type: DatabaseType,
+    pub path: Option<PathBuf>,
+    pub host: Option<String>,
+    pub port: Option<u16>,
+    pub database: Option<String>,
+    pub user: Option<String>,
+    #[serde(skip)]
+    pub password: Option<String>,
+    #[serde(default)]
+    pub ssl_mode: SslMode,
+    #[serde(default)]
+    pub ssl_config: Option<SslConfig>,
+    #[serde(default)]
+    pub ssh_tunnel: Option<SshTunnelConfig>,
+    #[serde(default)]
+    pub introspection_level: IntrospectionLevel,
+    #[serde(default)]
+    pub read_only: bool,
+    #[serde(default)]
+    pub color_index: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum SslMode {
+    #[default]
+    Disable,
+    Prefer,
+    Require,
+    VerifyCa,
+    VerifyFull,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct SslConfig {
+    pub ca_cert_path: Option<PathBuf>,
+    pub client_cert_path: Option<PathBuf>,
+    pub client_key_path: Option<PathBuf>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum SshAuthMethod {
+    Password,
+    PrivateKey {
+        key_path: PathBuf,
+        #[serde(skip)]
+        passphrase: Option<String>,
+    },
+    Agent,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SshTunnelConfig {
+    pub host: String,
+    pub port: u16,
+    pub username: String,
+    pub auth_method: SshAuthMethod,
+}
+
+impl Default for SshTunnelConfig {
+    fn default() -> Self {
+        Self {
+            host: String::new(),
+            port: 22,
+            username: String::new(),
+            auth_method: SshAuthMethod::Password,
+        }
+    }
+}
+
+impl ConnectionConfig {
+    pub fn generate_id() -> String {
+        uuid::Uuid::new_v4().to_string()
+    }
+
+    pub fn credential_key(&self) -> String {
+        format!("zed-db://{}", self.id)
+    }
+
+    pub fn sqlite(name: String, path: PathBuf) -> Self {
+        Self {
+            id: Self::generate_id(),
+            name,
+            database_type: DatabaseType::Sqlite,
+            path: Some(path),
+            host: None,
+            port: None,
+            database: None,
+            user: None,
+            password: None,
+            ssl_mode: SslMode::Disable,
+            ssl_config: None,
+            ssh_tunnel: None,
+            introspection_level: IntrospectionLevel::default(),
+            read_only: false,
+            color_index: 0,
+        }
+    }
+
+    pub fn postgres(
+        name: String,
+        host: String,
+        port: u16,
+        database: String,
+        user: String,
+        password: String,
+        ssl_mode: SslMode,
+    ) -> Self {
+        Self {
+            id: Self::generate_id(),
+            name,
+            database_type: DatabaseType::PostgreSql,
+            path: None,
+            host: Some(host),
+            port: Some(port),
+            database: Some(database),
+            user: Some(user),
+            password: if password.is_empty() {
+                None
+            } else {
+                Some(password)
+            },
+            ssl_mode,
+            ssl_config: None,
+            ssh_tunnel: None,
+            introspection_level: IntrospectionLevel::default(),
+            read_only: false,
+            color_index: 0,
+        }
+    }
+
+    pub fn mysql(
+        name: String,
+        host: String,
+        port: u16,
+        database: String,
+        user: String,
+        password: String,
+        ssl_mode: SslMode,
+    ) -> Self {
+        Self {
+            id: Self::generate_id(),
+            name,
+            database_type: DatabaseType::MySql,
+            path: None,
+            host: Some(host),
+            port: Some(port),
+            database: Some(database),
+            user: Some(user),
+            password: if password.is_empty() {
+                None
+            } else {
+                Some(password)
+            },
+            ssl_mode,
+            ssl_config: None,
+            ssh_tunnel: None,
+            introspection_level: IntrospectionLevel::default(),
+            read_only: false,
+            color_index: 0,
+        }
+    }
+
+    pub fn from_mysql_url(connection_string: &str) -> Result<Self, String> {
+        let trimmed = connection_string.trim();
+        if trimmed.is_empty() {
+            return Err("Connection string is required.".to_string());
+        }
+
+        let normalized = if !trimmed.starts_with("mysql://") {
+            format!("mysql://{}", trimmed)
+        } else {
+            trimmed.to_string()
+        };
+
+        // mysql:// is not a standard scheme for url::Url, swap temporarily
+        let for_parsing = normalized.replacen("mysql://", "http://", 1);
+        let parsed = url::Url::parse(&for_parsing)
+            .map_err(|error| format!("Invalid connection URL: {}", error))?;
+
+        let host = if parsed.host_str().unwrap_or("").is_empty() {
+            "localhost".to_string()
+        } else {
+            parsed.host_str().unwrap_or("localhost").to_string()
+        };
+
+        let port = parsed.port().unwrap_or(3306);
+
+        let database = {
+            let path = parsed.path().trim_start_matches('/');
+            if path.is_empty() {
+                "mysql".to_string()
+            } else {
+                url_decode(path)
+            }
+        };
+
+        let user = if parsed.username().is_empty() {
+            "root".to_string()
+        } else {
+            url_decode(parsed.username())
+        };
+
+        let password = parsed
+            .password()
+            .map(|p| url_decode(p))
+            .unwrap_or_default();
+
+        let ssl_mode = parsed
+            .query_pairs()
+            .find(|(key, _)| key == "sslmode")
+            .map(|(_, value)| match value.as_ref() {
+                "require" | "required" => SslMode::Require,
+                "prefer" | "preferred" => SslMode::Prefer,
+                "verify-ca" | "verify_ca" => SslMode::VerifyCa,
+                "verify-full" | "verify_full" => SslMode::VerifyFull,
+                _ => SslMode::Disable,
+            })
+            .unwrap_or(SslMode::Disable);
+
+        let name = format!("{} @ {}", database, host);
+        Ok(ConnectionConfig::mysql(
+            name, host, port, database, user, password, ssl_mode,
+        ))
+    }
+
+    pub fn from_postgres_url(connection_string: &str) -> Result<Self, String> {
+        let trimmed = connection_string.trim();
+        if trimmed.is_empty() {
+            return Err("Connection string is required.".to_string());
+        }
+
+        let normalized = if trimmed.starts_with("postgresql://") {
+            trimmed.replacen("postgresql://", "postgres://", 1)
+        } else if !trimmed.starts_with("postgres://") {
+            format!("postgres://{}", trimmed)
+        } else {
+            trimmed.to_string()
+        };
+
+        let parsed = url::Url::parse(&normalized)
+            .map_err(|error| format!("Invalid connection URL: {}", error))?;
+
+        let host = if parsed.host_str().unwrap_or("").is_empty() {
+            "localhost".to_string()
+        } else {
+            parsed.host_str().unwrap_or("localhost").to_string()
+        };
+
+        let port = parsed.port().unwrap_or(5432);
+
+        let database = {
+            let path = parsed.path().trim_start_matches('/');
+            if path.is_empty() {
+                "postgres".to_string()
+            } else {
+                url_decode(path)
+            }
+        };
+
+        let user = if parsed.username().is_empty() {
+            "postgres".to_string()
+        } else {
+            url_decode(parsed.username())
+        };
+
+        let password = parsed
+            .password()
+            .map(|p| url_decode(p))
+            .unwrap_or_default();
+
+        let ssl_mode = parsed
+            .query_pairs()
+            .find(|(key, _)| key == "sslmode")
+            .map(|(_, value)| match value.as_ref() {
+                "require" => SslMode::Require,
+                "prefer" => SslMode::Prefer,
+                "verify-ca" => SslMode::VerifyCa,
+                "verify-full" => SslMode::VerifyFull,
+                _ => SslMode::Disable,
+            })
+            .unwrap_or(SslMode::Disable);
+
+        let name = format!("{} @ {}", database, host);
+        Ok(ConnectionConfig::postgres(
+            name, host, port, database, user, password, ssl_mode,
+        ))
+    }
+
+    pub fn display_name(&self) -> String {
+        match self.database_type {
+            DatabaseType::Sqlite => self
+                .path
+                .as_ref()
+                .and_then(|p| p.file_name())
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_else(|| self.name.clone()),
+            DatabaseType::PostgreSql => {
+                let database = self.database.as_deref().unwrap_or("postgres");
+                let host = self.host.as_deref().unwrap_or("localhost");
+                format!("{} @ {}", database, host)
+            }
+            DatabaseType::MySql => {
+                let database = self.database.as_deref().unwrap_or("mysql");
+                let host = self.host.as_deref().unwrap_or("localhost");
+                format!("{} @ {}", database, host)
+            }
+        }
+    }
+
+    fn to_postgres_config_string(&self) -> String {
+        let host = self.host.as_deref().unwrap_or("localhost");
+        let port = self.port.unwrap_or(5432);
+        let database = self.database.as_deref().unwrap_or("postgres");
+        let user = self.user.as_deref().unwrap_or("postgres");
+        let sslmode = match self.ssl_mode {
+            SslMode::Disable => "disable",
+            SslMode::Prefer => "prefer",
+            SslMode::Require => "require",
+            SslMode::VerifyCa => "verify-ca",
+            SslMode::VerifyFull => "verify-full",
+        };
+
+        let mut config = format!(
+            "host={} port={} dbname={} user={} sslmode={}",
+            host, port, database, user, sslmode
+        );
+        if let Some(password) = &self.password {
+            config.push_str(&format!(" password={}", password));
+        }
+        config
+    }
+}
+
+pub trait DatabaseConnection: Send + Sync {
+    fn fetch_schema(&self) -> Result<DatabaseSchema> {
+        self.fetch_schema_with_level(IntrospectionLevel::Metadata)
+    }
+    fn fetch_schema_with_level(&self, level: IntrospectionLevel) -> Result<DatabaseSchema>;
+    fn execute_query(&self, sql: &str) -> Result<QueryResult>;
+    fn execute_query_paged(
+        &self,
+        sql: &str,
+        limit: usize,
+        offset: usize,
+    ) -> Result<QueryResult>;
+    fn execute_statement(&self, sql: &str) -> Result<u64>;
+    fn interrupt(&self);
+    fn is_alive(&self) -> bool;
+    #[allow(dead_code)]
+    fn database_type(&self) -> DatabaseType;
+}
+
+pub struct SqliteConnection {
+    connection: Mutex<Connection>,
+}
+
+impl SqliteConnection {
+    pub fn new_readonly(path: &PathBuf) -> Result<Self> {
+        let uri = path
+            .to_str()
+            .context("Invalid UTF-8 in database path")?;
+
+        if !path.exists() {
+            bail!("Database file does not exist: {}", uri);
+        }
+
+        let connection = Connection::open_file_readonly(uri)
+            .context(format!("Failed to open SQLite database at '{}'", uri))?;
+
+        Ok(Self {
+            connection: Mutex::new(connection),
+        })
+    }
+
+    fn with_connection<T>(&self, func: impl FnOnce(&Connection) -> Result<T>) -> Result<T> {
+        let connection = self
+            .connection
+            .lock()
+            .map_err(|_| anyhow::anyhow!("SQLite connection lock poisoned"))?;
+        func(&connection)
+    }
+}
+
+impl DatabaseConnection for SqliteConnection {
+    fn fetch_schema_with_level(&self, level: IntrospectionLevel) -> Result<DatabaseSchema> {
+        self.with_connection(|connection| {
+            let mut statement = Statement::prepare(
+                connection,
+                "SELECT name, CASE WHEN COALESCE(sql,'') LIKE 'CREATE VIRTUAL%' THEN 1 ELSE 0 END as is_virtual \
+                 FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name",
+            )?;
+            let table_entries: Vec<(String, bool)> = statement.map(|stmt| {
+                let name = stmt.column_text(0)?.to_string();
+                let is_virtual = stmt.column_int(1)? != 0;
+                Ok((name, is_virtual))
+            })?;
+
+            let mut tables = Vec::new();
+            for (table_name, is_virtual) in table_entries {
+                if level == IntrospectionLevel::Names {
+                    tables.push(TableInfo {
+                        name: table_name,
+                        columns: Vec::new(),
+                        indexes: Vec::new(),
+                        foreign_keys: Vec::new(),
+                        row_count: None,
+                        is_virtual,
+                        ddl: None,
+                    });
+                    continue;
+                }
+
+                let columns = match fetch_sqlite_columns(connection, &table_name) {
+                    Ok(cols) => cols,
+                    Err(error) => {
+                        log::warn!("database_viewer: skipping table '{}': {}", table_name, error);
+                        continue;
+                    }
+                };
+                let indexes = fetch_sqlite_indexes(connection, &table_name).unwrap_or_else(|error| {
+                    log::warn!("database_viewer: failed to fetch indexes for '{}': {}", table_name, error);
+                    Vec::new()
+                });
+                let foreign_keys = fetch_sqlite_foreign_keys(connection, &table_name).unwrap_or_else(|error| {
+                    log::warn!("database_viewer: failed to fetch foreign keys for '{}': {}", table_name, error);
+                    Vec::new()
+                });
+                let row_count = fetch_sqlite_row_count(connection, &table_name);
+
+                let ddl = if level == IntrospectionLevel::FullDdl {
+                    fetch_sqlite_ddl(connection, &table_name)
+                } else {
+                    None
+                };
+
+                tables.push(TableInfo {
+                    name: table_name,
+                    columns,
+                    indexes,
+                    foreign_keys,
+                    row_count,
+                    is_virtual,
+                    ddl,
+                });
+            }
+
+            Ok(DatabaseSchema { tables })
+        })
+    }
+
+    fn execute_query(&self, sql: &str) -> Result<QueryResult> {
+        self.with_connection(|connection| {
+            let start = Instant::now();
+            let mut statement = Statement::prepare(connection, sql)?;
+
+            let raw = statement
+                .raw_statements
+                .first()
+                .context("Prepared statement produced no statements")?;
+
+            let column_count = unsafe { libsqlite3_sys::sqlite3_column_count(*raw) };
+
+            let mut columns = Vec::with_capacity(column_count as usize);
+            for i in 0..column_count {
+                let name = unsafe {
+                    let ptr = libsqlite3_sys::sqlite3_column_name(*raw, i);
+                    if ptr.is_null() {
+                        format!("column_{}", i)
+                    } else {
+                        CStr::from_ptr(ptr)
+                            .to_str()
+                            .unwrap_or("?")
+                            .to_string()
+                    }
+                };
+                columns.push(name);
+            }
+
+            let rows = statement.map(|stmt| {
+                let mut row = Vec::with_capacity(column_count as usize);
+                for i in 0..column_count {
+                    let value = match stmt.column_type(i)? {
+                        SqlType::Null => CellValue::Null,
+                        SqlType::Integer => CellValue::Integer(stmt.column_int64(i)?),
+                        SqlType::Float => CellValue::Float(stmt.column_double(i)?),
+                        SqlType::Text => CellValue::Text(stmt.column_text(i)?.to_string()),
+                        SqlType::Blob => CellValue::Blob(stmt.column_blob(i)?.to_vec()),
+                    };
+                    row.push(value);
+                }
+                Ok(row)
+            })?;
+
+            let execution_time = start.elapsed();
+            Ok(QueryResult {
+                columns,
+                rows,
+                total_row_count: None,
+                affected_rows: None,
+                execution_time,
+            })
+        })
+    }
+
+    fn execute_query_paged(
+        &self,
+        sql: &str,
+        limit: usize,
+        offset: usize,
+    ) -> Result<QueryResult> {
+        let start = Instant::now();
+        let cleaned_sql = sql.trim().trim_end_matches(';').trim();
+
+        let total_row_count: Option<u64> = self.with_connection(|connection| {
+            let count_sql = format!("SELECT COUNT(*) FROM ({})", cleaned_sql);
+            match connection.select_row::<i64>(&count_sql) {
+                Ok(mut fetch) => match fetch() {
+                    Ok(Some(count)) => Ok(Some(count as u64)),
+                    Ok(None) => {
+                        log::warn!("database_viewer: count query returned no rows");
+                        Ok(None)
+                    }
+                    Err(error) => {
+                        log::warn!("database_viewer: count query execution failed: {}", error);
+                        Ok(None)
+                    }
+                },
+                Err(error) => {
+                    log::warn!("database_viewer: count query preparation failed: {}", error);
+                    Ok(None)
+                }
+            }
+        })?;
+
+        let has_limit = sql_has_limit(cleaned_sql);
+        let paged_sql = if has_limit {
+            cleaned_sql.to_string()
+        } else {
+            format!("{} LIMIT {} OFFSET {}", cleaned_sql, limit, offset)
+        };
+
+        let mut result = self.execute_query(&paged_sql)?;
+        result.total_row_count = total_row_count;
+        result.execution_time = start.elapsed();
+
+        Ok(result)
+    }
+
+    fn execute_statement(&self, sql: &str) -> Result<u64> {
+        self.with_connection(|connection| {
+            let mut statement = Statement::prepare(connection, sql)?;
+            statement.exec()?;
+            let changes = unsafe {
+                libsqlite3_sys::sqlite3_changes(connection.sqlite3_handle()) as u64
+            };
+            Ok(changes)
+        })
+    }
+
+    fn interrupt(&self) {
+        if let Ok(connection) = self.connection.lock() {
+            connection.interrupt();
+        }
+    }
+
+    fn is_alive(&self) -> bool {
+        self.connection.lock().is_ok()
+    }
+
+    fn database_type(&self) -> DatabaseType {
+        DatabaseType::Sqlite
+    }
+}
+
+fn build_postgres_tls_config(
+    ssl_mode: SslMode,
+    ssl_config: Option<&SslConfig>,
+) -> Result<rustls::ClientConfig> {
+    use rustls_platform_verifier::ConfigVerifierExt as _;
+
+    rustls::crypto::aws_lc_rs::default_provider()
+        .install_default()
+        .ok();
+
+    let mut config = match ssl_mode {
+        SslMode::VerifyCa | SslMode::VerifyFull => {
+            if let Some(ssl) = ssl_config {
+                if let Some(ca_path) = &ssl.ca_cert_path {
+                    let ca_data = std::fs::read(ca_path)
+                        .context(format!("Failed to read CA certificate: {:?}", ca_path))?;
+                    let mut root_store = rustls::RootCertStore::empty();
+                    let certs = rustls_pemfile::certs(&mut &ca_data[..])
+                        .collect::<Result<Vec<_>, _>>()
+                        .context("Failed to parse CA certificate PEM")?;
+                    for cert in certs {
+                        root_store
+                            .add(cert)
+                            .context("Failed to add CA certificate to root store")?;
+                    }
+                    rustls::ClientConfig::builder()
+                        .with_root_certificates(root_store)
+                        .with_no_client_auth()
+                } else {
+                    rustls::ClientConfig::with_platform_verifier()
+                }
+            } else {
+                rustls::ClientConfig::with_platform_verifier()
+            }
+        }
+        SslMode::Require => {
+            rustls::ClientConfig::builder()
+                .dangerous()
+                .with_custom_certificate_verifier(Arc::new(NoVerification))
+                .with_no_client_auth()
+        }
+        _ => rustls::ClientConfig::with_platform_verifier(),
+    };
+
+    config.alpn_protocols = Vec::new();
+    Ok(config)
+}
+
+#[derive(Debug)]
+struct NoVerification;
+
+impl rustls::client::danger::ServerCertVerifier for NoVerification {
+    fn verify_server_cert(
+        &self,
+        _end_entity: &rustls::pki_types::CertificateDer<'_>,
+        _intermediates: &[rustls::pki_types::CertificateDer<'_>],
+        _server_name: &rustls::pki_types::ServerName<'_>,
+        _ocsp_response: &[u8],
+        _now: rustls::pki_types::UnixTime,
+    ) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
+        Ok(rustls::client::danger::ServerCertVerified::assertion())
+    }
+
+    fn verify_tls12_signature(
+        &self,
+        _message: &[u8],
+        _cert: &rustls::pki_types::CertificateDer<'_>,
+        _dss: &rustls::DigitallySignedStruct,
+    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        _message: &[u8],
+        _cert: &rustls::pki_types::CertificateDer<'_>,
+        _dss: &rustls::DigitallySignedStruct,
+    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
+        vec![
+            rustls::SignatureScheme::RSA_PKCS1_SHA256,
+            rustls::SignatureScheme::RSA_PKCS1_SHA384,
+            rustls::SignatureScheme::RSA_PKCS1_SHA512,
+            rustls::SignatureScheme::ECDSA_NISTP256_SHA256,
+            rustls::SignatureScheme::ECDSA_NISTP384_SHA384,
+            rustls::SignatureScheme::ECDSA_NISTP521_SHA512,
+            rustls::SignatureScheme::RSA_PSS_SHA256,
+            rustls::SignatureScheme::RSA_PSS_SHA384,
+            rustls::SignatureScheme::RSA_PSS_SHA512,
+            rustls::SignatureScheme::ED25519,
+            rustls::SignatureScheme::ED448,
+        ]
+    }
+}
+
+fn build_mysql_ssl_opts(
+    ssl_mode: SslMode,
+    ssl_config: Option<&SslConfig>,
+) -> Result<mysql_async::SslOpts> {
+    let mut ssl_opts = mysql_async::SslOpts::default();
+
+    match ssl_mode {
+        SslMode::Require => {
+            ssl_opts = ssl_opts.with_danger_accept_invalid_certs(true);
+        }
+        SslMode::VerifyCa | SslMode::VerifyFull => {
+            ssl_opts = ssl_opts.with_danger_accept_invalid_certs(false);
+            if let Some(ssl) = ssl_config {
+                if let Some(ca_path) = &ssl.ca_cert_path {
+                    ssl_opts = ssl_opts.with_root_certs(vec![ca_path.clone().into()]);
+                }
+            }
+            if ssl_mode == SslMode::VerifyFull {
+                ssl_opts = ssl_opts.with_danger_skip_domain_validation(false);
+            } else {
+                ssl_opts = ssl_opts.with_danger_skip_domain_validation(true);
+            }
+        }
+        _ => {}
+    }
+
+    Ok(ssl_opts)
+}
+
+pub struct PostgresConnection {
+    client: Arc<TokioMutex<tokio_postgres::Client>>,
+    cancel_token: tokio_postgres::CancelToken,
+    // The runtime must be kept alive for the connection background task
+    // and for subsequent block_on calls via the handle.
+    _runtime: tokio::runtime::Runtime,
+}
+
+impl PostgresConnection {
+    pub fn connect(config: &ConnectionConfig) -> Result<Self> {
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(1)
+            .enable_all()
+            .build()
+            .context("Failed to create tokio runtime")?;
+
+        let config_string = config.to_postgres_config_string();
+        let use_tls = matches!(
+            config.ssl_mode,
+            SslMode::Require | SslMode::VerifyCa | SslMode::VerifyFull
+        );
+
+        let client = runtime.block_on(async {
+            if use_tls {
+                let tls_config = build_postgres_tls_config(config.ssl_mode, config.ssl_config.as_ref())?;
+                let tls_connector = tokio_postgres_rustls::MakeRustlsConnect::new(tls_config);
+                let (client, connection) =
+                    tokio_postgres::connect(&config_string, tls_connector)
+                        .await
+                        .map_err(|e| pg_err_to_anyhow("Failed to connect to PostgreSQL (TLS)", e))?;
+
+                tokio::spawn(async move {
+                    if let Err(error) = connection.await {
+                        log::error!("database_viewer: PostgreSQL connection error: {}", error);
+                    }
+                });
+
+                Ok::<_, anyhow::Error>(client)
+            } else {
+                let (client, connection) =
+                    tokio_postgres::connect(&config_string, tokio_postgres::NoTls)
+                        .await
+                        .map_err(|e| pg_err_to_anyhow("Failed to connect to PostgreSQL", e))?;
+
+                tokio::spawn(async move {
+                    if let Err(error) = connection.await {
+                        log::error!("database_viewer: PostgreSQL connection error: {}", error);
+                    }
+                });
+
+                Ok::<_, anyhow::Error>(client)
+            }
+        })?;
+
+        let cancel_token = client.cancel_token();
+
+        Ok(Self {
+            client: Arc::new(TokioMutex::new(client)),
+            cancel_token,
+            _runtime: runtime,
+        })
+    }
+
+    fn block_on<F: std::future::Future>(&self, future: F) -> F::Output {
+        self._runtime.handle().block_on(future)
+    }
+}
+
+impl DatabaseConnection for PostgresConnection {
+    fn fetch_schema_with_level(&self, _level: IntrospectionLevel) -> Result<DatabaseSchema> {
+        let client = self.client.clone();
+        self.block_on(async {
+            let client = client.lock().await;
+
+            let table_rows = client
+                .query(
+                    "SELECT table_name FROM information_schema.tables \
+                     WHERE table_schema = 'public' \
+                     ORDER BY table_name",
+                    &[],
+                )
+                .await
+                .map_err(|e| pg_err_to_anyhow("Failed to query tables", e))?;
+
+            let table_names: Vec<String> = table_rows.iter().map(|r| r.get(0)).collect();
+            if table_names.is_empty() {
+                return Ok(DatabaseSchema { tables: Vec::new() });
+            }
+
+            let all_columns = client
+                .query(
+                    "SELECT table_name, column_name, data_type, is_nullable, column_default \
+                     FROM information_schema.columns \
+                     WHERE table_schema = 'public' \
+                     ORDER BY table_name, ordinal_position",
+                    &[],
+                )
+                .await
+                .map_err(|e| pg_err_to_anyhow("Failed to query columns", e))?;
+
+            let all_pks = client
+                .query(
+                    "SELECT tc.table_name, kcu.column_name \
+                     FROM information_schema.table_constraints tc \
+                     JOIN information_schema.key_column_usage kcu \
+                       ON tc.constraint_name = kcu.constraint_name \
+                       AND tc.table_schema = kcu.table_schema \
+                     WHERE tc.constraint_type = 'PRIMARY KEY' \
+                       AND tc.table_schema = 'public'",
+                    &[],
+                )
+                .await
+                .unwrap_or_else(|error| {
+                    log::warn!("database_viewer: failed to fetch primary keys: {}", error);
+                    Vec::new()
+                });
+
+            let all_indexes = client
+                .query(
+                    "SELECT tablename, indexname, indexdef FROM pg_indexes \
+                     WHERE schemaname = 'public'",
+                    &[],
+                )
+                .await
+                .unwrap_or_else(|error| {
+                    log::warn!("database_viewer: failed to fetch indexes: {}", error);
+                    Vec::new()
+                });
+
+            let all_fks = client
+                .query(
+                    "SELECT tc.table_name, kcu.column_name, \
+                            ccu.table_name AS foreign_table, ccu.column_name AS foreign_column \
+                     FROM information_schema.table_constraints tc \
+                     JOIN information_schema.key_column_usage kcu \
+                       ON tc.constraint_name = kcu.constraint_name \
+                       AND tc.table_schema = kcu.table_schema \
+                     JOIN information_schema.constraint_column_usage ccu \
+                       ON tc.constraint_name = ccu.constraint_name \
+                       AND tc.table_schema = ccu.table_schema \
+                     WHERE tc.constraint_type = 'FOREIGN KEY' \
+                       AND tc.table_schema = 'public'",
+                    &[],
+                )
+                .await
+                .unwrap_or_else(|error| {
+                    log::warn!("database_viewer: failed to fetch foreign keys: {}", error);
+                    Vec::new()
+                });
+
+            let all_counts = client
+                .query(
+                    "SELECT relname, reltuples::bigint \
+                     FROM pg_class \
+                     JOIN pg_namespace ON pg_namespace.oid = relnamespace \
+                     WHERE nspname = 'public' AND relkind = 'r'",
+                    &[],
+                )
+                .await
+                .unwrap_or_else(|error| {
+                    log::warn!("database_viewer: failed to fetch row counts: {}", error);
+                    Vec::new()
+                });
+
+            let mut pk_map: HashMap<String, Vec<String>> = HashMap::new();
+            for row in &all_pks {
+                let table: String = row.get(0);
+                let column: String = row.get(1);
+                pk_map.entry(table).or_default().push(column);
+            }
+
+            let mut col_map: HashMap<String, Vec<(String, String, String, Option<String>)>> =
+                HashMap::new();
+            for row in &all_columns {
+                let table: String = row.get(0);
+                let name: String = row.get(1);
+                let data_type: String = row.get(2);
+                let is_nullable: String = row.get(3);
+                let default_value: Option<String> = row.get(4);
+                col_map
+                    .entry(table)
+                    .or_default()
+                    .push((name, data_type, is_nullable, default_value));
+            }
+
+            let mut idx_map: HashMap<String, Vec<IndexInfo>> = HashMap::new();
+            for row in &all_indexes {
+                let table: String = row.get(0);
+                let index_name: String = row.get(1);
+                let index_def: String = row.get(2);
+                let unique = index_def.contains("UNIQUE");
+                let index_columns = parse_pg_index_columns(&index_def);
+                idx_map.entry(table).or_default().push(IndexInfo {
+                    name: index_name,
+                    columns: index_columns,
+                    unique,
+                });
+            }
+
+            let mut fk_map: HashMap<String, Vec<ForeignKeyInfo>> = HashMap::new();
+            for row in &all_fks {
+                let table: String = row.get(0);
+                let from_column: String = row.get(1);
+                let to_table: String = row.get(2);
+                let to_column: String = row.get(3);
+                fk_map.entry(table).or_default().push(ForeignKeyInfo {
+                    from_column,
+                    to_table,
+                    to_column,
+                });
+            }
+
+            let mut count_map: HashMap<String, u64> = HashMap::new();
+            for row in &all_counts {
+                let table: String = row.get(0);
+                let count: i64 = row.get(1);
+                count_map.insert(table, count.max(0) as u64);
+            }
+
+            let tables = table_names
+                .into_iter()
+                .map(|table_name| {
+                    let pk_columns = pk_map.get(&table_name);
+                    let columns = col_map
+                        .remove(&table_name)
+                        .unwrap_or_default()
+                        .into_iter()
+                        .map(|(name, data_type, is_nullable, default_value)| {
+                            let primary_key = pk_columns
+                                .map(|pks| pks.contains(&name))
+                                .unwrap_or(false);
+                            ColumnInfo {
+                                name,
+                                data_type,
+                                nullable: is_nullable == "YES",
+                                primary_key,
+                                default_value,
+                            }
+                        })
+                        .collect();
+
+                    let indexes = idx_map.remove(&table_name).unwrap_or_default();
+                    let foreign_keys = fk_map.remove(&table_name).unwrap_or_default();
+                    let row_count = count_map.get(&table_name).copied();
+
+                    TableInfo {
+                        name: table_name,
+                        columns,
+                        indexes,
+                        foreign_keys,
+                        row_count,
+                        is_virtual: false,
+                        ddl: None,
+                    }
+                })
+                .collect();
+
+            Ok(DatabaseSchema { tables })
+        })
+    }
+
+    fn execute_query(&self, sql: &str) -> Result<QueryResult> {
+        let start = Instant::now();
+        let client = self.client.clone();
+        let sql = sql.to_string();
+
+        self.block_on(async {
+            let client = client.lock().await;
+            let rows = client
+                .query(&sql, &[])
+                .await
+                .map_err(|e| pg_err_to_anyhow("Failed to execute query", e))?;
+
+            let columns: Vec<String> = if let Some(first_row) = rows.first() {
+                first_row
+                    .columns()
+                    .iter()
+                    .map(|col| col.name().to_string())
+                    .collect()
+            } else {
+                Vec::new()
+            };
+
+            let result_rows: Vec<Vec<CellValue>> = rows
+                .iter()
+                .map(|row| {
+                    row.columns()
+                        .iter()
+                        .enumerate()
+                        .map(|(i, col)| pg_value_to_cell(row, i, col.type_()))
+                        .collect()
+                })
+                .collect();
+
+            let execution_time = start.elapsed();
+            Ok(QueryResult {
+                columns,
+                rows: result_rows,
+                total_row_count: None,
+                affected_rows: None,
+                execution_time,
+            })
+        })
+    }
+
+    fn execute_query_paged(
+        &self,
+        sql: &str,
+        limit: usize,
+        offset: usize,
+    ) -> Result<QueryResult> {
+        let start = Instant::now();
+        let cleaned_sql = sql.trim().trim_end_matches(';').trim();
+
+        let client = self.client.clone();
+        let count_sql = format!("SELECT COUNT(*) FROM ({}) AS _count_subquery", cleaned_sql);
+
+        let total_row_count: Option<u64> = self.block_on(async {
+            let client = client.lock().await;
+            match client.query_one(&count_sql, &[]).await {
+                Ok(row) => {
+                    let count: i64 = row.get(0);
+                    Some(count as u64)
+                }
+                Err(error) => {
+                    log::warn!(
+                        "database_viewer: PostgreSQL count query failed: {}",
+                        format_pg_error(&error)
+                    );
+                    None
+                }
+            }
+        });
+
+        let has_limit = sql_has_limit(cleaned_sql);
+        let paged_sql = if has_limit {
+            cleaned_sql.to_string()
+        } else {
+            format!("{} LIMIT {} OFFSET {}", cleaned_sql, limit, offset)
+        };
+
+        let mut result = self.execute_query(&paged_sql)?;
+        result.total_row_count = total_row_count;
+        result.execution_time = start.elapsed();
+
+        Ok(result)
+    }
+
+    fn execute_statement(&self, sql: &str) -> Result<u64> {
+        let client = self.client.clone();
+        let sql = sql.to_string();
+
+        self.block_on(async {
+            let client = client.lock().await;
+            let rows_affected = client
+                .execute(&sql, &[])
+                .await
+                .map_err(|e| pg_err_to_anyhow("Failed to execute statement", e))?;
+            Ok(rows_affected)
+        })
+    }
+
+    fn interrupt(&self) {
+        let cancel_token = self.cancel_token.clone();
+        self._runtime.handle().spawn(async move {
+            if let Err(error) = cancel_token.cancel_query(tokio_postgres::NoTls).await {
+                log::warn!("database_viewer: PostgreSQL cancel failed: {}", error);
+            }
+        });
+    }
+
+    fn is_alive(&self) -> bool {
+        let client = self.client.clone();
+        self.block_on(async {
+            let client = client.lock().await;
+            client.simple_query("SELECT 1").await.is_ok()
+        })
+    }
+
+    fn database_type(&self) -> DatabaseType {
+        DatabaseType::PostgreSql
+    }
+}
+
+pub struct MysqlConnection {
+    pool: mysql_async::Pool,
+    connection_id: Mutex<Option<u32>>,
+    runtime: tokio::runtime::Runtime,
+}
+
+impl MysqlConnection {
+    pub fn connect(config: &ConnectionConfig) -> Result<Self> {
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(1)
+            .enable_all()
+            .build()
+            .context("Failed to create tokio runtime")?;
+
+        let host = config.host.as_deref().unwrap_or("localhost");
+        let port = config.port.unwrap_or(3306);
+        let database = config.database.as_deref().unwrap_or("mysql");
+        let user = config.user.as_deref().unwrap_or("root");
+        let password = config.password.as_deref().unwrap_or("");
+
+        let mut opts = mysql_async::OptsBuilder::default()
+            .ip_or_hostname(host)
+            .tcp_port(port)
+            .db_name(Some(database))
+            .user(Some(user))
+            .pass(Some(password));
+
+        if matches!(config.ssl_mode, SslMode::Require | SslMode::VerifyCa | SslMode::VerifyFull) {
+            let ssl_opts = build_mysql_ssl_opts(config.ssl_mode, config.ssl_config.as_ref())?;
+            opts = opts.ssl_opts(Some(ssl_opts));
+        }
+
+        let pool = mysql_async::Pool::new(opts);
+
+        let connection_id = runtime.block_on(async {
+            use mysql_async::prelude::*;
+            let mut conn = pool.get_conn().await.map_err(|error| {
+                anyhow::anyhow!("Failed to connect to MySQL: {}", error)
+            })?;
+            let conn_id: Option<u32> = conn
+                .query_first("SELECT CONNECTION_ID()")
+                .await
+                .unwrap_or(None);
+            drop(conn);
+            Ok::<_, anyhow::Error>(conn_id)
+        })?;
+
+        Ok(Self {
+            pool,
+            connection_id: Mutex::new(connection_id),
+            runtime,
+        })
+    }
+
+    fn block_on<F: std::future::Future>(&self, future: F) -> F::Output {
+        self.runtime.handle().block_on(future)
+    }
+}
+
+impl DatabaseConnection for MysqlConnection {
+    fn fetch_schema_with_level(&self, _level: IntrospectionLevel) -> Result<DatabaseSchema> {
+        let pool = self.pool.clone();
+        self.block_on(async {
+            use mysql_async::prelude::*;
+            let mut conn = pool
+                .get_conn()
+                .await
+                .map_err(|error| anyhow::anyhow!("MySQL connection error: {}", error))?;
+
+            let table_names: Vec<String> = conn
+                .query("SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE() ORDER BY table_name")
+                .await
+                .map_err(|error| anyhow::anyhow!("Failed to query tables: {}", error))?;
+
+            if table_names.is_empty() {
+                return Ok(DatabaseSchema { tables: Vec::new() });
+            }
+
+            let all_columns: Vec<(String, String, String, String, String, Option<String>)> = conn
+                .query(
+                    "SELECT table_name, column_name, column_type, is_nullable, column_key, column_default \
+                     FROM information_schema.columns \
+                     WHERE table_schema = DATABASE() \
+                     ORDER BY table_name, ordinal_position",
+                )
+                .await
+                .map_err(|error| anyhow::anyhow!("Failed to query columns: {}", error))?;
+
+            let all_indexes: Vec<(String, String, i32, String)> = conn
+                .query(
+                    "SELECT table_name, index_name, non_unique, column_name \
+                     FROM information_schema.statistics \
+                     WHERE table_schema = DATABASE() \
+                     ORDER BY table_name, index_name, seq_in_index",
+                )
+                .await
+                .unwrap_or_else(|error| {
+                    log::warn!("database_viewer: failed to fetch indexes: {}", error);
+                    Vec::new()
+                });
+
+            let all_fks: Vec<(String, String, String, String)> = conn
+                .query(
+                    "SELECT table_name, column_name, referenced_table_name, referenced_column_name \
+                     FROM information_schema.key_column_usage \
+                     WHERE table_schema = DATABASE() \
+                       AND referenced_table_name IS NOT NULL",
+                )
+                .await
+                .unwrap_or_else(|error| {
+                    log::warn!("database_viewer: failed to fetch foreign keys: {}", error);
+                    Vec::new()
+                });
+
+            let all_counts: Vec<(String, u64)> = conn
+                .query(
+                    "SELECT table_name, table_rows \
+                     FROM information_schema.tables \
+                     WHERE table_schema = DATABASE() AND table_type = 'BASE TABLE'",
+                )
+                .await
+                .unwrap_or_else(|error| {
+                    log::warn!("database_viewer: failed to fetch row counts: {}", error);
+                    Vec::new()
+                });
+
+            let mut col_map: HashMap<String, Vec<ColumnInfo>> = HashMap::new();
+            for (table, name, data_type, is_nullable, column_key, default_value) in all_columns {
+                col_map.entry(table).or_default().push(ColumnInfo {
+                    name,
+                    data_type,
+                    nullable: is_nullable == "YES",
+                    primary_key: column_key == "PRI",
+                    default_value,
+                });
+            }
+
+            let mut idx_raw: HashMap<String, std::collections::BTreeMap<String, (bool, Vec<String>)>> =
+                HashMap::new();
+            for (table, index_name, non_unique, column_name) in all_indexes {
+                let entry = idx_raw
+                    .entry(table)
+                    .or_default()
+                    .entry(index_name)
+                    .or_insert_with(|| (non_unique == 0, Vec::new()));
+                entry.1.push(column_name);
+            }
+
+            let mut idx_map: HashMap<String, Vec<IndexInfo>> = HashMap::new();
+            for (table, indexes) in idx_raw {
+                idx_map.insert(
+                    table,
+                    indexes
+                        .into_iter()
+                        .map(|(name, (unique, columns))| IndexInfo {
+                            name,
+                            columns,
+                            unique,
+                        })
+                        .collect(),
+                );
+            }
+
+            let mut fk_map: HashMap<String, Vec<ForeignKeyInfo>> = HashMap::new();
+            for (table, from_column, to_table, to_column) in all_fks {
+                fk_map.entry(table).or_default().push(ForeignKeyInfo {
+                    from_column,
+                    to_table,
+                    to_column,
+                });
+            }
+
+            let mut count_map: HashMap<String, u64> = HashMap::new();
+            for (table, count) in all_counts {
+                count_map.insert(table, count);
+            }
+
+            let tables = table_names
+                .into_iter()
+                .map(|table_name| {
+                    let columns = col_map.remove(&table_name).unwrap_or_default();
+                    let indexes = idx_map.remove(&table_name).unwrap_or_default();
+                    let foreign_keys = fk_map.remove(&table_name).unwrap_or_default();
+                    let row_count = count_map.get(&table_name).copied();
+
+                    TableInfo {
+                        name: table_name,
+                        columns,
+                        indexes,
+                        foreign_keys,
+                        row_count,
+                        is_virtual: false,
+                        ddl: None,
+                    }
+                })
+                .collect();
+
+            Ok(DatabaseSchema { tables })
+        })
+    }
+
+    fn execute_query(&self, sql: &str) -> Result<QueryResult> {
+        let start = Instant::now();
+        let pool = self.pool.clone();
+        let sql = sql.to_string();
+
+        self.block_on(async {
+            use mysql_async::prelude::*;
+            let mut conn = pool
+                .get_conn()
+                .await
+                .map_err(|error| anyhow::anyhow!("MySQL connection error: {}", error))?;
+
+            let result: Vec<mysql_async::Row> = conn
+                .query(&sql)
+                .await
+                .map_err(|error| anyhow::anyhow!("Failed to execute query: {}", error))?;
+
+            let columns: Vec<String> = if let Some(first_row) = result.first() {
+                first_row
+                    .columns_ref()
+                    .iter()
+                    .map(|col| col.name_str().to_string())
+                    .collect()
+            } else {
+                Vec::new()
+            };
+
+            let rows: Vec<Vec<CellValue>> = result
+                .iter()
+                .map(|row| {
+                    (0..row.len())
+                        .map(|i| mysql_value_to_cell(row, i))
+                        .collect()
+                })
+                .collect();
+
+            let execution_time = start.elapsed();
+            Ok(QueryResult {
+                columns,
+                rows,
+                total_row_count: None,
+                affected_rows: None,
+                execution_time,
+            })
+        })
+    }
+
+    fn execute_query_paged(
+        &self,
+        sql: &str,
+        limit: usize,
+        offset: usize,
+    ) -> Result<QueryResult> {
+        let start = Instant::now();
+        let cleaned_sql = sql.trim().trim_end_matches(';').trim();
+
+        let pool = self.pool.clone();
+        let count_sql = format!("SELECT COUNT(*) FROM ({}) AS _count_subquery", cleaned_sql);
+
+        let total_row_count: Option<u64> = self.block_on(async {
+            use mysql_async::prelude::*;
+            let mut conn = match pool.get_conn().await {
+                Ok(conn) => conn,
+                Err(error) => {
+                    log::warn!("database_viewer: MySQL count conn error: {}", error);
+                    return None;
+                }
+            };
+            match conn.query_first::<u64, _>(&count_sql).await {
+                Ok(count) => count,
+                Err(error) => {
+                    log::warn!("database_viewer: MySQL count query failed: {}", error);
+                    None
+                }
+            }
+        });
+
+        let has_limit = sql_has_limit(cleaned_sql);
+        let paged_sql = if has_limit {
+            cleaned_sql.to_string()
+        } else {
+            format!("{} LIMIT {} OFFSET {}", cleaned_sql, limit, offset)
+        };
+
+        let mut result = self.execute_query(&paged_sql)?;
+        result.total_row_count = total_row_count;
+        result.execution_time = start.elapsed();
+
+        Ok(result)
+    }
+
+    fn execute_statement(&self, sql: &str) -> Result<u64> {
+        let pool = self.pool.clone();
+        let sql = sql.to_string();
+
+        self.block_on(async {
+            use mysql_async::prelude::*;
+            let mut conn = pool
+                .get_conn()
+                .await
+                .map_err(|error| anyhow::anyhow!("MySQL connection error: {}", error))?;
+            let result = conn
+                .exec_drop(&sql, ())
+                .await
+                .map_err(|error| anyhow::anyhow!("Failed to execute statement: {}", error))?;
+            let _ = result;
+            Ok(conn.affected_rows())
+        })
+    }
+
+    fn interrupt(&self) {
+        let conn_id = self.connection_id.lock().ok().and_then(|id| *id);
+        let Some(conn_id) = conn_id else {
+            return;
+        };
+        let pool = self.pool.clone();
+        self.runtime.handle().spawn(async move {
+            use mysql_async::prelude::*;
+            if let Ok(mut conn) = pool.get_conn().await {
+                let kill_sql = format!("KILL QUERY {}", conn_id);
+                if let Err(error) = conn.query_drop(&kill_sql).await {
+                    log::warn!("database_viewer: MySQL KILL QUERY failed: {}", error);
+                }
+            }
+        });
+    }
+
+    fn is_alive(&self) -> bool {
+        let pool = self.pool.clone();
+        self.block_on(async {
+            use mysql_async::prelude::*;
+            match pool.get_conn().await {
+                Ok(mut conn) => conn.ping().await.is_ok(),
+                Err(_) => false,
+            }
+        })
+    }
+
+    fn database_type(&self) -> DatabaseType {
+        DatabaseType::MySql
+    }
+}
+
+fn mysql_value_to_cell(row: &mysql_async::Row, index: usize) -> CellValue {
+    use mysql_async::Value;
+    use mysql_async::consts::ColumnType;
+
+    let column_type = row
+        .columns_ref()
+        .get(index)
+        .map(|col| col.column_type());
+
+    match row.as_ref(index) {
+        Some(Value::NULL) | None => CellValue::Null,
+        Some(Value::Int(val)) => {
+            if let Some(ColumnType::MYSQL_TYPE_TINY) = column_type {
+                if row.columns_ref().get(index).map(|c| c.column_length()) == Some(1) {
+                    return CellValue::Boolean(*val != 0);
+                }
+            }
+            CellValue::Integer(*val)
+        }
+        Some(Value::UInt(val)) => CellValue::Integer(*val as i64),
+        Some(Value::Float(val)) => CellValue::Float(*val as f64),
+        Some(Value::Double(val)) => CellValue::Float(*val),
+        Some(Value::Bytes(bytes)) => {
+            let is_json = matches!(column_type, Some(ColumnType::MYSQL_TYPE_JSON));
+            match String::from_utf8(bytes.clone()) {
+                Ok(text) if is_json => CellValue::Json(text),
+                Ok(text) => CellValue::Text(text),
+                Err(_) => CellValue::Blob(bytes.clone()),
+            }
+        }
+        Some(Value::Date(year, month, day, hour, minute, second, _micro)) => {
+            if *hour == 0 && *minute == 0 && *second == 0 {
+                CellValue::Date(format!("{:04}-{:02}-{:02}", year, month, day))
+            } else {
+                CellValue::Timestamp(format!(
+                    "{:04}-{:02}-{:02} {:02}:{:02}:{:02}",
+                    year, month, day, hour, minute, second
+                ))
+            }
+        }
+        Some(Value::Time(negative, days, hours, minutes, seconds, _micro)) => {
+            let sign = if *negative { "-" } else { "" };
+            let total_hours = (*days as u32) * 24 + (*hours as u32);
+            CellValue::Time(format!(
+                "{}{:02}:{:02}:{:02}",
+                sign, total_hours, minutes, seconds
+            ))
+        }
+    }
+}
+
+fn format_pg_error(error: &tokio_postgres::Error) -> String {
+    if let Some(db_error) = error.as_db_error() {
+        format!("{}: {}", db_error.severity(), db_error.message())
+    } else {
+        format!("{}", error)
+    }
+}
+
+fn pg_err_to_anyhow(context: &str, error: tokio_postgres::Error) -> anyhow::Error {
+    anyhow::anyhow!("{}: {}", context, format_pg_error(&error))
+}
+
+fn parse_pg_index_columns(index_def: &str) -> Vec<String> {
+    if let Some(start) = index_def.rfind('(') {
+        if let Some(end) = index_def[start..].find(')') {
+            let cols_str = &index_def[start + 1..start + end];
+            return cols_str
+                .split(',')
+                .map(|s| s.trim().to_string())
+                .collect();
+        }
+    }
+    Vec::new()
+}
+
+fn pg_value_to_cell(
+    row: &tokio_postgres::Row,
+    index: usize,
+    col_type: &tokio_postgres::types::Type,
+) -> CellValue {
+    use tokio_postgres::types::Type;
+
+    match *col_type {
+        Type::BOOL => match row.try_get::<_, Option<bool>>(index) {
+            Ok(Some(val)) => CellValue::Boolean(val),
+            Ok(None) => CellValue::Null,
+            Err(_) => CellValue::Null,
+        },
+        Type::INT2 => match row.try_get::<_, Option<i16>>(index) {
+            Ok(Some(val)) => CellValue::Integer(val as i64),
+            Ok(None) => CellValue::Null,
+            Err(_) => CellValue::Null,
+        },
+        Type::INT4 | Type::OID => match row.try_get::<_, Option<i32>>(index) {
+            Ok(Some(val)) => CellValue::Integer(val as i64),
+            Ok(None) => CellValue::Null,
+            Err(_) => CellValue::Null,
+        },
+        Type::INT8 => match row.try_get::<_, Option<i64>>(index) {
+            Ok(Some(val)) => CellValue::Integer(val),
+            Ok(None) => CellValue::Null,
+            Err(_) => CellValue::Null,
+        },
+        Type::FLOAT4 => match row.try_get::<_, Option<f32>>(index) {
+            Ok(Some(val)) => CellValue::Float(val as f64),
+            Ok(None) => CellValue::Null,
+            Err(_) => CellValue::Null,
+        },
+        Type::FLOAT8 => match row.try_get::<_, Option<f64>>(index) {
+            Ok(Some(val)) => CellValue::Float(val),
+            Ok(None) => CellValue::Null,
+            Err(_) => CellValue::Null,
+        },
+        Type::NUMERIC => match row.try_get::<_, Option<f64>>(index) {
+            Ok(Some(val)) => {
+                if val.fract() == 0.0 && val.abs() < i64::MAX as f64 {
+                    CellValue::Integer(val as i64)
+                } else {
+                    CellValue::Float(val)
+                }
+            }
+            Ok(None) => CellValue::Null,
+            Err(_) => CellValue::Null,
+        },
+        Type::BYTEA => match row.try_get::<_, Option<Vec<u8>>>(index) {
+            Ok(Some(val)) => CellValue::Blob(val),
+            Ok(None) => CellValue::Null,
+            Err(_) => CellValue::Null,
+        },
+        // Types that tokio-postgres can decode directly as String
+        Type::TEXT | Type::VARCHAR | Type::BPCHAR | Type::NAME | Type::CHAR => {
+            match row.try_get::<_, Option<String>>(index) {
+                Ok(Some(val)) => CellValue::Text(val),
+                Ok(None) => CellValue::Null,
+                Err(_) => CellValue::Null,
+            }
+        }
+        // For all other types (UUID, TIMESTAMP, JSONB, INET, arrays, etc.),
+        // tokio-postgres cannot decode them as String directly.
+        // Use the raw text representation via the binary protocol fallback.
+        _ => pg_value_to_cell_via_text_column(row, index, col_type),
+    }
+}
+
+fn pg_value_to_cell_via_text_column(
+    row: &tokio_postgres::Row,
+    index: usize,
+    _col_type: &tokio_postgres::types::Type,
+) -> CellValue {
+    use std::net::IpAddr;
+
+    // Try common types that have Display implementations.
+    // Each attempt checks if the column can be decoded as that Rust type.
+
+    // TIMESTAMP / TIMESTAMPTZ
+    if let Ok(Some(val)) = row.try_get::<_, Option<chrono::NaiveDateTime>>(index) {
+        return CellValue::Timestamp(val.to_string());
+    }
+    if let Ok(Some(val)) = row.try_get::<_, Option<chrono::DateTime<chrono::Utc>>>(index) {
+        return CellValue::Timestamp(val.to_string());
+    }
+
+    // DATE
+    if let Ok(Some(val)) = row.try_get::<_, Option<chrono::NaiveDate>>(index) {
+        return CellValue::Date(val.to_string());
+    }
+
+    // TIME
+    if let Ok(Some(val)) = row.try_get::<_, Option<chrono::NaiveTime>>(index) {
+        return CellValue::Time(val.to_string());
+    }
+
+    // UUID
+    if let Ok(Some(val)) = row.try_get::<_, Option<uuid::Uuid>>(index) {
+        return CellValue::Uuid(val.to_string());
+    }
+
+    // JSON / JSONB
+    if let Ok(Some(val)) = row.try_get::<_, Option<serde_json::Value>>(index) {
+        return CellValue::Json(val.to_string());
+    }
+
+    // INET / CIDR
+    if let Ok(Some(val)) = row.try_get::<_, Option<IpAddr>>(index) {
+        return CellValue::Text(val.to_string());
+    }
+
+    // MAC address as bytes
+    match row.try_get::<_, Option<Vec<u8>>>(index) {
+        Ok(Some(val)) => return CellValue::Blob(val),
+        Ok(None) => return CellValue::Null,
+        Err(_) => {}
+    }
+
+    CellValue::Text(format!("<{}>", _col_type.name()))
+}
+
+fn fetch_sqlite_columns(connection: &Connection, table_name: &str) -> Result<Vec<ColumnInfo>> {
+    let query = format!("PRAGMA table_info(\"{}\")", escape_sqlite_identifier(table_name));
+    let mut statement = Statement::prepare(connection, &query)?;
+    statement.map(|stmt| {
+        let name = stmt.column_text(1)?.to_string();
+        let data_type = stmt.column_text(2)?.to_string();
+        let not_null = stmt.column_int(3)?;
+        let default_value = {
+            let text = stmt.column_text(4)?;
+            if text.is_empty() {
+                None
+            } else {
+                Some(text.to_string())
+            }
+        };
+        let primary_key = stmt.column_int(5)? != 0;
+
+        Ok(ColumnInfo {
+            name,
+            data_type,
+            nullable: not_null == 0,
+            primary_key,
+            default_value,
+        })
+    })
+}
+
+fn fetch_sqlite_indexes(connection: &Connection, table_name: &str) -> Result<Vec<IndexInfo>> {
+    let query = format!("PRAGMA index_list(\"{}\")", escape_sqlite_identifier(table_name));
+    let index_names: Vec<(String, i32)> = {
+        let mut stmt = Statement::prepare(connection, &query)?;
+        stmt.map(|s| {
+            let name = s.column_text(1)?.to_string();
+            let unique = s.column_int(2)?;
+            Ok((name, unique))
+        })?
+    };
+
+    let mut indexes = Vec::new();
+    for (index_name, unique) in index_names {
+        let info_query = format!("PRAGMA index_info(\"{}\")", escape_sqlite_identifier(&index_name));
+        let mut info_stmt = Statement::prepare(connection, &info_query)?;
+        let columns = info_stmt.map(|s| {
+            let col_name = s.column_text(2)?.to_string();
+            Ok(col_name)
+        })?;
+
+        indexes.push(IndexInfo {
+            name: index_name,
+            columns,
+            unique: unique != 0,
+        });
+    }
+
+    Ok(indexes)
+}
+
+fn fetch_sqlite_foreign_keys(connection: &Connection, table_name: &str) -> Result<Vec<ForeignKeyInfo>> {
+    let query = format!("PRAGMA foreign_key_list(\"{}\")", escape_sqlite_identifier(table_name));
+    let mut statement = Statement::prepare(connection, &query)?;
+    statement.map(|stmt| {
+        let to_table = stmt.column_text(2)?.to_string();
+        let from_column = stmt.column_text(3)?.to_string();
+        let to_column = stmt.column_text(4)?.to_string();
+        Ok(ForeignKeyInfo {
+            from_column,
+            to_table,
+            to_column,
+        })
+    })
+}
+
+fn fetch_sqlite_ddl(connection: &Connection, table_name: &str) -> Option<String> {
+    let query = format!(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name=\"{}\"",
+        escape_sqlite_identifier(table_name)
+    );
+    match connection.select_row::<String>(&query) {
+        Ok(mut fetch) => match fetch() {
+            Ok(Some(ddl)) => Some(ddl),
+            _ => None,
+        },
+        Err(_) => None,
+    }
+}
+
+fn fetch_sqlite_row_count(connection: &Connection, table_name: &str) -> Option<u64> {
+    let query = format!(
+        "SELECT COUNT(*) FROM \"{}\"",
+        escape_sqlite_identifier(table_name)
+    );
+    match connection.select_row::<i64>(&query) {
+        Ok(mut fetch) => match fetch() {
+            Ok(Some(count)) => Some(count as u64),
+            _ => None,
+        },
+        Err(_) => None,
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StatementType {
+    ReadOnly,
+    Insert,
+    Update,
+    Delete,
+    Ddl,
+    Dcl,
+    Transaction,
+    Unknown,
+}
+
+impl StatementType {
+    pub fn is_read_only(&self) -> bool {
+        matches!(self, StatementType::ReadOnly)
+    }
+
+    pub fn is_mutation(&self) -> bool {
+        matches!(
+            self,
+            StatementType::Insert
+                | StatementType::Update
+                | StatementType::Delete
+                | StatementType::Ddl
+        )
+    }
+}
+
+pub fn classify_statement(sql: &str) -> StatementType {
+    let trimmed = sql.trim();
+    // Strip leading block comments (/* ... */)
+    let without_comments = strip_leading_comments(trimmed);
+    let upper = without_comments.to_uppercase();
+
+    // Match on the first keyword
+    if upper.starts_with("SELECT")
+        || upper.starts_with("WITH")
+        || upper.starts_with("EXPLAIN")
+        || upper.starts_with("SHOW")
+        || upper.starts_with("DESCRIBE")
+        || upper.starts_with("DESC ")
+        || upper.starts_with("PRAGMA")
+    {
+        StatementType::ReadOnly
+    } else if upper.starts_with("INSERT") || upper.starts_with("REPLACE") {
+        StatementType::Insert
+    } else if upper.starts_with("UPDATE") {
+        StatementType::Update
+    } else if upper.starts_with("DELETE") || upper.starts_with("TRUNCATE") {
+        StatementType::Delete
+    } else if upper.starts_with("CREATE")
+        || upper.starts_with("ALTER")
+        || upper.starts_with("DROP")
+    {
+        StatementType::Ddl
+    } else if upper.starts_with("GRANT") || upper.starts_with("REVOKE") {
+        StatementType::Dcl
+    } else if upper.starts_with("BEGIN")
+        || upper.starts_with("COMMIT")
+        || upper.starts_with("ROLLBACK")
+        || upper.starts_with("SAVEPOINT")
+    {
+        StatementType::Transaction
+    } else {
+        StatementType::Unknown
+    }
+}
+
+fn strip_leading_comments(sql: &str) -> &str {
+    let mut remaining = sql;
+    loop {
+        remaining = remaining.trim_start();
+        if remaining.starts_with("--") {
+            // Line comment: skip to end of line
+            match remaining.find('\n') {
+                Some(pos) => remaining = &remaining[pos + 1..],
+                None => return "",
+            }
+        } else if remaining.starts_with("/*") {
+            // Block comment: skip to closing */
+            match remaining.find("*/") {
+                Some(pos) => remaining = &remaining[pos + 2..],
+                None => return "",
+            }
+        } else {
+            return remaining;
+        }
+    }
+}
+
+fn sql_has_limit(sql: &str) -> bool {
+    let upper = sql.to_uppercase();
+    let trimmed = upper.trim_end_matches(';').trim();
+    // Only match LIMIT at the top level (not inside a subquery).
+    // Find the last occurrence of LIMIT that is not inside parentheses.
+    let mut depth = 0i32;
+    let bytes = trimmed.as_bytes();
+    let limit_keyword = b"LIMIT";
+
+    for i in 0..bytes.len() {
+        match bytes[i] {
+            b'(' => depth += 1,
+            b')' => depth -= 1,
+            _ => {}
+        }
+        if depth == 0
+            && i + limit_keyword.len() <= bytes.len()
+            && &bytes[i..i + limit_keyword.len()] == limit_keyword
+        {
+            let before_ok = i == 0 || !bytes[i - 1].is_ascii_alphanumeric();
+            let after_ok = i + limit_keyword.len() >= bytes.len()
+                || !bytes[i + limit_keyword.len()].is_ascii_alphanumeric();
+            if before_ok && after_ok {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+pub trait DatabaseDriver: Send + Sync {
+    fn driver_type(&self) -> DatabaseType;
+    fn display_name(&self) -> &str;
+    fn default_port(&self) -> Option<u16>;
+    fn validate_config(&self, config: &ConnectionConfig) -> Result<(), String>;
+    fn connect(&self, config: &ConnectionConfig) -> Result<Arc<dyn DatabaseConnection>>;
+}
+
+pub struct SqliteDriver;
+
+impl DatabaseDriver for SqliteDriver {
+    fn driver_type(&self) -> DatabaseType {
+        DatabaseType::Sqlite
+    }
+
+    fn display_name(&self) -> &str {
+        "SQLite"
+    }
+
+    fn default_port(&self) -> Option<u16> {
+        None
+    }
+
+    fn validate_config(&self, config: &ConnectionConfig) -> Result<(), String> {
+        if config.path.is_none() {
+            return Err("SQLite connection requires a file path".to_string());
+        }
+        Ok(())
+    }
+
+    fn connect(&self, config: &ConnectionConfig) -> Result<Arc<dyn DatabaseConnection>> {
+        let path = config
+            .path
+            .as_ref()
+            .context("SQLite connection requires a file path")?;
+        let connection = SqliteConnection::new_readonly(path)?;
+        Ok(Arc::new(connection))
+    }
+}
+
+pub struct PostgresDriver;
+
+impl DatabaseDriver for PostgresDriver {
+    fn driver_type(&self) -> DatabaseType {
+        DatabaseType::PostgreSql
+    }
+
+    fn display_name(&self) -> &str {
+        "PostgreSQL"
+    }
+
+    fn default_port(&self) -> Option<u16> {
+        Some(5432)
+    }
+
+    fn validate_config(&self, config: &ConnectionConfig) -> Result<(), String> {
+        if config.host.is_none() || config.host.as_deref() == Some("") {
+            return Err("PostgreSQL connection requires a host".to_string());
+        }
+        Ok(())
+    }
+
+    fn connect(&self, config: &ConnectionConfig) -> Result<Arc<dyn DatabaseConnection>> {
+        let connection = PostgresConnection::connect(config)?;
+        Ok(Arc::new(connection))
+    }
+}
+
+pub struct MysqlDriver;
+
+impl DatabaseDriver for MysqlDriver {
+    fn driver_type(&self) -> DatabaseType {
+        DatabaseType::MySql
+    }
+
+    fn display_name(&self) -> &str {
+        "MySQL"
+    }
+
+    fn default_port(&self) -> Option<u16> {
+        Some(3306)
+    }
+
+    fn validate_config(&self, config: &ConnectionConfig) -> Result<(), String> {
+        if config.host.is_none() || config.host.as_deref() == Some("") {
+            return Err("MySQL connection requires a host".to_string());
+        }
+        Ok(())
+    }
+
+    fn connect(&self, config: &ConnectionConfig) -> Result<Arc<dyn DatabaseConnection>> {
+        let connection = MysqlConnection::connect(config)?;
+        Ok(Arc::new(connection))
+    }
+}
+
+pub struct DriverRegistry {
+    drivers: HashMap<DatabaseType, Arc<dyn DatabaseDriver>>,
+}
+
+impl DriverRegistry {
+    pub fn new() -> Self {
+        let mut registry = Self {
+            drivers: HashMap::new(),
+        };
+        registry.register(Arc::new(SqliteDriver));
+        registry.register(Arc::new(PostgresDriver));
+        registry.register(Arc::new(MysqlDriver));
+        registry
+    }
+
+    pub fn register(&mut self, driver: Arc<dyn DatabaseDriver>) {
+        self.drivers.insert(driver.driver_type(), driver);
+    }
+
+    pub fn get(&self, database_type: &DatabaseType) -> Option<&Arc<dyn DatabaseDriver>> {
+        self.drivers.get(database_type)
+    }
+
+    pub fn available_drivers(&self) -> Vec<DatabaseType> {
+        self.drivers.keys().cloned().collect()
+    }
+}
+
+pub fn default_registry() -> DriverRegistry {
+    DriverRegistry::new()
+}
+
+pub struct SshTunnel {
+    process: std::process::Child,
+    pub local_port: u16,
+}
+
+impl Drop for SshTunnel {
+    fn drop(&mut self) {
+        let _ = self.process.kill();
+    }
+}
+
+pub fn establish_ssh_tunnel(
+    ssh_config: &SshTunnelConfig,
+    remote_host: &str,
+    remote_port: u16,
+) -> Result<SshTunnel> {
+    let local_port = find_available_port()?;
+
+    let mut args = vec![
+        "-N".to_string(),
+        "-L".to_string(),
+        format!("{}:{}:{}", local_port, remote_host, remote_port),
+        "-p".to_string(),
+        ssh_config.port.to_string(),
+        "-o".to_string(),
+        "StrictHostKeyChecking=accept-new".to_string(),
+        "-o".to_string(),
+        "ExitOnForwardFailure=yes".to_string(),
+        "-o".to_string(),
+        "ConnectTimeout=10".to_string(),
+    ];
+
+    match &ssh_config.auth_method {
+        SshAuthMethod::PrivateKey { key_path, .. } => {
+            args.push("-i".to_string());
+            args.push(key_path.to_string_lossy().to_string());
+        }
+        SshAuthMethod::Agent => {
+            // SSH agent will be used automatically
+        }
+        SshAuthMethod::Password => {
+            // Password auth requires interactive input or sshpass
+            // For now, rely on SSH_ASKPASS or agent fallback
+        }
+    }
+
+    args.push(format!("{}@{}", ssh_config.username, ssh_config.host));
+
+    let process = std::process::Command::new("ssh")
+        .args(&args)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .context("Failed to start SSH tunnel process")?;
+
+    // Wait briefly for the tunnel to establish
+    std::thread::sleep(std::time::Duration::from_millis(500));
+
+    log::info!(
+        "SSH tunnel established: localhost:{} -> {}:{}:{} via {}@{}:{}",
+        local_port,
+        ssh_config.host,
+        remote_host,
+        remote_port,
+        ssh_config.username,
+        ssh_config.host,
+        ssh_config.port,
+    );
+
+    Ok(SshTunnel {
+        process,
+        local_port,
+    })
+}
+
+fn find_available_port() -> Result<u16> {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0")
+        .context("Failed to find available port")?;
+    let port = listener.local_addr()?.port();
+    drop(listener);
+    Ok(port)
+}
+
+pub fn create_connection(config: &ConnectionConfig) -> Result<Arc<dyn DatabaseConnection>> {
+    let registry = default_registry();
+    let driver = registry
+        .get(&config.database_type)
+        .ok_or_else(|| anyhow::anyhow!("No driver registered for {:?}", config.database_type))?;
+
+    if let Some(ssh_config) = &config.ssh_tunnel {
+        let remote_host = config.host.as_deref().unwrap_or("127.0.0.1");
+        let remote_port = config.port.unwrap_or(match config.database_type {
+            DatabaseType::PostgreSql => 5432,
+            DatabaseType::MySql => 3306,
+            DatabaseType::Sqlite => return driver.connect(config),
+        });
+
+        let tunnel = establish_ssh_tunnel(ssh_config, remote_host, remote_port)?;
+        let local_port = tunnel.local_port;
+
+        let mut tunneled_config = config.clone();
+        tunneled_config.host = Some("127.0.0.1".to_string());
+        tunneled_config.port = Some(local_port);
+        tunneled_config.ssh_tunnel = None;
+        tunneled_config.ssl_mode = SslMode::Disable;
+
+        let connection = driver.connect(&tunneled_config)?;
+
+        // Store the tunnel handle to keep it alive
+        ACTIVE_TUNNELS.lock().map_err(|e| anyhow::anyhow!("Lock error: {}", e))?
+            .insert(config.id.clone(), tunnel);
+
+        return Ok(connection);
+    }
+
+    driver.connect(config)
+}
+
+static ACTIVE_TUNNELS: std::sync::LazyLock<Mutex<HashMap<String, SshTunnel>>> =
+    std::sync::LazyLock::new(|| Mutex::new(HashMap::new()));
+
+pub fn close_tunnel(connection_id: &str) {
+    if let Ok(mut tunnels) = ACTIVE_TUNNELS.lock() {
+        tunnels.remove(connection_id);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use indoc::indoc;
+    use sqlez::connection::Connection as SqlezConnection;
+
+    fn create_test_db() -> (tempfile::NamedTempFile, SqliteConnection) {
+        let temp = tempfile::NamedTempFile::new().unwrap();
+        let path = temp.path().to_str().unwrap();
+
+        let write_conn = SqlezConnection::open_file(path);
+
+        let statements = [
+            indoc! {"
+                CREATE TABLE users (
+                    id INTEGER PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    email TEXT,
+                    age INTEGER
+                )
+            "},
+            "INSERT INTO users (name, email, age) VALUES ('Alice', 'alice@example.com', 30)",
+            "INSERT INTO users (name, email, age) VALUES ('Bob', 'bob@example.com', 25)",
+            "INSERT INTO users (name, email, age) VALUES ('Charlie', NULL, 35)",
+            "CREATE INDEX idx_users_name ON users (name)",
+            indoc! {"
+                CREATE TABLE orders (
+                    id INTEGER PRIMARY KEY,
+                    user_id INTEGER,
+                    total REAL
+                )
+            "},
+            "INSERT INTO orders (user_id, total) VALUES (1, 99.99)",
+            "INSERT INTO orders (user_id, total) VALUES (2, 42.50)",
+        ];
+        for sql in statements {
+            write_conn.exec(sql).unwrap()().unwrap();
+        }
+
+        let readonly = SqliteConnection::new_readonly(&temp.path().to_path_buf()).unwrap();
+        (temp, readonly)
+    }
+
+    #[test]
+    fn test_escape_sqlite_identifier() {
+        assert_eq!(escape_sqlite_identifier("users"), "users");
+        assert_eq!(escape_sqlite_identifier("my table"), "my table");
+        assert_eq!(
+            escape_sqlite_identifier("table\"name"),
+            "table\"\"name"
+        );
+        assert_eq!(
+            escape_sqlite_identifier("a\"b\"c"),
+            "a\"\"b\"\"c"
+        );
+    }
+
+    #[test]
+    fn test_sql_has_limit() {
+        assert!(sql_has_limit("SELECT * FROM users LIMIT 10"));
+        assert!(sql_has_limit("SELECT * FROM users LIMIT 10 OFFSET 5"));
+        assert!(!sql_has_limit("SELECT * FROM users"));
+        assert!(!sql_has_limit(
+            "SELECT * FROM (SELECT * FROM users LIMIT 5)"
+        ));
+        assert!(sql_has_limit(
+            "SELECT * FROM (SELECT * FROM users LIMIT 5) LIMIT 10"
+        ));
+        assert!(!sql_has_limit("SELECT * FROM unlimited_table"));
+    }
+
+    #[test]
+    fn test_fetch_schema() {
+        let (_temp, conn) = create_test_db();
+        let schema = conn.fetch_schema().unwrap();
+
+        assert_eq!(schema.tables.len(), 2);
+
+        let users = schema.tables.iter().find(|t| t.name == "users").unwrap();
+        assert_eq!(users.columns.len(), 4);
+        assert_eq!(users.columns[0].name, "id");
+        assert!(users.columns[0].primary_key);
+        assert_eq!(users.columns[1].name, "name");
+        assert!(!users.columns[1].nullable);
+        assert_eq!(users.row_count, Some(3));
+        assert!(!users.is_virtual);
+        assert_eq!(users.indexes.len(), 1);
+        assert_eq!(users.indexes[0].name, "idx_users_name");
+
+        let orders = schema.tables.iter().find(|t| t.name == "orders").unwrap();
+        assert_eq!(orders.columns.len(), 3);
+        assert_eq!(orders.row_count, Some(2));
+    }
+
+    #[test]
+    fn test_execute_query() {
+        let (_temp, conn) = create_test_db();
+        let result = conn.execute_query("SELECT name, age FROM users ORDER BY name").unwrap();
+
+        assert_eq!(result.columns, vec!["name", "age"]);
+        assert_eq!(result.rows.len(), 3);
+        assert!(matches!(&result.rows[0][0], CellValue::Text(s) if s == "Alice"));
+        assert!(matches!(&result.rows[0][1], CellValue::Integer(30)));
+    }
+
+    #[test]
+    fn test_execute_query_paged() {
+        let (_temp, conn) = create_test_db();
+        let result = conn
+            .execute_query_paged("SELECT * FROM users ORDER BY id", 2, 0)
+            .unwrap();
+
+        assert_eq!(result.rows.len(), 2);
+        assert_eq!(result.total_row_count, Some(3));
+
+        let page2 = conn
+            .execute_query_paged("SELECT * FROM users ORDER BY id", 2, 2)
+            .unwrap();
+
+        assert_eq!(page2.rows.len(), 1);
+        assert_eq!(page2.total_row_count, Some(3));
+    }
+
+    #[test]
+    fn test_table_with_special_characters() {
+        let temp = tempfile::NamedTempFile::new().unwrap();
+        let path = temp.path().to_str().unwrap();
+
+        let write_conn = SqlezConnection::open_file(path);
+        write_conn
+            .exec("CREATE TABLE \"my\"\"table\" (id INTEGER PRIMARY KEY, value TEXT)")
+            .unwrap()()
+            .unwrap();
+        write_conn
+            .exec("INSERT INTO \"my\"\"table\" (value) VALUES ('test')")
+            .unwrap()()
+            .unwrap();
+
+        let readonly = SqliteConnection::new_readonly(&temp.path().to_path_buf()).unwrap();
+        let schema = readonly.fetch_schema().unwrap();
+
+        assert_eq!(schema.tables.len(), 1);
+        assert_eq!(schema.tables[0].name, "my\"table");
+        assert_eq!(schema.tables[0].row_count, Some(1));
+    }
+
+    #[test]
+    fn test_from_postgres_url_full() {
+        let config =
+            ConnectionConfig::from_postgres_url("postgres://myuser:secret@db.example.com:5433/mydb")
+                .expect("should parse");
+        assert_eq!(config.host.as_deref(), Some("db.example.com"));
+        assert_eq!(config.port, Some(5433));
+        assert_eq!(config.database.as_deref(), Some("mydb"));
+        assert_eq!(config.user.as_deref(), Some("myuser"));
+        assert_eq!(config.password.as_deref(), Some("secret"));
+    }
+
+    #[test]
+    fn test_from_postgres_url_defaults() {
+        let config =
+            ConnectionConfig::from_postgres_url("postgres://localhost").expect("should parse");
+        assert_eq!(config.host.as_deref(), Some("localhost"));
+        assert_eq!(config.port, Some(5432));
+        assert_eq!(config.database.as_deref(), Some("postgres"));
+        assert_eq!(config.user.as_deref(), Some("postgres"));
+    }
+
+    #[test]
+    fn test_from_postgres_url_postgresql_scheme() {
+        let config =
+            ConnectionConfig::from_postgres_url("postgresql://user@host/db").expect("should parse");
+        assert_eq!(config.host.as_deref(), Some("host"));
+        assert_eq!(config.database.as_deref(), Some("db"));
+        assert_eq!(config.user.as_deref(), Some("user"));
+    }
+
+    #[test]
+    fn test_from_postgres_url_empty() {
+        assert!(ConnectionConfig::from_postgres_url("").is_err());
+    }
+
+    #[test]
+    fn test_from_postgres_url_special_chars_password() {
+        let config = ConnectionConfig::from_postgres_url(
+            "postgres://user:p%40ss%23word@host/db",
+        )
+        .expect("should parse");
+        assert_eq!(config.password.as_deref(), Some("p@ss#word"));
+        assert_eq!(config.user.as_deref(), Some("user"));
+    }
+
+    #[test]
+    fn test_from_mysql_url_special_chars_password() {
+        let config = ConnectionConfig::from_mysql_url(
+            "mysql://admin:s%40cr%23t%21@host:3306/db",
+        )
+        .expect("should parse");
+        assert_eq!(config.password.as_deref(), Some("s@cr#t!"));
+        assert_eq!(config.user.as_deref(), Some("admin"));
+    }
+
+    #[test]
+    fn test_display_name_sqlite() {
+        let config = ConnectionConfig::sqlite(
+            "test.db".to_string(),
+            PathBuf::from("/path/to/test.db"),
+        );
+        assert_eq!(config.display_name(), "test.db");
+    }
+
+    #[test]
+    fn test_display_name_postgres() {
+        let config = ConnectionConfig::postgres(
+            "test".to_string(),
+            "myhost".to_string(),
+            5432,
+            "mydb".to_string(),
+            "user".to_string(),
+            "".to_string(),
+            SslMode::Disable,
+        );
+        assert_eq!(config.display_name(), "mydb @ myhost");
+    }
+
+    #[test]
+    fn test_from_mysql_url_full() {
+        let config =
+            ConnectionConfig::from_mysql_url("mysql://myuser:secret@db.example.com:3307/mydb")
+                .expect("should parse");
+        assert_eq!(config.host.as_deref(), Some("db.example.com"));
+        assert_eq!(config.port, Some(3307));
+        assert_eq!(config.database.as_deref(), Some("mydb"));
+        assert_eq!(config.user.as_deref(), Some("myuser"));
+        assert_eq!(config.password.as_deref(), Some("secret"));
+        assert_eq!(config.database_type, DatabaseType::MySql);
+    }
+
+    #[test]
+    fn test_from_mysql_url_defaults() {
+        let config =
+            ConnectionConfig::from_mysql_url("mysql://localhost").expect("should parse");
+        assert_eq!(config.host.as_deref(), Some("localhost"));
+        assert_eq!(config.port, Some(3306));
+        assert_eq!(config.database.as_deref(), Some("mysql"));
+        assert_eq!(config.user.as_deref(), Some("root"));
+    }
+
+    #[test]
+    fn test_from_mysql_url_empty() {
+        assert!(ConnectionConfig::from_mysql_url("").is_err());
+    }
+
+    #[test]
+    fn test_classify_statement_select() {
+        assert_eq!(classify_statement("SELECT * FROM users"), StatementType::ReadOnly);
+        assert_eq!(classify_statement("  select id from t"), StatementType::ReadOnly);
+    }
+
+    #[test]
+    fn test_classify_statement_with_cte() {
+        assert_eq!(
+            classify_statement("WITH cte AS (SELECT 1) SELECT * FROM cte"),
+            StatementType::ReadOnly
+        );
+    }
+
+    #[test]
+    fn test_classify_statement_mutations() {
+        assert_eq!(
+            classify_statement("INSERT INTO users VALUES (1)"),
+            StatementType::Insert
+        );
+        assert_eq!(
+            classify_statement("UPDATE users SET name = 'x'"),
+            StatementType::Update
+        );
+        assert_eq!(
+            classify_statement("DELETE FROM users WHERE id = 1"),
+            StatementType::Delete
+        );
+        assert_eq!(
+            classify_statement("TRUNCATE TABLE users"),
+            StatementType::Delete
+        );
+        assert_eq!(
+            classify_statement("REPLACE INTO users VALUES (1)"),
+            StatementType::Insert
+        );
+    }
+
+    #[test]
+    fn test_classify_statement_ddl() {
+        assert_eq!(
+            classify_statement("CREATE TABLE t (id INT)"),
+            StatementType::Ddl
+        );
+        assert_eq!(
+            classify_statement("ALTER TABLE t ADD col INT"),
+            StatementType::Ddl
+        );
+        assert_eq!(classify_statement("DROP TABLE t"), StatementType::Ddl);
+    }
+
+    #[test]
+    fn test_classify_statement_dcl() {
+        assert_eq!(
+            classify_statement("GRANT SELECT ON t TO user"),
+            StatementType::Dcl
+        );
+        assert_eq!(
+            classify_statement("REVOKE ALL ON t FROM user"),
+            StatementType::Dcl
+        );
+    }
+
+    #[test]
+    fn test_classify_statement_transaction() {
+        assert_eq!(classify_statement("BEGIN"), StatementType::Transaction);
+        assert_eq!(classify_statement("COMMIT"), StatementType::Transaction);
+        assert_eq!(classify_statement("ROLLBACK"), StatementType::Transaction);
+        assert_eq!(
+            classify_statement("SAVEPOINT sp1"),
+            StatementType::Transaction
+        );
+    }
+
+    #[test]
+    fn test_classify_statement_with_comments() {
+        assert_eq!(
+            classify_statement("-- a comment\nSELECT 1"),
+            StatementType::ReadOnly
+        );
+        assert_eq!(
+            classify_statement("/* block */  INSERT INTO t VALUES (1)"),
+            StatementType::Insert
+        );
+        assert_eq!(
+            classify_statement("/* multi\nline */ DELETE FROM t"),
+            StatementType::Delete
+        );
+    }
+
+    #[test]
+    fn test_classify_statement_explain() {
+        assert_eq!(
+            classify_statement("EXPLAIN SELECT * FROM users"),
+            StatementType::ReadOnly
+        );
+    }
+
+    #[test]
+    fn test_classify_statement_pragma() {
+        assert_eq!(
+            classify_statement("PRAGMA table_info('users')"),
+            StatementType::ReadOnly
+        );
+    }
+
+    #[test]
+    fn test_classify_statement_unknown() {
+        assert_eq!(classify_statement("VACUUM"), StatementType::Unknown);
+        assert_eq!(classify_statement(""), StatementType::Unknown);
+    }
+
+    #[test]
+    fn test_statement_type_predicates() {
+        assert!(StatementType::ReadOnly.is_read_only());
+        assert!(!StatementType::Insert.is_read_only());
+        assert!(StatementType::Insert.is_mutation());
+        assert!(StatementType::Update.is_mutation());
+        assert!(StatementType::Delete.is_mutation());
+        assert!(StatementType::Ddl.is_mutation());
+        assert!(!StatementType::ReadOnly.is_mutation());
+        assert!(!StatementType::Transaction.is_mutation());
+    }
+
+    #[test]
+    fn test_display_name_mysql() {
+        let config = ConnectionConfig::mysql(
+            "test".to_string(),
+            "myhost".to_string(),
+            3306,
+            "mydb".to_string(),
+            "root".to_string(),
+            "".to_string(),
+            SslMode::Disable,
+        );
+        assert_eq!(config.display_name(), "mydb @ myhost");
+    }
+
+    #[test]
+    fn test_driver_registry_registers_built_in_drivers() {
+        let registry = DriverRegistry::new();
+        assert!(registry.get(&DatabaseType::Sqlite).is_some());
+        assert!(registry.get(&DatabaseType::PostgreSql).is_some());
+        assert!(registry.get(&DatabaseType::MySql).is_some());
+    }
+
+    #[test]
+    fn test_driver_registry_available_drivers() {
+        let registry = DriverRegistry::new();
+        let mut available = registry.available_drivers();
+        available.sort_by_key(|d| format!("{:?}", d));
+        assert_eq!(available.len(), 3);
+        assert!(available.contains(&DatabaseType::Sqlite));
+        assert!(available.contains(&DatabaseType::PostgreSql));
+        assert!(available.contains(&DatabaseType::MySql));
+    }
+
+    #[test]
+    fn test_sqlite_driver_metadata() {
+        let driver = SqliteDriver;
+        assert_eq!(driver.driver_type(), DatabaseType::Sqlite);
+        assert_eq!(driver.display_name(), "SQLite");
+        assert_eq!(driver.default_port(), None);
+    }
+
+    #[test]
+    fn test_postgres_driver_metadata() {
+        let driver = PostgresDriver;
+        assert_eq!(driver.driver_type(), DatabaseType::PostgreSql);
+        assert_eq!(driver.display_name(), "PostgreSQL");
+        assert_eq!(driver.default_port(), Some(5432));
+    }
+
+    #[test]
+    fn test_mysql_driver_metadata() {
+        let driver = MysqlDriver;
+        assert_eq!(driver.driver_type(), DatabaseType::MySql);
+        assert_eq!(driver.display_name(), "MySQL");
+        assert_eq!(driver.default_port(), Some(3306));
+    }
+
+    #[test]
+    fn test_sqlite_driver_validate_config_missing_path() {
+        let driver = SqliteDriver;
+        let config = ConnectionConfig {
+            id: ConnectionConfig::generate_id(),
+            name: "test".to_string(),
+            database_type: DatabaseType::Sqlite,
+            path: None,
+            host: None,
+            port: None,
+            database: None,
+            user: None,
+            password: None,
+            ssl_mode: SslMode::Disable,
+            ssl_config: None,
+            ssh_tunnel: None,
+            introspection_level: IntrospectionLevel::default(),
+            read_only: false,
+            color_index: 0,
+        };
+        assert!(driver.validate_config(&config).is_err());
+    }
+
+    #[test]
+    fn test_sqlite_driver_validate_config_valid() {
+        let driver = SqliteDriver;
+        let config = ConnectionConfig::sqlite("test".to_string(), PathBuf::from("/tmp/test.db"));
+        assert!(driver.validate_config(&config).is_ok());
+    }
+
+    #[test]
+    fn test_postgres_driver_validate_config_missing_host() {
+        let driver = PostgresDriver;
+        let config = ConnectionConfig {
+            id: ConnectionConfig::generate_id(),
+            name: "test".to_string(),
+            database_type: DatabaseType::PostgreSql,
+            path: None,
+            host: None,
+            port: None,
+            database: None,
+            user: None,
+            password: None,
+            ssl_mode: SslMode::Disable,
+            ssl_config: None,
+            ssh_tunnel: None,
+            introspection_level: IntrospectionLevel::default(),
+            read_only: false,
+            color_index: 0,
+        };
+        assert!(driver.validate_config(&config).is_err());
+    }
+
+    #[test]
+    fn test_postgres_driver_validate_config_empty_host() {
+        let driver = PostgresDriver;
+        let config = ConnectionConfig {
+            id: ConnectionConfig::generate_id(),
+            name: "test".to_string(),
+            database_type: DatabaseType::PostgreSql,
+            path: None,
+            host: Some("".to_string()),
+            port: None,
+            database: None,
+            user: None,
+            password: None,
+            ssl_mode: SslMode::Disable,
+            ssl_config: None,
+            ssh_tunnel: None,
+            introspection_level: IntrospectionLevel::default(),
+            read_only: false,
+            color_index: 0,
+        };
+        assert!(driver.validate_config(&config).is_err());
+    }
+
+    #[test]
+    fn test_mysql_driver_validate_config_missing_host() {
+        let driver = MysqlDriver;
+        let config = ConnectionConfig {
+            id: ConnectionConfig::generate_id(),
+            name: "test".to_string(),
+            database_type: DatabaseType::MySql,
+            path: None,
+            host: None,
+            port: None,
+            database: None,
+            user: None,
+            password: None,
+            ssl_mode: SslMode::Disable,
+            ssl_config: None,
+            ssh_tunnel: None,
+            introspection_level: IntrospectionLevel::default(),
+            read_only: false,
+            color_index: 0,
+        };
+        assert!(driver.validate_config(&config).is_err());
+    }
+
+    #[test]
+    fn test_create_connection_via_registry_sqlite() {
+        let (_temp, _conn) = create_test_db();
+        let config = ConnectionConfig::sqlite("test".to_string(), _temp.path().to_path_buf());
+        let connection = create_connection(&config).expect("should connect via registry");
+        assert_eq!(connection.database_type(), DatabaseType::Sqlite);
+    }
+
+    #[test]
+    fn test_default_registry_returns_working_registry() {
+        let registry = default_registry();
+        assert!(registry.get(&DatabaseType::Sqlite).is_some());
+        assert!(registry.get(&DatabaseType::PostgreSql).is_some());
+        assert!(registry.get(&DatabaseType::MySql).is_some());
+    }
+
+    #[test]
+    fn test_ssh_tunnel_config_default() {
+        let config = SshTunnelConfig::default();
+        assert_eq!(config.host, "");
+        assert_eq!(config.port, 22);
+        assert_eq!(config.username, "");
+        assert!(matches!(config.auth_method, SshAuthMethod::Password));
+    }
+
+    #[test]
+    fn test_ssl_config_serde() {
+        let config = SslConfig {
+            ca_cert_path: Some(PathBuf::from("/etc/ssl/ca.pem")),
+            client_cert_path: Some(PathBuf::from("/etc/ssl/client.pem")),
+            client_key_path: None,
+        };
+        let json = serde_json::to_string(&config).expect("should serialize");
+        let deserialized: SslConfig =
+            serde_json::from_str(&json).expect("should deserialize");
+        assert_eq!(
+            deserialized.ca_cert_path,
+            Some(PathBuf::from("/etc/ssl/ca.pem"))
+        );
+        assert_eq!(
+            deserialized.client_cert_path,
+            Some(PathBuf::from("/etc/ssl/client.pem"))
+        );
+        assert!(deserialized.client_key_path.is_none());
+    }
+
+    #[test]
+    fn test_introspection_level_default() {
+        let level = IntrospectionLevel::default();
+        assert_eq!(level, IntrospectionLevel::Metadata);
+    }
+
+    #[test]
+    fn test_password_not_serialized() {
+        let config = ConnectionConfig::postgres(
+            "test".to_string(),
+            "localhost".to_string(),
+            5432,
+            "mydb".to_string(),
+            "user".to_string(),
+            "secret_password".to_string(),
+            SslMode::Disable,
+        );
+        assert!(config.password.is_some());
+
+        let json = serde_json::to_string(&config).expect("should serialize");
+        assert!(
+            !json.contains("secret_password"),
+            "password must not appear in serialized JSON"
+        );
+
+        let deserialized: ConnectionConfig =
+            serde_json::from_str(&json).expect("should deserialize");
+        assert!(
+            deserialized.password.is_none(),
+            "password must be None after deserialization"
+        );
+    }
+
+    #[test]
+    fn test_connection_id_stable_across_serde() {
+        let config = ConnectionConfig::postgres(
+            "test".to_string(),
+            "localhost".to_string(),
+            5432,
+            "mydb".to_string(),
+            "user".to_string(),
+            "".to_string(),
+            SslMode::Disable,
+        );
+        let original_id = config.id.clone();
+        assert!(!original_id.is_empty());
+
+        let json = serde_json::to_string(&config).expect("should serialize");
+        let deserialized: ConnectionConfig =
+            serde_json::from_str(&json).expect("should deserialize");
+        assert_eq!(
+            deserialized.id, original_id,
+            "connection id must be stable across serialization"
+        );
+    }
+
+    #[test]
+    fn test_connection_id_unique() {
+        let config1 = ConnectionConfig::sqlite("a".to_string(), PathBuf::from("/a.db"));
+        let config2 = ConnectionConfig::sqlite("b".to_string(), PathBuf::from("/b.db"));
+        assert_ne!(config1.id, config2.id);
+    }
+
+    #[test]
+    fn test_credential_key_format() {
+        let config = ConnectionConfig::sqlite("test".to_string(), PathBuf::from("/test.db"));
+        let key = config.credential_key();
+        assert!(key.starts_with("zed-db://"));
+        assert!(key.contains(&config.id));
+    }
+
+    #[test]
+    fn test_ssh_passphrase_not_serialized() {
+        let ssh_config = SshTunnelConfig {
+            host: "ssh.example.com".to_string(),
+            port: 22,
+            username: "user".to_string(),
+            auth_method: SshAuthMethod::PrivateKey {
+                key_path: PathBuf::from("/home/user/.ssh/id_rsa"),
+                passphrase: Some("my_secret_passphrase".to_string()),
+            },
+        };
+
+        let json = serde_json::to_string(&ssh_config).expect("should serialize");
+        assert!(
+            !json.contains("my_secret_passphrase"),
+            "SSH passphrase must not appear in serialized JSON"
+        );
+    }
+
+    #[test]
+    fn test_deserialized_config_gets_id_when_missing() {
+        let json = r#"{
+            "name": "legacy",
+            "database_type": "Sqlite",
+            "path": "/tmp/test.db",
+            "host": null,
+            "port": null,
+            "database": null,
+            "user": null,
+            "ssl_mode": "Disable",
+            "ssl_config": null,
+            "ssh_tunnel": null,
+            "read_only": false,
+            "color_index": 0
+        }"#;
+        let config: ConnectionConfig =
+            serde_json::from_str(json).expect("should deserialize legacy config");
+        assert!(
+            !config.id.is_empty(),
+            "deserialized config without id should get a generated one"
+        );
+    }
+
+    #[test]
+    fn test_sqlite_is_alive() {
+        let (_temp, conn) = create_test_db();
+        assert!(conn.is_alive());
+    }
+
+    #[test]
+    fn test_sqlite_interrupt_does_not_panic() {
+        let (_temp, conn) = create_test_db();
+        conn.interrupt();
+    }
+}

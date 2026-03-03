@@ -1,0 +1,38 @@
+[package]
+name = "database_core"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/database_core.rs"
+doctest = false
+
+[dependencies]
+anyhow.workspace = true
+thiserror.workspace = true
+chrono.workspace = true
+libsqlite3-sys.workspace = true
+log.workspace = true
+mysql_async.workspace = true
+percent-encoding.workspace = true
+rustls.workspace = true
+rustls-pemfile.workspace = true
+rustls-platform-verifier.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sqlez.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread"] }
+tokio-postgres.workspace = true
+tokio-postgres-rustls.workspace = true
+rust_xlsxwriter.workspace = true
+url.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+indoc.workspace = true
+tempfile.workspace = true
