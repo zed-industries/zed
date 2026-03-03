@@ -36,7 +36,7 @@ use crate::{
 use buffer_diff::{DiffHunkStatus, DiffHunkStatusKind};
 use collections::{BTreeMap, HashMap};
 use std::sync::Mutex;
-use crate::smooth_cursor_manager::SmoothCursorManager;
+use crate::smooth_cursor::SmoothCursorManager;
 use feature_flags::{DiffReviewFeatureFlag, FeatureFlagAppExt as _};
 use file_icons::FileIcons;
 use git::{Oid, blame::BlameEntry, commit::ParsedCommitMessage, status::FileStatus};
