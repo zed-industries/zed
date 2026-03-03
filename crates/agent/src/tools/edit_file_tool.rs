@@ -3,7 +3,7 @@ use super::save_file_tool::SaveFileTool;
 use super::tool_permissions::authorize_file_edit;
 use crate::{
     AgentTool, Templates, Thread, ToolCallEventStream, ToolInput,
-    edit_agent::{EditAgent, EditAgentOutput, EditAgentOutputEvent, EditFormat},
+    edit_agent::{EditAgent, EditAgentOutputEvent, EditFormat},
 };
 use acp_thread::Diff;
 use agent_client_protocol::{self as acp, ToolCallLocation, ToolCallUpdateFields};
@@ -104,8 +104,6 @@ pub enum EditFileToolOutput {
         old_text: Arc<String>,
         #[serde(default)]
         diff: String,
-        #[serde(alias = "raw_output")]
-        edit_agent_output: EditAgentOutput,
     },
     Error {
         error: String,
@@ -436,7 +434,7 @@ impl AgentTool for EditFileTool {
                     }
                 }
 
-                let edit_agent_output = output.await?;
+                output.await?;
 
                 let format_on_save_enabled = buffer.read_with(cx, |buffer, cx| {
                     let settings = language_settings::language_settings(
@@ -528,7 +526,6 @@ impl AgentTool for EditFileTool {
                     new_text,
                     old_text,
                     diff: unified_diff,
-                    edit_agent_output,
                 })
             }.await;
             result
