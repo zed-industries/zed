@@ -10,7 +10,7 @@ use std::{
 
 use crate::table_data_engine::TableDataEngine;
 use ui::{SharedString, TableColumnWidths, TableInteractionState, prelude::*};
-use workspace::{Item, Workspace};
+use workspace::{Item, SplitDirection, Workspace};
 
 use crate::{parser::EditorState, settings::CsvPreviewSettings, types::TableLikeContent};
 
@@ -20,7 +20,7 @@ mod settings;
 mod table_data_engine;
 mod types;
 
-actions!(csv, [OpenPreview]);
+actions!(csv, [OpenPreview, OpenPreviewToTheSide]);
 
 pub struct TabularDataPreviewFeatureFlag;
 
@@ -69,21 +69,48 @@ impl CsvPreviewView {
                 .and_then(|item| item.act_as::<Editor>(cx))
                 .filter(|editor| Self::is_csv_file(editor, cx))
             {
-                let existing = workspace
-                    .items_of_type::<CsvPreviewView>(cx)
-                    .find(|view| view.read(cx).active_editor_state.editor == editor);
-                if let Some(existing) = existing {
-                    workspace.activate_item(&existing, true, true, window, cx);
-                } else {
-                    let csv_preview = Self::new(&editor, cx);
-                    workspace.add_item_to_active_pane(
-                        Box::new(csv_preview),
-                        None,
-                        true,
-                        window,
-                        cx,
-                    );
-                }
+                let csv_preview = Self::new(&editor, cx);
+                workspace.active_pane().update(cx, |pane, cx| {
+                    let existing = pane
+                        .items_of_type::<CsvPreviewView>()
+                        .find(|view| view.read(cx).active_editor_state.editor == editor);
+                    if let Some(idx) = existing.and_then(|e| pane.index_for_item(&e)) {
+                        pane.activate_item(idx, true, true, window, cx);
+                    } else {
+                        pane.add_item(Box::new(csv_preview), true, true, None, window, cx);
+                    }
+                });
+                cx.notify();
+            }
+        });
+        workspace.register_action(|workspace, _: &OpenPreviewToTheSide, window, cx| {
+            if let Some(editor) = workspace
+                .active_item(cx)
+                .and_then(|item| item.act_as::<Editor>(cx))
+                .filter(|editor| Self::is_csv_file(editor, cx))
+            {
+                let csv_preview = Self::new(&editor, cx);
+                let pane = workspace
+                    .find_pane_in_direction(SplitDirection::Right, cx)
+                    .unwrap_or_else(|| {
+                        workspace.split_pane(
+                            workspace.active_pane().clone(),
+                            SplitDirection::Right,
+                            window,
+                            cx,
+                        )
+                    });
+                pane.update(cx, |pane, cx| {
+                    let existing = pane
+                        .items_of_type::<CsvPreviewView>()
+                        .find(|view| view.read(cx).active_editor_state.editor == editor);
+                    if let Some(idx) = existing.and_then(|e| pane.index_for_item(&e)) {
+                        pane.activate_item(idx, true, true, window, cx);
+                    } else {
+                        pane.add_item(Box::new(csv_preview), false, false, None, window, cx);
+                    }
+                });
+                cx.notify();
             }
         });
     }
@@ -186,7 +213,6 @@ impl Focusable for CsvPreviewView {
 
 impl EventEmitter<()> for CsvPreviewView {}
 
-/// Definition of tab name / icon
 impl Item for CsvPreviewView {
     type Event = ();
 

@@ -1,4 +1,7 @@
-use csv_preview::{CsvPreviewView, OpenPreview as CsvOpenPreview, TabularDataPreviewFeatureFlag};
+use csv_preview::{
+    CsvPreviewView, OpenPreview as CsvOpenPreview, OpenPreviewToTheSide as CsvOpenPreviewToTheSide,
+    TabularDataPreviewFeatureFlag,
+};
 use feature_flags::FeatureFlagAppExt as _;
 use gpui::{AnyElement, Modifiers, WeakEntity};
 use markdown_preview::{
@@ -68,7 +71,7 @@ impl QuickActionBar {
                     "toggle-csv-preview",
                     "Preview CSV",
                     Box::new(CsvOpenPreview) as Box<dyn gpui::Action>,
-                    Box::new(CsvOpenPreview) as Box<dyn gpui::Action>,
+                    Box::new(CsvOpenPreviewToTheSide) as Box<dyn gpui::Action>,
                     &csv_preview::OpenPreview as &dyn gpui::Action,
                 ),
             };
