@@ -1633,6 +1633,35 @@ impl LocalLspStore {
             })
         }
 
+        fn buffer_has_final_newline(buffer: &Buffer) -> bool {
+            buffer.reversed_chars_at(buffer.len()).next() == Some('\n')
+        }
+
+        fn remove_final_newlines(buffer: &mut Buffer, cx: &mut Context<Buffer>) {
+            let len = buffer.len();
+            if len == 0 {
+                return;
+            }
+
+            let mut first_trailing_newline = len;
+            for chunk in buffer.as_rope().reversed_chunks_in_range(0..len) {
+                let non_newline_len = chunk.trim_end_matches('\n').len();
+                first_trailing_newline -= chunk.len();
+                first_trailing_newline += non_newline_len;
+                if non_newline_len > 0 {
+                    break;
+                }
+            }
+
+            if first_trailing_newline < len {
+                buffer.edit([(first_trailing_newline..len, "")], None, cx);
+            }
+        }
+
+        let had_final_newline_before_formatting = buffer
+            .handle
+            .read_with(cx, |buffer, _| buffer_has_final_newline(buffer));
+
         // handle whitespace formatting
         if settings.remove_trailing_whitespace_on_save {
             zlog::trace!(logger => "removing trailing whitespace");
@@ -2200,6 +2229,19 @@ impl LocalLspStore {
                         // add it so it's included, and merge it into the format transaction when its created later
                     }
                 }
+            }
+        }
+
+        if !settings.ensure_final_newline_on_save && !had_final_newline_before_formatting {
+            // Some formatters ignore `insertFinalNewline`; preserve the user's original EOF style.
+            let final_newline_was_added = buffer
+                .handle
+                .read_with(cx, |buffer, _| buffer_has_final_newline(buffer));
+            if final_newline_was_added {
+                zlog::trace!(logger => "removing final newline added during formatting");
+                extend_formatting_transaction(buffer, formatting_transaction_id, cx, |buffer, cx| {
+                    remove_final_newlines(buffer, cx);
+                })?;
             }
         }
 
