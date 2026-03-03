@@ -16,7 +16,7 @@ use windows::{
         },
         UI::WindowsAndMessaging::PostMessageW,
     },
-    core::PCWSTR,
+    core::{PCWSTR, PWSTR},
 };
 
 use crate::windows_impl::WM_JOB_UPDATED;
@@ -292,14 +292,20 @@ fn release_file_handles(app_dir: &Path) {
         let mut session_key = [0u16; CCH_RM_SESSION_KEY as usize + 1];
 
         // Start a Restart Manager session
-        let err = unsafe { RmStartSession(&mut session, 0, session_key.as_mut_ptr()) };
+        let err = unsafe {
+            RmStartSession(
+                &mut session,
+                Some(0),
+                PWSTR::from_raw(session_key.as_mut_ptr()),
+            )
+        };
         if err.is_err() {
             anyhow::bail!("RmStartSession failed: {:?}", err);
         }
 
         // Ensure we end the session when done
         let _session_guard = scopeguard::guard(session, |s| {
-            unsafe { RmEndSession(s) };
+            let _ = unsafe { RmEndSession(s) };
         });
 
         // Convert paths to wide strings for Windows API
