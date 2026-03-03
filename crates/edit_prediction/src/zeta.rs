@@ -25,7 +25,7 @@ use zeta_prompt::{
 };
 
 use crate::open_ai_compatible::{
-    open_ai_compatible_api_token, open_ai_compatible_api_url, send_custom_server_request,
+    load_open_ai_compatible_api_key_if_needed, send_custom_server_request,
 };
 
 pub fn request_prediction_with_zeta(
@@ -59,17 +59,7 @@ pub fn request_prediction_with_zeta(
     let buffer_snapshotted_at = Instant::now();
     let raw_config = store.zeta2_raw_config().cloned();
     let preferred_experiment = store.preferred_experiment().map(|s| s.to_owned());
-    let open_ai_compatible_api_key =
-        if provider == settings::EditPredictionProvider::OpenAiCompatibleApi {
-            let api_token = open_ai_compatible_api_token(cx);
-            let api_url = open_ai_compatible_api_url(cx);
-            api_token.update(cx, |key_state, cx| {
-                let _task = key_state.load_if_needed(api_url.clone(), |state| state, cx);
-            });
-            api_token.read(cx).key(&api_url)
-        } else {
-            None
-        };
+    let open_ai_compatible_api_key = load_open_ai_compatible_api_key_if_needed(provider, cx);
 
     let excerpt_path: Arc<Path> = snapshot
         .file()

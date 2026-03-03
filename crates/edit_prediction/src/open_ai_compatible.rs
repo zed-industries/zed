@@ -48,12 +48,16 @@ pub fn load_open_ai_compatible_api_token(
     })
 }
 
-pub fn open_ai_compatible_api_key(cx: &App) -> Option<Arc<str>> {
+pub fn load_open_ai_compatible_api_key_if_needed(
+    provider: settings::EditPredictionProvider,
+    cx: &mut App,
+) -> Option<Arc<str>> {
+    if provider != settings::EditPredictionProvider::OpenAiCompatibleApi {
+        return None;
+    }
+    _ = load_open_ai_compatible_api_token(cx);
     let url = open_ai_compatible_api_url(cx);
-    cx.try_global::<GlobalOpenAiCompatibleApiKey>()?
-        .0
-        .read(cx)
-        .key(&url)
+    return open_ai_compatible_api_token(cx).read(cx).key(&url);
 }
 
 pub(crate) async fn send_custom_server_request(

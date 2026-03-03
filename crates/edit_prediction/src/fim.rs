@@ -1,5 +1,6 @@
 use crate::{
-    EditPredictionId, EditPredictionModelInput, cursor_excerpt, open_ai_compatible,
+    EditPredictionId, EditPredictionModelInput, cursor_excerpt,
+    open_ai_compatible::{self, load_open_ai_compatible_api_key_if_needed},
     prediction::EditPredictionResult,
 };
 use anyhow::{Context as _, Result, anyhow};
@@ -58,16 +59,7 @@ pub fn request_prediction(
         return Task::ready(Err(anyhow!("Unsupported edit prediction provider for FIM")));
     };
 
-    let api_key = if provider == settings::EditPredictionProvider::OpenAiCompatibleApi {
-        let api_token = open_ai_compatible::open_ai_compatible_api_token(cx);
-        let api_url = open_ai_compatible::open_ai_compatible_api_url(cx);
-        api_token.update(cx, |key_state, cx| {
-            let _task = key_state.load_if_needed(api_url.clone(), |state| state, cx);
-        });
-        api_token.read(cx).key(&api_url)
-    } else {
-        None
-    };
+    let api_key = load_open_ai_compatible_api_key_if_needed(provider, cx);
 
     let result = cx.background_spawn(async move {
         let (excerpt_range, _) = cursor_excerpt::editable_and_context_ranges_for_cursor_position(
