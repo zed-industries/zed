@@ -1973,6 +1973,8 @@ impl Editor {
             .clone_state(&self.scroll_manager, &my_snapshot, &clone_snapshot, cx);
         clone.searchable = self.searchable;
         clone.read_only = self.read_only;
+        clone.buffers_with_disabled_indent_guides =
+            self.buffers_with_disabled_indent_guides.clone();
         clone
     }
 
