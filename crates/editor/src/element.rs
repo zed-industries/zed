@@ -6823,9 +6823,6 @@ impl EditorElement {
     }
 
     fn paint_cursors(&mut self, layout: &mut EditorLayout, window: &mut Window, cx: &mut App) {
-        // --- Smooth cursor animation ---
-        // Measure elapsed time via GPUI's frame clock.
-        let dt = window.frame_duration().as_secs_f32();
         // Entity ID as a stable u64 key for the per-editor spring table.
         let editor_id: u64 = self.editor.entity_id().as_u64();
         // Collect target positions (cursor origin relative to content area).
@@ -6840,7 +6837,7 @@ impl EditorElement {
             let mgr = managers
                 .entry(editor_id)
                 .or_insert_with(SmoothCursorManager::new);
-            mgr.tick(&targets, dt)
+                        mgr.tick(&targets)
         };
         // If any spring is still moving, request another frame immediately.
         {
@@ -6858,7 +6855,11 @@ impl EditorElement {
             cursor.paint(layout.content_origin, window, cx);
             cursor.origin = old_origin;
         }
-    }            return;
+        }
+
+    fn paint_scrollbars(&mut self, layout: &mut EditorLayout, window: &mut Window, cx: &mut App) {
+        let Some(scrollbars_layout) = layout.scrollbars_layout.take() else {
+            return;
         };
         let any_scrollbar_dragged = self.editor.read(cx).scroll_manager.any_scrollbar_dragged();
 
