@@ -584,7 +584,7 @@ impl AgentPanel {
 
         let width = self.width;
         let selected_agent = self.selected_agent.clone();
-        let start_thread_in = Some(self.start_thread_in.clone());
+        let start_thread_in = Some(self.start_thread_in);
 
         let last_active_thread = self.active_agent_thread(cx).map(|thread| {
             let thread = thread.read(cx);
@@ -694,7 +694,7 @@ impl AgentPanel {
                         if let Some(selected_agent) = serialized_panel.selected_agent.clone() {
                             panel.selected_agent = selected_agent;
                         }
-                        if let Some(start_thread_in) = serialized_panel.start_thread_in.clone() {
+                        if let Some(start_thread_in) = serialized_panel.start_thread_in {
                             let is_worktree_flag_enabled =
                                 cx.has_flag::<AgentGitWorktreesFeatureFlag>();
                             let is_valid = match &start_thread_in {
@@ -2968,7 +2968,7 @@ impl AgentPanel {
             Some(WorktreeCreationStatus::Creating)
         );
 
-        let current_target = self.start_thread_in.clone();
+        let current_target = self.start_thread_in;
         let trigger_label = self.start_thread_in.label();
 
         let icon = if self.start_thread_in_menu_handle.is_deployed() {
@@ -2999,7 +2999,7 @@ impl AgentPanel {
             .anchor(gpui::Corner::BottomRight)
             .with_handle(self.start_thread_in_menu_handle.clone())
             .menu(move |window, cx| {
-                let current_target = current_target.clone();
+                let current_target = current_target;
                 Some(ContextMenu::build(window, cx, move |menu, _window, _cx| {
                     let is_local_selected = current_target == StartThreadIn::LocalProject;
                     let is_new_worktree_selected = current_target == StartThreadIn::NewWorktree;

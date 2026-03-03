@@ -1182,7 +1182,7 @@ impl ThreadView {
         let is_idle = self.thread.read(cx).status() == acp_thread::ThreadStatus::Idle;
 
         if is_idle {
-            self.send_impl(message_editor.clone(), window, cx);
+            self.send_impl(message_editor, window, cx);
             return;
         }
 
