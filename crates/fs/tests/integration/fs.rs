@@ -656,7 +656,7 @@ async fn test_fake_fs_restore(executor: BackgroundExecutor) {
         original_parent,
     };
     let result = fs.restore(trashed_entry).await;
-    assert!(matches!(result, Err(trash::Error::Unknown { .. })));
+    assert!(matches!(result, Err(TrashRestoreError::NotFound { .. })));
 
     // Attempt deleting a file, asserting that the filesystem no longer reports
     // it as part of its list of files, restore it and verify that the list of

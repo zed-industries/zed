@@ -165,11 +165,12 @@ pub trait Fs: Send + Sync {
     async fn is_case_sensitive(&self) -> bool;
     fn subscribe_to_jobs(&self) -> JobEventReceiver;
 
-    // TODO!: Probably need to have our own `Error` enum so we don't make
-    // callers depend on `trash::Error`?
     /// Restores a given `TrashedEntry`, moving it from the system's trash back
     /// to the original path.
-    async fn restore(&self, trashed_entry: TrashedEntry) -> std::result::Result<(), trash::Error>;
+    async fn restore(
+        &self,
+        trashed_entry: TrashedEntry,
+    ) -> std::result::Result<(), TrashRestoreError>;
 
     #[cfg(feature = "test-support")]
     fn as_fake(&self) -> Arc<FakeFs> {
@@ -212,6 +213,28 @@ impl TrashedEntry {
             // functionality, in which case we probably want to also preserve it
             // in the `From<trash::TrashItem> for TrashedEntry` implementation.
             time_deleted: 0,
+        }
+    }
+}
+
+#[derive(Debug)]
+pub enum TrashRestoreError {
+    /// The specified `path` was not found in the system's trash.
+    NotFound { path: PathBuf },
+    /// A file or directory already exists at the restore destination.
+    Collision { path: PathBuf },
+    /// Any other platform-specific error.
+    Unknown { description: String },
+}
+
+impl From<trash::Error> for TrashRestoreError {
+    fn from(err: trash::Error) -> Self {
+        match err {
+            trash::Error::RestoreCollision { path, .. } => Self::Collision { path },
+            trash::Error::Unknown { description } => Self::Unknown { description },
+            other => Self::Unknown {
+                description: other.to_string(),
+            },
         }
     }
 }
@@ -1160,8 +1183,11 @@ impl Fs for RealFs {
         res
     }
 
-    async fn restore(&self, trashed_entry: TrashedEntry) -> std::result::Result<(), trash::Error> {
-        trash::restore_all([trashed_entry.into_trash_item()])
+    async fn restore(
+        &self,
+        trashed_entry: TrashedEntry,
+    ) -> std::result::Result<(), TrashRestoreError> {
+        trash::restore_all([trashed_entry.into_trash_item()]).map_err(Into::into)
     }
 }
 
@@ -1198,8 +1224,6 @@ struct FakeFsState {
     path_write_counts: std::collections::HashMap<PathBuf, usize>,
     moves: std::collections::HashMap<u64, PathBuf>,
     job_event_subscribers: Arc<Mutex<Vec<JobEventSender>>>,
-    // TODO!: We might want to convert this to `HashMap` to make it easier to
-    // find and remove entries, instead of relying on `Vec.find` and `Vec.retain`.
     trash: Vec<(TrashedEntry, FakeFsEntry)>,
 }
 
@@ -2871,7 +2895,10 @@ impl Fs for FakeFs {
         receiver
     }
 
-    async fn restore(&self, trashed_entry: TrashedEntry) -> std::result::Result<(), trash::Error> {
+    async fn restore(
+        &self,
+        trashed_entry: TrashedEntry,
+    ) -> std::result::Result<(), TrashRestoreError> {
         let mut state = self.state.lock();
 
         let Some((trashed_entry, fake_entry)) = state
@@ -2880,10 +2907,8 @@ impl Fs for FakeFs {
             .find(|(entry, _)| *entry == trashed_entry)
             .cloned()
         else {
-            // TODO!: Is there a better or more appropriate error we can use
-            // when the trashed entry does not exist in trash?
-            return Err(trash::Error::Unknown {
-                description: format!("Trashed entry not found {:?}", trashed_entry),
+            return Err(TrashRestoreError::NotFound {
+                path: PathBuf::from(trashed_entry.id),
             });
         };
 
@@ -2910,10 +2935,7 @@ impl Fs for FakeFs {
                 // For now we'll just assume that this failed because it was a
                 // collision error, which I think that, for the time being, is
                 // the only case where this could fail?
-                Err(trash::Error::RestoreCollision {
-                    path,
-                    remaining_items: vec![],
-                })
+                Err(TrashRestoreError::Collision { path })
             }
         }
     }
