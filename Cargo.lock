@@ -15739,6 +15739,7 @@ dependencies = [
  "feature_flags",
  "fs",
  "gpui",
+ "menu",
  "project",
  "serde_json",
  "settings",

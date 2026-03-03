@@ -22,6 +22,7 @@ agent_ui.workspace = true
 chrono.workspace = true
 fs.workspace = true
 gpui.workspace = true
+menu.workspace = true
 project.workspace = true
 theme.workspace = true
 ui.workspace = true

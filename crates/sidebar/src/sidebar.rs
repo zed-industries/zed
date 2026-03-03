@@ -5,8 +5,9 @@ use agent_ui::{AgentPanel, AgentPanelEvent};
 use chrono::{DateTime, Utc};
 use gpui::{
     AnyElement, App, Context, Entity, EventEmitter, FocusHandle, Focusable, ListState, Pixels,
-    Render, SharedString, Subscription, Window, list, prelude::*, px,
+    Render, SharedString, Subscription, Window, actions, list, prelude::*, px,
 };
+use menu::{Confirm, SelectFirst, SelectLast, SelectNext, SelectPrevious};
 use project::Event as ProjectEvent;
 use std::collections::{HashMap, HashSet};
 use theme::ActiveTheme;
@@ -17,6 +18,16 @@ use workspace::{
     FocusWorkspaceSidebar, MultiWorkspace, NewWorkspaceInWindow, Sidebar as WorkspaceSidebar,
     SidebarEvent, ToggleWorkspaceSidebar, Workspace,
 };
+
+actions!(
+    workspace_sidebar,
+    [
+        /// Collapses the selected entry in the workspace sidebar.
+        CollapseSelectedEntry,
+        /// Expands the selected entry in the workspace sidebar.
+        ExpandSelectedEntry,
+    ]
+);
 
 const DEFAULT_WIDTH: Pixels = px(320.0);
 const MIN_WIDTH: Pixels = px(200.0);
@@ -78,6 +89,9 @@ impl Sidebar {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        let focus_handle = cx.focus_handle();
+        cx.on_focus(&focus_handle, window, Self::focus_in).detach();
+
         let subscription = cx.observe_in(
             &multi_workspace,
             window,
@@ -89,7 +103,7 @@ impl Sidebar {
         let mut this = Self {
             multi_workspace,
             width: DEFAULT_WIDTH,
-            focus_handle: cx.focus_handle(),
+            focus_handle,
             list_state: ListState::new(0, gpui::ListAlignment::Top, px(1000.)),
             entries: Vec::new(),
             selection: None,
@@ -429,7 +443,7 @@ impl Sidebar {
 
         match entry {
             ListEntry::ProjectHeader { path_list, label } => {
-                self.render_project_header(path_list, label, cx)
+                self.render_project_header(path_list, label, is_selected, cx)
             }
             ListEntry::Thread {
                 session_id,
@@ -451,7 +465,7 @@ impl Sidebar {
             ListEntry::ViewMore {
                 path_list,
                 remaining_count,
-            } => self.render_view_more(ix, path_list, *remaining_count, cx),
+            } => self.render_view_more(ix, path_list, *remaining_count, is_selected, cx),
         }
     }
 
@@ -459,6 +473,7 @@ impl Sidebar {
         &self,
         path_list: &PathList,
         label: &SharedString,
+        is_selected: bool,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let is_collapsed = self.collapsed_groups.contains(path_list);
@@ -475,6 +490,10 @@ impl Sidebar {
             .px_2()
             .py_1()
             .gap_1()
+            .when(is_selected, |this| {
+                this.bg(cx.theme().colors().ghost_element_selected)
+            })
+            .rounded_md()
             .child(
                 Icon::new(disclosure_icon)
                     .size(IconSize::Small)
@@ -506,6 +525,177 @@ impl Sidebar {
         self.update_entries(window, cx);
     }
 
+    fn focus_in(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        if self.selection.is_none() && !self.entries.is_empty() {
+            self.selection = Some(0);
+            cx.notify();
+        }
+    }
+
+    fn select_next(&mut self, _: &SelectNext, _window: &mut Window, cx: &mut Context<Self>) {
+        let next = match self.selection {
+            Some(ix) if ix + 1 < self.entries.len() => ix + 1,
+            None if !self.entries.is_empty() => 0,
+            _ => return,
+        };
+        self.selection = Some(next);
+        self.list_state.scroll_to_reveal_item(next);
+        cx.notify();
+    }
+
+    fn select_previous(
+        &mut self,
+        _: &SelectPrevious,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let prev = match self.selection {
+            Some(ix) if ix > 0 => ix - 1,
+            None if !self.entries.is_empty() => self.entries.len() - 1,
+            _ => return,
+        };
+        self.selection = Some(prev);
+        self.list_state.scroll_to_reveal_item(prev);
+        cx.notify();
+    }
+
+    fn select_first(&mut self, _: &SelectFirst, _window: &mut Window, cx: &mut Context<Self>) {
+        if !self.entries.is_empty() {
+            self.selection = Some(0);
+            self.list_state.scroll_to_reveal_item(0);
+            cx.notify();
+        }
+    }
+
+    fn select_last(&mut self, _: &SelectLast, _window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(last) = self.entries.len().checked_sub(1) {
+            self.selection = Some(last);
+            self.list_state.scroll_to_reveal_item(last);
+            cx.notify();
+        }
+    }
+
+    fn confirm(&mut self, _: &Confirm, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(ix) = self.selection else { return };
+        let Some(entry) = self.entries.get(ix) else {
+            return;
+        };
+
+        match entry {
+            ListEntry::ProjectHeader { path_list, .. } => {
+                let path_list = path_list.clone();
+                self.toggle_collapse(&path_list, window, cx);
+            }
+            ListEntry::Thread {
+                session_id,
+                workspace_index,
+                ..
+            } => {
+                let session_id = session_id.clone();
+                let workspace_index = *workspace_index;
+                self.activate_thread(&session_id, workspace_index, window, cx);
+            }
+            ListEntry::ViewMore { path_list, .. } => {
+                let path_list = path_list.clone();
+                self.expanded_groups.insert(path_list);
+                self.update_entries(window, cx);
+            }
+        }
+    }
+
+    fn activate_thread(
+        &mut self,
+        session_id: &acp::SessionId,
+        workspace_index: Option<usize>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(target_index) = workspace_index else {
+            return;
+        };
+        let multi_workspace = self.multi_workspace.clone();
+        let session_id = session_id.clone();
+
+        multi_workspace.update(cx, |multi_workspace, cx| {
+            multi_workspace.activate_index(target_index, window, cx);
+        });
+        let workspaces = multi_workspace.read(cx).workspaces().to_vec();
+        if let Some(workspace) = workspaces.get(target_index) {
+            if let Some(agent_panel) = workspace.read(cx).panel::<AgentPanel>(cx) {
+                agent_panel.update(cx, |panel, cx| {
+                    panel.load_agent_thread(
+                        acp_thread::AgentSessionInfo {
+                            session_id,
+                            cwd: None,
+                            title: None,
+                            updated_at: None,
+                            meta: None,
+                        },
+                        window,
+                        cx,
+                    );
+                });
+            }
+        }
+    }
+
+    fn expand_selected_entry(
+        &mut self,
+        _: &ExpandSelectedEntry,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(ix) = self.selection else { return };
+
+        match self.entries.get(ix) {
+            Some(ListEntry::ProjectHeader { path_list, .. }) => {
+                if self.collapsed_groups.contains(path_list) {
+                    let path_list = path_list.clone();
+                    self.collapsed_groups.remove(&path_list);
+                    self.update_entries(window, cx);
+                } else if ix + 1 < self.entries.len() {
+                    self.selection = Some(ix + 1);
+                    self.list_state.scroll_to_reveal_item(ix + 1);
+                    cx.notify();
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn collapse_selected_entry(
+        &mut self,
+        _: &CollapseSelectedEntry,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(ix) = self.selection else { return };
+
+        match self.entries.get(ix) {
+            Some(ListEntry::ProjectHeader { path_list, .. }) => {
+                if !self.collapsed_groups.contains(path_list) {
+                    let path_list = path_list.clone();
+                    self.collapsed_groups.insert(path_list);
+                    self.update_entries(window, cx);
+                }
+            }
+            Some(ListEntry::Thread { .. } | ListEntry::ViewMore { .. }) => {
+                for i in (0..ix).rev() {
+                    if let Some(ListEntry::ProjectHeader { path_list, .. }) =
+                        self.entries.get(i)
+                    {
+                        let path_list = path_list.clone();
+                        self.selection = Some(i);
+                        self.collapsed_groups.insert(path_list);
+                        self.update_entries(window, cx);
+                        break;
+                    }
+                }
+            }
+            None => {}
+        }
+    }
+
     fn render_thread(
         &self,
         ix: usize,
@@ -528,7 +718,6 @@ impl Sidebar {
 
         let is_active = workspace_index.is_some();
 
-        let multi_workspace = self.multi_workspace.clone();
         let session_id = session_id.clone();
 
         h_flex()
@@ -569,30 +758,8 @@ impl Sidebar {
             .when(has_notification, |this| {
                 this.child(div().size_2().rounded_full().bg(cx.theme().status().info))
             })
-            .on_click(cx.listener(move |_this, _, window, cx| {
-                if let Some(target_index) = workspace_index {
-                    multi_workspace.update(cx, |multi_workspace, cx| {
-                        multi_workspace.activate_index(target_index, window, cx);
-                    });
-                    let workspaces = multi_workspace.read(cx).workspaces().to_vec();
-                    if let Some(workspace) = workspaces.get(target_index) {
-                        if let Some(agent_panel) = workspace.read(cx).panel::<AgentPanel>(cx) {
-                            agent_panel.update(cx, |panel, cx| {
-                                panel.load_agent_thread(
-                                    acp_thread::AgentSessionInfo {
-                                        session_id: session_id.clone(),
-                                        cwd: None,
-                                        title: None,
-                                        updated_at: None,
-                                        meta: None,
-                                    },
-                                    window,
-                                    cx,
-                                );
-                            });
-                        }
-                    }
-                }
+            .on_click(cx.listener(move |this, _, window, cx| {
+                this.activate_thread(&session_id, workspace_index, window, cx);
             }))
             .into_any_element()
     }
@@ -602,6 +769,7 @@ impl Sidebar {
         ix: usize,
         path_list: &PathList,
         remaining_count: usize,
+        is_selected: bool,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let path_list = path_list.clone();
@@ -611,6 +779,10 @@ impl Sidebar {
             .w_full()
             .px_2()
             .py_1()
+            .when(is_selected, |this| {
+                this.bg(cx.theme().colors().ghost_element_selected)
+            })
+            .rounded_md()
             .cursor_pointer()
             .child(
                 Label::new(format!("+ View More ({})", remaining_count))
@@ -662,6 +834,13 @@ impl Render for Sidebar {
             .id("workspace-sidebar")
             .key_context("WorkspaceSidebar")
             .track_focus(&self.focus_handle)
+            .on_action(cx.listener(Self::select_next))
+            .on_action(cx.listener(Self::select_previous))
+            .on_action(cx.listener(Self::select_first))
+            .on_action(cx.listener(Self::select_last))
+            .on_action(cx.listener(Self::confirm))
+            .on_action(cx.listener(Self::expand_selected_entry))
+            .on_action(cx.listener(Self::collapse_selected_entry))
             .font(ui_font)
             .h_full()
             .w(self.width)
@@ -1195,5 +1374,451 @@ mod tests {
                 entry
             );
         }
+    }
+
+    #[gpui::test]
+    async fn test_keyboard_select_next_and_previous(cx: &mut TestAppContext) {
+        let project = init_test_project("/my-project", cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let sidebar = setup_sidebar(&multi_workspace, cx);
+
+        let path_list = PathList::new(&[std::path::PathBuf::from("/my-project")]);
+        let thread_store = cx.update(|_window, cx| ThreadStore::global(cx));
+
+        for i in 0..3 {
+            let save_task = thread_store.update(cx, |store, cx| {
+                store.save_thread(
+                    acp::SessionId::new(Arc::from(format!("thread-{}", i))),
+                    make_test_thread(
+                        &format!("Thread {}", i + 1),
+                        chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, i).unwrap(),
+                    ),
+                    path_list.clone(),
+                    cx,
+                )
+            });
+            save_task.await.unwrap();
+        }
+        cx.run_until_parked();
+
+        multi_workspace.update_in(cx, |_, _window, cx| cx.notify());
+        cx.run_until_parked();
+
+        // Entries: [header, thread3, thread2, thread1]
+        assert_eq!(sidebar.read_with(cx, |s, _| s.selection), None);
+
+        // SelectNext from None selects the first entry
+        sidebar.update_in(cx, |s, window, cx| {
+            s.select_next(&SelectNext, window, cx);
+        });
+        assert_eq!(sidebar.read_with(cx, |s, _| s.selection), Some(0));
+
+        // Move down through all entries
+        sidebar.update_in(cx, |s, window, cx| {
+            s.select_next(&SelectNext, window, cx);
+        });
+        assert_eq!(sidebar.read_with(cx, |s, _| s.selection), Some(1));
+
+        sidebar.update_in(cx, |s, window, cx| {
+            s.select_next(&SelectNext, window, cx);
+        });
+        assert_eq!(sidebar.read_with(cx, |s, _| s.selection), Some(2));
+
+        sidebar.update_in(cx, |s, window, cx| {
+            s.select_next(&SelectNext, window, cx);
+        });
+        assert_eq!(sidebar.read_with(cx, |s, _| s.selection), Some(3));
+
+        // At the end, selection stays on the last entry
+        sidebar.update_in(cx, |s, window, cx| {
+            s.select_next(&SelectNext, window, cx);
+        });
+        assert_eq!(sidebar.read_with(cx, |s, _| s.selection), Some(3));
+
+        // Move back up
+        sidebar.update_in(cx, |s, window, cx| {
+            s.select_previous(&SelectPrevious, window, cx);
+        });
+        assert_eq!(sidebar.read_with(cx, |s, _| s.selection), Some(2));
+
+        sidebar.update_in(cx, |s, window, cx| {
+            s.select_previous(&SelectPrevious, window, cx);
+        });
+        assert_eq!(sidebar.read_with(cx, |s, _| s.selection), Some(1));
+
+        sidebar.update_in(cx, |s, window, cx| {
+            s.select_previous(&SelectPrevious, window, cx);
+        });
+        assert_eq!(sidebar.read_with(cx, |s, _| s.selection), Some(0));
+
+        // At the top, selection stays on the first entry
+        sidebar.update_in(cx, |s, window, cx| {
+            s.select_previous(&SelectPrevious, window, cx);
+        });
+        assert_eq!(sidebar.read_with(cx, |s, _| s.selection), Some(0));
+    }
+
+    #[gpui::test]
+    async fn test_keyboard_select_first_and_last(cx: &mut TestAppContext) {
+        let project = init_test_project("/my-project", cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let sidebar = setup_sidebar(&multi_workspace, cx);
+
+        let path_list = PathList::new(&[std::path::PathBuf::from("/my-project")]);
+        let thread_store = cx.update(|_window, cx| ThreadStore::global(cx));
+
+        for i in 0..3 {
+            let save_task = thread_store.update(cx, |store, cx| {
+                store.save_thread(
+                    acp::SessionId::new(Arc::from(format!("thread-{}", i))),
+                    make_test_thread(
+                        &format!("Thread {}", i + 1),
+                        chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, i).unwrap(),
+                    ),
+                    path_list.clone(),
+                    cx,
+                )
+            });
+            save_task.await.unwrap();
+        }
+        cx.run_until_parked();
+        multi_workspace.update_in(cx, |_, _window, cx| cx.notify());
+        cx.run_until_parked();
+
+        // SelectLast jumps to the end
+        sidebar.update_in(cx, |s, window, cx| {
+            s.select_last(&SelectLast, window, cx);
+        });
+        assert_eq!(sidebar.read_with(cx, |s, _| s.selection), Some(3));
+
+        // SelectFirst jumps to the beginning
+        sidebar.update_in(cx, |s, window, cx| {
+            s.select_first(&SelectFirst, window, cx);
+        });
+        assert_eq!(sidebar.read_with(cx, |s, _| s.selection), Some(0));
+    }
+
+    #[gpui::test]
+    async fn test_keyboard_focus_in_selects_first(cx: &mut TestAppContext) {
+        let project = init_test_project("/my-project", cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let sidebar = setup_sidebar(&multi_workspace, cx);
+
+        // Initially no selection
+        assert_eq!(sidebar.read_with(cx, |s, _| s.selection), None);
+
+        // Simulate focus_in
+        sidebar.update_in(cx, |s, window, cx| {
+            s.focus_in(window, cx);
+        });
+        assert_eq!(sidebar.read_with(cx, |s, _| s.selection), Some(0));
+
+        // Calling focus_in again preserves existing selection
+        sidebar.update_in(cx, |s, window, cx| {
+            s.selection = Some(0);
+            s.select_next(&SelectNext, window, cx);
+        });
+        cx.run_until_parked();
+
+        let selection_before = sidebar.read_with(cx, |s, _| s.selection);
+        sidebar.update_in(cx, |s, window, cx| {
+            s.focus_in(window, cx);
+        });
+        assert_eq!(sidebar.read_with(cx, |s, _| s.selection), selection_before);
+    }
+
+    #[gpui::test]
+    async fn test_keyboard_confirm_on_project_header_toggles_collapse(cx: &mut TestAppContext) {
+        let project = init_test_project("/my-project", cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let sidebar = setup_sidebar(&multi_workspace, cx);
+
+        let path_list = PathList::new(&[std::path::PathBuf::from("/my-project")]);
+        let thread_store = cx.update(|_window, cx| ThreadStore::global(cx));
+
+        let save_task = thread_store.update(cx, |store, cx| {
+            store.save_thread(
+                acp::SessionId::new(Arc::from("thread-1")),
+                make_test_thread(
+                    "My Thread",
+                    chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, 0).unwrap(),
+                ),
+                path_list.clone(),
+                cx,
+            )
+        });
+        save_task.await.unwrap();
+        cx.run_until_parked();
+        multi_workspace.update_in(cx, |_, _window, cx| cx.notify());
+        cx.run_until_parked();
+
+        assert_eq!(
+            visible_entries_as_strings(&sidebar, cx),
+            vec!["v [my-project]", "  My Thread"]
+        );
+
+        // Select the header and press confirm to collapse
+        sidebar.update_in(cx, |s, window, cx| {
+            s.selection = Some(0);
+            s.confirm(&Confirm, window, cx);
+        });
+        cx.run_until_parked();
+
+        assert_eq!(
+            visible_entries_as_strings(&sidebar, cx),
+            vec!["> [my-project]  <== selected"]
+        );
+
+        // Confirm again to expand
+        sidebar.update_in(cx, |s, window, cx| {
+            s.confirm(&Confirm, window, cx);
+        });
+        cx.run_until_parked();
+
+        assert_eq!(
+            visible_entries_as_strings(&sidebar, cx),
+            vec!["v [my-project]  <== selected", "  My Thread"]
+        );
+    }
+
+    #[gpui::test]
+    async fn test_keyboard_confirm_on_view_more_expands(cx: &mut TestAppContext) {
+        let project = init_test_project("/my-project", cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let sidebar = setup_sidebar(&multi_workspace, cx);
+
+        let path_list = PathList::new(&[std::path::PathBuf::from("/my-project")]);
+        let thread_store = cx.update(|_window, cx| ThreadStore::global(cx));
+
+        for i in 0..8 {
+            let save_task = thread_store.update(cx, |store, cx| {
+                store.save_thread(
+                    acp::SessionId::new(Arc::from(format!("thread-{}", i))),
+                    make_test_thread(
+                        &format!("Thread {}", i + 1),
+                        chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, i).unwrap(),
+                    ),
+                    path_list.clone(),
+                    cx,
+                )
+            });
+            save_task.await.unwrap();
+        }
+        cx.run_until_parked();
+        multi_workspace.update_in(cx, |_, _window, cx| cx.notify());
+        cx.run_until_parked();
+
+        // Should show header + 5 threads + "View More (3)"
+        let entries = visible_entries_as_strings(&sidebar, cx);
+        assert_eq!(entries.len(), 7);
+        assert!(entries.last().unwrap().contains("View More (3)"));
+
+        // Select the "View More" entry and confirm
+        sidebar.update_in(cx, |s, _window, _cx| {
+            s.selection = Some(6);
+        });
+        sidebar.update_in(cx, |s, window, cx| {
+            s.confirm(&Confirm, window, cx);
+        });
+        cx.run_until_parked();
+
+        // All 8 threads should now be visible, no "View More"
+        let entries = visible_entries_as_strings(&sidebar, cx);
+        assert_eq!(entries.len(), 9); // header + 8 threads
+        assert!(!entries.iter().any(|e| e.contains("View More")));
+    }
+
+    #[gpui::test]
+    async fn test_keyboard_expand_and_collapse_selected_entry(cx: &mut TestAppContext) {
+        let project = init_test_project("/my-project", cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let sidebar = setup_sidebar(&multi_workspace, cx);
+
+        let path_list = PathList::new(&[std::path::PathBuf::from("/my-project")]);
+        let thread_store = cx.update(|_window, cx| ThreadStore::global(cx));
+
+        let save_task = thread_store.update(cx, |store, cx| {
+            store.save_thread(
+                acp::SessionId::new(Arc::from("thread-1")),
+                make_test_thread(
+                    "My Thread",
+                    chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, 0).unwrap(),
+                ),
+                path_list.clone(),
+                cx,
+            )
+        });
+        save_task.await.unwrap();
+        cx.run_until_parked();
+        multi_workspace.update_in(cx, |_, _window, cx| cx.notify());
+        cx.run_until_parked();
+
+        assert_eq!(
+            visible_entries_as_strings(&sidebar, cx),
+            vec!["v [my-project]", "  My Thread"]
+        );
+
+        // Select the header and press left to collapse
+        sidebar.update_in(cx, |s, window, cx| {
+            s.selection = Some(0);
+            s.collapse_selected_entry(&CollapseSelectedEntry, window, cx);
+        });
+        cx.run_until_parked();
+
+        assert_eq!(
+            visible_entries_as_strings(&sidebar, cx),
+            vec!["> [my-project]  <== selected"]
+        );
+
+        // Press right to expand
+        sidebar.update_in(cx, |s, window, cx| {
+            s.expand_selected_entry(&ExpandSelectedEntry, window, cx);
+        });
+        cx.run_until_parked();
+
+        assert_eq!(
+            visible_entries_as_strings(&sidebar, cx),
+            vec!["v [my-project]  <== selected", "  My Thread"]
+        );
+
+        // Press right again on already-expanded header moves selection down
+        sidebar.update_in(cx, |s, window, cx| {
+            s.expand_selected_entry(&ExpandSelectedEntry, window, cx);
+        });
+        assert_eq!(sidebar.read_with(cx, |s, _| s.selection), Some(1));
+    }
+
+    #[gpui::test]
+    async fn test_keyboard_collapse_from_child_selects_parent(cx: &mut TestAppContext) {
+        let project = init_test_project("/my-project", cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let sidebar = setup_sidebar(&multi_workspace, cx);
+
+        let path_list = PathList::new(&[std::path::PathBuf::from("/my-project")]);
+        let thread_store = cx.update(|_window, cx| ThreadStore::global(cx));
+
+        let save_task = thread_store.update(cx, |store, cx| {
+            store.save_thread(
+                acp::SessionId::new(Arc::from("thread-1")),
+                make_test_thread(
+                    "My Thread",
+                    chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, 0).unwrap(),
+                ),
+                path_list.clone(),
+                cx,
+            )
+        });
+        save_task.await.unwrap();
+        cx.run_until_parked();
+        multi_workspace.update_in(cx, |_, _window, cx| cx.notify());
+        cx.run_until_parked();
+
+        // Select the thread entry (child)
+        sidebar.update_in(cx, |s, _window, _cx| {
+            s.selection = Some(1);
+        });
+
+        assert_eq!(
+            visible_entries_as_strings(&sidebar, cx),
+            vec!["v [my-project]", "  My Thread  <== selected"]
+        );
+
+        // Pressing left on a child collapses the parent group and selects it
+        sidebar.update_in(cx, |s, window, cx| {
+            s.collapse_selected_entry(&CollapseSelectedEntry, window, cx);
+        });
+        cx.run_until_parked();
+
+        assert_eq!(sidebar.read_with(cx, |s, _| s.selection), Some(0));
+        assert_eq!(
+            visible_entries_as_strings(&sidebar, cx),
+            vec!["> [my-project]  <== selected"]
+        );
+    }
+
+    #[gpui::test]
+    async fn test_keyboard_navigation_on_empty_list(cx: &mut TestAppContext) {
+        let project = init_test_project("/empty-project", cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let sidebar = setup_sidebar(&multi_workspace, cx);
+
+        // Even an empty project has the header
+        assert_eq!(
+            visible_entries_as_strings(&sidebar, cx),
+            vec!["v [empty-project]"]
+        );
+
+        // SelectNext on single-entry list stays at 0
+        sidebar.update_in(cx, |s, window, cx| {
+            s.select_next(&SelectNext, window, cx);
+        });
+        assert_eq!(sidebar.read_with(cx, |s, _| s.selection), Some(0));
+
+        sidebar.update_in(cx, |s, window, cx| {
+            s.select_next(&SelectNext, window, cx);
+        });
+        assert_eq!(sidebar.read_with(cx, |s, _| s.selection), Some(0));
+
+        // SelectPrevious stays at 0
+        sidebar.update_in(cx, |s, window, cx| {
+            s.select_previous(&SelectPrevious, window, cx);
+        });
+        assert_eq!(sidebar.read_with(cx, |s, _| s.selection), Some(0));
+    }
+
+    #[gpui::test]
+    async fn test_selection_clamps_after_entry_removal(cx: &mut TestAppContext) {
+        let project = init_test_project("/my-project", cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let sidebar = setup_sidebar(&multi_workspace, cx);
+
+        let path_list = PathList::new(&[std::path::PathBuf::from("/my-project")]);
+        let thread_store = cx.update(|_window, cx| ThreadStore::global(cx));
+
+        let save_task = thread_store.update(cx, |store, cx| {
+            store.save_thread(
+                acp::SessionId::new(Arc::from("thread-1")),
+                make_test_thread(
+                    "Thread 1",
+                    chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, 0).unwrap(),
+                ),
+                path_list.clone(),
+                cx,
+            )
+        });
+        save_task.await.unwrap();
+        cx.run_until_parked();
+        multi_workspace.update_in(cx, |_, _window, cx| cx.notify());
+        cx.run_until_parked();
+
+        // Select the thread (index 1)
+        sidebar.update_in(cx, |s, _window, _cx| {
+            s.selection = Some(1);
+        });
+
+        // Collapse the group, which removes the thread from the list
+        sidebar.update_in(cx, |s, window, cx| {
+            s.collapse_selected_entry(&CollapseSelectedEntry, window, cx);
+        });
+        cx.run_until_parked();
+
+        // Selection should be clamped to the last valid index (0 = header)
+        let selection = sidebar.read_with(cx, |s, _| s.selection);
+        let entry_count = sidebar.read_with(cx, |s, _| s.entries.len());
+        assert!(
+            selection.unwrap_or(0) < entry_count,
+            "selection {} should be within bounds (entries: {})",
+            selection.unwrap_or(0),
+            entry_count,
+        );
     }
 }

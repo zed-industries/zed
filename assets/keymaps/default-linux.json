@@ -671,6 +671,9 @@
     "use_key_equivalents": true,
     "bindings": {
       "ctrl-n": "multi_workspace::NewWorkspaceInWindow",
+      "left": "workspace_sidebar::CollapseSelectedEntry",
+      "right": "workspace_sidebar::ExpandSelectedEntry",
+      "enter": "menu::Confirm",
     },
   },
   {
