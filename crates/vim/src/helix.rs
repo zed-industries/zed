@@ -371,8 +371,9 @@ impl Vim {
             let at_newline = (left == '\n') ^ (right == '\n');
 
             let is_word_start = left_kind != right_kind && right_kind != CharKind::Whitespace;
-            let is_subword_start =
-                (left == '_' && right != '_') || (left.is_lowercase() && right.is_uppercase());
+            let is_separator = |c: char| "_$=".contains(c);
+            let is_subword_start = (is_separator(left) && !is_separator(right))
+                || (left.is_lowercase() && right.is_uppercase());
 
             is_word_start || (is_subword_start && !right.is_whitespace()) || at_newline
         }
@@ -387,8 +388,9 @@ impl Vim {
             let at_newline = (left == '\n') ^ (right == '\n');
 
             let is_word_end = left_kind != right_kind && left_kind != CharKind::Whitespace;
-            let is_subword_end =
-                (left != '_' && right == '_') || (left.is_lowercase() && right.is_uppercase());
+            let is_separator = |c: char| "_$=".contains(c);
+            let is_subword_end = (!is_separator(left) && is_separator(right))
+                || (left.is_lowercase() && right.is_uppercase());
 
             is_word_end || (is_subword_end && !left.is_whitespace()) || at_newline
         }
@@ -1026,6 +1028,35 @@ mod test {
             ignore_punctuation: false,
         });
         cx.assert_state("get_«user_ˇ»name", Mode::HelixNormal);
+
+        // Test with $ as subword boundary (e.g. PHP variables)
+        cx.set_state("ˇ$someVariable = 2;", Mode::HelixNormal);
+        cx.dispatch_action(NextSubwordEnd {
+            ignore_punctuation: false,
+        });
+        cx.assert_state("«ˇ»$someVariable = 2;", Mode::HelixNormal);
+
+        cx.dispatch_action(NextSubwordStart {
+            ignore_punctuation: false,
+        });
+        cx.assert_state("«$ˇ»someVariable = 2;", Mode::HelixNormal);
+
+        cx.dispatch_action(NextSubwordEnd {
+            ignore_punctuation: false,
+        });
+        cx.assert_state("$«someˇ»Variable = 2;", Mode::HelixNormal);
+
+        // Test with = as subword boundary
+        cx.set_state("ˇfoo=bar", Mode::HelixNormal);
+        cx.dispatch_action(NextSubwordEnd {
+            ignore_punctuation: false,
+        });
+        cx.assert_state("«fooˇ»=bar", Mode::HelixNormal);
+
+        cx.dispatch_action(NextSubwordStart {
+            ignore_punctuation: false,
+        });
+        cx.assert_state("foo«=ˇ»bar", Mode::HelixNormal);
     }
 
     #[gpui::test]
