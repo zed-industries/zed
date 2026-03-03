@@ -66,7 +66,7 @@ use syntax_map::{QueryCursorHandle, SyntaxSnapshot};
 use task::RunnableTag;
 pub use task_context::{ContextLocation, ContextProvider, RunnableRange};
 pub use text_diff::{
-    DiffOptions, apply_diff_patch, apply_reversed_diff_patch, line_diff, text_diff,
+    DiffOptions, apply_diff_patch, apply_reversed_diff_patch, char_diff, line_diff, text_diff,
     text_diff_with_options, unified_diff, unified_diff_with_context, unified_diff_with_offsets,
     word_diff_ranges,
 };
@@ -97,6 +97,7 @@ pub use tree_sitter::{Node, Parser, Tree, TreeCursor};
 static QUERY_CURSORS: Mutex<Vec<QueryCursor>> = Mutex::new(vec![]);
 static PARSERS: Mutex<Vec<Parser>> = Mutex::new(vec![]);
 
+#[ztracing::instrument(skip_all)]
 pub fn with_parser<F, R>(func: F) -> R
 where
     F: FnOnce(&mut Parser) -> R,
@@ -378,7 +379,7 @@ pub trait LspAdapterDelegate: Send + Sync {
     fn http_client(&self) -> Arc<dyn HttpClient>;
     fn worktree_id(&self) -> WorktreeId;
     fn worktree_root_path(&self) -> &Path;
-    fn resolve_executable_path(&self, path: PathBuf) -> PathBuf;
+    fn resolve_relative_path(&self, path: PathBuf) -> PathBuf;
     fn update_status(&self, language: LanguageServerName, status: BinaryStatus);
     fn registered_lsp_adapters(&self) -> Vec<Arc<dyn LspAdapter>>;
     async fn language_server_download_dir(&self, name: &LanguageServerName) -> Option<Arc<Path>>;
@@ -490,6 +491,7 @@ pub trait LspAdapter: 'static + Send + Sync + DynLspInstaller {
     async fn initialization_options(
         self: Arc<Self>,
         _: &Arc<dyn LspAdapterDelegate>,
+        _cx: &mut AsyncApp,
     ) -> Result<Option<Value>> {
         Ok(None)
     }
@@ -2637,6 +2639,7 @@ impl LspAdapter for FakeLspAdapter {
     async fn initialization_options(
         self: Arc<Self>,
         _: &Arc<dyn LspAdapterDelegate>,
+        _cx: &mut AsyncApp,
     ) -> Result<Option<Value>> {
         Ok(self.initialization_options.clone())
     }

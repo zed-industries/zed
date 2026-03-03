@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
-use crate::acp::AcpThreadHistory;
+use crate::ThreadHistory;
 use acp_thread::{AgentSessionInfo, MentionUri};
 use anyhow::Result;
 use editor::{
@@ -206,7 +206,7 @@ pub struct PromptCompletionProvider<T: PromptCompletionProviderDelegate> {
     source: Arc<T>,
     editor: WeakEntity<Editor>,
     mention_set: Entity<MentionSet>,
-    history: WeakEntity<AcpThreadHistory>,
+    history: WeakEntity<ThreadHistory>,
     prompt_store: Option<Entity<PromptStore>>,
     workspace: WeakEntity<Workspace>,
 }
@@ -216,7 +216,7 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
         source: T,
         editor: WeakEntity<Editor>,
         mention_set: Entity<MentionSet>,
-        history: WeakEntity<AcpThreadHistory>,
+        history: WeakEntity<ThreadHistory>,
         prompt_store: Option<Entity<PromptStore>>,
         workspace: WeakEntity<Workspace>,
     ) -> Self {
@@ -617,6 +617,7 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
                                     let crease = crate::mention_set::crease_for_mention(
                                         mention_uri.name().into(),
                                         mention_uri.icon_path(cx),
+                                        None,
                                         range,
                                         editor.downgrade(),
                                     );
@@ -2050,7 +2051,17 @@ fn selection_ranges(
 
         selections
             .into_iter()
-            .map(|s| snapshot.anchor_after(s.start)..snapshot.anchor_before(s.end))
+            .map(|s| {
+                let (start, end) = if s.is_empty() {
+                    let row = multi_buffer::MultiBufferRow(s.start.row);
+                    let line_start = text::Point::new(s.start.row, 0);
+                    let line_end = text::Point::new(s.start.row, snapshot.line_len(row));
+                    (line_start, line_end)
+                } else {
+                    (s.start, s.end)
+                };
+                snapshot.anchor_after(start)..snapshot.anchor_before(end)
+            })
             .flat_map(|range| {
                 let (start_buffer, start) = buffer.text_anchor_for_position(range.start, cx)?;
                 let (end_buffer, end) = buffer.text_anchor_for_position(range.end, cx)?;
@@ -2354,7 +2365,7 @@ mod tests {
         use project::Project;
         use serde_json::json;
         use util::{path, rel_path::rel_path};
-        use workspace::AppState;
+        use workspace::{AppState, MultiWorkspace};
 
         let app_state = cx.update(|cx| {
             let state = AppState::test(cx);
@@ -2379,8 +2390,9 @@ mod tests {
             .await;
 
         let project = Project::test(app_state.fs.clone(), [path!("/root").as_ref()], cx).await;
-        let (workspace, cx) =
-            cx.add_window_view(|window, cx| workspace::Workspace::test_new(project, window, cx));
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
         let worktree_id = cx.read(|cx| {
             let worktrees = workspace.read(cx).worktrees(cx).collect::<Vec<_>>();

@@ -8,16 +8,18 @@ const MAX_OUTLINE_ITEM_BODY_SIZE: usize = 24;
 
 pub fn assemble_excerpt_ranges(
     buffer: &BufferSnapshot,
-    mut input_ranges: Vec<Range<Point>>,
-) -> Vec<Range<u32>> {
+    input_ranges: Vec<(Range<Point>, usize)>,
+) -> Vec<(Range<u32>, usize)> {
+    let mut input_ranges: Vec<(Range<Point>, usize)> = input_ranges
+        .into_iter()
+        .map(|(range, order)| (clip_range_to_lines(&range, false, buffer), order))
+        .collect();
     merge_ranges(&mut input_ranges);
 
-    let mut outline_ranges = Vec::new();
+    let mut outline_ranges: Vec<(Range<Point>, usize)> = Vec::new();
     let outline_items = buffer.outline_items_as_points_containing(0..buffer.len(), false, None);
     let mut outline_ix = 0;
-    for input_range in &mut input_ranges {
-        *input_range = clip_range_to_lines(input_range, false, buffer);
-
+    for (input_range, input_order) in &mut input_ranges {
         while let Some(outline_item) = outline_items.get(outline_ix) {
             let item_range = clip_range_to_lines(&outline_item.range, false, buffer);
 
@@ -36,6 +38,7 @@ pub fn assemble_excerpt_ranges(
                 add_outline_item(
                     item_range.clone(),
                     body_range.clone(),
+                    *input_order,
                     buffer,
                     &mut outline_ranges,
                 );
@@ -57,6 +60,7 @@ pub fn assemble_excerpt_ranges(
                                 next_outline_item
                                     .body_range(buffer)
                                     .map(|body| clip_range_to_lines(&body, true, buffer)),
+                                *input_order,
                                 buffer,
                                 &mut outline_ranges,
                             );
@@ -70,12 +74,12 @@ pub fn assemble_excerpt_ranges(
         }
     }
 
-    input_ranges.extend_from_slice(&outline_ranges);
+    input_ranges.extend(outline_ranges);
     merge_ranges(&mut input_ranges);
 
     input_ranges
         .into_iter()
-        .map(|range| range.start.row..range.end.row)
+        .map(|(range, order)| (range.start.row..range.end.row, order))
         .collect()
 }
 
@@ -102,8 +106,9 @@ fn clip_range_to_lines(
 fn add_outline_item(
     mut item_range: Range<Point>,
     body_range: Option<Range<Point>>,
+    order: usize,
     buffer: &BufferSnapshot,
-    outline_ranges: &mut Vec<Range<Point>>,
+    outline_ranges: &mut Vec<(Range<Point>, usize)>,
 ) {
     if let Some(mut body_range) = body_range {
         if body_range.start.column > 0 {
@@ -113,38 +118,39 @@ fn add_outline_item(
 
         let head_range = item_range.start..body_range.start;
         if head_range.start < head_range.end {
-            outline_ranges.push(head_range);
+            outline_ranges.push((head_range, order));
         }
 
         let tail_range = body_range.end..item_range.end;
         if tail_range.start < tail_range.end {
-            outline_ranges.push(tail_range);
+            outline_ranges.push((tail_range, order));
         }
     } else {
         item_range.start.column = 0;
         item_range.end.column = buffer.line_len(item_range.end.row);
-        outline_ranges.push(item_range);
+        outline_ranges.push((item_range, order));
     }
 }
 
-pub fn merge_ranges(ranges: &mut Vec<Range<Point>>) {
-    ranges.sort_unstable_by(|a, b| a.start.cmp(&b.start).then(b.end.cmp(&a.end)));
+pub fn merge_ranges(ranges: &mut Vec<(Range<Point>, usize)>) {
+    ranges.sort_unstable_by(|(a, _), (b, _)| a.start.cmp(&b.start).then(b.end.cmp(&a.end)));
 
     let mut index = 1;
     while index < ranges.len() {
-        let mut prev_range_end = ranges[index - 1].end;
+        let mut prev_range_end = ranges[index - 1].0.end;
         if prev_range_end.column > 0 {
             prev_range_end += Point::new(1, 0);
         }
 
         if (prev_range_end + Point::new(1, 0))
-            .cmp(&ranges[index].start)
+            .cmp(&ranges[index].0.start)
             .is_ge()
         {
             let removed = ranges.remove(index);
-            if removed.end.cmp(&ranges[index - 1].end).is_gt() {
-                ranges[index - 1].end = removed.end;
+            if removed.0.end.cmp(&ranges[index - 1].0.end).is_gt() {
+                ranges[index - 1].0.end = removed.0.end;
             }
+            ranges[index - 1].1 = ranges[index - 1].1.min(removed.1);
         } else {
             index += 1;
         }

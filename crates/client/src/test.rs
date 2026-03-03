@@ -265,6 +265,7 @@ pub fn make_get_authenticated_user_response(
             accepted_tos_at: None,
         },
         feature_flags: vec![],
+        organizations: vec![],
         plan: PlanInfo {
             plan: KnownOrUnknown::Known(Plan::ZedPro),
             subscription_period: None,

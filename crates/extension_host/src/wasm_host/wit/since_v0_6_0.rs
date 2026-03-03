@@ -20,7 +20,6 @@ wasmtime::component::bindgen!({
         "project": ExtensionProject,
         "key-value-store": ExtensionKeyValueStore,
         "zed:extension/common": latest::zed::extension::common,
-        "zed:extension/github": latest::zed::extension::github,
         "zed:extension/http-client": latest::zed::extension::http_client,
         "zed:extension/nodejs": latest::zed::extension::nodejs,
         "zed:extension/platform": latest::zed::extension::platform,
@@ -106,12 +105,52 @@ impl From<DownloadedFileType> for latest::DownloadedFileType {
     }
 }
 
-impl From<latest::lsp::Symbol> for lsp::Symbol {
-    fn from(value: latest::lsp::Symbol) -> Self {
+impl From<latest::github::GithubReleaseAsset> for github::GithubReleaseAsset {
+    fn from(value: latest::github::GithubReleaseAsset) -> Self {
         Self {
             name: value.name,
-            kind: value.kind.into(),
+            download_url: value.download_url,
         }
+    }
+}
+
+impl From<latest::github::GithubRelease> for github::GithubRelease {
+    fn from(value: latest::github::GithubRelease) -> Self {
+        Self {
+            version: value.version,
+            assets: value.assets.into_iter().map(Into::into).collect(),
+        }
+    }
+}
+
+impl From<github::GithubReleaseOptions> for latest::github::GithubReleaseOptions {
+    fn from(value: github::GithubReleaseOptions) -> Self {
+        Self {
+            require_assets: value.require_assets,
+            pre_release: value.pre_release,
+        }
+    }
+}
+
+impl zed::extension::github::Host for WasmState {
+    async fn github_release_by_tag_name(
+        &mut self,
+        repo: String,
+        tag: String,
+    ) -> wasmtime::Result<Result<github::GithubRelease, String>> {
+        latest::github::Host::github_release_by_tag_name(self, repo, tag)
+            .await
+            .map(|result| result.map(Into::into))
+    }
+
+    async fn latest_github_release(
+        &mut self,
+        repo: String,
+        options: github::GithubReleaseOptions,
+    ) -> wasmtime::Result<Result<github::GithubRelease, String>> {
+        latest::github::Host::latest_github_release(self, repo, options.into())
+            .await
+            .map(|result| result.map(Into::into))
     }
 }
 
@@ -123,6 +162,15 @@ impl From<latest::lsp::Completion> for lsp::Completion {
             detail: value.detail,
             kind: value.kind.map(Into::into),
             insert_text_format: value.insert_text_format.map(Into::into),
+        }
+    }
+}
+
+impl From<latest::lsp::Symbol> for lsp::Symbol {
+    fn from(value: latest::lsp::Symbol) -> Self {
+        Self {
+            name: value.name,
+            kind: value.kind.into(),
         }
     }
 }

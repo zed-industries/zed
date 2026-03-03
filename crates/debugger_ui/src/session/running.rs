@@ -48,8 +48,8 @@ use serde_json::Value;
 use settings::Settings;
 use stack_frame_list::StackFrameList;
 use task::{
-    BuildTaskDefinition, DebugScenario, Shell, ShellBuilder, SpawnInTerminal, TaskContext,
-    ZedDebugConfig, substitute_variables_in_str,
+    BuildTaskDefinition, DebugScenario, SharedTaskContext, Shell, ShellBuilder, SpawnInTerminal,
+    TaskContext, ZedDebugConfig, substitute_variables_in_str,
 };
 use terminal_view::TerminalView;
 use ui::{
@@ -356,11 +356,11 @@ pub(crate) fn new_debugger_pane(
                     debug_assert!(_previous_subscription.is_none());
                     running
                         .panes
-                        .split(&this_pane, &new_pane, split_direction, cx)?;
-                    anyhow::Ok(new_pane)
+                        .split(&this_pane, &new_pane, split_direction, cx);
+                    new_pane
                 });
 
-                match new_pane.and_then(|r| r) {
+                match new_pane {
                     Ok(new_pane) => {
                         move_item(
                             &source,
@@ -956,7 +956,7 @@ impl RunningState {
     pub(crate) fn resolve_scenario(
         &self,
         scenario: DebugScenario,
-        task_context: TaskContext,
+        task_context: SharedTaskContext,
         buffer: Option<Entity<Buffer>>,
         worktree_id: Option<WorktreeId>,
         window: &Window,

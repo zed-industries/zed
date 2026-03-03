@@ -322,16 +322,14 @@ impl ProjectDiagnosticsEditor {
             if !has_no_blocks {
                 continue;
             }
-            let is_dirty = self
-                .multibuffer
-                .read(cx)
-                .buffer(buffer_id)
-                .is_none_or(|buffer| buffer.read(cx).is_dirty());
-            if is_dirty {
+            let Some(buffer) = self.multibuffer.read(cx).buffer(buffer_id) else {
+                continue;
+            };
+            if buffer.read(cx).is_dirty() {
                 continue;
             }
             self.multibuffer.update(cx, |b, cx| {
-                b.remove_excerpts_for_buffer(buffer_id, cx);
+                b.remove_excerpts_for_path(PathKey::for_buffer(&buffer, cx), cx);
             });
         }
     }
@@ -717,7 +715,7 @@ impl Focusable for ProjectDiagnosticsEditor {
 impl Item for ProjectDiagnosticsEditor {
     type Event = EditorEvent;
 
-    fn to_item_events(event: &EditorEvent, f: impl FnMut(ItemEvent)) {
+    fn to_item_events(event: &EditorEvent, f: &mut dyn FnMut(ItemEvent)) {
         Editor::to_item_events(event, f)
     }
 
