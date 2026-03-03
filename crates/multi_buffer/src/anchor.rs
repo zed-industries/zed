@@ -11,7 +11,6 @@ use std::{
 };
 use sum_tree::Bias;
 use text::BufferId;
-use util::debug_panic;
 
 /// A multibuffer anchor derived from an anchor into a specific excerpted buffer.
 #[derive(Clone, Copy, Eq, PartialEq, Hash)]
