@@ -443,7 +443,7 @@ impl Sidebar {
 
         match entry {
             ListEntry::ProjectHeader { path_list, label } => {
-                self.render_project_header(path_list, label, is_selected, cx)
+                self.render_project_header(ix, path_list, label, is_selected, cx)
             }
             ListEntry::Thread {
                 session_id,
@@ -471,6 +471,7 @@ impl Sidebar {
 
     fn render_project_header(
         &self,
+        ix: usize,
         path_list: &PathList,
         label: &SharedString,
         is_selected: bool,
@@ -485,7 +486,7 @@ impl Sidebar {
         let path_list = path_list.clone();
 
         h_flex()
-            .id(SharedString::from(format!("project-header-{}", label)))
+            .id(SharedString::from(format!("project-header-{}", ix)))
             .w_full()
             .px_2()
             .py_1()
