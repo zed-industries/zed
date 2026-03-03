@@ -34,7 +34,7 @@ use crate::{
     },
 };
 use buffer_diff::{DiffHunkStatus, DiffHunkStatusKind};
-use collections::{BTreeMap, HashMap};
+use collections::{BTreeMap, HashMap, HashSet};
 use feature_flags::{DiffReviewFeatureFlag, FeatureFlagAppExt as _};
 use file_icons::FileIcons;
 use git::{Oid, blame::BlameEntry, commit::ParsedCommitMessage, status::FileStatus};
@@ -646,6 +646,9 @@ impl EditorElement {
         register_action(editor, window, Editor::insert_uuid_v4);
         register_action(editor, window, Editor::insert_uuid_v7);
         register_action(editor, window, Editor::open_selections_in_multibuffer);
+        register_action(editor, window, Editor::toggle_bookmark);
+        register_action(editor, window, Editor::go_to_next_bookmark);
+        register_action(editor, window, Editor::go_to_previous_bookmark);
         register_action(editor, window, Editor::toggle_breakpoint);
         register_action(editor, window, Editor::edit_log_breakpoint);
         register_action(editor, window, Editor::enable_breakpoint);
@@ -3123,6 +3126,67 @@ impl EditorElement {
         }
 
         (offset_y, length, row_range)
+    }
+
+    fn layout_bookmarks(
+        &self,
+        line_height: Pixels,
+        range: Range<DisplayRow>,
+        scroll_position: gpui::Point<ScrollOffset>,
+        gutter_dimensions: &GutterDimensions,
+        gutter_hitbox: &Hitbox,
+        snapshot: &EditorSnapshot,
+        bookmarks: HashSet<DisplayRow>,
+        row_infos: &[RowInfo],
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Vec<AnyElement> {
+        if self.split_side == Some(SplitSide::Left) {
+            return Vec::new();
+        }
+
+        self.editor.update(cx, |editor, cx| {
+            bookmarks
+                .into_iter()
+                .filter_map(|display_row| {
+                    if row_infos
+                        .get((display_row.0.saturating_sub(range.start.0)) as usize)
+                        .is_some_and(|row_info| {
+                            row_info.expand_info.is_some()
+                                || row_info
+                                    .diff_status
+                                    .is_some_and(|status| status.is_deleted())
+                        })
+                    {
+                        return None;
+                    }
+
+                    if range.start > display_row || range.end < display_row {
+                        return None;
+                    }
+
+                    let row =
+                        MultiBufferRow(DisplayPoint::new(display_row, 0).to_point(snapshot).row);
+                    if snapshot.is_line_folded(row) {
+                        return None;
+                    }
+
+                    let icon = editor.render_bookmark();
+
+                    let icon = prepaint_gutter_button(
+                        icon.into_any_element(),
+                        display_row,
+                        line_height,
+                        gutter_dimensions,
+                        scroll_position,
+                        gutter_hitbox,
+                        window,
+                        cx,
+                    );
+                    Some(icon)
+                })
+                .collect_vec()
+        })
     }
 
     fn layout_breakpoints(
@@ -6416,6 +6480,10 @@ impl EditorElement {
                     expand_toggle.paint(window, cx);
                 }
             });
+
+            for bookmark in layout.bookmarks.iter_mut() {
+                bookmark.paint(window, cx);
+            }
 
             for breakpoint in layout.breakpoints.iter_mut() {
                 breakpoint.paint(window, cx);
@@ -10113,6 +10181,10 @@ impl Element for EditorElement {
                         })
                     });
 
+                    let mut bookmark_rows = self.editor.update(cx, |editor, cx| {
+                        editor.active_bookmarks(start_row..end_row, window, cx)
+                    });
+
                     let mut breakpoint_rows = self.editor.update(cx, |editor, cx| {
                         editor.active_breakpoints(start_row..end_row, window, cx)
                     });
@@ -10160,6 +10232,9 @@ impl Element for EditorElement {
                                 });
                         }
                     });
+
+                    // Don't render bookmarks on lines that already have breakpoints or phantom breakpoints
+                    bookmark_rows.retain(|row| !breakpoint_rows.contains_key(row));
 
                     let mut expand_toggles =
                         window.with_element_namespace("expand_toggles", |window| {
@@ -10764,6 +10839,25 @@ impl Element for EditorElement {
                         Vec::new()
                     };
 
+                    let show_bookmarks =
+                        snapshot.show_bookmarks.unwrap_or(gutter_settings.bookmarks);
+                    let bookmarks = if show_bookmarks {
+                        self.layout_bookmarks(
+                            line_height,
+                            start_row..end_row,
+                            scroll_position,
+                            &gutter_dimensions,
+                            &gutter_hitbox,
+                            &snapshot,
+                            bookmark_rows,
+                            &row_infos,
+                            window,
+                            cx,
+                        )
+                    } else {
+                        Vec::new()
+                    };
+
                     let show_breakpoints = snapshot
                         .show_breakpoints
                         .unwrap_or(gutter_settings.breakpoints);
@@ -11072,6 +11166,7 @@ impl Element for EditorElement {
                         diff_hunk_controls,
                         mouse_context_menu,
                         test_indicators,
+                        bookmarks,
                         breakpoints,
                         diff_review_button,
                         crease_toggles,
@@ -11259,6 +11354,7 @@ pub struct EditorLayout {
     visible_cursors: Vec<CursorLayout>,
     selections: Vec<(PlayerColor, Vec<SelectionLayout>)>,
     test_indicators: Vec<AnyElement>,
+    bookmarks: Vec<AnyElement>,
     breakpoints: Vec<AnyElement>,
     diff_review_button: Option<AnyElement>,
     crease_toggles: Vec<Option<AnyElement>>,
