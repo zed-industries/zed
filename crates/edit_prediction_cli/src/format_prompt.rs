@@ -53,18 +53,22 @@ pub async fn run_format_prompt(
 
             let prompt = format_zeta_prompt(prompt_inputs, zeta_format);
             let prefill = zeta_prompt::get_prefill(prompt_inputs, zeta_format);
-            let (expected_patch, expected_cursor_offset) = example
+            let expected_output = example
                 .spec
                 .expected_patches_with_cursor_positions()
                 .into_iter()
                 .next()
-                .context("expected patches is empty")?;
-            let expected_output = zeta2_output_for_patch(
-                prompt_inputs,
-                &expected_patch,
-                expected_cursor_offset,
-                zeta_format,
-            )?;
+                .and_then(|(expected_patch, expected_cursor_offset)| {
+                    zeta2_output_for_patch(
+                        prompt_inputs,
+                        &expected_patch,
+                        expected_cursor_offset,
+                        zeta_format,
+                    )
+                    .ok()
+                })
+                .unwrap_or_default();
+
             let rejected_output = example.spec.rejected_patch.as_ref().and_then(|patch| {
                 zeta2_output_for_patch(prompt_inputs, patch, None, zeta_format).ok()
             });

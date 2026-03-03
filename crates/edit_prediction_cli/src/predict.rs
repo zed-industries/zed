@@ -6,14 +6,18 @@ use crate::{
     headless::EpAppState,
     load_project::run_load_project,
     openai_client::OpenAiClient,
+    parse_output::parse_prediction_output,
     paths::{LATEST_EXAMPLE_RUN_DIR, RUN_DIR},
-    progress::{ExampleProgress, InfoStyle, Step},
+    progress::{ExampleProgress, InfoStyle, Step, StepProgress},
     retrieve_context::run_context_retrieval,
 };
 use anyhow::Context as _;
+use cloud_llm_client::predict_edits_v3::{RawCompletionRequest, RawCompletionResponse};
 use edit_prediction::{DebugEvent, EditPredictionStore, Zeta2RawConfig};
-use futures::{FutureExt as _, StreamExt as _, future::Shared};
+use futures::{AsyncReadExt as _, FutureExt as _, StreamExt as _, future::Shared};
 use gpui::{AppContext as _, AsyncApp, Task};
+use http_client::{AsyncBody, HttpClient, Method};
+use reqwest_client::ReqwestClient;
 use std::{
     fs,
     sync::{
@@ -79,6 +83,22 @@ pub async fn run_prediction(
         .await;
     }
 
+    if let PredictionProvider::Baseten(format) = provider {
+        run_format_prompt(
+            example,
+            &FormatPromptArgs {
+                provider: PredictionProvider::Zeta2(format),
+            },
+            app_state.clone(),
+            example_progress,
+            cx,
+        )
+        .await?;
+
+        let step_progress = example_progress.start(Step::Predict);
+        return predict_baseten(example, format, &step_progress).await;
+    }
+
     run_load_project(example, app_state.clone(), example_progress, cx.clone()).await?;
     run_context_retrieval(example, app_state.clone(), example_progress, cx.clone()).await?;
 
@@ -116,7 +136,8 @@ pub async fn run_prediction(
             PredictionProvider::Mercury => edit_prediction::EditPredictionModel::Mercury,
             PredictionProvider::Teacher(..)
             | PredictionProvider::TeacherNonBatching(..)
-            | PredictionProvider::Repair => {
+            | PredictionProvider::Repair
+            | PredictionProvider::Baseten(_) => {
                 unreachable!()
             }
         };
@@ -477,6 +498,89 @@ async fn predict_openai(
 
         example.predictions.push(prediction);
     }
+    Ok(())
+}
+
+pub async fn predict_baseten(
+    example: &mut Example,
+    format: ZetaFormat,
+    step_progress: &StepProgress,
+) -> anyhow::Result<()> {
+    let model_id =
+        std::env::var("ZED_ZETA_MODEL").context("ZED_ZETA_MODEL environment variable required")?;
+
+    let api_key =
+        std::env::var("BASETEN_API_KEY").context("BASETEN_API_KEY environment variable not set")?;
+
+    let prompt = example.prompt.as_ref().context("Prompt is required")?;
+    let prompt_text = prompt.input.clone();
+    let prefill = prompt.prefill.clone().unwrap_or_default();
+
+    step_progress.set_substatus("running prediction via baseten");
+
+    let environment: String = <&'static str>::from(&format).to_lowercase();
+    let url = format!(
+        "https://model-{model_id}.api.baseten.co/environments/{environment}/sync/v1/completions"
+    );
+
+    let request_body = RawCompletionRequest {
+        model: model_id,
+        prompt: prompt_text.clone(),
+        max_tokens: Some(2048),
+        temperature: Some(0.),
+        stop: vec![],
+        environment: None,
+    };
+
+    let body_bytes =
+        serde_json::to_vec(&request_body).context("Failed to serialize request body")?;
+
+    let http_client: Arc<dyn HttpClient> = Arc::new(ReqwestClient::new());
+    let request = http_client::Request::builder()
+        .method(Method::POST)
+        .uri(&url)
+        .header("Content-Type", "application/json")
+        .header("Authorization", format!("Api-Key {api_key}"))
+        .body(AsyncBody::from(body_bytes))?;
+
+    let mut response = http_client.send(request).await?;
+    let status = response.status();
+
+    let mut body = String::new();
+    response
+        .body_mut()
+        .read_to_string(&mut body)
+        .await
+        .context("Failed to read Baseten response body")?;
+
+    if !status.is_success() {
+        anyhow::bail!("Baseten API returned {status}: {body}");
+    }
+
+    let completion: RawCompletionResponse =
+        serde_json::from_str(&body).context("Failed to parse Baseten response")?;
+
+    let actual_output = completion
+        .choices
+        .into_iter()
+        .next()
+        .map(|choice| choice.text)
+        .unwrap_or_default();
+
+    let actual_output = format!("{prefill}{actual_output}");
+
+    let (actual_patch, actual_cursor) =
+        parse_prediction_output(example, &actual_output, PredictionProvider::Zeta2(format))?;
+
+    let prediction = ExamplePrediction {
+        actual_patch: Some(actual_patch),
+        actual_output,
+        actual_cursor,
+        error: None,
+        provider: PredictionProvider::Baseten(format),
+    };
+
+    example.predictions.push(prediction);
     Ok(())
 }
 
