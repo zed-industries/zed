@@ -656,6 +656,7 @@ struct DiffTransformHunkInfo {
     hunk_start_anchor: text::Anchor,
     hunk_secondary_status: DiffHunkSecondaryStatus,
     is_logically_deleted: bool,
+    excerpt_end: ExcerptAnchor,
 }
 
 impl Eq for DiffTransformHunkInfo {}
@@ -788,9 +789,7 @@ impl ExcerptRange<text::Anchor> {
 #[derive(Clone, Debug)]
 pub struct ExcerptSummary {
     path_key: PathKey,
-    /// End of the excerpt
-    max_anchor: text::Anchor,
-    buffer_id: BufferId,
+    max_anchor: Anchor,
     widest_line_number: u32,
     text: MBTextSummary,
     count: usize,
@@ -800,7 +799,7 @@ impl ExcerptSummary {
     pub fn min() -> Self {
         ExcerptSummary {
             path_key: PathKey::min(),
-            max_anchor: text::Anchor::MIN,
+            max_anchor: Anchor::Min,
             widest_line_number: 0,
             text: MBTextSummary::default(),
             count: 0,
@@ -1064,6 +1063,7 @@ struct MultiBufferRegion<'a, MBD, BD> {
 
 struct ExcerptChunks<'a> {
     content_chunks: BufferChunks<'a>,
+    end: ExcerptAnchor,
     has_footer: bool,
 }
 
@@ -6800,7 +6800,7 @@ where
                     && self
                         .excerpts
                         .item()
-                        .is_some_and(|excerpt| excerpt.id != hunk_info.excerpt_id)
+                        .is_some_and(|excerpt| excerpt.end_anchor() != hunk_info.excerpt_end)
                 {
                     self.excerpts.next();
                 }
@@ -6866,7 +6866,7 @@ where
             DiffTransform::DeletedHunk { hunk_info, .. } => self
                 .excerpts
                 .item()
-                .is_some_and(|excerpt| excerpt.id != hunk_info.excerpt_id),
+                .is_some_and(|excerpt| excerpt.end_anchor() != hunk_info.excerpt_end),
         })
     }
 
@@ -7038,6 +7038,7 @@ impl Excerpt {
         ExcerptChunks {
             content_chunks,
             has_footer,
+            end: self.end_anchor(),
         }
     }
 
@@ -7100,20 +7101,19 @@ impl PartialEq for Excerpt {
 }
 
 impl<'a> MultiBufferExcerpt<'a> {
-    pub fn id(&self) -> ExcerptId {
-        self.excerpt.id
-    }
-
     pub fn buffer_id(&self) -> BufferId {
-        self.excerpt.buffer_id
+        self.excerpt.buffer.remote_id()
     }
 
     pub fn start_anchor(&self) -> Anchor {
-        Anchor::text(self.excerpt.id, self.excerpt.range.context.start)
+        Anchor::in_buffer(
+            self.excerpt.path_key_index,
+            self.excerpt.range.context.start,
+        )
     }
 
     pub fn end_anchor(&self) -> Anchor {
-        Anchor::text(self.excerpt.id, self.excerpt.range.context.end)
+        Anchor::in_buffer(self.excerpt.path_key_index, self.excerpt.range.context.end)
     }
 
     pub fn buffer(&self) -> &'a BufferSnapshot {
@@ -7754,7 +7754,7 @@ impl<'a> MultiBufferChunks<'a> {
             if let Some(excerpt_chunks) = self
                 .excerpt_chunks
                 .as_mut()
-                .filter(|chunks| excerpt.id == chunks.excerpt_id)
+                .filter(|chunks| excerpt.end_anchor() == chunks.end)
             {
                 excerpt.seek_chunks(
                     excerpt_chunks,
