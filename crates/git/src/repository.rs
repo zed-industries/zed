@@ -138,12 +138,14 @@ pub fn validate_worktree_directory(
 
 /// Returns the full absolute path for a specific branch's worktree
 /// given the resolved worktree directory.
+/// Slashes in branch names are replaced with dashes to avoid nested directories.
 pub fn worktree_path_for_branch(
     working_directory: &Path,
     worktree_directory_setting: &str,
     branch: &str,
 ) -> PathBuf {
-    resolve_worktree_directory(working_directory, worktree_directory_setting).join(branch)
+    let dir_name = branch.replace('/', "-");
+    resolve_worktree_directory(working_directory, worktree_directory_setting).join(dir_name)
 }
 
 /// Commit data needed for the git graph visualization.
@@ -1707,7 +1709,10 @@ impl GitRepository for RealGitRepository {
     ) -> BoxFuture<'_, Result<()>> {
         let git_binary_path = self.any_git_binary_path.clone();
         let working_directory = self.working_directory();
-        let final_path = directory.join(&name);
+        // Sanitize branch name for directory: replace `/` with `-` to avoid nested folders
+        // e.g., "feature/my-feature" → directory "feature-my-feature"
+        let dir_name = name.replace('/', "-");
+        let final_path = directory.join(&dir_name);
         let mut args = vec![
             OsString::from("--no-optional-locks"),
             OsString::from("worktree"),
@@ -3972,6 +3977,46 @@ mod tests {
             // Clean up so the next iteration starts fresh
             repo.remove_worktree(expected_path, true).await.unwrap();
 
+            // Create a worktree with a slash in the branch name
+            // This tests that slashes are replaced with dashes in the directory name
+            // while the branch name itself is preserved
+            repo.create_worktree(
+                "feature/my-feature".to_string(),
+                resolve_worktree_directory(repo_dir.path(), worktree_dir_setting),
+                Some("HEAD".to_string()),
+            )
+            .await
+            .unwrap();
+
+            // List worktrees — should have two
+            let worktrees = repo.worktrees().await.unwrap();
+            assert_eq!(worktrees.len(), 2);
+
+            let expected_path = worktree_path_for_branch(
+                repo_dir.path(),
+                worktree_dir_setting,
+                "feature/my-feature",
+            );
+            let new_worktree = worktrees
+                .iter()
+                .find(|w| w.branch() == "feature/my-feature")
+                .expect("should find worktree with feature/my-feature");
+            assert_eq!(
+                new_worktree.path.canonicalize().unwrap(),
+                expected_path.canonicalize().unwrap(),
+                "failed for worktree_directory setting: {worktree_dir_setting:?}"
+            );
+            // Verify the directory name uses dashes, not slashes (flat structure)
+            // e.g., ".../worktrees/repo/feature-my-feature" not ".../worktrees/repo/feature/my-feature"
+            assert_eq!(
+                expected_path.file_name().unwrap().to_string_lossy(),
+                "feature-my-feature",
+                "worktree directory name should have slashes replaced with dashes"
+            );
+
+            // Clean up so the next iteration starts fresh
+            repo.remove_worktree(expected_path, true).await.unwrap();
+
             // Clean up the worktree base directory if it was created outside repo_dir
             // (e.g. for the "../worktrees" setting, it won't be inside the TempDir)
             let resolved_dir = resolve_worktree_directory(repo_dir.path(), worktree_dir_setting);
@@ -4319,9 +4364,10 @@ mod tests {
         let work_dir = Path::new("/code/my-project");
 
         // Outside project — repo dir name is part of the resolved directory
+        // Slashes in branch names are replaced with dashes to avoid nested directories
         assert_eq!(
             worktree_path_for_branch(work_dir, "../worktrees", "feature/foo"),
-            PathBuf::from("/code/worktrees/my-project/feature/foo")
+            PathBuf::from("/code/worktrees/my-project/feature-foo")
         );
 
         // Inside project — no repo dir name inserted

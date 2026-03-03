@@ -278,7 +278,9 @@ impl WorktreeListDelegate {
                 let work_dir = repo.work_directory_abs_path.clone();
                 let directory =
                     validate_worktree_directory(&work_dir, &worktree_directory_setting)?;
-                let new_worktree_path = directory.join(&branch);
+                // Sanitize branch name for directory: replace `/` with `-` to avoid nested folders
+                let dir_name = branch.replace('/', "-");
+                let new_worktree_path = directory.join(&dir_name);
                 let receiver = repo.create_worktree(branch.clone(), directory, commit);
                 anyhow::Ok((receiver, new_worktree_path))
             })?;
