@@ -26,10 +26,10 @@ use fs::Fs;
 use futures::FutureExt as _;
 use gpui::{
     Action, Animation, AnimationExt, AnyView, App, ClickEvent, ClipboardItem, CursorStyle,
-    ElementId, Empty, Entity, FocusHandle, Focusable, Hsla, ListOffset, ListState, ObjectFit,
-    PlatformDisplay, ScrollHandle, SharedString, Subscription, Task, TextStyle, WeakEntity, Window,
-    WindowHandle, div, ease_in_out, img, linear_color_stop, linear_gradient, list, point,
-    pulsating_between,
+    ElementId, Empty, Entity, EventEmitter, FocusHandle, Focusable, Hsla, ListOffset, ListState,
+    ObjectFit, PlatformDisplay, ScrollHandle, SharedString, Subscription, Task, TextStyle,
+    WeakEntity, Window, WindowHandle, div, ease_in_out, img, linear_color_stop, linear_gradient,
+    list, point, pulsating_between,
 };
 use language::Buffer;
 use language_model::LanguageModelRegistry;
@@ -295,6 +295,12 @@ impl Conversation {
     }
 }
 
+pub enum AcpServerViewEvent {
+    ActiveThreadChanged,
+}
+
+impl EventEmitter<AcpServerViewEvent> for ConnectionView {}
+
 pub struct ConnectionView {
     agent: Rc<dyn AgentServer>,
     agent_server_store: Entity<AgentServerStore>,
@@ -386,6 +392,7 @@ impl ConnectionView {
         if let Some(view) = self.active_thread() {
             view.focus_handle(cx).focus(window, cx);
         }
+        cx.emit(AcpServerViewEvent::ActiveThreadChanged);
         cx.notify();
     }
 }
@@ -524,6 +531,7 @@ impl ConnectionView {
         }
 
         self.server_state = state;
+        cx.emit(AcpServerViewEvent::ActiveThreadChanged);
         cx.notify();
     }
 

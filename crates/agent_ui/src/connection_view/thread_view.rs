@@ -1,6 +1,8 @@
 use acp_thread::ContentBlock;
 use cloud_api_types::{SubmitAgentThreadFeedbackBody, SubmitAgentThreadFeedbackCommentsBody};
 use editor::actions::OpenExcerpts;
+
+use crate::StartThreadIn;
 use gpui::{Corner, List};
 use language_model::{LanguageModelEffortLevel, Speed};
 use settings::update_settings_file;
@@ -190,6 +192,12 @@ impl DiffStats {
         total
     }
 }
+
+pub enum AcpThreadViewEvent {
+    FirstSendRequested { content: Vec<acp::ContentBlock> },
+}
+
+impl EventEmitter<AcpThreadViewEvent> for ThreadView {}
 
 pub struct ThreadView {
     pub id: acp::SessionId,
@@ -518,6 +526,24 @@ impl ThreadView {
             .thread(acp_thread.session_id(), cx)
     }
 
+    /// Resolves the message editor's contents into content blocks. For profiles
+    /// that do not enable any tools, directory mentions are expanded to inline
+    /// file contents since the agent can't read files on its own.
+    fn resolve_message_contents(
+        &self,
+        message_editor: &Entity<MessageEditor>,
+        cx: &mut App,
+    ) -> Task<Result<(Vec<acp::ContentBlock>, Vec<Entity<Buffer>>)>> {
+        let expand = self.as_native_thread(cx).is_some_and(|thread| {
+            let thread = thread.read(cx);
+            AgentSettings::get_global(cx)
+                .profiles
+                .get(thread.profile())
+                .is_some_and(|profile| profile.tools.is_empty())
+        });
+        message_editor.update(cx, |message_editor, cx| message_editor.contents(expand, cx))
+    }
+
     pub fn current_model_id(&self, cx: &App) -> Option<String> {
         let selector = self.model_selector.as_ref()?;
         let model = selector.read(cx).active_model(cx)?;
@@ -731,6 +757,46 @@ impl ThreadView {
         }
 
         let message_editor = self.message_editor.clone();
+
+        // Intercept the first send so the agent panel can capture the full
+        // content blocks — needed for "Start thread in New Worktree",
+        // which must create a workspace before sending the message there.
+        let intercept_first_send = self.thread.read(cx).entries().is_empty()
+            && !message_editor.read(cx).is_empty(cx)
+            && self
+                .workspace
+                .upgrade()
+                .and_then(|workspace| workspace.read(cx).panel::<AgentPanel>(cx))
+                .is_some_and(|panel| {
+                    panel.read(cx).start_thread_in() == &StartThreadIn::NewWorktree
+                });
+
+        if intercept_first_send {
+            let content_task = self.resolve_message_contents(&message_editor, cx);
+
+            cx.spawn(async move |this, cx| match content_task.await {
+                Ok((content, _tracked_buffers)) => {
+                    if content.is_empty() {
+                        return;
+                    }
+
+                    this.update(cx, |_, cx| {
+                        cx.emit(AcpThreadViewEvent::FirstSendRequested { content });
+                    })
+                    .ok();
+                }
+                Err(error) => {
+                    this.update(cx, |this, cx| {
+                        this.handle_thread_error(error, cx);
+                    })
+                    .ok();
+                }
+            })
+            .detach();
+
+            return;
+        }
+
         let is_editor_empty = message_editor.read(cx).is_empty(cx);
         let is_generating = thread.read(cx).status() != ThreadStatus::Idle;
 
@@ -794,18 +860,7 @@ impl ThreadView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let full_mention_content = self.as_native_thread(cx).is_some_and(|thread| {
-            // Include full contents when using minimal profile
-            let thread = thread.read(cx);
-            AgentSettings::get_global(cx)
-                .profiles
-                .get(thread.profile())
-                .is_some_and(|profile| profile.tools.is_empty())
-        });
-
-        let contents = message_editor.update(cx, |message_editor, cx| {
-            message_editor.contents(full_mention_content, cx)
-        });
+        let contents = self.resolve_message_contents(&message_editor, cx);
 
         self.thread_error.take();
         self.thread_feedback.clear();
@@ -1140,21 +1195,11 @@ impl ThreadView {
         let is_idle = self.thread.read(cx).status() == acp_thread::ThreadStatus::Idle;
 
         if is_idle {
-            self.send_impl(message_editor.clone(), window, cx);
+            self.send_impl(message_editor, window, cx);
             return;
         }
 
-        let full_mention_content = self.as_native_thread(cx).is_some_and(|thread| {
-            let thread = thread.read(cx);
-            AgentSettings::get_global(cx)
-                .profiles
-                .get(thread.profile())
-                .is_some_and(|profile| profile.tools.is_empty())
-        });
-
-        let contents = message_editor.update(cx, |message_editor, cx| {
-            message_editor.contents(full_mention_content, cx)
-        });
+        let contents = self.resolve_message_contents(&message_editor, cx);
 
         cx.spawn_in(window, async move |this, cx| {
             let (content, tracked_buffers) = contents.await?;
