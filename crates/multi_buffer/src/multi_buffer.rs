@@ -10,6 +10,7 @@ use self::transaction::History;
 
 pub use anchor::{Anchor, AnchorRangeExt};
 
+use anchor::AnchorSeekTarget;
 use anyhow::{Result, anyhow};
 use buffer_diff::{
     BufferDiff, BufferDiffEvent, BufferDiffSnapshot, DiffChanged, DiffHunkSecondaryStatus,
@@ -788,6 +789,7 @@ pub struct ExcerptSummary {
     path_key: PathKey,
     /// End of the excerpt
     max_anchor: text::Anchor,
+    buffer_id: BufferId,
     widest_line_number: u32,
     text: MBTextSummary,
     count: usize,
@@ -4956,11 +4958,13 @@ impl MultiBufferSnapshot {
             + Add<MBD::TextDimension, Output = MBD>,
         MBD::TextDimension: Sub<Output = MBD::TextDimension> + Ord,
     {
-        let target = self.anchor_seek_target(*anchor);
-        let Some((_, text_anchor, _)) = anchor.text_anchor() else {
-            if anchor.is_min() {
+        let target = anchor.seek_target(self);
+        let anchor = match anchor {
+            Anchor::Min => {
                 return MBD::default();
-            } else {
+            }
+            Anchor::Excerpt(excerpt_anchor) => excerpt_anchor,
+            Anchor::Max => {
                 return MBD::from_summary(&self.text_summary());
             }
         };
@@ -4986,7 +4990,9 @@ impl MultiBufferSnapshot {
                     .context
                     .end
                     .summary::<MBD::TextDimension>(&excerpt.buffer);
-                let buffer_summary = text_anchor.summary::<MBD::TextDimension>(&excerpt.buffer);
+                let buffer_summary = anchor
+                    .text_anchor()
+                    .summary::<MBD::TextDimension>(&excerpt.buffer);
                 let summary = cmp::min(excerpt_buffer_end, buffer_summary);
                 let mut position = excerpt_start_position;
                 if summary > excerpt_buffer_start {
@@ -5021,7 +5027,9 @@ impl MultiBufferSnapshot {
                     .context
                     .end
                     .summary::<MBD::TextDimension>(&excerpt.buffer);
-                let buffer_summary = text_anchor.summary::<MBD::TextDimension>(&excerpt.buffer);
+                let buffer_summary = anchor
+                    .text_anchor()
+                    .summary::<MBD::TextDimension>(&excerpt.buffer);
                 let summary = cmp::min(excerpt_buffer_end, buffer_summary);
                 let mut position = excerpt_start_position;
                 if summary > excerpt_buffer_start {
@@ -5032,8 +5040,7 @@ impl MultiBufferSnapshot {
                     diff_transforms_cursor.seek_forward(&position, Bias::Left);
                 }
                 self.summary_for_anchor_with_excerpt_position(
-                    text_anchor,
-                    anchor.diff_base_anchor(),
+                    *anchor,
                     position,
                     &mut diff_transforms_cursor,
                     &excerpt.buffer,
@@ -5054,8 +5061,7 @@ impl MultiBufferSnapshot {
     /// calls, so it may already be partway through the transform list.
     fn summary_for_anchor_with_excerpt_position<MBD>(
         &self,
-        text_anchor: text::Anchor,
-        diff_base_anchor: Option<text::Anchor>,
+        anchor: ExcerptAnchor,
         excerpt_position: ExcerptDimension<MBD>,
         diff_transforms: &mut Cursor<
             DiffTransform,
@@ -5073,7 +5079,7 @@ impl MultiBufferSnapshot {
 
             // A right-biased anchor at a transform boundary belongs to the
             // *next* transform, so advance past the current one.
-            if text_anchor.bias == Bias::Right && at_transform_end {
+            if anchor.bias == Bias::Right && at_transform_end {
                 diff_transforms.next();
                 continue;
             }
@@ -5086,7 +5092,7 @@ impl MultiBufferSnapshot {
                     hunk_info,
                     ..
                 }) => {
-                    if let Some(diff_base_anchor) = &diff_base_anchor
+                    if let Some(diff_base_anchor) = anchor.diff_base_anchor
                         && let Some(base_text) =
                             self.diffs.get(buffer_id).map(|diff| diff.base_text())
                         && diff_base_anchor.is_valid(&base_text)
@@ -5109,7 +5115,8 @@ impl MultiBufferSnapshot {
                             continue;
                         }
                     } else if at_transform_end
-                        && text_anchor
+                        && anchor
+                            .text_anchor()
                             .cmp(&hunk_info.hunk_start_anchor, excerpt_buffer)
                             .is_gt()
                     {
@@ -5130,7 +5137,7 @@ impl MultiBufferSnapshot {
                     // On a BufferContent (or no transform). If the anchor
                     // carries a diff_base_anchor it needs a DeletedHunk, so
                     // advance to find one.
-                    if at_transform_end && diff_base_anchor.is_some() {
+                    if at_transform_end && anchor.diff_base_anchor.is_some() {
                         diff_transforms.next();
                         continue;
                     }
@@ -5179,15 +5186,13 @@ impl MultiBufferSnapshot {
     }
 
     fn excerpt_offset_for_anchor(&self, anchor: &Anchor) -> ExcerptOffset {
-        let Some((_, text_anchor, _)) = anchor.text_anchor() else {
-            if anchor.is_min() {
-                return ExcerptOffset::default();
-            } else {
-                return self.excerpts.summary().len();
-            }
+        let anchor = match anchor {
+            Anchor::Min => return ExcerptOffset::default(),
+            Anchor::Excerpt(excerpt_anchor) => excerpt_anchor,
+            Anchor::Max => return self.excerpts.summary().len(),
         };
         let mut cursor = self.excerpts.cursor::<ExcerptSummary>(());
-        let target = self.anchor_seek_target(*anchor);
+        let target = self.anchor_seek_target(anchor);
 
         cursor.seek(&target, Bias::Left);
         if cursor.item().is_none() && anchor.is_max() {
@@ -5238,26 +5243,33 @@ impl MultiBufferSnapshot {
 
         let mut summaries = Vec::new();
         while let Some(anchor) = anchors.peek() {
-            let anchor = **anchor;
-            let target = self.anchor_seek_target(anchor);
+            let target = anchor.seek_target(self);
+            let excerpt_anchor = match anchor {
+                Anchor::Min => {
+                    summaries.push(MBD::default());
+                    anchors.next();
+                    continue;
+                }
+                Anchor::Excerpt(excerpt_anchor) => excerpt_anchor,
+                Anchor::Max => {
+                    summaries.push(self.excerpts.summary());
+                    anchors.next();
+                    continue;
+                }
+            };
 
             cursor.seek_forward(&target, Bias::Left);
 
-            let excerpt_anchors = anchors.peeking_take_while(|anchor| {
-                cursor
-                    .item()
-                    .is_some_and(|excerpt| excerpt.contains(&anchor))
-            });
-
             let excerpt_start_position = ExcerptDimension(MBD::from_summary(&cursor.start().text));
             if let Some(excerpt) = cursor.item() {
-                if !excerpt.contains(&anchor) {
+                if !excerpt.contains(&excerpt_anchor) {
                     let position = self.summary_for_excerpt_position_without_hunks(
                         Bias::Left,
                         excerpt_start_position,
                         &mut diff_transforms_cursor,
                     );
-                    summaries.extend(excerpt_anchors.map(|_| position));
+                    summaries.push(position);
+                    anchors.next();
                     continue;
                 }
                 let excerpt_buffer_start = excerpt
@@ -5270,14 +5282,18 @@ impl MultiBufferSnapshot {
                     .context
                     .end
                     .summary::<MBD::TextDimension>(&excerpt.buffer);
-                for (buffer_summary, (text_anchor, diff_base_anchor)) in excerpt
+                for (buffer_summary, excerpt_anchor) in excerpt
                     .buffer
                     .summaries_for_anchors_with_payload::<MBD::TextDimension, _, _>(
-                    excerpt_anchors.filter_map(|a| {
-                        let (_, text_anchor, diff_base_anchor) = a.text_anchor()?;
-                        Some((text_anchor, (text_anchor, diff_base_anchor)))
-                    }),
-                ) {
+                        std::iter::from_fn(|| {
+                            let excerpt_anchor = anchors.peek()?.excerpt_anchor()?;
+                            if !excerpt.contains(&excerpt_anchor) {
+                                return None;
+                            }
+                            Some((excerpt_anchor.text_anchor(), excerpt_anchor))
+                        }),
+                    )
+                {
                     let summary = cmp::min(excerpt_buffer_end, buffer_summary);
                     let mut position = excerpt_start_position;
                     if summary > excerpt_buffer_start {
@@ -5289,8 +5305,7 @@ impl MultiBufferSnapshot {
                     }
 
                     summaries.push(self.summary_for_anchor_with_excerpt_position(
-                        text_anchor,
-                        diff_base_anchor,
+                        excerpt_anchor,
                         position,
                         &mut diff_transforms_cursor,
                         &excerpt.buffer,
@@ -5303,7 +5318,8 @@ impl MultiBufferSnapshot {
                     excerpt_start_position,
                     &mut diff_transforms_cursor,
                 );
-                summaries.extend(excerpt_anchors.map(|_| position));
+                summaries.push(position);
+                anchors.next();
             }
         }
 
@@ -6520,22 +6536,6 @@ impl MultiBufferSnapshot {
         ))
     }
 
-    fn try_anchor_seek_target(&self, anchor: ExcerptAnchor) -> Option<AnchorSeekTarget> {
-        let path_key = self.try_path_for_anchor(anchor)?;
-        let snapshot = self.buffer_for_path(&path_key);
-
-        Some(AnchorSeekTarget::Text {
-            path_key: path_key.clone(),
-            anchor: anchor.text_anchor(),
-            snapshot: snapshot.cloned(),
-        })
-    }
-
-    fn anchor_seek_target(&self, anchor: Anchor) -> AnchorSeekTarget {
-        self.try_anchor_seek_target(anchor)
-            .expect("invalid anchor: path was never added to multibuffer")
-    }
-
     fn excerpt_locator_for_id(&self, id: ExcerptId) -> &Locator {
         self.try_excerpt_locator_for_id(id)
             .unwrap_or_else(|| panic!("invalid excerpt id {id:?}"))
@@ -6718,22 +6718,24 @@ impl MultiBufferSnapshot {
         include_local: bool,
     ) -> impl 'a + Iterator<Item = (ReplicaId, bool, CursorShape, Selection<Anchor>)> {
         let mut cursor = self.excerpts.cursor::<ExcerptSummary>(());
-        let start_target = self.anchor_seek_target(range.start);
-        let end_target = self.anchor_seek_target(range.end);
-        cursor.seek(&start_target, Bias::Left);
+        cursor.seek(&range.start.seek_target(self), Bias::Left);
         cursor
-            .take_while(move |excerpt| end_target.cmp_excerpt(&excerpt).is_ge())
+            .take_while(move |excerpt| {
+                let excerpt_start =
+                    Anchor::in_buffer(excerpt.path_key_index, excerpt.range.context.start);
+                excerpt_start.cmp(&range.end, self).is_le()
+            })
             .flat_map(move |excerpt| {
                 let mut query_range = excerpt.range.context.start..excerpt.range.context.end;
-                if excerpt.contains(&range.start)
-                    && let Some((_, text_anchor, _)) = range.start.text_anchor()
+                if let Some(excerpt_anchor) = range.start.excerpt_anchor()
+                    && excerpt.contains(&excerpt_anchor)
                 {
-                    query_range.start = text_anchor;
+                    query_range.start = excerpt_anchor.text_anchor();
                 }
-                if excerpt.contains(&range.end)
-                    && let Some((_, text_anchor, _)) = range.end.text_anchor()
+                if let Some(excerpt_anchor) = range.end.excerpt_anchor()
+                    && excerpt.contains(&excerpt_anchor)
                 {
-                    query_range.end = text_anchor;
+                    query_range.end = excerpt_anchor.text_anchor();
                 }
 
                 excerpt
@@ -6741,8 +6743,9 @@ impl MultiBufferSnapshot {
                     .selections_in_range(query_range, include_local)
                     .flat_map(move |(replica_id, line_mode, cursor_shape, selections)| {
                         selections.map(move |selection| {
-                            let mut start = Anchor::text(excerpt.path_key_index, selection.start);
-                            let mut end = Anchor::text(excerpt.path_key_index, selection.end);
+                            let mut start =
+                                Anchor::in_buffer(excerpt.path_key_index, selection.start);
+                            let mut end = Anchor::in_buffer(excerpt.path_key_index, selection.end);
                             if range.start.cmp(&start, self).is_gt() {
                                 start = range.start;
                             }
@@ -7315,14 +7318,10 @@ impl Excerpt {
         }
     }
 
-    // todo!() this always rejects min/max right now, is that right?
-    pub(crate) fn contains(&self, anchor: &Anchor) -> bool {
-        let Some((path, text_anchor, _)) = anchor.text_anchor() else {
-            return false;
-        };
-        self.path_key_index == path
-            && Some(self.buffer.remote_id()) == text_anchor.buffer_id
-            && self.range.contains(&text_anchor, &self.buffer)
+    pub(crate) fn contains(&self, anchor: &ExcerptAnchor) -> bool {
+        self.path_key_index == anchor.path
+            && self.buffer.remote_id() == anchor.buffer_id
+            && self.range.contains(&anchor.text_anchor(), &self.buffer)
     }
 
     /// The [`Excerpt`]'s start offset in its [`Buffer`]
@@ -7597,24 +7596,6 @@ impl sum_tree::ContextLessSummary for ExcerptSummary {
     }
 }
 
-// todo!() should this take a lifetime?
-enum AnchorSeekTarget {
-    Min,
-    Max,
-    Text {
-        path_key: PathKey,
-        anchor: text::Anchor,
-        // None when the buffer no longer exists in the multibuffer
-        snapshot: Option<BufferSnapshot>,
-    },
-}
-
-impl AnchorSeekTarget {
-    fn cmp_excerpt(&self, excerpt: &Excerpt) -> cmp::Ordering {
-        sum_tree::SeekTarget::cmp(self, &sum_tree::Item::summary(excerpt, ()), ())
-    }
-}
-
 impl sum_tree::SeekTarget<'_, ExcerptSummary, ExcerptSummary> for AnchorSeekTarget {
     fn cmp(
         &self,
@@ -7624,7 +7605,7 @@ impl sum_tree::SeekTarget<'_, ExcerptSummary, ExcerptSummary> for AnchorSeekTarg
         match self {
             AnchorSeekTarget::Min => Ordering::Less,
             AnchorSeekTarget::Max => Ordering::Greater,
-            AnchorSeekTarget::Text {
+            AnchorSeekTarget::Excerpt {
                 path_key,
                 anchor,
                 snapshot,
@@ -7633,9 +7614,17 @@ impl sum_tree::SeekTarget<'_, ExcerptSummary, ExcerptSummary> for AnchorSeekTarg
                 if path_comparison.is_ne() {
                     path_comparison
                 } else if let Some(snapshot) = snapshot {
-                    anchor.cmp(&cursor_location.max_anchor, snapshot)
+                    snapshot
+                        .remote_id()
+                        .cmp(&cursor_location.buffer_id)
+                        .then_with(|| {
+                            anchor
+                                .text_anchor()
+                                .cmp(&cursor_location.max_anchor, snapshot)
+                        })
                 } else {
                     // shouldn't happen because we expect this buffer not to have any excerpts
+                    // (otherwise snapshot would have been Some)
                     Ordering::Equal
                 }
             }

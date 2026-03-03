@@ -1,9 +1,10 @@
 use crate::{
-    ExcerptSummary, MultiBufferDimension, MultiBufferOffset, MultiBufferOffsetUtf16, PathKeyIndex,
+    ExcerptSummary, MultiBufferDimension, MultiBufferOffset, MultiBufferOffsetUtf16, PathKey,
+    PathKeyIndex,
 };
 
 use super::{MultiBufferSnapshot, ToOffset, ToPoint};
-use language::Point;
+use language::{BufferSnapshot, Point};
 use std::{
     cmp::Ordering,
     ops::{Add, AddAssign, Range, Sub},
@@ -56,6 +57,18 @@ impl std::fmt::Debug for ExcerptAnchor {
     }
 }
 
+// todo!() should this take a lifetime?
+pub(crate) enum AnchorSeekTarget {
+    Min,
+    Max,
+    Excerpt {
+        path_key: PathKey,
+        anchor: ExcerptAnchor,
+        // None when the buffer no longer exists in the multibuffer
+        snapshot: Option<BufferSnapshot>,
+    },
+}
+
 impl std::fmt::Debug for Anchor {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -67,7 +80,7 @@ impl std::fmt::Debug for Anchor {
 }
 
 impl ExcerptAnchor {
-    fn text_anchor(&self) -> text::Anchor {
+    pub(crate) fn text_anchor(&self) -> text::Anchor {
         text::Anchor::new(self.timestamp, self.offset, self.bias, Some(self.buffer_id))
     }
 
@@ -209,6 +222,16 @@ impl ExcerptAnchor {
                 .cmp(&self.text_anchor(), &excerpt.buffer)
                 .is_ge()
     }
+
+    fn seek_target(&self, snapshot: &MultiBufferSnapshot) -> AnchorSeekTarget {
+        let path_key = snapshot.path_for_anchor(*self);
+        let buffer = snapshot.buffer_for_path(&path_key).cloned();
+        AnchorSeekTarget::Excerpt {
+            path_key,
+            anchor: *self,
+            snapshot: buffer,
+        }
+    }
 }
 
 impl Anchor {
@@ -291,6 +314,21 @@ impl Anchor {
         match self {
             Anchor::Min | Anchor::Max => true,
             Anchor::Excerpt(excerpt_anchor) => excerpt_anchor.is_valid(snapshot),
+        }
+    }
+
+    pub(crate) fn seek_target(&self, snapshot: &MultiBufferSnapshot) -> AnchorSeekTarget {
+        match self {
+            Anchor::Min => AnchorSeekTarget::Min,
+            Anchor::Excerpt(excerpt_anchor) => excerpt_anchor.seek_target(snapshot),
+            Anchor::Max => AnchorSeekTarget::Max,
+        }
+    }
+
+    pub(crate) fn excerpt_anchor(&self) -> Option<ExcerptAnchor> {
+        match self {
+            Anchor::Min | Anchor::Max => None,
+            Anchor::Excerpt(excerpt_anchor) => Some(*excerpt_anchor),
         }
     }
 }
