@@ -7,7 +7,7 @@ use context_server::types::{
     LATEST_PROTOCOL_VERSION,
 };
 use database_core::{connection_count, set_mcp_socket_path};
-use gpui::{App, AppContext, AsyncApp, Context, Entity, Task, WeakEntity};
+use gpui::{App, AppContext as _, AsyncApp, Context, Entity, Task, WeakEntity};
 use util::ResultExt;
 
 use crate::mcp_tools::{
@@ -35,9 +35,10 @@ impl DatabaseMcpServerManager {
                     if is_active && !was_active {
                         Self::start_server(&this, &mut cx).await;
                     } else if !is_active && was_active {
+                        log::info!("database_mcp: no active connections, stopping MCP server");
+                        set_mcp_socket_path(None);
                         this.update(cx, |this, _cx| {
                             this.server = None;
-                            set_mcp_socket_path(None);
                         })
                         .log_err();
                     }
@@ -82,15 +83,22 @@ impl DatabaseMcpServerManager {
                 server.add_tool(McpGetSchema);
 
                 let path = server.socket_path().to_path_buf();
-                set_mcp_socket_path(Some(path));
 
-                this.update(cx, |this, _cx| {
-                    this.server = Some(server);
-                })
-                .log_err();
+                let stored = this
+                    .update(cx, |this, _cx| {
+                        this.server = Some(server);
+                    })
+                    .is_ok();
+
+                if stored {
+                    log::info!("database_mcp: MCP server started at {}", path.display());
+                    set_mcp_socket_path(Some(path));
+                } else {
+                    log::error!("database_mcp: failed to store MCP server, entity dropped");
+                }
             }
             Err(error) => {
-                log::error!("Failed to start database MCP server: {error}");
+                log::error!("database_mcp: failed to start MCP server: {error}");
             }
         }
     }
