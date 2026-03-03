@@ -1881,7 +1881,7 @@ mod tests {
                 "-q",
                 "-t",
                 "user@host",
-                "cd \"$HOME/work\" && exec env INPUT_VA=val remote_program arg1 arg2"
+                "cd \"$HOME/work\" && exec env 'INPUT_VA=val' remote_program arg1 arg2"
             ]
         );
         assert_eq!(command.env, env);
@@ -1917,7 +1917,7 @@ mod tests {
                 "-q",
                 "-t",
                 "user@host",
-                "cd && exec env INPUT_VA=val /bin/fish -l"
+                "cd && exec env 'INPUT_VA=val' /bin/fish -l"
             ]
         );
         assert_eq!(command.env, env);
