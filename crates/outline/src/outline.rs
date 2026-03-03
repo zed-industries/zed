@@ -250,7 +250,6 @@ impl OutlineViewDelegate {
             });
         }
     }
-
 }
 
 impl PickerDelegate for OutlineViewDelegate {
@@ -338,21 +337,24 @@ impl PickerDelegate for OutlineViewDelegate {
 
         let outline = self.outline.clone();
         cx.spawn_in(window, async move |this, cx| {
-            let matches = outline.search(&query, cx.background_executor().clone()).await;
+            let matches = outline
+                .search(&query, cx.background_executor().clone())
+                .await;
             let _ = this.update(cx, |this, cx| {
                 if this.delegate.match_update_count != match_update_count {
                     return;
                 }
 
                 this.delegate.matches = matches;
-                let (buffer, cursor_offset) = this.delegate.active_editor.update(cx, |editor, cx| {
-                    let buffer = editor.buffer().read(cx).snapshot(cx);
-                    let cursor_offset = editor
-                        .selections
-                        .newest::<MultiBufferOffset>(&editor.display_snapshot(cx))
-                        .head();
-                    (buffer, cursor_offset)
-                });
+                let (buffer, cursor_offset) =
+                    this.delegate.active_editor.update(cx, |editor, cx| {
+                        let buffer = editor.buffer().read(cx).snapshot(cx);
+                        let cursor_offset = editor
+                            .selections
+                            .newest::<MultiBufferOffset>(&editor.display_snapshot(cx))
+                            .head();
+                        (buffer, cursor_offset)
+                    });
 
                 let selected_index = this
                     .delegate
@@ -714,27 +716,29 @@ mod tests {
         let outline_view = open_outline_view(&workspace, cx);
         outline_view
             .update_in(cx, |outline_view, window, cx| {
-                outline_view.delegate.update_matches("f".to_string(), window, cx)
+                outline_view
+                    .delegate
+                    .update_matches("f".to_string(), window, cx)
             })
             .await;
 
-        let (selected_id, first_scored_id, last_scored_id, scored_match_count) =
-            outline_view.read_with(cx, |outline_view, _| {
-            let delegate = &outline_view.delegate;
-            let selected_match = &delegate.matches[delegate.selected_match_index];
-            let scored_ids = delegate
-                .matches
-                .iter()
-                .filter(|m| m.score > 0.0)
-                .map(|m| m.candidate_id)
-                .collect::<Vec<_>>();
-            (
-                selected_match.candidate_id,
-                *scored_ids.first().unwrap(),
-                *scored_ids.last().unwrap(),
-                scored_ids.len(),
-            )
-        });
+        let (selected_id, first_scored_id, last_scored_id, scored_match_count) = outline_view
+            .read_with(cx, |outline_view, _| {
+                let delegate = &outline_view.delegate;
+                let selected_match = &delegate.matches[delegate.selected_match_index];
+                let scored_ids = delegate
+                    .matches
+                    .iter()
+                    .filter(|m| m.score > 0.0)
+                    .map(|m| m.candidate_id)
+                    .collect::<Vec<_>>();
+                (
+                    selected_match.candidate_id,
+                    *scored_ids.first().unwrap(),
+                    *scored_ids.last().unwrap(),
+                    scored_ids.len(),
+                )
+            });
 
         assert!(
             scored_match_count > 1,
