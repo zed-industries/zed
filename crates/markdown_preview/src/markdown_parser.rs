@@ -794,11 +794,14 @@ impl<'a> MarkdownParser<'a> {
         let highlights = if let Some(language) = &language {
             if let Some(registry) = &self.language_registry {
                 let rope: language::Rope = code.as_str().into();
-                registry
-                    .language_for_name_or_extension(language)
-                    .await
-                    .map(|l| l.highlight_text(&rope, 0..code.len()))
-                    .ok()
+                if let Ok(l) = registry.language_for_name_or_extension(language).await {
+                    Some(
+                        l.highlight_text_with_injections(&rope, 0..code.len(), registry)
+                            .await,
+                    )
+                } else {
+                    None
+                }
             } else {
                 None
             }
