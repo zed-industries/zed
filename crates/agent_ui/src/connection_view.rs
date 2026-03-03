@@ -694,7 +694,14 @@ impl ConnectionView {
                         }
 
                         let id = current.read(cx).thread.read(cx).session_id().clone();
-                        let session_list = connection.session_list(cx);
+                        let session_list = if connection.supports_session_history() {
+                            connection.session_list(cx)
+                        } else {
+                            None
+                        };
+                        this.history.update(cx, |history, cx| {
+                            history.set_session_list(session_list, cx);
+                        });
                         this.set_server_state(
                             ServerState::Connected(ConnectedServerState {
                                 connection,
@@ -705,9 +712,6 @@ impl ConnectionView {
                             }),
                             cx,
                         );
-                        this.history.update(cx, |history, cx| {
-                            history.set_session_list(session_list, cx);
-                        });
                     }
                     Err(err) => {
                         this.handle_load_error(err, window, cx);
@@ -803,10 +807,6 @@ impl ConnectionView {
 
         let connection = thread.read(cx).connection().clone();
         let session_id = thread.read(cx).session_id().clone();
-        let session_list = connection.session_list(cx);
-        self.history.update(cx, |history, cx| {
-            history.set_session_list(session_list, cx);
-        });
 
         // Check for config options first
         // Config options take precedence over legacy mode/model selectors
@@ -3683,7 +3683,7 @@ pub(crate) mod tests {
             cx: &mut App,
         ) -> Task<anyhow::Result<Entity<AcpThread>>> {
             let thread = build_test_thread(
-                self.clone(),
+                self,
                 project,
                 "SessionHistoryConnection",
                 SessionId::new("history-session"),
@@ -3743,7 +3743,7 @@ pub(crate) mod tests {
             cx: &mut gpui::App,
         ) -> Task<gpui::Result<Entity<AcpThread>>> {
             let thread = build_test_thread(
-                self.clone(),
+                self,
                 project,
                 "ResumeOnlyAgentConnection",
                 SessionId::new("new-session"),
@@ -3764,7 +3764,7 @@ pub(crate) mod tests {
             cx: &mut App,
         ) -> Task<gpui::Result<Entity<AcpThread>>> {
             let thread = build_test_thread(
-                self.clone(),
+                self,
                 project,
                 "ResumeOnlyAgentConnection",
                 session.session_id,

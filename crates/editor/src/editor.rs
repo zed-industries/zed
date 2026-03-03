@@ -8764,14 +8764,11 @@ impl Editor {
     }
 
     fn insert_tasks(&mut self, key: (BufferId, BufferRow), value: RunnableTasks) {
-        match self.tasks.entry(key) {
-            collections::btree_map::Entry::Occupied(mut entry) => {
-                entry.get_mut().templates.extend(value.templates);
-                entry.get_mut().extra_variables.extend(value.extra_variables);
-            }
-            collections::btree_map::Entry::Vacant(entry) => {
-                entry.insert(value);
-            }
+        if self.tasks.insert(key, value).is_some() {
+            // This case should hopefully be rare, but just in case...
+            log::error!(
+                "multiple different run targets found on a single line, only the last target will be rendered"
+            )
         }
     }
 
