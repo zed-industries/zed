@@ -36,7 +36,6 @@ use crate::{
 use buffer_diff::{DiffHunkStatus, DiffHunkStatusKind};
 use collections::{BTreeMap, HashMap};
 use std::sync::Mutex;
-use gpui::EntityId;
 use crate::smooth_cursor_manager::SmoothCursorManager;
 use feature_flags::{DiffReviewFeatureFlag, FeatureFlagAppExt as _};
 use file_icons::FileIcons;
