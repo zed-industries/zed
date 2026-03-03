@@ -2,15 +2,14 @@ use crate::cursor_excerpt::compute_excerpt_ranges;
 use crate::prediction::EditPredictionResult;
 use crate::{
     CurrentEditPrediction, DebugEvent, EditPredictionFinishedDebugEvent, EditPredictionId,
-    EditPredictionModelInput, EditPredictionStartedDebugEvent, EditPredictionStore, ollama,
+    EditPredictionModelInput, EditPredictionStartedDebugEvent, EditPredictionStore,
 };
-use anyhow::{Context as _, Result};
-use cloud_llm_client::predict_edits_v3::{RawCompletionRequest, RawCompletionResponse};
+use anyhow::Result;
+use cloud_llm_client::predict_edits_v3::RawCompletionRequest;
 use cloud_llm_client::{AcceptEditPredictionBody, EditPredictionRejectReason};
 use edit_prediction_types::PredictedCursorPosition;
-use futures::AsyncReadExt as _;
-use gpui::{App, AppContext as _, Task, http_client, prelude::*};
-use language::language_settings::{OpenAiCompatibleEditPredictionSettings, all_language_settings};
+use gpui::{App, AppContext as _, Task, prelude::*};
+use language::language_settings::all_language_settings;
 use language::{BufferSnapshot, ToOffset as _, ToPoint, text_diff};
 use release_channel::AppVersion;
 use settings::EditPredictionPromptFormat;
@@ -23,6 +22,10 @@ use zeta_prompt::{
     CURSOR_MARKER, ZetaFormat, clean_zeta2_model_output, format_zeta_prompt, get_prefill,
     prompt_input_contains_special_tokens,
     zeta1::{self, EDITABLE_REGION_END_MARKER},
+};
+
+use crate::open_ai_compatible::{
+    open_ai_compatible_api_token, open_ai_compatible_api_url, send_custom_server_request,
 };
 
 pub fn request_prediction_with_zeta(
@@ -56,6 +59,17 @@ pub fn request_prediction_with_zeta(
     let buffer_snapshotted_at = Instant::now();
     let raw_config = store.zeta2_raw_config().cloned();
     let preferred_experiment = store.preferred_experiment().map(|s| s.to_owned());
+    let open_ai_compatible_api_key =
+        if provider == settings::EditPredictionProvider::OpenAiCompatibleApi {
+            let api_token = open_ai_compatible_api_token(cx);
+            let api_url = open_ai_compatible_api_url(cx);
+            api_token.update(cx, |key_state, cx| {
+                let _task = key_state.load_if_needed(api_url.clone(), |state| state, cx);
+            });
+            api_token.read(cx).key(&api_url)
+        } else {
+            None
+        };
 
     let excerpt_path: Arc<Path> = snapshot
         .file()
@@ -131,6 +145,7 @@ pub fn request_prediction_with_zeta(
                                 prompt,
                                 max_tokens,
                                 stop_tokens,
+                                open_ai_compatible_api_key.clone(),
                                 &http_client,
                             )
                             .await?;
@@ -157,6 +172,7 @@ pub fn request_prediction_with_zeta(
                                 prompt,
                                 max_tokens,
                                 vec![],
+                                open_ai_compatible_api_key.clone(),
                                 &http_client,
                             )
                             .await?;
@@ -398,66 +414,6 @@ pub fn zeta2_prompt_input(
         can_collect_data,
     };
     (full_context_offset_range, prompt_input)
-}
-
-pub(crate) async fn send_custom_server_request(
-    provider: settings::EditPredictionProvider,
-    settings: &OpenAiCompatibleEditPredictionSettings,
-    prompt: String,
-    max_tokens: u32,
-    stop_tokens: Vec<String>,
-    http_client: &Arc<dyn http_client::HttpClient>,
-) -> Result<(String, String)> {
-    match provider {
-        settings::EditPredictionProvider::Ollama => {
-            let response =
-                ollama::make_request(settings.clone(), prompt, stop_tokens, http_client.clone())
-                    .await?;
-            Ok((response.response, response.created_at))
-        }
-        _ => {
-            let request = RawCompletionRequest {
-                model: settings.model.clone(),
-                prompt,
-                max_tokens: Some(max_tokens),
-                temperature: None,
-                stop: stop_tokens
-                    .into_iter()
-                    .map(std::borrow::Cow::Owned)
-                    .collect(),
-                environment: None,
-            };
-
-            let request_body = serde_json::to_string(&request)?;
-            let http_request = http_client::Request::builder()
-                .method(http_client::Method::POST)
-                .uri(settings.api_url.as_ref())
-                .header("Content-Type", "application/json")
-                .body(http_client::AsyncBody::from(request_body))?;
-
-            let mut response = http_client.send(http_request).await?;
-            let status = response.status();
-
-            if !status.is_success() {
-                let mut body = String::new();
-                response.body_mut().read_to_string(&mut body).await?;
-                anyhow::bail!("custom server error: {} - {}", status, body);
-            }
-
-            let mut body = String::new();
-            response.body_mut().read_to_string(&mut body).await?;
-
-            let parsed: RawCompletionResponse =
-                serde_json::from_str(&body).context("Failed to parse completion response")?;
-            let text = parsed
-                .choices
-                .into_iter()
-                .next()
-                .map(|choice| choice.text)
-                .unwrap_or_default();
-            Ok((text, parsed.id))
-        }
-    }
 }
 
 pub(crate) fn edit_prediction_accepted(

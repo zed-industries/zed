@@ -539,9 +539,15 @@ impl EditPredictionButton {
         edit_prediction::ollama::ensure_authenticated(cx);
         let sweep_api_token_task = edit_prediction::sweep_ai::load_sweep_api_token(cx);
         let mercury_api_token_task = edit_prediction::mercury::load_mercury_api_token(cx);
+        let open_ai_compatible_api_token_task =
+            edit_prediction::open_ai_compatible::load_open_ai_compatible_api_token(cx);
 
         cx.spawn(async move |this, cx| {
-            _ = futures::join!(sweep_api_token_task, mercury_api_token_task);
+            _ = futures::join!(
+                sweep_api_token_task,
+                mercury_api_token_task,
+                open_ai_compatible_api_token_task
+            );
             this.update(cx, |_, cx| {
                 cx.notify();
             })

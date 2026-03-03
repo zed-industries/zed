@@ -69,6 +69,7 @@ pub mod sweep_ai;
 pub mod udiff;
 
 mod capture_example;
+pub mod open_ai_compatible;
 mod zed_edit_prediction_delegate;
 pub mod zeta;
 
