@@ -557,6 +557,7 @@ pub enum GitGutterSetting {
     /// Show git gutter in tracked files.
     #[default]
     TrackedFiles,
+    TrackedFilesWithSigns,
     /// Hide git gutter
     Hide,
 }
