@@ -899,6 +899,8 @@ pub struct Thread {
     imported: bool,
     /// If this is a subagent thread, contains context about the parent
     subagent_context: Option<SubagentContext>,
+    /// The user's unsent prompt text, persisted so it can be restored when reloading the thread.
+    draft_prompt: Option<Vec<acp::ContentBlock>>,
     /// Weak references to running subagent threads for cancellation propagation
     running_subagents: Vec<WeakEntity<Thread>>,
 }
@@ -917,12 +919,16 @@ impl Thread {
         let context_server_registry = parent_thread.read(cx).context_server_registry.clone();
         let templates = parent_thread.read(cx).templates.clone();
         let model = parent_thread.read(cx).model().cloned();
-        let mut thread = Self::new(
+        let parent_action_log = parent_thread.read(cx).action_log().clone();
+        let action_log =
+            cx.new(|_cx| ActionLog::new(project.clone()).with_linked_action_log(parent_action_log));
+        let mut thread = Self::new_internal(
             project,
             project_context,
             context_server_registry,
             templates,
             model,
+            action_log,
             cx,
         );
         thread.subagent_context = Some(SubagentContext {
@@ -940,6 +946,26 @@ impl Thread {
         model: Option<Arc<dyn LanguageModel>>,
         cx: &mut Context<Self>,
     ) -> Self {
+        Self::new_internal(
+            project.clone(),
+            project_context,
+            context_server_registry,
+            templates,
+            model,
+            cx.new(|_cx| ActionLog::new(project)),
+            cx,
+        )
+    }
+
+    fn new_internal(
+        project: Entity<Project>,
+        project_context: Entity<ProjectContext>,
+        context_server_registry: Entity<ContextServerRegistry>,
+        templates: Arc<Templates>,
+        model: Option<Arc<dyn LanguageModel>>,
+        action_log: Entity<ActionLog>,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let settings = AgentSettings::get_global(cx);
         let profile_id = settings.default_profile.clone();
         let enable_thinking = settings
@@ -950,7 +976,6 @@ impl Thread {
             .default_model
             .as_ref()
             .and_then(|model| model.effort.clone());
-        let action_log = cx.new(|_cx| ActionLog::new(project.clone()));
         let (prompt_capabilities_tx, prompt_capabilities_rx) =
             watch::channel(Self::prompt_capabilities(model.as_deref()));
         Self {
@@ -991,6 +1016,7 @@ impl Thread {
             file_read_times: HashMap::default(),
             imported: false,
             subagent_context: None,
+            draft_prompt: None,
             running_subagents: Vec::new(),
         }
     }
@@ -1206,6 +1232,7 @@ impl Thread {
             file_read_times: HashMap::default(),
             imported: db_thread.imported,
             subagent_context: db_thread.subagent_context,
+            draft_prompt: db_thread.draft_prompt,
             running_subagents: Vec::new(),
         }
     }
@@ -1230,6 +1257,7 @@ impl Thread {
             speed: self.speed,
             thinking_enabled: self.thinking_enabled,
             thinking_effort: self.thinking_effort.clone(),
+            draft_prompt: self.draft_prompt.clone(),
         };
 
         cx.background_spawn(async move {
@@ -1269,6 +1297,14 @@ impl Thread {
 
     pub fn is_empty(&self) -> bool {
         self.messages.is_empty() && self.title.is_none()
+    }
+
+    pub fn draft_prompt(&self) -> Option<&[acp::ContentBlock]> {
+        self.draft_prompt.as_deref()
+    }
+
+    pub fn set_draft_prompt(&mut self, prompt: Option<Vec<acp::ContentBlock>>) {
+        self.draft_prompt = prompt;
     }
 
     pub fn model(&self) -> Option<&Arc<dyn LanguageModel>> {
@@ -1364,10 +1400,6 @@ impl Thread {
 
     pub fn last_message(&self) -> Option<&Message> {
         self.messages.last()
-    }
-
-    pub fn num_messages(&self) -> usize {
-        self.messages.len()
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -1908,7 +1940,15 @@ impl Thread {
                 })??;
                 let timer = cx.background_executor().timer(retry.duration);
                 event_stream.send_retry(retry);
-                timer.await;
+                futures::select! {
+                    _ = timer.fuse() => {}
+                    _ = cancellation_rx.changed().fuse() => {
+                        if *cancellation_rx.borrow() {
+                            log::debug!("Turn cancelled during retry delay, exiting");
+                            return Ok(());
+                        }
+                    }
+                }
                 this.update(cx, |this, _cx| {
                     if let Some(Message::Agent(message)) = this.messages.last() {
                         if message.tool_results.is_empty() {

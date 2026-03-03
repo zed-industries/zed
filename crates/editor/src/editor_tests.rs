@@ -8539,6 +8539,26 @@ async fn test_split_selection_into_lines(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_split_selection_into_lines_does_not_scroll(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+
+    let large_body = "\nline".repeat(300);
+    cx.set_state(&format!("«ˇstart{large_body}\nend»"));
+    let initial_scroll_position = cx.update_editor(|editor, _, cx| editor.scroll_position(cx));
+
+    cx.update_editor(|editor, window, cx| {
+        editor.split_selection_into_lines(&Default::default(), window, cx);
+    });
+
+    let scroll_position_after_split = cx.update_editor(|editor, _, cx| editor.scroll_position(cx));
+    assert_eq!(
+        initial_scroll_position, scroll_position_after_split,
+        "Scroll position should not change after splitting selection into lines"
+    );
+}
+
+#[gpui::test]
 async fn test_split_selection_into_lines_interacting_with_creases(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
@@ -24306,6 +24326,77 @@ async fn test_folding_buffers(cx: &mut TestAppContext) {
         "\n\naaaa\nBbbbb\ncccc\n\nffff\ngggg\n\njjjj\n\n\nllll\nmmmm\nnnnn\n\nqqqq\nrrrr\n\nuuuu\n\n\nvvvv\nwwww\nxxxx\n\n1111\n2222\n\n5555",
         "After unfolding the all buffers, all original text should be displayed"
     );
+}
+
+#[gpui::test]
+async fn test_folded_buffers_cleared_on_excerpts_removed(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            "file_a.txt": "File A\nFile A\nFile A",
+            "file_b.txt": "File B\nFile B\nFile B",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let cx = &mut VisualTestContext::from_window(*window, cx);
+    let worktree = project.update(cx, |project, cx| {
+        let mut worktrees = project.worktrees(cx).collect::<Vec<_>>();
+        assert_eq!(worktrees.len(), 1);
+        worktrees.pop().unwrap()
+    });
+    let worktree_id = worktree.update(cx, |worktree, _| worktree.id());
+
+    let buffer_a = project
+        .update(cx, |project, cx| {
+            project.open_buffer((worktree_id, rel_path("file_a.txt")), cx)
+        })
+        .await
+        .unwrap();
+    let buffer_b = project
+        .update(cx, |project, cx| {
+            project.open_buffer((worktree_id, rel_path("file_b.txt")), cx)
+        })
+        .await
+        .unwrap();
+
+    let multi_buffer = cx.new(|cx| {
+        let mut multi_buffer = MultiBuffer::new(ReadWrite);
+        let range_a = Point::new(0, 0)..Point::new(2, 4);
+        let range_b = Point::new(0, 0)..Point::new(2, 4);
+
+        multi_buffer.set_excerpts_for_path(PathKey::sorted(0), buffer_a.clone(), [range_a], 0, cx);
+        multi_buffer.set_excerpts_for_path(PathKey::sorted(1), buffer_b.clone(), [range_b], 0, cx);
+        multi_buffer
+    });
+
+    let editor = cx.new_window_entity(|window, cx| {
+        Editor::new(
+            EditorMode::full(),
+            multi_buffer.clone(),
+            Some(project.clone()),
+            window,
+            cx,
+        )
+    });
+
+    editor.update(cx, |editor, cx| {
+        editor.fold_buffer(buffer_a.read(cx).remote_id(), cx);
+    });
+    assert!(editor.update(cx, |editor, cx| editor.has_any_buffer_folded(cx)));
+
+    // When the excerpts for `buffer_a` are removed, a
+    // `multi_buffer::Event::ExcerptsRemoved` event is emitted, which should be
+    // picked up by the editor and update the display map accordingly.
+    multi_buffer.update(cx, |multi_buffer, cx| {
+        multi_buffer.remove_excerpts_for_path(PathKey::sorted(0), cx)
+    });
+    assert!(!editor.update(cx, |editor, cx| editor.has_any_buffer_folded(cx)));
 }
 
 #[gpui::test]

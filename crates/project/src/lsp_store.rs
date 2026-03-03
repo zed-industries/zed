@@ -3158,7 +3158,7 @@ impl LocalLspStore {
                 .map(|edit| (range_from_lsp(edit.range), edit.new_text))
                 .collect::<Vec<_>>();
 
-            lsp_edits.sort_by_key(|(range, _)| (range.start, range.end));
+            lsp_edits.sort_unstable_by_key(|(range, _)| (range.start, range.end));
 
             let mut lsp_edits = lsp_edits.into_iter().peekable();
             let mut edits = Vec::new();
@@ -5001,10 +5001,6 @@ impl LspStore {
         };
 
         let status = request.status();
-        if !request.check_capabilities(language_server.adapter_server_capabilities()) {
-            return Task::ready(Ok(Default::default()));
-        }
-
         let request_timeout = ProjectSettings::get_global(cx)
             .global_lsp_settings
             .get_request_timeout();
