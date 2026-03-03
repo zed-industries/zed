@@ -14,8 +14,9 @@ use util::rel_path::RelPath;
 use ztracing::instrument;
 
 use crate::{
-    Anchor, BufferState, DiffChangeKind, Event, Excerpt, ExcerptOffset, ExcerptRange,
-    ExcerptSummary, ExpandExcerptDirection, MultiBuffer, PathKeyIndex, build_excerpt_ranges,
+    Anchor, BufferState, BufferStateSnapshot, DiffChangeKind, Event, Excerpt, ExcerptOffset,
+    ExcerptRange, ExcerptSummary, ExpandExcerptDirection, MultiBuffer, PathKeyIndex,
+    build_excerpt_ranges,
 };
 
 #[derive(PartialEq, Eq, Ord, PartialOrd, Clone, Hash, Debug)]
@@ -232,19 +233,19 @@ impl MultiBuffer {
                         context.start.column = 0;
                     }
                     ExpandExcerptDirection::Down => {
-                        context.end.row =
-                            (context.end.row + line_count).min(excerpt.buffer.max_point().row);
-                        context.end.column = excerpt.buffer.line_len(context.end.row);
+                        context.end.row = (context.end.row + line_count)
+                            .min(excerpt.buffer_snapshot.max_point().row);
+                        context.end.column = excerpt.buffer_snapshot.line_len(context.end.row);
                     }
                     ExpandExcerptDirection::UpAndDown => {
                         context.start.row = context.start.row.saturating_sub(line_count);
                         context.start.column = 0;
-                        context.end.row =
-                            (context.end.row + line_count).min(excerpt.buffer.max_point().row);
-                        context.end.column = excerpt.buffer.line_len(context.end.row);
+                        context.end.row = (context.end.row + line_count)
+                            .min(excerpt.buffer_snapshot.max_point().row);
+                        context.end.column = excerpt.buffer_snapshot.line_len(context.end.row);
                     }
                 }
-                let context = excerpt.buffer.anchor_range_around(context);
+                let context = excerpt.buffer_snapshot.anchor_range_around(context);
                 expanded_ranges.push(ExcerptRange {
                     context,
                     primary: excerpt.range.primary.clone(),
@@ -381,7 +382,7 @@ impl MultiBuffer {
         // with a different buffer by removing its excerpts.
         if let Some(excerpt) = cursor.item()
             && excerpt.path_key == path_key
-            && excerpt.buffer.remote_id() != buffer_id
+            && excerpt.buffer_id != buffer_id
         {
             let before = cursor.position.1;
             cursor.seek_forward(&path_key, Bias::Right);
@@ -392,11 +393,10 @@ impl MultiBuffer {
             });
         }
 
-        let buffer_snapshot = Arc::new(buffer_snapshot);
         while let Some(excerpt) = cursor.item()
             && excerpt.path_key == path_key
         {
-            assert_eq!(excerpt.buffer.remote_id(), buffer_id);
+            assert_eq!(excerpt.buffer_id, buffer_id);
             let Some(next_excerpt) = to_insert.peek() else {
                 break;
             };
@@ -431,7 +431,7 @@ impl MultiBuffer {
                     Excerpt::new(
                         path_key.clone(),
                         path_key_index,
-                        buffer_snapshot.clone(),
+                        buffer_snapshot.remote_id(),
                         next_excerpt.clone(),
                         to_insert.peek().is_some(),
                     ),
@@ -459,6 +459,13 @@ impl MultiBuffer {
         new_excerpts.append(suffix, ());
         drop(cursor);
         snapshot.excerpts = new_excerpts;
+        snapshot.buffers.insert(
+            buffer_id,
+            BufferStateSnapshot {
+                path_key,
+                buffer_snapshot,
+            },
+        );
         if changed_trailing_excerpt {
             snapshot.trailing_excerpt_update_count += 1;
         }
@@ -500,7 +507,7 @@ impl MultiBuffer {
         if let Some(excerpt) = cursor.item()
             && excerpt.path_key == path
         {
-            buffer_id = Some(excerpt.buffer.remote_id());
+            buffer_id = Some(excerpt.buffer_id);
         }
         cursor.seek(&path, Bias::Right);
         let edit_end = cursor.position.1;
@@ -514,7 +521,7 @@ impl MultiBuffer {
         };
 
         if let Some(buffer_id) = buffer_id {
-            snapshot.path_keys_by_buffer.remove(&buffer_id);
+            snapshot.buffers.remove(&buffer_id);
             self.buffers.remove(&buffer_id);
             cx.emit(Event::BuffersRemoved {
                 removed_buffer_ids: vec![buffer_id],

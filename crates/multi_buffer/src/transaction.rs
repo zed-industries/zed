@@ -340,11 +340,11 @@ impl MultiBuffer {
             {
                 buffer_anchors.push(Anchor::in_buffer(
                     excerpt.path_key_index,
-                    excerpt.buffer.anchor_at(range.start, Bias::Left),
+                    excerpt.buffer_snapshot.anchor_at(range.start, Bias::Left),
                 ));
                 buffer_anchors.push(Anchor::in_buffer(
                     excerpt.path_key_index,
-                    excerpt.buffer.anchor_at(range.end, Bias::Right),
+                    excerpt.buffer_snapshot.anchor_at(range.end, Bias::Right),
                 ));
             }
         }

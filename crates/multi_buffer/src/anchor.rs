@@ -214,18 +214,18 @@ impl ExcerptAnchor {
         let Some(excerpt) = cursor.item() else {
             return false;
         };
-        excerpt.buffer.remote_id() == self.buffer_id
+        excerpt.buffer_id == self.buffer_id
             && excerpt
                 .range
                 .context
                 .start
-                .cmp(&self.text_anchor(), &excerpt.buffer)
+                .cmp(&self.text_anchor(), &excerpt.buffer_snapshot(snapshot))
                 .is_le()
             && excerpt
                 .range
                 .context
                 .end
-                .cmp(&self.text_anchor(), &excerpt.buffer)
+                .cmp(&self.text_anchor(), &excerpt.buffer_snapshot(snapshot))
                 .is_ge()
     }
 
