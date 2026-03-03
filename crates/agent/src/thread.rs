@@ -2617,7 +2617,8 @@ impl Thread {
             }
         }
 
-        let use_streaming_edit_tool = cx.has_flag::<StreamingEditFileToolFeatureFlag>();
+        let use_streaming_edit_tool =
+            cx.has_flag::<StreamingEditFileToolFeatureFlag>() && model.supports_streaming_tools();
 
         let mut tools = self
             .tools
