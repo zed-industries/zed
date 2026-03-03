@@ -1863,6 +1863,7 @@ impl LocalLspStore {
                             buffer_path_abs,
                             &language_server,
                             &settings,
+                            logger.clone(),
                             cx,
                         )
                         .await
@@ -2269,6 +2270,7 @@ impl LocalLspStore {
         abs_path: &Path,
         language_server: &Arc<LanguageServer>,
         settings: &LanguageSettings,
+        logger: zlog::Logger,
         cx: &mut AsyncApp,
     ) -> Result<Vec<(Range<Anchor>, Arc<str>)>> {
         let capabilities = &language_server.capabilities();
