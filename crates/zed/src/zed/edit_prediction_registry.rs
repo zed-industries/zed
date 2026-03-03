@@ -154,7 +154,10 @@ fn edit_prediction_provider_config_for_settings(cx: &App) -> Option<EditPredicti
                 }
             }
 
-            if format == EditPredictionPromptFormat::Zeta {
+            if matches!(
+                format,
+                EditPredictionPromptFormat::Zeta | EditPredictionPromptFormat::Zeta2
+            ) {
                 Some(EditPredictionProviderConfig::Zed(EditPredictionModel::Zeta))
             } else {
                 Some(EditPredictionProviderConfig::Zed(
