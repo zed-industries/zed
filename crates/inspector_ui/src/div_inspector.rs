@@ -401,19 +401,19 @@ impl DivInspector {
                         ..snapshot.clip_offset(usize::MAX, Bias::Left),
                 )
                 .collect::<String>();
-            let mut method_names = split_str_with_ranges(&before_text, is_not_identifier_char)
+            let mut method_names = split_str_with_ranges(&before_text, &is_not_identifier_char)
                 .into_iter()
                 .map(|(range, name)| (Some(range), name.to_string()))
                 .collect::<Vec<_>>();
             method_names.push((None, completion.clone()));
             method_names.extend(
-                split_str_with_ranges(&after_text, is_not_identifier_char)
+                split_str_with_ranges(&after_text, &is_not_identifier_char)
                     .into_iter()
                     .map(|(range, name)| (Some(range), name.to_string())),
             );
             method_names
         } else {
-            split_str_with_ranges(&snapshot.text(), is_not_identifier_char)
+            split_str_with_ranges(&snapshot.text(), &is_not_identifier_char)
                 .into_iter()
                 .map(|(range, name)| (Some(range), name.to_string()))
                 .collect::<Vec<_>>()

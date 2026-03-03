@@ -1,16 +1,7 @@
 use language::{BufferSnapshot, Point};
 use std::ops::Range;
+use text::OffsetRangeExt as _;
 use zeta_prompt::ExcerptRanges;
-
-/// Pre-computed Point ranges for all editable/context budget combinations.
-pub struct ExcerptRangePoints {
-    pub editable_150: Range<Point>,
-    pub editable_180: Range<Point>,
-    pub editable_350: Range<Point>,
-    pub editable_150_context_350: Range<Point>,
-    pub editable_180_context_350: Range<Point>,
-    pub editable_350_context_150: Range<Point>,
-}
 
 /// Computes all range variants for a cursor position: editable ranges at 150, 180, and 350
 /// token budgets, plus their corresponding context expansions. Returns the full excerpt range
@@ -18,10 +9,11 @@ pub struct ExcerptRangePoints {
 pub fn compute_excerpt_ranges(
     position: Point,
     snapshot: &BufferSnapshot,
-) -> (Range<Point>, ExcerptRangePoints) {
+) -> (Range<Point>, Range<usize>, ExcerptRanges) {
     let editable_150 = compute_editable_range(snapshot, position, 150);
     let editable_180 = compute_editable_range(snapshot, position, 180);
     let editable_350 = compute_editable_range(snapshot, position, 350);
+    let editable_512 = compute_editable_range(snapshot, position, 512);
 
     let editable_150_context_350 =
         expand_context_syntactically_then_linewise(snapshot, editable_150.clone(), 350);
@@ -29,52 +21,47 @@ pub fn compute_excerpt_ranges(
         expand_context_syntactically_then_linewise(snapshot, editable_180.clone(), 350);
     let editable_350_context_150 =
         expand_context_syntactically_then_linewise(snapshot, editable_350.clone(), 150);
+    let editable_350_context_512 =
+        expand_context_syntactically_then_linewise(snapshot, editable_350.clone(), 512);
+    let editable_350_context_1024 =
+        expand_context_syntactically_then_linewise(snapshot, editable_350.clone(), 1024);
+    let context_4096 = expand_context_syntactically_then_linewise(
+        snapshot,
+        editable_350_context_1024.clone(),
+        4096 - 1024,
+    );
+    let context_8192 =
+        expand_context_syntactically_then_linewise(snapshot, context_4096.clone(), 8192 - 4096);
 
-    let full_start_row = editable_150_context_350
-        .start
-        .row
-        .min(editable_180_context_350.start.row)
-        .min(editable_350_context_150.start.row);
-    let full_end_row = editable_150_context_350
-        .end
-        .row
-        .max(editable_180_context_350.end.row)
-        .max(editable_350_context_150.end.row);
+    let full_start_row = context_8192.start.row;
+    let full_end_row = context_8192.end.row;
 
     let full_context =
         Point::new(full_start_row, 0)..Point::new(full_end_row, snapshot.line_len(full_end_row));
 
-    let ranges = ExcerptRangePoints {
-        editable_150,
-        editable_180,
-        editable_350,
-        editable_150_context_350,
-        editable_180_context_350,
-        editable_350_context_150,
-    };
+    let full_context_offset_range = full_context.to_offset(snapshot);
 
-    (full_context, ranges)
-}
-
-/// Converts `ExcerptRangePoints` to byte-offset `ExcerptRanges` relative to `excerpt_start`.
-pub fn excerpt_ranges_to_byte_offsets(
-    ranges: &ExcerptRangePoints,
-    excerpt_start: usize,
-    snapshot: &BufferSnapshot,
-) -> ExcerptRanges {
     let to_offset = |range: &Range<Point>| -> Range<usize> {
         let start = range.start.to_offset(snapshot);
         let end = range.end.to_offset(snapshot);
-        (start - excerpt_start)..(end - excerpt_start)
+        (start - full_context_offset_range.start)..(end - full_context_offset_range.start)
     };
-    ExcerptRanges {
-        editable_150: to_offset(&ranges.editable_150),
-        editable_180: to_offset(&ranges.editable_180),
-        editable_350: to_offset(&ranges.editable_350),
-        editable_150_context_350: to_offset(&ranges.editable_150_context_350),
-        editable_180_context_350: to_offset(&ranges.editable_180_context_350),
-        editable_350_context_150: to_offset(&ranges.editable_350_context_150),
-    }
+
+    let ranges = ExcerptRanges {
+        editable_150: to_offset(&editable_150),
+        editable_180: to_offset(&editable_180),
+        editable_350: to_offset(&editable_350),
+        editable_512: Some(to_offset(&editable_512)),
+        editable_150_context_350: to_offset(&editable_150_context_350),
+        editable_180_context_350: to_offset(&editable_180_context_350),
+        editable_350_context_150: to_offset(&editable_350_context_150),
+        editable_350_context_512: Some(to_offset(&editable_350_context_512)),
+        editable_350_context_1024: Some(to_offset(&editable_350_context_1024)),
+        context_4096: Some(to_offset(&context_4096)),
+        context_8192: Some(to_offset(&context_8192)),
+    };
+
+    (full_context, full_context_offset_range, ranges)
 }
 
 pub fn editable_and_context_ranges_for_cursor_position(

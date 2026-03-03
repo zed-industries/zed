@@ -20,7 +20,7 @@ pub use crate::jupyter_settings::JupyterSettings;
 pub use crate::kernels::{Kernel, KernelSpecification, KernelStatus, PythonEnvKernelSpecification};
 pub use crate::repl_editor::*;
 pub use crate::repl_sessions_ui::{
-    ClearOutputs, Interrupt, ReplSessionsPage, Restart, Run, Sessions, Shutdown,
+    ClearCurrentOutput, ClearOutputs, Interrupt, ReplSessionsPage, Restart, Run, Sessions, Shutdown,
 };
 pub use crate::repl_settings::ReplSettings;
 pub use crate::repl_store::ReplStore;

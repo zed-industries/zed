@@ -7,7 +7,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 use uuid::Uuid;
 
-use crate::acp::AcpThreadHistory;
+use crate::ThreadHistory;
 use crate::context::load_context;
 use crate::mention_set::MentionSet;
 use crate::{
@@ -26,8 +26,8 @@ use editor::RowExt;
 use editor::SelectionEffects;
 use editor::scroll::ScrollOffset;
 use editor::{
-    Anchor, AnchorRangeExt, CodeActionProvider, Editor, EditorEvent, ExcerptId, ExcerptRange,
-    HighlightKey, MultiBuffer, MultiBufferSnapshot, ToOffset as _, ToPoint,
+    Anchor, AnchorRangeExt, CodeActionProvider, Editor, EditorEvent, ExcerptId, HighlightKey,
+    MultiBuffer, MultiBufferSnapshot, ToOffset as _, ToPoint,
     actions::SelectAll,
     display_map::{
         BlockContext, BlockPlacement, BlockProperties, BlockStyle, CustomBlockId, EditorMargins,
@@ -487,7 +487,7 @@ impl InlineAssistant {
         project: WeakEntity<Project>,
         thread_store: Entity<ThreadStore>,
         prompt_store: Option<Entity<PromptStore>>,
-        history: WeakEntity<AcpThreadHistory>,
+        history: WeakEntity<ThreadHistory>,
         initial_prompt: Option<String>,
         window: &mut Window,
         codegen_ranges: &[Range<Anchor>],
@@ -626,7 +626,7 @@ impl InlineAssistant {
         project: WeakEntity<Project>,
         thread_store: Entity<ThreadStore>,
         prompt_store: Option<Entity<PromptStore>>,
-        history: WeakEntity<AcpThreadHistory>,
+        history: WeakEntity<ThreadHistory>,
         initial_prompt: Option<String>,
         window: &mut Window,
         cx: &mut App,
@@ -671,7 +671,7 @@ impl InlineAssistant {
         workspace: Entity<Workspace>,
         thread_store: Entity<ThreadStore>,
         prompt_store: Option<Entity<PromptStore>>,
-        history: WeakEntity<AcpThreadHistory>,
+        history: WeakEntity<ThreadHistory>,
         window: &mut Window,
         cx: &mut App,
     ) -> InlineAssistId {
@@ -1495,11 +1495,11 @@ impl InlineAssistant {
 
             let mut new_blocks = Vec::new();
             for (new_row, old_row_range) in deleted_row_ranges {
-                let (_, buffer_start) = old_snapshot
-                    .point_to_buffer_offset(Point::new(*old_row_range.start(), 0))
+                let (_, start, _) = old_snapshot
+                    .point_to_buffer_point(Point::new(*old_row_range.start(), 0))
                     .unwrap();
-                let (_, buffer_end) = old_snapshot
-                    .point_to_buffer_offset(Point::new(
+                let (_, end, _) = old_snapshot
+                    .point_to_buffer_point(Point::new(
                         *old_row_range.end(),
                         old_snapshot.line_len(MultiBufferRow(*old_row_range.end())),
                     ))
@@ -1509,10 +1509,11 @@ impl InlineAssistant {
                     let multi_buffer =
                         cx.new(|_| MultiBuffer::without_headers(language::Capability::ReadOnly));
                     multi_buffer.update(cx, |multi_buffer, cx| {
-                        multi_buffer.push_excerpts(
+                        multi_buffer.set_excerpts_for_buffer(
                             old_buffer.clone(),
-                            // todo(lw): buffer_start and buffer_end might come from different snapshots!
-                            Some(ExcerptRange::new(buffer_start..buffer_end)),
+                            // todo(lw): start and end might come from different snapshots!
+                            [start..end],
+                            0,
                             cx,
                         );
                     });
@@ -2154,7 +2155,7 @@ pub mod test {
             });
 
             let thread_store = cx.new(|cx| ThreadStore::new(cx));
-            let history = cx.new(|cx| crate::acp::AcpThreadHistory::new(None, window, cx));
+            let history = cx.new(|cx| crate::ThreadHistory::new(None, window, cx));
 
             // Add editor to workspace
             workspace.update(cx, |workspace, cx| {

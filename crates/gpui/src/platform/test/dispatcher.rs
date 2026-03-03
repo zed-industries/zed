@@ -1,11 +1,12 @@
 use crate::{PlatformDispatcher, Priority, RunnableVariant};
+use scheduler::Instant;
 use scheduler::{Clock, Scheduler, SessionId, TestScheduler, TestSchedulerConfig, Yield};
 use std::{
     sync::{
         Arc,
         atomic::{AtomicUsize, Ordering},
     },
-    time::{Duration, Instant},
+    time::Duration,
 };
 
 /// TestDispatcher provides deterministic async execution for tests.
@@ -45,6 +46,10 @@ impl TestDispatcher {
 
     pub fn session_id(&self) -> SessionId {
         self.session_id
+    }
+
+    pub fn drain_tasks(&self) {
+        self.scheduler.drain_tasks();
     }
 
     pub fn advance_clock(&self, by: Duration) {

@@ -451,12 +451,29 @@ pub struct CommitDiff {
     pub files: Vec<CommitFile>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum CommitFileStatus {
+    Added,
+    Modified,
+    Deleted,
+}
+
 #[derive(Debug)]
 pub struct CommitFile {
     pub path: RepoPath,
     pub old_text: Option<String>,
     pub new_text: Option<String>,
     pub is_binary: bool,
+}
+
+impl CommitFile {
+    pub fn status(&self) -> CommitFileStatus {
+        match (&self.old_text, &self.new_text) {
+            (None, Some(_)) => CommitFileStatus::Added,
+            (Some(_), None) => CommitFileStatus::Deleted,
+            _ => CommitFileStatus::Modified,
+        }
+    }
 }
 
 impl CommitDetails {
@@ -881,6 +898,11 @@ pub trait GitRepository: Send + Sync {
     /// Run git diff
     fn diff(&self, diff: DiffType) -> BoxFuture<'_, Result<String>>;
 
+    fn diff_stat(
+        &self,
+        diff: DiffType,
+    ) -> BoxFuture<'_, Result<HashMap<RepoPath, crate::status::DiffStat>>>;
+
     /// Creates a checkpoint for the repository.
     fn checkpoint(&self) -> BoxFuture<'static, Result<GitRepositoryCheckpoint>>;
 
@@ -1296,33 +1318,29 @@ impl GitRepository for RealGitRepository {
         self.executor
             .spawn(async move {
                 fn logic(repo: &git2::Repository, path: &RepoPath) -> Result<Option<String>> {
-                    // This check is required because index.get_path() unwraps internally :(
                     let mut index = repo.index()?;
                     index.read(false)?;
 
                     const STAGE_NORMAL: i32 = 0;
-                    let path = path.as_std_path();
-                    // `RepoPath` contains a `RelPath` which normalizes `.` into an empty path
-                    // `get_path` unwraps on empty paths though, so undo that normalization here
-                    let path = if path.components().next().is_none() {
-                        ".".as_ref()
-                    } else {
-                        path
+                    // git2 unwraps internally on empty paths or `.`
+                    if path.is_empty() {
+                        bail!("empty path has no index text");
+                    }
+                    let Some(entry) = index.get_path(path.as_std_path(), STAGE_NORMAL) else {
+                        return Ok(None);
                     };
-                    let oid = match index.get_path(path, STAGE_NORMAL) {
-                        Some(entry) if entry.mode != GIT_MODE_SYMLINK => entry.id,
-                        _ => return Ok(None),
-                    };
+                    if entry.mode == GIT_MODE_SYMLINK {
+                        return Ok(None);
+                    }
 
-                    let content = repo.find_blob(oid)?.content().to_owned();
+                    let content = repo.find_blob(entry.id)?.content().to_owned();
                     Ok(String::from_utf8(content).ok())
                 }
 
-                match logic(&repo.lock(), &path) {
-                    Ok(value) => return value,
-                    Err(err) => log::error!("Error loading index text: {:?}", err),
-                }
-                None
+                logic(&repo.lock(), &path)
+                    .context("loading index text")
+                    .log_err()
+                    .flatten()
             })
             .boxed()
     }
@@ -1331,14 +1349,26 @@ impl GitRepository for RealGitRepository {
         let repo = self.repository.clone();
         self.executor
             .spawn(async move {
-                let repo = repo.lock();
-                let head = repo.head().ok()?.peel_to_tree().log_err()?;
-                let entry = head.get_path(path.as_std_path()).ok()?;
-                if entry.filemode() == i32::from(git2::FileMode::Link) {
-                    return None;
+                fn logic(repo: &git2::Repository, path: &RepoPath) -> Result<Option<String>> {
+                    let head = repo.head()?.peel_to_tree()?;
+                    // git2 unwraps internally on empty paths or `.`
+                    if path.is_empty() {
+                        return Err(anyhow!("empty path has no committed text"));
+                    }
+                    let Some(entry) = head.get_path(path.as_std_path()).ok() else {
+                        return Ok(None);
+                    };
+                    if entry.filemode() == i32::from(git2::FileMode::Link) {
+                        return Ok(None);
+                    }
+                    let content = repo.find_blob(entry.id())?.content().to_owned();
+                    Ok(String::from_utf8(content).ok())
                 }
-                let content = repo.find_blob(entry.id()).log_err()?.content().to_owned();
-                String::from_utf8(content).ok()
+
+                logic(&repo.lock(), &path)
+                    .context("loading committed text")
+                    .log_err()
+                    .flatten()
             })
             .boxed()
     }
@@ -1998,7 +2028,7 @@ impl GitRepository for RealGitRepository {
                     DiffType::MergeBase { base_ref } => {
                         new_command(&git_binary_path)
                             .current_dir(&working_directory)
-                            .args(["diff", "--merge-base", base_ref.as_ref(), "HEAD"])
+                            .args(["diff", "--merge-base", base_ref.as_ref()])
                             .output()
                             .await?
                     }
@@ -2010,6 +2040,57 @@ impl GitRepository for RealGitRepository {
                     String::from_utf8_lossy(&output.stderr)
                 );
                 Ok(String::from_utf8_lossy(&output.stdout).to_string())
+            })
+            .boxed()
+    }
+
+    fn diff_stat(
+        &self,
+        diff: DiffType,
+    ) -> BoxFuture<'_, Result<HashMap<RepoPath, crate::status::DiffStat>>> {
+        let working_directory = self.working_directory();
+        let git_binary_path = self.any_git_binary_path.clone();
+        self.executor
+            .spawn(async move {
+                let working_directory = working_directory?;
+                let output = match diff {
+                    DiffType::HeadToIndex => {
+                        new_command(&git_binary_path)
+                            .current_dir(&working_directory)
+                            .args(["diff", "--numstat", "--staged"])
+                            .output()
+                            .await?
+                    }
+                    DiffType::HeadToWorktree => {
+                        new_command(&git_binary_path)
+                            .current_dir(&working_directory)
+                            .args(["diff", "--numstat"])
+                            .output()
+                            .await?
+                    }
+                    DiffType::MergeBase { base_ref } => {
+                        new_command(&git_binary_path)
+                            .current_dir(&working_directory)
+                            .args([
+                                "diff",
+                                "--numstat",
+                                "--merge-base",
+                                base_ref.as_ref(),
+                                "HEAD",
+                            ])
+                            .output()
+                            .await?
+                    }
+                };
+
+                anyhow::ensure!(
+                    output.status.success(),
+                    "Failed to run git diff --numstat:\n{}",
+                    String::from_utf8_lossy(&output.stderr)
+                );
+                Ok(crate::status::parse_numstat(&String::from_utf8_lossy(
+                    &output.stdout,
+                )))
             })
             .boxed()
     }

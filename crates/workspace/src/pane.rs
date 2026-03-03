@@ -1148,7 +1148,7 @@ impl Pane {
                     }
                 };
 
-                self.close_items(window, cx, SaveIntent::Skip, |existing_item| {
+                self.close_items(window, cx, SaveIntent::Skip, &|existing_item| {
                     views_to_close.contains(&existing_item)
                 })
                 .detach();
@@ -1468,7 +1468,8 @@ impl Pane {
     fn update_active_tab(&mut self, index: usize) {
         if !self.is_tab_pinned(index) {
             self.suppress_scroll = false;
-            self.tab_bar_scroll_handle.scroll_to_item(index);
+            self.tab_bar_scroll_handle
+                .scroll_to_item(index - self.pinned_tab_count);
         }
     }
 
@@ -1621,7 +1622,7 @@ impl Pane {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
-        self.close_items(window, cx, save_intent, move |view_id| {
+        self.close_items(window, cx, save_intent, &move |view_id| {
             view_id == item_id_to_close
         })
     }
@@ -1640,7 +1641,7 @@ impl Pane {
             .filter(|item| item.project_path(cx).as_ref() == Some(project_path))
             .map(|item| item.item_id())
             .collect();
-        self.close_items(window, cx, save_intent, move |item_id| {
+        self.close_items(window, cx, save_intent, &move |item_id| {
             matching_item_ids.contains(&item_id)
                 && (close_pinned || !pinned_item_ids.contains(&item_id))
         })
@@ -1670,7 +1671,7 @@ impl Pane {
             window,
             cx,
             action.save_intent.unwrap_or(SaveIntent::Close),
-            move |item_id| {
+            &move |item_id| {
                 item_id != active_item_id
                     && (action.close_pinned || !pinned_item_ids.contains(&item_id))
             },
@@ -1694,7 +1695,7 @@ impl Pane {
             window,
             cx,
             action.save_intent.unwrap_or(SaveIntent::Close),
-            move |item_id| {
+            &move |item_id| {
                 (action.close_pinned || !pinned_item_ids.contains(&item_id))
                     && multibuffer_items.contains(&item_id)
             },
@@ -1714,7 +1715,7 @@ impl Pane {
         let clean_item_ids = self.clean_item_ids(cx);
         let pinned_item_ids = self.pinned_item_ids();
 
-        self.close_items(window, cx, SaveIntent::Close, move |item_id| {
+        self.close_items(window, cx, SaveIntent::Close, &move |item_id| {
             clean_item_ids.contains(&item_id)
                 && (action.close_pinned || !pinned_item_ids.contains(&item_id))
         })
@@ -1756,7 +1757,7 @@ impl Pane {
         let to_the_side_item_ids = self.to_the_side_item_ids(item_id, side);
         let pinned_item_ids = self.pinned_item_ids();
 
-        self.close_items(window, cx, SaveIntent::Close, move |item_id| {
+        self.close_items(window, cx, SaveIntent::Close, &move |item_id| {
             to_the_side_item_ids.contains(&item_id)
                 && (close_pinned || !pinned_item_ids.contains(&item_id))
         })
@@ -1778,7 +1779,7 @@ impl Pane {
             window,
             cx,
             action.save_intent.unwrap_or(SaveIntent::Close),
-            |item_id| action.close_pinned || !pinned_item_ids.contains(&item_id),
+            &|item_id| action.close_pinned || !pinned_item_ids.contains(&item_id),
         )
     }
 
@@ -1911,7 +1912,7 @@ impl Pane {
         window: &mut Window,
         cx: &mut Context<Pane>,
         mut save_intent: SaveIntent,
-        should_close: impl Fn(EntityId) -> bool,
+        should_close: &dyn Fn(EntityId) -> bool,
     ) -> Task<Result<()>> {
         // Find the items to close.
         let mut items_to_close = Vec::new();
@@ -7932,6 +7933,71 @@ mod tests {
         assert!(
             !tab_bounds.intersects(&new_tab_button_bounds),
             "Tab should not overlap with the new tab button, if this is failing check if there's been a redesign!"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_pinned_tabs_scroll_to_item_uses_correct_index(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        cx.simulate_resize(size(px(400.), px(300.)));
+
+        for label in ["A", "B", "C"] {
+            add_labeled_item(&pane, label, false, cx);
+        }
+
+        pane.update_in(cx, |pane, window, cx| {
+            pane.pin_tab_at(0, window, cx);
+            pane.pin_tab_at(1, window, cx);
+            pane.pin_tab_at(2, window, cx);
+        });
+
+        for label in ["D", "E", "F", "G", "H", "I", "J", "K"] {
+            add_labeled_item(&pane, label, false, cx);
+        }
+
+        assert_item_labels(
+            &pane,
+            ["A!", "B!", "C!", "D", "E", "F", "G", "H", "I", "J", "K*"],
+            cx,
+        );
+
+        cx.run_until_parked();
+
+        // Verify overflow exists (precondition for scroll test)
+        let scroll_handle =
+            pane.update_in(cx, |pane, _window, _cx| pane.tab_bar_scroll_handle.clone());
+        assert!(
+            scroll_handle.max_offset().width > px(0.),
+            "Test requires tab overflow to verify scrolling. Increase tab count or reduce window width."
+        );
+
+        // Activate a different tab first, then activate K
+        // This ensures we're not just re-activating an already-active tab
+        pane.update_in(cx, |pane, window, cx| {
+            pane.activate_item(3, true, true, window, cx);
+        });
+        cx.run_until_parked();
+
+        pane.update_in(cx, |pane, window, cx| {
+            pane.activate_item(10, true, true, window, cx);
+        });
+        cx.run_until_parked();
+
+        let scroll_handle =
+            pane.update_in(cx, |pane, _window, _cx| pane.tab_bar_scroll_handle.clone());
+        let k_tab_bounds = cx.debug_bounds("TAB-10").unwrap();
+        let scroll_bounds = scroll_handle.bounds();
+
+        assert!(
+            k_tab_bounds.left() >= scroll_bounds.left(),
+            "Active tab K should be scrolled into view"
         );
     }
 

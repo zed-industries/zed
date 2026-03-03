@@ -1,3 +1,4 @@
+use scheduler::Instant;
 use std::{
     any::{TypeId, type_name},
     cell::{BorrowMutError, Cell, Ref, RefCell, RefMut},
@@ -7,7 +8,7 @@ use std::{
     path::{Path, PathBuf},
     rc::{Rc, Weak},
     sync::{Arc, atomic::Ordering::SeqCst},
-    time::{Duration, Instant},
+    time::Duration,
 };
 
 use anyhow::{Context as _, Result, anyhow};
@@ -25,11 +26,11 @@ pub use async_context::*;
 use collections::{FxHashMap, FxHashSet, HashMap, VecDeque};
 pub use context::*;
 pub use entity_map::*;
+use gpui_util::{ResultExt, debug_panic};
 use http_client::{HttpClient, Url};
 use smallvec::SmallVec;
 #[cfg(any(test, feature = "test-support"))]
 pub use test_context::*;
-use util::{ResultExt, debug_panic};
 #[cfg(all(target_os = "macos", any(test, feature = "test-support")))]
 pub use visual_test_context::*;
 
@@ -46,7 +47,7 @@ use crate::{
     SharedString, SubscriberSet, Subscription, SvgRenderer, Task, TextRenderingMode, TextSystem,
     ThermalState, Window, WindowAppearance, WindowHandle, WindowId, WindowInvalidator,
     colors::{Colors, GlobalColors},
-    current_platform, hash, init_app_menus,
+    hash, init_app_menus,
 };
 
 mod async_context;
@@ -132,25 +133,10 @@ pub struct Application(Rc<AppCell>);
 /// Represents an application before it is fully launched. Once your app is
 /// configured, you'll start the app with `App::run`.
 impl Application {
-    /// Builds an app with the given asset source.
-    #[allow(clippy::new_without_default)]
-    pub fn new() -> Self {
-        #[cfg(any(test, feature = "test-support"))]
-        log::info!("GPUI was compiled in test mode");
-
+    /// Builds an app with a caller-provided platform implementation.
+    pub fn with_platform(platform: Rc<dyn Platform>) -> Self {
         Self(App::new_app(
-            current_platform(false),
-            Arc::new(()),
-            Arc::new(NullHttpClient),
-        ))
-    }
-
-    /// Build an app in headless mode. This prevents opening windows,
-    /// but makes it possible to run an application in an context like
-    /// SSH, where GUI applications are not allowed.
-    pub fn headless() -> Self {
-        Self(App::new_app(
-            current_platform(true),
+            platform,
             Arc::new(()),
             Arc::new(NullHttpClient),
         ))
@@ -765,6 +751,37 @@ impl App {
         }));
 
         app
+    }
+
+    #[doc(hidden)]
+    pub fn ref_counts_drop_handle(&self) -> impl Sized + use<> {
+        self.entities.ref_counts_drop_handle()
+    }
+
+    /// Captures a snapshot of all entities that currently have alive handles.
+    ///
+    /// The returned [`LeakDetectorSnapshot`] can later be passed to
+    /// [`assert_no_new_leaks`](Self::assert_no_new_leaks) to verify that no
+    /// entities created after the snapshot are still alive.
+    #[cfg(any(test, feature = "leak-detection"))]
+    pub fn leak_detector_snapshot(&self) -> LeakDetectorSnapshot {
+        self.entities.leak_detector_snapshot()
+    }
+
+    /// Asserts that no entities created after `snapshot` still have alive handles.
+    ///
+    /// Entities that were already tracked at the time of the snapshot are ignored,
+    /// even if they still have handles. Only *new* entities (those whose
+    /// `EntityId` was not present in the snapshot) are considered leaks.
+    ///
+    /// # Panics
+    ///
+    /// Panics if any new entity handles exist. The panic message lists every
+    /// leaked entity with its type name, and includes allocation-site backtraces
+    /// when `LEAK_BACKTRACE` is set.
+    #[cfg(any(test, feature = "leak-detection"))]
+    pub fn assert_no_new_leaks(&self, snapshot: &LeakDetectorSnapshot) {
+        self.entities.assert_no_new_leaks(snapshot)
     }
 
     /// Quit the application gracefully. Handlers registered with [`Context::on_app_quit`]

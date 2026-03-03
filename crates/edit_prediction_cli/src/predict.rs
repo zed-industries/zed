@@ -53,11 +53,10 @@ pub async fn run_prediction(
         );
     };
 
-    run_context_retrieval(example, app_state.clone(), example_progress, cx.clone()).await?;
-
     if let PredictionProvider::Teacher(backend) | PredictionProvider::TeacherNonBatching(backend) =
         provider
     {
+        run_context_retrieval(example, app_state.clone(), example_progress, cx.clone()).await?;
         run_format_prompt(
             example,
             &FormatPromptArgs { provider },
@@ -81,6 +80,7 @@ pub async fn run_prediction(
     }
 
     run_load_project(example, app_state.clone(), example_progress, cx.clone()).await?;
+    run_context_retrieval(example, app_state.clone(), example_progress, cx.clone()).await?;
 
     let step_progress = example_progress.start(Step::Predict);
 
@@ -110,8 +110,8 @@ pub async fn run_prediction(
 
     ep_store.update(&mut cx, |store, _cx| {
         let model = match provider {
-            PredictionProvider::Zeta1 => edit_prediction::EditPredictionModel::Zeta1,
-            PredictionProvider::Zeta2(_) => edit_prediction::EditPredictionModel::Zeta2,
+            PredictionProvider::Zeta1 => edit_prediction::EditPredictionModel::Zeta,
+            PredictionProvider::Zeta2(_) => edit_prediction::EditPredictionModel::Zeta,
             PredictionProvider::Sweep => edit_prediction::EditPredictionModel::Sweep,
             PredictionProvider::Mercury => edit_prediction::EditPredictionModel::Mercury,
             PredictionProvider::Teacher(..)
