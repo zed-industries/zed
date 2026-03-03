@@ -845,7 +845,9 @@ impl ConnectionView {
             );
         });
 
-        if let Some((item_ix, offset_in_item)) = thread.read(cx).scroll_position() {
+        let scroll_position = thread.read(cx).scroll_position();
+        dbg!("scroll_position: restoring in UI", &scroll_position);
+        if let Some((item_ix, offset_in_item)) = scroll_position {
             list_state.scroll_to(ListOffset {
                 item_ix,
                 offset_in_item: px(offset_in_item),

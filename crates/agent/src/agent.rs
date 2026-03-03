@@ -355,6 +355,10 @@ impl NativeAgent {
         let scroll_position = thread
             .ui_scroll_position()
             .map(|sp| (sp.item_ix, sp.offset_in_item));
+        dbg!(
+            "scroll_position: register_session: from Thread",
+            &scroll_position
+        );
         let token_usage = thread.latest_token_usage();
         let project = thread.project.clone();
         let action_log = thread.action_log.clone();
@@ -877,10 +881,18 @@ impl NativeAgent {
                     offset_in_item,
                 },
             );
+        dbg!(
+            "scroll_position: save_thread: from AcpThread",
+            &scroll_position
+        );
         let database_future = ThreadsDatabase::connect(cx);
         let db_thread = thread.update(cx, |thread, cx| {
             thread.set_draft_prompt(draft_prompt);
             thread.set_ui_scroll_position(scroll_position);
+            dbg!(
+                "scroll_position: save_thread: written to Thread",
+                thread.ui_scroll_position()
+            );
             thread.to_db(cx)
         });
         let thread_store = self.thread_store.clone();

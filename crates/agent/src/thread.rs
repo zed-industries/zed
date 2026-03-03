@@ -1197,7 +1197,7 @@ impl Thread {
 
         let action_log = cx.new(|_| ActionLog::new(project.clone()));
 
-        Self {
+        let thread = Self {
             id,
             prompt_id: PromptId::new(),
             title: if db_thread.title.is_empty() {
@@ -1237,7 +1237,9 @@ impl Thread {
             draft_prompt: db_thread.draft_prompt,
             ui_scroll_position: db_thread.ui_scroll_position,
             running_subagents: Vec::new(),
-        }
+        };
+        dbg!("scroll_position: from_db", &thread.ui_scroll_position);
+        thread
     }
 
     pub fn to_db(&self, cx: &App) -> Task<DbThread> {
@@ -1263,6 +1265,7 @@ impl Thread {
             draft_prompt: self.draft_prompt.clone(),
             ui_scroll_position: self.ui_scroll_position,
         };
+        dbg!("scroll_position: to_db", &thread.ui_scroll_position);
 
         cx.background_spawn(async move {
             let initial_project_snapshot = initial_project_snapshot.await;
@@ -1315,7 +1318,10 @@ impl Thread {
         self.ui_scroll_position
     }
 
-    pub fn set_ui_scroll_position(&mut self, position: Option<crate::db::SerializedScrollPosition>) {
+    pub fn set_ui_scroll_position(
+        &mut self,
+        position: Option<crate::db::SerializedScrollPosition>,
+    ) {
         self.ui_scroll_position = position;
     }
 
