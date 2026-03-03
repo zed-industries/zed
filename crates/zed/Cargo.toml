@@ -241,6 +241,9 @@ gpui = { workspace = true, features = [
 ] }
 ashpd.workspace = true
 
+[target.'cfg(target_os = "linux")'.build-dependencies]
+pkg-config = "0.3.22"
+
 [dev-dependencies]
 call = { workspace = true, features = ["test-support"] }
 dap = { workspace = true, features = ["test-support"] }
