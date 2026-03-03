@@ -8955,13 +8955,15 @@ impl LineWithInvisibles {
                             // avoid printing them
                             let is_soft_wrapped = is_row_soft_wrapped(row);
                             if highlighted_chunk.is_tab {
+                                let line_offset_base = len + line.len();
                                 if non_whitespace_added || !is_soft_wrapped {
                                     invisibles.push(Invisible::Tab {
-                                        line_start_offset: line.len(),
-                                        line_end_offset: line.len() + line_chunk.len(),
+                                        line_start_offset: line_offset_base,
+                                        line_end_offset: line_offset_base + line_chunk.len(),
                                     });
                                 }
                             } else {
+                                let line_offset_base = len + line.len();
                                 invisibles.extend(line_chunk.char_indices().filter_map(
                                     |(index, c)| {
                                         let is_whitespace = c.is_whitespace();
@@ -8970,7 +8972,7 @@ impl LineWithInvisibles {
                                             && (non_whitespace_added || !is_soft_wrapped)
                                         {
                                             Some(Invisible::Whitespace {
-                                                line_offset: line.len() + index,
+                                                line_offset: line_offset_base + index,
                                             })
                                         } else {
                                             None
@@ -13156,6 +13158,35 @@ mod tests {
 
                 editor_width += resize_step;
             }
+        }
+    }
+
+    #[gpui::test]
+    fn test_invisibles_with_non_breaking_space(cx: &mut TestAppContext) {
+        let input_text = "nbsp:\u{00A0}regular space: trailing space: ";
+        let expected_invisibles = vec![
+            Invisible::Whitespace { line_offset: 14 },
+            Invisible::Whitespace { line_offset: 21 },
+            Invisible::Whitespace { line_offset: 30 },
+            Invisible::Whitespace { line_offset: 37 },
+        ];
+
+        assert_eq!(5, input_text.chars().filter(|c| c.is_whitespace()).count());
+
+        for show_line_numbers in [true, false] {
+            init_test(cx, |s| {
+                s.defaults.show_whitespaces = Some(ShowWhitespaceSetting::All);
+            });
+
+            let actual_invisibles = collect_invisibles_from_new_editor(
+                cx,
+                EditorMode::full(),
+                input_text,
+                px(500.0),
+                show_line_numbers,
+            );
+
+            assert_eq!(expected_invisibles, actual_invisibles);
         }
     }
 
