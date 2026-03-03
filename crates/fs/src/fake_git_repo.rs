@@ -844,7 +844,11 @@ impl GitRepository for FakeGitRepository {
             let all_paths: HashSet<&RepoPath> = state
                 .head_contents
                 .keys()
-                .chain(worktree_files.keys())
+                .chain(
+                    worktree_files
+                        .keys()
+                        .filter(|p| state.index_contents.contains_key(*p)),
+                )
                 .collect();
             for path in all_paths {
                 if !matches_prefixes(path, &path_prefixes) {

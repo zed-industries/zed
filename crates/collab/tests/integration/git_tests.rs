@@ -349,6 +349,8 @@ async fn test_diff_stat_sync_between_host_and_downstream_client(
         &[
             ("src/lib.rs", "line1\nold_line2\nline3\nline4\n".into()),
             ("src/staged_only.rs", "x\ny\n".into()),
+            ("src/new_file.rs", "added1\nadded2\n".into()),
+            ("README.md", "# project 1".into()),
         ],
     );
 
@@ -379,19 +381,9 @@ async fn test_diff_stat_sync_between_host_and_downstream_client(
 
     cx_a.run_until_parked();
 
-    // Diff stats are populated from the repository snapshot, which is computed
-    // regardless of the diff_stats UI setting. Verify the snapshot has data.
     let stats_a = collect_diff_stats(&panel_a, cx_a);
     let stats_b = collect_diff_stats(&panel_b, cx_b);
 
-    // The fake git repo compares HEAD vs working tree (like `git diff --numstat HEAD`).
-    // HEAD has: src/lib.rs ("line1\nold_line2\n"), src/deleted.rs ("was_here\n")
-    // Worktree has: src/lib.rs ("line1\nline2\nline3\n"), src/new_file.rs ("added1\nadded2\n"), README.md ("# project 1")
-    //
-    // src/lib.rs:      head=2 lines vs worktree=3 lines → +3 -2
-    // src/deleted.rs:  head=1 line vs worktree=missing → +0 -1
-    // src/new_file.rs: head=missing vs worktree=2 lines → +2 -0
-    // README.md:       head=missing vs worktree=1 line → +1 -0
     let mut expected: HashMap<RepoPath, DiffStat> = HashMap::default();
     expected.insert(
         RepoPath::new("src/lib.rs").unwrap(),
@@ -424,7 +416,6 @@ async fn test_diff_stat_sync_between_host_and_downstream_client(
     assert_eq!(stats_a, expected, "host diff stats should match expected");
     assert_eq!(stats_a, stats_b, "host and remote should agree");
 
-    // ── Update a file on host, save → remote picks up new diff stats ──
     let buffer_a = project_a
         .update(cx_a, |p, cx| {
             p.open_buffer((worktree_id, rel_path("src/lib.rs")), cx)
@@ -432,7 +423,6 @@ async fn test_diff_stat_sync_between_host_and_downstream_client(
         .await
         .unwrap();
 
-    // Also open the buffer on the remote so its project sees the update.
     let _buffer_b = project_b
         .update(cx_b, |p, cx| {
             p.open_buffer((worktree_id, rel_path("src/lib.rs")), cx)
@@ -455,8 +445,6 @@ async fn test_diff_stat_sync_between_host_and_downstream_client(
     let stats_a = collect_diff_stats(&panel_a, cx_a);
     let stats_b = collect_diff_stats(&panel_b, cx_b);
 
-    // After adding "line4\n", worktree src/lib.rs is now "line1\nline2\nline3\nline4\n" (4 lines).
-    // HEAD vs worktree: head=2 lines vs worktree=4 lines → +4 -2
     let mut expected_after_edit = expected.clone();
     expected_after_edit.insert(
         RepoPath::new("src/lib.rs").unwrap(),
