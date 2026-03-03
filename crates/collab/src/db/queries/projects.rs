@@ -411,8 +411,12 @@ impl Database {
                             status_kind: ActiveValue::set(status_kind),
                             first_status: ActiveValue::set(first_status),
                             second_status: ActiveValue::set(second_status),
-                            lines_added: ActiveValue::set(None),
-                            lines_deleted: ActiveValue::set(None),
+                            lines_added: ActiveValue::set(
+                                status_entry.diff_stat_added.map(|v| v as i32),
+                            ),
+                            lines_deleted: ActiveValue::set(
+                                status_entry.diff_stat_deleted.map(|v| v as i32),
+                            ),
                         }
                     }),
                 )
@@ -454,47 +458,6 @@ impl Database {
                     .set(project_repository_statuses::ActiveModel {
                         is_deleted: ActiveValue::Set(true),
                         scan_id: ActiveValue::Set(update.scan_id as i64),
-                        ..Default::default()
-                    })
-                    .exec(&*tx)
-                    .await?;
-            }
-
-            for diff_stat in &update.updated_diff_stats {
-                project_repository_statuses::Entity::update_many()
-                    .filter(
-                        project_repository_statuses::Column::ProjectId
-                            .eq(project_id)
-                            .and(
-                                project_repository_statuses::Column::RepositoryId.eq(repository_id),
-                            )
-                            .and(project_repository_statuses::Column::RepoPath.eq(&diff_stat.path)),
-                    )
-                    .set(project_repository_statuses::ActiveModel {
-                        lines_added: ActiveValue::Set(Some(diff_stat.added as i32)),
-                        lines_deleted: ActiveValue::Set(Some(diff_stat.deleted as i32)),
-                        ..Default::default()
-                    })
-                    .exec(&*tx)
-                    .await?;
-            }
-
-            if !update.removed_diff_stats.is_empty() {
-                project_repository_statuses::Entity::update_many()
-                    .filter(
-                        project_repository_statuses::Column::ProjectId
-                            .eq(project_id)
-                            .and(
-                                project_repository_statuses::Column::RepositoryId.eq(repository_id),
-                            )
-                            .and(
-                                project_repository_statuses::Column::RepoPath
-                                    .is_in(update.removed_diff_stats.iter()),
-                            ),
-                    )
-                    .set(project_repository_statuses::ActiveModel {
-                        lines_added: ActiveValue::Set(None),
-                        lines_deleted: ActiveValue::Set(None),
                         ..Default::default()
                     })
                     .exec(&*tx)
@@ -860,18 +823,8 @@ impl Database {
                     .stream(tx)
                     .await?;
                 let mut updated_statuses = Vec::new();
-                let mut updated_diff_stats = Vec::new();
                 while let Some(status_entry) = repository_statuses.next().await {
                     let status_entry = status_entry?;
-                    if let (Some(added), Some(deleted)) =
-                        (status_entry.lines_added, status_entry.lines_deleted)
-                    {
-                        updated_diff_stats.push(proto::GitDiffStatEntry {
-                            path: status_entry.repo_path.clone(),
-                            added: added as u32,
-                            deleted: deleted as u32,
-                        });
-                    }
                     updated_statuses.push(db_status_to_proto(status_entry)?);
                 }
 
@@ -929,8 +882,6 @@ impl Database {
                         stash_entries: Vec::new(),
                         remote_upstream_url: db_repository_entry.remote_upstream_url.clone(),
                         remote_origin_url: db_repository_entry.remote_origin_url.clone(),
-                        updated_diff_stats,
-                        removed_diff_stats: Vec::new(),
                         original_repo_abs_path: Some(db_repository_entry.abs_path),
                     });
                 }

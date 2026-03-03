@@ -3541,7 +3541,7 @@ impl GitPanel {
                 repo_path: entry.repo_path.clone(),
                 status: entry.status,
                 staging,
-                diff_stat: repo.diff_stat_for_path(&entry.repo_path),
+                diff_stat: entry.diff_stat,
             };
 
             if staging.has_staged() {
@@ -3578,7 +3578,7 @@ impl GitPanel {
                             repo_path: ops.repo_path.clone(),
                             status: status.status,
                             staging: StageStatus::Staged,
-                            diff_stat: repo.diff_stat_for_path(&ops.repo_path),
+                            diff_stat: status.diff_stat,
                         });
             }
         }

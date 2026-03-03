@@ -192,6 +192,7 @@ pub struct GitStoreCheckpoint {
 pub struct StatusEntry {
     pub repo_path: RepoPath,
     pub status: FileStatus,
+    pub diff_stat: Option<DiffStat>,
 }
 
 impl StatusEntry {
@@ -213,6 +214,8 @@ impl StatusEntry {
             repo_path: self.repo_path.to_proto(),
             simple_status,
             status: Some(status_to_proto(self.status)),
+            diff_stat_added: self.diff_stat.map(|ds| ds.added),
+            diff_stat_deleted: self.diff_stat.map(|ds| ds.deleted),
         }
     }
 }
@@ -223,7 +226,15 @@ impl TryFrom<proto::StatusEntry> for StatusEntry {
     fn try_from(value: proto::StatusEntry) -> Result<Self, Self::Error> {
         let repo_path = RepoPath::from_proto(&value.repo_path).context("invalid repo path")?;
         let status = status_from_proto(value.simple_status, value.status)?;
-        Ok(Self { repo_path, status })
+        let diff_stat = match (value.diff_stat_added, value.diff_stat_deleted) {
+            (Some(added), Some(deleted)) => Some(DiffStat { added, deleted }),
+            _ => None,
+        };
+        Ok(Self {
+            repo_path,
+            status,
+            diff_stat,
+        })
     }
 }
 
@@ -239,31 +250,6 @@ impl sum_tree::Item for StatusEntry {
 }
 
 impl sum_tree::KeyedItem for StatusEntry {
-    type Key = PathKey;
-
-    fn key(&self) -> Self::Key {
-        PathKey(self.repo_path.as_ref().clone())
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct DiffStatEntry {
-    pub repo_path: RepoPath,
-    pub diff_stat: DiffStat,
-}
-
-impl sum_tree::Item for DiffStatEntry {
-    type Summary = PathSummary<DiffStat>;
-
-    fn summary(&self, _: <Self::Summary as sum_tree::Summary>::Context<'_>) -> Self::Summary {
-        PathSummary {
-            max_path: self.repo_path.as_ref().clone(),
-            item_summary: self.diff_stat,
-        }
-    }
-}
-
-impl sum_tree::KeyedItem for DiffStatEntry {
     type Key = PathKey;
 
     fn key(&self) -> Self::Key {
@@ -290,7 +276,6 @@ pub enum CommitDataState {
 pub struct RepositorySnapshot {
     pub id: RepositoryId,
     pub statuses_by_path: SumTree<StatusEntry>,
-    pub diff_stats_by_path: SumTree<DiffStatEntry>,
     pub work_directory_abs_path: Arc<Path>,
     /// The working directory of the original repository. For a normal
     /// checkout this equals `work_directory_abs_path`. For a git worktree
@@ -3490,7 +3475,6 @@ impl RepositorySnapshot {
         Self {
             id,
             statuses_by_path: Default::default(),
-            diff_stats_by_path: Default::default(),
             original_repo_abs_path: original_repo_abs_path
                 .unwrap_or_else(|| work_directory_abs_path.clone()),
             work_directory_abs_path,
@@ -3515,16 +3499,6 @@ impl RepositorySnapshot {
                 .map(|entry| entry.to_proto())
                 .collect(),
             removed_statuses: Default::default(),
-            updated_diff_stats: self
-                .diff_stats_by_path
-                .iter()
-                .map(|entry| proto::GitDiffStatEntry {
-                    path: entry.repo_path.to_proto(),
-                    added: entry.diff_stat.added,
-                    deleted: entry.diff_stat.deleted,
-                })
-                .collect(),
-            removed_diff_stats: Default::default(),
             current_merge_conflicts: self
                 .merge
                 .merge_heads_by_conflicted_path
@@ -3570,7 +3544,7 @@ impl RepositorySnapshot {
                             current_new_entry = new_statuses.next();
                         }
                         Ordering::Equal => {
-                            if new_entry.status != old_entry.status {
+                            if new_entry != old_entry {
                                 updated_statuses.push(new_entry.to_proto());
                             }
                             current_old_entry = old_statuses.next();
@@ -3594,66 +3568,11 @@ impl RepositorySnapshot {
             }
         }
 
-        let mut updated_diff_stats: Vec<proto::GitDiffStatEntry> = Vec::new();
-        let mut removed_diff_stats: Vec<String> = Vec::new();
-
-        let mut new_diff_stats = self.diff_stats_by_path.iter().peekable();
-        let mut old_diff_stats = old.diff_stats_by_path.iter().peekable();
-
-        let mut current_new_ds = new_diff_stats.next();
-        let mut current_old_ds = old_diff_stats.next();
-        loop {
-            match (current_new_ds, current_old_ds) {
-                (Some(new_entry), Some(old_entry)) => {
-                    match new_entry.repo_path.cmp(&old_entry.repo_path) {
-                        Ordering::Less => {
-                            updated_diff_stats.push(proto::GitDiffStatEntry {
-                                path: new_entry.repo_path.to_proto(),
-                                added: new_entry.diff_stat.added,
-                                deleted: new_entry.diff_stat.deleted,
-                            });
-                            current_new_ds = new_diff_stats.next();
-                        }
-                        Ordering::Equal => {
-                            if new_entry.diff_stat != old_entry.diff_stat {
-                                updated_diff_stats.push(proto::GitDiffStatEntry {
-                                    path: new_entry.repo_path.to_proto(),
-                                    added: new_entry.diff_stat.added,
-                                    deleted: new_entry.diff_stat.deleted,
-                                });
-                            }
-                            current_old_ds = old_diff_stats.next();
-                            current_new_ds = new_diff_stats.next();
-                        }
-                        Ordering::Greater => {
-                            removed_diff_stats.push(old_entry.repo_path.to_proto());
-                            current_old_ds = old_diff_stats.next();
-                        }
-                    }
-                }
-                (None, Some(old_entry)) => {
-                    removed_diff_stats.push(old_entry.repo_path.to_proto());
-                    current_old_ds = old_diff_stats.next();
-                }
-                (Some(new_entry), None) => {
-                    updated_diff_stats.push(proto::GitDiffStatEntry {
-                        path: new_entry.repo_path.to_proto(),
-                        added: new_entry.diff_stat.added,
-                        deleted: new_entry.diff_stat.deleted,
-                    });
-                    current_new_ds = new_diff_stats.next();
-                }
-                (None, None) => break,
-            }
-        }
-
         proto::UpdateRepository {
             branch_summary: self.branch.as_ref().map(branch_to_proto),
             head_commit_details: self.head_commit.as_ref().map(commit_details_to_proto),
             updated_statuses,
             removed_statuses,
-            updated_diff_stats,
-            removed_diff_stats,
             current_merge_conflicts: self
                 .merge
                 .merge_heads_by_conflicted_path
@@ -3696,9 +3615,9 @@ impl RepositorySnapshot {
     }
 
     pub fn diff_stat_for_path(&self, path: &RepoPath) -> Option<DiffStat> {
-        self.diff_stats_by_path
+        self.statuses_by_path
             .get(&PathKey(path.as_ref().clone()), ())
-            .map(|entry| entry.diff_stat)
+            .and_then(|entry| entry.diff_stat)
     }
 
     pub fn abs_path_to_repo_path(&self, abs_path: &Path) -> Option<RepoPath> {
@@ -6112,29 +6031,6 @@ impl Repository {
         }
         self.snapshot.statuses_by_path.edit(edits, ());
 
-        let diff_stat_edits = update
-            .removed_diff_stats
-            .into_iter()
-            .filter_map(|path| {
-                Some(sum_tree::Edit::Remove(PathKey(
-                    RelPath::from_proto(&path).log_err()?,
-                )))
-            })
-            .chain(update.updated_diff_stats.into_iter().filter_map(|entry| {
-                let repo_path = RepoPath::from_proto(&entry.path).log_err()?;
-                Some(sum_tree::Edit::Insert(DiffStatEntry {
-                    repo_path,
-                    diff_stat: DiffStat {
-                        added: entry.added,
-                        deleted: entry.deleted,
-                    },
-                }))
-            }))
-            .collect::<Vec<_>>();
-        if !diff_stat_edits.is_empty() {
-            self.snapshot.diff_stats_by_path.edit(diff_stat_edits, ());
-        }
-
         if update.is_last_update {
             self.snapshot.scan_id = update.scan_id;
         }
@@ -6451,78 +6347,63 @@ impl Repository {
 
                 let stash_entries = backend.stash_entries().await?;
                 let backend_for_diff_stats = backend.clone();
-                let changed_path_statuses_task = cx.background_spawn(async move {
-                    let mut changed_paths =
-                        changed_paths.into_iter().flatten().collect::<BTreeSet<_>>();
-                    let statuses = backend
-                        .status(&changed_paths.iter().cloned().collect::<Vec<_>>())
+
+                let changed_statuses_task = cx.background_spawn({
+                    let prev_snapshot = prev_snapshot.clone();
+                    async move {
+                        let mut changed_paths =
+                            changed_paths.into_iter().flatten().collect::<BTreeSet<_>>();
+                        let (statuses, diff_stats) = futures::future::try_join(
+                            backend.status(&changed_paths.iter().cloned().collect::<Vec<_>>()),
+                            backend_for_diff_stats.diff_stat(&[]),
+                        )
                         .await?;
-                    let mut changed_path_statuses = Vec::new();
-                    let prev_statuses = prev_snapshot.statuses_by_path.clone();
-                    let mut cursor = prev_statuses.cursor::<PathProgress>(());
 
-                    for (repo_path, status) in &*statuses.entries {
-                        changed_paths.remove(repo_path);
-                        if cursor.seek_forward(&PathTarget::Path(repo_path), Bias::Left)
-                            && cursor.item().is_some_and(|entry| entry.status == *status)
-                        {
-                            continue;
+                        let diff_stat_map: HashMap<&RepoPath, DiffStat> =
+                            diff_stats.entries.iter().map(|(p, s)| (p, *s)).collect();
+
+                        let mut edits = Vec::new();
+                        let prev_statuses = prev_snapshot.statuses_by_path.clone();
+                        let mut cursor = prev_statuses.cursor::<PathProgress>(());
+
+                        for (repo_path, status) in &*statuses.entries {
+                            changed_paths.remove(repo_path);
+                            let new_entry = StatusEntry {
+                                repo_path: repo_path.clone(),
+                                status: *status,
+                                diff_stat: diff_stat_map.get(repo_path).copied(),
+                            };
+                            if cursor.seek_forward(&PathTarget::Path(repo_path), Bias::Left)
+                                && cursor.item().is_some_and(|entry| *entry == new_entry)
+                            {
+                                continue;
+                            }
+                            edits.push(Edit::Insert(new_entry));
                         }
 
-                        changed_path_statuses.push(Edit::Insert(StatusEntry {
-                            repo_path: repo_path.clone(),
-                            status: *status,
-                        }));
-                    }
-                    let mut cursor = prev_statuses.cursor::<PathProgress>(());
-                    for path in changed_paths.into_iter() {
-                        if cursor.seek_forward(&PathTarget::Path(&path), Bias::Left) {
-                            changed_path_statuses
-                                .push(Edit::Remove(PathKey(path.as_ref().clone())));
+                        let mut cursor = prev_statuses.cursor::<PathProgress>(());
+                        for path in changed_paths.into_iter() {
+                            if cursor.seek_forward(&PathTarget::Path(&path), Bias::Left) {
+                                edits.push(Edit::Remove(PathKey(path.as_ref().clone())));
+                            }
                         }
+
+                        for entry in prev_statuses.iter() {
+                            let new_diff_stat = diff_stat_map.get(&entry.repo_path).copied();
+                            if entry.diff_stat != new_diff_stat {
+                                edits.push(Edit::Insert(StatusEntry {
+                                    repo_path: entry.repo_path.clone(),
+                                    status: entry.status,
+                                    diff_stat: new_diff_stat,
+                                }));
+                            }
+                        }
+
+                        anyhow::Ok(edits)
                     }
-                    anyhow::Ok(changed_path_statuses)
                 });
 
-                let changed_diff_stats_task = cx.background_spawn(async move {
-                    // todo! pass justed the changed paths
-                    let diff_stats = backend_for_diff_stats
-                        .diff_stat(&[/* changed paths */])
-                        .await?;
-                    let mut changed_diff_stats = Vec::new();
-                    let prev_diff_stats = prev_snapshot.diff_stats_by_path.clone();
-                    let mut cursor = prev_diff_stats.cursor::<PathProgress>(());
-
-                    for (repo_path, diff_stat) in &*diff_stats.entries {
-                        if cursor.seek_forward(&PathTarget::Path(repo_path), Bias::Left)
-                            && cursor
-                                .item()
-                                .is_some_and(|entry| entry.diff_stat == *diff_stat)
-                        {
-                            continue;
-                        }
-
-                        changed_diff_stats.push(Edit::Insert(DiffStatEntry {
-                            repo_path: repo_path.clone(),
-                            diff_stat: *diff_stat,
-                        }));
-                    }
-
-                    let current_paths: std::collections::HashSet<&RepoPath> =
-                        diff_stats.entries.iter().map(|(p, _)| p).collect();
-                    for entry in prev_diff_stats.iter() {
-                        if !current_paths.contains(&entry.repo_path) {
-                            changed_diff_stats
-                                .push(Edit::Remove(PathKey(entry.repo_path.as_ref().clone())));
-                        }
-                    }
-
-                    anyhow::Ok(changed_diff_stats)
-                });
-
-                let (changed_path_statuses, changed_diff_stats) =
-                    futures::future::try_join(changed_path_statuses_task, changed_diff_stats_task)
-                        .await?;
+                let changed_statuses = changed_statuses_task.await?;
 
                 this.update(&mut cx, |this, cx| {
                     if this.snapshot.stash_entries != stash_entries {
@@ -6530,21 +6411,10 @@ impl Repository {
                         this.snapshot.stash_entries = stash_entries;
                     }
 
-                    if !changed_path_statuses.is_empty() || !changed_diff_stats.is_empty() {
+                    if !changed_statuses.is_empty() {
                         this.snapshot.scan_id += 1;
-                    }
-
-                    if !changed_path_statuses.is_empty() {
                         cx.emit(RepositoryEvent::StatusesChanged);
-                        this.snapshot
-                            .statuses_by_path
-                            .edit(changed_path_statuses, ());
-                    }
-
-                    if !changed_diff_stats.is_empty() {
-                        this.snapshot
-                            .diff_stats_by_path
-                            .edit(changed_diff_stats, ());
+                        this.snapshot.statuses_by_path.edit(changed_statuses, ());
                     }
 
                     if let Some(updates_tx) = updates_tx {
@@ -6877,12 +6747,16 @@ async fn compute_snapshot(
     let mut events = Vec::new();
     let branches = backend.branches().await?;
     let branch = branches.into_iter().find(|branch| branch.is_head);
-    // todo! handle status and diff stats at the same time
-    let statuses = backend
-        .status(&[RepoPath::from_rel_path(
+    let (statuses, diff_stats) = futures::future::try_join(
+        backend.status(&[RepoPath::from_rel_path(
             &RelPath::new(".".as_ref(), PathStyle::local()).unwrap(),
-        )])
-        .await?;
+        )]),
+        backend.diff_stat(&[]),
+    )
+    .await?;
+
+    let diff_stat_map: HashMap<&RepoPath, DiffStat> =
+        diff_stats.entries.iter().map(|(p, s)| (p, *s)).collect();
     let stash_entries = backend.stash_entries().await?;
     let mut conflicted_paths = Vec::new();
     let statuses_by_path = SumTree::from_iter(
@@ -6893,6 +6767,7 @@ async fn compute_snapshot(
             StatusEntry {
                 repo_path: repo_path.clone(),
                 status: *status,
+                diff_stat: diff_stat_map.get(repo_path).copied(),
             }
         }),
         (),
@@ -6918,22 +6793,9 @@ async fn compute_snapshot(
     let remote_origin_url = backend.remote_url("origin").await;
     let remote_upstream_url = backend.remote_url("upstream").await;
 
-    let diff_stats = backend.diff_stat(&[]).await?;
-    let diff_stats_by_path = SumTree::from_iter(
-        diff_stats
-            .entries
-            .iter()
-            .map(|(repo_path, diff_stat)| DiffStatEntry {
-                repo_path: repo_path.clone(),
-                diff_stat: *diff_stat,
-            }),
-        (),
-    );
-
     let snapshot = RepositorySnapshot {
         id,
         statuses_by_path,
-        diff_stats_by_path,
         work_directory_abs_path,
         original_repo_abs_path: prev_snapshot.original_repo_abs_path,
         path_style: prev_snapshot.path_style,

@@ -26,8 +26,10 @@ fn collect_diff_stats<C: gpui::AppContext>(
         };
         let snapshot = repo.read(cx).snapshot();
         let mut stats = HashMap::default();
-        for entry in snapshot.diff_stats_by_path.iter() {
-            stats.insert(entry.repo_path.clone(), entry.diff_stat);
+        for entry in snapshot.statuses_by_path.iter() {
+            if let Some(diff_stat) = entry.diff_stat {
+                stats.insert(entry.repo_path.clone(), diff_stat);
+            }
         }
         stats
     })
@@ -306,13 +308,15 @@ async fn test_remote_git_worktrees(
 async fn test_diff_stat_sync_between_host_and_downstream_client(
     cx_a: &mut TestAppContext,
     cx_b: &mut TestAppContext,
+    cx_c: &mut TestAppContext,
 ) {
     let mut server = TestServer::start(cx_a.background_executor.clone()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
+    let client_c = server.create_client(cx_c, "user_c").await;
 
     server
-        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
+        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b), (&client_c, cx_c)])
         .await;
 
     let fs = client_a.fs();
@@ -357,6 +361,7 @@ async fn test_diff_stat_sync_between_host_and_downstream_client(
         .await
         .unwrap();
     let project_b = client_b.join_remote_project(project_id, cx_b).await;
+    let _project_c = client_c.join_remote_project(project_id, cx_c).await;
     cx_a.run_until_parked();
 
     let (workspace_a, cx_a) = client_a.build_workspace(&project_a, cx_a);
