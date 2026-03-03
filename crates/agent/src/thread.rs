@@ -1434,7 +1434,7 @@ impl Thread {
             self.add_tool(EditFileTool::new(
                 self.project.clone(),
                 cx.weak_entity(),
-                language_registry.clone(),
+                language_registry,
                 Templates::new(),
             ));
         }
