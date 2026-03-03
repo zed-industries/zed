@@ -352,6 +352,10 @@ impl NativeAgent {
         let parent_session_id = thread.parent_thread_id();
         let title = thread.title();
         let draft_prompt = thread.draft_prompt().map(Vec::from);
+        let scroll_position = thread
+            .ui_scroll_position()
+            .map(|sp| (sp.item_ix, sp.offset_in_item));
+        let token_usage = thread.latest_token_usage();
         let project = thread.project.clone();
         let action_log = thread.action_log.clone();
         let prompt_capabilities_rx = thread.prompt_capabilities_rx.clone();
@@ -367,6 +371,8 @@ impl NativeAgent {
                 cx,
             );
             acp_thread.set_draft_prompt(draft_prompt);
+            acp_thread.set_scroll_position(scroll_position);
+            acp_thread.update_token_usage(token_usage, cx);
             acp_thread
         });
 
@@ -861,10 +867,20 @@ impl NativeAgent {
                 .collect::<Vec<_>>(),
         );
 
-        let draft_prompt = session.acp_thread.read(cx).draft_prompt().map(Vec::from);
+        let acp_thread = session.acp_thread.read(cx);
+        let draft_prompt = acp_thread.draft_prompt().map(Vec::from);
+        let scroll_position = acp_thread
+            .scroll_position()
+            .map(
+                |(item_ix, offset_in_item)| crate::db::SerializedScrollPosition {
+                    item_ix,
+                    offset_in_item,
+                },
+            );
         let database_future = ThreadsDatabase::connect(cx);
         let db_thread = thread.update(cx, |thread, cx| {
             thread.set_draft_prompt(draft_prompt);
+            thread.set_ui_scroll_position(scroll_position);
             thread.to_db(cx)
         });
         let thread_store = self.thread_store.clone();
@@ -1917,7 +1933,9 @@ mod internal_tests {
     use gpui::TestAppContext;
     use indoc::formatdoc;
     use language_model::fake_provider::{FakeLanguageModel, FakeLanguageModelProvider};
-    use language_model::{LanguageModelProviderId, LanguageModelProviderName};
+    use language_model::{
+        LanguageModelCompletionEvent, LanguageModelProviderId, LanguageModelProviderName,
+    };
     use serde_json::json;
     use settings::SettingsStore;
     use util::{path, rel_path::rel_path};
@@ -2549,6 +2567,13 @@ mod internal_tests {
         cx.run_until_parked();
 
         model.send_last_completion_stream_text_chunk("Lorem.");
+        model.send_last_completion_stream_event(LanguageModelCompletionEvent::UsageUpdate(
+            language_model::TokenUsage {
+                input_tokens: 150,
+                output_tokens: 75,
+                ..Default::default()
+            },
+        ));
         model.end_last_completion_stream();
         cx.run_until_parked();
         summary_model
@@ -2586,6 +2611,9 @@ mod internal_tests {
         ];
         acp_thread.update(cx, |thread, _cx| {
             thread.set_draft_prompt(Some(draft_blocks.clone()));
+        });
+        acp_thread.update(cx, |thread, _cx| {
+            thread.set_scroll_position(Some((5, 12.5)));
         });
         thread.update(cx, |_thread, cx| cx.notify());
         cx.run_until_parked();
@@ -2631,6 +2659,24 @@ mod internal_tests {
         // Ensure the draft prompt with rich content blocks survived the round-trip.
         acp_thread.read_with(cx, |thread, _| {
             assert_eq!(thread.draft_prompt(), Some(draft_blocks.as_slice()));
+        });
+
+        // Ensure token usage survived the round-trip.
+        acp_thread.read_with(cx, |thread, _| {
+            let usage = thread
+                .token_usage()
+                .expect("token usage should be restored after reload");
+            assert_eq!(usage.input_tokens, 150);
+            assert_eq!(usage.output_tokens, 75);
+        });
+
+        // Ensure scroll position survived the round-trip.
+        acp_thread.read_with(cx, |thread, _| {
+            let (item_ix, offset) = thread
+                .scroll_position()
+                .expect("scroll position should be restored after reload");
+            assert_eq!(item_ix, 5);
+            assert!((offset - 12.5).abs() < f32::EPSILON);
         });
     }
 

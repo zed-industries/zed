@@ -404,8 +404,12 @@ impl ThreadView {
                     None
                 };
                 this.update(cx, |this, cx| {
+                    let scroll_top = this.list_state.logical_scroll_top();
+                    let scroll_position =
+                        Some((scroll_top.item_ix, scroll_top.offset_in_item.as_f32()));
                     this.thread.update(cx, |thread, _cx| {
                         thread.set_draft_prompt(draft);
+                        thread.set_scroll_position(scroll_position);
                     });
                 })
                 .ok();

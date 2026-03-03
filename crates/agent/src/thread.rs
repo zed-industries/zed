@@ -901,6 +901,7 @@ pub struct Thread {
     subagent_context: Option<SubagentContext>,
     /// The user's unsent prompt text, persisted so it can be restored when reloading the thread.
     draft_prompt: Option<Vec<acp::ContentBlock>>,
+    ui_scroll_position: Option<crate::db::SerializedScrollPosition>,
     /// Weak references to running subagent threads for cancellation propagation
     running_subagents: Vec<WeakEntity<Thread>>,
 }
@@ -1017,6 +1018,7 @@ impl Thread {
             imported: false,
             subagent_context: None,
             draft_prompt: None,
+            ui_scroll_position: None,
             running_subagents: Vec::new(),
         }
     }
@@ -1233,6 +1235,7 @@ impl Thread {
             imported: db_thread.imported,
             subagent_context: db_thread.subagent_context,
             draft_prompt: db_thread.draft_prompt,
+            ui_scroll_position: db_thread.ui_scroll_position,
             running_subagents: Vec::new(),
         }
     }
@@ -1258,6 +1261,7 @@ impl Thread {
             thinking_enabled: self.thinking_enabled,
             thinking_effort: self.thinking_effort.clone(),
             draft_prompt: self.draft_prompt.clone(),
+            ui_scroll_position: self.ui_scroll_position,
         };
 
         cx.background_spawn(async move {
@@ -1305,6 +1309,14 @@ impl Thread {
 
     pub fn set_draft_prompt(&mut self, prompt: Option<Vec<acp::ContentBlock>>) {
         self.draft_prompt = prompt;
+    }
+
+    pub fn ui_scroll_position(&self) -> Option<crate::db::SerializedScrollPosition> {
+        self.ui_scroll_position
+    }
+
+    pub fn set_ui_scroll_position(&mut self, position: Option<crate::db::SerializedScrollPosition>) {
+        self.ui_scroll_position = position;
     }
 
     pub fn model(&self) -> Option<&Arc<dyn LanguageModel>> {
