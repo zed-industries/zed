@@ -212,7 +212,6 @@ impl AgentTool for ReadFileTool {
             });
 
             if is_image {
-
                 let image_entity: Entity<ImageItem> = cx
                     .update(|cx| {
                         self.project.update(cx, |project, cx| {
@@ -268,6 +267,9 @@ impl AgentTool for ReadFileTool {
                     })
                     .ok();
             }
+
+
+            let update_agent_location = self.thread.read_with(cx, |thread, _cx| !thread.is_subagent()).unwrap_or_default();
 
             let mut anchor = None;
 
@@ -328,15 +330,17 @@ impl AgentTool for ReadFileTool {
             };
 
             project.update(cx, |project, cx| {
-                project.set_agent_location(
-                    Some(AgentLocation {
-                        buffer: buffer.downgrade(),
-                        position: anchor.unwrap_or_else(|| {
-                            text::Anchor::min_for_buffer(buffer.read(cx).remote_id())
+                if update_agent_location {
+                    project.set_agent_location(
+                        Some(AgentLocation {
+                            buffer: buffer.downgrade(),
+                            position: anchor.unwrap_or_else(|| {
+                                text::Anchor::min_for_buffer(buffer.read(cx).remote_id())
+                            }),
                         }),
-                    }),
-                    cx,
-                );
+                        cx,
+                    );
+                }
                 if let Ok(LanguageModelToolResultContent::Text(text)) = &result {
                     let text: &str = text;
                     let markdown = MarkdownCodeBlock {

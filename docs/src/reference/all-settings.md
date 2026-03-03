@@ -1800,17 +1800,7 @@ While other options may be changed at a runtime and should be placed under `sett
 }
 ```
 
-3. Use Supermaven as the edit prediction provider:
-
-```json [settings]
-{
-  "edit_predictions": {
-    "provider": "supermaven"
-  }
-}
-```
-
-4. Turn off edit predictions across all providers
+3. Turn off edit predictions across all providers
 
 ```json [settings]
 {

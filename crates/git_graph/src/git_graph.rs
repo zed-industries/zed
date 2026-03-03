@@ -1028,7 +1028,7 @@ impl GitGraph {
                     }
                 }
             }
-            RepositoryEvent::BranchChanged | RepositoryEvent::MergeHeadsChanged => {
+            RepositoryEvent::BranchChanged => {
                 self.pending_select_sha = None;
                 // Only invalidate if we scanned atleast once,
                 // meaning we are not inside the initial repo loading state
@@ -3196,12 +3196,6 @@ mod tests {
                 .iter()
                 .any(|event| matches!(event, RepositoryEvent::BranchChanged)),
             "initial repository scan should emit BranchChanged"
-        );
-        assert!(
-            observed_repository_events
-                .iter()
-                .any(|event| matches!(event, RepositoryEvent::MergeHeadsChanged)),
-            "initial repository scan should emit MergeHeadsChanged"
         );
         let commit_count_after = repository.read_with(cx, |repo, _| {
             repo.get_graph_data(crate::LogSource::default(), crate::LogOrder::default())

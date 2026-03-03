@@ -10,6 +10,7 @@ use crate::{
     },
 };
 use acp_thread::Diff;
+use action_log::ActionLog;
 use agent_client_protocol::{self as acp, ToolCallLocation, ToolCallUpdateFields};
 use anyhow::{Context as _, Result};
 use collections::HashSet;
@@ -22,9 +23,11 @@ use project::lsp_store::{FormatTrigger, LspFormatTarget};
 use project::{AgentLocation, Project, ProjectPath};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use std::ops::Range;
 use std::path::PathBuf;
 use std::sync::Arc;
 use streaming_diff::{CharOperation, StreamingDiff};
+use text::ToOffset;
 use ui::SharedString;
 use util::rel_path::RelPath;
 use util::{Deferred, ResultExt};
@@ -220,9 +223,15 @@ impl StreamingEditFileTool {
     }
 
     fn set_agent_location(&self, buffer: WeakEntity<Buffer>, position: text::Anchor, cx: &mut App) {
-        self.project.update(cx, |project, cx| {
-            project.set_agent_location(Some(AgentLocation { buffer, position }), cx);
-        });
+        let should_update_agent_location = self
+            .thread
+            .read_with(cx, |thread, _cx| !thread.is_subagent())
+            .unwrap_or_default();
+        if should_update_agent_location {
+            self.project.update(cx, |project, cx| {
+                project.set_agent_location(Some(AgentLocation { buffer, position }), cx);
+            });
+        }
     }
 }
 
@@ -714,20 +723,30 @@ impl EditSession {
         event_stream: &ToolCallEventStream,
         cx: &mut AsyncApp,
     ) -> Result<(), StreamingEditFileToolOutput> {
+        let action_log = tool
+            .thread
+            .read_with(cx, |thread, _cx| thread.action_log().clone())
+            .ok();
+
         for event in events {
             match event {
                 ToolEditEvent::ContentChunk { chunk } => {
+                    let (buffer_id, insert_at) = buffer.read_with(cx, |buffer, _cx| {
+                        let insert_at = if !pipeline.content_written && buffer.len() > 0 {
+                            0..buffer.len()
+                        } else {
+                            let len = buffer.len();
+                            len..len
+                        };
+                        (buffer.remote_id(), insert_at)
+                    });
+                    agent_edit_buffer(
+                        buffer,
+                        [(insert_at, chunk.as_str())],
+                        action_log.as_ref(),
+                        cx,
+                    );
                     cx.update(|cx| {
-                        buffer.update(cx, |buffer, cx| {
-                            let insert_at = if !pipeline.content_written && buffer.len() > 0 {
-                                0..buffer.len()
-                            } else {
-                                let len = buffer.len();
-                                len..len
-                            };
-                            buffer.edit([(insert_at, chunk.as_str())], None, cx);
-                        });
-                        let buffer_id = buffer.read(cx).remote_id();
                         tool.set_agent_location(
                             buffer.downgrade(),
                             text::Anchor::max_for_buffer(buffer_id),
@@ -875,6 +894,7 @@ impl EditSession {
                         buffer,
                         original_snapshot,
                         edit_cursor,
+                        action_log.as_ref(),
                         cx,
                     );
 
@@ -882,16 +902,6 @@ impl EditSession {
                     cx.update(|cx| {
                         tool.set_agent_location(buffer.downgrade(), position, cx);
                     });
-
-                    let action_log = tool
-                        .thread
-                        .read_with(cx, |thread, _cx| thread.action_log().clone())
-                        .ok();
-                    if let Some(action_log) = action_log {
-                        action_log.update(cx, |log, cx| {
-                            log.buffer_edited(buffer.clone(), cx);
-                        });
-                    }
                 }
 
                 ToolEditEvent::NewTextChunk {
@@ -927,6 +937,7 @@ impl EditSession {
                             buffer,
                             &original_snapshot,
                             &mut edit_cursor,
+                            action_log.as_ref(),
                             cx,
                         );
                     }
@@ -937,6 +948,7 @@ impl EditSession {
                         buffer,
                         &original_snapshot,
                         &mut edit_cursor,
+                        action_log.as_ref(),
                         cx,
                     );
 
@@ -944,16 +956,6 @@ impl EditSession {
                     cx.update(|cx| {
                         tool.set_agent_location(buffer.downgrade(), position, cx);
                     });
-
-                    let action_log = tool
-                        .thread
-                        .read_with(cx, |thread, _cx| thread.action_log().clone())
-                        .ok();
-                    if let Some(action_log) = action_log {
-                        action_log.update(cx, |log, cx| {
-                            log.buffer_edited(buffer.clone(), cx);
-                        });
-                    }
                 }
             }
         }
@@ -965,26 +967,19 @@ impl EditSession {
         buffer: &Entity<Buffer>,
         snapshot: &text::BufferSnapshot,
         edit_cursor: &mut usize,
+        action_log: Option<&Entity<ActionLog>>,
         cx: &mut AsyncApp,
     ) {
         for op in ops {
             match op {
                 CharOperation::Insert { text } => {
                     let anchor = snapshot.anchor_after(*edit_cursor);
-                    cx.update(|cx| {
-                        buffer.update(cx, |buffer, cx| {
-                            buffer.edit([(anchor..anchor, text.as_str())], None, cx);
-                        });
-                    });
+                    agent_edit_buffer(&buffer, [(anchor..anchor, text.as_str())], action_log, cx);
                 }
                 CharOperation::Delete { bytes } => {
                     let delete_end = *edit_cursor + bytes;
                     let anchor_range = snapshot.anchor_range_around(*edit_cursor..delete_end);
-                    cx.update(|cx| {
-                        buffer.update(cx, |buffer, cx| {
-                            buffer.edit([(anchor_range, "")], None, cx);
-                        });
-                    });
+                    agent_edit_buffer(&buffer, [(anchor_range, "")], action_log, cx);
                     *edit_cursor = delete_end;
                 }
                 CharOperation::Keep { bytes } => {
@@ -993,6 +988,30 @@ impl EditSession {
             }
         }
     }
+}
+
+/// Edits a buffer and reports the edit to the action log in the same effect
+/// cycle. This ensures the action log's subscription handler sees the version
+/// already updated by `buffer_edited`, so it does not misattribute the agent's
+/// edit as a user edit.
+fn agent_edit_buffer<I, S, T>(
+    buffer: &Entity<Buffer>,
+    edits: I,
+    action_log: Option<&Entity<ActionLog>>,
+    cx: &mut AsyncApp,
+) where
+    I: IntoIterator<Item = (Range<S>, T)>,
+    S: ToOffset,
+    T: Into<Arc<str>>,
+{
+    cx.update(|cx| {
+        buffer.update(cx, |buffer, cx| {
+            buffer.edit(edits, None, cx);
+        });
+        if let Some(action_log) = action_log {
+            action_log.update(cx, |log, cx| log.buffer_edited(buffer.clone(), cx));
+        }
+    });
 }
 
 fn ensure_buffer_saved(
@@ -4748,6 +4767,150 @@ mod tests {
             panic!("expected success");
         };
         assert_eq!(new_text, "HELLO\nWORLD\nfoo\n");
+    }
+
+    // Verifies that after streaming_edit_file_tool edits a file, the action log
+    // reports changed buffers so that the Accept All / Reject All review UI appears.
+    #[gpui::test]
+    async fn test_streaming_edit_file_tool_registers_changed_buffers(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.update(|cx| {
+            let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
+            settings.tool_permissions.default = settings::ToolPermissionMode::Allow;
+            agent_settings::AgentSettings::override_global(settings, cx);
+        });
+
+        let fs = project::FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/root"),
+            json!({
+                "file.txt": "line 1\nline 2\nline 3\n"
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+        let language_registry = project.read_with(cx, |project, _cx| project.languages().clone());
+        let context_server_registry =
+            cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
+        let thread = cx.new(|cx| {
+            crate::Thread::new(
+                project.clone(),
+                cx.new(|_cx| ProjectContext::default()),
+                context_server_registry,
+                Templates::new(),
+                None,
+                cx,
+            )
+        });
+        let action_log = thread.read_with(cx, |thread, _| thread.action_log().clone());
+
+        let tool = Arc::new(StreamingEditFileTool::new(
+            project.clone(),
+            thread.downgrade(),
+            language_registry,
+        ));
+        let (event_stream, _rx) = ToolCallEventStream::test();
+
+        let task = cx.update(|cx| {
+            tool.run(
+                ToolInput::resolved(StreamingEditFileToolInput {
+                    display_description: "Edit lines".to_string(),
+                    path: "root/file.txt".into(),
+                    mode: StreamingEditFileMode::Edit,
+                    content: None,
+                    edits: Some(vec![Edit {
+                        old_text: "line 2".into(),
+                        new_text: "modified line 2".into(),
+                    }]),
+                }),
+                event_stream,
+                cx,
+            )
+        });
+
+        let result = task.await;
+        assert!(result.is_ok(), "edit should succeed: {:?}", result.err());
+
+        cx.run_until_parked();
+
+        let changed = action_log.read_with(cx, |log, cx| log.changed_buffers(cx));
+        assert!(
+            !changed.is_empty(),
+            "action_log.changed_buffers() should be non-empty after streaming edit, \
+             but no changed buffers were found \u{2014} Accept All / Reject All will not appear"
+        );
+    }
+
+    // Same test but for Write mode (overwrite entire file).
+    #[gpui::test]
+    async fn test_streaming_edit_file_tool_write_mode_registers_changed_buffers(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        cx.update(|cx| {
+            let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
+            settings.tool_permissions.default = settings::ToolPermissionMode::Allow;
+            agent_settings::AgentSettings::override_global(settings, cx);
+        });
+
+        let fs = project::FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/root"),
+            json!({
+                "file.txt": "original content"
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+        let language_registry = project.read_with(cx, |project, _cx| project.languages().clone());
+        let context_server_registry =
+            cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
+        let thread = cx.new(|cx| {
+            crate::Thread::new(
+                project.clone(),
+                cx.new(|_cx| ProjectContext::default()),
+                context_server_registry,
+                Templates::new(),
+                None,
+                cx,
+            )
+        });
+        let action_log = thread.read_with(cx, |thread, _| thread.action_log().clone());
+
+        let tool = Arc::new(StreamingEditFileTool::new(
+            project.clone(),
+            thread.downgrade(),
+            language_registry,
+        ));
+        let (event_stream, _rx) = ToolCallEventStream::test();
+
+        let task = cx.update(|cx| {
+            tool.run(
+                ToolInput::resolved(StreamingEditFileToolInput {
+                    display_description: "Overwrite file".to_string(),
+                    path: "root/file.txt".into(),
+                    mode: StreamingEditFileMode::Write,
+                    content: Some("completely new content".into()),
+                    edits: None,
+                }),
+                event_stream,
+                cx,
+            )
+        });
+
+        let result = task.await;
+        assert!(result.is_ok(), "write should succeed: {:?}", result.err());
+
+        cx.run_until_parked();
+
+        let changed = action_log.read_with(cx, |log, cx| log.changed_buffers(cx));
+        assert!(
+            !changed.is_empty(),
+            "action_log.changed_buffers() should be non-empty after streaming write, \
+             but no changed buffers were found \u{2014} Accept All / Reject All will not appear"
+        );
     }
 
     fn init_test(cx: &mut TestAppContext) {

@@ -1704,12 +1704,8 @@ async fn test_rejections_flushing(cx: &mut TestAppContext) {
 
 // Generate a model response that would apply the given diff to the active file.
 fn model_response(request: &PredictEditsV3Request, diff_to_apply: &str) -> PredictEditsV3Response {
-    let editable_range = request
-        .input
-        .excerpt_ranges
-        .as_ref()
-        .map(|r| zeta_prompt::excerpt_range_for_format(Default::default(), r).1)
-        .unwrap_or(request.input.editable_range_in_excerpt.clone());
+    let editable_range =
+        zeta_prompt::excerpt_range_for_format(Default::default(), &request.input.excerpt_ranges).1;
     let excerpt = request.input.cursor_excerpt[editable_range.clone()].to_string();
     let new_excerpt = apply_diff_to_string(diff_to_apply, &excerpt).unwrap();
 
@@ -1846,11 +1842,10 @@ async fn test_edit_prediction_basic_interpolation(cx: &mut TestAppContext) {
             related_files: Default::default(),
             cursor_path: Path::new("").into(),
             cursor_excerpt: "".into(),
-            editable_range_in_excerpt: 0..0,
             cursor_offset_in_excerpt: 0,
             excerpt_start_row: None,
-            excerpt_ranges: None,
-            preferred_model: None,
+            excerpt_ranges: Default::default(),
+            experiment: None,
             in_open_source_repo: false,
             can_collect_data: false,
         },
@@ -2183,7 +2178,7 @@ async fn make_test_ep_store(
 
     let ep_store = cx.new(|cx| {
         let mut ep_store = EditPredictionStore::new(client, project.read(cx).user_store(), cx);
-        ep_store.set_edit_prediction_model(EditPredictionModel::Zeta1);
+        ep_store.set_edit_prediction_model(EditPredictionModel::Zeta);
 
         let worktrees = project.read(cx).worktrees(cx).collect::<Vec<_>>();
         for worktree in worktrees {
@@ -2282,7 +2277,7 @@ async fn test_unauthenticated_without_custom_url_blocks_prediction_impl(cx: &mut
     cx.background_executor.run_until_parked();
 
     let completion_task = ep_store.update(cx, |ep_store, cx| {
-        ep_store.set_edit_prediction_model(EditPredictionModel::Zeta1);
+        ep_store.set_edit_prediction_model(EditPredictionModel::Zeta);
         ep_store.request_prediction(&project, &buffer, cursor, Default::default(), cx)
     });
 
