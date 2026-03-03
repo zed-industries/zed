@@ -19,35 +19,44 @@ unsafe impl Send for Connection {}
 
 impl Connection {
     pub(crate) fn open(uri: &str, persistent: bool) -> Result<Self> {
-        let mut connection = Self {
-            sqlite3: ptr::null_mut(),
-            persistent,
-            write: RefCell::new(true),
-            _sqlite: PhantomData,
-        };
-
         let flags = SQLITE_OPEN_CREATE | SQLITE_OPEN_NOMUTEX | SQLITE_OPEN_READWRITE;
-        unsafe {
-            sqlite3_open_v2(
-                CString::new(uri)?.as_ptr(),
-                &mut connection.sqlite3,
-                flags,
-                ptr::null(),
-            );
-
-            // Turn on extended error codes
-            sqlite3_extended_result_codes(connection.sqlite3, 1);
-
-            connection.last_error()?;
-        }
-
-        Ok(connection)
+        Self::open_with_flags(uri, persistent, flags, true)
     }
 
     /// Attempts to open the database at uri. If it fails, a shared memory db will be opened
     /// instead.
     pub fn open_file(uri: &str) -> Self {
         Self::open(uri, true).unwrap_or_else(|_| Self::open_memory(Some(uri)))
+    }
+
+    /// Opens a database file in readonly mode. Returns an error instead of
+    /// falling back to an in-memory database.
+    pub fn open_file_readonly(uri: &str) -> Result<Self> {
+        let flags = SQLITE_OPEN_READONLY | SQLITE_OPEN_NOMUTEX;
+        Self::open_with_flags(uri, true, flags, false)
+    }
+
+    fn open_with_flags(uri: &str, persistent: bool, flags: i32, write: bool) -> Result<Self> {
+        let mut connection = Self {
+            sqlite3: ptr::null_mut(),
+            persistent,
+            write: RefCell::new(write),
+            _sqlite: PhantomData,
+        };
+
+        let c_uri = CString::new(uri)?;
+        unsafe {
+            sqlite3_open_v2(
+                c_uri.as_ptr(),
+                &mut connection.sqlite3,
+                flags,
+                ptr::null(),
+            );
+            sqlite3_extended_result_codes(connection.sqlite3, 1);
+            connection.last_error()?;
+        }
+
+        Ok(connection)
     }
 
     pub fn open_memory(uri: Option<&str>) -> Self {
@@ -66,6 +75,21 @@ impl Connection {
 
     pub fn can_write(&self) -> bool {
         *self.write.borrow()
+    }
+
+    /// Interrupts any pending database operation. This is safe to call from
+    /// any thread and will cause the current sqlite3_step() to return
+    /// SQLITE_INTERRUPT.
+    pub fn interrupt(&self) {
+        unsafe {
+            sqlite3_interrupt(self.sqlite3);
+        }
+    }
+
+    /// Returns the raw sqlite3 pointer for use with libsqlite3-sys functions.
+    /// The caller must ensure the Connection outlives any use of this pointer.
+    pub fn sqlite3_handle(&self) -> *mut sqlite3 {
+        self.sqlite3
     }
 
     pub fn backup_main(&self, destination: &Connection) -> Result<()> {

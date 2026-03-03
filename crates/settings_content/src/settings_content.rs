@@ -128,6 +128,9 @@ pub struct SettingsContent {
     /// Configuration for the collab panel visual settings.
     pub collaboration_panel: Option<PanelSettingsContent>,
 
+    /// Configuration for the database viewer panel.
+    pub database_panel: Option<DatabasePanelSettingsContent>,
+
     pub debugger: Option<DebuggerSettingsContent>,
 
     /// Configuration for Diagnostics-related features.
@@ -671,6 +674,93 @@ pub struct NotificationPanelSettingsContent {
     /// Default: 300
     #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
     pub default_width: Option<f32>,
+}
+
+#[with_fallible_options]
+#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, MergeFrom, Debug, PartialEq)]
+pub struct DatabasePanelSettingsContent {
+    /// Whether to show the panel button in the status bar.
+    ///
+    /// Default: true
+    pub button: Option<bool>,
+    /// Where to dock the panel.
+    ///
+    /// Default: right
+    pub dock: Option<DockPosition>,
+    /// Default width of the panel in pixels.
+    ///
+    /// Default: 360
+    #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
+    pub default_width: Option<f32>,
+    /// Maximum number of characters to display in a cell before truncating.
+    ///
+    /// Default: 500
+    pub max_cell_display_chars: Option<usize>,
+    /// Maximum number of query history entries to keep.
+    ///
+    /// Default: 100
+    pub max_query_history: Option<usize>,
+    /// Default column width in pixels for the results grid.
+    ///
+    /// Default: 200
+    #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
+    pub default_column_width: Option<f32>,
+    /// Row height in pixels for the results grid.
+    ///
+    /// Default: 26
+    #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
+    pub row_height: Option<f32>,
+    /// Header height in pixels for the results grid.
+    ///
+    /// Default: 28
+    #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
+    pub header_height: Option<f32>,
+    /// Default number of rows per page in the results grid.
+    ///
+    /// Default: 50
+    pub default_rows_per_page: Option<usize>,
+    /// Whether to automatically commit changes to the database.
+    ///
+    /// Default: false
+    pub auto_commit: Option<bool>,
+    /// Whether to show a visual indicator for NULL values in the results grid.
+    ///
+    /// Default: true
+    pub show_null_indicator: Option<bool>,
+    /// Font family override for the results grid.
+    pub grid_font_family: Option<String>,
+    /// Font size override for the results grid.
+    #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
+    pub grid_font_size: Option<f32>,
+    /// Default export format for query results (csv, json, sql).
+    ///
+    /// Default: csv
+    pub default_export_format: Option<String>,
+    /// How to sort results: "server" sends ORDER BY to the database,
+    /// "client" sorts in memory.
+    ///
+    /// Default: server
+    pub sort_mode: Option<DatabasePanelSortMode>,
+    /// Number formatting preferences.
+    pub number_format: Option<DatabasePanelNumberFormat>,
+}
+
+#[derive(Clone, Copy, Default, Serialize, Deserialize, JsonSchema, MergeFrom, Debug, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum DatabasePanelSortMode {
+    #[default]
+    Server,
+    Client,
+}
+
+#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, MergeFrom, Debug, PartialEq)]
+pub struct DatabasePanelNumberFormat {
+    /// Decimal separator character.
+    ///
+    /// Default: "."
+    pub decimal_separator: Option<String>,
+    /// Grouping (thousands) separator character, if any.
+    pub grouping_separator: Option<String>,
 }
 
 #[with_fallible_options]

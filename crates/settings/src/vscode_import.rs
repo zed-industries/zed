@@ -179,6 +179,7 @@ impl VsCodeSettings {
             base_keymap: Some(BaseKeymapContent::VSCode),
             calls: None,
             collaboration_panel: None,
+            database_panel: None,
             debugger: None,
             diagnostics: None,
             editor: self.editor_settings_content(),
