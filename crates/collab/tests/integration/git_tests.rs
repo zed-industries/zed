@@ -9,7 +9,6 @@ use serde_json::json;
 use util::{path, rel_path::rel_path};
 use workspace::{MultiWorkspace, Workspace};
 
-//
 use crate::TestServer;
 
 #[gpui::test]
