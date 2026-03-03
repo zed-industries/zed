@@ -1337,6 +1337,854 @@ pub mod hashline {
 
         Ok(result)
     }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+        use indoc::indoc;
+
+        #[test]
+        fn test_format_cursor_region() {
+            struct Case {
+                name: &'static str,
+                context: &'static str,
+                editable_range: Range<usize>,
+                cursor_offset: usize,
+                expected: &'static str,
+            }
+
+            let cases = [
+                Case {
+                    name: "basic_cursor_placement",
+                    context: "hello world\n",
+                    editable_range: 0..12,
+                    cursor_offset: 5,
+                    expected: indoc! {"
+                    <|file_sep|>test.rs
+                    <|fim_prefix|>
+                    <|fim_middle|>current
+                    0:5c|hello<|user_cursor|> world
+                    <|fim_suffix|>
+                    <|fim_middle|>updated"},
+                },
+                Case {
+                    name: "multiline_cursor_on_second_line",
+                    context: "aaa\nbbb\nccc\n",
+                    editable_range: 0..12,
+                    cursor_offset: 5, // byte 5 → 1 byte into "bbb"
+                    expected: indoc! {"
+                    <|file_sep|>test.rs
+                    <|fim_prefix|>
+                    <|fim_middle|>current
+                    0:23|aaa
+                    1:26|b<|user_cursor|>bb
+                    2:29|ccc
+                    <|fim_suffix|>
+                    <|fim_middle|>updated"},
+                },
+                Case {
+                    name: "no_trailing_newline_in_context",
+                    context: "line1\nline2",
+                    editable_range: 0..11,
+                    cursor_offset: 3,
+                    expected: indoc! {"
+                    <|file_sep|>test.rs
+                    <|fim_prefix|>
+                    <|fim_middle|>current
+                    0:d9|lin<|user_cursor|>e1
+                    1:da|line2
+                    <|fim_suffix|>
+                    <|fim_middle|>updated"},
+                },
+                Case {
+                    name: "leading_newline_in_editable_region",
+                    context: "\nabc\n",
+                    editable_range: 0..5,
+                    cursor_offset: 2, // byte 2 = 'a' in "abc" (after leading \n)
+                    expected: indoc! {"
+                    <|file_sep|>test.rs
+                    <|fim_prefix|>
+                    <|fim_middle|>current
+                    0:00|
+                    1:26|a<|user_cursor|>bc
+                    <|fim_suffix|>
+                    <|fim_middle|>updated"},
+                },
+                Case {
+                    name: "with_suffix",
+                    context: "abc\ndef",
+                    editable_range: 0..4, // editable region = "abc\n", suffix = "def"
+                    cursor_offset: 2,
+                    expected: indoc! {"
+                    <|file_sep|>test.rs
+                    <|fim_prefix|>
+                    <|fim_middle|>current
+                    0:26|ab<|user_cursor|>c
+                    <|fim_suffix|>
+                    def
+                    <|fim_middle|>updated"},
+                },
+                Case {
+                    name: "unicode_two_byte_chars",
+                    context: "héllo\n",
+                    editable_range: 0..7,
+                    cursor_offset: 3, // byte 3 = after "hé" (h=1 byte, é=2 bytes), before "llo"
+                    expected: indoc! {"
+                    <|file_sep|>test.rs
+                    <|fim_prefix|>
+                    <|fim_middle|>current
+                    0:1b|hé<|user_cursor|>llo
+                    <|fim_suffix|>
+                    <|fim_middle|>updated"},
+                },
+                Case {
+                    name: "unicode_three_byte_chars",
+                    context: "日本語\n",
+                    editable_range: 0..10,
+                    cursor_offset: 6, // byte 6 = after "日本" (3+3 bytes), before "語"
+                    expected: indoc! {"
+                    <|file_sep|>test.rs
+                    <|fim_prefix|>
+                    <|fim_middle|>current
+                    0:80|日本<|user_cursor|>語
+                    <|fim_suffix|>
+                    <|fim_middle|>updated"},
+                },
+                Case {
+                    name: "unicode_four_byte_chars",
+                    context: "a🌍b\n",
+                    editable_range: 0..7,
+                    cursor_offset: 5, // byte 5 = after "a🌍" (1+4 bytes), before "b"
+                    expected: indoc! {"
+                    <|file_sep|>test.rs
+                    <|fim_prefix|>
+                    <|fim_middle|>current
+                    0:6b|a🌍<|user_cursor|>b
+                    <|fim_suffix|>
+                    <|fim_middle|>updated"},
+                },
+                Case {
+                    name: "cursor_at_start_of_region_not_placed",
+                    context: "abc\n",
+                    editable_range: 0..4,
+                    cursor_offset: 0, // cursor_offset(0) > offset(0) is false → cursor not placed
+                    expected: indoc! {"
+                    <|file_sep|>test.rs
+                    <|fim_prefix|>
+                    <|fim_middle|>current
+                    0:26|abc
+                    <|fim_suffix|>
+                    <|fim_middle|>updated"},
+                },
+                Case {
+                    name: "cursor_at_end_of_line_not_placed",
+                    context: "abc\ndef\n",
+                    editable_range: 0..8,
+                    cursor_offset: 3, // byte 3 = the \n after "abc" → falls between lines, not placed
+                    expected: indoc! {"
+                    <|file_sep|>test.rs
+                    <|fim_prefix|>
+                    <|fim_middle|>current
+                    0:26|abc
+                    1:2f|def
+                    <|fim_suffix|>
+                    <|fim_middle|>updated"},
+                },
+                Case {
+                    name: "cursor_offset_relative_to_context_not_editable_region",
+                    // cursor_offset is relative to `context`, so when editable_range.start > 0,
+                    // write_cursor_excerpt_section must subtract it before comparing against
+                    // per-line offsets within the editable region.
+                    context: "pre\naaa\nbbb\nsuf\n",
+                    editable_range: 4..12, // editable region = "aaa\nbbb\n"
+                    cursor_offset: 9,      // byte 9 in context = second 'b' in "bbb"
+                    expected: indoc! {"
+                    <|file_sep|>test.rs
+                    <|fim_prefix|>
+                    pre
+                    <|fim_middle|>current
+                    0:23|aaa
+                    1:26|b<|user_cursor|>bb
+                    <|fim_suffix|>
+                    suf
+                    <|fim_middle|>updated"},
+                },
+            ];
+
+            for case in &cases {
+                let mut prompt = String::new();
+                hashline::write_cursor_excerpt_section(
+                    &mut prompt,
+                    Path::new("test.rs"),
+                    case.context,
+                    &case.editable_range,
+                    case.cursor_offset,
+                );
+                assert_eq!(prompt, case.expected, "failed case: {}", case.name);
+            }
+        }
+
+        #[test]
+        fn test_apply_edit_commands() {
+            struct Case {
+                name: &'static str,
+                original: &'static str,
+                model_output: &'static str,
+                expected: &'static str,
+            }
+
+            let cases = vec![
+                Case {
+                    name: "set_single_line",
+                    original: indoc! {"
+                    let mut total = 0;
+                    for product in products {
+                        total += ;
+                    }
+                    total
+                "},
+                    model_output: indoc! {"
+                    <|set|>2:87
+                        total += product.price;
+                "},
+                    expected: indoc! {"
+                    let mut total = 0;
+                    for product in products {
+                        total += product.price;
+                    }
+                    total
+                "},
+                },
+                Case {
+                    name: "set_range",
+                    original: indoc! {"
+                    fn foo() {
+                        let x = 1;
+                        let y = 2;
+                        let z = 3;
+                    }
+                "},
+                    model_output: indoc! {"
+                    <|set|>1:46-3:4a
+                        let sum = 6;
+                "},
+                    expected: indoc! {"
+                    fn foo() {
+                        let sum = 6;
+                    }
+                "},
+                },
+                Case {
+                    name: "insert_after_line",
+                    original: indoc! {"
+                    fn main() {
+                        let x = 1;
+                    }
+                "},
+                    model_output: indoc! {"
+                    <|insert|>1:46
+                        let y = 2;
+                "},
+                    expected: indoc! {"
+                    fn main() {
+                        let x = 1;
+                        let y = 2;
+                    }
+                "},
+                },
+                Case {
+                    name: "insert_before_first",
+                    original: indoc! {"
+                    let x = 1;
+                    let y = 2;
+                "},
+                    model_output: indoc! {"
+                    <|insert|>
+                    use std::io;
+                "},
+                    expected: indoc! {"
+                    use std::io;
+                    let x = 1;
+                    let y = 2;
+                "},
+                },
+                Case {
+                    name: "set_with_cursor_marker",
+                    original: indoc! {"
+                    fn main() {
+                        println!();
+                    }
+                "},
+                    model_output: indoc! {"
+                    <|set|>1:34
+                        eprintln!(\"<|user_cursor|>\");
+                "},
+                    expected: indoc! {"
+                    fn main() {
+                        eprintln!(\"<|user_cursor|>\");
+                    }
+                "},
+                },
+                Case {
+                    name: "multiple_set_commands",
+                    original: indoc! {"
+                    aaa
+                    bbb
+                    ccc
+                    ddd
+                "},
+                    model_output: indoc! {"
+                    <|set|>0:23
+                    AAA
+                    <|set|>2:29
+                    CCC
+                "},
+                    expected: indoc! {"
+                    AAA
+                    bbb
+                    CCC
+                    ddd
+                "},
+                },
+                Case {
+                    name: "set_range_multiline_replacement",
+                    original: indoc! {"
+                    fn handle_submit() {
+                    }
+
+                    fn handle_keystroke() {
+                "},
+                    model_output: indoc! {"
+                    <|set|>0:3f-1:7d
+                    fn handle_submit(modal_state: &mut ModalState) {
+                        <|user_cursor|>
+                    }
+                "},
+                    expected: indoc! {"
+                    fn handle_submit(modal_state: &mut ModalState) {
+                        <|user_cursor|>
+                    }
+
+                    fn handle_keystroke() {
+                "},
+                },
+                Case {
+                    name: "no_edit_commands_returns_original",
+                    original: indoc! {"
+                    hello
+                    world
+                "},
+                    model_output: "some random text with no commands",
+                    expected: indoc! {"
+                    hello
+                    world
+                "},
+                },
+                Case {
+                    name: "wrong_hash_set_ignored",
+                    original: indoc! {"
+                    aaa
+                    bbb
+                "},
+                    model_output: indoc! {"
+                    <|set|>0:ff
+                    ZZZ
+                "},
+                    expected: indoc! {"
+                    aaa
+                    bbb
+                "},
+                },
+                Case {
+                    name: "insert_and_set_combined",
+                    original: indoc! {"
+                    alpha
+                    beta
+                    gamma
+                "},
+                    model_output: indoc! {"
+                    <|set|>0:06
+                    ALPHA
+                    <|insert|>1:9c
+                    beta_extra
+                "},
+                    expected: indoc! {"
+                    ALPHA
+                    beta
+                    beta_extra
+                    gamma
+                "},
+                },
+                Case {
+                    name: "no_trailing_newline_preserved",
+                    original: "hello\nworld",
+                    model_output: indoc! {"
+                    <|set|>0:14
+                    HELLO
+                "},
+                    expected: "HELLO\nworld",
+                },
+                Case {
+                    name: "set_range_hash_mismatch_in_end_bound",
+                    original: indoc! {"
+                    one
+                    two
+                    three
+                "},
+                    model_output: indoc! {"
+                    <|set|>0:42-2:ff
+                    ONE_TWO_THREE
+                "},
+                    expected: indoc! {"
+                    one
+                    two
+                    three
+                "},
+                },
+                Case {
+                    name: "set_range_start_greater_than_end_ignored",
+                    original: indoc! {"
+                    a
+                    b
+                    c
+                "},
+                    model_output: indoc! {"
+                    <|set|>2:63-1:62
+                    X
+                "},
+                    expected: indoc! {"
+                    a
+                    b
+                    c
+                "},
+                },
+                Case {
+                    name: "insert_out_of_bounds_ignored",
+                    original: indoc! {"
+                    x
+                    y
+                "},
+                    model_output: indoc! {"
+                    <|insert|>99:aa
+                    z
+                "},
+                    expected: indoc! {"
+                    x
+                    y
+                "},
+                },
+                Case {
+                    name: "set_out_of_bounds_ignored",
+                    original: indoc! {"
+                    x
+                    y
+                "},
+                    model_output: indoc! {"
+                    <|set|>99:aa
+                    z
+                "},
+                    expected: indoc! {"
+                    x
+                    y
+                "},
+                },
+                Case {
+                    name: "malformed_set_command_ignored",
+                    original: indoc! {"
+                    alpha
+                    beta
+                "},
+                    model_output: indoc! {"
+                    <|set|>not-a-line-ref
+                    UPDATED
+                "},
+                    expected: indoc! {"
+                    alpha
+                    beta
+                "},
+                },
+                Case {
+                    name: "malformed_insert_hash_treated_as_before_first",
+                    original: indoc! {"
+                    alpha
+                    beta
+                "},
+                    model_output: indoc! {"
+                    <|insert|>1:nothex
+                    preamble
+                "},
+                    expected: indoc! {"
+                    preamble
+                    alpha
+                    beta
+                "},
+                },
+                Case {
+                    name: "set_then_insert_same_target_orders_insert_after_replacement",
+                    original: indoc! {"
+                    cat
+                    dog
+                "},
+                    model_output: indoc! {"
+                    <|set|>0:38
+                    CAT
+                    <|insert|>0:38
+                    TAIL
+                "},
+                    expected: indoc! {"
+                    CAT
+                    TAIL
+                    dog
+                "},
+                },
+                Case {
+                    name: "overlapping_set_ranges_last_wins",
+                    original: indoc! {"
+                    a
+                    b
+                    c
+                    d
+                "},
+                    model_output: indoc! {"
+                    <|set|>0:61-2:63
+                    FIRST
+                    <|set|>1:62-3:64
+                    SECOND
+                "},
+                    expected: indoc! {"
+                    FIRST
+                    d
+                "},
+                },
+                Case {
+                    name: "insert_before_first_and_after_line",
+                    original: indoc! {"
+                    a
+                    b
+                "},
+                    model_output: indoc! {"
+                    <|insert|>
+                    HEAD
+                    <|insert|>0:61
+                    MID
+                "},
+                    expected: indoc! {"
+                    HEAD
+                    a
+                    MID
+                    b
+                "},
+                },
+            ];
+
+            for case in &cases {
+                let result = hashline::apply_edit_commands(case.original, &case.model_output);
+                assert_eq!(result, case.expected, "failed case: {}", case.name);
+            }
+        }
+
+        #[test]
+        fn test_output_has_edit_commands() {
+            assert!(hashline::output_has_edit_commands("<|set|>0:ab\nnew"));
+            assert!(hashline::output_has_edit_commands("<|insert|>0:ab\nnew"));
+            assert!(hashline::output_has_edit_commands(
+                "some text\n<|set|>1:cd\nstuff"
+            ));
+            assert!(!hashline::output_has_edit_commands("just plain text"));
+            assert!(!hashline::output_has_edit_commands("NO_EDITS"));
+        }
+
+        // ---- hashline::patch_to_edit_commands round-trip tests ----
+
+        #[test]
+        fn test_patch_to_edit_commands() {
+            struct Case {
+                name: &'static str,
+                old: &'static str,
+                patch: &'static str,
+                expected_new: &'static str,
+            }
+
+            let cases = [
+                Case {
+                    name: "single_line_replacement",
+                    old: indoc! {"
+                    let mut total = 0;
+                    for product in products {
+                        total += ;
+                    }
+                    total
+                "},
+                    patch: indoc! {"
+                    @@ -1,5 +1,5 @@
+                     let mut total = 0;
+                     for product in products {
+                    -    total += ;
+                    +    total += product.price;
+                     }
+                     total
+                "},
+                    expected_new: indoc! {"
+                    let mut total = 0;
+                    for product in products {
+                        total += product.price;
+                    }
+                    total
+                "},
+                },
+                Case {
+                    name: "multiline_replacement",
+                    old: indoc! {"
+                    fn foo() {
+                        let x = 1;
+                        let y = 2;
+                        let z = 3;
+                    }
+                "},
+                    patch: indoc! {"
+                    @@ -1,5 +1,3 @@
+                     fn foo() {
+                    -    let x = 1;
+                    -    let y = 2;
+                    -    let z = 3;
+                    +    let sum = 1 + 2 + 3;
+                     }
+                "},
+                    expected_new: indoc! {"
+                    fn foo() {
+                        let sum = 1 + 2 + 3;
+                    }
+                "},
+                },
+                Case {
+                    name: "insertion",
+                    old: indoc! {"
+                    fn main() {
+                        let x = 1;
+                    }
+                "},
+                    patch: indoc! {"
+                    @@ -1,3 +1,4 @@
+                     fn main() {
+                         let x = 1;
+                    +    let y = 2;
+                     }
+                "},
+                    expected_new: indoc! {"
+                    fn main() {
+                        let x = 1;
+                        let y = 2;
+                    }
+                "},
+                },
+                Case {
+                    name: "insertion_before_first",
+                    old: indoc! {"
+                    let x = 1;
+                    let y = 2;
+                "},
+                    patch: indoc! {"
+                    @@ -1,2 +1,3 @@
+                    +use std::io;
+                     let x = 1;
+                     let y = 2;
+                "},
+                    expected_new: indoc! {"
+                    use std::io;
+                    let x = 1;
+                    let y = 2;
+                "},
+                },
+                Case {
+                    name: "deletion",
+                    old: indoc! {"
+                    aaa
+                    bbb
+                    ccc
+                    ddd
+                "},
+                    patch: indoc! {"
+                    @@ -1,4 +1,2 @@
+                     aaa
+                    -bbb
+                    -ccc
+                     ddd
+                "},
+                    expected_new: indoc! {"
+                    aaa
+                    ddd
+                "},
+                },
+                Case {
+                    name: "multiple_changes",
+                    old: indoc! {"
+                    alpha
+                    beta
+                    gamma
+                    delta
+                    epsilon
+                "},
+                    patch: indoc! {"
+                    @@ -1,5 +1,5 @@
+                    -alpha
+                    +ALPHA
+                     beta
+                     gamma
+                    -delta
+                    +DELTA
+                     epsilon
+                "},
+                    expected_new: indoc! {"
+                    ALPHA
+                    beta
+                    gamma
+                    DELTA
+                    epsilon
+                "},
+                },
+                Case {
+                    name: "replace_with_insertion",
+                    old: indoc! {r#"
+                    fn handle() {
+                        modal_state.close();
+                        modal_state.dismiss();
+                "#},
+                    patch: indoc! {r#"
+                    @@ -1,3 +1,4 @@
+                     fn handle() {
+                         modal_state.close();
+                    +    eprintln!("");
+                         modal_state.dismiss();
+                "#},
+                    expected_new: indoc! {r#"
+                    fn handle() {
+                        modal_state.close();
+                        eprintln!("");
+                        modal_state.dismiss();
+                "#},
+                },
+                Case {
+                    name: "complete_replacement",
+                    old: indoc! {"
+                    aaa
+                    bbb
+                    ccc
+                "},
+                    patch: indoc! {"
+                    @@ -1,3 +1,3 @@
+                    -aaa
+                    -bbb
+                    -ccc
+                    +xxx
+                    +yyy
+                    +zzz
+                "},
+                    expected_new: indoc! {"
+                    xxx
+                    yyy
+                    zzz
+                "},
+                },
+                Case {
+                    name: "add_function_body",
+                    old: indoc! {"
+                    fn foo() {
+                        modal_state.dismiss();
+                    }
+
+                    fn
+
+                    fn handle_keystroke() {
+                "},
+                    patch: indoc! {"
+                    @@ -1,6 +1,8 @@
+                     fn foo() {
+                         modal_state.dismiss();
+                     }
+
+                    -fn
+                    +fn handle_submit() {
+                    +    todo()
+                    +}
+
+                     fn handle_keystroke() {
+                "},
+                    expected_new: indoc! {"
+                    fn foo() {
+                        modal_state.dismiss();
+                    }
+
+                    fn handle_submit() {
+                        todo()
+                    }
+
+                    fn handle_keystroke() {
+                "},
+                },
+                Case {
+                    name: "with_cursor_offset",
+                    old: indoc! {r#"
+                    fn main() {
+                        println!();
+                    }
+                "#},
+                    patch: indoc! {r#"
+                    @@ -1,3 +1,3 @@
+                     fn main() {
+                    -    println!();
+                    +    eprintln!("");
+                     }
+                "#},
+                    expected_new: indoc! {r#"
+                    fn main() {
+                        eprintln!("<|user_cursor|>");
+                    }
+                "#},
+                },
+                Case {
+                    name: "non_local_hunk_header_pure_insertion_repro",
+                    old: indoc! {"
+                    aaa
+                    bbb
+                "},
+                    patch: indoc! {"
+                    @@ -20,2 +20,3 @@
+                     aaa
+                    +xxx
+                     bbb
+                "},
+                    expected_new: indoc! {"
+                    aaa
+                    xxx
+                    bbb
+                "},
+                },
+            ];
+
+            for case in &cases {
+                let cursor_offset = case.expected_new.find(CURSOR_MARKER).map(|offset| {
+                    // The cursor_offset for patch_to_edit_commands is relative to
+                    // the first hunk's new text (context + additions). We compute
+                    // it by finding where the marker sits in the expected output
+                    // (which mirrors the new text of the hunk).
+                    offset
+                });
+
+                let commands =
+                    hashline::patch_to_edit_commands(case.old, case.patch, cursor_offset)
+                        .unwrap_or_else(|e| panic!("failed case {}: {e}", case.name));
+
+                assert!(
+                    hashline::output_has_edit_commands(&commands),
+                    "case {}: expected edit commands, got: {commands:?}",
+                    case.name,
+                );
+
+                let applied = hashline::apply_edit_commands(case.old, &commands);
+                assert_eq!(applied, case.expected_new, "case {}", case.name);
+            }
+        }
+    }
 }
 
 pub mod seed_coder {
@@ -2480,606 +3328,5 @@ mod tests {
         let output = "<|editable_region_start|>\n<|editable_region_end|>\n";
         let cleaned = zeta1::clean_zeta1_model_output(output).unwrap();
         assert_eq!(cleaned, "");
-    }
-
-    // ---- hashline::write_cursor_excerpt_section tests ----
-
-    #[test]
-    fn test_hashline() {
-        struct Case {
-            name: &'static str,
-            context: &'static str,
-            editable_range: Range<usize>,
-            cursor_offset: usize,
-            expected: &'static str,
-        }
-
-        let cases = [
-            Case {
-                name: "basic_cursor_placement",
-                context: "hello world\n",
-                editable_range: 0..12,
-                cursor_offset: 5,
-                expected: indoc! {"
-                    <|file_sep|>test.rs
-                    <|fim_prefix|>
-                    <|fim_middle|>current
-                    0:5c|hello<|user_cursor|> world
-                    <|fim_suffix|>
-                    <|fim_middle|>updated"},
-            },
-            Case {
-                name: "multiline_cursor_on_second_line",
-                context: "aaa\nbbb\nccc\n",
-                editable_range: 0..12,
-                cursor_offset: 5, // byte 5 → 1 byte into "bbb"
-                expected: indoc! {"
-                    <|file_sep|>test.rs
-                    <|fim_prefix|>
-                    <|fim_middle|>current
-                    0:23|aaa
-                    1:26|b<|user_cursor|>bb
-                    2:29|ccc
-                    <|fim_suffix|>
-                    <|fim_middle|>updated"},
-            },
-            Case {
-                name: "no_trailing_newline_in_context",
-                context: "line1\nline2",
-                editable_range: 0..11,
-                cursor_offset: 3,
-                expected: indoc! {"
-                    <|file_sep|>test.rs
-                    <|fim_prefix|>
-                    <|fim_middle|>current
-                    0:d9|lin<|user_cursor|>e1
-                    1:da|line2
-                    <|fim_suffix|>
-                    <|fim_middle|>updated"},
-            },
-            Case {
-                name: "leading_newline_in_editable_region",
-                context: "\nabc\n",
-                editable_range: 0..5,
-                cursor_offset: 2, // byte 2 = 'a' in "abc" (after leading \n)
-                expected: indoc! {"
-                    <|file_sep|>test.rs
-                    <|fim_prefix|>
-                    <|fim_middle|>current
-                    0:00|
-                    1:26|a<|user_cursor|>bc
-                    <|fim_suffix|>
-                    <|fim_middle|>updated"},
-            },
-            Case {
-                name: "with_suffix",
-                context: "abc\ndef",
-                editable_range: 0..4, // editable region = "abc\n", suffix = "def"
-                cursor_offset: 2,
-                expected: indoc! {"
-                    <|file_sep|>test.rs
-                    <|fim_prefix|>
-                    <|fim_middle|>current
-                    0:26|ab<|user_cursor|>c
-                    <|fim_suffix|>
-                    def
-                    <|fim_middle|>updated"},
-            },
-            Case {
-                name: "unicode_two_byte_chars",
-                context: "héllo\n",
-                editable_range: 0..7,
-                cursor_offset: 3, // byte 3 = after "hé" (h=1 byte, é=2 bytes), before "llo"
-                expected: indoc! {"
-                    <|file_sep|>test.rs
-                    <|fim_prefix|>
-                    <|fim_middle|>current
-                    0:1b|hé<|user_cursor|>llo
-                    <|fim_suffix|>
-                    <|fim_middle|>updated"},
-            },
-            Case {
-                name: "unicode_three_byte_chars",
-                context: "日本語\n",
-                editable_range: 0..10,
-                cursor_offset: 6, // byte 6 = after "日本" (3+3 bytes), before "語"
-                expected: indoc! {"
-                    <|file_sep|>test.rs
-                    <|fim_prefix|>
-                    <|fim_middle|>current
-                    0:80|日本<|user_cursor|>語
-                    <|fim_suffix|>
-                    <|fim_middle|>updated"},
-            },
-            Case {
-                name: "unicode_four_byte_chars",
-                context: "a🌍b\n",
-                editable_range: 0..7,
-                cursor_offset: 5, // byte 5 = after "a🌍" (1+4 bytes), before "b"
-                expected: indoc! {"
-                    <|file_sep|>test.rs
-                    <|fim_prefix|>
-                    <|fim_middle|>current
-                    0:6b|a🌍<|user_cursor|>b
-                    <|fim_suffix|>
-                    <|fim_middle|>updated"},
-            },
-            Case {
-                name: "cursor_at_start_of_region_not_placed",
-                context: "abc\n",
-                editable_range: 0..4,
-                cursor_offset: 0, // cursor_offset(0) > offset(0) is false → cursor not placed
-                expected: indoc! {"
-                    <|file_sep|>test.rs
-                    <|fim_prefix|>
-                    <|fim_middle|>current
-                    0:26|abc
-                    <|fim_suffix|>
-                    <|fim_middle|>updated"},
-            },
-            Case {
-                name: "cursor_at_end_of_line_not_placed",
-                context: "abc\ndef\n",
-                editable_range: 0..8,
-                cursor_offset: 3, // byte 3 = the \n after "abc" → falls between lines, not placed
-                expected: indoc! {"
-                    <|file_sep|>test.rs
-                    <|fim_prefix|>
-                    <|fim_middle|>current
-                    0:26|abc
-                    1:2f|def
-                    <|fim_suffix|>
-                    <|fim_middle|>updated"},
-            },
-            Case {
-                name: "cursor_offset_relative_to_context_not_editable_region",
-                // cursor_offset is relative to `context`, so when editable_range.start > 0,
-                // write_cursor_excerpt_section must subtract it before comparing against
-                // per-line offsets within the editable region.
-                context: "pre\naaa\nbbb\nsuf\n",
-                editable_range: 4..12, // editable region = "aaa\nbbb\n"
-                cursor_offset: 9,      // byte 9 in context = second 'b' in "bbb"
-                expected: indoc! {"
-                    <|file_sep|>test.rs
-                    <|fim_prefix|>
-                    pre
-                    <|fim_middle|>current
-                    0:23|aaa
-                    1:26|b<|user_cursor|>bb
-                    <|fim_suffix|>
-                    suf
-                    <|fim_middle|>updated"},
-            },
-        ];
-
-        for case in &cases {
-            let mut prompt = String::new();
-            hashline::write_cursor_excerpt_section(
-                &mut prompt,
-                Path::new("test.rs"),
-                case.context,
-                &case.editable_range,
-                case.cursor_offset,
-            );
-            assert_eq!(prompt, case.expected, "failed case: {}", case.name);
-        }
-    }
-
-    // ---- hashline::apply_edit_commands tests ----
-
-    #[test]
-    fn test_hashline_apply_set_single_line() {
-        let original = "    let mut total = 0;\n    for product in products {\n        total += ;\n    }\n    total\n";
-        // Line 2 is "        total += ;" with hash computed by hash_line
-        let hash = hashline::hash_line(b"        total += ;");
-        let model_output = format!("<|set|>2:{hash:02x}\n        total += product.price;");
-        let result = hashline::apply_edit_commands(original, &model_output);
-        assert_eq!(
-            result,
-            "    let mut total = 0;\n    for product in products {\n        total += product.price;\n    }\n    total\n"
-        );
-    }
-
-    #[test]
-    fn test_hashline_apply_set_range() {
-        let original = "fn foo() {\n    let x = 1;\n    let y = 2;\n    let z = 3;\n}\n";
-        let hash1 = hashline::hash_line(b"    let x = 1;");
-        let hash3 = hashline::hash_line(b"    let z = 3;");
-        let model_output = format!("<|set|>1:{hash1:02x}-3:{hash3:02x}\n    let sum = 6;");
-        let result = hashline::apply_edit_commands(original, &model_output);
-        assert_eq!(result, "fn foo() {\n    let sum = 6;\n}\n");
-    }
-
-    #[test]
-    fn test_hashline_apply_insert_after_line() {
-        let original = "fn main() {\n    let x = 1;\n}\n";
-        let hash1 = hashline::hash_line(b"    let x = 1;");
-        let model_output = format!("<|insert|>1:{hash1:02x}\n    let y = 2;");
-        let result = hashline::apply_edit_commands(original, &model_output);
-        assert_eq!(result, "fn main() {\n    let x = 1;\n    let y = 2;\n}\n");
-    }
-
-    #[test]
-    fn test_hashline_apply_insert_before_first() {
-        let original = "    let x = 1;\n    let y = 2;\n";
-        let model_output = "<|insert|>\nuse std::io;";
-        let result = hashline::apply_edit_commands(original, model_output);
-        assert_eq!(result, "use std::io;\n    let x = 1;\n    let y = 2;\n");
-    }
-
-    #[test]
-    fn test_hashline_apply_set_with_cursor_marker() {
-        let original = "fn main() {\n    println!();\n}\n";
-        let hash1 = hashline::hash_line(b"    println!();");
-        let model_output = format!("<|set|>1:{hash1:02x}\n    eprintln!(\"<|user_cursor|>\");");
-        let result = hashline::apply_edit_commands(original, &model_output);
-        assert_eq!(
-            result,
-            "fn main() {\n    eprintln!(\"<|user_cursor|>\");\n}\n"
-        );
-    }
-
-    #[test]
-    fn test_hashline_apply_multiple_commands() {
-        let original = "aaa\nbbb\nccc\nddd\n";
-        let hash0 = hashline::hash_line(b"aaa");
-        let hash2 = hashline::hash_line(b"ccc");
-        let model_output = format!("<|set|>0:{hash0:02x}\nAAA\n<|set|>2:{hash2:02x}\nCCC");
-        let result = hashline::apply_edit_commands(original, &model_output);
-        assert_eq!(result, "AAA\nbbb\nCCC\nddd\n");
-    }
-
-    #[test]
-    fn test_hashline_apply_set_range_with_multiline_replacement() {
-        let original = "fn handle_submit() {\n}\n\nfn handle_keystroke() {\n";
-        let hash0 = hashline::hash_line(b"fn handle_submit() {");
-        let hash1 = hashline::hash_line(b"}");
-        let model_output = format!(
-            "<|set|>0:{hash0:02x}-1:{hash1:02x}\nfn handle_submit(modal_state: &mut ModalState) {{\n    <|user_cursor|>\n}}"
-        );
-        let result = hashline::apply_edit_commands(original, &model_output);
-        assert_eq!(
-            result,
-            "fn handle_submit(modal_state: &mut ModalState) {\n    <|user_cursor|>\n}\n\nfn handle_keystroke() {\n"
-        );
-    }
-
-    #[test]
-    fn test_hashline_apply_no_edit_commands_returns_original() {
-        let original = "hello\nworld\n";
-        let model_output = "some random text with no commands";
-        let result = hashline::apply_edit_commands(original, model_output);
-        assert_eq!(result, original);
-    }
-
-    #[test]
-    fn test_hashline_apply_wrong_hash_ignored() {
-        let original = "aaa\nbbb\n";
-        // Use a wrong hash (ff) so the command should be skipped
-        let model_output = "<|set|>0:ff\nZZZ";
-        let result = hashline::apply_edit_commands(original, model_output);
-        assert_eq!(result, "aaa\nbbb\n");
-    }
-
-    #[test]
-    fn test_hashline_apply_insert_and_set_combined() {
-        let original = "alpha\nbeta\ngamma\n";
-        let hash0 = hashline::hash_line(b"alpha");
-        let hash1 = hashline::hash_line(b"beta");
-        let model_output =
-            format!("<|set|>0:{hash0:02x}\nALPHA\n<|insert|>1:{hash1:02x}\nbeta_extra");
-        let result = hashline::apply_edit_commands(original, &model_output);
-        assert_eq!(result, "ALPHA\nbeta\nbeta_extra\ngamma\n");
-    }
-
-    #[test]
-    fn test_hashline_apply_no_trailing_newline_preserved() {
-        let original = "hello\nworld";
-        let hash0 = hashline::hash_line(b"hello");
-        let model_output = format!("<|set|>0:{hash0:02x}\nHELLO");
-        let result = hashline::apply_edit_commands(original, &model_output);
-        // Original has no trailing newline, so result shouldn't either
-        assert_eq!(result, "HELLO\nworld");
-    }
-
-    #[test]
-    fn test_hashline_output_has_edit_commands() {
-        assert!(hashline::output_has_edit_commands("<|set|>0:ab\nnew"));
-        assert!(hashline::output_has_edit_commands("<|insert|>0:ab\nnew"));
-        assert!(hashline::output_has_edit_commands(
-            "some text\n<|set|>1:cd\nstuff"
-        ));
-        assert!(!hashline::output_has_edit_commands("just plain text"));
-        assert!(!hashline::output_has_edit_commands("NO_EDITS"));
-    }
-
-    // ---- hashline::patch_to_edit_commands round-trip tests ----
-
-    #[test]
-    fn test_patch_to_edit_commands() {
-        struct Case {
-            name: &'static str,
-            old: &'static str,
-            patch: &'static str,
-            expected_new: &'static str,
-        }
-
-        let cases = [
-            Case {
-                name: "single_line_replacement",
-                old: indoc! {"
-                    let mut total = 0;
-                    for product in products {
-                        total += ;
-                    }
-                    total
-                "},
-                patch: indoc! {"
-                    @@ -1,5 +1,5 @@
-                     let mut total = 0;
-                     for product in products {
-                    -    total += ;
-                    +    total += product.price;
-                     }
-                     total
-                "},
-                expected_new: indoc! {"
-                    let mut total = 0;
-                    for product in products {
-                        total += product.price;
-                    }
-                    total
-                "},
-            },
-            Case {
-                name: "multiline_replacement",
-                old: indoc! {"
-                    fn foo() {
-                        let x = 1;
-                        let y = 2;
-                        let z = 3;
-                    }
-                "},
-                patch: indoc! {"
-                    @@ -1,5 +1,3 @@
-                     fn foo() {
-                    -    let x = 1;
-                    -    let y = 2;
-                    -    let z = 3;
-                    +    let sum = 1 + 2 + 3;
-                     }
-                "},
-                expected_new: indoc! {"
-                    fn foo() {
-                        let sum = 1 + 2 + 3;
-                    }
-                "},
-            },
-            Case {
-                name: "insertion",
-                old: indoc! {"
-                    fn main() {
-                        let x = 1;
-                    }
-                "},
-                patch: indoc! {"
-                    @@ -1,3 +1,4 @@
-                     fn main() {
-                         let x = 1;
-                    +    let y = 2;
-                     }
-                "},
-                expected_new: indoc! {"
-                    fn main() {
-                        let x = 1;
-                        let y = 2;
-                    }
-                "},
-            },
-            Case {
-                name: "insertion_before_first",
-                old: indoc! {"
-                    let x = 1;
-                    let y = 2;
-                "},
-                patch: indoc! {"
-                    @@ -1,2 +1,3 @@
-                    +use std::io;
-                     let x = 1;
-                     let y = 2;
-                "},
-                expected_new: indoc! {"
-                    use std::io;
-                    let x = 1;
-                    let y = 2;
-                "},
-            },
-            Case {
-                name: "deletion",
-                old: indoc! {"
-                    aaa
-                    bbb
-                    ccc
-                    ddd
-                "},
-                patch: indoc! {"
-                    @@ -1,4 +1,2 @@
-                     aaa
-                    -bbb
-                    -ccc
-                     ddd
-                "},
-                expected_new: indoc! {"
-                    aaa
-                    ddd
-                "},
-            },
-            Case {
-                name: "multiple_changes",
-                old: indoc! {"
-                    alpha
-                    beta
-                    gamma
-                    delta
-                    epsilon
-                "},
-                patch: indoc! {"
-                    @@ -1,5 +1,5 @@
-                    -alpha
-                    +ALPHA
-                     beta
-                     gamma
-                    -delta
-                    +DELTA
-                     epsilon
-                "},
-                expected_new: indoc! {"
-                    ALPHA
-                    beta
-                    gamma
-                    DELTA
-                    epsilon
-                "},
-            },
-            Case {
-                name: "replace_with_insertion",
-                old: indoc! {r#"
-                    fn handle() {
-                        modal_state.close();
-                        modal_state.dismiss();
-                "#},
-                patch: indoc! {r#"
-                    @@ -1,3 +1,4 @@
-                     fn handle() {
-                         modal_state.close();
-                    +    eprintln!("");
-                         modal_state.dismiss();
-                "#},
-                expected_new: indoc! {r#"
-                    fn handle() {
-                        modal_state.close();
-                        eprintln!("");
-                        modal_state.dismiss();
-                "#},
-            },
-            Case {
-                name: "complete_replacement",
-                old: indoc! {"
-                    aaa
-                    bbb
-                    ccc
-                "},
-                patch: indoc! {"
-                    @@ -1,3 +1,3 @@
-                    -aaa
-                    -bbb
-                    -ccc
-                    +xxx
-                    +yyy
-                    +zzz
-                "},
-                expected_new: indoc! {"
-                    xxx
-                    yyy
-                    zzz
-                "},
-            },
-            Case {
-                name: "add_function_body",
-                old: indoc! {"
-                    fn foo() {
-                        modal_state.dismiss();
-                    }
-
-                    fn
-
-                    fn handle_keystroke() {
-                "},
-                patch: indoc! {"
-                    @@ -1,6 +1,8 @@
-                     fn foo() {
-                         modal_state.dismiss();
-                     }
-
-                    -fn
-                    +fn handle_submit() {
-                    +    todo()
-                    +}
-
-                     fn handle_keystroke() {
-                "},
-                expected_new: indoc! {"
-                    fn foo() {
-                        modal_state.dismiss();
-                    }
-
-                    fn handle_submit() {
-                        todo()
-                    }
-
-                    fn handle_keystroke() {
-                "},
-            },
-            Case {
-                name: "with_cursor_offset",
-                old: indoc! {r#"
-                    fn main() {
-                        println!();
-                    }
-                "#},
-                patch: indoc! {r#"
-                    @@ -1,3 +1,3 @@
-                     fn main() {
-                    -    println!();
-                    +    eprintln!("");
-                     }
-                "#},
-                expected_new: indoc! {r#"
-                    fn main() {
-                        eprintln!("<|user_cursor|>");
-                    }
-                "#},
-            },
-            Case {
-                name: "non_local_hunk_header_pure_insertion_repro",
-                old: indoc! {"
-                    aaa
-                    bbb
-                "},
-                patch: indoc! {"
-                    @@ -20,2 +20,3 @@
-                     aaa
-                    +xxx
-                     bbb
-                "},
-                expected_new: indoc! {"
-                    aaa
-                    xxx
-                    bbb
-                "},
-            },
-        ];
-
-        for case in &cases {
-            let cursor_offset = case.expected_new.find(CURSOR_MARKER).map(|offset| {
-                // The cursor_offset for patch_to_edit_commands is relative to
-                // the first hunk's new text (context + additions). We compute
-                // it by finding where the marker sits in the expected output
-                // (which mirrors the new text of the hunk).
-                offset
-            });
-
-            let commands = hashline::patch_to_edit_commands(case.old, case.patch, cursor_offset)
-                .unwrap_or_else(|e| panic!("failed case {}: {e}", case.name));
-
-            assert!(
-                hashline::output_has_edit_commands(&commands),
-                "case {}: expected edit commands, got: {commands:?}",
-                case.name,
-            );
-
-            let applied = hashline::apply_edit_commands(case.old, &commands);
-            assert_eq!(applied, case.expected_new, "case {}", case.name);
-        }
     }
 }
