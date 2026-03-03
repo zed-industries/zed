@@ -14057,6 +14057,7 @@ dependencies = [
  "serde",
  "serde_json",
  "settings",
+ "shlex",
  "smol",
  "telemetry",
  "terminal",
