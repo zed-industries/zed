@@ -930,11 +930,14 @@ pub mod hashline {
 
     use super::*;
 
+    const SET_COMMAND_MARKER: &str = "<|set|>";
+    const INSERT_COMMAND_MARKER: &str = "<|insert|>";
+
     pub fn special_tokens() -> &'static [&'static str] {
         return &[
-            "<|set|>",
+            SET_COMMAND_MARKER,
             "<|set_range|>",
-            "<|insert|>",
+            INSERT_COMMAND_MARKER,
             CURSOR_MARKER,
             "<|file_sep|>",
             "<|fim_prefix|>",
@@ -1033,10 +1036,9 @@ pub mod hashline {
     /// A single edit command parsed from the model output.
     #[derive(Debug)]
     enum EditCommand<'a> {
-        /// Replace a single line.
-        SetLine { target: LineRef, content: &'a str },
-        /// Replace a range of lines (inclusive on both ends).
-        SetRange {
+        /// Replace a range of lines (inclusive on both ends). Single-line set is
+        /// represented by `start == end`.
+        Set {
             start: LineRef,
             end: LineRef,
             content: &'a str,
@@ -1075,16 +1077,15 @@ pub mod hashline {
             };
 
             let trimmed = line.trim();
-            let (is_set, specifier) = if let Some(spec) = trimmed.strip_prefix("<|set|>") {
+            let (is_set, specifier) = if let Some(spec) = trimmed.strip_prefix(SET_COMMAND_MARKER) {
                 (true, spec)
-            } else if let Some(spec) = trimmed.strip_prefix("<|insert|>") {
+            } else if let Some(spec) = trimmed.strip_prefix(INSERT_COMMAND_MARKER) {
                 (false, spec)
             } else {
                 offset = line_end;
                 continue;
             };
 
-            let mut content_start = line_end;
             let mut content_end = line_end;
             let mut scan = line_end;
 
@@ -1094,37 +1095,38 @@ pub mod hashline {
                     .map(|i| scan + i)
                     .unwrap_or(model_output.len());
                 let body_line = &model_output[scan..body_nl];
-                if body_line.trim().starts_with("<|set|>")
-                    || body_line.trim().starts_with("<|insert|>")
+                if body_line.trim().starts_with(SET_COMMAND_MARKER)
+                    || body_line.trim().starts_with(INSERT_COMMAND_MARKER)
                 {
                     break;
                 }
-                content_end = body_nl;
                 scan = if body_nl < model_output.len() {
                     body_nl + 1
                 } else {
                     body_nl
                 };
+                content_end = scan;
             }
 
-            if content_end < content_start {
-                content_start = content_end;
-            }
-            let content = &model_output[content_start..content_end];
+            let content = &model_output[line_end..content_end];
 
             if is_set {
                 if let Some((start_str, end_str)) = specifier.split_once('-') {
                     if let (Some(start), Some(end)) =
                         (parse_line_ref(start_str), parse_line_ref(end_str))
                     {
-                        commands.push(EditCommand::SetRange {
+                        commands.push(EditCommand::Set {
                             start,
                             end,
                             content,
                         });
                     }
                 } else if let Some(target) = parse_line_ref(specifier) {
-                    commands.push(EditCommand::SetLine { target, content });
+                    commands.push(EditCommand::Set {
+                        start: target.clone(),
+                        end: target,
+                        content,
+                    });
                 }
             } else {
                 let after = parse_line_ref(specifier);
@@ -1154,7 +1156,7 @@ pub mod hashline {
     }
 
     pub fn output_has_edit_commands(model_output: &str) -> bool {
-        model_output.contains("<|set|>") || model_output.contains("<|insert|>")
+        model_output.contains(SET_COMMAND_MARKER) || model_output.contains(INSERT_COMMAND_MARKER)
     }
 
     /// Apply `<|set|>` and `<|insert|>` edit commands from the model output to the
@@ -1182,12 +1184,7 @@ pub mod hashline {
 
         for command in &commands {
             match command {
-                EditCommand::SetLine { target, content } => {
-                    if target.index < old_hashes.len() && old_hashes[target.index] == target.hash {
-                        set_ops[target.index] = Some((target.index, *content));
-                    }
-                }
-                EditCommand::SetRange {
+                EditCommand::Set {
                     start,
                     end,
                     content,
@@ -1219,7 +1216,9 @@ pub mod hashline {
         // Emit any insertions before the first line
         for content in &insert_before_first {
             result.push_str(content);
-            result.push('\n');
+            if !content.ends_with('\n') {
+                result.push('\n');
+            }
         }
 
         let mut i = 0;
@@ -1227,14 +1226,16 @@ pub mod hashline {
             if let Some((end_index, replacement)) = set_ops[i].as_ref() {
                 // Replace lines i..=end_index with the replacement content
                 result.push_str(replacement);
-                if !replacement.is_empty() {
+                if !replacement.is_empty() && !replacement.ends_with('\n') {
                     result.push('\n');
                 }
                 // Emit any insertions after the end of this set range
                 if *end_index < insert_after.len() {
                     for content in &insert_after[*end_index] {
                         result.push_str(content);
-                        result.push('\n');
+                        if !content.ends_with('\n') {
+                            result.push('\n');
+                        }
                     }
                 }
                 i = end_index + 1;
@@ -1245,7 +1246,9 @@ pub mod hashline {
                 // Emit any insertions after this line
                 for content in &insert_after[i] {
                     result.push_str(content);
-                    result.push('\n');
+                    if !content.ends_with('\n') {
+                        result.push('\n');
+                    }
                 }
                 i += 1;
             }
@@ -1311,9 +1314,15 @@ pub mod hashline {
                 if let Some(after) = last_old_line
                     && let Some(&hash) = old_hashes.get(after)
                 {
-                    write!(result, "<|insert|>{}\n", LineRef { index: after, hash }).unwrap();
+                    write!(
+                        result,
+                        "{INSERT_COMMAND_MARKER}{}\n",
+                        LineRef { index: after, hash }
+                    )
+                    .unwrap();
                 } else {
-                    result.push_str("<|insert|>\n");
+                    result.push_str(INSERT_COMMAND_MARKER);
+                    result.push('\n');
                 }
             } else {
                 let start = hunk.line_range.start;
@@ -1322,9 +1331,15 @@ pub mod hashline {
 
                 if deleted_line_count == 1 {
                     if let Some(&hash) = old_hashes.get(start) {
-                        write!(result, "<|set|>{}\n", LineRef { index: start, hash }).unwrap();
+                        write!(
+                            result,
+                            "{SET_COMMAND_MARKER}{}\n",
+                            LineRef { index: start, hash }
+                        )
+                        .unwrap();
                     } else {
-                        result.push_str("<|set|>\n");
+                        result.push_str(SET_COMMAND_MARKER);
+                        result.push('\n');
                     }
                 } else {
                     let end_inclusive = end_exclusive - 1;
@@ -1335,7 +1350,7 @@ pub mod hashline {
                         (Some(start_hash), Some(end_hash)) => {
                             write!(
                                 result,
-                                "<|set|>{}-{}\n",
+                                "{SET_COMMAND_MARKER}{}-{}\n",
                                 LineRef {
                                     index: start,
                                     hash: start_hash
@@ -1347,7 +1362,10 @@ pub mod hashline {
                             )
                             .unwrap();
                         }
-                        _ => result.push_str("<|set|>\n"),
+                        _ => {
+                            result.push_str(SET_COMMAND_MARKER);
+                            result.push('\n');
+                        }
                     }
                 }
             }
@@ -1405,9 +1423,7 @@ pub mod hashline {
                     }
                 }
                 old_line_index += 1;
-            } else if raw_line.starts_with('+') {
-                let added_content = &raw_line[1..];
-
+            } else if let Some(added_content) = raw_line.strip_prefix('+') {
                 // Place cursor marker if cursor_offset falls within this line.
                 let mut cursor_line_offset = None;
                 if let Some(cursor_off) = cursor_offset
@@ -1440,11 +1456,7 @@ pub mod hashline {
                 }
                 last_old_line_before_hunk = Some(old_line_index);
                 old_line_index += 1;
-                let content = if raw_line.starts_with(' ') {
-                    &raw_line[1..]
-                } else {
-                    raw_line
-                };
+                let content = raw_line.strip_prefix(' ').unwrap_or(raw_line);
                 new_text_byte_offset += content.len();
             }
         }
@@ -2009,11 +2021,18 @@ pub mod hashline {
 
         #[test]
         fn test_output_has_edit_commands() {
-            assert!(hashline::output_has_edit_commands("<|set|>0:ab\nnew"));
-            assert!(hashline::output_has_edit_commands("<|insert|>0:ab\nnew"));
-            assert!(hashline::output_has_edit_commands(
-                "some text\n<|set|>1:cd\nstuff"
-            ));
+            assert!(hashline::output_has_edit_commands(&format!(
+                "{}0:ab\nnew",
+                SET_COMMAND_MARKER
+            )));
+            assert!(hashline::output_has_edit_commands(&format!(
+                "{}0:ab\nnew",
+                INSERT_COMMAND_MARKER
+            )));
+            assert!(hashline::output_has_edit_commands(&format!(
+                "some text\n{}1:cd\nstuff",
+                SET_COMMAND_MARKER
+            )));
             assert!(!hashline::output_has_edit_commands("just plain text"));
             assert!(!hashline::output_has_edit_commands("NO_EDITS"));
         }
@@ -2286,13 +2305,11 @@ pub mod hashline {
             ];
 
             for case in &cases {
-                let cursor_offset = case.expected_new.find(CURSOR_MARKER).map(|offset| {
-                    // The cursor_offset for patch_to_edit_commands is relative to
-                    // the first hunk's new text (context + additions). We compute
-                    // it by finding where the marker sits in the expected output
-                    // (which mirrors the new text of the hunk).
-                    offset
-                });
+                // The cursor_offset for patch_to_edit_commands is relative to
+                // the first hunk's new text (context + additions). We compute
+                // it by finding where the marker sits in the expected output
+                // (which mirrors the new text of the hunk).
+                let cursor_offset = case.expected_new.find(CURSOR_MARKER);
 
                 let commands =
                     hashline::patch_to_edit_commands(case.old, case.patch, cursor_offset)
