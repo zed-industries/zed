@@ -880,6 +880,23 @@
     // Default width of the collaboration panel.
     "default_width": 240,
   },
+  "database_panel": {
+    // Whether to show the database panel button in the status bar.
+    "button": true,
+    // Where to dock the database panel. Can be 'left' or 'right'.
+    "dock": "right",
+    // Default width of the database panel.
+    "default_width": 360,
+    // Whether to automatically commit changes to the database.
+    "auto_commit": false,
+    // Whether to show a visual indicator for NULL values.
+    "show_null_indicator": true,
+    // Default export format for query results (csv, json, sql).
+    "default_export_format": "csv",
+    // How to sort results: "server" sends ORDER BY to the database,
+    // "client" sorts in memory.
+    "sort_mode": "server",
+  },
   "git_panel": {
     // Whether to show the git panel button in the status bar.
     "button": true,
@@ -1032,6 +1049,11 @@
         "tools": {
           "copy_path": true,
           "create_directory": true,
+          "database_describe_object": true,
+          "database_execute_query": true,
+          "database_explain_query": true,
+          "database_list_objects": true,
+          "database_modify_data": true,
           "delete_path": true,
           "diagnostics": true,
           "edit_file": true,
@@ -1057,6 +1079,10 @@
         // We don't know which of the context server tools are safe for the "Ask" profile, so we don't enable them by default.
         // "enable_all_context_servers": true,
         "tools": {
+          "database_describe_object": true,
+          "database_execute_query": true,
+          "database_explain_query": true,
+          "database_list_objects": true,
           "diagnostics": true,
           "fetch": true,
           "list_directory": true,
