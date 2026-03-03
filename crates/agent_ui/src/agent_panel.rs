@@ -9,7 +9,7 @@ use std::{
     time::Duration,
 };
 
-use acp_thread::{AcpThread, AgentSessionInfo, MentionUri};
+use acp_thread::{AcpThread, AgentSessionInfo, MentionUri, ThreadStatus};
 use agent::{ContextServerRegistry, SharedThread, ThreadStore};
 use agent_client_protocol as acp;
 use agent_servers::AgentServer;
@@ -50,6 +50,7 @@ use assistant_slash_command::SlashCommandWorkingSet;
 use assistant_text_thread::{TextThread, TextThreadEvent, TextThreadSummary};
 use client::UserStore;
 use cloud_api_types::Plan;
+use collections::HashMap;
 use editor::{Anchor, AnchorRangeExt as _, Editor, EditorEvent, MultiBuffer};
 use extension::ExtensionEvents;
 use extension_host::ExtensionStore;
@@ -513,7 +514,7 @@ pub struct AgentPanel {
     focus_handle: FocusHandle,
     active_view: ActiveView,
     previous_view: Option<ActiveView>,
-    _active_view_observation: Option<Subscription>,
+    background_views: HashMap<acp::SessionId, Entity<ConnectionView>>,
     new_thread_menu_handle: PopoverMenuHandle<ContextMenu>,
     agent_panel_menu_handle: PopoverMenuHandle<ContextMenu>,
     agent_navigation_menu_handle: PopoverMenuHandle<ContextMenu>,
@@ -798,7 +799,7 @@ impl AgentPanel {
             focus_handle: cx.focus_handle(),
             context_server_registry,
             previous_view: None,
-            _active_view_observation: None,
+            background_views: HashMap::default(),
             new_thread_menu_handle: PopoverMenuHandle::default(),
             agent_panel_menu_handle: PopoverMenuHandle::default(),
             agent_navigation_menu_handle: PopoverMenuHandle::default(),
@@ -1566,6 +1567,49 @@ impl AgentPanel {
         }
     }
 
+    /// Returns the primary thread views for all retained connections: the
+    /// active thread plus any background threads that are still running or
+    /// completed but unseen.
+    pub fn parent_threads(&self, cx: &App) -> Vec<Entity<ThreadView>> {
+        let mut views = Vec::new();
+
+        if let Some(server_view) = self.as_active_server_view() {
+            if let Some(thread_view) = server_view.read(cx).parent_thread(cx) {
+                views.push(thread_view);
+            }
+        }
+
+        for server_view in self.background_views.values() {
+            if let Some(thread_view) = server_view.read(cx).parent_thread(cx) {
+                views.push(thread_view);
+            }
+        }
+
+        views
+    }
+
+    fn retain_running_thread(&mut self, old_view: ActiveView, cx: &mut Context<Self>) {
+        let ActiveView::AgentThread { server_view } = old_view else {
+            return;
+        };
+
+        let Some(thread_view) = server_view.read(cx).parent_thread(cx) else {
+            return;
+        };
+
+        let thread = &thread_view.read(cx).thread;
+        let (status, session_id) = {
+            let thread = thread.read(cx);
+            (thread.status(), thread.session_id().clone())
+        };
+
+        if status != ThreadStatus::Generating {
+            return;
+        }
+
+        self.background_views.insert(session_id, server_view);
+    }
+
     pub(crate) fn active_native_agent_thread(&self, cx: &App) -> Option<Entity<agent::Thread>> {
         match &self.active_view {
             ActiveView::AgentThread { server_view, .. } => {
@@ -1604,30 +1648,22 @@ impl AgentPanel {
         let current_is_config = matches!(self.active_view, ActiveView::Configuration);
         let new_is_config = matches!(new_view, ActiveView::Configuration);
 
-        let current_is_special = current_is_history || current_is_config;
-        let new_is_special = new_is_history || new_is_config;
+        let current_is_overlay = current_is_history || current_is_config;
+        let new_is_overlay = new_is_history || new_is_config;
 
-        if current_is_uninitialized || (current_is_special && !new_is_special) {
+        if current_is_uninitialized || (current_is_overlay && !new_is_overlay) {
             self.active_view = new_view;
-        } else if !current_is_special && new_is_special {
+        } else if !current_is_overlay && new_is_overlay {
             self.previous_view = Some(std::mem::replace(&mut self.active_view, new_view));
         } else {
-            if !new_is_special {
-                self.previous_view = None;
+            let old_view = std::mem::replace(&mut self.active_view, new_view);
+            if !new_is_overlay {
+                if let Some(previous) = self.previous_view.take() {
+                    self.retain_running_thread(previous, cx);
+                }
             }
-            self.active_view = new_view;
+            self.retain_running_thread(old_view, cx);
         }
-
-        self._active_view_observation = match &self.active_view {
-            ActiveView::AgentThread { server_view } => {
-                Some(cx.observe(server_view, |this, _, cx| {
-                    cx.emit(AgentPanelEvent::ActiveViewChanged);
-                    this.serialize(cx);
-                    cx.notify();
-                }))
-            }
-            _ => None,
-        };
 
         let is_in_agent_history = matches!(
             self.active_view,
@@ -1824,6 +1860,11 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if let Some(server_view) = self.background_views.remove(&thread.session_id) {
+            self.set_active_view(ActiveView::AgentThread { server_view }, true, window, cx);
+            return;
+        }
+
         let Some(agent) = self.selected_external_agent() else {
             return;
         };
@@ -1867,6 +1908,20 @@ impl AgentPanel {
             )
         });
 
+        cx.observe(&server_view, |this, server_view, cx| {
+            let is_active = this
+                .as_active_server_view()
+                .is_some_and(|active| active.entity_id() == server_view.entity_id());
+            if is_active {
+                cx.emit(AgentPanelEvent::ActiveViewChanged);
+                this.serialize(cx);
+            } else {
+                cx.emit(AgentPanelEvent::BackgroundThreadChanged);
+            }
+            cx.notify();
+        })
+        .detach();
+
         self.set_active_view(ActiveView::AgentThread { server_view }, true, window, cx);
     }
 }
@@ -1900,6 +1955,7 @@ fn agent_panel_dock_position(cx: &App) -> DockPosition {
 
 pub enum AgentPanelEvent {
     ActiveViewChanged,
+    BackgroundThreadChanged,
 }
 
 impl EventEmitter<PanelEvent> for AgentPanel {}
