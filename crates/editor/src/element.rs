@@ -35,6 +35,9 @@ use crate::{
 };
 use buffer_diff::{DiffHunkStatus, DiffHunkStatusKind};
 use collections::{BTreeMap, HashMap};
+use std::sync::Mutex;
+use gpui::EntityId;
+use crate::smooth_cursor_manager::SmoothCursorManager;
 use feature_flags::{DiffReviewFeatureFlag, FeatureFlagAppExt as _};
 use file_icons::FileIcons;
 use git::{Oid, blame::BlameEntry, commit::ParsedCommitMessage, status::FileStatus};
@@ -6820,14 +6823,42 @@ impl EditorElement {
     }
 
     fn paint_cursors(&mut self, layout: &mut EditorLayout, window: &mut Window, cx: &mut App) {
-        for cursor in &mut layout.visible_cursors {
-            cursor.paint(layout.content_origin, window, cx);
+        // --- Smooth cursor animation ---
+        // Measure elapsed time via GPUI's frame clock.
+        let dt = window.frame_duration().as_secs_f32();
+        // Entity ID as a stable u64 key for the per-editor spring table.
+        let editor_id: u64 = self.editor.entity_id().as_u64();
+        // Collect target positions (cursor origin relative to content area).
+        let targets: Vec<_> = layout
+            .visible_cursors
+            .iter()
+            .map(|c| c.origin)
+            .collect();
+        // Advance springs and get smoothed positions.
+        let smoothed = {
+            let mut managers = SMOOTH_CURSOR_MANAGERS.lock().unwrap();
+            let mgr = managers
+                .entry(editor_id)
+                .or_insert_with(SmoothCursorManager::new);
+            mgr.tick(&targets, dt)
+        };
+        // If any spring is still moving, request another frame immediately.
+        {
+            let managers = SMOOTH_CURSOR_MANAGERS.lock().unwrap();
+            if let Some(mgr) = managers.get(&editor_id) {
+                if mgr.is_animating() {
+                    window.request_animation_frame();
+                }
+            }
         }
-    }
-
-    fn paint_scrollbars(&mut self, layout: &mut EditorLayout, window: &mut Window, cx: &mut App) {
-        let Some(scrollbars_layout) = layout.scrollbars_layout.take() else {
-            return;
+        // Paint cursors at their smoothed positions.
+        for (cursor, smoothed_origin) in layout.visible_cursors.iter_mut().zip(smoothed) {
+            let old_origin = cursor.origin;
+            cursor.origin = smoothed_origin;
+            cursor.paint(layout.content_origin, window, cx);
+            cursor.origin = old_origin;
+        }
+    }            return;
         };
         let any_scrollbar_dragged = self.editor.read(cx).scroll_manager.any_scrollbar_dragged();
 
