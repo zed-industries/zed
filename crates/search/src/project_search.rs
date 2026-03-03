@@ -11,7 +11,7 @@ use crate::{
 use anyhow::Context as _;
 use collections::HashMap;
 use editor::{
-    Anchor, Editor, EditorEvent, EditorSettings, MAX_TAB_TITLE_LEN, MultiBuffer, PathKey,
+    Anchor, Editor, EditorEvent, EditorSettings, ExcerptId, MAX_TAB_TITLE_LEN, MultiBuffer, PathKey,
     SelectionEffects,
     actions::{Backtab, FoldAll, SelectAll, Tab, UnfoldAll},
     items::active_match_index,
@@ -27,6 +27,7 @@ use gpui::{
 use itertools::Itertools;
 use language::{Buffer, Language};
 use menu::Confirm;
+use multi_buffer;
 use project::{
     Project, ProjectPath, SearchResults,
     search::{SearchInputKind, SearchQuery},
@@ -239,6 +240,7 @@ pub struct ProjectSearch {
     search_history_cursor: SearchHistoryCursor,
     search_included_history_cursor: SearchHistoryCursor,
     search_excluded_history_cursor: SearchHistoryCursor,
+    _excerpts_subscription: Subscription,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -283,10 +285,12 @@ pub struct ProjectSearchBar {
 impl ProjectSearch {
     pub fn new(project: Entity<Project>, cx: &mut Context<Self>) -> Self {
         let capability = project.read(cx).capability();
+        let excerpts = cx.new(|_| MultiBuffer::new(capability));
+        let subscription = Self::subscribe_to_excerpts(&excerpts, cx);
 
         Self {
             project,
-            excerpts: cx.new(|_| MultiBuffer::new(capability)),
+            excerpts,
             pending_search: Default::default(),
             match_ranges: Default::default(),
             active_query: None,
@@ -297,27 +301,80 @@ impl ProjectSearch {
             search_history_cursor: Default::default(),
             search_included_history_cursor: Default::default(),
             search_excluded_history_cursor: Default::default(),
+            _excerpts_subscription: subscription,
         }
     }
 
     fn clone(&self, cx: &mut Context<Self>) -> Entity<Self> {
-        cx.new(|cx| Self {
-            project: self.project.clone(),
-            excerpts: self
+        cx.new(|cx| {
+            let excerpts = self
                 .excerpts
-                .update(cx, |excerpts, cx| cx.new(|cx| excerpts.clone(cx))),
-            pending_search: Default::default(),
-            match_ranges: self.match_ranges.clone(),
-            active_query: self.active_query.clone(),
-            last_search_query_text: self.last_search_query_text.clone(),
-            search_id: self.search_id,
-            no_results: self.no_results,
-            limit_reached: self.limit_reached,
-            search_history_cursor: self.search_history_cursor.clone(),
-            search_included_history_cursor: self.search_included_history_cursor.clone(),
-            search_excluded_history_cursor: self.search_excluded_history_cursor.clone(),
+                .update(cx, |excerpts, cx| cx.new(|cx| excerpts.clone(cx)));
+            let subscription = Self::subscribe_to_excerpts(&excerpts, cx);
+
+            Self {
+                project: self.project.clone(),
+                excerpts,
+                pending_search: Default::default(),
+                match_ranges: self.match_ranges.clone(),
+                active_query: self.active_query.clone(),
+                last_search_query_text: self.last_search_query_text.clone(),
+                search_id: self.search_id,
+                no_results: self.no_results,
+                limit_reached: self.limit_reached,
+                search_history_cursor: self.search_history_cursor.clone(),
+                search_included_history_cursor: self.search_included_history_cursor.clone(),
+                search_excluded_history_cursor: self.search_excluded_history_cursor.clone(),
+                _excerpts_subscription: subscription,
+            }
         })
     }
+    fn subscribe_to_excerpts(
+        excerpts: &Entity<MultiBuffer>,
+        cx: &mut Context<Self>,
+    ) -> Subscription {
+        cx.subscribe(excerpts, |this, _, event, cx| {
+            if matches!(event, multi_buffer::Event::FileHandleChanged) {
+                this.remove_deleted_buffers(cx);
+            }
+        })
+    }
+
+    fn remove_deleted_buffers(&mut self, cx: &mut Context<Self>) {
+        let deleted_paths: Vec<PathKey> = self.excerpts.read(cx).paths().filter(|path| {
+            self.excerpts
+                .read(cx)
+                .buffer_for_path(path, cx)
+                .is_some_and(|buffer| {
+                    buffer
+                        .read(cx)
+                        .file()
+                        .is_some_and(|file| file.disk_state().is_deleted())
+                })
+        }).cloned().collect();
+
+        if deleted_paths.is_empty() {
+            return;
+        }
+
+        let removed_excerpt_ids: collections::HashSet<ExcerptId> = deleted_paths
+            .iter()
+            .flat_map(|path| self.excerpts.read(cx).excerpts_for_path(path))
+            .collect();
+
+        self.excerpts.update(cx, |excerpts, cx| {
+            for path in deleted_paths {
+                excerpts.remove_excerpts_for_path(path, cx);
+            }
+        });
+
+        self.match_ranges.retain(|range| {
+            !removed_excerpt_ids.contains(&range.start.excerpt_id)
+        });
+
+        cx.notify();
+    }
+
     fn cursor(&self, kind: SearchInputKind) -> &SearchHistoryCursor {
         match kind {
             SearchInputKind::Query => &self.search_history_cursor,
