@@ -1568,6 +1568,10 @@ impl AgentPanel {
     }
 
     /// Returns the primary thread views for all retained connections: the
+    pub fn is_background_thread(&self, session_id: &acp::SessionId) -> bool {
+        self.background_threads.contains_key(session_id)
+    }
+
     /// active thread plus any background threads that are still running or
     /// completed but unseen.
     pub fn parent_threads(&self, cx: &App) -> Vec<Entity<ThreadView>> {

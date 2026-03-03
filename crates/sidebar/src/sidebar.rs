@@ -10,6 +10,7 @@ use gpui::{
 use menu::{Confirm, SelectFirst, SelectLast, SelectNext, SelectPrevious};
 use project::Event as ProjectEvent;
 use std::collections::{HashMap, HashSet};
+use std::mem;
 use theme::ActiveTheme;
 use ui::utils::TRAFFIC_LIGHT_PADDING;
 use ui::{AgentThreadStatus, KeyBinding, Tooltip, prelude::*};
@@ -40,6 +41,7 @@ struct ActiveThreadInfo {
     title: SharedString,
     status: AgentThreadStatus,
     icon: IconName,
+    is_background: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -57,6 +59,7 @@ enum ListEntry {
         updated_at: DateTime<Utc>,
         diff_stats: Option<(usize, usize)>,
         workspace_index: Option<usize>,
+        is_background: bool,
     },
     ViewMore {
         path_list: PathList,
@@ -64,17 +67,35 @@ enum ListEntry {
     },
 }
 
+struct SidebarContents {
+    entries: Vec<ListEntry>,
+    notified_threads: HashSet<acp::SessionId>,
+}
+
+impl Default for SidebarContents {
+    fn default() -> Self {
+        Self {
+            entries: Vec::new(),
+            notified_threads: HashSet::new(),
+        }
+    }
+}
+
+impl SidebarContents {
+    fn is_thread_notified(&self, session_id: &acp::SessionId) -> bool {
+        self.notified_threads.contains(session_id)
+    }
+}
+
 pub struct Sidebar {
-    // Reference cycle with the Workspace?
     multi_workspace: Entity<MultiWorkspace>,
     width: Pixels,
     focus_handle: FocusHandle,
     list_state: ListState,
-    entries: Vec<ListEntry>,
+    contents: SidebarContents,
     selection: Option<usize>,
     collapsed_groups: HashSet<PathList>,
     expanded_groups: HashSet<PathList>,
-    notified_workspaces: HashSet<usize>,
     _subscription: Subscription,
     _project_subscriptions: Vec<Subscription>,
     _agent_panel_subscriptions: Vec<Subscription>,
@@ -105,11 +126,10 @@ impl Sidebar {
             width: DEFAULT_WIDTH,
             focus_handle,
             list_state: ListState::new(0, gpui::ListAlignment::Top, px(1000.)),
-            entries: Vec::new(),
+            contents: SidebarContents::default(),
             selection: None,
             collapsed_groups: HashSet::new(),
             expanded_groups: HashSet::new(),
-            notified_workspaces: HashSet::new(),
             _subscription: subscription,
             _project_subscriptions: Vec::new(),
             _agent_panel_subscriptions: Vec::new(),
@@ -239,6 +259,7 @@ impl Sidebar {
                 let icon = thread_view_ref.agent_icon;
                 let title = thread.title();
                 let session_id = thread.session_id().clone();
+                let is_background = agent_panel_ref.is_background_thread(&session_id);
 
                 let status = if thread.is_waiting_for_confirmation() {
                     AgentThreadStatus::WaitingForConfirmation
@@ -256,9 +277,175 @@ impl Sidebar {
                     title,
                     status,
                     icon,
+                    is_background,
                 }
             })
             .collect()
+    }
+
+    fn rebuild_contents(&mut self, cx: &App) {
+        let mw = self.multi_workspace.read(cx);
+        let workspaces = mw.workspaces().to_vec();
+        let active_workspace_index = mw.active_workspace_index();
+
+        let thread_store = ThreadStore::try_global(cx);
+
+        let previous = mem::take(&mut self.contents);
+
+        let old_statuses: HashMap<acp::SessionId, AgentThreadStatus> = previous
+            .entries
+            .iter()
+            .filter_map(|entry| match entry {
+                ListEntry::Thread {
+                    workspace_index: Some(_),
+                    session_id,
+                    status,
+                    ..
+                } => Some((session_id.clone(), *status)),
+                _ => None,
+            })
+            .collect();
+
+        let mut entries = Vec::new();
+        let mut notified_threads = previous.notified_threads;
+
+        for (index, workspace) in workspaces.iter().enumerate() {
+            let (path_list, label) = Self::workspace_path_list_and_label(workspace, cx);
+
+            entries.push(ListEntry::ProjectHeader {
+                path_list: path_list.clone(),
+                label,
+            });
+
+            if self.collapsed_groups.contains(&path_list) {
+                continue;
+            }
+
+            let mut threads: Vec<ListEntry> = Vec::new();
+
+            if let Some(ref thread_store) = thread_store {
+                for meta in thread_store.read(cx).threads_for_paths(&path_list) {
+                    threads.push(ListEntry::Thread {
+                        session_id: meta.id.clone(),
+                        title: meta.title.clone(),
+                        icon: IconName::ZedAgent,
+                        status: AgentThreadStatus::default(),
+                        updated_at: meta.updated_at,
+                        diff_stats: None,
+                        workspace_index: None,
+                        is_background: false,
+                    });
+                }
+            }
+
+            let live_infos = Self::all_thread_infos_for_workspace(workspace, cx);
+
+            for info in &live_infos {
+                let existing = threads.iter_mut().find(|t| {
+                    matches!(t, ListEntry::Thread { session_id, .. } if session_id == &info.session_id)
+                });
+
+                if let Some(existing) = existing {
+                    if let ListEntry::Thread {
+                        status,
+                        icon,
+                        workspace_index,
+                        title,
+                        is_background,
+                        ..
+                    } = existing
+                    {
+                        *status = info.status;
+                        *icon = info.icon;
+                        *workspace_index = Some(index);
+                        *title = info.title.clone();
+                        *is_background = info.is_background;
+                    }
+                } else {
+                    threads.push(ListEntry::Thread {
+                        session_id: info.session_id.clone(),
+                        title: info.title.clone(),
+                        icon: info.icon,
+                        status: info.status,
+                        updated_at: Utc::now(),
+                        diff_stats: None,
+                        workspace_index: Some(index),
+                        is_background: info.is_background,
+                    });
+                }
+            }
+
+            // Update notification state for live threads.
+            for thread in &threads {
+                if let ListEntry::Thread {
+                    workspace_index: Some(workspace_idx),
+                    session_id,
+                    status,
+                    is_background,
+                    ..
+                } = thread
+                {
+                    if *is_background && *status == AgentThreadStatus::Completed {
+                        notified_threads.insert(session_id.clone());
+                    } else if *status == AgentThreadStatus::Completed
+                        && *workspace_idx != active_workspace_index
+                        && old_statuses.get(session_id) == Some(&AgentThreadStatus::Running)
+                    {
+                        notified_threads.insert(session_id.clone());
+                    }
+
+                    if *workspace_idx == active_workspace_index && !*is_background {
+                        notified_threads.remove(session_id);
+                    }
+                }
+            }
+
+            threads.sort_by(|a, b| {
+                let a_time = match a {
+                    ListEntry::Thread { updated_at, .. } => updated_at,
+                    _ => unreachable!(),
+                };
+                let b_time = match b {
+                    ListEntry::Thread { updated_at, .. } => updated_at,
+                    _ => unreachable!(),
+                };
+                b_time.cmp(a_time)
+            });
+
+            let total = threads.len();
+            let show_view_more =
+                total > DEFAULT_THREADS_SHOWN && !self.expanded_groups.contains(&path_list);
+
+            let count = if show_view_more {
+                DEFAULT_THREADS_SHOWN
+            } else {
+                total
+            };
+
+            entries.extend(threads.into_iter().take(count));
+
+            if show_view_more {
+                entries.push(ListEntry::ViewMore {
+                    path_list: path_list.clone(),
+                    remaining_count: total - DEFAULT_THREADS_SHOWN,
+                });
+            }
+        }
+
+        // Prune stale entries from notified_threads.
+        let current_session_ids: HashSet<&acp::SessionId> = entries
+            .iter()
+            .filter_map(|e| match e {
+                ListEntry::Thread { session_id, .. } => Some(session_id),
+                _ => None,
+            })
+            .collect();
+        notified_threads.retain(|id| current_session_ids.contains(id));
+
+        self.contents = SidebarContents {
+            entries,
+            notified_threads,
+        };
     }
 
     fn update_entries(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -272,157 +459,19 @@ impl Sidebar {
             this._agent_panel_subscriptions = this.subscribe_to_agent_panels(window, cx);
             this.subscribe_to_thread_store(window, cx);
 
-            let (workspaces, active_workspace_index) = {
-                let mw = multi_workspace.read(cx);
-                (mw.workspaces().to_vec(), mw.active_workspace_index())
-            };
+            let had_notifications = this.has_notifications(cx);
 
-            let thread_store = ThreadStore::try_global(cx);
+            this.rebuild_contents(cx);
 
-            let had_notifications = !this.notified_workspaces.is_empty();
-
-            let old_statuses: HashMap<(usize, acp::SessionId), AgentThreadStatus> = this
-                .entries
-                .iter()
-                .filter_map(|entry| match entry {
-                    ListEntry::Thread {
-                        workspace_index: Some(index),
-                        session_id,
-                        status,
-                        ..
-                    } => Some(((*index, session_id.clone()), *status)),
-                    _ => None,
-                })
-                .collect();
-
-            this.entries.clear();
-
-            for (index, workspace) in workspaces.iter().enumerate() {
-                let (path_list, label) =
-                    Self::workspace_path_list_and_label(workspace, cx);
-
-                this.entries.push(ListEntry::ProjectHeader {
-                    path_list: path_list.clone(),
-                    label,
-                });
-
-                if this.collapsed_groups.contains(&path_list) {
-                    continue;
-                }
-
-                let mut threads: Vec<ListEntry> = Vec::new();
-
-                if let Some(ref thread_store) = thread_store {
-                    for meta in thread_store.read(cx).threads_for_paths(&path_list) {
-                        threads.push(ListEntry::Thread {
-                            session_id: meta.id.clone(),
-                            title: meta.title.clone(),
-                            icon: IconName::ZedAgent,
-                            status: AgentThreadStatus::default(),
-                            updated_at: meta.updated_at,
-                            diff_stats: None,
-                            workspace_index: None,
-                        });
-                    }
-                }
-
-                let live_infos = Self::all_thread_infos_for_workspace(workspace, cx);
-
-                for info in &live_infos {
-                    let existing = threads.iter_mut().find(|t| {
-                        matches!(t, ListEntry::Thread { session_id, .. } if session_id == &info.session_id)
-                    });
-
-                    if let Some(existing) = existing {
-                        if let ListEntry::Thread {
-                            status,
-                            icon,
-                            workspace_index,
-                            title,
-                            ..
-                        } = existing
-                        {
-                            *status = info.status;
-                            *icon = info.icon;
-                            *workspace_index = Some(index);
-                            *title = info.title.clone();
-                        }
-                    } else {
-                        threads.push(ListEntry::Thread {
-                            session_id: info.session_id.clone(),
-                            title: info.title.clone(),
-                            icon: info.icon,
-                            status: info.status,
-                            updated_at: Utc::now(),
-                            diff_stats: None,
-                            workspace_index: Some(index),
-                        });
-                    }
-                }
-
-                // Detect Running → Completed transitions on background workspaces.
-                for thread in &threads {
-                    if let ListEntry::Thread {
-                        workspace_index: Some(workspace_idx),
-                        session_id,
-                        status,
-                        ..
-                    } = thread
-                    {
-                        let key = (*workspace_idx, session_id.clone());
-                        if *status == AgentThreadStatus::Completed
-                            && *workspace_idx != active_workspace_index
-                            && old_statuses.get(&key) == Some(&AgentThreadStatus::Running)
-                        {
-                            this.notified_workspaces.insert(*workspace_idx);
-                        }
-                    }
-                }
-
-                threads.sort_by(|a, b| {
-                    let a_time = match a {
-                        ListEntry::Thread { updated_at, .. } => updated_at,
-                        _ => unreachable!(),
-                    };
-                    let b_time = match b {
-                        ListEntry::Thread { updated_at, .. } => updated_at,
-                        _ => unreachable!(),
-                    };
-                    b_time.cmp(a_time)
-                });
-
-                let total = threads.len();
-                let show_view_more =
-                    total > DEFAULT_THREADS_SHOWN && !this.expanded_groups.contains(&path_list);
-
-                let count = if show_view_more {
-                    DEFAULT_THREADS_SHOWN
-                } else {
-                    total
-                };
-
-                this.entries.extend(threads.into_iter().take(count));
-
-                if show_view_more {
-                    this.entries.push(ListEntry::ViewMore {
-                        path_list: path_list.clone(),
-                        remaining_count: total - DEFAULT_THREADS_SHOWN,
-                    });
-                }
-            }
-
-            this.notified_workspaces.remove(&active_workspace_index);
-
-            this.list_state.reset(this.entries.len());
+            this.list_state.reset(this.contents.entries.len());
 
             if let Some(selection) = this.selection {
-                if selection >= this.entries.len() {
-                    this.selection = this.entries.len().checked_sub(1);
+                if selection >= this.contents.entries.len() {
+                    this.selection = this.contents.entries.len().checked_sub(1);
                 }
             }
 
-            let has_notifications = !this.notified_workspaces.is_empty();
-            if had_notifications != has_notifications {
+            if had_notifications != this.has_notifications(cx) {
                 multi_workspace.update(cx, |_, cx| cx.notify());
             }
 
@@ -436,7 +485,7 @@ impl Sidebar {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let Some(entry) = self.entries.get(ix) else {
+        let Some(entry) = self.contents.entries.get(ix) else {
             return div().into_any_element();
         };
         let is_selected = self.selection == Some(ix);
@@ -529,7 +578,7 @@ impl Sidebar {
     }
 
     fn focus_in(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
-        if self.selection.is_none() && !self.entries.is_empty() {
+        if self.selection.is_none() && !self.contents.entries.is_empty() {
             self.selection = Some(0);
             cx.notify();
         }
@@ -537,8 +586,8 @@ impl Sidebar {
 
     fn select_next(&mut self, _: &SelectNext, _window: &mut Window, cx: &mut Context<Self>) {
         let next = match self.selection {
-            Some(ix) if ix + 1 < self.entries.len() => ix + 1,
-            None if !self.entries.is_empty() => 0,
+            Some(ix) if ix + 1 < self.contents.entries.len() => ix + 1,
+            None if !self.contents.entries.is_empty() => 0,
             _ => return,
         };
         self.selection = Some(next);
@@ -554,7 +603,7 @@ impl Sidebar {
     ) {
         let prev = match self.selection {
             Some(ix) if ix > 0 => ix - 1,
-            None if !self.entries.is_empty() => self.entries.len() - 1,
+            None if !self.contents.entries.is_empty() => self.contents.entries.len() - 1,
             _ => return,
         };
         self.selection = Some(prev);
@@ -563,7 +612,7 @@ impl Sidebar {
     }
 
     fn select_first(&mut self, _: &SelectFirst, _window: &mut Window, cx: &mut Context<Self>) {
-        if !self.entries.is_empty() {
+        if !self.contents.entries.is_empty() {
             self.selection = Some(0);
             self.list_state.scroll_to_reveal_item(0);
             cx.notify();
@@ -571,7 +620,7 @@ impl Sidebar {
     }
 
     fn select_last(&mut self, _: &SelectLast, _window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(last) = self.entries.len().checked_sub(1) {
+        if let Some(last) = self.contents.entries.len().checked_sub(1) {
             self.selection = Some(last);
             self.list_state.scroll_to_reveal_item(last);
             cx.notify();
@@ -580,7 +629,7 @@ impl Sidebar {
 
     fn confirm(&mut self, _: &Confirm, window: &mut Window, cx: &mut Context<Self>) {
         let Some(ix) = self.selection else { return };
-        let Some(entry) = self.entries.get(ix) else {
+        let Some(entry) = self.contents.entries.get(ix) else {
             return;
         };
 
@@ -650,13 +699,13 @@ impl Sidebar {
     ) {
         let Some(ix) = self.selection else { return };
 
-        match self.entries.get(ix) {
+        match self.contents.entries.get(ix) {
             Some(ListEntry::ProjectHeader { path_list, .. }) => {
                 if self.collapsed_groups.contains(path_list) {
                     let path_list = path_list.clone();
                     self.collapsed_groups.remove(&path_list);
                     self.update_entries(window, cx);
-                } else if ix + 1 < self.entries.len() {
+                } else if ix + 1 < self.contents.entries.len() {
                     self.selection = Some(ix + 1);
                     self.list_state.scroll_to_reveal_item(ix + 1);
                     cx.notify();
@@ -674,7 +723,7 @@ impl Sidebar {
     ) {
         let Some(ix) = self.selection else { return };
 
-        match self.entries.get(ix) {
+        match self.contents.entries.get(ix) {
             Some(ListEntry::ProjectHeader { path_list, .. }) => {
                 if !self.collapsed_groups.contains(path_list) {
                     let path_list = path_list.clone();
@@ -684,7 +733,9 @@ impl Sidebar {
             }
             Some(ListEntry::Thread { .. } | ListEntry::ViewMore { .. }) => {
                 for i in (0..ix).rev() {
-                    if let Some(ListEntry::ProjectHeader { path_list, .. }) = self.entries.get(i) {
+                    if let Some(ListEntry::ProjectHeader { path_list, .. }) =
+                        self.contents.entries.get(i)
+                    {
                         let path_list = path_list.clone();
                         self.selection = Some(i);
                         self.collapsed_groups.insert(path_list);
@@ -713,9 +764,7 @@ impl Sidebar {
             AgentThreadStatus::Running | AgentThreadStatus::WaitingForConfirmation
         );
 
-        let has_notification = workspace_index
-            .map(|idx| self.notified_workspaces.contains(&idx))
-            .unwrap_or(false);
+        let has_notification = self.contents.is_thread_notified(session_id);
 
         let is_active = workspace_index.is_some();
 
@@ -813,7 +862,7 @@ impl WorkspaceSidebar for Sidebar {
     }
 
     fn has_notifications(&self, _cx: &App) -> bool {
-        !self.notified_workspaces.is_empty()
+        !self.contents.notified_threads.is_empty()
     }
 }
 
@@ -1008,8 +1057,8 @@ mod tests {
         cx: &mut gpui::VisualTestContext,
     ) -> Vec<String> {
         sidebar.read_with(cx, |sidebar, _cx| {
-            let mut workspace_counter = 0usize;
             sidebar
+                .contents
                 .entries
                 .iter()
                 .enumerate()
@@ -1023,24 +1072,17 @@ mod tests {
                         ListEntry::ProjectHeader {
                             label, path_list, ..
                         } => {
-                            let current_workspace = workspace_counter;
-                            workspace_counter += 1;
                             let icon = if sidebar.collapsed_groups.contains(path_list) {
                                 ">"
                             } else {
                                 "v"
                             };
-                            let notified =
-                                if sidebar.notified_workspaces.contains(&current_workspace) {
-                                    " (!)"
-                                } else {
-                                    ""
-                                };
-                            format!("{} [{}]{}{}", icon, label, notified, selected)
+                            format!("{} [{}]{}", icon, label, selected)
                         }
                         ListEntry::Thread {
                             title,
                             status,
+                            session_id,
                             workspace_index,
                             ..
                         } => {
@@ -1051,7 +1093,15 @@ mod tests {
                                 AgentThreadStatus::WaitingForConfirmation => " (waiting)",
                                 _ => "",
                             };
-                            format!("  {}{}{}{}", title, active, status_str, selected)
+                            let notified = if sidebar.contents.is_thread_notified(session_id) {
+                                " (!)"
+                            } else {
+                                ""
+                            };
+                            format!(
+                                "  {}{}{}{}{}",
+                                title, active, status_str, notified, selected
+                            )
                         }
                         ListEntry::ViewMore {
                             remaining_count, ..
@@ -1293,7 +1343,10 @@ mod tests {
 
         sidebar.update_in(cx, |s, _window, _cx| {
             s.collapsed_groups.insert(collapsed_path.clone());
-            s.entries = vec![
+            s.contents
+                .notified_threads
+                .insert(acp::SessionId::new(Arc::from("t-5")));
+            s.contents.entries = vec![
                 // Expanded project header
                 ListEntry::ProjectHeader {
                     path_list: expanded_path.clone(),
@@ -1308,6 +1361,7 @@ mod tests {
                     updated_at: Utc::now(),
                     diff_stats: None,
                     workspace_index: None,
+                    is_background: false,
                 },
                 // Active thread with Running status
                 ListEntry::Thread {
@@ -1318,6 +1372,7 @@ mod tests {
                     updated_at: Utc::now(),
                     diff_stats: None,
                     workspace_index: Some(0),
+                    is_background: false,
                 },
                 // Active thread with Error status
                 ListEntry::Thread {
@@ -1328,6 +1383,7 @@ mod tests {
                     updated_at: Utc::now(),
                     diff_stats: None,
                     workspace_index: Some(1),
+                    is_background: false,
                 },
                 // Thread with WaitingForConfirmation status, not active
                 ListEntry::Thread {
@@ -1338,6 +1394,18 @@ mod tests {
                     updated_at: Utc::now(),
                     diff_stats: None,
                     workspace_index: None,
+                    is_background: false,
+                },
+                // Background thread that completed (should show notification)
+                ListEntry::Thread {
+                    session_id: acp::SessionId::new(Arc::from("t-5")),
+                    title: "Notified thread".into(),
+                    icon: IconName::ZedAgent,
+                    status: AgentThreadStatus::Completed,
+                    updated_at: Utc::now(),
+                    diff_stats: None,
+                    workspace_index: Some(1),
+                    is_background: true,
                 },
                 // View More entry
                 ListEntry::ViewMore {
@@ -1362,6 +1430,7 @@ mod tests {
                 "  Running thread * (running)  <== selected",
                 "  Error thread * (error)",
                 "  Waiting thread (waiting)",
+                "  Notified thread * (!)",
                 "  + View More (42)",
                 "> [collapsed-project]",
             ]
@@ -1369,7 +1438,7 @@ mod tests {
 
         // Move selection to the collapsed header
         sidebar.update_in(cx, |s, _window, _cx| {
-            s.selection = Some(6);
+            s.selection = Some(7);
         });
 
         assert_eq!(
@@ -1830,7 +1899,7 @@ mod tests {
 
         // Selection should be clamped to the last valid index (0 = header)
         let selection = sidebar.read_with(cx, |s, _| s.selection);
-        let entry_count = sidebar.read_with(cx, |s, _| s.entries.len());
+        let entry_count = sidebar.read_with(cx, |s, _| s.contents.entries.len());
         assert!(
             selection.unwrap_or(0) < entry_count,
             "selection {} should be within bounds (entries: {})",
@@ -1962,10 +2031,10 @@ mod tests {
         connection_a.end_turn(session_id_a.clone(), acp::StopReason::EndTurn);
         cx.run_until_parked();
 
-        // Completing a thread on a background workspace should trigger a notification.
+        // The completed background thread shows a notification indicator.
         assert_eq!(
             visible_entries_as_strings(&sidebar, cx),
-            vec!["v [project-a] (!)", "  Test *", "v [Empty Workspace]",]
+            vec!["v [project-a]", "  Test * (!)", "v [Empty Workspace]",]
         );
     }
 }
