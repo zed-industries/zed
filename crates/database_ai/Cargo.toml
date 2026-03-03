@@ -1,0 +1,26 @@
+[package]
+name = "database_ai"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/database_ai.rs"
+doctest = false
+
+[dependencies]
+agent.workspace = true
+agent-client-protocol.workspace = true
+anyhow.workspace = true
+context_server.workspace = true
+database_core.workspace = true
+gpui.workspace = true
+log.workspace = true
+schemars.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+util.workspace = true
