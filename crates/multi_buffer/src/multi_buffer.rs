@@ -1634,17 +1634,16 @@ impl MultiBuffer {
         let snapshot = self.read(cx);
         let mut cursor = snapshot.excerpts.cursor::<ExcerptSummary>(());
         for selection in selections {
-            let Some(start) = snapshot.anchor_seek_target(selection.start) else {
-                continue;
-            };
-            let Some(end) = snapshot.anchor_seek_target(selection.end) else {
-                continue;
-            };
+            let start = selection.start.seek_target(&snapshot);
 
             cursor.seek(&start, Bias::Left);
-            while let Some(excerpt) = cursor.item()
-                && sum_tree::SeekTarget::cmp(&end, &cursor.position, ()).is_gt()
-            {
+            while let Some(excerpt) = cursor.item() {
+                // todo!() method?
+                let excerpt_start =
+                    Anchor::in_buffer(excerpt.path_key_index, excerpt.range.context.end);
+                if excerpt_start.cmp(&selection.end, &snapshot).is_gt() {
+                    break;
+                }
                 let start = text::Anchor::max(
                     &excerpt.range.context.start,
                     &selection.start.text_anchor().unwrap_or(text::Anchor::MIN),
@@ -1741,6 +1740,7 @@ impl MultiBuffer {
             use_extended_diff_range: _,
             show_headers: _,
             path_keys_by_buffer: _,
+            path_keys_by_index: _,
         } = self.snapshot.get_mut();
         let start = ExcerptDimension(MultiBufferOffset::ZERO);
         let prev_len = ExcerptDimension(excerpts.summary().text.len);
@@ -1937,15 +1937,15 @@ impl MultiBuffer {
         let mut error = None;
         let mut futures = Vec::new();
         for anchor in anchors {
-            if let Some(text_anchor) = anchor.text_anchor() {
-                if let Some(buffer) = self.buffers.get(&text_anchor.buffer_id.unwrap()) {
+            if let Some(excerpt_anchor) = anchor.excerpt_anchor() {
+                if let Some(buffer) = self.buffers.get(&excerpt_anchor.buffer_id) {
                     buffer.buffer.update(cx, |buffer, _| {
-                        futures.push(buffer.wait_for_anchors([text_anchor]))
+                        futures.push(buffer.wait_for_anchors([excerpt_anchor.text_anchor()]))
                     });
                 } else {
                     error = Some(anyhow!(
                         "buffer {:?} is not part of this multi-buffer",
-                        text_anchor.buffer_id
+                        excerpt_anchor.buffer_id
                     ));
                     break;
                 }
@@ -1968,9 +1968,9 @@ impl MultiBuffer {
         cx: &App,
     ) -> Option<(Entity<Buffer>, text::Anchor)> {
         let snapshot = self.read(cx);
-        let anchor = snapshot.anchor_before(position).text_anchor()?;
-        let buffer = self.buffers.get(&anchor.buffer_id.unwrap())?.buffer.clone();
-        Some((buffer, anchor))
+        let anchor = snapshot.anchor_before(position).excerpt_anchor()?;
+        let buffer = self.buffers.get(&anchor.buffer_id)?.buffer.clone();
+        Some((buffer, anchor.text_anchor()))
     }
 
     fn on_buffer_event(
@@ -2037,31 +2037,33 @@ impl MultiBuffer {
         range: Range<text::Anchor>,
         cx: &mut Context<Self>,
     ) {
-        self.sync_mut(cx);
+        let Some(buffer) = self.buffer(diff.read(cx).buffer_id) else {
+            return;
+        };
+        let snapshot = self.sync_mut(cx);
 
         let diff = diff.read(cx);
         let buffer_id = diff.buffer_id;
 
-        let Some(buffer_state) = self.buffers.get(&buffer_id) else {
+        let Some(path) = snapshot.path_for_buffer(buffer_id).cloned() else {
             return;
         };
         let new_diff = DiffStateSnapshot {
             diff: diff.snapshot(cx),
             main_buffer: None,
         };
-        let mut snapshot = self.snapshot.get_mut();
         let base_text_changed = snapshot
             .diffs
             .get(&buffer_id)
             .is_none_or(|old_diff| !new_diff.base_texts_definitely_eq(old_diff));
         snapshot.diffs.insert_or_replace(buffer_id, new_diff);
 
-        let buffer = buffer_state.buffer.read(cx);
+        let buffer = buffer.read(cx);
         let diff_change_range = range.to_offset(buffer);
 
-        let excerpt_edits = snapshot.excerpt_edits_for_diff_change(buffer_state, diff_change_range);
+        let excerpt_edits = snapshot.excerpt_edits_for_diff_change(&path, diff_change_range);
         let edits = Self::sync_diff_transforms(
-            &mut snapshot,
+            snapshot,
             excerpt_edits,
             DiffChangeKind::DiffUpdated {
                 base_changed: base_text_changed,
@@ -2082,10 +2084,10 @@ impl MultiBuffer {
         diff_change_range: Option<Range<usize>>,
         cx: &mut Context<Self>,
     ) {
-        self.sync_mut(cx);
+        let snapshot = self.sync_mut(cx);
 
         let base_text_buffer_id = diff.read(cx).base_text_buffer().read(cx).remote_id();
-        let Some(buffer_state) = self.buffers.get(&base_text_buffer_id) else {
+        let Some(path) = snapshot.path_for_buffer(base_text_buffer_id).cloned() else {
             return;
         };
 
@@ -2095,7 +2097,6 @@ impl MultiBuffer {
             diff: diff.snapshot(cx),
             main_buffer: Some(main_buffer_snapshot),
         };
-        let mut snapshot = self.snapshot.get_mut();
         snapshot
             .diffs
             .insert_or_replace(base_text_buffer_id, new_diff);
@@ -2104,9 +2105,9 @@ impl MultiBuffer {
             return;
         };
 
-        let excerpt_edits = snapshot.excerpt_edits_for_diff_change(buffer_state, diff_change_range);
+        let excerpt_edits = snapshot.excerpt_edits_for_diff_change(&path, diff_change_range);
         let edits = Self::sync_diff_transforms(
-            &mut snapshot,
+            snapshot,
             excerpt_edits,
             DiffChangeKind::DiffUpdated {
                 // We don't read this field for inverted diffs.
@@ -2669,17 +2670,19 @@ impl MultiBuffer {
         }
     }
 
-    fn sync_mut(&mut self, cx: &App) {
+    fn sync_mut(&mut self, cx: &App) -> &mut MultiBufferSnapshot {
+        let snapshot = self.snapshot.get_mut();
         let changed = self.buffer_changed_since_sync.replace(false);
         if !changed {
-            return;
+            return snapshot;
         }
-        let edits =
-            Self::sync_from_buffer_changes(self.snapshot.get_mut(), &self.buffers, &self.diffs, cx);
+        let edits = Self::sync_from_buffer_changes(snapshot, &self.buffers, &self.diffs, cx);
 
         if !edits.is_empty() {
             self.subscriptions.publish(edits);
         }
+
+        snapshot
     }
 
     fn sync_from_buffer_changes(
@@ -3788,13 +3791,13 @@ impl MultiBufferSnapshot {
                             .is_ge()
                         {
                             // record it and all following anchors that are within
-                            result.push(Some(Anchor::text(excerpt.id, next)));
+                            result.push(Some(Anchor::in_buffer(excerpt.path_key_index, next)));
                             result.extend(
                                 same_buffer_anchors
                                     .peeking_take_while(|a| {
                                         excerpt.range.context.end.cmp(a, &excerpt.buffer).is_ge()
                                     })
-                                    .map(|a| Some(Anchor::text(excerpt.id, a))),
+                                    .map(|a| Some(Anchor::in_buffer(excerpt.path_key_index, a))),
                             );
                             match same_buffer_anchors.next() {
                                 Some(anchor) => next = anchor,
@@ -4009,7 +4012,7 @@ impl MultiBufferSnapshot {
             + AddAssign<MBD::TextDimension>
             + Ord,
     {
-        let mut current_excerpt_metadata: Option<(ExcerptId, I)> = None;
+        let mut current_excerpt_metadata: Option<(Excerpt, I)> = None;
         let mut cursor = self.cursor::<MBD, MBD::TextDimension>();
 
         // Find the excerpt and buffer offset where the given range ends.
@@ -4024,7 +4027,7 @@ impl MultiBufferSnapshot {
                     <MBD::TextDimension>::default()
                 };
                 buffer_end = buffer_end + overshoot;
-                range_end = Some((region.excerpt.id, buffer_end));
+                range_end = Some((region.excerpt, buffer_end));
                 break;
             }
             cursor.next();
@@ -4077,15 +4080,14 @@ impl MultiBufferSnapshot {
                         .context
                         .end
                         .summary::<MBD::TextDimension>(&excerpt.buffer);
-                    if let Some((end_excerpt_id, end_buffer_offset)) = range_end
-                        && excerpt.id == end_excerpt_id
+                    if let Some((end_excerpt, end_buffer_offset)) = range_end
+                        && excerpt == end_excerpt
                     {
                         buffer_end = buffer_end.min(end_buffer_offset);
                     }
 
-                    get_buffer_metadata(&excerpt.buffer, buffer_start..buffer_end).map(|iterator| {
-                        &mut current_excerpt_metadata.insert((excerpt.id, iterator)).1
-                    })
+                    get_buffer_metadata(&excerpt.buffer, buffer_start..buffer_end)
+                        .map(|iterator| &mut current_excerpt_metadata.insert((excerpt, iterator)).1)
                 };
 
                 // Visit each metadata item.
@@ -4149,8 +4151,8 @@ impl MultiBufferSnapshot {
                 // When there are no more metadata items for this excerpt, move to the next excerpt.
                 else {
                     current_excerpt_metadata.take();
-                    if let Some((end_excerpt_id, _)) = range_end
-                        && excerpt.id == end_excerpt_id
+                    if let Some((end_excerpt, _)) = range_end
+                        && excerpt == end_excerpt
                     {
                         return None;
                     }
@@ -4175,12 +4177,15 @@ impl MultiBufferSnapshot {
 
         let excerpt_start = excerpt.range.context.start.to_offset(&excerpt.buffer);
         let excerpt_end = excerpt.range.context.end.to_offset(&excerpt.buffer);
-        let current_position = self
-            .anchor_before(offset)
-            .text_anchor
-            .to_offset(&excerpt.buffer);
+        let current_position = match self.anchor_before(offset) {
+            Anchor::Min => 0,
+            Anchor::Excerpt(excerpt_anchor) => {
+                excerpt_anchor.text_anchor().to_offset(&excerpt.buffer)
+            }
+            Anchor::Max => unreachable!(),
+        };
 
-        if let Some(diff) = self.diffs.get(&excerpt.buffer_id) {
+        if let Some(diff) = self.diffs.get(&excerpt.buffer.remote_id()) {
             if let Some(main_buffer) = &diff.main_buffer {
                 for hunk in diff
                     .hunks_intersecting_base_text_range_rev(excerpt_start..excerpt_end, main_buffer)
@@ -4189,7 +4194,8 @@ impl MultiBufferSnapshot {
                         continue;
                     }
                     let hunk_start = excerpt.buffer.anchor_after(hunk.diff_base_byte_range.start);
-                    let start = Anchor::text(excerpt.id, hunk_start).to_point(self);
+                    let start =
+                        Anchor::in_buffer(excerpt.path_key_index, hunk_start).to_point(self);
                     return Some(MultiBufferRow(start.row));
                 }
             } else {
@@ -4204,7 +4210,8 @@ impl MultiBufferSnapshot {
                     if hunk_end >= current_position {
                         continue;
                     }
-                    let start = Anchor::text(excerpt.id, hunk.buffer_range.start).to_point(self);
+                    let start = Anchor::in_buffer(excerpt.path_key_index, hunk.buffer_range.start)
+                        .to_point(self);
                     return Some(MultiBufferRow(start.row));
                 }
             }
@@ -4214,7 +4221,7 @@ impl MultiBufferSnapshot {
             cursor.prev_excerpt();
             let excerpt = cursor.excerpt()?;
 
-            let Some(diff) = self.diffs.get(&excerpt.buffer_id) else {
+            let Some(diff) = self.diffs.get(&excerpt.buffer.remote_id()) else {
                 continue;
             };
             if let Some(main_buffer) = &diff.main_buffer {
@@ -4228,7 +4235,7 @@ impl MultiBufferSnapshot {
                     continue;
                 };
                 let hunk_start = excerpt.buffer.anchor_after(hunk.diff_base_byte_range.start);
-                let start = Anchor::text(excerpt.id, hunk_start).to_point(self);
+                let start = Anchor::in_buffer(excerpt.path_key_index, hunk_start).to_point(self);
                 return Some(MultiBufferRow(start.row));
             } else {
                 let Some(hunk) = diff
@@ -4237,7 +4244,8 @@ impl MultiBufferSnapshot {
                 else {
                     continue;
                 };
-                let start = Anchor::text(excerpt.id, hunk.buffer_range.start).to_point(self);
+                let start = Anchor::in_buffer(excerpt.path_key_index, hunk.buffer_range.start)
+                    .to_point(self);
                 return Some(MultiBufferRow(start.row));
             }
         }
@@ -5192,16 +5200,13 @@ impl MultiBufferSnapshot {
             Anchor::Max => return self.excerpts.summary().len(),
         };
         let mut cursor = self.excerpts.cursor::<ExcerptSummary>(());
-        let target = self.anchor_seek_target(anchor);
+        let target = anchor.seek_target(self);
 
         cursor.seek(&target, Bias::Left);
-        if cursor.item().is_none() && anchor.is_max() {
-            cursor.prev();
-        }
 
         let mut position = cursor.start().len();
         if let Some(excerpt) = cursor.item()
-            && (excerpt.contains(anchor) || anchor.is_max())
+            && excerpt.contains(anchor)
         {
             let excerpt_buffer_start = excerpt
                 .buffer
@@ -5209,20 +5214,13 @@ impl MultiBufferSnapshot {
             let excerpt_buffer_end = excerpt.buffer.offset_for_anchor(&excerpt.range.context.end);
             let buffer_position = cmp::min(
                 excerpt_buffer_end,
-                excerpt.buffer.offset_for_anchor(&text_anchor),
+                excerpt.buffer.offset_for_anchor(&anchor.text_anchor()),
             );
             if buffer_position > excerpt_buffer_start {
                 position += buffer_position - excerpt_buffer_start;
             }
         }
         position
-    }
-
-    pub fn latest_excerpt_id(&self, mut excerpt_id: ExcerptId) -> ExcerptId {
-        while let Some(replacement) = self.replaced_excerpts.get(&excerpt_id) {
-            excerpt_id = *replacement;
-        }
-        excerpt_id
     }
 
     pub fn summaries_for_anchors<'a, MBD, I>(&'a self, anchors: I) -> Vec<MBD>
@@ -5252,7 +5250,7 @@ impl MultiBufferSnapshot {
                 }
                 Anchor::Excerpt(excerpt_anchor) => excerpt_anchor,
                 Anchor::Max => {
-                    summaries.push(self.excerpts.summary());
+                    summaries.push(MBD::from_summary(&self.text_summary()));
                     anchors.next();
                     continue;
                 }
@@ -5506,7 +5504,7 @@ impl MultiBufferSnapshot {
 
         let mut excerpts = self
             .excerpts
-            .cursor::<Dimensions<ExcerptOffset, Option<ExcerptId>>>(());
+            .cursor::<Dimensions<ExcerptOffset, ExcerptSummary>>(());
         excerpts.seek(&excerpt_offset, Bias::Right);
         if excerpts.item().is_none() && excerpt_offset == excerpts.start().0 && bias == Bias::Left {
             excerpts.prev();
@@ -5521,11 +5519,12 @@ impl MultiBufferSnapshot {
             let buffer_start = excerpt.range.context.start.to_offset(&excerpt.buffer);
             let text_anchor =
                 excerpt.clip_anchor(excerpt.buffer.anchor_at(buffer_start + overshoot, bias));
-            let anchor = Anchor::text(excerpt.id, text_anchor);
-            match diff_base_anchor {
+            let anchor = ExcerptAnchor::in_buffer(excerpt.path_key_index, text_anchor);
+            let anchor = match diff_base_anchor {
                 Some(diff_base_anchor) => anchor.with_diff_base_anchor(diff_base_anchor),
                 None => anchor,
-            }
+            };
+            anchor.into()
         } else if excerpt_offset == ExcerptDimension(MultiBufferOffset::ZERO) && bias == Bias::Left
         {
             Anchor::min()
@@ -5538,7 +5537,7 @@ impl MultiBufferSnapshot {
     pub fn as_singleton_anchor(&self, text_anchor: text::Anchor) -> Option<Anchor> {
         let (excerpt, buffer, _) = self.as_singleton()?;
         if text_anchor.buffer_id.is_none_or(|id| id == buffer) {
-            Some(Anchor::text(excerpt, text_anchor))
+            Some(Anchor::in_buffer(excerpt, text_anchor))
         } else {
             None
         }
@@ -5586,10 +5585,10 @@ impl MultiBufferSnapshot {
 
     fn anchor_in_excerpt_(excerpt: &Excerpt, text_anchor: text::Anchor) -> Option<Anchor> {
         match text_anchor.buffer_id {
-            Some(buffer_id) if buffer_id == excerpt.buffer_id => (),
+            Some(buffer_id) if buffer_id == excerpt.buffer.remote_id() => (),
             Some(_) => return None,
             None if text_anchor.is_max() || text_anchor.is_min() => {
-                return Some(Anchor::text(excerpt.id, text_anchor));
+                return Some(Anchor::in_buffer(excerpt.path_key_index, text_anchor));
             }
             None => return None,
         }
@@ -5601,28 +5600,24 @@ impl MultiBufferSnapshot {
             return None;
         }
 
-        Some(Anchor::text(excerpt.id, text_anchor))
-    }
-
-    pub fn context_range_for_excerpt(&self, excerpt_id: ExcerptId) -> Option<Range<text::Anchor>> {
-        Some(self.excerpt(excerpt_id)?.range.context.clone())
-    }
-
-    pub fn excerpt_range_for_excerpt(
-        &self,
-        excerpt_id: ExcerptId,
-    ) -> Option<ExcerptRange<text::Anchor>> {
-        Some(self.excerpt(excerpt_id)?.range.clone())
+        Some(Anchor::in_buffer(excerpt.path_key_index, text_anchor))
     }
 
     pub fn can_resolve(&self, anchor: &Anchor) -> bool {
-        if anchor.is_min() || anchor.is_max() {
+        match anchor {
             // todo(lw): should be `!self.is_empty()`
-            true
-        } else if let Some(excerpt) = self.excerpt(anchor.excerpt_id) {
-            excerpt.buffer.can_resolve(&anchor.text_anchor)
-        } else {
-            false
+            Anchor::Min | Anchor::Max => true,
+            Anchor::Excerpt(excerpt_anchor) => {
+                let Some(target) = excerpt_anchor.try_seek_target(self) else {
+                    return false;
+                };
+                let mut cursor = self.excerpts.cursor::<ExcerptSummary>(());
+                cursor.seek(&target, Bias::Left);
+                let Some(excerpt) = cursor.item() else {
+                    return false;
+                };
+                excerpt.buffer.can_resolve(&excerpt_anchor.text_anchor())
+            }
         }
     }
 
@@ -6557,49 +6552,6 @@ impl MultiBufferSnapshot {
         }
     }
 
-    /// Returns the locators referenced by the given excerpt IDs, sorted by locator.
-    fn excerpt_locators_for_ids(
-        &self,
-        ids: impl IntoIterator<Item = ExcerptId>,
-    ) -> SmallVec<[Locator; 1]> {
-        let mut sorted_ids = ids.into_iter().collect::<SmallVec<[_; 1]>>();
-        sorted_ids.sort_unstable();
-        sorted_ids.dedup();
-        let mut locators = SmallVec::new();
-
-        while sorted_ids.last() == Some(&ExcerptId::max()) {
-            sorted_ids.pop();
-            locators.push(Locator::max());
-        }
-
-        let mut sorted_ids = sorted_ids.into_iter().peekable();
-        locators.extend(
-            sorted_ids
-                .peeking_take_while(|excerpt| *excerpt == ExcerptId::min())
-                .map(|_| Locator::min()),
-        );
-
-        let mut cursor = self.excerpt_ids.cursor::<ExcerptId>(());
-        for id in sorted_ids {
-            if cursor.seek_forward(&id, Bias::Left) {
-                locators.push(cursor.item().unwrap().locator.clone());
-            } else {
-                panic!("invalid excerpt id {:?}", id);
-            }
-        }
-
-        locators.sort_unstable();
-        locators
-    }
-
-    pub fn buffer_id_for_excerpt(&self, excerpt_id: ExcerptId) -> Option<BufferId> {
-        Some(self.excerpt(excerpt_id)?.buffer_id)
-    }
-
-    pub fn buffer_for_excerpt(&self, excerpt_id: ExcerptId) -> Option<&BufferSnapshot> {
-        Some(&self.excerpt(excerpt_id)?.buffer)
-    }
-
     pub fn buffer_for_path(&self, path: &PathKey) -> Option<&BufferSnapshot> {
         todo!()
     }
@@ -6651,28 +6603,6 @@ impl MultiBufferSnapshot {
         }
     }
 
-    /// Returns the excerpt for the given id. The returned excerpt is guaranteed
-    /// to have the latest excerpt id for the one passed in and will also remap
-    /// `ExcerptId::max()` to the corresponding excertp ID.
-    ///
-    /// Callers of this function should generally use the resulting excerpt's `id` field
-    /// afterwards.
-    fn excerpt(&self, excerpt_id: ExcerptId) -> Option<&Excerpt> {
-        let excerpt_id = self.latest_excerpt_id(excerpt_id);
-        let locator = self.try_excerpt_locator_for_id(excerpt_id)?;
-        let (_, _, item) =
-            self.excerpts
-                .find::<Option<&Locator>, _>((), &Some(locator), Bias::Left);
-        if let Some(excerpt) = item
-            && excerpt.id == excerpt_id
-        {
-            return Some(excerpt);
-        } else if item.is_none() && excerpt_id == ExcerptId::max() {
-            return self.excerpts.last();
-        }
-        None
-    }
-
     /// Returns the excerpt containing range and its offset start within the multibuffer or none if `range` spans multiple excerpts
     pub fn excerpt_containing<T: ToOffset>(
         &self,
@@ -6705,11 +6635,17 @@ impl MultiBufferSnapshot {
     }
 
     pub fn buffer_id_for_anchor(&self, anchor: Anchor) -> Option<BufferId> {
-        if let Some(id) = anchor.text_anchor.buffer_id {
-            return Some(id);
+        match anchor {
+            Anchor::Min => self
+                .excerpts
+                .first()
+                .map(|excerpt| excerpt.buffer.remote_id()),
+            Anchor::Excerpt(excerpt_anchor) => Some(excerpt_anchor.buffer_id),
+            Anchor::Max => self
+                .excerpts
+                .last()
+                .map(|excerpt| excerpt.buffer.remote_id()),
         }
-        let excerpt = self.excerpt_containing(anchor..anchor)?;
-        Some(excerpt.buffer_id())
     }
 
     pub fn selections_in_range<'a>(
@@ -6823,39 +6759,36 @@ impl MultiBufferSnapshot {
 
     fn excerpt_edits_for_diff_change(
         &self,
-        buffer_state: &BufferState,
+        path: &PathKey,
         diff_change_range: Range<usize>,
     ) -> Vec<Edit<ExcerptDimension<MultiBufferOffset>>> {
         let mut excerpt_edits = Vec::new();
-        for locator in &buffer_state.excerpts {
-            let mut cursor = self
-                .excerpts
-                .cursor::<Dimensions<Option<&Locator>, ExcerptOffset>>(());
-            cursor.seek_forward(&Some(locator), Bias::Left);
-            if let Some(excerpt) = cursor.item()
-                && excerpt.locator == *locator
+        let mut cursor = self.excerpts.cursor::<ExcerptSummary>(());
+        cursor.seek(path, Bias::Left);
+        while let Some(excerpt) = cursor.item()
+            && &excerpt.path_key == path
+        {
+            let excerpt_buffer_range = excerpt.range.context.to_offset(&excerpt.buffer);
+            let excerpt_start = cursor.start().clone();
+            let excerpt_len = excerpt.text_summary.len;
+            cursor.next();
+            if diff_change_range.end < excerpt_buffer_range.start
+                || diff_change_range.start > excerpt_buffer_range.end
             {
-                let excerpt_buffer_range = excerpt.range.context.to_offset(&excerpt.buffer);
-                if diff_change_range.end < excerpt_buffer_range.start
-                    || diff_change_range.start > excerpt_buffer_range.end
-                {
-                    continue;
-                }
-                let excerpt_start = cursor.start().1;
-                let excerpt_len = excerpt.text_summary.len;
-                let diff_change_start_in_excerpt = diff_change_range
-                    .start
-                    .saturating_sub(excerpt_buffer_range.start);
-                let diff_change_end_in_excerpt = diff_change_range
-                    .end
-                    .saturating_sub(excerpt_buffer_range.start);
-                let edit_start = excerpt_start + diff_change_start_in_excerpt.min(excerpt_len);
-                let edit_end = excerpt_start + diff_change_end_in_excerpt.min(excerpt_len);
-                excerpt_edits.push(Edit {
-                    old: edit_start..edit_end,
-                    new: edit_start..edit_end,
-                });
+                continue;
             }
+            let diff_change_start_in_excerpt = diff_change_range
+                .start
+                .saturating_sub(excerpt_buffer_range.start);
+            let diff_change_end_in_excerpt = diff_change_range
+                .end
+                .saturating_sub(excerpt_buffer_range.start);
+            let edit_start = excerpt_start.len() + diff_change_start_in_excerpt.min(excerpt_len);
+            let edit_end = excerpt_start.len() + diff_change_end_in_excerpt.min(excerpt_len);
+            excerpt_edits.push(Edit {
+                old: edit_start..edit_end,
+                new: edit_start..edit_end,
+            });
         }
         excerpt_edits
     }

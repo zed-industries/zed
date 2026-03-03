@@ -79,12 +79,18 @@ impl std::fmt::Debug for Anchor {
     }
 }
 
+impl From<ExcerptAnchor> for Anchor {
+    fn from(anchor: ExcerptAnchor) -> Self {
+        Anchor::Excerpt(anchor)
+    }
+}
+
 impl ExcerptAnchor {
     pub(crate) fn text_anchor(&self) -> text::Anchor {
         text::Anchor::new(self.timestamp, self.offset, self.bias, Some(self.buffer_id))
     }
 
-    fn with_diff_base_anchor(mut self, diff_base_anchor: text::Anchor) -> Self {
+    pub(crate) fn with_diff_base_anchor(mut self, diff_base_anchor: text::Anchor) -> Self {
         self.diff_base_anchor = Some(diff_base_anchor);
         self
     }
@@ -185,7 +191,7 @@ impl ExcerptAnchor {
         }
     }
 
-    fn in_buffer(path: PathKeyIndex, text_anchor: text::Anchor) -> Self {
+    pub(crate) fn in_buffer(path: PathKeyIndex, text_anchor: text::Anchor) -> Self {
         let Some(buffer_id) = text_anchor.buffer_id else {
             panic!("text_anchor must have a buffer_id");
         };
@@ -223,7 +229,7 @@ impl ExcerptAnchor {
                 .is_ge()
     }
 
-    fn seek_target(&self, snapshot: &MultiBufferSnapshot) -> AnchorSeekTarget {
+    pub(crate) fn seek_target(&self, snapshot: &MultiBufferSnapshot) -> AnchorSeekTarget {
         let path_key = snapshot.path_for_anchor(*self);
         let buffer = snapshot.buffer_for_path(&path_key).cloned();
         AnchorSeekTarget::Excerpt {
@@ -329,6 +335,15 @@ impl Anchor {
         match self {
             Anchor::Min | Anchor::Max => None,
             Anchor::Excerpt(excerpt_anchor) => Some(*excerpt_anchor),
+        }
+    }
+
+    pub(crate) fn try_seek_target(&self, arg: &MultiBufferSnapshot) -> Option<AnchorSeekTarget> {
+        todo!()
+        match self {
+            Anchor::Min => AnchorSeekTarget::Min,
+            Anchor::Excerpt(excerpt_anchor) => excerpt_anchor.seek_target(snapshot),
+            Anchor::Max => AnchorSeekTarget::Max,
         }
     }
 }
