@@ -239,7 +239,7 @@ impl AgentTool for StreamingEditFileTool {
     type Input = StreamingEditFileToolInput;
     type Output = StreamingEditFileToolOutput;
 
-    const NAME: &'static str = "streaming_edit_file";
+    const NAME: &'static str = "edit_file";
 
     fn supports_input_streaming() -> bool {
         true
