@@ -1,6 +1,8 @@
 use acp_thread::ContentBlock;
 use cloud_api_types::{SubmitAgentThreadFeedbackBody, SubmitAgentThreadFeedbackCommentsBody};
 use editor::actions::OpenExcerpts;
+
+use crate::StartThreadIn;
 use gpui::{Corner, List};
 use language_model::{LanguageModelEffortLevel, Speed};
 use settings::update_settings_file;
@@ -759,7 +761,17 @@ impl ThreadView {
         // Intercept the first send so the agent panel can capture the full
         // content blocks — needed for "Start thread in New Worktree",
         // which must create a workspace before sending the message there.
-        if self.thread.read(cx).entries().is_empty() && !message_editor.read(cx).is_empty(cx) {
+        let intercept_first_send = self.thread.read(cx).entries().is_empty()
+            && !message_editor.read(cx).is_empty(cx)
+            && self
+                .workspace
+                .upgrade()
+                .and_then(|workspace| workspace.read(cx).panel::<AgentPanel>(cx))
+                .is_some_and(|panel| {
+                    panel.read(cx).start_thread_in() == &StartThreadIn::NewWorktree
+                });
+
+        if intercept_first_send {
             let content_task = self.resolve_message_contents(&message_editor, cx);
 
             cx.spawn(async move |this, cx| match content_task.await {
@@ -767,6 +779,7 @@ impl ThreadView {
                     if content.is_empty() {
                         return;
                     }
+
                     this.update(cx, |_, cx| {
                         cx.emit(AcpThreadViewEvent::FirstSendRequested { content });
                     })
