@@ -12,7 +12,8 @@ use similar::DiffableStr;
 use std::ops::Range;
 use std::sync::Arc;
 use zeta_prompt::{
-    ZetaFormat, excerpt_range_for_format, format_zeta_prompt, resolve_cursor_region,
+    ZetaFormat, encode_patch_as_output_for_format, excerpt_range_for_format, format_zeta_prompt,
+    output_end_marker_for_format, resolve_cursor_region,
 };
 
 pub async fn run_format_prompt(
@@ -101,6 +102,12 @@ pub fn zeta2_output_for_patch(
         old_editable_region.push('\n');
     }
 
+    if let Some(encoded_output) =
+        encode_patch_as_output_for_format(version, &old_editable_region, patch, cursor_offset)?
+    {
+        return Ok(encoded_output);
+    }
+
     let (mut result, first_hunk_offset) =
         udiff::apply_diff_to_string_with_hunk_offset(patch, &old_editable_region).with_context(
             || {
@@ -120,16 +127,11 @@ pub fn zeta2_output_for_patch(
         result.insert_str(offset, zeta_prompt::CURSOR_MARKER);
     }
 
-    match version {
-        ZetaFormat::V0120GitMergeMarkers
-        | ZetaFormat::V0131GitMergeMarkersPrefix
-        | ZetaFormat::V0211SeedCoder => {
-            if !result.ends_with('\n') {
-                result.push('\n');
-            }
-            result.push_str(zeta_prompt::v0120_git_merge_markers::END_MARKER);
+    if let Some(end_marker) = output_end_marker_for_format(version) {
+        if !result.ends_with('\n') {
+            result.push('\n');
         }
-        _ => (),
+        result.push_str(end_marker);
     }
 
     Ok(result)
