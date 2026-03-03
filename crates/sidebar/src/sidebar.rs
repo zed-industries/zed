@@ -684,9 +684,7 @@ impl Sidebar {
             }
             Some(ListEntry::Thread { .. } | ListEntry::ViewMore { .. }) => {
                 for i in (0..ix).rev() {
-                    if let Some(ListEntry::ProjectHeader { path_list, .. }) =
-                        self.entries.get(i)
-                    {
+                    if let Some(ListEntry::ProjectHeader { path_list, .. }) = self.entries.get(i) {
                         let path_list = path_list.clone();
                         self.selection = Some(i);
                         self.collapsed_groups.insert(path_list);
@@ -937,7 +935,10 @@ impl Render for Sidebar {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use acp_thread::StubAgentConnection;
     use agent::ThreadStore;
+    use agent_ui::test_support::{active_session_id, open_thread_with_connection, send_message};
+    use assistant_text_thread::TextThreadStore;
     use feature_flags::FeatureFlagAppExt as _;
     use fs::FakeFs;
     use gpui::TestAppContext;
@@ -1007,6 +1008,7 @@ mod tests {
         cx: &mut gpui::VisualTestContext,
     ) -> Vec<String> {
         sidebar.read_with(cx, |sidebar, _cx| {
+            let mut workspace_counter = 0usize;
             sidebar
                 .entries
                 .iter()
@@ -1021,12 +1023,20 @@ mod tests {
                         ListEntry::ProjectHeader {
                             label, path_list, ..
                         } => {
+                            let current_workspace = workspace_counter;
+                            workspace_counter += 1;
                             let icon = if sidebar.collapsed_groups.contains(path_list) {
                                 ">"
                             } else {
                                 "v"
                             };
-                            format!("{} [{}]{}", icon, label, selected)
+                            let notified =
+                                if sidebar.notified_workspaces.contains(&current_workspace) {
+                                    " (!)"
+                                } else {
+                                    ""
+                                };
+                            format!("{} [{}]{}{}", icon, label, notified, selected)
                         }
                         ListEntry::Thread {
                             title,
@@ -1826,6 +1836,136 @@ mod tests {
             "selection {} should be within bounds (entries: {})",
             selection.unwrap_or(0),
             entry_count,
+        );
+    }
+
+    async fn init_test_project_with_agent_panel(
+        worktree_path: &str,
+        cx: &mut TestAppContext,
+    ) -> Entity<project::Project> {
+        agent_ui::test_support::init_test(cx);
+        cx.update(|cx| {
+            cx.update_flags(false, vec!["agent-v2".into()]);
+            ThreadStore::init_global(cx);
+            language_model::LanguageModelRegistry::test(cx);
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(worktree_path, serde_json::json!({ "src": {} }))
+            .await;
+        cx.update(|cx| <dyn fs::Fs>::set_global(fs.clone(), cx));
+        project::Project::test(fs, [worktree_path.as_ref()], cx).await
+    }
+
+    fn add_agent_panel(
+        workspace: &Entity<Workspace>,
+        project: &Entity<project::Project>,
+        cx: &mut gpui::VisualTestContext,
+    ) -> Entity<AgentPanel> {
+        workspace.update_in(cx, |workspace, window, cx| {
+            let text_thread_store = cx.new(|cx| TextThreadStore::fake(project.clone(), cx));
+            let panel = cx.new(|cx| AgentPanel::test_new(workspace, text_thread_store, window, cx));
+            workspace.add_panel(panel.clone(), window, cx);
+            panel
+        })
+    }
+
+    fn setup_sidebar_with_agent_panel(
+        multi_workspace: &Entity<MultiWorkspace>,
+        project: &Entity<project::Project>,
+        cx: &mut gpui::VisualTestContext,
+    ) -> (Entity<Sidebar>, Entity<AgentPanel>) {
+        let sidebar = setup_sidebar(multi_workspace, cx);
+        let workspace = multi_workspace.read_with(cx, |mw, _cx| mw.workspace().clone());
+        let panel = add_agent_panel(&workspace, project, cx);
+        (sidebar, panel)
+    }
+
+    #[gpui::test]
+    async fn test_parallel_threads_shown_with_live_status(cx: &mut TestAppContext) {
+        let project = init_test_project_with_agent_panel("/my-project", cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let (sidebar, panel) = setup_sidebar_with_agent_panel(&multi_workspace, &project, cx);
+
+        // Open thread A and keep it generating.
+        let connection_a = StubAgentConnection::new();
+        open_thread_with_connection(&panel, connection_a.clone(), cx);
+        send_message(&panel, cx);
+
+        let session_id_a = active_session_id(&panel, cx);
+
+        cx.update(|_, cx| {
+            connection_a.send_update(
+                session_id_a.clone(),
+                acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk::new("working...".into())),
+                cx,
+            );
+        });
+        cx.run_until_parked();
+
+        // Open thread B (idle, default response) — thread A goes to background.
+        let connection_b = StubAgentConnection::new();
+        connection_b.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
+            acp::ContentChunk::new("Done".into()),
+        )]);
+        open_thread_with_connection(&panel, connection_b, cx);
+        send_message(&panel, cx);
+
+        cx.run_until_parked();
+
+        let mut entries = visible_entries_as_strings(&sidebar, cx);
+        entries[1..].sort();
+        assert_eq!(
+            entries,
+            vec!["v [my-project]", "  Test *", "  Test * (running)",]
+        );
+    }
+
+    #[gpui::test]
+    async fn test_background_thread_completion_triggers_notification(cx: &mut TestAppContext) {
+        let project_a = init_test_project_with_agent_panel("/project-a", cx).await;
+        let (multi_workspace, cx) = cx
+            .add_window_view(|window, cx| MultiWorkspace::test_new(project_a.clone(), window, cx));
+        let (sidebar, panel_a) = setup_sidebar_with_agent_panel(&multi_workspace, &project_a, cx);
+
+        // Open thread on workspace A and keep it generating.
+        let connection_a = StubAgentConnection::new();
+        open_thread_with_connection(&panel_a, connection_a.clone(), cx);
+        send_message(&panel_a, cx);
+
+        let session_id_a = active_session_id(&panel_a, cx);
+        cx.update(|_, cx| {
+            connection_a.send_update(
+                session_id_a.clone(),
+                acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk::new("chunk".into())),
+                cx,
+            );
+        });
+        cx.run_until_parked();
+
+        // Add a second workspace and activate it (making workspace A the background).
+        let fs = cx.update(|_, cx| <dyn fs::Fs>::global(cx));
+        let project_b = project::Project::test(fs, [], cx).await;
+        multi_workspace.update_in(cx, |mw, window, cx| {
+            mw.test_add_workspace(project_b, window, cx);
+        });
+        cx.run_until_parked();
+
+        // Thread A is still running; no notification yet.
+        assert_eq!(
+            visible_entries_as_strings(&sidebar, cx),
+            vec!["v [project-a]", "  Test * (running)", "v [Empty Workspace]",]
+        );
+
+        // Complete thread A's turn (transition Running → Completed).
+        connection_a.end_turn(session_id_a.clone(), acp::StopReason::EndTurn);
+        cx.run_until_parked();
+
+        // Completing a thread on a background workspace should trigger a notification.
+        assert_eq!(
+            visible_entries_as_strings(&sidebar, cx),
+            vec!["v [project-a] (!)", "  Test *", "v [Empty Workspace]",]
         );
     }
 }

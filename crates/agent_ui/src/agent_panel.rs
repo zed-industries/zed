@@ -514,7 +514,7 @@ pub struct AgentPanel {
     focus_handle: FocusHandle,
     active_view: ActiveView,
     previous_view: Option<ActiveView>,
-    background_views: HashMap<acp::SessionId, Entity<ConnectionView>>,
+    background_threads: HashMap<acp::SessionId, Entity<ConnectionView>>,
     new_thread_menu_handle: PopoverMenuHandle<ContextMenu>,
     agent_panel_menu_handle: PopoverMenuHandle<ContextMenu>,
     agent_navigation_menu_handle: PopoverMenuHandle<ContextMenu>,
@@ -799,7 +799,7 @@ impl AgentPanel {
             focus_handle: cx.focus_handle(),
             context_server_registry,
             previous_view: None,
-            background_views: HashMap::default(),
+            background_threads: HashMap::default(),
             new_thread_menu_handle: PopoverMenuHandle::default(),
             agent_panel_menu_handle: PopoverMenuHandle::default(),
             agent_navigation_menu_handle: PopoverMenuHandle::default(),
@@ -1579,7 +1579,7 @@ impl AgentPanel {
             }
         }
 
-        for server_view in self.background_views.values() {
+        for server_view in self.background_threads.values() {
             if let Some(thread_view) = server_view.read(cx).parent_thread(cx) {
                 views.push(thread_view);
             }
@@ -1607,7 +1607,7 @@ impl AgentPanel {
             return;
         }
 
-        self.background_views.insert(session_id, server_view);
+        self.background_threads.insert(session_id, server_view);
     }
 
     pub(crate) fn active_native_agent_thread(&self, cx: &App) -> Option<Entity<agent::Thread>> {
@@ -1860,7 +1860,7 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Some(server_view) = self.background_views.remove(&thread.session_id) {
+        if let Some(server_view) = self.background_threads.remove(&thread.session_id) {
             self.set_active_view(ActiveView::AgentThread { server_view }, true, window, cx);
             return;
         }
@@ -3494,6 +3494,15 @@ impl Dismissable for TrialEndUpsell {
 /// Test-only helper methods
 #[cfg(any(test, feature = "test-support"))]
 impl AgentPanel {
+    pub fn test_new(
+        workspace: &Workspace,
+        text_thread_store: Entity<assistant_text_thread::TextThreadStore>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        Self::new(workspace, text_thread_store, None, window, cx)
+    }
+
     /// Opens an external thread using an arbitrary AgentServer.
     ///
     /// This is a test-only helper that allows visual tests and integration tests
@@ -3530,6 +3539,7 @@ impl AgentPanel {
 mod tests {
     use super::*;
     use crate::connection_view::tests::{StubAgentServer, init_test};
+    use crate::test_support::{active_session_id, open_thread_with_connection, send_message};
     use acp_thread::{StubAgentConnection, ThreadStatus};
     use assistant_text_thread::TextThreadStore;
     use feature_flags::FeatureFlagAppExt;
@@ -3749,39 +3759,6 @@ mod tests {
         (panel, cx)
     }
 
-    fn open_thread_with_connection(
-        panel: &Entity<AgentPanel>,
-        connection: StubAgentConnection,
-        cx: &mut VisualTestContext,
-    ) {
-        panel.update_in(cx, |panel, window, cx| {
-            panel.open_external_thread_with_server(
-                Rc::new(StubAgentServer::new(connection)),
-                window,
-                cx,
-            );
-        });
-        cx.run_until_parked();
-    }
-
-    fn send_message(panel: &Entity<AgentPanel>, cx: &mut VisualTestContext) {
-        let thread_view = panel.read_with(cx, |panel, cx| panel.as_active_thread_view(cx).unwrap());
-
-        let message_editor = thread_view.read_with(cx, |view, _cx| view.message_editor.clone());
-        message_editor.update_in(cx, |editor, window, cx| {
-            editor.set_text("Hello", window, cx);
-        });
-        thread_view.update_in(cx, |view, window, cx| view.send(window, cx));
-        cx.run_until_parked();
-    }
-
-    fn active_session_id(panel: &Entity<AgentPanel>, cx: &VisualTestContext) -> acp::SessionId {
-        panel.read_with(cx, |panel, cx| {
-            let thread = panel.active_agent_thread(cx).unwrap();
-            thread.read(cx).session_id().clone()
-        })
-    }
-
     #[gpui::test]
     async fn test_running_thread_retained_when_navigating_away(cx: &mut TestAppContext) {
         let (panel, mut cx) = setup_panel(cx).await;
@@ -3806,7 +3783,7 @@ mod tests {
         panel.read_with(&cx, |panel, cx| {
             let thread = panel.active_agent_thread(cx).unwrap();
             assert_eq!(thread.read(cx).status(), ThreadStatus::Generating);
-            assert!(panel.background_views.is_empty());
+            assert!(panel.background_threads.is_empty());
         });
 
         // Open a new thread B — thread A should be retained in background.
@@ -3815,12 +3792,12 @@ mod tests {
 
         panel.read_with(&cx, |panel, _cx| {
             assert_eq!(
-                panel.background_views.len(),
+                panel.background_threads.len(),
                 1,
                 "Running thread A should be retained in background_views"
             );
             assert!(
-                panel.background_views.contains_key(&session_id_a),
+                panel.background_threads.contains_key(&session_id_a),
                 "Background view should be keyed by thread A's session ID"
             );
         });
@@ -3853,7 +3830,7 @@ mod tests {
 
         panel.read_with(&cx, |panel, _cx| {
             assert!(
-                panel.background_views.is_empty(),
+                panel.background_threads.is_empty(),
                 "Idle thread A should not be retained in background_views"
             );
         });
@@ -3892,8 +3869,8 @@ mod tests {
         let session_id_b = active_session_id(&panel, &cx);
 
         panel.read_with(&cx, |panel, _cx| {
-            assert_eq!(panel.background_views.len(), 1);
-            assert!(panel.background_views.contains_key(&session_id_a));
+            assert_eq!(panel.background_threads.len(), 1);
+            assert!(panel.background_threads.contains_key(&session_id_a));
         });
 
         // Load thread A back via load_agent_thread — should promote from background.
@@ -3920,11 +3897,11 @@ mod tests {
 
         panel.read_with(&cx, |panel, _cx| {
             assert!(
-                !panel.background_views.contains_key(&session_id_a),
+                !panel.background_threads.contains_key(&session_id_a),
                 "Promoted thread A should no longer be in background_views"
             );
             assert!(
-                !panel.background_views.contains_key(&session_id_b),
+                !panel.background_threads.contains_key(&session_id_b),
                 "Thread B (idle) should not have been retained in background_views"
             );
         });

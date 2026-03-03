@@ -30,8 +30,12 @@ util.workspace = true
 workspace.workspace = true
 
 [dev-dependencies]
+acp_thread = { workspace = true, features = ["test-support"] }
 agent = { workspace = true, features = ["test-support"] }
+agent_ui = { workspace = true, features = ["test-support"] }
+assistant_text_thread = { workspace = true, features = ["test-support"] }
 editor.workspace = true
+language_model = { workspace = true, features = ["test-support"] }
 serde_json.workspace = true
 feature_flags.workspace = true
 fs = { workspace = true, features = ["test-support"] }
