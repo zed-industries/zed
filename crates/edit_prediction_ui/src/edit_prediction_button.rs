@@ -1194,6 +1194,56 @@ impl EditPredictionButton {
                 menu = self.build_language_settings_menu(menu, window, cx);
             }
             menu = self.add_provider_switching_section(menu, provider, cx);
+
+            if cx.is_staff() {
+                if let Some(store) = EditPredictionStore::try_global(cx) {
+                    let store = store.read(cx);
+                    let experiments = store.available_experiments().to_vec();
+                    let preferred = store.preferred_experiment().map(|s| s.to_owned());
+
+                    let preferred_for_submenu = preferred.clone();
+                    menu = menu
+                        .separator()
+                        .submenu("Experiment", move |menu, _window, _cx| {
+                            let mut menu = menu.toggleable_entry(
+                                "Default",
+                                preferred_for_submenu.is_none(),
+                                IconPosition::Start,
+                                None,
+                                {
+                                    move |_window, cx| {
+                                        if let Some(store) = EditPredictionStore::try_global(cx) {
+                                            store.update(cx, |store, _cx| {
+                                                store.set_preferred_experiment(None);
+                                            });
+                                        }
+                                    }
+                                },
+                            );
+                            for experiment in &experiments {
+                                let is_selected = preferred.as_deref() == Some(experiment.as_str());
+                                let experiment_name = experiment.clone();
+                                menu = menu.toggleable_entry(
+                                    experiment.clone(),
+                                    is_selected,
+                                    IconPosition::Start,
+                                    None,
+                                    move |_window, cx| {
+                                        if let Some(store) = EditPredictionStore::try_global(cx) {
+                                            store.update(cx, |store, _cx| {
+                                                store.set_preferred_experiment(Some(
+                                                    experiment_name.clone(),
+                                                ));
+                                            });
+                                        }
+                                    },
+                                );
+                            }
+                            menu
+                        });
+                }
+            }
+
             menu = menu.separator().item(
                 ContextMenuEntry::new("Configure Providers")
                     .icon(IconName::Settings)

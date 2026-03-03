@@ -18,17 +18,10 @@ fn estimate_tokens(bytes: usize) -> usize {
     bytes / 3
 }
 
-/// The client's preferred edit prediction model. The server may override this.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum EditPredictionModelKind {
-    Zeta1,
-    Zeta2,
-}
-
 /// Pre-computed byte offset ranges within `cursor_excerpt` for different
 /// editable and context token budgets. Allows the server to select the
 /// appropriate ranges for whichever model it uses.
-#[derive(Clone, Debug, PartialEq, Hash, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Hash, Serialize, Deserialize)]
 pub struct ExcerptRanges {
     /// Editable region computed with a 150-token budget.
     pub editable_150: Range<usize>,
@@ -54,21 +47,16 @@ pub struct ExcerptRanges {
 pub struct ZetaPromptInput {
     pub cursor_path: Arc<Path>,
     pub cursor_excerpt: Arc<str>,
-    pub editable_range_in_excerpt: Range<usize>,
     pub cursor_offset_in_excerpt: usize,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub excerpt_start_row: Option<u32>,
     pub events: Vec<Arc<Event>>,
     pub related_files: Vec<RelatedFile>,
-    /// When set, the excerpt was computed with a larger budget (~512 tokens)
-    /// and these ranges let the server select model-appropriate subsets.
-    /// When absent, the excerpt IS the context region and
-    /// `editable_range_in_excerpt` is the only editable range.
+    /// These ranges let the server select model-appropriate subsets.
+    pub excerpt_ranges: ExcerptRanges,
+    /// The name of the edit prediction model experiment to use.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub excerpt_ranges: Option<ExcerptRanges>,
-    /// Client's preferred model. The server may override.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub preferred_model: Option<EditPredictionModelKind>,
+    pub experiment: Option<String>,
     #[serde(default)]
     pub in_open_source_repo: bool,
     #[serde(default)]
@@ -274,15 +262,7 @@ pub fn resolve_cursor_region(
     input: &ZetaPromptInput,
     format: ZetaFormat,
 ) -> (&str, Range<usize>, usize) {
-    let Some(ranges) = &input.excerpt_ranges else {
-        return (
-            &input.cursor_excerpt,
-            input.editable_range_in_excerpt.clone(),
-            input.cursor_offset_in_excerpt,
-        );
-    };
-
-    let (editable_range, context_range) = excerpt_range_for_format(format, ranges);
+    let (editable_range, context_range) = excerpt_range_for_format(format, &input.excerpt_ranges);
     let context_start = context_range.start;
     let context_text = &input.cursor_excerpt[context_range];
     let adjusted_editable =
@@ -1159,16 +1139,24 @@ mod tests {
         events: Vec<Event>,
         related_files: Vec<RelatedFile>,
     ) -> ZetaPromptInput {
+        let context_range = 0..cursor_excerpt.len();
         ZetaPromptInput {
             cursor_path: Path::new("test.rs").into(),
             cursor_excerpt: cursor_excerpt.into(),
-            editable_range_in_excerpt: editable_range,
             cursor_offset_in_excerpt: cursor_offset,
             excerpt_start_row: None,
             events: events.into_iter().map(Arc::new).collect(),
             related_files,
-            excerpt_ranges: None,
-            preferred_model: None,
+            excerpt_ranges: ExcerptRanges {
+                editable_150: editable_range.clone(),
+                editable_180: editable_range.clone(),
+                editable_350: editable_range,
+                editable_150_context_350: context_range.clone(),
+                editable_180_context_350: context_range.clone(),
+                editable_350_context_150: context_range,
+                ..Default::default()
+            },
+            experiment: None,
             in_open_source_repo: false,
             can_collect_data: false,
         }
@@ -1752,13 +1740,20 @@ mod tests {
         let input = ZetaPromptInput {
             cursor_path: Path::new("src/main.rs").into(),
             cursor_excerpt: excerpt.into(),
-            editable_range_in_excerpt: 15..41,
             cursor_offset_in_excerpt: 30,
             excerpt_start_row: Some(0),
             events: vec![Arc::new(make_event("other.rs", "-old\n+new\n"))],
             related_files: vec![],
-            excerpt_ranges: None,
-            preferred_model: None,
+            excerpt_ranges: ExcerptRanges {
+                editable_150: 15..41,
+                editable_180: 15..41,
+                editable_350: 15..41,
+                editable_150_context_350: 0..excerpt.len(),
+                editable_180_context_350: 0..excerpt.len(),
+                editable_350_context_150: 0..excerpt.len(),
+                ..Default::default()
+            },
+            experiment: None,
             in_open_source_repo: false,
             can_collect_data: false,
         };
@@ -1807,13 +1802,20 @@ mod tests {
         let input = ZetaPromptInput {
             cursor_path: Path::new("src/main.rs").into(),
             cursor_excerpt: excerpt.into(),
-            editable_range_in_excerpt: 0..28,
             cursor_offset_in_excerpt: 15,
             excerpt_start_row: Some(10),
             events: vec![],
             related_files: vec![],
-            excerpt_ranges: None,
-            preferred_model: None,
+            excerpt_ranges: ExcerptRanges {
+                editable_150: 0..28,
+                editable_180: 0..28,
+                editable_350: 0..28,
+                editable_150_context_350: 0..28,
+                editable_180_context_350: 0..28,
+                editable_350_context_150: 0..28,
+                ..Default::default()
+            },
+            experiment: None,
             in_open_source_repo: false,
             can_collect_data: false,
         };
@@ -1857,13 +1859,20 @@ mod tests {
         let input = ZetaPromptInput {
             cursor_path: Path::new("test.rs").into(),
             cursor_excerpt: excerpt.into(),
-            editable_range_in_excerpt: editable_range.clone(),
             cursor_offset_in_excerpt: 25,
             excerpt_start_row: Some(0),
             events: vec![],
             related_files: vec![],
-            excerpt_ranges: None,
-            preferred_model: None,
+            excerpt_ranges: ExcerptRanges {
+                editable_150: editable_range.clone(),
+                editable_180: editable_range.clone(),
+                editable_350: editable_range.clone(),
+                editable_150_context_350: context_range.clone(),
+                editable_180_context_350: context_range.clone(),
+                editable_350_context_150: context_range.clone(),
+                ..Default::default()
+            },
+            experiment: None,
             in_open_source_repo: false,
             can_collect_data: false,
         };
