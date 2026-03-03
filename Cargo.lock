@@ -7598,7 +7598,7 @@ dependencies = [
  "mach2 0.5.0",
  "media",
  "metal",
- "naga",
+ "naga 28.0.0",
  "num_cpus",
  "objc",
  "objc2",
@@ -10702,6 +10702,30 @@ name = "naga"
 version = "28.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "618f667225063219ddfc61251087db8a9aec3c3f0950c916b614e403486f1135"
+dependencies = [
+ "arrayvec",
+ "bit-set",
+ "bitflags 2.10.0",
+ "cfg-if",
+ "cfg_aliases 0.2.1",
+ "codespan-reporting 0.12.0",
+ "half",
+ "hashbrown 0.16.1",
+ "hexf-parse",
+ "indexmap",
+ "libm",
+ "log",
+ "num-traits",
+ "once_cell",
+ "rustc-hash 1.1.0",
+ "thiserror 2.0.17",
+ "unicode-ident",
+]
+
+[[package]]
+name = "naga"
+version = "28.0.1"
+source = "git+https://github.com/zed-industries/wgpu?rev=e0f83a6cedc5e0b97da1ebe2d638ad103672e0a2#e0f83a6cedc5e0b97da1ebe2d638ad103672e0a2"
 dependencies = [
  "arrayvec",
  "bit-set",
@@ -19890,9 +19914,8 @@ checksum = "a751b3277700db47d3e574514de2eced5e54dc8a5436a3bf7a0b248b2cee16f3"
 
 [[package]]
 name = "wgpu"
-version = "28.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f9cb534d5ffd109c7d1135f34cdae29e60eab94855a625dcfe1705f8bc7ad79f"
+version = "28.0.1"
+source = "git+https://github.com/zed-industries/wgpu?rev=e0f83a6cedc5e0b97da1ebe2d638ad103672e0a2#e0f83a6cedc5e0b97da1ebe2d638ad103672e0a2"
 dependencies = [
  "arrayvec",
  "bitflags 2.10.0",
@@ -19903,7 +19926,7 @@ dependencies = [
  "hashbrown 0.16.1",
  "js-sys",
  "log",
- "naga",
+ "naga 28.0.1",
  "parking_lot",
  "portable-atomic",
  "profiling",
@@ -19920,9 +19943,8 @@ dependencies = [
 
 [[package]]
 name = "wgpu-core"
-version = "28.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8bb4c8b5db5f00e56f1f08869d870a0dff7c8bc7ebc01091fec140b0cf0211a9"
+version = "28.0.1"
+source = "git+https://github.com/zed-industries/wgpu?rev=e0f83a6cedc5e0b97da1ebe2d638ad103672e0a2#e0f83a6cedc5e0b97da1ebe2d638ad103672e0a2"
 dependencies = [
  "arrayvec",
  "bit-set",
@@ -19934,7 +19956,7 @@ dependencies = [
  "hashbrown 0.16.1",
  "indexmap",
  "log",
- "naga",
+ "naga 28.0.1",
  "once_cell",
  "parking_lot",
  "portable-atomic",
@@ -19952,36 +19974,32 @@ dependencies = [
 
 [[package]]
 name = "wgpu-core-deps-apple"
-version = "28.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "87b7b696b918f337c486bf93142454080a32a37832ba8a31e4f48221890047da"
+version = "28.0.1"
+source = "git+https://github.com/zed-industries/wgpu?rev=e0f83a6cedc5e0b97da1ebe2d638ad103672e0a2#e0f83a6cedc5e0b97da1ebe2d638ad103672e0a2"
 dependencies = [
  "wgpu-hal",
 ]
 
 [[package]]
 name = "wgpu-core-deps-emscripten"
-version = "28.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "34b251c331f84feac147de3c4aa3aa45112622a95dd7ee1b74384fa0458dbd79"
+version = "28.0.1"
+source = "git+https://github.com/zed-industries/wgpu?rev=e0f83a6cedc5e0b97da1ebe2d638ad103672e0a2#e0f83a6cedc5e0b97da1ebe2d638ad103672e0a2"
 dependencies = [
  "wgpu-hal",
 ]
 
 [[package]]
 name = "wgpu-core-deps-windows-linux-android"
-version = "28.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "68ca976e72b2c9964eb243e281f6ce7f14a514e409920920dcda12ae40febaae"
+version = "28.0.1"
+source = "git+https://github.com/zed-industries/wgpu?rev=e0f83a6cedc5e0b97da1ebe2d638ad103672e0a2#e0f83a6cedc5e0b97da1ebe2d638ad103672e0a2"
 dependencies = [
  "wgpu-hal",
 ]
 
 [[package]]
 name = "wgpu-hal"
-version = "28.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "293080d77fdd14d6b08a67c5487dfddbf874534bb7921526db56a7b75d7e3bef"
+version = "28.0.1"
+source = "git+https://github.com/zed-industries/wgpu?rev=e0f83a6cedc5e0b97da1ebe2d638ad103672e0a2#e0f83a6cedc5e0b97da1ebe2d638ad103672e0a2"
 dependencies = [
  "android_system_properties",
  "arrayvec",
@@ -20004,7 +20022,7 @@ dependencies = [
  "libloading",
  "log",
  "metal",
- "naga",
+ "naga 28.0.1",
  "ndk-sys",
  "objc",
  "once_cell",
@@ -20027,9 +20045,8 @@ dependencies = [
 
 [[package]]
 name = "wgpu-types"
-version = "28.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e18308757e594ed2cd27dddbb16a139c42a683819d32a2e0b1b0167552f5840c"
+version = "28.0.1"
+source = "git+https://github.com/zed-industries/wgpu?rev=e0f83a6cedc5e0b97da1ebe2d638ad103672e0a2#e0f83a6cedc5e0b97da1ebe2d638ad103672e0a2"
 dependencies = [
  "bitflags 2.10.0",
  "bytemuck",
