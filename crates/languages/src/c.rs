@@ -147,17 +147,26 @@ impl LspInstaller for CLspAdapter {
         container_dir: PathBuf,
         _: &dyn LspAdapterDelegate,
     ) -> Option<LanguageServerBinary> {
+        if let Err(error) = ensure_arch_compatibility() {
+            log::info!("Skipping cached clangd binary: {error:#}");
+            return None;
+        }
+
         get_cached_server_binary(container_dir).await
     }
 }
 
 fn ensure_arch_compatibility() -> Result<()> {
-    let arch = consts::ARCH;
-    if consts::OS == "linux" && !["x86_64", "x86"].contains(&arch) {
+    ensure_arch_compatibility_for_platform(consts::OS, consts::ARCH)
+}
+
+fn ensure_arch_compatibility_for_platform(os: &str, arch: &str) -> Result<()> {
+    if os == "linux" && !["x86_64", "x86"].contains(&arch) {
         anyhow::bail!(
             "Clangd does not provide prebuilt binaries for {arch} to fetch from GitHub. Consider installing the binary manually."
         )
     }
+
     Ok(())
 }
 
@@ -653,5 +662,22 @@ mod tests {
 
             buffer
         });
+    }
+
+    #[test]
+    fn test_ensure_arch_compatibility_for_platform() {
+        assert!(ensure_arch_compatibility_for_platform("linux", "x86_64").is_ok());
+        assert!(ensure_arch_compatibility_for_platform("linux", "x86").is_ok());
+        assert!(ensure_arch_compatibility_for_platform("macos", "aarch64").is_ok());
+        assert!(ensure_arch_compatibility_for_platform("windows", "aarch64").is_ok());
+
+        let error = ensure_arch_compatibility_for_platform("linux", "aarch64")
+            .expect_err("linux aarch64 should not be considered a downloadable clangd platform");
+        assert!(
+            error
+                .to_string()
+                .contains("Clangd does not provide prebuilt binaries for aarch64"),
+            "unexpected error: {error:?}"
+        );
     }
 }
