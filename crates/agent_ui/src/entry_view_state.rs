@@ -114,7 +114,7 @@ impl EntryViewState {
                     cx.subscribe(&message_editor, move |_, editor, event, cx| {
                         cx.emit(EntryViewEvent {
                             entry_index: index,
-                            view_event: ViewEvent::MessageEditorEvent(editor, *event),
+                            view_event: ViewEvent::MessageEditorEvent(editor, event.clone()),
                         })
                     })
                     .detach();
@@ -126,14 +126,19 @@ impl EntryViewState {
                 let terminals = tool_call.terminals().cloned().collect::<Vec<_>>();
                 let diffs = tool_call.diffs().cloned().collect::<Vec<_>>();
 
-                let views = if let Some(Entry::Content(views)) = self.entries.get_mut(index) {
-                    views
+                let views = if let Some(Entry::ToolCall(tool_call)) = self.entries.get_mut(index) {
+                    &mut tool_call.content
                 } else {
-                    self.set_entry(index, Entry::empty());
-                    let Some(Entry::Content(views)) = self.entries.get_mut(index) else {
+                    self.set_entry(
+                        index,
+                        Entry::ToolCall(ToolCallEntry {
+                            content: HashMap::default(),
+                        }),
+                    );
+                    let Some(Entry::ToolCall(tool_call)) = self.entries.get_mut(index) else {
                         unreachable!()
                     };
-                    views
+                    &mut tool_call.content
                 };
 
                 let is_tool_call_completed =
@@ -250,8 +255,8 @@ impl EntryViewState {
         for entry in self.entries.iter() {
             match entry {
                 Entry::UserMessage { .. } | Entry::AssistantMessage { .. } => {}
-                Entry::Content(response_views) => {
-                    for view in response_views.values() {
+                Entry::ToolCall(ToolCallEntry { content }) => {
+                    for view in content.values() {
                         if let Ok(diff_editor) = view.clone().downcast::<Editor>() {
                             diff_editor.update(cx, |diff_editor, cx| {
                                 diff_editor.set_text_style_refinement(
@@ -306,24 +311,29 @@ impl AssistantMessageEntry {
 }
 
 #[derive(Debug)]
+pub struct ToolCallEntry {
+    content: HashMap<EntityId, AnyEntity>,
+}
+
+#[derive(Debug)]
 pub enum Entry {
     UserMessage(Entity<MessageEditor>),
     AssistantMessage(AssistantMessageEntry),
-    Content(HashMap<EntityId, AnyEntity>),
+    ToolCall(ToolCallEntry),
 }
 
 impl Entry {
     pub fn focus_handle(&self, cx: &App) -> Option<FocusHandle> {
         match self {
             Self::UserMessage(editor) => Some(editor.read(cx).focus_handle(cx)),
-            Self::AssistantMessage(_) | Self::Content(_) => None,
+            Self::AssistantMessage(_) | Self::ToolCall(_) => None,
         }
     }
 
     pub fn message_editor(&self) -> Option<&Entity<MessageEditor>> {
         match self {
             Self::UserMessage(editor) => Some(editor),
-            Self::AssistantMessage(_) | Self::Content(_) => None,
+            Self::AssistantMessage(_) | Self::ToolCall(_) => None,
         }
     }
 
@@ -350,25 +360,21 @@ impl Entry {
     ) -> Option<ScrollHandle> {
         match self {
             Self::AssistantMessage(message) => message.scroll_handle_for_chunk(chunk_ix),
-            Self::UserMessage(_) | Self::Content(_) => None,
+            Self::UserMessage(_) | Self::ToolCall(_) => None,
         }
     }
 
     fn content_map(&self) -> Option<&HashMap<EntityId, AnyEntity>> {
         match self {
-            Self::Content(map) => Some(map),
+            Self::ToolCall(ToolCallEntry { content }) => Some(content),
             _ => None,
         }
-    }
-
-    fn empty() -> Self {
-        Self::Content(HashMap::default())
     }
 
     #[cfg(test)]
     pub fn has_content(&self) -> bool {
         match self {
-            Self::Content(map) => !map.is_empty(),
+            Self::ToolCall(ToolCallEntry { content }) => !content.is_empty(),
             Self::UserMessage(_) | Self::AssistantMessage(_) => false,
         }
     }

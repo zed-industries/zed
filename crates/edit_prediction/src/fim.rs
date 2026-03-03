@@ -72,16 +72,14 @@ pub fn request_prediction(
             events,
             related_files: Vec::new(),
             cursor_offset_in_excerpt: cursor_offset - excerpt_offset_range.start,
-            editable_range_in_excerpt: cursor_offset - excerpt_offset_range.start
-                ..cursor_offset - excerpt_offset_range.start,
             cursor_path: full_path.clone(),
             excerpt_start_row: Some(excerpt_range.start.row),
             cursor_excerpt: snapshot
                 .text_for_range(excerpt_range)
                 .collect::<String>()
                 .into(),
-            excerpt_ranges: None,
-            preferred_model: None,
+            excerpt_ranges: Default::default(),
+            experiment: None,
             in_open_source_repo: false,
             can_collect_data: false,
         };
