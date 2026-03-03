@@ -19,9 +19,13 @@ Gets errors and warnings for either a specific file or the entire project, usefu
 When a path is provided, shows all diagnostics for that specific file.
 When no path is provided, shows a summary of error and warning counts for all files in the project.
 
+**Example:** After editing `src/parser.rs`, call `diagnostics` with that path to check for type errors immediately. After a larger refactor touching many files, call it without a path to see a project-wide count of errors before deciding what to fix next.
+
 ### `fetch`
 
 Fetches a URL and returns the content as Markdown. Useful for providing docs as context.
+
+**Example:** Fetching a library's changelog page to check whether a breaking API change was introduced in a recent version before writing integration code.
 
 ### `find_path`
 
@@ -30,6 +34,8 @@ Quickly finds files by matching glob patterns (like "\*_/_.js"), returning match
 ### `grep`
 
 Searches file contents across the project using regular expressions, preferred for finding symbols in code without knowing exact file paths.
+
+**Example:** To find every call site of a function before renaming it, search for `parse_config\(` — the regex matches the function name followed by an opening parenthesis, filtering out comments or variable names that happen to contain the string.
 
 ### `list_directory`
 
@@ -55,6 +61,8 @@ Allows the Agent to work through problems, brainstorm ideas, or plan without exe
 
 Searches the web for information, providing results with snippets and links from relevant web pages, useful for accessing real-time information.
 
+**Example:** Looking up whether a known bug in a dependency has been patched in a recent release, or finding the current API signature for a third-party library when the local docs are out of date.
+
 ## Edit Tools
 
 ### `copy_path`
@@ -73,6 +81,8 @@ Deletes a file or directory (including contents recursively) at the specified pa
 
 Edits files by replacing specific text with new content.
 
+**Example:** Updating a function signature — the agent identifies the exact lines to replace and provides the updated version, leaving the surrounding code untouched. For widespread renames, it pairs this with `grep` to find every occurrence first.
+
 ### `move_path`
 
 Moves or renames a file or directory in the project, performing a rename if only the filename differs.
@@ -89,8 +99,12 @@ Saves files that have unsaved changes. Used when files need to be saved before f
 
 Executes shell commands and returns the combined output, creating a new shell process for each invocation.
 
+**Example:** After editing a Rust file, run `cargo test --package my_crate 2>&1 | tail -30` to confirm the changes don't break existing tests. Or run `git diff --stat` to review which files have been modified before wrapping up a task.
+
 ## Other Tools
 
 ### `subagent`
 
 Spawns a subagent with its own context window to perform a delegated task. Useful for running parallel investigations, completing self-contained tasks, or performing research where only the outcome matters. Each subagent has access to the same tools as the parent agent.
+
+**Example:** While refactoring the authentication module, spawn a subagent to investigate how session tokens are validated elsewhere in the codebase. The parent agent continues its work and reviews the subagent's findings when it completes — keeping both context windows focused on a single task.
