@@ -276,7 +276,7 @@ fn main() {
 
     zlog::init();
 
-    if stdout_is_a_pty() {
+    if true {
         zlog::init_output_stdout();
     } else {
         let result = zlog::init_output_file(paths::log_file(), Some(paths::old_log_file()));
@@ -638,7 +638,6 @@ fn main() {
         );
 
         copilot_ui::init(&app_state, cx);
-        supermaven::init(app_state.client.clone(), cx);
         language_model::init(app_state.client.clone(), cx);
         language_models::init(app_state.user_store.clone(), app_state.client.clone(), cx);
         acp_tools::init(cx);

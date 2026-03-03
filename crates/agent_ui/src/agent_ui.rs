@@ -371,7 +371,6 @@ fn update_command_palette_filter(cx: &mut App) {
             filter.hide_namespace("agents");
             filter.hide_namespace("assistant");
             filter.hide_namespace("copilot");
-            filter.hide_namespace("supermaven");
             filter.hide_namespace("zed_predict_onboarding");
             filter.hide_namespace("edit_prediction");
 
@@ -392,19 +391,11 @@ fn update_command_palette_filter(cx: &mut App) {
                 EditPredictionProvider::None => {
                     filter.hide_namespace("edit_prediction");
                     filter.hide_namespace("copilot");
-                    filter.hide_namespace("supermaven");
                     filter.hide_action_types(&edit_prediction_actions);
                 }
                 EditPredictionProvider::Copilot => {
                     filter.show_namespace("edit_prediction");
                     filter.show_namespace("copilot");
-                    filter.hide_namespace("supermaven");
-                    filter.show_action_types(edit_prediction_actions.iter());
-                }
-                EditPredictionProvider::Supermaven => {
-                    filter.show_namespace("edit_prediction");
-                    filter.hide_namespace("copilot");
-                    filter.show_namespace("supermaven");
                     filter.show_action_types(edit_prediction_actions.iter());
                 }
                 EditPredictionProvider::Zed
@@ -416,7 +407,6 @@ fn update_command_palette_filter(cx: &mut App) {
                 | EditPredictionProvider::Experimental(_) => {
                     filter.show_namespace("edit_prediction");
                     filter.hide_namespace("copilot");
-                    filter.hide_namespace("supermaven");
                     filter.show_action_types(edit_prediction_actions.iter());
                 }
             }

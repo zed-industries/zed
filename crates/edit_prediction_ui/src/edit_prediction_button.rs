@@ -30,7 +30,6 @@ use std::{
     sync::{Arc, LazyLock},
     time::Duration,
 };
-use supermaven::{AccountStatus, Supermaven};
 use ui::{
     Clickable, ContextMenu, ContextMenuEntry, DocumentationSide, IconButton, IconButtonShape,
     Indicator, PopoverMenu, PopoverMenuHandle, ProgressBar, Tooltip, prelude::*,
@@ -73,13 +72,6 @@ pub struct EditPredictionButton {
     user_store: Entity<UserStore>,
     popover_menu_handle: PopoverMenuHandle<ContextMenu>,
     project: WeakEntity<Project>,
-}
-
-enum SupermavenButtonStatus {
-    Ready,
-    Errored(String),
-    NeedsActivation(String),
-    Initializing,
 }
 
 impl Render for EditPredictionButton {
@@ -184,101 +176,6 @@ impl Render for EditPredictionButton {
                         .trigger_with_tooltip(
                             IconButton::new("copilot-icon", icon),
                             |_window, cx| Tooltip::for_action("GitHub Copilot", &ToggleMenu, cx),
-                        )
-                        .with_handle(self.popover_menu_handle.clone()),
-                )
-            }
-            EditPredictionProvider::Supermaven => {
-                let Some(supermaven) = Supermaven::global(cx) else {
-                    return div();
-                };
-
-                let supermaven = supermaven.read(cx);
-
-                let status = match supermaven {
-                    Supermaven::Starting => SupermavenButtonStatus::Initializing,
-                    Supermaven::FailedDownload { error } => {
-                        SupermavenButtonStatus::Errored(error.to_string())
-                    }
-                    Supermaven::Spawned(agent) => {
-                        let account_status = agent.account_status.clone();
-                        match account_status {
-                            AccountStatus::NeedsActivation { activate_url } => {
-                                SupermavenButtonStatus::NeedsActivation(activate_url)
-                            }
-                            AccountStatus::Unknown => SupermavenButtonStatus::Initializing,
-                            AccountStatus::Ready => SupermavenButtonStatus::Ready,
-                        }
-                    }
-                    Supermaven::Error { error } => {
-                        SupermavenButtonStatus::Errored(error.to_string())
-                    }
-                };
-
-                let icon = status.to_icon();
-                let tooltip_text = status.to_tooltip();
-                let has_menu = status.has_menu();
-                let this = cx.weak_entity();
-                let fs = self.fs.clone();
-                let file = self.file.clone();
-                let language = self.language.clone();
-                let project = self.project.clone();
-
-                div().child(
-                    PopoverMenu::new("supermaven")
-                        .on_open({
-                            let file = file.clone();
-                            let language = language;
-                            let project = project;
-                            Rc::new(move |_window, cx| {
-                                emit_edit_prediction_menu_opened(
-                                    "supermaven",
-                                    &file,
-                                    &language,
-                                    &project,
-                                    cx,
-                                );
-                            })
-                        })
-                        .menu(move |window, cx| match &status {
-                            SupermavenButtonStatus::NeedsActivation(activate_url) => {
-                                Some(ContextMenu::build(window, cx, |menu, _, _| {
-                                    let fs = fs.clone();
-                                    let activate_url = activate_url.clone();
-
-                                    menu.entry("Sign In", None, move |_, cx| {
-                                        cx.open_url(activate_url.as_str())
-                                    })
-                                    .entry(
-                                        "Use Zed AI",
-                                        None,
-                                        move |_, cx| {
-                                            set_completion_provider(
-                                                fs.clone(),
-                                                cx,
-                                                EditPredictionProvider::Zed,
-                                            )
-                                        },
-                                    )
-                                }))
-                            }
-                            SupermavenButtonStatus::Ready => this
-                                .update(cx, |this, cx| {
-                                    this.build_supermaven_context_menu(window, cx)
-                                })
-                                .ok(),
-                            _ => None,
-                        })
-                        .anchor(Corner::BottomRight)
-                        .trigger_with_tooltip(
-                            IconButton::new("supermaven-icon", icon),
-                            move |window, cx| {
-                                if has_menu {
-                                    Tooltip::for_action(tooltip_text.clone(), &ToggleMenu, cx)
-                                } else {
-                                    Tooltip::text(tooltip_text.clone())(window, cx)
-                                }
-                            },
                         )
                         .with_handle(self.popover_menu_handle.clone()),
                 )
@@ -1120,21 +1017,6 @@ impl EditPredictionButton {
         })
     }
 
-    fn build_supermaven_context_menu(
-        &self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Entity<ContextMenu> {
-        ContextMenu::build(window, cx, |menu, window, cx| {
-            let menu = self.build_language_settings_menu(menu, window, cx);
-            let menu =
-                self.add_provider_switching_section(menu, EditPredictionProvider::Supermaven, cx);
-
-            menu.separator()
-                .action("Sign Out", supermaven::SignOut.boxed_clone())
-        })
-    }
-
     fn build_codestral_context_menu(
         &self,
         window: &mut Window,
@@ -1384,33 +1266,6 @@ impl StatusItemView for EditPredictionButton {
     }
 }
 
-impl SupermavenButtonStatus {
-    fn to_icon(&self) -> IconName {
-        match self {
-            SupermavenButtonStatus::Ready => IconName::Supermaven,
-            SupermavenButtonStatus::Errored(_) => IconName::SupermavenError,
-            SupermavenButtonStatus::NeedsActivation(_) => IconName::SupermavenInit,
-            SupermavenButtonStatus::Initializing => IconName::SupermavenInit,
-        }
-    }
-
-    fn to_tooltip(&self) -> String {
-        match self {
-            SupermavenButtonStatus::Ready => "Supermaven is ready".to_string(),
-            SupermavenButtonStatus::Errored(error) => format!("Supermaven error: {}", error),
-            SupermavenButtonStatus::NeedsActivation(_) => "Supermaven needs activation".to_string(),
-            SupermavenButtonStatus::Initializing => "Supermaven initializing".to_string(),
-        }
-    }
-
-    fn has_menu(&self) -> bool {
-        match self {
-            SupermavenButtonStatus::Ready | SupermavenButtonStatus::NeedsActivation(_) => true,
-            SupermavenButtonStatus::Errored(_) | SupermavenButtonStatus::Initializing => false,
-        }
-    }
-}
-
 async fn open_disabled_globs_setting_in_editor(
     workspace: WeakEntity<Workspace>,
     cx: &mut AsyncWindowContext,
@@ -1506,14 +1361,6 @@ pub fn get_available_providers(cx: &mut App) -> Vec<EditPredictionProvider> {
     {
         providers.push(EditPredictionProvider::Copilot);
     };
-
-    if let Some(supermaven) = Supermaven::global(cx) {
-        if let Supermaven::Spawned(agent) = supermaven.read(cx) {
-            if matches!(agent.account_status, AccountStatus::Ready) {
-                providers.push(EditPredictionProvider::Supermaven);
-            }
-        }
-    }
 
     if codestral::codestral_api_key(cx).is_some() {
         providers.push(EditPredictionProvider::Codestral);

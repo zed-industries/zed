@@ -1749,7 +1749,7 @@ impl SubagentHandle for NativeSubagentHandle {
     }
 
     fn num_entries(&self, cx: &App) -> usize {
-        self.subagent_thread.read(cx).num_messages()
+        self.acp_thread.read(cx).entries().len()
     }
 
     fn send(&self, message: String, cx: &AsyncApp) -> Task<Result<String>> {
