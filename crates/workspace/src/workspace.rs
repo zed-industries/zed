@@ -1,3 +1,4 @@
+pub mod activity_bar;
 pub mod dock;
 pub mod history_manager;
 pub mod invalid_item_view;
@@ -1294,6 +1295,7 @@ pub struct Workspace {
     last_open_dock_positions: Vec<DockPosition>,
     removing: bool,
     _panels_task: Option<Task<Result<()>>>,
+    pub(crate) activity_bar: Entity<activity_bar::ActivityBar>,
 }
 
 impl EventEmitter<Event> for Workspace {}
@@ -1569,9 +1571,11 @@ impl Workspace {
         let left_dock = Dock::new(DockPosition::Left, modal_layer.clone(), window, cx);
         let bottom_dock = Dock::new(DockPosition::Bottom, modal_layer.clone(), window, cx);
         let right_dock = Dock::new(DockPosition::Right, modal_layer.clone(), window, cx);
+        let workspace_entity = cx.entity();
         let left_dock_buttons = cx.new(|cx| PanelButtons::new(left_dock.clone(), cx));
         let bottom_dock_buttons = cx.new(|cx| PanelButtons::new(bottom_dock.clone(), cx));
         let right_dock_buttons = cx.new(|cx| PanelButtons::new(right_dock.clone(), cx));
+        let activity_bar = cx.new(|cx| activity_bar::ActivityBar::new(workspace_entity, app_state.fs.clone(), cx));
         let status_bar = cx.new(|cx| {
             let mut status_bar = StatusBar::new(&center_pane.clone(), window, cx);
             status_bar.add_left_item(left_dock_buttons, window, cx);
@@ -1699,6 +1703,7 @@ impl Workspace {
             scheduled_tasks: Vec::new(),
             last_open_dock_positions: Vec::new(),
             removing: false,
+            activity_bar,
         }
     }
 
@@ -7533,6 +7538,11 @@ impl Render for Workspace {
             .map(|(_, notification)| notification.entity_id())
             .collect::<Vec<_>>();
         let bottom_dock_layout = WorkspaceSettings::get_global(cx).bottom_dock_layout;
+        let activity_bar_settings = WorkspaceSettings::get_global(cx).activity_bar.clone();
+        let activity_bar_on_left = activity_bar_settings.enabled
+            && activity_bar_settings.side == crate::workspace_settings::ActivityBarSide::Left;
+        let activity_bar_on_right = activity_bar_settings.enabled
+            && activity_bar_settings.side == crate::workspace_settings::ActivityBarSide::Right;
 
         div()
             .relative()
@@ -7666,6 +7676,9 @@ impl Render for Workspace {
                                                     .flex_row()
                                                     .flex_1()
                                                     .overflow_hidden()
+                                                    .when(activity_bar_on_left, |this| {
+                                                        this.child(self.activity_bar.clone())
+                                                    })
                                                     .children(self.render_dock(
                                                         DockPosition::Left,
                                                         &self.left_dock,
@@ -7720,7 +7733,10 @@ impl Render for Workspace {
                                                         &self.right_dock,
                                                         window,
                                                         cx,
-                                                    )),
+                                                    ))
+                                                    .when(activity_bar_on_right, |this| {
+                                                        this.child(self.activity_bar.clone())
+                                                    }),
                                             )
                                             .child(div().w_full().children(self.render_dock(
                                                 DockPosition::Bottom,
@@ -7733,6 +7749,9 @@ impl Render for Workspace {
                                             .flex()
                                             .flex_row()
                                             .h_full()
+                                            .when(activity_bar_on_left, |this| {
+                                                this.child(self.activity_bar.clone())
+                                            })
                                             .child(
                                                 div()
                                                     .flex()
@@ -7786,12 +7805,18 @@ impl Render for Workspace {
                                                 &self.right_dock,
                                                 window,
                                                 cx,
-                                            )),
+                                            ))
+                                            .when(activity_bar_on_right, |this| {
+                                                this.child(self.activity_bar.clone())
+                                            }),
 
                                         BottomDockLayout::RightAligned => div()
                                             .flex()
                                             .flex_row()
                                             .h_full()
+                                            .when(activity_bar_on_left, |this| {
+                                                this.child(self.activity_bar.clone())
+                                            })
                                             .children(self.render_dock(
                                                 DockPosition::Left,
                                                 &self.left_dock,
@@ -7845,12 +7870,18 @@ impl Render for Workspace {
                                                             .w_full()
                                                             .children(self.render_dock(DockPosition::Bottom, &self.bottom_dock, window, cx))
                                                     ),
-                                            ),
+                                            )
+                                            .when(activity_bar_on_right, |this| {
+                                                this.child(self.activity_bar.clone())
+                                            }),
 
                                         BottomDockLayout::Contained => div()
                                             .flex()
                                             .flex_row()
                                             .h_full()
+                                            .when(activity_bar_on_left, |this| {
+                                                this.child(self.activity_bar.clone())
+                                            })
                                             .children(self.render_dock(
                                                 DockPosition::Left,
                                                 &self.left_dock,
@@ -7901,7 +7932,10 @@ impl Render for Workspace {
                                                 &self.right_dock,
                                                 window,
                                                 cx,
-                                            )),
+                                            ))
+                                            .when(activity_bar_on_right, |this| {
+                                                this.child(self.activity_bar.clone())
+                                            }),
                                     }
                                 })
                                 .children(self.zoomed.as_ref().and_then(|view| {

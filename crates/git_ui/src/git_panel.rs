@@ -5737,7 +5737,10 @@ impl Panel for GitPanel {
         Some("Git Panel")
     }
 
-    fn icon_label(&self, _: &Window, _: &App) -> Option<String> {
+    fn icon_label(&self, _: &Window, cx: &App) -> Option<String> {
+        if !GitPanelSettings::get_global(cx).show_count_badge {
+            return None;
+        }
         let total = self.new_count + self.changes_count;
         (total > 0).then(|| {
             if total > 99 {
