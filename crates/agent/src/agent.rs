@@ -14,6 +14,7 @@ mod tools;
 
 use context_server::ContextServerId;
 pub use db::*;
+use itertools::Itertools;
 pub use native_agent_server::NativeAgentServer;
 pub use pattern_extraction::*;
 pub use shell_command_parser::extract_commands;
@@ -51,6 +52,7 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
 use util::ResultExt;
+use util::path_list::PathList;
 use util::rel_path::RelPath;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -848,13 +850,26 @@ impl NativeAgent {
         let Some(session) = self.sessions.get_mut(&id) else {
             return;
         };
+
+        let folder_paths = PathList::new(
+            &self
+                .project
+                .read(cx)
+                .visible_worktrees(cx)
+                .map(|worktree| worktree.read(cx).abs_path().to_path_buf())
+                .collect::<Vec<_>>(),
+        );
+
         let thread_store = self.thread_store.clone();
         session.pending_save = cx.spawn(async move |_, cx| {
             let Some(database) = database_future.await.map_err(|err| anyhow!(err)).log_err() else {
                 return;
             };
             let db_thread = db_thread.await;
-            database.save_thread(id, db_thread).await.log_err();
+            database
+                .save_thread(id, db_thread, folder_paths)
+                .await
+                .log_err();
             thread_store.update(cx, |store, cx| store.reload(cx));
         });
     }
@@ -1733,7 +1748,11 @@ impl SubagentHandle for NativeSubagentHandle {
         self.session_id.clone()
     }
 
-    fn run_turn(&self, message: String, cx: &AsyncApp) -> Task<Result<String>> {
+    fn num_entries(&self, cx: &App) -> usize {
+        self.subagent_thread.read(cx).num_messages()
+    }
+
+    fn send(&self, message: String, cx: &AsyncApp) -> Task<Result<String>> {
         let thread = self.subagent_thread.clone();
         let acp_thread = self.acp_thread.clone();
         let subagent_session_id = self.session_id.clone();
@@ -1805,10 +1824,24 @@ impl SubagentHandle for NativeSubagentHandle {
                 SubagentPromptResult::Completed => thread.read_with(cx, |thread, _cx| {
                     thread
                         .last_message()
-                        .map(|m| m.to_markdown())
+                        .and_then(|message| {
+                            let content = message.as_agent_message()?
+                                .content
+                                .iter()
+                                .filter_map(|c| match c {
+                                    AgentMessageContent::Text(text) => Some(text.as_str()),
+                                    _ => None,
+                                })
+                                .join("\n\n");
+                            if content.is_empty() {
+                                None
+                            } else {
+                                Some( content)
+                            }
+                        })
                         .context("No response from subagent")
                 }),
-                SubagentPromptResult::Cancelled => Err(anyhow!("User cancelled")),
+                SubagentPromptResult::Cancelled => Err(anyhow!("User canceled")),
                 SubagentPromptResult::Error(message) => Err(anyhow!("{message}")),
                 SubagentPromptResult::ContextWindowWarning => {
                     thread.update(cx, |thread, cx| thread.cancel(cx)).await;

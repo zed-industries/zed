@@ -8074,7 +8074,7 @@ async fn test_copy_trim_line_mode(cx: &mut TestAppContext) {
 
     cx.set_state(indoc! {"
         «    fn main() {
-                dbg!(1)
+                1
             }ˇ»
     "});
     cx.update_editor(|editor, _window, _cx| editor.selections.set_line_mode(true));
@@ -8082,7 +8082,7 @@ async fn test_copy_trim_line_mode(cx: &mut TestAppContext) {
 
     assert_eq!(
         cx.read_from_clipboard().and_then(|item| item.text()),
-        Some("fn main() {\n    dbg!(1)\n}\n".to_string())
+        Some("fn main() {\n    1\n}\n".to_string())
     );
 
     let clipboard_selections: Vec<ClipboardSelection> = cx
@@ -8099,7 +8099,7 @@ async fn test_copy_trim_line_mode(cx: &mut TestAppContext) {
 
     cx.set_state(indoc! {"
         «fn main() {
-            dbg!(1)
+            1
         }ˇ»
     "});
     cx.update_editor(|editor, _window, _cx| editor.selections.set_line_mode(true));
@@ -8107,7 +8107,7 @@ async fn test_copy_trim_line_mode(cx: &mut TestAppContext) {
 
     assert_eq!(
         cx.read_from_clipboard().and_then(|item| item.text()),
-        Some("fn main() {\n    dbg!(1)\n}\n".to_string())
+        Some("fn main() {\n    1\n}\n".to_string())
     );
 
     let clipboard_selections: Vec<ClipboardSelection> = cx
@@ -17284,6 +17284,7 @@ async fn test_no_duplicated_completion_requests(cx: &mut TestAppContext) {
         }
     });
 
+    cx.executor().run_until_parked();
     cx.condition(|editor, _| editor.context_menu_visible())
         .await;
     cx.assert_editor_state("fn main() { let a = 2.ˇ; }");
@@ -26620,6 +26621,48 @@ async fn test_linked_edits_on_typing_punctuation(cx: &mut TestAppContext) {
         editor.handle_input("V", window, cx);
     });
     cx.assert_editor_state("<Animated.Vˇ></Animated.V>");
+}
+
+#[gpui::test]
+async fn test_linked_edits_on_typing_dot_without_language_override(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+    let language = Arc::new(Language::new(
+        LanguageConfig {
+            name: "HTML".into(),
+            matcher: LanguageMatcher {
+                path_suffixes: vec!["html".to_string()],
+                ..LanguageMatcher::default()
+            },
+            brackets: BracketPairConfig {
+                pairs: vec![BracketPair {
+                    start: "<".into(),
+                    end: ">".into(),
+                    close: true,
+                    ..Default::default()
+                }],
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+        Some(tree_sitter_html::LANGUAGE.into()),
+    ));
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
+
+    cx.set_state("<Tableˇ></Table>");
+    cx.update_editor(|editor, _, cx| {
+        set_linked_edit_ranges(
+            (Point::new(0, 1), Point::new(0, 6)),
+            (Point::new(0, 9), Point::new(0, 14)),
+            editor,
+            cx,
+        );
+    });
+    cx.update_editor(|editor, window, cx| {
+        editor.handle_input(".", window, cx);
+    });
+    cx.assert_editor_state("<Table.ˇ></Table.>");
 }
 
 #[gpui::test]
