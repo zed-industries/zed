@@ -9,7 +9,7 @@ use editor::Editor;
 use fs::Fs;
 use futures::channel::mpsc::{UnboundedReceiver, UnboundedSender};
 use futures::channel::{mpsc, oneshot};
-use futures::future;
+use futures::future::{self, join_all};
 
 use futures::{FutureExt, SinkExt, StreamExt};
 use git_ui::{file_diff_view::FileDiffView, multi_diff_view::MultiDiffView};
@@ -28,7 +28,9 @@ use util::ResultExt;
 use util::paths::PathWithPosition;
 use workspace::PathList;
 use workspace::item::ItemHandle;
-use workspace::{AppState, MultiWorkspace, OpenOptions, SerializedWorkspaceLocation};
+use workspace::{
+    AppState, MultiWorkspace, OpenOptions, SerializedWorkspaceLocation, WorkspaceFileSource,
+};
 
 #[derive(Default, Debug)]
 pub struct OpenRequest {
@@ -551,6 +553,28 @@ async fn open_workspaces(
                     errored = true
                 }
             }
+            SerializedWorkspaceLocation::LocalFromFile {
+                workspace_file_path,
+                workspace_file_kind: _,
+            } => {
+                let workspace_paths: Vec<String> =
+                    vec![workspace_file_path.to_string_lossy().into_owned()];
+
+                let workspace_failed_to_open = open_local_workspace(
+                    workspace_paths,
+                    diff_paths.clone(),
+                    diff_all,
+                    open_options,
+                    responses,
+                    &app_state,
+                    cx,
+                )
+                .await;
+
+                if workspace_failed_to_open {
+                    errored = true
+                }
+            }
             SerializedWorkspaceLocation::Remote(mut connection) => {
                 let app_state = app_state.clone();
                 if let RemoteConnectionOptions::Ssh(options) = &mut connection {
@@ -589,7 +613,7 @@ async fn open_local_workspace(
     app_state: &Arc<AppState>,
     cx: &mut AsyncApp,
 ) -> bool {
-    let paths_with_position =
+    let (paths_with_position, workspace_file_source) =
         derive_paths_with_position(app_state.fs.as_ref(), workspace_paths).await;
 
     let (workspace, items) = match open_paths_with_positions(
@@ -597,7 +621,10 @@ async fn open_local_workspace(
         &diff_paths,
         diff_all,
         app_state.clone(),
-        open_options.clone(),
+        workspace::OpenOptions {
+            workspace_file_source,
+            ..open_options.clone()
+        },
         cx,
     )
     .await
@@ -693,19 +720,56 @@ async fn open_local_workspace(
     errored
 }
 
+/// Derives paths with positions from path strings, detecting workspace files.
+///
+/// If exactly one `.code-workspace` file is provided (and no other paths), this function
+/// will parse it and return the folder paths from within, along with the workspace file source.
+///
+/// Returns a tuple of (paths_with_position, optional_workspace_file_source).
 pub async fn derive_paths_with_position(
     fs: &dyn Fs,
     path_strings: impl IntoIterator<Item = impl AsRef<str>>,
-) -> Vec<PathWithPosition> {
-    let path_strings: Vec<_> = path_strings.into_iter().collect();
+) -> (Vec<PathWithPosition>, Option<WorkspaceFileSource>) {
+    let path_strings: Vec<_> = path_strings
+        .into_iter()
+        .map(|s| s.as_ref().to_string())
+        .collect();
+
+    // Check if we have exactly one path and it's a workspace file
+    if path_strings.len() == 1 {
+        let path_str = &path_strings[0];
+        let path = Path::new(path_str);
+
+        if let Some(workspace_source) = WorkspaceFileSource::from_path(path) {
+            if let Ok(canonical_path) = fs.canonicalize(path).await {
+                let workspace_source =
+                    WorkspaceFileSource::from_path(&canonical_path).unwrap_or(workspace_source);
+
+                if let Ok(content) = fs.load(&canonical_path).await {
+                    if let Ok(parsed) = workspace_source.parse(&content) {
+                        let folder_paths =
+                            join_all(parsed.folders.into_iter().map(|folder| async {
+                                if let Ok(canonical) = fs.canonicalize(&folder).await {
+                                    PathWithPosition::from_path(canonical)
+                                } else {
+                                    PathWithPosition::from_path(folder)
+                                }
+                            }))
+                            .await;
+
+                        return (folder_paths, Some(workspace_source));
+                    }
+                }
+            }
+        }
+    }
+
     let mut result = Vec::with_capacity(path_strings.len());
-    for path_str in path_strings {
-        let original_path = Path::new(path_str.as_ref());
-        let mut parsed = PathWithPosition::parse_str(path_str.as_ref());
+    for path_str in &path_strings {
+        let original_path = Path::new(path_str.as_str());
+        let mut parsed = PathWithPosition::parse_str(path_str.as_str());
 
         // If the unparsed path string actually points to a file, use that file instead of parsing out the line/col number.
-        // Note: The colon syntax is also used to open NTFS alternate data streams (e.g., `file.txt:stream`), which would cause issues.
-        // However, the colon is not valid in NTFS file names, so we can just skip this logic.
         if !cfg!(windows)
             && parsed.row.is_some()
             && parsed.path != original_path
@@ -720,7 +784,7 @@ pub async fn derive_paths_with_position(
 
         result.push(parsed);
     }
-    result
+    (result, None)
 }
 
 #[cfg(test)]
@@ -738,7 +802,7 @@ mod tests {
     use remote::SshConnectionOptions;
     use rope::Rope;
     use serde_json::json;
-    use std::{sync::Arc, task::Poll};
+    use std::{path::PathBuf, sync::Arc, task::Poll};
     use util::path;
     use workspace::{AppState, MultiWorkspace};
 
@@ -1246,6 +1310,79 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_derive_paths_with_workspace_file(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
+
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(
+                path!("/projects"),
+                json!({
+                    "my-workspace.code-workspace": r#"{
+                        "folders": [
+                            { "path": "frontend" },
+                            { "path": "backend" },
+                            { "path": "../shared" }
+                        ]
+                    }"#,
+                    "frontend": { "src": {} },
+                    "backend": { "src": {} },
+                }),
+            )
+            .await;
+
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(path!("/shared"), json!({ "lib": {} }))
+            .await;
+
+        let (paths, workspace_source) = derive_paths_with_position(
+            app_state.fs.as_ref(),
+            vec![path!("/projects/my-workspace.code-workspace")],
+        )
+        .await;
+
+        assert_eq!(paths.len(), 3);
+        assert_eq!(paths[0].path, PathBuf::from(path!("/projects/frontend")));
+        assert_eq!(paths[1].path, PathBuf::from(path!("/projects/backend")));
+        assert_eq!(paths[2].path, PathBuf::from(path!("/shared")));
+
+        let source = workspace_source.expect("Expected workspace file source");
+        assert_eq!(
+            source.path,
+            std::path::PathBuf::from(path!("/projects/my-workspace.code-workspace"))
+        );
+        assert_eq!(source.kind, workspace::WorkspaceFileKind::CodeWorkspace);
+    }
+
+    #[gpui::test]
+    async fn test_derive_paths_with_regular_directory(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
+
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(
+                path!("/projects"),
+                json!({
+                    "my-project": { "src": {} },
+                }),
+            )
+            .await;
+
+        let (paths, workspace_source) =
+            derive_paths_with_position(app_state.fs.as_ref(), vec![path!("/projects/my-project")])
+                .await;
+
+        assert_eq!(paths.len(), 1);
+        assert_eq!(paths[0].path, PathBuf::from(path!("/projects/my-project")));
+
+        assert!(workspace_source.is_none());
+    }
+
+    #[gpui::test]
     async fn test_add_flag_prefers_focused_window(cx: &mut TestAppContext) {
         let app_state = init_test(cx);
 
@@ -1293,7 +1430,6 @@ mod tests {
 
         let (response_tx, _response_rx) = ipc::channel::<CliResponse>().unwrap();
 
-        // Open first workspace
         let workspace_paths_1 = vec![file1_path.to_string()];
         let _errored = cx
             .spawn({
@@ -1317,7 +1453,6 @@ mod tests {
         assert_eq!(cx.windows().len(), 1);
         let multi_workspace_1 = cx.windows()[0].downcast::<MultiWorkspace>().unwrap();
 
-        // Open second workspace in a new window
         let workspace_paths_2 = vec![file2_path.to_string()];
         let _errored = cx
             .spawn({
@@ -1329,7 +1464,7 @@ mod tests {
                         Vec::new(),
                         false,
                         workspace::OpenOptions {
-                            open_new_workspace: Some(true), // Force new window
+                            open_new_workspace: Some(true),
                             ..Default::default()
                         },
                         &response_tx,
@@ -1344,15 +1479,12 @@ mod tests {
         assert_eq!(cx.windows().len(), 2);
         let multi_workspace_2 = cx.windows()[1].downcast::<MultiWorkspace>().unwrap();
 
-        // Focus window2
         multi_workspace_2
             .update(cx, |_, window, _| {
                 window.activate_window();
             })
             .unwrap();
 
-        // Now use --add flag (open_new_workspace = Some(false)) to add a new file
-        // It should open in the focused window (window2), not an arbitrary window
         let new_file_path = if cfg!(windows) {
             "C:\\root\\new_file.txt"
         } else {
@@ -1375,7 +1507,7 @@ mod tests {
                         Vec::new(),
                         false,
                         workspace::OpenOptions {
-                            open_new_workspace: Some(false), // --add flag
+                            open_new_workspace: Some(false),
                             ..Default::default()
                         },
                         &response_tx,
@@ -1387,19 +1519,15 @@ mod tests {
             })
             .await;
 
-        // Should still have 2 windows (file added to existing focused window)
         assert_eq!(cx.windows().len(), 2);
 
-        // Verify the file was added to window2 (the focused one)
         multi_workspace_2
             .update(cx, |workspace, _, cx| {
                 let items = workspace.workspace().read(cx).items(cx).collect::<Vec<_>>();
-                // Should have 2 items now (file2.txt and new_file.txt)
                 assert_eq!(items.len(), 2, "Focused window should have 2 items");
             })
             .unwrap();
 
-        // Verify window1 still has only 1 item
         multi_workspace_1
             .update(cx, |workspace, _, cx| {
                 let items = workspace.workspace().read(cx).items(cx).collect::<Vec<_>>();

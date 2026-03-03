@@ -967,6 +967,11 @@ impl Domain for WorkspaceDb {
             DROP TABLE user_toolchains;
             ALTER TABLE user_toolchains2 RENAME TO user_toolchains;
         ),
+        // Add workspace file tracking
+        sql!(
+            ALTER TABLE workspaces ADD COLUMN workspace_file_path TEXT;
+            ALTER TABLE workspaces ADD COLUMN workspace_file_kind TEXT;
+        ),
         sql!(
             ALTER TABLE remote_connections ADD COLUMN use_podman BOOLEAN;
         ),
@@ -1325,13 +1330,16 @@ impl WorkspaceDb {
         log::debug!("Saving workspace at location: {:?}", workspace.location);
         self.write(move |conn| {
             conn.with_savepoint("update_worktrees", || {
-                let remote_connection_id = match workspace.location.clone() {
-                    SerializedWorkspaceLocation::Local => None,
+                let (remote_connection_id, workspace_file_path, workspace_file_kind) = match workspace.location.clone() {
+                    SerializedWorkspaceLocation::Local => (None, None, None),
+                    SerializedWorkspaceLocation::LocalFromFile { workspace_file_path, workspace_file_kind } => {
+                        (None, Some(workspace_file_path.to_string_lossy().to_string()), Some(workspace_file_kind))
+                    }
                     SerializedWorkspaceLocation::Remote(connection_options) => {
-                        Some(Self::get_or_create_remote_connection_internal(
+                        (Some(Self::get_or_create_remote_connection_internal(
                             conn,
                             connection_options
-                        )?.0)
+                        )?.0), None, None)
                     }
                 };
 
@@ -1434,9 +1442,11 @@ impl WorkspaceDb {
                         bottom_dock_zoom,
                         session_id,
                         window_id,
+                        workspace_file_path,
+                        workspace_file_kind,
                         timestamp
                     )
-                    VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, CURRENT_TIMESTAMP)
+                    VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, CURRENT_TIMESTAMP)
                     ON CONFLICT DO
                     UPDATE SET
                         paths = ?2,
@@ -1453,6 +1463,8 @@ impl WorkspaceDb {
                         bottom_dock_zoom = ?13,
                         session_id = ?14,
                         window_id = ?15,
+                        workspace_file_path = ?16,
+                        workspace_file_kind = ?17,
                         timestamp = CURRENT_TIMESTAMP
                 );
                 let mut prepared_query = conn.exec_bound(query)?;
@@ -1464,6 +1476,8 @@ impl WorkspaceDb {
                     workspace.docks,
                     workspace.session_id,
                     workspace.window_id,
+                    workspace_file_path,
+                    workspace_file_kind,
                 );
 
                 prepared_query(args).context("Updating workspace")?;
@@ -1612,26 +1626,40 @@ impl WorkspaceDb {
             WorkspaceId,
             PathList,
             Option<RemoteConnectionId>,
+            Option<String>,
+            Option<String>,
             DateTime<Utc>,
         )>,
     > {
         Ok(self
             .recent_workspaces_query()?
             .into_iter()
-            .map(|(id, paths, order, remote_connection_id, timestamp)| {
-                (
+            .map(
+                |(
                     id,
-                    PathList::deserialize(&SerializedPathList { paths, order }),
-                    remote_connection_id.map(RemoteConnectionId),
-                    parse_timestamp(&timestamp),
-                )
-            })
+                    paths,
+                    order,
+                    remote_connection_id,
+                    workspace_file_path,
+                    workspace_file_kind,
+                    timestamp,
+                )| {
+                    (
+                        id,
+                        PathList::deserialize(&SerializedPathList { paths, order }),
+                        remote_connection_id.map(RemoteConnectionId),
+                        workspace_file_path,
+                        workspace_file_kind,
+                        parse_timestamp(&timestamp),
+                    )
+                },
+            )
             .collect())
     }
 
     query! {
-        fn recent_workspaces_query() -> Result<Vec<(WorkspaceId, String, String, Option<u64>, String)>> {
-            SELECT workspace_id, paths, paths_order, remote_connection_id, timestamp
+        fn recent_workspaces_query() -> Result<Vec<(WorkspaceId, String, String, Option<u64>, Option<String>, Option<String>, String)>> {
+            SELECT workspace_id, paths, paths_order, remote_connection_id, workspace_file_path, workspace_file_kind, timestamp
             FROM workspaces
             WHERE
                 paths IS NOT NULL OR
@@ -1815,7 +1843,15 @@ impl WorkspaceDb {
         let mut delete_tasks = Vec::new();
         let remote_connections = self.remote_connections()?;
 
-        for (id, paths, remote_connection_id, timestamp) in self.recent_workspaces()? {
+        for (
+            id,
+            paths,
+            remote_connection_id,
+            workspace_file_path,
+            workspace_file_kind,
+            timestamp,
+        ) in self.recent_workspaces()?
+        {
             if let Some(remote_connection_id) = remote_connection_id {
                 if let Some(connection_options) = remote_connections.get(&remote_connection_id) {
                     result.push((
@@ -1844,7 +1880,21 @@ impl WorkspaceDb {
             // WSL VM and file server to boot up. This can block for many seconds.
             // Supported scenarios use remote workspaces.
             if !has_wsl_path && Self::all_paths_exist_with_a_directory(paths.paths(), fs).await {
-                result.push((id, SerializedWorkspaceLocation::Local, paths, timestamp));
+                let location = match (workspace_file_path, workspace_file_kind) {
+                    (Some(file_path), Some(file_kind)) => {
+                        let workspace_path = PathBuf::from(&file_path);
+                        if workspace_path.exists() {
+                            SerializedWorkspaceLocation::LocalFromFile {
+                                workspace_file_path: workspace_path,
+                                workspace_file_kind: file_kind,
+                            }
+                        } else {
+                            SerializedWorkspaceLocation::Local
+                        }
+                    }
+                    _ => SerializedWorkspaceLocation::Local,
+                };
+                result.push((id, location, paths, timestamp));
             } else {
                 delete_tasks.push(self.delete_workspace_by_id(id));
             }

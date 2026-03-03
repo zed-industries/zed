@@ -22,6 +22,7 @@ mod theme_preview;
 mod toast_layer;
 mod toolbar;
 pub mod welcome;
+pub mod workspace_file;
 mod workspace_settings;
 
 pub use crate::notifications::NotificationFrame;
@@ -33,6 +34,7 @@ pub use multi_workspace::{
 };
 pub use path_list::{PathList, SerializedPathList};
 pub use toast_layer::{ToastAction, ToastLayer, ToastView};
+pub use workspace_file::{WorkspaceFileContent, WorkspaceFileKind, WorkspaceFileSource};
 
 use anyhow::{Context as _, Result, anyhow};
 use client::{
@@ -1290,6 +1292,7 @@ pub struct Workspace {
     scheduled_tasks: Vec<Task<()>>,
     last_open_dock_positions: Vec<DockPosition>,
     removing: bool,
+    workspace_file_source: Option<WorkspaceFileSource>,
 }
 
 impl EventEmitter<Event> for Workspace {}
@@ -1694,6 +1697,7 @@ impl Workspace {
             scheduled_tasks: Vec::new(),
             last_open_dock_positions: Vec::new(),
             removing: false,
+            workspace_file_source: None,
         }
     }
 
@@ -5832,6 +5836,14 @@ impl Workspace {
         self.session_id.clone()
     }
 
+    pub fn workspace_file_source(&self) -> Option<&WorkspaceFileSource> {
+        self.workspace_file_source.as_ref()
+    }
+
+    pub fn set_workspace_file_source(&mut self, source: Option<WorkspaceFileSource>) {
+        self.workspace_file_source = source;
+    }
+
     fn save_window_bounds(&self, window: &mut Window, cx: &mut App) -> Task<()> {
         let Some(display) = window.display(cx) else {
             return Task::ready(());
@@ -6139,7 +6151,16 @@ impl Workspace {
             WorkspaceLocation::Location(SerializedWorkspaceLocation::Remote(connection), paths)
         } else if self.project.read(cx).is_local() {
             if !paths.is_empty() || self.has_any_items_open(cx) {
-                WorkspaceLocation::Location(SerializedWorkspaceLocation::Local, paths)
+                // Use LocalFromFile if this workspace was opened from a workspace file
+                let location = if let Some(source) = &self.workspace_file_source {
+                    SerializedWorkspaceLocation::LocalFromFile {
+                        workspace_file_path: source.path.clone(),
+                        workspace_file_kind: source.kind.as_str().to_string(),
+                    }
+                } else {
+                    SerializedWorkspaceLocation::Local
+                };
+                WorkspaceLocation::Location(location, paths)
             } else {
                 WorkspaceLocation::DetachFromSession
             }
@@ -8630,6 +8651,7 @@ pub struct OpenOptions {
     pub wait: bool,
     pub replace_window: Option<WindowHandle<MultiWorkspace>>,
     pub env: Option<HashMap<String, String>>,
+    pub workspace_file_source: Option<WorkspaceFileSource>,
 }
 
 /// Opens a workspace by its database ID, used for restoring empty workspaces with unsaved content.
@@ -8837,6 +8859,7 @@ pub fn open_paths(
 
             Ok((existing, open_task))
         } else {
+            let workspace_file_source = open_options.workspace_file_source.clone();
             let result = cx
                 .update(move |cx| {
                     Workspace::new_local(
@@ -8856,6 +8879,15 @@ pub fn open_paths(
                         window.activate_window();
                     })
                     .log_err();
+                if let Some(source) = workspace_file_source {
+                    window_handle
+                        .update(cx, |multi_workspace, _window, cx| {
+                            multi_workspace.workspace().update(cx, |workspace, _cx| {
+                                workspace.set_workspace_file_source(Some(source));
+                            });
+                        })
+                        .log_err();
+                }
             }
 
             result
