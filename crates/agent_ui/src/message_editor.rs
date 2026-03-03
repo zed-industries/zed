@@ -191,8 +191,9 @@ impl MessageEditor {
                 {
                     editor.update(cx, |editor, cx| {
                         let snapshot = editor.snapshot(window, cx);
-                        this.mention_set
-                            .update(cx, |mention_set, cx| mention_set.remove_invalid(&snapshot, cx));
+                        this.mention_set.update(cx, |mention_set, cx| {
+                            mention_set.remove_invalid(&snapshot, cx)
+                        });
 
                         let new_hints = this
                             .command_hint(snapshot.buffer())
@@ -829,7 +830,12 @@ impl MessageEditor {
                             .shared();
 
                         self.mention_set.update(cx, |mention_set, cx| {
-                            mention_set.insert_mention(crease_id, mention_uri.clone(), task.clone(), cx)
+                            mention_set.insert_mention(
+                                crease_id,
+                                mention_uri.clone(),
+                                task.clone(),
+                                cx,
+                            )
                         });
 
                         // Drop the tx after inserting to signal the crease is ready
