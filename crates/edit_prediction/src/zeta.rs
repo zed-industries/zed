@@ -35,6 +35,8 @@ pub fn request_prediction_with_zeta(
         debug_tx,
         trigger,
         project,
+        can_collect_data,
+        is_open_source,
         ..
     }: EditPredictionModelInput,
     preferred_model: Option<EditPredictionModelKind>,
@@ -62,14 +64,6 @@ pub fn request_prediction_with_zeta(
     let client = store.client.clone();
     let llm_token = store.llm_token.clone();
     let app_version = AppVersion::global(cx);
-
-    let is_open_source = snapshot
-        .file()
-        .map_or(false, |file| store.is_file_open_source(&project, file, cx))
-        && events.iter().all(|event| event.in_open_source_repo())
-        && related_files.iter().all(|file| file.in_open_source_repo);
-
-    let can_collect_data = is_open_source && store.is_data_collection_enabled(cx);
 
     let request_task = cx.background_spawn({
         async move {

@@ -5,6 +5,7 @@ use gpui::{Corner, List};
 use language_model::{LanguageModelEffortLevel, Speed};
 use settings::update_settings_file;
 use ui::{ButtonLike, SplitButton, SplitButtonStyle, Tab};
+use workspace::SERIALIZATION_THROTTLE_TIME;
 
 use super::*;
 
@@ -245,6 +246,7 @@ pub struct ThreadView {
     pub resumed_without_history: bool,
     pub resume_thread_metadata: Option<AgentSessionInfo>,
     pub _cancel_task: Option<Task<()>>,
+    _draft_save_task: Option<Task<()>>,
     pub skip_queue_processing_count: usize,
     pub user_interrupted_generation: bool,
     pub can_fast_track_queue: bool,
@@ -351,6 +353,8 @@ impl ThreadView {
                         editor.set_message(blocks, window, cx);
                     }
                 }
+            } else if let Some(draft) = thread.read(cx).draft_prompt() {
+                editor.set_message(draft.to_vec(), window, cx);
             }
             editor
         });
@@ -382,6 +386,38 @@ impl ThreadView {
             window,
             Self::handle_message_editor_event,
         ));
+
+        subscriptions.push(cx.observe(&message_editor, |this, editor, cx| {
+            let is_empty = editor.read(cx).text(cx).is_empty();
+            let draft_contents_task = if is_empty {
+                None
+            } else {
+                Some(editor.update(cx, |editor, cx| editor.draft_contents(cx)))
+            };
+            this._draft_save_task = Some(cx.spawn(async move |this, cx| {
+                let draft = if let Some(task) = draft_contents_task {
+                    let blocks = task.await.ok().filter(|b| !b.is_empty());
+                    blocks
+                } else {
+                    None
+                };
+                this.update(cx, |this, cx| {
+                    this.thread.update(cx, |thread, _cx| {
+                        thread.set_draft_prompt(draft);
+                    });
+                })
+                .ok();
+                cx.background_executor()
+                    .timer(SERIALIZATION_THROTTLE_TIME)
+                    .await;
+                this.update(cx, |this, cx| {
+                    if let Some(thread) = this.as_native_thread(cx) {
+                        thread.update(cx, |_thread, cx| cx.notify());
+                    }
+                })
+                .ok();
+            }));
+        }));
 
         let recent_history_entries = history.read(cx).get_recent_sessions(3);
 
@@ -433,6 +469,7 @@ impl ThreadView {
             is_loading_contents: false,
             new_server_version_available: None,
             _cancel_task: None,
+            _draft_save_task: None,
             skip_queue_processing_count: 0,
             user_interrupted_generation: false,
             can_fast_track_queue: false,
