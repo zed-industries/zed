@@ -7,7 +7,7 @@ use gpui::{
     PolychromeSprite, PrimitiveBatch, Quad, ScaledPixels, Scene, Shadow, Size, SubpixelSprite,
     Underline, get_gamma_correction_ratios,
 };
-use log::warn;
+
 #[cfg(not(target_family = "wasm"))]
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use std::num::NonZeroU64;
@@ -255,10 +255,14 @@ impl WgpuRenderer {
         let clamped_height = requested_height.min(max_texture_size);
 
         if clamped_width != requested_width || clamped_height != requested_height {
-            warn!(
+            log::warn!(
                 "Requested surface size ({}, {}) exceeds maximum texture dimension {}. \
                  Clamping to ({}, {}). Window content may not fill the entire window.",
-                requested_width, requested_height, max_texture_size, clamped_width, clamped_height
+                requested_width,
+                requested_height,
+                max_texture_size,
+                clamped_width,
+                clamped_height
             );
         }
 
@@ -375,6 +379,9 @@ impl WgpuRenderer {
             let mut guard = last_error_clone.lock().unwrap();
             *guard = Some(error.to_string());
         }));
+        device.set_device_lost_callback(|reason, message| {
+            log::error!("wgpu device lost ({reason:?}): {message}");
+        });
 
         Ok(Self {
             device,
@@ -850,10 +857,14 @@ impl WgpuRenderer {
             let clamped_height = height.min(self.max_texture_size);
 
             if clamped_width != width || clamped_height != height {
-                warn!(
+                log::warn!(
                     "Requested surface size ({}, {}) exceeds maximum texture dimension {}. \
                      Clamping to ({}, {}). Window content may not fill the entire window.",
-                    width, height, self.max_texture_size, clamped_width, clamped_height
+                    width,
+                    height,
+                    self.max_texture_size,
+                    clamped_width,
+                    clamped_height
                 );
             }
 
@@ -862,7 +873,7 @@ impl WgpuRenderer {
                 submission_index: None,
                 timeout: None,
             }) {
-                warn!("Failed to poll device during resize: {e:?}");
+                log::warn!("Failed to poll device during resize: {e:?}");
             }
 
             // Destroy old textures before allocating new ones to avoid GPU memory spikes
