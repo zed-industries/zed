@@ -54,6 +54,7 @@ pub(crate) struct WebWindowInner {
     pub(crate) last_physical_size: Cell<(u32, u32)>,
     pub(crate) notify_scale: Cell<bool>,
     mql_handle: RefCell<Option<MqlHandle>>,
+    pending_physical_size: Cell<Option<(u32, u32)>>,
 }
 
 pub struct WebWindow {
@@ -163,6 +164,7 @@ impl WebWindow {
             last_physical_size: Cell::new((0, 0)),
             notify_scale: Cell::new(false),
             mql_handle: RefCell::new(None),
+            pending_physical_size: Cell::new(None),
         });
 
         let raf_closure = inner.create_raf_closure();
@@ -252,8 +254,9 @@ impl WebWindow {
             let clamped_width = physical_width.min(max_texture_dimension);
             let clamped_height = physical_height.min(max_texture_dimension);
 
-            inner.canvas.set_width(clamped_width);
-            inner.canvas.set_height(clamped_height);
+            inner
+                .pending_physical_size
+                .set(Some((clamped_width, clamped_height)));
 
             {
                 let mut s = inner.state.borrow_mut();
@@ -262,10 +265,6 @@ impl WebWindow {
                     height: px(logical_height),
                 };
                 s.scale_factor = dpr_f32;
-                s.renderer.update_drawable_size(Size {
-                    width: DevicePixels(clamped_width as i32),
-                    height: DevicePixels(clamped_height as i32),
-                });
             }
 
             let new_size = Size {
@@ -637,6 +636,20 @@ impl PlatformWindow for WebWindow {
     }
 
     fn draw(&self, scene: &Scene) {
+        if let Some((width, height)) = self.inner.pending_physical_size.take() {
+            if self.inner.canvas.width() != width || self.inner.canvas.height() != height {
+                self.inner.canvas.set_width(width);
+                self.inner.canvas.set_height(height);
+            }
+
+            let mut state = self.inner.state.borrow_mut();
+            state.renderer.update_drawable_size(Size {
+                width: DevicePixels(width as i32),
+                height: DevicePixels(height as i32),
+            });
+            drop(state);
+        }
+
         self.inner.state.borrow_mut().renderer.draw(scene);
     }
 

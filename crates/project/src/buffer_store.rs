@@ -869,7 +869,6 @@ impl BufferStore {
 
                 entry
                     .insert(
-                        // todo(lw): hot foreground spawn
                         cx.spawn(async move |this, cx| {
                             let load_result = load_buffer.await;
                             this.update(cx, |this, _cx| {

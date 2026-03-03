@@ -806,7 +806,7 @@ impl Database {
                             head_commit_details,
                             project_id: project_id.to_proto(),
                             id: db_repository.id as u64,
-                            abs_path: db_repository.abs_path,
+                            abs_path: db_repository.abs_path.clone(),
                             scan_id: db_repository.scan_id as u64,
                             is_last_update: true,
                             merge_message: db_repository.merge_message,
@@ -815,6 +815,7 @@ impl Database {
                             remote_origin_url: db_repository.remote_origin_url.clone(),
                             updated_diff_stats,
                             removed_diff_stats,
+                            original_repo_abs_path: Some(db_repository.abs_path),
                         });
                     }
                 }

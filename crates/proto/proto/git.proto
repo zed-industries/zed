@@ -125,8 +125,9 @@ message UpdateRepository {
   repeated StashEntry stash_entries = 13;
   optional string remote_upstream_url = 14;
   optional string remote_origin_url = 15;
-  repeated GitDiffStatEntry updated_diff_stats = 16;
-  repeated string removed_diff_stats = 17;
+  optional string original_repo_abs_path = 16;
+  repeated GitDiffStatEntry updated_diff_stats = 17;
+  repeated string removed_diff_stats = 18;
 }
 
 message RemoveRepository {

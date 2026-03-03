@@ -1721,7 +1721,7 @@ impl BufferDiff {
             if let Some(language_registry) = language_registry {
                 base_text.set_language_registry(language_registry);
             }
-            base_text.set_language(language, cx);
+            base_text.set_language_async(language, cx);
             base_text.parsing_idle()
         });
         cx.spawn(async move |this, cx| {

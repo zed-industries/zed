@@ -368,6 +368,7 @@ dependencies = [
  "fs",
  "futures 0.3.31",
  "fuzzy",
+ "git",
  "gpui",
  "gpui_tokio",
  "html_to_markdown",
@@ -1351,6 +1352,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "log",
+ "scopeguard",
  "simplelog",
  "tempfile",
  "windows 0.61.3",
@@ -4120,7 +4122,6 @@ dependencies = [
 name = "crashes"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "bincode",
  "cfg-if",
  "crash-handler",
@@ -4339,6 +4340,20 @@ checksum = "13b588ba4ac1a99f7f2964d24b3d896ddc6bf847ee3855dbd4366f058cfcd331"
 dependencies = [
  "quote",
  "syn 2.0.106",
+]
+
+[[package]]
+name = "csv_preview"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "editor",
+ "feature_flags",
+ "gpui",
+ "log",
+ "text",
+ "ui",
+ "workspace",
 ]
 
 [[package]]
@@ -5404,7 +5419,6 @@ dependencies = [
  "semver",
  "serde_json",
  "settings",
- "supermaven",
  "telemetry",
  "text",
  "theme",
@@ -7311,6 +7325,7 @@ dependencies = [
  "pretty_assertions",
  "project",
  "prompt_store",
+ "proto",
  "rand 0.9.2",
  "remote",
  "remote_connection",
@@ -7573,6 +7588,7 @@ dependencies = [
  "gpui_macros",
  "gpui_platform",
  "gpui_util",
+ "gpui_web",
  "http_client",
  "image",
  "inventory",
@@ -7764,6 +7780,7 @@ dependencies = [
  "futures 0.3.31",
  "gpui",
  "gpui_wgpu",
+ "http_client",
  "js-sys",
  "log",
  "parking_lot",
@@ -9698,7 +9715,7 @@ dependencies = [
 [[package]]
 name = "libwebrtc"
 version = "0.3.26"
-source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=fccf29d1d0d0a139b2e50746b0b9a1bac828fa04#fccf29d1d0d0a139b2e50746b0b9a1bac828fa04"
+source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=37835f840d0070d45ac8b31cce6a6ae7aca3f459#37835f840d0070d45ac8b31cce6a6ae7aca3f459"
 dependencies = [
  "cxx",
  "glib",
@@ -9796,7 +9813,7 @@ checksum = "11d3d7f243d5c5a8b9bb5d6dd2b1602c0cb0b9db1621bafc7ed66e35ff9fe092"
 [[package]]
 name = "livekit"
 version = "0.7.32"
-source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=fccf29d1d0d0a139b2e50746b0b9a1bac828fa04#fccf29d1d0d0a139b2e50746b0b9a1bac828fa04"
+source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=37835f840d0070d45ac8b31cce6a6ae7aca3f459#37835f840d0070d45ac8b31cce6a6ae7aca3f459"
 dependencies = [
  "base64 0.22.1",
  "bmrng",
@@ -9822,7 +9839,7 @@ dependencies = [
 [[package]]
 name = "livekit-api"
 version = "0.4.14"
-source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=fccf29d1d0d0a139b2e50746b0b9a1bac828fa04#fccf29d1d0d0a139b2e50746b0b9a1bac828fa04"
+source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=37835f840d0070d45ac8b31cce6a6ae7aca3f459#37835f840d0070d45ac8b31cce6a6ae7aca3f459"
 dependencies = [
  "base64 0.21.7",
  "futures-util",
@@ -9849,7 +9866,7 @@ dependencies = [
 [[package]]
 name = "livekit-protocol"
 version = "0.7.1"
-source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=fccf29d1d0d0a139b2e50746b0b9a1bac828fa04#fccf29d1d0d0a139b2e50746b0b9a1bac828fa04"
+source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=37835f840d0070d45ac8b31cce6a6ae7aca3f459#37835f840d0070d45ac8b31cce6a6ae7aca3f459"
 dependencies = [
  "futures-util",
  "livekit-runtime",
@@ -9865,7 +9882,7 @@ dependencies = [
 [[package]]
 name = "livekit-runtime"
 version = "0.4.0"
-source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=fccf29d1d0d0a139b2e50746b0b9a1bac828fa04#fccf29d1d0d0a139b2e50746b0b9a1bac828fa04"
+source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=37835f840d0070d45ac8b31cce6a6ae7aca3f459#37835f840d0070d45ac8b31cce6a6ae7aca3f459"
 dependencies = [
  "tokio",
  "tokio-stream",
@@ -10174,7 +10191,6 @@ dependencies = [
  "anyhow",
  "async-recursion",
  "collections",
- "crashes",
  "editor",
  "fs",
  "gpui",
@@ -10400,7 +10416,7 @@ dependencies = [
 [[package]]
 name = "mermaid-rs-renderer"
 version = "0.2.0"
-source = "git+https://github.com/zed-industries/mermaid-rs-renderer?rev=9d8360d9cea10dc4bc86d7b8012cc6e9656e6cf2#9d8360d9cea10dc4bc86d7b8012cc6e9656e6cf2"
+source = "git+https://github.com/zed-industries/mermaid-rs-renderer?rev=374db9ead5426697c6c2111151d9f246899bc638#374db9ead5426697c6c2111151d9f246899bc638"
 dependencies = [
  "anyhow",
  "fontdb 0.16.2",
@@ -14240,6 +14256,7 @@ dependencies = [
  "serde",
  "serde_json",
  "settings",
+ "shlex",
  "smol",
  "telemetry",
  "terminal",
@@ -16521,49 +16538,6 @@ dependencies = [
  "tracing",
  "zlog",
  "ztracing",
-]
-
-[[package]]
-name = "supermaven"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "client",
- "collections",
- "edit_prediction_types",
- "editor",
- "env_logger 0.11.8",
- "futures 0.3.31",
- "gpui",
- "http_client",
- "language",
- "log",
- "postage",
- "project",
- "serde",
- "serde_json",
- "settings",
- "smol",
- "supermaven_api",
- "text",
- "theme",
- "ui",
- "unicode-segmentation",
- "util",
-]
-
-[[package]]
-name = "supermaven_api"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "futures 0.3.31",
- "http_client",
- "paths",
- "serde",
- "serde_json",
- "smol",
- "util",
 ]
 
 [[package]]
@@ -19883,7 +19857,7 @@ dependencies = [
 [[package]]
 name = "webrtc-sys"
 version = "0.3.23"
-source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=fccf29d1d0d0a139b2e50746b0b9a1bac828fa04#fccf29d1d0d0a139b2e50746b0b9a1bac828fa04"
+source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=37835f840d0070d45ac8b31cce6a6ae7aca3f459#37835f840d0070d45ac8b31cce6a6ae7aca3f459"
 dependencies = [
  "cc",
  "cxx",
@@ -19897,7 +19871,7 @@ dependencies = [
 [[package]]
 name = "webrtc-sys-build"
 version = "0.3.13"
-source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=fccf29d1d0d0a139b2e50746b0b9a1bac828fa04#fccf29d1d0d0a139b2e50746b0b9a1bac828fa04"
+source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=37835f840d0070d45ac8b31cce6a6ae7aca3f459#37835f840d0070d45ac8b31cce6a6ae7aca3f459"
 dependencies = [
  "anyhow",
  "fs2",
@@ -21769,6 +21743,7 @@ dependencies = [
  "copilot_chat",
  "copilot_ui",
  "crashes",
+ "csv_preview",
  "dap",
  "dap_adapters",
  "db",
@@ -21833,6 +21808,7 @@ dependencies = [
  "parking_lot",
  "paths",
  "picker",
+ "pkg-config",
  "pretty_assertions",
  "profiling",
  "project",
@@ -21860,7 +21836,6 @@ dependencies = [
  "smol",
  "snippet_provider",
  "snippets_ui",
- "supermaven",
  "svg_preview",
  "sysinfo 0.37.2",
  "system_specs",
