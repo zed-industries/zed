@@ -1237,7 +1237,7 @@ impl TextThreadEditor {
                 style: BlockStyle::Sticky,
                 placement: BlockPlacement::Above(
                     buffer
-                        .anchor_in_excerpt(excerpt_id, message.anchor_range.start)
+                        .anchor_in_buffer(excerpt_id, message.anchor_range.start)
                         .unwrap(),
                 ),
                 priority: usize::MAX,
@@ -2048,7 +2048,7 @@ impl TextThreadEditor {
                 )
                 .filter_map(|(anchor, render_image)| {
                     const MAX_HEIGHT_IN_LINES: u32 = 8;
-                    let anchor = buffer.anchor_in_excerpt(excerpt_id, anchor).unwrap();
+                    let anchor = buffer.anchor_in_buffer(excerpt_id, anchor).unwrap();
                     let image = render_image;
                     anchor.is_valid(&buffer).then(|| BlockProperties {
                         placement: BlockPlacement::Above(anchor),

@@ -1120,7 +1120,7 @@ impl OutlinePanel {
                     |(excerpt_id, buffer_snapshot, excerpt_range)| {
                         if buffer_snapshot.remote_id() == file.buffer_id {
                             multi_buffer_snapshot
-                                .anchor_in_excerpt(excerpt_id, excerpt_range.context.start)
+                                .anchor_in_buffer(excerpt_id, excerpt_range.context.start)
                         } else {
                             None
                         }
@@ -1145,19 +1145,19 @@ impl OutlinePanel {
                     .and_then(|excerpts| {
                         let (excerpt_id, excerpt_range) = excerpts.first()?;
                         multi_buffer_snapshot
-                            .anchor_in_excerpt(*excerpt_id, excerpt_range.context.start)
+                            .anchor_in_buffer(*excerpt_id, excerpt_range.context.start)
                     })
             }
             PanelEntry::Outline(OutlineEntry::Outline(outline)) => multi_buffer_snapshot
-                .anchor_in_excerpt(outline.excerpt_id, outline.outline.range.start)
+                .anchor_in_buffer(outline.excerpt_id, outline.outline.range.start)
                 .or_else(|| {
                     multi_buffer_snapshot
-                        .anchor_in_excerpt(outline.excerpt_id, outline.outline.range.end)
+                        .anchor_in_buffer(outline.excerpt_id, outline.outline.range.end)
                 }),
             PanelEntry::Outline(OutlineEntry::Excerpt(excerpt)) => {
                 change_selection = false;
                 change_focus = false;
-                multi_buffer_snapshot.anchor_in_excerpt(excerpt.id, excerpt.range.context.start)
+                multi_buffer_snapshot.anchor_in_buffer(excerpt.id, excerpt.range.context.start)
             }
             PanelEntry::Search(search_entry) => Some(search_entry.match_range.start),
         };

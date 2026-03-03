@@ -8630,7 +8630,7 @@ impl Editor {
         }
 
         let cursor_position = predicted_cursor_position.and_then(|predicted| {
-            let anchor = multibuffer.anchor_in_excerpt(excerpt_id, predicted.anchor)?;
+            let anchor = multibuffer.anchor_in_buffer(excerpt_id, predicted.anchor)?;
             Some((anchor, predicted.offset))
         });
 
@@ -11848,7 +11848,7 @@ impl Editor {
                         if breakpoint_row == row {
                             snapshot
                                 .buffer_snapshot()
-                                .anchor_in_excerpt(enclosing_excerpt, bp.position)
+                                .anchor_in_buffer(enclosing_excerpt, bp.position)
                                 .map(|position| (position, bp.bp.clone()))
                         } else {
                             None
@@ -17114,7 +17114,7 @@ impl Editor {
                                 if snapshot.remote_id() == buffer_snapshot.remote_id() {
                                     display_snapshot
                                         .buffer_snapshot()
-                                        .anchor_in_excerpt(excerpt_id, location.target.range.start)
+                                        .anchor_in_buffer(excerpt_id, location.target.range.start)
                                 } else {
                                     None
                                 }
@@ -22861,7 +22861,7 @@ impl Editor {
                     continue;
                 }
                 let snapshot = self.buffer.read(cx).snapshot(cx);
-                let multibuffer_anchor = snapshot.anchor_in_excerpt(id, position)?;
+                let multibuffer_anchor = snapshot.anchor_in_buffer(id, position)?;
 
                 handled = true;
                 self.clear_row_highlights::<ActiveDebugLine>();

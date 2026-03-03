@@ -27,8 +27,9 @@ impl Editor {
         let anchors_in_multi_buffer = |current_excerpt: ExcerptId,
                                        text_anchors: [text::Anchor; 4]|
          -> Option<[Option<_>; 4]> {
+            // todo!() move filtering out.
             multi_buffer_snapshot
-                .anchors_in_excerpt(current_excerpt, text_anchors)?
+                .anchors_in_buffer(current_excerpt, text_anchors)?
                 .collect_array()
         };
 
