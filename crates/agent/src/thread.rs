@@ -1940,7 +1940,15 @@ impl Thread {
                 })??;
                 let timer = cx.background_executor().timer(retry.duration);
                 event_stream.send_retry(retry);
-                timer.await;
+                futures::select! {
+                    _ = timer.fuse() => {}
+                    _ = cancellation_rx.changed().fuse() => {
+                        if *cancellation_rx.borrow() {
+                            log::debug!("Turn cancelled during retry delay, exiting");
+                            return Ok(());
+                        }
+                    }
+                }
                 this.update(cx, |this, _cx| {
                     if let Some(Message::Agent(message)) = this.messages.last() {
                         if message.tool_results.is_empty() {
