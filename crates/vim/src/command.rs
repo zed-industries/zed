@@ -2635,9 +2635,12 @@ mod test {
         state::Mode,
         test::{NeovimBackedTestContext, VimTestContext},
     };
-    use editor::{Editor, EditorSettings};
+    use editor::{Editor, EditorSettings, Inlay, test::editor_lsp_test_context::EditorLspTestContext};
     use gpui::{Context, TestAppContext};
     use indoc::indoc;
+    use language::Point;
+    use lsp::ServerCapabilities;
+    use multi_buffer::MultiBufferRow;
     use settings::Settings;
     use util::path;
     use workspace::{OpenOptions, Workspace};
@@ -2758,6 +2761,140 @@ mod test {
         cx.simulate_keystrokes("enter");
         assert!(!cx.has_pending_prompt());
         assert_eq!(fs.load(path).await.unwrap().replace("\r\n", "\n"), "@@\n");
+    }
+
+    #[gpui::test]
+    async fn test_command_write_helix_preserves_missing_final_newline(
+        cx: &mut TestAppContext,
+    ) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.enable_helix();
+        cx.update_global(|store: &mut settings::SettingsStore, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings
+                    .project
+                    .all_languages
+                    .defaults
+                    .ensure_final_newline_on_save = Some(false);
+            });
+        });
+
+        let path = Path::new(path!("/root/dir/file.rs"));
+        let fs = cx.workspace(|workspace, _, cx| workspace.project().read(cx).fs().clone());
+
+        cx.set_state("one\ntwo\nthreeˇ", Mode::HelixNormal);
+        cx.simulate_keystrokes(": w enter");
+        cx.run_until_parked();
+
+        assert_eq!(
+            fs.load(path).await.unwrap().replace("\r\n", "\n"),
+            "one\ntwo\nthree"
+        );
+        cx.assert_state("one\ntwo\nthreeˇ", Mode::HelixNormal);
+    }
+
+    #[gpui::test]
+    async fn test_command_write_helix_with_inlay_near_eof(cx: &mut TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.enable_helix();
+        cx.update_global(|store: &mut settings::SettingsStore, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings
+                    .project
+                    .all_languages
+                    .defaults
+                    .ensure_final_newline_on_save = Some(false);
+            });
+        });
+
+        let path = Path::new(path!("/root/dir/file.rs"));
+        let fs = cx.workspace(|workspace, _, cx| workspace.project().read(cx).fs().clone());
+
+        cx.set_state("fn test_new() {\n    assert!(true);\n}ˇ\n}", Mode::HelixNormal);
+        cx.update_editor(|editor, _window, cx| {
+            let snapshot = editor.buffer().read(cx).snapshot(cx);
+            let inlay_anchor =
+                snapshot.anchor_after(Point::new(2, snapshot.line_len(MultiBufferRow(2))));
+            let inlay = Inlay::mock_hint(1, inlay_anchor, " fn test_new");
+            editor.splice_inlays(&[], vec![inlay], cx);
+        });
+        cx.run_until_parked();
+
+        cx.simulate_keystrokes(": w enter");
+        cx.run_until_parked();
+
+        let (buffer_max_row, display_max_row, cursor_row) = cx.update_editor(|editor, _, cx| {
+            let display_snapshot = editor.display_snapshot(cx);
+            let newest = editor.selections.newest_display(&display_snapshot);
+            (
+                display_snapshot.buffer_snapshot().max_point().row,
+                display_snapshot.max_point().row().0,
+                newest.head().row().0,
+            )
+        });
+
+        assert_eq!(
+            fs.load(path).await.unwrap().replace("\r\n", "\n"),
+            "fn test_new() {\n    assert!(true);\n}\n}"
+        );
+        assert_eq!(display_max_row, buffer_max_row);
+        assert!(cursor_row <= display_max_row);
+        cx.assert_state("fn test_new() {\n    assert!(true);\n}ˇ\n}", Mode::HelixNormal);
+    }
+
+    #[gpui::test]
+    async fn test_command_write_helix_format_on_save_preserves_missing_final_newline(
+        cx: &mut TestAppContext,
+    ) {
+        VimTestContext::init(cx);
+        let lsp_test_context = EditorLspTestContext::new_rust(
+            ServerCapabilities {
+                document_formatting_provider: Some(lsp::OneOf::Left(true)),
+                ..Default::default()
+            },
+            cx,
+        )
+        .await;
+        let mut cx = VimTestContext::new_with_lsp(lsp_test_context, true);
+        cx.enable_helix();
+        cx.update_global(|store: &mut settings::SettingsStore, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings
+                    .project
+                    .all_languages
+                    .defaults
+                    .ensure_final_newline_on_save = Some(false);
+            });
+        });
+
+        let path = Path::new(path!("/root/dir/file.rs"));
+        let fs = cx.workspace(|workspace, _, cx| workspace.project().read(cx).fs().clone());
+
+        cx.set_state("one\ntwo\nthreeˇ", Mode::HelixNormal);
+        cx.lsp
+            .set_request_handler::<lsp::request::Formatting, _, _>(move |params, _| async move {
+                assert_eq!(params.options.insert_final_newline, Some(false));
+                assert_eq!(params.options.trim_final_newlines, Some(false));
+                Ok(Some(vec![
+                    lsp::TextEdit::new(
+                        lsp::Range::new(lsp::Position::new(1, 0), lsp::Position::new(1, 3)),
+                        "TWO".to_string(),
+                    ),
+                    lsp::TextEdit::new(
+                        lsp::Range::new(lsp::Position::new(2, 5), lsp::Position::new(2, 5)),
+                        "\n".to_string(),
+                    ),
+                ]))
+            });
+
+        cx.simulate_keystrokes(": w enter");
+        cx.run_until_parked();
+
+        assert_eq!(
+            fs.load(path).await.unwrap().replace("\r\n", "\n"),
+            "one\nTWO\nthree"
+        );
+        cx.assert_state("one\nTWO\nthreeˇ", Mode::HelixNormal);
     }
 
     #[gpui::test]
