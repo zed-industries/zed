@@ -52,7 +52,6 @@ use assistant_slash_command::SlashCommandWorkingSet;
 use assistant_text_thread::{TextThread, TextThreadEvent, TextThreadSummary};
 use client::UserStore;
 use cloud_api_types::Plan;
-use collections::HashSet;
 use editor::{Anchor, AnchorRangeExt as _, Editor, EditorEvent, MultiBuffer};
 use extension::ExtensionEvents;
 use extension_host::ExtensionStore;
@@ -68,7 +67,6 @@ use language_model::{ConfigurationError, LanguageModelRegistry};
 use project::project_settings::ProjectSettings;
 use project::{Project, ProjectPath, Worktree};
 use prompt_store::{PromptBuilder, PromptStore, UserPromptId};
-use rand::Rng;
 use rules_library::{RulesLibrary, open_rules_library};
 use search::{BufferSearchBar, buffer_search};
 use settings::{Settings, update_settings_file};
@@ -92,96 +90,6 @@ use zed_actions::{
 const AGENT_PANEL_KEY: &str = "agent_panel";
 const RECENTLY_UPDATED_MENU_LIMIT: usize = 6;
 const DEFAULT_THREAD_TITLE: &str = "New Thread";
-
-const TYPEWRITER_NAMES: &[&str] = &[
-    "adler",
-    "blick",
-    "caligraph",
-    "clipper",
-    "consul",
-    "continental",
-    "coronet",
-    "corsair",
-    "densmore",
-    "dora",
-    "electra",
-    "erika",
-    "everest",
-    "facit",
-    "galaxie",
-    "groma",
-    "halda",
-    "hammond",
-    "hansen",
-    "hermes",
-    "imperial",
-    "kolibri",
-    "lettera",
-    "lexikon",
-    "monarch",
-    "monica",
-    "nakajima",
-    "noiseless",
-    "olivetti",
-    "olympia",
-    "optima",
-    "pluma",
-    "praxis",
-    "remington",
-    "robotron",
-    "royal",
-    "selectric",
-    "skyriter",
-    "splendid",
-    "sterling",
-    "studio",
-    "tippa",
-    "torpedo",
-    "traveller",
-    "triumph",
-    "underwood",
-    "valentine",
-    "voss",
-    "woodstock",
-];
-
-fn pick_typewriter_name(existing_branches: &[&str], rng: &mut impl Rng) -> Option<&'static str> {
-    let disallowed: HashSet<&str> = existing_branches
-        .iter()
-        .filter_map(|branch| branch.rsplit_once('-').map(|(prefix, _)| prefix))
-        .collect();
-
-    let available: Vec<&'static str> = TYPEWRITER_NAMES
-        .iter()
-        .copied()
-        .filter(|name| !disallowed.contains(name))
-        .collect();
-
-    if available.is_empty() {
-        return None;
-    }
-
-    let index = rng.random_range(0..available.len());
-    Some(available[index])
-}
-
-fn generate_agent_branch_name_from_rng(
-    existing_branches: &[&str],
-    rng: &mut impl Rng,
-) -> Option<String> {
-    let typewriter_name = pick_typewriter_name(existing_branches, rng)?;
-    let hash: String = (0..8)
-        .map(|_| {
-            let idx: u8 = rng.random_range(0..36);
-            if idx < 10 {
-                (b'0' + idx) as char
-            } else {
-                (b'a' + idx - 10) as char
-            }
-        })
-        .collect();
-    Some(format!("{typewriter_name}-{hash}"))
-}
 
 fn read_serialized_panel(workspace_id: workspace::WorkspaceId) -> Option<SerializedAgentPanel> {
     let scope = KEY_VALUE_STORE.scoped(AGENT_PANEL_KEY);
@@ -2135,7 +2043,7 @@ impl AgentPanel {
 
     fn generate_agent_branch_name() -> String {
         let mut rng = rand::rng();
-        generate_agent_branch_name_from_rng(&[], &mut rng)
+        crate::branch_names::generate_branch_name(&[], &mut rng)
             .expect("should always succeed with no disallowed names")
     }
 
@@ -4386,63 +4294,8 @@ mod tests {
     use fs::FakeFs;
     use gpui::{TestAppContext, VisualTestContext};
     use project::Project;
-    use rand::rngs::StdRng;
     use serde_json::json;
     use workspace::MultiWorkspace;
-
-    #[gpui::test(iterations = 10)]
-    fn test_pick_typewriter_name_with_no_disallowed(mut rng: StdRng) {
-        let name = pick_typewriter_name(&[], &mut rng);
-        assert!(name.is_some());
-        assert!(TYPEWRITER_NAMES.contains(&name.unwrap()));
-    }
-
-    #[gpui::test(iterations = 10)]
-    fn test_pick_typewriter_name_excludes_taken_names(mut rng: StdRng) {
-        let branch_names = &["olivetti-abc12345", "selectric-def67890"];
-        let name = pick_typewriter_name(branch_names, &mut rng).unwrap();
-        assert_ne!(name, "olivetti");
-        assert_ne!(name, "selectric");
-    }
-
-    #[gpui::test]
-    fn test_pick_typewriter_name_all_taken(mut rng: StdRng) {
-        let branch_names: Vec<String> = TYPEWRITER_NAMES
-            .iter()
-            .map(|name| format!("{name}-00000000"))
-            .collect();
-        let branch_name_refs: Vec<&str> = branch_names.iter().map(|s| s.as_str()).collect();
-        let name = pick_typewriter_name(&branch_name_refs, &mut rng);
-        assert!(name.is_none());
-    }
-
-    #[gpui::test(iterations = 10)]
-    fn test_pick_typewriter_name_ignores_branches_without_hyphen(mut rng: StdRng) {
-        let branch_names = &["main", "develop", "feature"];
-        let name = pick_typewriter_name(branch_names, &mut rng);
-        assert!(name.is_some());
-        assert!(TYPEWRITER_NAMES.contains(&name.unwrap()));
-    }
-
-    #[gpui::test(iterations = 10)]
-    fn test_generate_agent_branch_name_format(mut rng: StdRng) {
-        let branch_name = generate_agent_branch_name_from_rng(&[], &mut rng).unwrap();
-        let (prefix, suffix) = branch_name.rsplit_once('-').unwrap();
-        assert!(TYPEWRITER_NAMES.contains(&prefix));
-        assert_eq!(suffix.len(), 8);
-        assert!(suffix.chars().all(|c| c.is_ascii_alphanumeric()));
-    }
-
-    #[gpui::test]
-    fn test_generate_agent_branch_name_returns_none_when_exhausted(mut rng: StdRng) {
-        let branch_names: Vec<String> = TYPEWRITER_NAMES
-            .iter()
-            .map(|name| format!("{name}-00000000"))
-            .collect();
-        let branch_name_refs: Vec<&str> = branch_names.iter().map(|s| s.as_str()).collect();
-        let result = generate_agent_branch_name_from_rng(&branch_name_refs, &mut rng);
-        assert!(result.is_none());
-    }
 
     #[gpui::test]
     async fn test_active_thread_serialize_and_load_round_trip(cx: &mut TestAppContext) {
