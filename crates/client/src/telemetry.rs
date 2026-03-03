@@ -582,6 +582,14 @@ impl Telemetry {
         self.state.lock().is_staff
     }
 
+    pub fn os_name(self: &Arc<Self>) -> String {
+        self.state.lock().os_name.clone()
+    }
+
+    pub fn os_version(self: &Arc<Self>) -> Option<String> {
+        self.state.lock().os_version.clone()
+    }
+
     fn build_request(
         self: &Arc<Self>,
         // We take in the JSON bytes buffer so we can reuse the existing allocation.

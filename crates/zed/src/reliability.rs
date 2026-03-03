@@ -364,6 +364,13 @@ async fn upload_minidump(
             );
     }
 
+    form = form
+        .text("sentry[contexts][os][type]", "os")
+        .text("sentry[contexts][os][name]", client.telemetry().os_name());
+    if let Some(os_version) = client.telemetry().os_version() {
+        form = form.text("sentry[contexts][os][version]", os_version);
+    }
+
     // TODO: feature-flag-context, and more of device-context like screen resolution, available ram, device model, etc
 
     let content_type = format!("multipart/form-data; boundary={}", form.boundary());
