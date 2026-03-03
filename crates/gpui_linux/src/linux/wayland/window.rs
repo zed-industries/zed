@@ -757,7 +757,13 @@ impl WaylandWindowStatePtr {
                 }
             }
             xdg_toplevel::Event::WmCapabilities { capabilities } => {
-                let mut window_controls = WindowControls::default();
+                let mut window_controls = WindowControls {
+                    maximize: false,
+                    minimize: false,
+                    fullscreen: false,
+                    window_menu: false,
+                    ..Default::default()
+                };
 
                 let states = extract_states::<xdg_toplevel::WmCapabilities>(&capabilities);
 
