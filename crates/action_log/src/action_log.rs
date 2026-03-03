@@ -695,8 +695,9 @@ impl ActionLog {
                             .read(cx)
                             .entry_id(cx)
                             .and_then(|entry_id| {
-                                self.project
-                                    .update(cx, |project, cx| project.delete_entry(entry_id, cx))
+                                self.project.update(cx, |project, cx| {
+                                    project.delete_entry(entry_id, false, cx)
+                                })
                             })
                             .unwrap_or(Task::ready(Ok(())))
                     } else {
@@ -1710,14 +1711,14 @@ mod tests {
         action_log.update(cx, |log, cx| log.will_delete_buffer(buffer2.clone(), cx));
         project
             .update(cx, |project, cx| {
-                project.delete_file(file1_path.clone(), cx)
+                project.delete_file(file1_path.clone(), false, cx)
             })
             .unwrap()
             .await
             .unwrap();
         project
             .update(cx, |project, cx| {
-                project.delete_file(file2_path.clone(), cx)
+                project.delete_file(file2_path.clone(), false, cx)
             })
             .unwrap()
             .await
@@ -2023,7 +2024,7 @@ mod tests {
         });
         project
             .update(cx, |project, cx| {
-                project.delete_file(file_path.clone(), cx)
+                project.delete_file(file_path.clone(), false, cx)
             })
             .unwrap()
             .await

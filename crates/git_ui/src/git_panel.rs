@@ -1534,8 +1534,7 @@ impl GitPanel {
             if !entry.status.is_created() {
                 self.perform_checkout(vec![entry.clone()], window, cx);
             } else {
-                let details = "This cannot be undone without restoring the file manually.";
-                let prompt = prompt(&format!("Trash {}?", filename), Some(details), window, cx);
+                let prompt = prompt(&format!("Trash {}?", filename), None, window, cx);
                 cx.spawn_in(window, async move |_, cx| {
                     match prompt.await? {
                         TrashCancel::Trash => {}
@@ -1544,7 +1543,7 @@ impl GitPanel {
                     let task = workspace.update(cx, |workspace, cx| {
                         workspace
                             .project()
-                            .update(cx, |project, cx| project.trash_file(path, cx))
+                            .update(cx, |project, cx| project.delete_file(path, true, cx))
                     })?;
                     if let Some(task) = task {
                         task.await?;
@@ -1650,10 +1649,11 @@ impl GitPanel {
             .filter(|status_entry| !status_entry.status.is_created())
             .collect::<Vec<_>>();
 
-        if entries.is_empty() {
-            return;
+        match entries.len() {
+            0 => return,
+            1 => return self.revert_entry(&entries[0], window, cx),
+            _ => {}
         }
-
         let mut details = entries
             .iter()
             .filter_map(|entry| entry.repo_path.as_ref().file_name())
@@ -1671,7 +1671,7 @@ impl GitPanel {
             Cancel,
         }
         let prompt = prompt(
-            "Discard changes to these files? This is PERMANENT and cannot be undone.",
+            "Discard changes to these files?",
             Some(&details),
             window,
             cx,
@@ -1700,9 +1700,11 @@ impl GitPanel {
             .cloned()
             .collect::<Vec<_>>();
 
-        if to_delete.is_empty() {
-            return;
-        }
+        match to_delete.len() {
+            0 => return,
+            1 => return self.revert_entry(&to_delete[0], window, cx),
+            _ => {}
+        };
 
         let mut details = to_delete
             .iter()
@@ -1720,21 +1722,8 @@ impl GitPanel {
         if to_delete.len() > 5 {
             details.push_str(&format!("\nand {} more…", to_delete.len() - 5))
         }
-        let files_noun_phrase = if to_delete.len() == 1 {
-            "this file"
-        } else {
-            "these files"
-        };
-        details.push_str(&format!(
-            "\n\nYou can restore {files_noun_phrase} from the trash."
-        ));
 
-        let prompt = prompt(
-            &format!("Trash {files_noun_phrase}?"),
-            Some(&details),
-            window,
-            cx,
-        );
+        let prompt = prompt("Trash these files?", Some(&details), window, cx);
         cx.spawn_in(window, async move |this, cx| {
             match prompt.await? {
                 TrashCancel::Trash => {}
@@ -1748,7 +1737,7 @@ impl GitPanel {
                             let project_path = active_repo
                                 .read(cx)
                                 .repo_path_to_project_path(&entry.repo_path, cx)?;
-                            project.trash_file(project_path, cx)
+                            project.delete_file(project_path, true, cx)
                         })
                     })
                     .collect::<Vec<_>>()
