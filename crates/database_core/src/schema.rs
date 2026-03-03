@@ -8,6 +8,30 @@ pub struct DatabaseSchema {
     pub tables: Vec<TableInfo>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum TableKind {
+    #[default]
+    Table,
+    View,
+    MaterializedView,
+    VirtualTable,
+}
+
+impl TableKind {
+    pub fn is_view_like(self) -> bool {
+        matches!(self, TableKind::View | TableKind::MaterializedView)
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            TableKind::Table => "Table",
+            TableKind::View => "View",
+            TableKind::MaterializedView => "Materialized view",
+            TableKind::VirtualTable => "Virtual table",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TableInfo {
     pub name: String,
@@ -15,7 +39,7 @@ pub struct TableInfo {
     pub indexes: Vec<IndexInfo>,
     pub foreign_keys: Vec<ForeignKeyInfo>,
     pub row_count: Option<u64>,
-    pub is_virtual: bool,
+    pub table_kind: TableKind,
     #[serde(default)]
     pub ddl: Option<String>,
 }
@@ -111,7 +135,7 @@ mod tests {
                 indexes: vec![],
                 foreign_keys: vec![],
                 row_count: Some(10),
-                is_virtual: false,
+                table_kind: TableKind::Table,
                 ddl: None,
             }],
         };

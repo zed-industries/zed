@@ -157,8 +157,8 @@ pub fn describe_object_core(object_name: &str, connection_name: &str) -> Result<
     if let Some(row_count) = table.row_count {
         writeln!(output, "Row count: {row_count}").ok();
     }
-    if table.is_virtual {
-        writeln!(output, "Type: Virtual table").ok();
+    if table.table_kind != crate::schema::TableKind::Table {
+        writeln!(output, "Type: {}", table.table_kind.label()).ok();
     }
 
     writeln!(output).ok();
@@ -242,12 +242,12 @@ pub fn list_objects_core(
     let tables: Vec<_> = schema
         .tables
         .iter()
-        .filter(|table| !table.is_virtual)
+        .filter(|table| !table.table_kind.is_view_like())
         .collect();
     let views: Vec<_> = schema
         .tables
         .iter()
-        .filter(|table| table.is_virtual)
+        .filter(|table| table.table_kind.is_view_like())
         .collect();
 
     let show_tables = filter == "all" || filter == "tables";
@@ -416,8 +416,8 @@ pub fn get_schema_core(
     writeln!(
         output,
         "-- {} tables, {} views",
-        schema.tables.iter().filter(|t| !t.is_virtual).count(),
-        schema.tables.iter().filter(|t| t.is_virtual).count()
+        schema.tables.iter().filter(|t| !t.table_kind.is_view_like()).count(),
+        schema.tables.iter().filter(|t| t.table_kind.is_view_like()).count()
     )
     .ok();
     writeln!(output).ok();

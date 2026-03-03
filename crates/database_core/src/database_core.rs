@@ -27,7 +27,7 @@ pub use query_history::{NavigateResult, QueryHistory};
 pub use query_result::{CellValue, QueryResult};
 pub use schema::{
     ColumnInfo, DatabaseSchema, ForeignKeyInfo, IndexInfo, IntrospectionLevel, SchemaCache,
-    TableInfo,
+    TableInfo, TableKind,
 };
 pub use tool_core::{
     build_explain_sql, describe_object_core, execute_query_core, explain_query_core,

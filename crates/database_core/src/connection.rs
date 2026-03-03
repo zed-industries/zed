@@ -12,7 +12,7 @@ use sqlez::statement::{SqlType, Statement};
 use tokio::sync::Mutex as TokioMutex;
 
 use crate::query_result::{CellValue, QueryResult};
-use crate::schema::{ColumnInfo, DatabaseSchema, ForeignKeyInfo, IndexInfo, IntrospectionLevel, TableInfo};
+use crate::schema::{ColumnInfo, DatabaseSchema, ForeignKeyInfo, IndexInfo, IntrospectionLevel, TableInfo, TableKind};
 
 fn url_decode(input: &str) -> String {
     percent_decode_str(input)
@@ -448,17 +448,25 @@ impl DatabaseConnection for SqliteConnection {
         self.with_connection(|connection| {
             let mut statement = Statement::prepare(
                 connection,
-                "SELECT name, CASE WHEN COALESCE(sql,'') LIKE 'CREATE VIRTUAL%' THEN 1 ELSE 0 END as is_virtual \
-                 FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name",
+                "SELECT name, type, CASE WHEN COALESCE(sql,'') LIKE 'CREATE VIRTUAL%' THEN 1 ELSE 0 END as is_virtual_tbl \
+                 FROM sqlite_master WHERE type IN ('table', 'view') AND name NOT LIKE 'sqlite_%' ORDER BY name",
             )?;
-            let table_entries: Vec<(String, bool)> = statement.map(|stmt| {
+            let table_entries: Vec<(String, TableKind)> = statement.map(|stmt| {
                 let name = stmt.column_text(0)?.to_string();
-                let is_virtual = stmt.column_int(1)? != 0;
-                Ok((name, is_virtual))
+                let entry_type = stmt.column_text(1)?.to_string();
+                let is_virtual_tbl = stmt.column_int(2)? != 0;
+                let table_kind = if entry_type == "view" {
+                    TableKind::View
+                } else if is_virtual_tbl {
+                    TableKind::VirtualTable
+                } else {
+                    TableKind::Table
+                };
+                Ok((name, table_kind))
             })?;
 
             let mut tables = Vec::new();
-            for (table_name, is_virtual) in table_entries {
+            for (table_name, table_kind) in table_entries {
                 if level == IntrospectionLevel::Names {
                     tables.push(TableInfo {
                         name: table_name,
@@ -466,7 +474,7 @@ impl DatabaseConnection for SqliteConnection {
                         indexes: Vec::new(),
                         foreign_keys: Vec::new(),
                         row_count: None,
-                        is_virtual,
+                        table_kind,
                         ddl: None,
                     });
                     continue;
@@ -501,7 +509,7 @@ impl DatabaseConnection for SqliteConnection {
                     indexes,
                     foreign_keys,
                     row_count,
-                    is_virtual,
+                    table_kind,
                     ddl,
                 });
             }
@@ -669,6 +677,10 @@ fn build_postgres_tls_config(
                 rustls::ClientConfig::with_platform_verifier()
             }
         }
+        // SslMode::Require encrypts the connection but does NOT verify the server's
+        // identity. This matches PostgreSQL's `sslmode=require` semantics. It protects
+        // against passive eavesdropping but is vulnerable to active MITM attacks.
+        // Use SslMode::VerifyFull for certificate validation.
         SslMode::Require => {
             rustls::ClientConfig::builder()
                 .dangerous()
@@ -682,6 +694,8 @@ fn build_postgres_tls_config(
     Ok(config)
 }
 
+// Accepts any server certificate without validation. Used by SslMode::Require
+// to match PostgreSQL's `sslmode=require` behavior (encrypt-only, no identity check).
 #[derive(Debug)]
 struct NoVerification;
 
@@ -837,7 +851,7 @@ impl DatabaseConnection for PostgresConnection {
 
             let table_rows = client
                 .query(
-                    "SELECT table_name FROM information_schema.tables \
+                    "SELECT table_name, table_type FROM information_schema.tables \
                      WHERE table_schema = 'public' \
                      ORDER BY table_name",
                     &[],
@@ -845,7 +859,41 @@ impl DatabaseConnection for PostgresConnection {
                 .await
                 .map_err(|e| pg_err_to_anyhow("Failed to query tables", e))?;
 
-            let table_names: Vec<String> = table_rows.iter().map(|r| r.get(0)).collect();
+            let table_entries: Vec<(String, TableKind)> = table_rows
+                .iter()
+                .map(|r| {
+                    let name: String = r.get(0);
+                    let table_type: String = r.get(1);
+                    let kind = if table_type == "VIEW" {
+                        TableKind::View
+                    } else {
+                        TableKind::Table
+                    };
+                    (name, kind)
+                })
+                .collect();
+
+            let matview_rows = client
+                .query(
+                    "SELECT matviewname FROM pg_matviews \
+                     WHERE schemaname = 'public' \
+                     ORDER BY matviewname",
+                    &[],
+                )
+                .await
+                .unwrap_or_else(|error| {
+                    log::warn!("database_viewer: failed to fetch materialized views: {}", error);
+                    Vec::new()
+                });
+
+            let matview_names: Vec<String> = matview_rows.iter().map(|r| r.get(0)).collect();
+
+            let mut all_entries: Vec<(String, TableKind)> = table_entries;
+            for name in matview_names {
+                all_entries.push((name, TableKind::MaterializedView));
+            }
+
+            let table_names: Vec<String> = all_entries.iter().map(|(n, _)| n.clone()).collect();
             if table_names.is_empty() {
                 return Ok(DatabaseSchema { tables: Vec::new() });
             }
@@ -860,6 +908,27 @@ impl DatabaseConnection for PostgresConnection {
                 )
                 .await
                 .map_err(|e| pg_err_to_anyhow("Failed to query columns", e))?;
+
+            let matview_columns = client
+                .query(
+                    "SELECT c.relname, a.attname, \
+                            pg_catalog.format_type(a.atttypid, a.atttypmod), \
+                            CASE WHEN a.attnotnull THEN 'NO' ELSE 'YES' END, \
+                            pg_catalog.pg_get_expr(d.adbin, d.adrelid) \
+                     FROM pg_catalog.pg_attribute a \
+                     JOIN pg_catalog.pg_class c ON a.attrelid = c.oid \
+                     JOIN pg_catalog.pg_namespace n ON c.relnamespace = n.oid \
+                     LEFT JOIN pg_catalog.pg_attrdef d ON a.attrelid = d.adrelid AND a.attnum = d.adnum \
+                     WHERE n.nspname = 'public' AND c.relkind = 'm' \
+                       AND a.attnum > 0 AND NOT a.attisdropped \
+                     ORDER BY c.relname, a.attnum",
+                    &[],
+                )
+                .await
+                .unwrap_or_else(|error| {
+                    log::warn!("database_viewer: failed to fetch materialized view columns: {}", error);
+                    Vec::new()
+                });
 
             let all_pks = client
                 .query(
@@ -916,7 +985,7 @@ impl DatabaseConnection for PostgresConnection {
                     "SELECT relname, reltuples::bigint \
                      FROM pg_class \
                      JOIN pg_namespace ON pg_namespace.oid = relnamespace \
-                     WHERE nspname = 'public' AND relkind = 'r'",
+                     WHERE nspname = 'public' AND relkind IN ('r', 'm')",
                     &[],
                 )
                 .await
@@ -935,6 +1004,17 @@ impl DatabaseConnection for PostgresConnection {
             let mut col_map: HashMap<String, Vec<(String, String, String, Option<String>)>> =
                 HashMap::new();
             for row in &all_columns {
+                let table: String = row.get(0);
+                let name: String = row.get(1);
+                let data_type: String = row.get(2);
+                let is_nullable: String = row.get(3);
+                let default_value: Option<String> = row.get(4);
+                col_map
+                    .entry(table)
+                    .or_default()
+                    .push((name, data_type, is_nullable, default_value));
+            }
+            for row in &matview_columns {
                 let table: String = row.get(0);
                 let name: String = row.get(1);
                 let data_type: String = row.get(2);
@@ -980,9 +1060,17 @@ impl DatabaseConnection for PostgresConnection {
                 count_map.insert(table, count.max(0) as u64);
             }
 
+            let kind_map: HashMap<String, TableKind> = all_entries
+                .into_iter()
+                .collect();
+
             let tables = table_names
                 .into_iter()
                 .map(|table_name| {
+                    let table_kind = kind_map
+                        .get(&table_name)
+                        .copied()
+                        .unwrap_or(TableKind::Table);
                     let pk_columns = pk_map.get(&table_name);
                     let columns = col_map
                         .remove(&table_name)
@@ -1012,7 +1100,7 @@ impl DatabaseConnection for PostgresConnection {
                         indexes,
                         foreign_keys,
                         row_count,
-                        is_virtual: false,
+                        table_kind,
                         ddl: None,
                     }
                 })
@@ -1214,14 +1302,28 @@ impl DatabaseConnection for MysqlConnection {
                 .await
                 .map_err(|error| anyhow::anyhow!("MySQL connection error: {}", error))?;
 
-            let table_names: Vec<String> = conn
-                .query("SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE() ORDER BY table_name")
+            let table_entries: Vec<(String, String)> = conn
+                .query("SELECT table_name, table_type FROM information_schema.tables WHERE table_schema = DATABASE() ORDER BY table_name")
                 .await
                 .map_err(|error| anyhow::anyhow!("Failed to query tables: {}", error))?;
 
-            if table_names.is_empty() {
+            if table_entries.is_empty() {
                 return Ok(DatabaseSchema { tables: Vec::new() });
             }
+
+            let kind_map: HashMap<String, TableKind> = table_entries
+                .iter()
+                .map(|(name, table_type)| {
+                    let kind = if table_type == "VIEW" || table_type == "SYSTEM VIEW" {
+                        TableKind::View
+                    } else {
+                        TableKind::Table
+                    };
+                    (name.clone(), kind)
+                })
+                .collect();
+
+            let table_names: Vec<String> = table_entries.into_iter().map(|(n, _)| n).collect();
 
             let all_columns: Vec<(String, String, String, String, String, Option<String>)> = conn
                 .query(
@@ -1325,6 +1427,10 @@ impl DatabaseConnection for MysqlConnection {
             let tables = table_names
                 .into_iter()
                 .map(|table_name| {
+                    let table_kind = kind_map
+                        .get(&table_name)
+                        .copied()
+                        .unwrap_or(TableKind::Table);
                     let columns = col_map.remove(&table_name).unwrap_or_default();
                     let indexes = idx_map.remove(&table_name).unwrap_or_default();
                     let foreign_keys = fk_map.remove(&table_name).unwrap_or_default();
@@ -1336,7 +1442,7 @@ impl DatabaseConnection for MysqlConnection {
                         indexes,
                         foreign_keys,
                         row_count,
-                        is_virtual: false,
+                        table_kind,
                         ddl: None,
                     }
                 })
@@ -1447,11 +1553,9 @@ impl DatabaseConnection for MysqlConnection {
                 .get_conn()
                 .await
                 .map_err(|error| anyhow::anyhow!("MySQL connection error: {}", error))?;
-            let result = conn
-                .exec_drop(&sql, ())
+            conn.exec_drop(&sql, ())
                 .await
                 .map_err(|error| anyhow::anyhow!("Failed to execute statement: {}", error))?;
-            let _ = result;
             Ok(conn.affected_rows())
         })
     }
@@ -1493,16 +1597,14 @@ fn mysql_value_to_cell(row: &mysql_async::Row, index: usize) -> CellValue {
     use mysql_async::Value;
     use mysql_async::consts::ColumnType;
 
-    let column_type = row
-        .columns_ref()
-        .get(index)
-        .map(|col| col.column_type());
+    let column = row.columns_ref().get(index);
+    let column_type = column.map(|col| col.column_type());
 
     match row.as_ref(index) {
         Some(Value::NULL) | None => CellValue::Null,
         Some(Value::Int(val)) => {
             if let Some(ColumnType::MYSQL_TYPE_TINY) = column_type {
-                if row.columns_ref().get(index).map(|c| c.column_length()) == Some(1) {
+                if column.map(|c| c.column_length()) == Some(1) {
                     return CellValue::Boolean(*val != 0);
                 }
             }
@@ -1511,17 +1613,56 @@ fn mysql_value_to_cell(row: &mysql_async::Row, index: usize) -> CellValue {
         Some(Value::UInt(val)) => CellValue::Integer(*val as i64),
         Some(Value::Float(val)) => CellValue::Float(*val as f64),
         Some(Value::Double(val)) => CellValue::Float(*val),
-        Some(Value::Bytes(bytes)) => {
-            let is_json = matches!(column_type, Some(ColumnType::MYSQL_TYPE_JSON));
-            match String::from_utf8(bytes.clone()) {
-                Ok(text) if is_json => CellValue::Json(text),
+        Some(Value::Bytes(bytes)) => match column_type {
+            Some(ColumnType::MYSQL_TYPE_JSON) => match String::from_utf8(bytes.clone()) {
+                Ok(text) => CellValue::Json(text),
+                Err(_) => CellValue::Blob(bytes.clone()),
+            },
+            Some(ColumnType::MYSQL_TYPE_NEWDECIMAL) | Some(ColumnType::MYSQL_TYPE_DECIMAL) => {
+                match String::from_utf8(bytes.clone()) {
+                    Ok(text) => match text.parse::<f64>() {
+                        Ok(val) if val.fract() == 0.0 && val.abs() < i64::MAX as f64 => {
+                            CellValue::Integer(val as i64)
+                        }
+                        Ok(val) => CellValue::Float(val),
+                        Err(_) => CellValue::Text(text),
+                    },
+                    Err(_) => CellValue::Blob(bytes.clone()),
+                }
+            }
+            Some(ColumnType::MYSQL_TYPE_BIT) => {
+                let mut bits = String::new();
+                for byte in bytes {
+                    bits.push_str(&format!("{:08b}", byte));
+                }
+                let trimmed = bits.trim_start_matches('0');
+                CellValue::Text(if trimmed.is_empty() {
+                    "0".to_string()
+                } else {
+                    trimmed.to_string()
+                })
+            }
+            Some(ColumnType::MYSQL_TYPE_YEAR) => match String::from_utf8(bytes.clone()) {
+                Ok(text) => match text.parse::<i64>() {
+                    Ok(year) => CellValue::Integer(year),
+                    Err(_) => CellValue::Text(text),
+                },
+                Err(_) => CellValue::Blob(bytes.clone()),
+            },
+            Some(ColumnType::MYSQL_TYPE_GEOMETRY) => CellValue::Blob(bytes.clone()),
+            _ => match String::from_utf8(bytes.clone()) {
                 Ok(text) => CellValue::Text(text),
                 Err(_) => CellValue::Blob(bytes.clone()),
-            }
-        }
-        Some(Value::Date(year, month, day, hour, minute, second, _micro)) => {
-            if *hour == 0 && *minute == 0 && *second == 0 {
+            },
+        },
+        Some(Value::Date(year, month, day, hour, minute, second, micro)) => {
+            if *hour == 0 && *minute == 0 && *second == 0 && *micro == 0 {
                 CellValue::Date(format!("{:04}-{:02}-{:02}", year, month, day))
+            } else if *micro > 0 {
+                CellValue::Timestamp(format!(
+                    "{:04}-{:02}-{:02} {:02}:{:02}:{:02}.{:06}",
+                    year, month, day, hour, minute, second, micro
+                ))
             } else {
                 CellValue::Timestamp(format!(
                     "{:04}-{:02}-{:02} {:02}:{:02}:{:02}",
@@ -1529,13 +1670,20 @@ fn mysql_value_to_cell(row: &mysql_async::Row, index: usize) -> CellValue {
                 ))
             }
         }
-        Some(Value::Time(negative, days, hours, minutes, seconds, _micro)) => {
+        Some(Value::Time(negative, days, hours, minutes, seconds, micro)) => {
             let sign = if *negative { "-" } else { "" };
             let total_hours = (*days as u32) * 24 + (*hours as u32);
-            CellValue::Time(format!(
-                "{}{:02}:{:02}:{:02}",
-                sign, total_hours, minutes, seconds
-            ))
+            if *micro > 0 {
+                CellValue::Time(format!(
+                    "{}{:02}:{:02}:{:02}.{:06}",
+                    sign, total_hours, minutes, seconds, micro
+                ))
+            } else {
+                CellValue::Time(format!(
+                    "{}{:02}:{:02}:{:02}",
+                    sign, total_hours, minutes, seconds
+                ))
+            }
         }
     }
 }
@@ -1554,9 +1702,9 @@ fn pg_err_to_anyhow(context: &str, error: tokio_postgres::Error) -> anyhow::Erro
 
 fn parse_pg_index_columns(index_def: &str) -> Vec<String> {
     if let Some(start) = index_def.rfind('(') {
-        if let Some(end) = index_def[start..].find(')') {
-            let cols_str = &index_def[start + 1..start + end];
-            return cols_str
+        let after_paren = &index_def[start + 1..];
+        if let Some(end) = after_paren.find(')') {
+            return after_paren[..end]
                 .split(',')
                 .map(|s| s.trim().to_string())
                 .collect();
@@ -1571,6 +1719,17 @@ fn pg_value_to_cell(
     col_type: &tokio_postgres::types::Type,
 ) -> CellValue {
     use tokio_postgres::types::Type;
+
+    let type_name = col_type.name();
+    if (type_name == "json" || type_name == "jsonb")
+        && !matches!(*col_type, Type::JSON | Type::JSONB)
+    {
+        match row.try_get::<_, Option<AnyJsonValue>>(index) {
+            Ok(Some(val)) => return CellValue::Json(val.0),
+            Ok(None) => return CellValue::Null,
+            Err(_) => {}
+        }
+    }
 
     match *col_type {
         Type::BOOL => match row.try_get::<_, Option<bool>>(index) {
@@ -1619,7 +1778,6 @@ fn pg_value_to_cell(
             Ok(None) => CellValue::Null,
             Err(_) => CellValue::Null,
         },
-        // Types that tokio-postgres can decode directly as String
         Type::TEXT | Type::VARCHAR | Type::BPCHAR | Type::NAME | Type::CHAR => {
             match row.try_get::<_, Option<String>>(index) {
                 Ok(Some(val)) => CellValue::Text(val),
@@ -1627,64 +1785,378 @@ fn pg_value_to_cell(
                 Err(_) => CellValue::Null,
             }
         }
-        // For all other types (UUID, TIMESTAMP, JSONB, INET, arrays, etc.),
-        // tokio-postgres cannot decode them as String directly.
-        // Use the raw text representation via the binary protocol fallback.
-        _ => pg_value_to_cell_via_text_column(row, index, col_type),
+        Type::TIMESTAMP => match row.try_get::<_, Option<chrono::NaiveDateTime>>(index) {
+            Ok(Some(val)) => CellValue::Timestamp(val.to_string()),
+            Ok(None) => CellValue::Null,
+            Err(_) => CellValue::Null,
+        },
+        Type::TIMESTAMPTZ => {
+            match row.try_get::<_, Option<chrono::DateTime<chrono::Utc>>>(index) {
+                Ok(Some(val)) => CellValue::Timestamp(val.to_string()),
+                Ok(None) => CellValue::Null,
+                Err(_) => CellValue::Null,
+            }
+        }
+        Type::DATE => match row.try_get::<_, Option<chrono::NaiveDate>>(index) {
+            Ok(Some(val)) => CellValue::Date(val.to_string()),
+            Ok(None) => CellValue::Null,
+            Err(_) => CellValue::Null,
+        },
+        Type::TIME => match row.try_get::<_, Option<chrono::NaiveTime>>(index) {
+            Ok(Some(val)) => CellValue::Time(val.to_string()),
+            Ok(None) => CellValue::Null,
+            Err(_) => CellValue::Null,
+        },
+        Type::UUID => match row.try_get::<_, Option<uuid::Uuid>>(index) {
+            Ok(Some(val)) => CellValue::Uuid(val.to_string()),
+            Ok(None) => CellValue::Null,
+            Err(_) => CellValue::Null,
+        },
+        Type::JSON | Type::JSONB => match row.try_get::<_, Option<serde_json::Value>>(index) {
+            Ok(Some(val)) => CellValue::Json(val.to_string()),
+            Ok(None) => CellValue::Null,
+            Err(_) => match row.try_get::<_, Option<AnyJsonValue>>(index) {
+                Ok(Some(val)) => CellValue::Json(val.0),
+                Ok(None) => CellValue::Null,
+                Err(_) => CellValue::Null,
+            },
+        },
+        Type::INET => match row.try_get::<_, Option<std::net::IpAddr>>(index) {
+            Ok(Some(val)) => CellValue::Text(val.to_string()),
+            Ok(None) => CellValue::Null,
+            Err(_) => CellValue::Null,
+        },
+        // Array types
+        Type::BOOL_ARRAY => pg_array_to_cell::<bool>(row, index),
+        Type::INT2_ARRAY => pg_array_to_cell::<i16>(row, index),
+        Type::INT4_ARRAY => pg_array_to_cell::<i32>(row, index),
+        Type::INT8_ARRAY => pg_array_to_cell::<i64>(row, index),
+        Type::FLOAT4_ARRAY => pg_array_to_cell::<f32>(row, index),
+        Type::FLOAT8_ARRAY | Type::NUMERIC_ARRAY => pg_array_to_cell::<f64>(row, index),
+        Type::TEXT_ARRAY | Type::VARCHAR_ARRAY => pg_array_to_cell::<String>(row, index),
+        Type::UUID_ARRAY => pg_array_to_cell::<uuid::Uuid>(row, index),
+        Type::JSON_ARRAY | Type::JSONB_ARRAY => {
+            pg_array_to_cell::<serde_json::Value>(row, index)
+        }
+        Type::TIMESTAMP_ARRAY => pg_array_to_cell::<chrono::NaiveDateTime>(row, index),
+        Type::TIMESTAMPTZ_ARRAY => {
+            pg_array_to_cell::<chrono::DateTime<chrono::Utc>>(row, index)
+        }
+        Type::DATE_ARRAY => pg_array_to_cell::<chrono::NaiveDate>(row, index),
+        Type::TIME_ARRAY => pg_array_to_cell::<chrono::NaiveTime>(row, index),
+        Type::INET_ARRAY => pg_array_to_cell::<std::net::IpAddr>(row, index),
+        _ => pg_value_to_cell_fallback(row, index, col_type),
     }
 }
 
-fn pg_value_to_cell_via_text_column(
+fn pg_array_to_cell<T>(row: &tokio_postgres::Row, index: usize) -> CellValue
+where
+    T: for<'a> tokio_postgres::types::FromSql<'a> + std::fmt::Display,
+{
+    match row.try_get::<_, Option<Vec<Option<T>>>>(index) {
+        Ok(Some(items)) => {
+            let formatted: Vec<String> = items
+                .iter()
+                .map(|item| match item {
+                    Some(val) => val.to_string(),
+                    None => "NULL".to_string(),
+                })
+                .collect();
+            CellValue::Text(format!("{{{}}}", formatted.join(",")))
+        }
+        Ok(None) => CellValue::Null,
+        Err(_) => CellValue::Null,
+    }
+}
+
+struct AnyJsonValue(String);
+
+impl<'a> tokio_postgres::types::FromSql<'a> for AnyJsonValue {
+    fn from_sql(
+        _type: &tokio_postgres::types::Type,
+        raw: &'a [u8],
+    ) -> Result<Self, Box<dyn std::error::Error + Sync + Send>> {
+        // JSONB binary format: version byte (0x01) followed by JSON text
+        let json_bytes = if raw.first() == Some(&1) && raw.len() > 1 {
+            &raw[1..]
+        } else {
+            raw
+        };
+        let text = std::str::from_utf8(json_bytes)?;
+        Ok(AnyJsonValue(text.to_string()))
+    }
+
+    fn accepts(_type: &tokio_postgres::types::Type) -> bool {
+        true
+    }
+}
+
+struct RawPgBytes(Vec<u8>);
+
+impl<'a> tokio_postgres::types::FromSql<'a> for RawPgBytes {
+    fn from_sql(
+        _type: &tokio_postgres::types::Type,
+        raw: &'a [u8],
+    ) -> Result<Self, Box<dyn std::error::Error + Sync + Send>> {
+        Ok(RawPgBytes(raw.to_vec()))
+    }
+
+    fn accepts(_type: &tokio_postgres::types::Type) -> bool {
+        true
+    }
+}
+
+fn pg_value_to_cell_fallback(
     row: &tokio_postgres::Row,
     index: usize,
-    _col_type: &tokio_postgres::types::Type,
+    col_type: &tokio_postgres::types::Type,
 ) -> CellValue {
-    use std::net::IpAddr;
+    use tokio_postgres::types::{Kind, Type};
 
-    // Try common types that have Display implementations.
-    // Each attempt checks if the column can be decoded as that Rust type.
-
-    // TIMESTAMP / TIMESTAMPTZ
-    if let Ok(Some(val)) = row.try_get::<_, Option<chrono::NaiveDateTime>>(index) {
-        return CellValue::Timestamp(val.to_string());
-    }
-    if let Ok(Some(val)) = row.try_get::<_, Option<chrono::DateTime<chrono::Utc>>>(index) {
-        return CellValue::Timestamp(val.to_string());
+    if let Kind::Domain(ref base_type) = *col_type.kind() {
+        return pg_value_to_cell(row, index, base_type);
     }
 
-    // DATE
-    if let Ok(Some(val)) = row.try_get::<_, Option<chrono::NaiveDate>>(index) {
-        return CellValue::Date(val.to_string());
+    match row.try_get::<_, Option<RawPgBytes>>(index) {
+        Ok(None) => CellValue::Null,
+        Err(_) => CellValue::Text(format!("<{}>", col_type.name())),
+        Ok(Some(raw)) => {
+            let bytes = &raw.0;
+            match *col_type {
+                Type::INTERVAL => decode_pg_interval(bytes)
+                    .map(CellValue::Text)
+                    .unwrap_or(CellValue::Text("<interval>".into())),
+                Type::MONEY => decode_pg_money(bytes)
+                    .map(CellValue::Text)
+                    .unwrap_or(CellValue::Text("<money>".into())),
+                Type::MACADDR | Type::MACADDR8 => CellValue::Text(decode_pg_macaddr(bytes)),
+                Type::BIT | Type::VARBIT => CellValue::Text(decode_pg_bit(bytes)),
+                Type::CIDR => decode_pg_cidr(bytes)
+                    .map(CellValue::Text)
+                    .unwrap_or(CellValue::Text("<cidr>".into())),
+                Type::TIMETZ => decode_pg_timetz(bytes)
+                    .map(CellValue::Time)
+                    .unwrap_or(CellValue::Text("<timetz>".into())),
+                Type::POINT => decode_pg_point(bytes)
+                    .map(CellValue::Text)
+                    .unwrap_or(CellValue::Text("<point>".into())),
+                Type::LINE => decode_pg_line(bytes)
+                    .map(CellValue::Text)
+                    .unwrap_or(CellValue::Text("<line>".into())),
+                Type::LSEG | Type::BOX => decode_pg_two_points(bytes)
+                    .map(CellValue::Text)
+                    .unwrap_or(CellValue::Text(format!("<{}>", col_type.name()))),
+                Type::CIRCLE => decode_pg_circle(bytes)
+                    .map(CellValue::Text)
+                    .unwrap_or(CellValue::Text("<circle>".into())),
+                _ => {
+                    if matches!(col_type.kind(), Kind::Enum(_)) {
+                        if let Ok(text) = String::from_utf8(bytes.clone()) {
+                            return CellValue::Text(text);
+                        }
+                    }
+                    let fallback_type_name = col_type.name();
+                    if fallback_type_name == "jsonb" && bytes.first() == Some(&1) {
+                        if let Ok(text) = String::from_utf8(bytes[1..].to_vec()) {
+                            return CellValue::Json(text);
+                        }
+                    } else if fallback_type_name == "json" {
+                        if let Ok(text) = String::from_utf8(bytes.to_vec()) {
+                            return CellValue::Json(text);
+                        }
+                    }
+                    match String::from_utf8(bytes.clone()) {
+                        Ok(text) => CellValue::Text(text),
+                        Err(error) => CellValue::Blob(error.into_bytes()),
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn decode_pg_interval(bytes: &[u8]) -> Option<String> {
+    let microseconds = i64::from_be_bytes(bytes.get(0..8)?.try_into().ok()?);
+    let days = i32::from_be_bytes(bytes.get(8..12)?.try_into().ok()?);
+    let months = i32::from_be_bytes(bytes.get(12..16)?.try_into().ok()?);
+
+    let mut parts = Vec::new();
+
+    let years = months / 12;
+    let remaining_months = months % 12;
+
+    if years != 0 {
+        if years.abs() == 1 {
+            parts.push(format!("{} year", years));
+        } else {
+            parts.push(format!("{} years", years));
+        }
+    }
+    if remaining_months != 0 {
+        if remaining_months.abs() == 1 {
+            parts.push(format!("{} mon", remaining_months));
+        } else {
+            parts.push(format!("{} mons", remaining_months));
+        }
+    }
+    if days != 0 {
+        if days.abs() == 1 {
+            parts.push(format!("{} day", days));
+        } else {
+            parts.push(format!("{} days", days));
+        }
     }
 
-    // TIME
-    if let Ok(Some(val)) = row.try_get::<_, Option<chrono::NaiveTime>>(index) {
-        return CellValue::Time(val.to_string());
+    if microseconds != 0 || parts.is_empty() {
+        let negative = microseconds < 0;
+        let abs_micros = microseconds.unsigned_abs();
+        let total_seconds = abs_micros / 1_000_000;
+        let remaining_micros = abs_micros % 1_000_000;
+        let hours = total_seconds / 3600;
+        let minutes = (total_seconds % 3600) / 60;
+        let seconds = total_seconds % 60;
+
+        let sign = if negative { "-" } else { "" };
+        if remaining_micros != 0 {
+            parts.push(format!(
+                "{}{:02}:{:02}:{:02}.{:06}",
+                sign, hours, minutes, seconds, remaining_micros
+            ));
+        } else {
+            parts.push(format!("{}{:02}:{:02}:{:02}", sign, hours, minutes, seconds));
+        }
     }
 
-    // UUID
-    if let Ok(Some(val)) = row.try_get::<_, Option<uuid::Uuid>>(index) {
-        return CellValue::Uuid(val.to_string());
-    }
+    Some(parts.join(" "))
+}
 
-    // JSON / JSONB
-    if let Ok(Some(val)) = row.try_get::<_, Option<serde_json::Value>>(index) {
-        return CellValue::Json(val.to_string());
+fn decode_pg_money(bytes: &[u8]) -> Option<String> {
+    let cents = i64::from_be_bytes(bytes.get(0..8)?.try_into().ok()?);
+    let dollars = cents / 100;
+    let remaining = (cents % 100).unsigned_abs();
+    if cents < 0 {
+        Some(format!("-{}.{:02}", dollars.abs(), remaining))
+    } else {
+        Some(format!("{}.{:02}", dollars, remaining))
     }
+}
 
-    // INET / CIDR
-    if let Ok(Some(val)) = row.try_get::<_, Option<IpAddr>>(index) {
-        return CellValue::Text(val.to_string());
+fn decode_pg_macaddr(bytes: &[u8]) -> String {
+    bytes
+        .iter()
+        .map(|byte| format!("{:02x}", byte))
+        .collect::<Vec<_>>()
+        .join(":")
+}
+
+fn decode_pg_bit(bytes: &[u8]) -> String {
+    let bit_count = match bytes.get(0..4) {
+        Some(slice) => match <[u8; 4]>::try_from(slice) {
+            Ok(array) => i32::from_be_bytes(array) as usize,
+            Err(_) => return String::new(),
+        },
+        None => return String::new(),
+    };
+    let data = &bytes[4..];
+    let mut result = String::with_capacity(bit_count);
+    for index in 0..bit_count {
+        let byte_index = index / 8;
+        let bit_index = 7 - (index % 8);
+        if byte_index < data.len() {
+            result.push(if data[byte_index] & (1 << bit_index) != 0 {
+                '1'
+            } else {
+                '0'
+            });
+        }
     }
+    result
+}
 
-    // MAC address as bytes
-    match row.try_get::<_, Option<Vec<u8>>>(index) {
-        Ok(Some(val)) => return CellValue::Blob(val),
-        Ok(None) => return CellValue::Null,
-        Err(_) => {}
-    }
+fn decode_pg_cidr(bytes: &[u8]) -> Option<String> {
+    let family = *bytes.first()?;
+    let mask_length = *bytes.get(1)?;
+    let address_length = *bytes.get(3)? as usize;
+    let address_bytes = bytes.get(4..4 + address_length)?;
 
-    CellValue::Text(format!("<{}>", _col_type.name()))
+    let address = if family == 2 && address_length == 4 {
+        format!(
+            "{}.{}.{}.{}",
+            address_bytes[0], address_bytes[1], address_bytes[2], address_bytes[3]
+        )
+    } else if family == 3 && address_length == 16 {
+        let parts: Vec<String> = address_bytes
+            .chunks(2)
+            .map(|chunk| {
+                if chunk.len() == 2 {
+                    format!("{:02x}{:02x}", chunk[0], chunk[1])
+                } else {
+                    format!("{:02x}", chunk[0])
+                }
+            })
+            .collect();
+        parts.join(":")
+    } else {
+        return None;
+    };
+
+    Some(format!("{}/{}", address, mask_length))
+}
+
+fn decode_pg_timetz(bytes: &[u8]) -> Option<String> {
+    let microseconds = i64::from_be_bytes(bytes.get(0..8)?.try_into().ok()?);
+    let timezone_offset = i32::from_be_bytes(bytes.get(8..12)?.try_into().ok()?);
+
+    let total_seconds = microseconds / 1_000_000;
+    let remaining_micros = (microseconds % 1_000_000) as u64;
+    let hours = total_seconds / 3600;
+    let minutes = (total_seconds % 3600) / 60;
+    let seconds = total_seconds % 60;
+
+    let timezone_hours = -timezone_offset / 3600;
+    let timezone_minutes = ((-timezone_offset) % 3600).abs() / 60;
+
+    let time_str = if remaining_micros > 0 {
+        format!(
+            "{:02}:{:02}:{:02}.{:06}",
+            hours, minutes, seconds, remaining_micros
+        )
+    } else {
+        format!("{:02}:{:02}:{:02}", hours, minutes, seconds)
+    };
+
+    Some(format!(
+        "{}{:+03}:{:02}",
+        time_str, timezone_hours, timezone_minutes
+    ))
+}
+
+fn decode_pg_point(bytes: &[u8]) -> Option<String> {
+    let x = f64::from_be_bytes(bytes.get(0..8)?.try_into().ok()?);
+    let y = f64::from_be_bytes(bytes.get(8..16)?.try_into().ok()?);
+    Some(format!("({},{})", x, y))
+}
+
+fn decode_pg_line(bytes: &[u8]) -> Option<String> {
+    let a = f64::from_be_bytes(bytes.get(0..8)?.try_into().ok()?);
+    let b = f64::from_be_bytes(bytes.get(8..16)?.try_into().ok()?);
+    let c = f64::from_be_bytes(bytes.get(16..24)?.try_into().ok()?);
+    Some(format!("{{{},{},{}}}", a, b, c))
+}
+
+fn decode_pg_two_points(bytes: &[u8]) -> Option<String> {
+    let x1 = f64::from_be_bytes(bytes.get(0..8)?.try_into().ok()?);
+    let y1 = f64::from_be_bytes(bytes.get(8..16)?.try_into().ok()?);
+    let x2 = f64::from_be_bytes(bytes.get(16..24)?.try_into().ok()?);
+    let y2 = f64::from_be_bytes(bytes.get(24..32)?.try_into().ok()?);
+    Some(format!("({},{}),({},{})", x1, y1, x2, y2))
+}
+
+fn decode_pg_circle(bytes: &[u8]) -> Option<String> {
+    let x = f64::from_be_bytes(bytes.get(0..8)?.try_into().ok()?);
+    let y = f64::from_be_bytes(bytes.get(8..16)?.try_into().ok()?);
+    let radius = f64::from_be_bytes(bytes.get(16..24)?.try_into().ok()?);
+    Some(format!("<({},{}),{}>", x, y, radius))
 }
 
 fn fetch_sqlite_columns(connection: &Connection, table_name: &str) -> Result<Vec<ColumnInfo>> {
@@ -2248,7 +2720,7 @@ mod tests {
         assert_eq!(users.columns[1].name, "name");
         assert!(!users.columns[1].nullable);
         assert_eq!(users.row_count, Some(3));
-        assert!(!users.is_virtual);
+        assert_eq!(users.table_kind, TableKind::Table);
         assert_eq!(users.indexes.len(), 1);
         assert_eq!(users.indexes[0].name, "idx_users_name");
 

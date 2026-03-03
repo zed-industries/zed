@@ -231,10 +231,10 @@ pub fn generate_ddl_from_schema(schema: &DatabaseSchema) -> String {
 }
 
 pub fn generate_table_ddl(table: &TableInfo, output: &mut String) {
-    let keyword = if table.is_virtual {
-        "CREATE VIEW"
-    } else {
-        "CREATE TABLE"
+    let keyword = match table.table_kind {
+        crate::schema::TableKind::View => "CREATE VIEW",
+        crate::schema::TableKind::MaterializedView => "CREATE MATERIALIZED VIEW",
+        _ => "CREATE TABLE",
     };
 
     let escaped_name = table.name.replace('"', "\"\"");
@@ -710,7 +710,7 @@ mod tests {
             }],
             foreign_keys: vec![],
             row_count: Some(100),
-            is_virtual: false,
+            table_kind: crate::schema::TableKind::Table,
             ddl: None,
         }
     }
@@ -754,7 +754,7 @@ mod tests {
                 to_column: "id".to_string(),
             }],
             row_count: None,
-            is_virtual: false,
+            table_kind: crate::schema::TableKind::Table,
             ddl: None,
         };
         let mut output = String::new();
@@ -809,7 +809,7 @@ mod tests {
             indexes: vec![],
             foreign_keys: vec![],
             row_count: None,
-            is_virtual: true,
+            table_kind: crate::schema::TableKind::View,
             ddl: None,
         };
         let mut output = String::new();
