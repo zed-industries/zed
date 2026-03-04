@@ -112,6 +112,7 @@ impl Mercury {
                 },
                 in_open_source_repo: false,
                 can_collect_data: false,
+                repo_url: None,
             };
 
             let prompt = build_prompt(&inputs);

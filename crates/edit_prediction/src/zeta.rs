@@ -64,6 +64,18 @@ pub fn request_prediction_with_zeta(
         .map(|file| -> Arc<Path> { file.full_path(cx).into() })
         .unwrap_or_else(|| Arc::from(Path::new("untitled")));
 
+    let repo_url = if can_collect_data {
+        let buffer_id = buffer.read(cx).remote_id();
+        project
+            .read(cx)
+            .git_store()
+            .read(cx)
+            .repository_and_path_for_buffer_id(buffer_id, cx)
+            .and_then(|(repo, _)| repo.read(cx).default_remote_url())
+    } else {
+        None
+    };
+
     let client = store.client.clone();
     let llm_token = store.llm_token.clone();
     let organization_id = store
@@ -91,6 +103,7 @@ pub fn request_prediction_with_zeta(
                 preferred_experiment,
                 is_open_source,
                 can_collect_data,
+                repo_url,
             );
 
             if prompt_input_contains_special_tokens(&prompt_input, zeta_version) {
@@ -391,6 +404,7 @@ pub fn zeta2_prompt_input(
     preferred_experiment: Option<String>,
     is_open_source: bool,
     can_collect_data: bool,
+    repo_url: Option<String>,
 ) -> (Range<usize>, zeta_prompt::ZetaPromptInput) {
     let cursor_point = cursor_offset.to_point(snapshot);
 
@@ -422,6 +436,7 @@ pub fn zeta2_prompt_input(
         experiment: preferred_experiment,
         in_open_source_repo: is_open_source,
         can_collect_data,
+        repo_url,
     };
     (full_context_offset_range, prompt_input)
 }
