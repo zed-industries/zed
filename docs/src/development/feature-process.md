@@ -37,9 +37,8 @@ Then include any relevant background or context that helps the team understand w
 
 ## 3. Map the Integration Surface
 
-Zed has a lot of features, and many of them interact with each other. Before you start building, walk through the sections below and ask: "Does my feature touch this?" Not every feature touches every area — but every feature touches more areas than you initially think.
+Zed has a lot of features, and many of them interact with each other. Before you start building, walk through the sections below and ask: "Does my feature involve this system or could use this UI?"
 
-For each area that applies, mark it and write a brief note on what the interaction looks like. For areas that don't apply, mark them N/A so reviewers know you considered them rather than forgot.
 
 ### Where does it live in the UI?
 
