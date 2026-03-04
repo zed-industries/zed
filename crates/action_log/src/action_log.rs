@@ -1,14 +1,20 @@
 use anyhow::{Context as _, Result};
 use buffer_diff::BufferDiff;
 use clock;
-use collections::BTreeMap;
+use collections::{BTreeMap, HashMap};
+use fs::MTime;
 use futures::{FutureExt, StreamExt, channel::mpsc};
 use gpui::{
     App, AppContext, AsyncApp, Context, Entity, SharedString, Subscription, Task, WeakEntity,
 };
 use language::{Anchor, Buffer, BufferEvent, Point, ToOffset, ToPoint};
 use project::{Project, ProjectItem, lsp_store::OpenLspBufferHandle};
-use std::{cmp, ops::Range, sync::Arc};
+use std::{
+    cmp,
+    ops::Range,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 use text::{Edit, Patch, Rope};
 use util::{RangeExt, ResultExt as _};
 
@@ -54,6 +60,8 @@ pub struct ActionLog {
     linked_action_log: Option<Entity<ActionLog>>,
     /// Stores undo information for the most recent reject operation
     last_reject_undo: Option<LastRejectUndo>,
+    /// Tracks the last time files were read by the agent, to detect external modifications
+    file_read_times: HashMap<PathBuf, MTime>,
 }
 
 impl ActionLog {
@@ -64,6 +72,7 @@ impl ActionLog {
             project,
             linked_action_log: None,
             last_reject_undo: None,
+            file_read_times: HashMap::default(),
         }
     }
 
@@ -74,6 +83,15 @@ impl ActionLog {
 
     pub fn project(&self) -> &Entity<Project> {
         &self.project
+    }
+
+    pub fn record_file_read_time(&mut self, path: PathBuf, mtime: MTime) {
+        // We don't send to the linked one so they don't share read times for files they never had in context
+        self.file_read_times.insert(path, mtime);
+    }
+
+    pub fn file_read_time(&self, path: &Path) -> Option<MTime> {
+        self.file_read_times.get(path).copied()
     }
 
     fn track_buffer_internal(

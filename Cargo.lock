@@ -76,6 +76,7 @@ dependencies = [
  "clock",
  "collections",
  "ctor",
+ "fs",
  "futures 0.3.31",
  "gpui",
  "indoc",
