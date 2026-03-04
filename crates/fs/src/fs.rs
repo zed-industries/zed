@@ -1005,20 +1005,14 @@ impl Fs for RealFs {
         }
 
         // Check if path is a symlink and follow the target parent
-        if let Some(mut target) = self.read_link(path).await.ok() {
-            log::trace!("watch symlink {path:?} -> {target:?}");
-            // Check if symlink target is relative path, if so make it absolute
-            if target.is_relative()
-                && let Some(parent) = path.parent()
-            {
-                target = parent.join(target);
-                if let Ok(canonical) = self.canonicalize(&target).await {
-                    target = SanitizedPath::new(&canonical).as_path().to_path_buf();
+        if let Ok(canonical) = self.canonicalize(path).await {
+            let target = SanitizedPath::new(&canonical).as_path().to_path_buf();
+            if target != path {
+                log::trace!("watch resolved path {path:?} -> {target:?}");
+                watcher.add(&target).ok();
+                if let Some(parent) = target.parent() {
+                    watcher.add(parent).log_err();
                 }
-            }
-            watcher.add(&target).ok();
-            if let Some(parent) = target.parent() {
-                watcher.add(parent).log_err();
             }
         }
 
