@@ -545,10 +545,11 @@ impl MultiBuffer {
             })
         }
         drop(cursor);
-        snapshot.excerpts = new_excerpts;
         if changed_trailing_excerpt {
             snapshot.trailing_excerpt_update_count += 1;
+            new_excerpts.update_last(|excerpt| excerpt.has_trailing_newline = false, ())
         }
+        snapshot.excerpts = new_excerpts;
 
         let edits =
             Self::sync_diff_transforms(&mut snapshot, vec![edit], DiffChangeKind::BufferEdited);

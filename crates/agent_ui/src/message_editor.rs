@@ -1645,7 +1645,7 @@ mod tests {
             completion_provider.completions(
                 excerpt_id,
                 &buffer,
-                text::Anchor::MAX,
+                text::Anchor::max_for_buffer(buffer.read(cx).remote_id()),
                 CompletionContext {
                     trigger_kind: CompletionTriggerKind::TRIGGER_CHARACTER,
                     trigger_character: Some("@".into()),

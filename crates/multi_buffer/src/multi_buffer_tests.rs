@@ -3623,6 +3623,7 @@ async fn test_summaries_for_anchors(cx: &mut TestAppContext) {
     });
     cx.run_until_parked();
 
+    dbg!("BEFORE");
     let multibuffer = cx.new(|cx| {
         let mut multibuffer = MultiBuffer::new(Capability::ReadWrite);
         multibuffer.set_all_diff_hunks_expanded(cx);
@@ -3645,10 +3646,12 @@ async fn test_summaries_for_anchors(cx: &mut TestAppContext) {
         multibuffer
     });
 
+    dbg!("BEFORE");
     let (mut snapshot, mut subscription) = multibuffer.update(cx, |multibuffer, cx| {
         (multibuffer.snapshot(cx), multibuffer.subscribe())
     });
 
+    dbg!("BEFORE");
     assert_new_snapshot(
         &multibuffer,
         &mut snapshot,
@@ -3665,6 +3668,7 @@ async fn test_summaries_for_anchors(cx: &mut TestAppContext) {
         ),
     );
 
+    dbg!("BEFORE");
     let anchor_1 = multibuffer.read_with(cx, |multibuffer, cx| {
         multibuffer
             .buffer_anchor_to_anchor(
@@ -3674,9 +3678,11 @@ async fn test_summaries_for_anchors(cx: &mut TestAppContext) {
             )
             .unwrap()
     });
+    dbg!("BEFORE");
     let point_1 = snapshot.summaries_for_anchors::<Point, _>([&anchor_1])[0];
     assert_eq!(point_1, Point::new(0, 0));
 
+    dbg!("BEFORE");
     let anchor_2 = multibuffer.read_with(cx, |multibuffer, cx| {
         multibuffer
             .buffer_anchor_to_anchor(
@@ -3686,7 +3692,9 @@ async fn test_summaries_for_anchors(cx: &mut TestAppContext) {
             )
             .unwrap()
     });
+    dbg!("BEFORE");
     let point_2 = snapshot.summaries_for_anchors::<Point, _>([&anchor_2])[0];
+    dbg!("AFTER");
     assert_eq!(point_2, Point::new(3, 0));
 }
 

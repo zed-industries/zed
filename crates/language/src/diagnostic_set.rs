@@ -326,23 +326,17 @@ impl DiagnosticEntry<Anchor> {
     }
 }
 
-impl Default for Summary {
-    fn default() -> Self {
-        Self {
-            start: Anchor::MIN,
-            end: Anchor::MAX,
-            min_start: Anchor::MAX,
-            max_end: Anchor::MIN,
-            count: 0,
-        }
-    }
-}
-
 impl sum_tree::Summary for Summary {
     type Context<'a> = &'a text::BufferSnapshot;
 
-    fn zero(_cx: Self::Context<'_>) -> Self {
-        Default::default()
+    fn zero(buffer: &text::BufferSnapshot) -> Self {
+        Self {
+            start: Anchor::min_for_buffer(buffer.remote_id()),
+            end: Anchor::max_for_buffer(buffer.remote_id()),
+            min_start: Anchor::max_for_buffer(buffer.remote_id()),
+            max_end: Anchor::min_for_buffer(buffer.remote_id()),
+            count: 0,
+        }
     }
 
     fn add_summary(&mut self, other: &Self, buffer: Self::Context<'_>) {

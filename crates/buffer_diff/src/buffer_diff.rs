@@ -158,9 +158,9 @@ impl sum_tree::Item for PendingHunk {
 impl sum_tree::Summary for DiffHunkSummary {
     type Context<'a> = &'a text::BufferSnapshot;
 
-    fn zero(_cx: Self::Context<'_>) -> Self {
+    fn zero(buffer: &text::BufferSnapshot) -> Self {
         DiffHunkSummary {
-            buffer_range: Anchor::MIN..Anchor::MIN,
+            buffer_range: Anchor::min_min_range_for_buffer(buffer.remote_id()),
             diff_base_byte_range: 0..0,
         }
     }
@@ -1614,7 +1614,7 @@ impl BufferDiff {
     ) {
         let hunks = self
             .snapshot(cx)
-            .hunks_intersecting_range(Anchor::MIN..Anchor::MAX, buffer)
+            .hunks_intersecting_range(Anchor::min_max_range_for_buffer(buffer.remote_id()), buffer)
             .collect::<Vec<_>>();
         let Some(secondary) = self.secondary_diff.clone() else {
             return;

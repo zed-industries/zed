@@ -23412,7 +23412,7 @@ async fn test_display_diff_hunks(cx: &mut TestAppContext) {
             multibuffer.set_excerpts_for_path(
                 PathKey::with_sort_prefix(0, buffer.read(cx).file().unwrap().path().clone()),
                 buffer.clone(),
-                vec![text::Anchor::MIN.to_point(&snapshot)..text::Anchor::MAX.to_point(&snapshot)],
+                vec![Point::zero()..snapshot.max_point()],
                 2,
                 cx,
             );

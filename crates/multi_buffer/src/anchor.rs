@@ -10,29 +10,12 @@ use std::{
     ops::{Add, AddAssign, Range, Sub},
 };
 use sum_tree::Bias;
-use text::BufferId;
 
 /// A multibuffer anchor derived from an anchor into a specific excerpted buffer.
 #[derive(Clone, Copy, Eq, PartialEq, Hash)]
 pub struct ExcerptAnchor {
-    /// The position within the excerpt's underlying buffer. This is a stable
-    /// reference that remains valid as the buffer text is edited.
-    pub(crate) timestamp: clock::Lamport,
-
-    /// The byte offset into the text inserted in the operation
-    /// at `timestamp`.
-    pub(crate) offset: u32,
-    /// Whether this anchor stays attached to the character *before* or *after*
-    /// the offset.
-    pub(crate) bias: Bias,
-    pub(crate) buffer_id: BufferId,
-    /// Refers to the path key that the buffer had when this anchor was created,
-    /// so that ordering is stable when the path key for a buffer changes
+    pub(crate) text_anchor: text::Anchor,
     pub(crate) path: PathKeyIndex,
-    /// When present, indicates this anchor points into deleted text within an
-    /// expanded diff hunk. The anchor references a position in the diff base
-    /// (original) text rather than the current buffer text. This is used when
-    /// displaying inline diffs where deleted lines are shown.
     pub(crate) diff_base_anchor: Option<text::Anchor>,
 }
 
@@ -50,7 +33,7 @@ pub enum Anchor {
 impl std::fmt::Debug for ExcerptAnchor {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Anchor")
-            .field("text_anchor", &self.text_anchor())
+            .field("text_anchor", &self.text_anchor)
             .field("diff_base_anchor", &self.diff_base_anchor)
             .finish()
     }
@@ -86,7 +69,7 @@ impl From<ExcerptAnchor> for Anchor {
 
 impl ExcerptAnchor {
     pub(crate) fn text_anchor(&self) -> text::Anchor {
-        text::Anchor::new(self.timestamp, self.offset, self.bias, Some(self.buffer_id))
+        self.text_anchor
     }
 
     pub(crate) fn with_diff_base_anchor(mut self, diff_base_anchor: text::Anchor) -> Self {
@@ -109,8 +92,8 @@ impl ExcerptAnchor {
         // in the case that you removed the buffer containing self,
         // and added the buffer containing other with the same path key
         // (ordering is arbitrary but consistent)
-        if self.buffer_id != other.buffer_id {
-            return self.buffer_id.cmp(&other.buffer_id);
+        if self.text_anchor.buffer_id != other.text_anchor.buffer_id {
+            return self.text_anchor.buffer_id.cmp(&other.text_anchor.buffer_id);
         }
 
         let Some(buffer) = snapshot.buffer_for_path(&self_path_key) else {
@@ -124,7 +107,7 @@ impl ExcerptAnchor {
         if (self.diff_base_anchor.is_some() || other.diff_base_anchor.is_some())
             && let Some(base_text) = snapshot
                 .diffs
-                .get(&self.buffer_id)
+                .get(&self.text_anchor.buffer_id)
                 .map(|diff| diff.base_text())
         {
             let self_anchor = self.diff_base_anchor.filter(|a| a.is_valid(base_text));
@@ -147,16 +130,16 @@ impl ExcerptAnchor {
     }
 
     fn bias_left(&self, snapshot: &MultiBufferSnapshot) -> Self {
-        if self.bias == Bias::Left {
+        if self.text_anchor.bias == Bias::Left {
             return *self;
         }
-        let Some(buffer) = snapshot.buffer_for_id(self.buffer_id) else {
+        let Some(buffer) = snapshot.buffer_for_id(self.text_anchor.buffer_id) else {
             return *self;
         };
         let text_anchor = self.text_anchor().bias_left(&buffer);
         let ret = Self::in_buffer(self.path, text_anchor);
         if let Some(diff_base_anchor) = self.diff_base_anchor {
-            if let Some(diff) = snapshot.diffs.get(&self.buffer_id)
+            if let Some(diff) = snapshot.diffs.get(&self.text_anchor.buffer_id)
                 && diff_base_anchor.is_valid(&diff.base_text())
             {
                 ret.with_diff_base_anchor(diff_base_anchor.bias_left(diff.base_text()))
@@ -169,16 +152,16 @@ impl ExcerptAnchor {
     }
 
     fn bias_right(&self, snapshot: &MultiBufferSnapshot) -> Self {
-        if self.bias == Bias::Right {
+        if self.text_anchor.bias == Bias::Right {
             return *self;
         }
-        let Some(buffer) = snapshot.buffer_for_id(self.buffer_id) else {
+        let Some(buffer) = snapshot.buffer_for_id(self.text_anchor.buffer_id) else {
             return *self;
         };
         let text_anchor = self.text_anchor().bias_right(&buffer);
         let ret = Self::in_buffer(self.path, text_anchor);
         if let Some(diff_base_anchor) = self.diff_base_anchor {
-            if let Some(diff) = snapshot.diffs.get(&self.buffer_id)
+            if let Some(diff) = snapshot.diffs.get(&self.text_anchor.buffer_id)
                 && diff_base_anchor.is_valid(&diff.base_text())
             {
                 ret.with_diff_base_anchor(diff_base_anchor.bias_right(diff.base_text()))
@@ -192,16 +175,10 @@ impl ExcerptAnchor {
 
     #[track_caller]
     pub(crate) fn in_buffer(path: PathKeyIndex, text_anchor: text::Anchor) -> Self {
-        let Some(buffer_id) = text_anchor.buffer_id else {
-            panic!("text_anchor must have a buffer_id");
-        };
         ExcerptAnchor {
             path,
             diff_base_anchor: None,
-            timestamp: text_anchor.timestamp(),
-            buffer_id,
-            offset: text_anchor.offset,
-            bias: text_anchor.bias,
+            text_anchor,
         }
     }
 
@@ -214,7 +191,7 @@ impl ExcerptAnchor {
         let Some(excerpt) = cursor.item() else {
             return false;
         };
-        excerpt.buffer_id == self.buffer_id
+        excerpt.buffer_id == self.text_anchor.buffer_id
             && excerpt
                 .range
                 .context
@@ -291,7 +268,7 @@ impl Anchor {
         match self {
             Anchor::Min => Bias::Left,
             Anchor::Max => Bias::Right,
-            Anchor::Excerpt(anchor) => anchor.bias,
+            Anchor::Excerpt(anchor) => anchor.text_anchor.bias,
         }
     }
 

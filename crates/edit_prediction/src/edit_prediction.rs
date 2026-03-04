@@ -1995,7 +1995,10 @@ impl EditPredictionStore {
         cx: &mut AsyncApp,
     ) -> Result<Option<(Entity<Buffer>, language::Anchor)>> {
         let collaborator_cursor_rows: Vec<u32> = active_buffer_snapshot
-            .selections_in_range(Anchor::MIN..Anchor::MAX, false)
+            .selections_in_range(
+                Anchor::min_max_range_for_buffer(active_buffer_snapshot.remote_id()),
+                false,
+            )
             .flat_map(|(_, _, _, selections)| {
                 selections.map(|s| s.head().to_point(active_buffer_snapshot).row)
             })
@@ -2071,7 +2074,10 @@ impl EditPredictionStore {
                     candidate_buffer.read_with(cx, |buffer, _cx| {
                         let snapshot = buffer.snapshot();
                         let has_collaborators = snapshot
-                            .selections_in_range(Anchor::MIN..Anchor::MAX, false)
+                            .selections_in_range(
+                                Anchor::max_max_range_for_buffer(snapshot.remote_id()),
+                                false,
+                            )
                             .next()
                             .is_some();
                         let position = buffer

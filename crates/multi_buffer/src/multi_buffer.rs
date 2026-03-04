@@ -801,7 +801,7 @@ impl ExcerptRange<text::Anchor> {
 #[derive(Clone, Debug)]
 pub struct ExcerptSummary {
     path_key: PathKey,
-    max_anchor: text::Anchor,
+    max_anchor: Option<text::Anchor>,
     widest_line_number: u32,
     text: MBTextSummary,
     count: usize,
@@ -811,7 +811,7 @@ impl ExcerptSummary {
     pub fn min() -> Self {
         ExcerptSummary {
             path_key: PathKey::min(),
-            max_anchor: text::Anchor::MIN,
+            max_anchor: None,
             widest_line_number: 0,
             text: MBTextSummary::default(),
             count: 0,
@@ -1660,7 +1660,7 @@ impl MultiBuffer {
                         .start
                         .excerpt_anchor()
                         .map(|excerpt_anchor| excerpt_anchor.text_anchor())
-                        .unwrap_or(text::Anchor::MIN),
+                        .unwrap_or(text::Anchor::min_for_buffer(excerpt.buffer_id)),
                     buffer,
                 )
                 .clone();
@@ -1670,7 +1670,7 @@ impl MultiBuffer {
                         .end
                         .excerpt_anchor()
                         .map(|excerpt_anchor| excerpt_anchor.text_anchor())
-                        .unwrap_or(text::Anchor::MAX),
+                        .unwrap_or(text::Anchor::max_for_buffer(excerpt.buffer_id)),
                     buffer,
                 )
                 .clone();
@@ -1842,7 +1842,7 @@ impl MultiBuffer {
     pub fn buffer_for_anchor(&self, anchor: Anchor, cx: &App) -> Option<Entity<Buffer>> {
         match anchor {
             Anchor::Min => Some(self.snapshot(cx).excerpts.first()?.buffer(self)),
-            Anchor::Excerpt(excerpt_anchor) => self.buffer(excerpt_anchor.buffer_id),
+            Anchor::Excerpt(excerpt_anchor) => self.buffer(excerpt_anchor.text_anchor.buffer_id),
             Anchor::Max => Some(self.snapshot(cx).excerpts.first()?.buffer(self)),
         }
     }
@@ -1935,14 +1935,14 @@ impl MultiBuffer {
         let mut futures = Vec::new();
         for anchor in anchors {
             if let Some(excerpt_anchor) = anchor.excerpt_anchor() {
-                if let Some(buffer) = self.buffers.get(&excerpt_anchor.buffer_id) {
+                if let Some(buffer) = self.buffers.get(&excerpt_anchor.text_anchor.buffer_id) {
                     buffer.buffer.update(cx, |buffer, _| {
                         futures.push(buffer.wait_for_anchors([excerpt_anchor.text_anchor()]))
                     });
                 } else {
                     error = Some(anyhow!(
                         "buffer {:?} is not part of this multi-buffer",
-                        excerpt_anchor.buffer_id
+                        excerpt_anchor.text_anchor.buffer_id
                     ));
                     break;
                 }
@@ -1966,7 +1966,11 @@ impl MultiBuffer {
     ) -> Option<(Entity<Buffer>, text::Anchor)> {
         let snapshot = self.read(cx);
         let anchor = snapshot.anchor_before(position).excerpt_anchor()?;
-        let buffer = self.buffers.get(&anchor.buffer_id)?.buffer.clone();
+        let buffer = self
+            .buffers
+            .get(&anchor.text_anchor.buffer_id)?
+            .buffer
+            .clone();
         Some((buffer, anchor.text_anchor()))
     }
 
@@ -3591,13 +3595,8 @@ impl MultiBufferSnapshot {
         let mut anchors = anchors.peekable();
         let mut cursor = self.excerpts.cursor::<ExcerptSummary>(());
         'anchors: while let Some(anchor) = anchors.peek() {
-            let Some(buffer_id) = anchor.buffer_id else {
-                anchors.next();
-                result.push(None);
-                continue 'anchors;
-            };
-            let mut same_buffer_anchors =
-                anchors.peeking_take_while(|a| a.buffer_id.is_some_and(|b| buffer_id == b));
+            let buffer_id = anchor.buffer_id;
+            let mut same_buffer_anchors = anchors.peeking_take_while(|a| a.buffer_id == buffer_id);
 
             if let Some(buffer) = self.buffers.get(&buffer_id) {
                 let path = &buffer.path_key;
@@ -4920,7 +4919,7 @@ impl MultiBufferSnapshot {
 
             // A right-biased anchor at a transform boundary belongs to the
             // *next* transform, so advance past the current one.
-            if anchor.bias == Bias::Right && at_transform_end {
+            if anchor.text_anchor.bias == Bias::Right && at_transform_end {
                 diff_transforms.next();
                 continue;
             }
@@ -5074,6 +5073,7 @@ impl MultiBufferSnapshot {
 
         let mut summaries = Vec::new();
         while let Some(anchor) = anchors.peek() {
+            dbg!(&anchor);
             let target = anchor.seek_target(self);
             let excerpt_anchor = match anchor {
                 Anchor::Min => {
@@ -5121,6 +5121,7 @@ impl MultiBufferSnapshot {
                             if !excerpt.contains(&excerpt_anchor, self) {
                                 return None;
                             }
+                            anchors.next();
                             Some((excerpt_anchor.text_anchor(), excerpt_anchor))
                         }),
                     )
@@ -5304,10 +5305,7 @@ impl MultiBufferSnapshot {
     /// Wraps the [`text::Anchor`] in a [`crate::Anchor`] if this multi-buffer is a singleton.
     pub fn as_singleton_anchor(&self, text_anchor: text::Anchor) -> Option<Anchor> {
         let buffer = self.as_singleton()?;
-        if text_anchor
-            .buffer_id
-            .is_none_or(|id| id == buffer.remote_id())
-        {
+        if text_anchor.buffer_id == buffer.remote_id() {
             // todo!() bit hacky, but always right for singletons
             Some(Anchor::in_buffer(PathKeyIndex(0), text_anchor))
         } else {
@@ -6242,7 +6240,7 @@ impl MultiBufferSnapshot {
                     anchor
                         .excerpt_anchor()
                         .map(|anchor| anchor.text_anchor())
-                        .unwrap_or(text::Anchor::MIN),
+                        .unwrap_or(text::Anchor::min_for_buffer(buffer_snapshot.remote_id())),
                     theme,
                 )
                 .into_iter()
@@ -6376,7 +6374,7 @@ impl MultiBufferSnapshot {
     pub fn buffer_id_for_anchor(&self, anchor: Anchor) -> Option<BufferId> {
         match anchor {
             Anchor::Min => self.excerpts.first().map(|excerpt| excerpt.buffer_id),
-            Anchor::Excerpt(excerpt_anchor) => Some(excerpt_anchor.buffer_id),
+            Anchor::Excerpt(excerpt_anchor) => Some(excerpt_anchor.text_anchor.buffer_id),
             Anchor::Max => self.excerpts.last().map(|excerpt| excerpt.buffer_id),
         }
     }
@@ -7051,7 +7049,7 @@ impl Excerpt {
 
     pub(crate) fn contains(&self, anchor: &ExcerptAnchor, snapshot: &MultiBufferSnapshot) -> bool {
         self.path_key_index == anchor.path
-            && self.buffer_id == anchor.buffer_id
+            && self.buffer_id == anchor.text_anchor.buffer_id
             && self
                 .range
                 .contains(&anchor.text_anchor(), self.buffer_snapshot(snapshot))
@@ -7245,7 +7243,7 @@ impl sum_tree::Item for Excerpt {
         }
         ExcerptSummary {
             path_key: self.path_key.clone(),
-            max_anchor: self.range.context.end,
+            max_anchor: Some(self.range.context.end),
             widest_line_number: self.max_buffer_row,
             text: text.into(),
             count: 1,
@@ -7372,14 +7370,13 @@ impl sum_tree::SeekTarget<'_, ExcerptSummary, ExcerptSummary> for AnchorSeekTarg
                     // the goal is that if you seek to buffer_id 1 (path key a)
                     // and you find that path key a now belongs to buffer_id 2,
                     // we'll seek past buffer_id 2.
-                    if let Some(buffer_id) = cursor_location.max_anchor.buffer_id
-                        && buffer_id != snapshot.remote_id()
+                    if cursor_location.max_anchor.map(|a| a.buffer_id) != Some(snapshot.remote_id())
                     {
                         Ordering::Greater
                     } else {
                         anchor
                             .text_anchor()
-                            .cmp(&cursor_location.max_anchor, snapshot)
+                            .cmp(&cursor_location.max_anchor.unwrap(), snapshot)
                     }
                 } else {
                     // shouldn't happen because we expect this buffer not to have any excerpts

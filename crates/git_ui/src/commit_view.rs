@@ -223,7 +223,11 @@ impl CommitView {
                     editor
                         .buffer()
                         .read(cx)
-                        .buffer_anchor_to_anchor(&message_buffer, Anchor::MAX, cx)
+                        .buffer_anchor_to_anchor(
+                            &message_buffer,
+                            Anchor::max_for_buffer(&message_buffer.read(cx).remote_id()),
+                            cx,
+                        )
                         .map(|anchor| BlockProperties {
                             placement: BlockPlacement::Below(anchor),
                             height: Some(1),
@@ -431,7 +435,9 @@ impl CommitView {
 
             let base_text = diff.base_text();
 
-            for hunk in diff.hunks_intersecting_range(Anchor::MIN..Anchor::MAX, buffer) {
+            for hunk in
+                diff.hunks_intersecting_range(Anchor::min_max_range_for_buffer(buffer_id), buffer)
+            {
                 let added_rows = hunk.range.end.row.saturating_sub(hunk.range.start.row);
                 total_additions += added_rows;
 

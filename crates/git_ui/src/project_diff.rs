@@ -559,7 +559,9 @@ impl ProjectDiff {
 
             let base_text = diff.base_text();
 
-            for hunk in diff.hunks_intersecting_range(Anchor::MIN..Anchor::MAX, buffer) {
+            for hunk in
+                diff.hunks_intersecting_range(Anchor::min_max_range_for_buffer(buffer_id), buffer)
+            {
                 let added_rows = hunk.range.end.row.saturating_sub(hunk.range.start.row);
                 total_additions += added_rows;
 

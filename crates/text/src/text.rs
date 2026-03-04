@@ -2413,7 +2413,7 @@ impl BufferSnapshot {
         } else if anchor.is_max() {
             self.visible_text.len()
         } else {
-            debug_assert_eq!(anchor.buffer_id, Some(self.remote_id));
+            debug_assert_eq!(anchor.buffer_id, self.remote_id);
             debug_assert!(
                 self.version.observed(anchor.timestamp()),
                 "Anchor timestamp {:?} not observed by buffer {:?}",
@@ -2445,7 +2445,7 @@ impl BufferSnapshot {
 
     #[cold]
     fn panic_bad_anchor(&self, anchor: &Anchor) -> ! {
-        if anchor.buffer_id.is_some_and(|id| id != self.remote_id) {
+        if anchor.buffer_id != self.remote_id {
             panic!(
                 "invalid anchor - buffer id does not match: anchor {anchor:?}; buffer id: {}, version: {:?}",
                 self.remote_id, self.version
@@ -2566,7 +2566,7 @@ impl BufferSnapshot {
                 fragment.timestamp,
                 fragment.insertion_offset + overshoot as u32,
                 bias,
-                Some(self.remote_id),
+                self.remote_id,
             )
         }
     }
@@ -2574,8 +2574,7 @@ impl BufferSnapshot {
     pub fn can_resolve(&self, anchor: &Anchor) -> bool {
         anchor.is_min()
             || anchor.is_max()
-            || (Some(self.remote_id) == anchor.buffer_id
-                && self.version.observed(anchor.timestamp()))
+            || (self.remote_id == anchor.buffer_id && self.version.observed(anchor.timestamp()))
     }
 
     pub fn clip_offset(&self, offset: usize, bias: Bias) -> usize {
@@ -2601,7 +2600,10 @@ impl BufferSnapshot {
     where
         D: TextDimension + Ord,
     {
-        self.edits_since_in_range(since, Anchor::MIN..Anchor::MAX)
+        self.edits_since_in_range(
+            since,
+            Anchor::min_for_buffer(self.remote_id)..Anchor::max_for_buffer(self.remote_id),
+        )
     }
 
     pub fn anchored_edits_since<'a, D>(
@@ -2611,7 +2613,10 @@ impl BufferSnapshot {
     where
         D: TextDimension + Ord,
     {
-        self.anchored_edits_since_in_range(since, Anchor::MIN..Anchor::MAX)
+        self.anchored_edits_since_in_range(
+            since,
+            Anchor::min_for_buffer(self.remote_id)..Anchor::max_for_buffer(self.remote_id),
+        )
     }
 
     pub fn edits_since_in_range<'a, D>(
@@ -2874,13 +2879,13 @@ impl<D: TextDimension + Ord, F: FnMut(&FragmentSummary) -> bool> Iterator for Ed
                 fragment.timestamp,
                 fragment.insertion_offset,
                 Bias::Right,
-                Some(self.buffer_id),
+                self.buffer_id,
             );
             let end_anchor = Anchor::new(
                 fragment.timestamp,
                 fragment.insertion_offset + fragment.len,
                 Bias::Left,
-                Some(self.buffer_id),
+                self.buffer_id,
             );
 
             if !fragment.was_visible(self.since, self.undos) && fragment.visible {

@@ -24,7 +24,7 @@ pub struct Anchor {
     /// Whether this anchor stays attached to the character *before* or *after*
     /// the offset.
     pub bias: Bias,
-    pub buffer_id: Option<BufferId>,
+    pub buffer_id: BufferId,
 }
 
 impl Debug for Anchor {
@@ -46,28 +46,7 @@ impl Debug for Anchor {
 }
 
 impl Anchor {
-    pub const MIN: Self = Self {
-        timestamp_replica_id: clock::Lamport::MIN.replica_id,
-        timestamp_value: clock::Lamport::MIN.value,
-        offset: u32::MIN,
-        bias: Bias::Left,
-        buffer_id: None,
-    };
-
-    pub const MAX: Self = Self {
-        timestamp_replica_id: clock::Lamport::MAX.replica_id,
-        timestamp_value: clock::Lamport::MAX.value,
-        offset: u32::MAX,
-        bias: Bias::Right,
-        buffer_id: None,
-    };
-
-    pub fn new(
-        timestamp: clock::Lamport,
-        offset: u32,
-        bias: Bias,
-        buffer_id: Option<BufferId>,
-    ) -> Self {
+    pub fn new(timestamp: clock::Lamport, offset: u32, bias: Bias, buffer_id: BufferId) -> Self {
         Self {
             timestamp_replica_id: timestamp.replica_id,
             timestamp_value: timestamp.value,
@@ -83,7 +62,7 @@ impl Anchor {
             timestamp_value: clock::Lamport::MIN.value,
             offset: u32::MIN,
             bias: Bias::Left,
-            buffer_id: Some(buffer_id),
+            buffer_id,
         }
     }
 
@@ -93,7 +72,7 @@ impl Anchor {
             timestamp_value: clock::Lamport::MAX.value,
             offset: u32::MAX,
             bias: Bias::Right,
-            buffer_id: Some(buffer_id),
+            buffer_id,
         }
     }
 
@@ -171,7 +150,7 @@ impl Anchor {
     pub fn is_valid(&self, buffer: &BufferSnapshot) -> bool {
         if self.is_min() || self.is_max() {
             true
-        } else if self.buffer_id.is_none_or(|id| id != buffer.remote_id) {
+        } else if self.buffer_id != buffer.remote_id {
             false
         } else {
             let Some(fragment_id) = buffer.try_fragment_id_for_anchor(self) else {
