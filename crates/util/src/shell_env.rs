@@ -159,16 +159,21 @@ async fn capture_windows(
                 zed_path.display()
             ),
         ]),
-        ShellKind::PowerShell | ShellKind::Pwsh => cmd.args([
-            "-NonInteractive",
-            "-NoProfile",
-            "-Command",
-            &format!(
-                "Set-Location '{}'; & '{}' --printenv",
-                directory.display(),
-                zed_path.display()
-            ),
-        ]),
+        ShellKind::PowerShell | ShellKind::Pwsh => {
+            let directory_string = directory.display().to_string();
+            let zed_path_string = zed_path.display().to_string();
+            let quoted_directory = ShellKind::quote_pwsh(&directory_string);
+            let quoted_zed_path = ShellKind::quote_pwsh(&zed_path_string);
+            cmd.args([
+                "-NonInteractive",
+                "-NoProfile",
+                "-Command",
+                &format!(
+                    "Set-Location {}; & {} --printenv",
+                    quoted_directory, quoted_zed_path
+                ),
+            ])
+        }
         ShellKind::Elvish => cmd.args([
             "-c",
             &format!(
