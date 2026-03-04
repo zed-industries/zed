@@ -1048,6 +1048,44 @@ mod tests {
         sidebar
     }
 
+    async fn save_n_test_threads(
+        count: u32,
+        path_list: &PathList,
+        cx: &mut gpui::VisualTestContext,
+    ) {
+        let thread_store = cx.update(|_window, cx| ThreadStore::global(cx));
+        for i in 0..count {
+            let save_task = thread_store.update(cx, |store, cx| {
+                store.save_thread(
+                    acp::SessionId::new(Arc::from(format!("thread-{}", i))),
+                    make_test_thread(
+                        &format!("Thread {}", i + 1),
+                        chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, i).unwrap(),
+                    ),
+                    path_list.clone(),
+                    cx,
+                )
+            });
+            save_task.await.unwrap();
+        }
+        cx.run_until_parked();
+    }
+
+    fn open_and_focus_sidebar(
+        sidebar: &Entity<Sidebar>,
+        multi_workspace: &Entity<MultiWorkspace>,
+        cx: &mut gpui::VisualTestContext,
+    ) {
+        multi_workspace.update_in(cx, |mw, window, cx| {
+            mw.toggle_sidebar(window, cx);
+        });
+        cx.run_until_parked();
+        sidebar.update_in(cx, |_, window, cx| {
+            cx.focus_self(window);
+        });
+        cx.run_until_parked();
+    }
+
     fn visible_entries_as_strings(
         sidebar: &Entity<Sidebar>,
         cx: &mut gpui::VisualTestContext,
@@ -1244,23 +1282,7 @@ mod tests {
         let sidebar = setup_sidebar(&multi_workspace, cx);
 
         let path_list = PathList::new(&[std::path::PathBuf::from("/my-project")]);
-        let thread_store = cx.update(|_window, cx| ThreadStore::global(cx));
-
-        for i in 0..12 {
-            let save_task = thread_store.update(cx, |store, cx| {
-                store.save_thread(
-                    acp::SessionId::new(Arc::from(format!("thread-{}", i))),
-                    make_test_thread(
-                        &format!("Thread {}", i + 1),
-                        chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, i).unwrap(),
-                    ),
-                    path_list.clone(),
-                    cx,
-                )
-            });
-            save_task.await.unwrap();
-        }
-        cx.run_until_parked();
+        save_n_test_threads(12, &path_list, cx).await;
 
         multi_workspace.update_in(cx, |_, _window, cx| cx.notify());
         cx.run_until_parked();
@@ -1287,28 +1309,14 @@ mod tests {
         let sidebar = setup_sidebar(&multi_workspace, cx);
 
         let path_list = PathList::new(&[std::path::PathBuf::from("/my-project")]);
-        let thread_store = cx.update(|_window, cx| ThreadStore::global(cx));
-
-        let save_task = thread_store.update(cx, |store, cx| {
-            store.save_thread(
-                acp::SessionId::new(Arc::from("test-thread")),
-                make_test_thread(
-                    "Test Thread",
-                    chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, 0).unwrap(),
-                ),
-                path_list.clone(),
-                cx,
-            )
-        });
-        save_task.await.unwrap();
-        cx.run_until_parked();
+        save_n_test_threads(1, &path_list, cx).await;
 
         multi_workspace.update_in(cx, |_, _window, cx| cx.notify());
         cx.run_until_parked();
 
         assert_eq!(
             visible_entries_as_strings(&sidebar, cx),
-            vec!["v [my-project]", "  Test Thread"]
+            vec!["v [my-project]", "  Thread 1"]
         );
 
         // Collapse
@@ -1330,7 +1338,7 @@ mod tests {
 
         assert_eq!(
             visible_entries_as_strings(&sidebar, cx),
-            vec!["v [my-project]", "  Test Thread"]
+            vec!["v [my-project]", "  Thread 1"]
         );
     }
 
@@ -1498,78 +1506,42 @@ mod tests {
         let sidebar = setup_sidebar(&multi_workspace, cx);
 
         let path_list = PathList::new(&[std::path::PathBuf::from("/my-project")]);
-        let thread_store = cx.update(|_window, cx| ThreadStore::global(cx));
-
-        for i in 0..3 {
-            let save_task = thread_store.update(cx, |store, cx| {
-                store.save_thread(
-                    acp::SessionId::new(Arc::from(format!("thread-{}", i))),
-                    make_test_thread(
-                        &format!("Thread {}", i + 1),
-                        chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, i).unwrap(),
-                    ),
-                    path_list.clone(),
-                    cx,
-                )
-            });
-            save_task.await.unwrap();
-        }
-        cx.run_until_parked();
+        save_n_test_threads(3, &path_list, cx).await;
 
         multi_workspace.update_in(cx, |_, _window, cx| cx.notify());
         cx.run_until_parked();
 
         // Entries: [header, thread3, thread2, thread1]
-        assert_eq!(sidebar.read_with(cx, |s, _| s.selection), None);
-
-        // SelectNext from None selects the first entry
-        sidebar.update_in(cx, |s, window, cx| {
-            s.select_next(&SelectNext, window, cx);
-        });
+        // Focusing the sidebar triggers focus_in, which selects the first entry
+        open_and_focus_sidebar(&sidebar, &multi_workspace, cx);
         assert_eq!(sidebar.read_with(cx, |s, _| s.selection), Some(0));
 
         // Move down through all entries
-        sidebar.update_in(cx, |s, window, cx| {
-            s.select_next(&SelectNext, window, cx);
-        });
+        cx.dispatch_action(SelectNext);
         assert_eq!(sidebar.read_with(cx, |s, _| s.selection), Some(1));
 
-        sidebar.update_in(cx, |s, window, cx| {
-            s.select_next(&SelectNext, window, cx);
-        });
+        cx.dispatch_action(SelectNext);
         assert_eq!(sidebar.read_with(cx, |s, _| s.selection), Some(2));
 
-        sidebar.update_in(cx, |s, window, cx| {
-            s.select_next(&SelectNext, window, cx);
-        });
+        cx.dispatch_action(SelectNext);
         assert_eq!(sidebar.read_with(cx, |s, _| s.selection), Some(3));
 
         // At the end, selection stays on the last entry
-        sidebar.update_in(cx, |s, window, cx| {
-            s.select_next(&SelectNext, window, cx);
-        });
+        cx.dispatch_action(SelectNext);
         assert_eq!(sidebar.read_with(cx, |s, _| s.selection), Some(3));
 
         // Move back up
-        sidebar.update_in(cx, |s, window, cx| {
-            s.select_previous(&SelectPrevious, window, cx);
-        });
+        cx.dispatch_action(SelectPrevious);
         assert_eq!(sidebar.read_with(cx, |s, _| s.selection), Some(2));
 
-        sidebar.update_in(cx, |s, window, cx| {
-            s.select_previous(&SelectPrevious, window, cx);
-        });
+        cx.dispatch_action(SelectPrevious);
         assert_eq!(sidebar.read_with(cx, |s, _| s.selection), Some(1));
 
-        sidebar.update_in(cx, |s, window, cx| {
-            s.select_previous(&SelectPrevious, window, cx);
-        });
+        cx.dispatch_action(SelectPrevious);
         assert_eq!(sidebar.read_with(cx, |s, _| s.selection), Some(0));
 
         // At the top, selection stays on the first entry
-        sidebar.update_in(cx, |s, window, cx| {
-            s.select_previous(&SelectPrevious, window, cx);
-        });
+        cx.dispatch_action(SelectPrevious);
         assert_eq!(sidebar.read_with(cx, |s, _| s.selection), Some(0));
     }
 
@@ -1581,36 +1553,18 @@ mod tests {
         let sidebar = setup_sidebar(&multi_workspace, cx);
 
         let path_list = PathList::new(&[std::path::PathBuf::from("/my-project")]);
-        let thread_store = cx.update(|_window, cx| ThreadStore::global(cx));
-
-        for i in 0..3 {
-            let save_task = thread_store.update(cx, |store, cx| {
-                store.save_thread(
-                    acp::SessionId::new(Arc::from(format!("thread-{}", i))),
-                    make_test_thread(
-                        &format!("Thread {}", i + 1),
-                        chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, i).unwrap(),
-                    ),
-                    path_list.clone(),
-                    cx,
-                )
-            });
-            save_task.await.unwrap();
-        }
-        cx.run_until_parked();
+        save_n_test_threads(3, &path_list, cx).await;
         multi_workspace.update_in(cx, |_, _window, cx| cx.notify());
         cx.run_until_parked();
 
+        open_and_focus_sidebar(&sidebar, &multi_workspace, cx);
+
         // SelectLast jumps to the end
-        sidebar.update_in(cx, |s, window, cx| {
-            s.select_last(&SelectLast, window, cx);
-        });
+        cx.dispatch_action(SelectLast);
         assert_eq!(sidebar.read_with(cx, |s, _| s.selection), Some(3));
 
         // SelectFirst jumps to the beginning
-        sidebar.update_in(cx, |s, window, cx| {
-            s.select_first(&SelectFirst, window, cx);
-        });
+        cx.dispatch_action(SelectFirst);
         assert_eq!(sidebar.read_with(cx, |s, _| s.selection), Some(0));
     }
 
@@ -1624,24 +1578,21 @@ mod tests {
         // Initially no selection
         assert_eq!(sidebar.read_with(cx, |s, _| s.selection), None);
 
-        // Simulate focus_in
-        sidebar.update_in(cx, |s, window, cx| {
-            s.focus_in(window, cx);
-        });
+        // Open the sidebar so it's rendered, then focus it to trigger focus_in
+        open_and_focus_sidebar(&sidebar, &multi_workspace, cx);
         assert_eq!(sidebar.read_with(cx, |s, _| s.selection), Some(0));
 
-        // Calling focus_in again preserves existing selection
-        sidebar.update_in(cx, |s, window, cx| {
-            s.selection = Some(0);
-            s.select_next(&SelectNext, window, cx);
+        // Blur the sidebar, then refocus — existing selection should be preserved
+        cx.update(|window, _cx| {
+            window.blur();
         });
         cx.run_until_parked();
 
-        let selection_before = sidebar.read_with(cx, |s, _| s.selection);
-        sidebar.update_in(cx, |s, window, cx| {
-            s.focus_in(window, cx);
+        sidebar.update_in(cx, |_, window, cx| {
+            cx.focus_self(window);
         });
-        assert_eq!(sidebar.read_with(cx, |s, _| s.selection), selection_before);
+        cx.run_until_parked();
+        assert_eq!(sidebar.read_with(cx, |s, _| s.selection), Some(0));
     }
 
     #[gpui::test]
@@ -1652,34 +1603,21 @@ mod tests {
         let sidebar = setup_sidebar(&multi_workspace, cx);
 
         let path_list = PathList::new(&[std::path::PathBuf::from("/my-project")]);
-        let thread_store = cx.update(|_window, cx| ThreadStore::global(cx));
-
-        let save_task = thread_store.update(cx, |store, cx| {
-            store.save_thread(
-                acp::SessionId::new(Arc::from("thread-1")),
-                make_test_thread(
-                    "My Thread",
-                    chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, 0).unwrap(),
-                ),
-                path_list.clone(),
-                cx,
-            )
-        });
-        save_task.await.unwrap();
-        cx.run_until_parked();
+        save_n_test_threads(1, &path_list, cx).await;
         multi_workspace.update_in(cx, |_, _window, cx| cx.notify());
         cx.run_until_parked();
 
         assert_eq!(
             visible_entries_as_strings(&sidebar, cx),
-            vec!["v [my-project]", "  My Thread"]
+            vec!["v [my-project]", "  Thread 1"]
         );
 
-        // Select the header and press confirm to collapse
-        sidebar.update_in(cx, |s, window, cx| {
-            s.selection = Some(0);
-            s.confirm(&Confirm, window, cx);
-        });
+        // Focus the sidebar — focus_in selects the header (index 0)
+        open_and_focus_sidebar(&sidebar, &multi_workspace, cx);
+        assert_eq!(sidebar.read_with(cx, |s, _| s.selection), Some(0));
+
+        // Press confirm to collapse
+        cx.dispatch_action(Confirm);
         cx.run_until_parked();
 
         assert_eq!(
@@ -1688,14 +1626,12 @@ mod tests {
         );
 
         // Confirm again to expand
-        sidebar.update_in(cx, |s, window, cx| {
-            s.confirm(&Confirm, window, cx);
-        });
+        cx.dispatch_action(Confirm);
         cx.run_until_parked();
 
         assert_eq!(
             visible_entries_as_strings(&sidebar, cx),
-            vec!["v [my-project]  <== selected", "  My Thread"]
+            vec!["v [my-project]  <== selected", "  Thread 1"]
         );
     }
 
@@ -1707,23 +1643,7 @@ mod tests {
         let sidebar = setup_sidebar(&multi_workspace, cx);
 
         let path_list = PathList::new(&[std::path::PathBuf::from("/my-project")]);
-        let thread_store = cx.update(|_window, cx| ThreadStore::global(cx));
-
-        for i in 0..8 {
-            let save_task = thread_store.update(cx, |store, cx| {
-                store.save_thread(
-                    acp::SessionId::new(Arc::from(format!("thread-{}", i))),
-                    make_test_thread(
-                        &format!("Thread {}", i + 1),
-                        chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, i).unwrap(),
-                    ),
-                    path_list.clone(),
-                    cx,
-                )
-            });
-            save_task.await.unwrap();
-        }
-        cx.run_until_parked();
+        save_n_test_threads(8, &path_list, cx).await;
         multi_workspace.update_in(cx, |_, _window, cx| cx.notify());
         cx.run_until_parked();
 
@@ -1732,13 +1652,15 @@ mod tests {
         assert_eq!(entries.len(), 7);
         assert!(entries.last().unwrap().contains("View More (3)"));
 
-        // Select the "View More" entry and confirm
-        sidebar.update_in(cx, |s, _window, _cx| {
-            s.selection = Some(6);
-        });
-        sidebar.update_in(cx, |s, window, cx| {
-            s.confirm(&Confirm, window, cx);
-        });
+        // Focus sidebar (selects index 0), then navigate down to the "View More" entry (index 6)
+        open_and_focus_sidebar(&sidebar, &multi_workspace, cx);
+        for _ in 0..6 {
+            cx.dispatch_action(SelectNext);
+        }
+        assert_eq!(sidebar.read_with(cx, |s, _| s.selection), Some(6));
+
+        // Confirm on "View More" to expand
+        cx.dispatch_action(Confirm);
         cx.run_until_parked();
 
         // All 8 threads should now be visible, no "View More"
@@ -1755,34 +1677,20 @@ mod tests {
         let sidebar = setup_sidebar(&multi_workspace, cx);
 
         let path_list = PathList::new(&[std::path::PathBuf::from("/my-project")]);
-        let thread_store = cx.update(|_window, cx| ThreadStore::global(cx));
-
-        let save_task = thread_store.update(cx, |store, cx| {
-            store.save_thread(
-                acp::SessionId::new(Arc::from("thread-1")),
-                make_test_thread(
-                    "My Thread",
-                    chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, 0).unwrap(),
-                ),
-                path_list.clone(),
-                cx,
-            )
-        });
-        save_task.await.unwrap();
-        cx.run_until_parked();
+        save_n_test_threads(1, &path_list, cx).await;
         multi_workspace.update_in(cx, |_, _window, cx| cx.notify());
         cx.run_until_parked();
 
         assert_eq!(
             visible_entries_as_strings(&sidebar, cx),
-            vec!["v [my-project]", "  My Thread"]
+            vec!["v [my-project]", "  Thread 1"]
         );
 
-        // Select the header and press left to collapse
-        sidebar.update_in(cx, |s, window, cx| {
-            s.selection = Some(0);
-            s.collapse_selected_entry(&CollapseSelectedEntry, window, cx);
-        });
+        // Focus sidebar — focus_in selects the header (index 0). Press left to collapse.
+        open_and_focus_sidebar(&sidebar, &multi_workspace, cx);
+        assert_eq!(sidebar.read_with(cx, |s, _| s.selection), Some(0));
+
+        cx.dispatch_action(CollapseSelectedEntry);
         cx.run_until_parked();
 
         assert_eq!(
@@ -1791,20 +1699,16 @@ mod tests {
         );
 
         // Press right to expand
-        sidebar.update_in(cx, |s, window, cx| {
-            s.expand_selected_entry(&ExpandSelectedEntry, window, cx);
-        });
+        cx.dispatch_action(ExpandSelectedEntry);
         cx.run_until_parked();
 
         assert_eq!(
             visible_entries_as_strings(&sidebar, cx),
-            vec!["v [my-project]  <== selected", "  My Thread"]
+            vec!["v [my-project]  <== selected", "  Thread 1"]
         );
 
         // Press right again on already-expanded header moves selection down
-        sidebar.update_in(cx, |s, window, cx| {
-            s.expand_selected_entry(&ExpandSelectedEntry, window, cx);
-        });
+        cx.dispatch_action(ExpandSelectedEntry);
         assert_eq!(sidebar.read_with(cx, |s, _| s.selection), Some(1));
     }
 
@@ -1816,38 +1720,22 @@ mod tests {
         let sidebar = setup_sidebar(&multi_workspace, cx);
 
         let path_list = PathList::new(&[std::path::PathBuf::from("/my-project")]);
-        let thread_store = cx.update(|_window, cx| ThreadStore::global(cx));
-
-        let save_task = thread_store.update(cx, |store, cx| {
-            store.save_thread(
-                acp::SessionId::new(Arc::from("thread-1")),
-                make_test_thread(
-                    "My Thread",
-                    chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, 0).unwrap(),
-                ),
-                path_list.clone(),
-                cx,
-            )
-        });
-        save_task.await.unwrap();
-        cx.run_until_parked();
+        save_n_test_threads(1, &path_list, cx).await;
         multi_workspace.update_in(cx, |_, _window, cx| cx.notify());
         cx.run_until_parked();
 
-        // Select the thread entry (child)
-        sidebar.update_in(cx, |s, _window, _cx| {
-            s.selection = Some(1);
-        });
+        // Focus sidebar (selects header at index 0), then navigate down to the thread (child)
+        open_and_focus_sidebar(&sidebar, &multi_workspace, cx);
+        cx.dispatch_action(SelectNext);
+        assert_eq!(sidebar.read_with(cx, |s, _| s.selection), Some(1));
 
         assert_eq!(
             visible_entries_as_strings(&sidebar, cx),
-            vec!["v [my-project]", "  My Thread  <== selected"]
+            vec!["v [my-project]", "  Thread 1  <== selected"]
         );
 
         // Pressing left on a child collapses the parent group and selects it
-        sidebar.update_in(cx, |s, window, cx| {
-            s.collapse_selected_entry(&CollapseSelectedEntry, window, cx);
-        });
+        cx.dispatch_action(CollapseSelectedEntry);
         cx.run_until_parked();
 
         assert_eq!(sidebar.read_with(cx, |s, _| s.selection), Some(0));
@@ -1870,21 +1758,19 @@ mod tests {
             vec!["v [empty-project]"]
         );
 
-        // SelectNext on single-entry list stays at 0
-        sidebar.update_in(cx, |s, window, cx| {
-            s.select_next(&SelectNext, window, cx);
-        });
+        // Focus sidebar — focus_in selects the only entry (header at 0)
+        open_and_focus_sidebar(&sidebar, &multi_workspace, cx);
         assert_eq!(sidebar.read_with(cx, |s, _| s.selection), Some(0));
 
-        sidebar.update_in(cx, |s, window, cx| {
-            s.select_next(&SelectNext, window, cx);
-        });
+        // SelectNext on single-entry list stays at 0
+        cx.dispatch_action(SelectNext);
+        assert_eq!(sidebar.read_with(cx, |s, _| s.selection), Some(0));
+
+        cx.dispatch_action(SelectNext);
         assert_eq!(sidebar.read_with(cx, |s, _| s.selection), Some(0));
 
         // SelectPrevious stays at 0
-        sidebar.update_in(cx, |s, window, cx| {
-            s.select_previous(&SelectPrevious, window, cx);
-        });
+        cx.dispatch_action(SelectPrevious);
         assert_eq!(sidebar.read_with(cx, |s, _| s.selection), Some(0));
     }
 
@@ -1896,33 +1782,17 @@ mod tests {
         let sidebar = setup_sidebar(&multi_workspace, cx);
 
         let path_list = PathList::new(&[std::path::PathBuf::from("/my-project")]);
-        let thread_store = cx.update(|_window, cx| ThreadStore::global(cx));
-
-        let save_task = thread_store.update(cx, |store, cx| {
-            store.save_thread(
-                acp::SessionId::new(Arc::from("thread-1")),
-                make_test_thread(
-                    "Thread 1",
-                    chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, 0).unwrap(),
-                ),
-                path_list.clone(),
-                cx,
-            )
-        });
-        save_task.await.unwrap();
-        cx.run_until_parked();
+        save_n_test_threads(1, &path_list, cx).await;
         multi_workspace.update_in(cx, |_, _window, cx| cx.notify());
         cx.run_until_parked();
 
-        // Select the thread (index 1)
-        sidebar.update_in(cx, |s, _window, _cx| {
-            s.selection = Some(1);
-        });
+        // Focus sidebar (selects header at 0), navigate down to the thread (index 1)
+        open_and_focus_sidebar(&sidebar, &multi_workspace, cx);
+        cx.dispatch_action(SelectNext);
+        assert_eq!(sidebar.read_with(cx, |s, _| s.selection), Some(1));
 
         // Collapse the group, which removes the thread from the list
-        sidebar.update_in(cx, |s, window, cx| {
-            s.collapse_selected_entry(&CollapseSelectedEntry, window, cx);
-        });
+        cx.dispatch_action(CollapseSelectedEntry);
         cx.run_until_parked();
 
         // Selection should be clamped to the last valid index (0 = header)
