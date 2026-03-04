@@ -17,8 +17,8 @@ use std::mem;
 use theme::{ActiveTheme, ThemeSettings};
 use ui::utils::TRAFFIC_LIGHT_PADDING;
 use ui::{
-    AgentThreadStatus, IconButtonShape, KeyBinding, PopoverMenu, Tab, ThreadItem, Tooltip,
-    WithScrollbar, prelude::*,
+    AgentThreadStatus, IconButtonShape, KeyBinding, ListItem, PopoverMenu, Tab, ThreadItem,
+    Tooltip, WithScrollbar, prelude::*,
 };
 use util::path_list::PathList;
 use workspace::{
