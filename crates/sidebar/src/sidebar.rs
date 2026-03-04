@@ -17,8 +17,8 @@ use std::mem;
 use theme::{ActiveTheme, ThemeSettings};
 use ui::utils::TRAFFIC_LIGHT_PADDING;
 use ui::{
-    AgentThreadStatus, Divider, IconButtonShape, KeyBinding, ListHeader, ListItem, ListSubHeader,
-    Tab, ThreadItem, Tooltip, WithScrollbar, prelude::*,
+    AgentThreadStatus, IconButtonShape, KeyBinding, ListItem, Tab, ThreadItem, Tooltip,
+    WithScrollbar, prelude::*,
 };
 use util::path_list::PathList;
 use workspace::{
@@ -943,23 +943,27 @@ impl Sidebar {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let path_list = path_list.clone();
+        let id = SharedString::from(format!("view-more-{}", ix));
 
-        h_flex()
-            .id(SharedString::from(format!("view-more-{}", ix)))
-            .w_full()
-            .px_2()
-            .py_1()
-            .hover(|style| style.bg(cx.theme().colors().ghost_element_hover))
-            .active(|style| style.bg(cx.theme().colors().ghost_element_active))
-            .when(is_selected, |this| {
-                this.bg(cx.theme().colors().ghost_element_selected)
-            })
-            .rounded_md()
-            .cursor_pointer()
+        let label = format!("View More ({})", remaining_count);
+
+        ListItem::new(id)
+            .toggle_state(is_selected)
             .child(
-                Label::new(format!("+ View More ({})", remaining_count))
-                    .size(LabelSize::Small)
-                    .color(Color::Accent),
+                h_flex()
+                    .px_1()
+                    .py_1p5()
+                    .gap_0p5()
+                    .child(
+                        Icon::new(IconName::Plus)
+                            .size(IconSize::Small)
+                            .color(Color::Muted),
+                    )
+                    .child(
+                        Label::new(label.clone())
+                            .size(LabelSize::Small)
+                            .color(Color::Muted),
+                    ),
             )
             .on_click(cx.listener(move |this, _, window, cx| {
                 this.selection = None;
