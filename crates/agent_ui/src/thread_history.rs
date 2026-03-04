@@ -9,7 +9,7 @@ use gpui::{
     App, Entity, EventEmitter, FocusHandle, Focusable, ScrollStrategy, Task,
     UniformListScrollHandle, WeakEntity, Window, uniform_list,
 };
-use std::{fmt::Display, ops::Range, rc::Rc};
+use std::{fmt::Display, ops::Range, path::PathBuf, rc::Rc};
 use text::Bias;
 use time::{OffsetDateTime, UtcOffset};
 use ui::{
@@ -38,6 +38,7 @@ pub struct ThreadHistory {
     visible_items: Vec<ListItemType>,
     local_timezone: UtcOffset,
     confirming_delete_history: bool,
+    cwd: Option<PathBuf>,
     _visible_items_task: Task<()>,
     _refresh_task: Task<()>,
     _watch_task: Option<Task<()>>,
@@ -111,6 +112,7 @@ impl ThreadHistory {
             .unwrap(),
             search_query: SharedString::default(),
             confirming_delete_history: false,
+            cwd: None,
             _subscriptions: vec![search_editor_subscription],
             _visible_items_task: Task::ready(()),
             _refresh_task: Task::ready(()),
@@ -216,6 +218,10 @@ impl ThreadHistory {
         }));
     }
 
+    pub fn set_cwd(&mut self, cwd: Option<PathBuf>) {
+        self.cwd = cwd;
+    }
+
     pub(crate) fn refresh_full_history(&mut self, cx: &mut Context<Self>) {
         self.refresh_sessions(true, true, cx);
     }
@@ -275,6 +281,7 @@ impl ThreadHistory {
         // If a new refresh arrives while pagination is in progress, the previous
         // `_refresh_task` is cancelled. This is intentional (latest refresh wins),
         // but means sessions may be in a partial state until the new refresh completes.
+        let cwd = self.cwd.clone();
         self._refresh_task = cx.spawn(async move |this, cx| {
             let mut cursor: Option<String> = None;
             let mut is_first_page = true;
@@ -282,6 +289,7 @@ impl ThreadHistory {
             loop {
                 let request = AgentSessionListRequest {
                     cursor: cursor.clone(),
+                    cwd: cwd.clone(),
                     ..Default::default()
                 };
                 let task = cx.update(|cx| session_list.list_sessions(request, cx));

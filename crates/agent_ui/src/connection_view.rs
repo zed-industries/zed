@@ -741,8 +741,15 @@ impl ConnectionView {
                         } else {
                             None
                         };
+                        let cwd = this
+                            .project
+                            .read(cx)
+                            .visible_worktrees(cx)
+                            .next()
+                            .map(|worktree| worktree.read(cx).abs_path().to_path_buf());
                         this.history.update(cx, |history, cx| {
                             history.set_session_list(session_list, cx);
+                            history.set_cwd(cwd);
                         });
                         this.set_server_state(
                             ServerState::Connected(ConnectedServerState {
