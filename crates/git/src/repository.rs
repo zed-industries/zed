@@ -2848,6 +2848,10 @@ impl GitRepository for RealGitRepository {
 
         // Note: Do not spawn these commands on the background thread, as this causes some git hooks to hang.
         async move {
+            if !is_trusted {
+                bail!("Can't run git commit hooks in restrictive workspace");
+            }
+
             let working_directory = working_directory?;
             if !help_output
                 .await
@@ -2855,7 +2859,8 @@ impl GitRepository for RealGitRepository {
                 .any(|line| line.trim().starts_with("hook "))
             {
                 let hook_abs_path = repository.lock().path().join("hooks").join(hook.as_str());
-                if hook_abs_path.is_file() && is_trusted {
+                if hook_abs_path.is_file() {
+                    #[allow(clippy::disallowed_methods)]
                     let output = new_command(&hook_abs_path)
                         .envs(env.iter())
                         .current_dir(&working_directory)
@@ -3300,6 +3305,7 @@ impl GitBinary {
         Ok(String::from_utf8(output.stdout)?)
     }
 
+    #[allow(clippy::disallowed_methods)]
     pub(crate) fn build_command<S>(
         &self,
         args: impl IntoIterator<Item = S>,
