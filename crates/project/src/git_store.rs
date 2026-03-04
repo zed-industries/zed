@@ -6345,22 +6345,43 @@ impl Repository {
                     return Ok(());
                 }
 
+                let has_head = prev_snapshot.head_commit.is_some();
+
                 let stash_entries = backend.stash_entries().await?;
                 let changed_path_statuses = cx
                     .background_spawn(async move {
                         let mut changed_paths =
                             changed_paths.into_iter().flatten().collect::<BTreeSet<_>>();
-                        let statuses = backend
-                            .status(&changed_paths.iter().cloned().collect::<Vec<_>>())
-                            .await?;
+                        let changed_paths_vec = changed_paths.iter().cloned().collect::<Vec<_>>();
+
+                        let status_task = backend.status(&changed_paths_vec);
+                        let diff_stat_future = if has_head {
+                            backend.diff_stat(&changed_paths_vec)
+                        } else {
+                            future::ready(Ok(status::GitDiffStat {
+                                entries: Arc::default(),
+                            }))
+                            .boxed()
+                        };
+
+                        let (statuses, diff_stats) =
+                            futures::future::try_join(status_task, diff_stat_future).await?;
+
+                        let diff_stats: HashMap<RepoPath, DiffStat> =
+                            HashMap::from_iter(diff_stats.entries.into_iter().cloned());
+
                         let mut changed_path_statuses = Vec::new();
                         let prev_statuses = prev_snapshot.statuses_by_path.clone();
                         let mut cursor = prev_statuses.cursor::<PathProgress>(());
 
                         for (repo_path, status) in &*statuses.entries {
+                            let current_diff_stat = diff_stats.get(repo_path).copied();
+
                             changed_paths.remove(repo_path);
                             if cursor.seek_forward(&PathTarget::Path(repo_path), Bias::Left)
-                                && cursor.item().is_some_and(|entry| entry.status == *status)
+                                && cursor.item().is_some_and(|entry| {
+                                    entry.status == *status || entry.diff_stat == current_diff_stat
+                                })
                             {
                                 continue;
                             }
@@ -6368,7 +6389,7 @@ impl Repository {
                             changed_path_statuses.push(Edit::Insert(StatusEntry {
                                 repo_path: repo_path.clone(),
                                 status: *status,
-                                diff_stat: None,
+                                diff_stat: current_diff_stat,
                             }));
                         }
                         let mut cursor = prev_statuses.cursor::<PathProgress>(());
