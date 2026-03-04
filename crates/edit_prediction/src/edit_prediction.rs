@@ -173,7 +173,6 @@ pub struct EditPredictionModelInput {
     debug_tx: Option<mpsc::UnboundedSender<DebugEvent>>,
     can_collect_data: bool,
     is_open_source: bool,
-    repo_url: Option<String>,
     pub user_actions: Vec<UserActionRecord>,
 }
 
@@ -2169,20 +2168,6 @@ impl EditPredictionStore {
             && self.is_data_collection_enabled(cx)
             && matches!(self.edit_prediction_model, EditPredictionModel::Zeta);
 
-        let repo_url = if can_collect_data {
-            snapshot.file().and_then(|_| {
-                let buffer_id = active_buffer.read(cx).remote_id();
-                project
-                    .read(cx)
-                    .git_store()
-                    .read(cx)
-                    .repository_and_path_for_buffer_id(buffer_id, cx)
-                    .and_then(|(repo, _)| repo.read(cx).default_remote_url())
-            })
-        } else {
-            None
-        };
-
         let inputs = EditPredictionModelInput {
             project: project.clone(),
             buffer: active_buffer.clone(),
@@ -2197,7 +2182,6 @@ impl EditPredictionStore {
             user_actions,
             can_collect_data,
             is_open_source,
-            repo_url,
         };
 
         if can_collect_data && rand::random_ratio(1, 1000) {

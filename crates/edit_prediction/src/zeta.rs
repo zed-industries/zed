@@ -39,7 +39,6 @@ pub fn request_prediction_with_zeta(
         project,
         can_collect_data,
         is_open_source,
-        repo_url,
         ..
     }: EditPredictionModelInput,
     cx: &mut Context<EditPredictionStore>,
@@ -64,6 +63,18 @@ pub fn request_prediction_with_zeta(
         .file()
         .map(|file| -> Arc<Path> { file.full_path(cx).into() })
         .unwrap_or_else(|| Arc::from(Path::new("untitled")));
+
+    let repo_url = if can_collect_data {
+        let buffer_id = buffer.read(cx).remote_id();
+        project
+            .read(cx)
+            .git_store()
+            .read(cx)
+            .repository_and_path_for_buffer_id(buffer_id, cx)
+            .and_then(|(repo, _)| repo.read(cx).default_remote_url())
+    } else {
+        None
+    };
 
     let client = store.client.clone();
     let llm_token = store.llm_token.clone();
