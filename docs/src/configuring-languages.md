@@ -133,19 +133,29 @@ The `"..."` entry acts as a wildcard that includes any registered language serve
 Suppose you're working with Ruby. The default configuration is:
 
 ```json [settings]
-"language_servers": ["solargraph", "!ruby-lsp", "!rubocop", "!sorbet", "!steep", "!kanayago", "..."]
+{
+  "language_servers": [
+    "solargraph",
+    "!ruby-lsp",
+    "!rubocop",
+    "!sorbet",
+    "!steep",
+    "!kanayago",
+    "..."
+  ]
+}
 ```
 
 When you override `language_servers` in your settings, your list **replaces** the default entirely. This means default-disabled servers like `kanayago` will be re-enabled by `"..."` unless you explicitly disable them again.
 
-| Configuration                                          | Result                                                                |
-| ------------------------------------------------------ | --------------------------------------------------------------------- |
-| `["..."]`                                              | `solargraph`, `ruby-lsp`, `rubocop`, `sorbet`, `steep`, `kanayago`    |
-| `["ruby-lsp", "..."]`                                  | `ruby-lsp`, `solargraph`, `rubocop`, `sorbet`, `steep`, `kanayago`    |
-| `["ruby-lsp", "!solargraph", "!kanayago", "..."]`      | `ruby-lsp`, `rubocop`, `sorbet`, `steep`                              |
-| `["ruby-lsp", "solargraph"]`                            | `ruby-lsp`, `solargraph`                                              |
+| Configuration                                     | Result                                                             |
+| ------------------------------------------------- | ------------------------------------------------------------------ |
+| `["..."]`                                         | `solargraph`, `ruby-lsp`, `rubocop`, `sorbet`, `steep`, `kanayago` |
+| `["ruby-lsp", "..."]`                             | `ruby-lsp`, `solargraph`, `rubocop`, `sorbet`, `steep`, `kanayago` |
+| `["ruby-lsp", "!solargraph", "!kanayago", "..."]` | `ruby-lsp`, `rubocop`, `sorbet`, `steep`                           |
+| `["ruby-lsp", "solargraph"]`                      | `ruby-lsp`, `solargraph`                                           |
 
-Note that in the first example, `"..."` includes `kanayago` even though it is disabled by default — your override replaced the default list, so the `"!kanayago"` entry is no longer present. To keep it disabled, you must include `"!kanayago"` in your configuration.
+> Note: In the first example, `"..."` includes `kanayago` even though it is disabled by default. The override replaced the default list, so the `"!kanayago"` entry is no longer present. To keep it disabled, you must include `"!kanayago"` in your configuration.
 
 ### Toolchains
 
