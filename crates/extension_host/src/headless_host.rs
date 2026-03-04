@@ -38,12 +38,6 @@ pub struct HeadlessExtensionStore {
 }
 
 impl HeadlessExtensionStore {
-    fn normalize_manifest_path(path: &Path) -> PathBuf {
-        // Manifests serialized on Windows may contain `\` separators. On POSIX remotes,
-        // those are treated as literal characters instead of path separators.
-        PathBuf::from(path.to_string_lossy().replace('\\', "/"))
-    }
-
     pub fn new(
         fs: Arc<dyn Fs>,
         http_client: Arc<dyn HttpClient>,
@@ -145,9 +139,15 @@ impl HeadlessExtensionStore {
             )
         }
 
+        let norm = |p: &Path| {
+            p.to_string_lossy()
+                .split(|c| c == '\\' || c == '/')
+                .filter(|s| !s.is_empty())
+                .collect::<PathBuf>()
+        };
+
         for language_path in &manifest.languages {
-            let language_path =
-                extension_dir.join(Self::normalize_manifest_path(language_path.as_path()));
+            let language_path = extension_dir.join(norm(language_path.as_path()));
             let config = fs.load(&language_path.join("config.toml")).await?;
             let mut config = ::toml::from_str::<LanguageConfig>(&config)?;
 
@@ -202,15 +202,15 @@ impl HeadlessExtensionStore {
         }
 
         for (debug_adapter, meta) in &manifest.debug_adapters {
-            let schema_path = Self::normalize_manifest_path(
-                extension::build_debug_adapter_schema_path(debug_adapter, meta).as_path(),
-            );
+            let schema_path = extension_dir.join(norm(
+                &extension::build_debug_adapter_schema_path(debug_adapter, meta),
+            ));
 
             this.update(cx, |this, _cx| {
                 this.proxy.register_debug_adapter(
                     wasm_extension.clone(),
                     debug_adapter.clone(),
-                    &extension_dir.join(schema_path),
+                    &schema_path,
                 );
             })?;
             log::info!("Loaded debug adapter: {}", debug_adapter);
