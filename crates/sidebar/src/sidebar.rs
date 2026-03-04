@@ -16,7 +16,10 @@ use std::collections::{HashMap, HashSet};
 use std::mem;
 use theme::{ActiveTheme, ThemeSettings};
 use ui::utils::TRAFFIC_LIGHT_PADDING;
-use ui::{AgentThreadStatus, HighlightedLabel, IconButtonShape, KeyBinding, Tab, Tooltip, prelude::*};
+use ui::{
+    AgentThreadStatus, HighlightedLabel, IconButtonShape, KeyBinding, Tab, ThreadItem, Tooltip,
+    prelude::*,
+};
 use util::path_list::PathList;
 use workspace::{
     FocusWorkspaceSidebar, MultiWorkspace, NewWorkspaceInWindow, Sidebar as WorkspaceSidebar,
@@ -157,25 +160,24 @@ impl Sidebar {
             },
         );
 
-        let filter_subscription =
-            cx.subscribe(&filter_editor, |this: &mut Self, _, event, cx| {
-                if let editor::EditorEvent::BufferEdited = event {
-                    let query = this.filter_editor.read(cx).text(cx);
-                    if !query.is_empty() {
-                        this.selection.take();
-                    }
-                    this.rebuild_contents(cx);
-                    this.list_state.reset(this.contents.entries.len());
-                    if !query.is_empty() {
-                        this.selection = this
-                            .contents
-                            .entries
-                            .iter()
-                            .position(|entry| matches!(entry, ListEntry::Thread { .. }));
-                    }
-                    cx.notify();
+        let filter_subscription = cx.subscribe(&filter_editor, |this: &mut Self, _, event, cx| {
+            if let editor::EditorEvent::BufferEdited = event {
+                let query = this.filter_editor.read(cx).text(cx);
+                if !query.is_empty() {
+                    this.selection.take();
                 }
-            });
+                this.rebuild_contents(cx);
+                this.list_state.reset(this.contents.entries.len());
+                if !query.is_empty() {
+                    this.selection = this
+                        .contents
+                        .entries
+                        .iter()
+                        .position(|entry| matches!(entry, ListEntry::Thread { .. }));
+                }
+                cx.notify();
+            }
+        });
 
         let mut this = Self {
             multi_workspace,
@@ -597,7 +599,6 @@ impl Sidebar {
                 icon,
                 status,
                 workspace_index,
-                is_live,
                 highlight_positions,
                 ..
             } => self.render_thread(
@@ -606,7 +607,6 @@ impl Sidebar {
                 *icon,
                 *status,
                 *workspace_index,
-                *is_live,
                 highlight_positions,
                 is_selected,
                 cx,
@@ -868,16 +868,10 @@ impl Sidebar {
         icon: IconName,
         status: AgentThreadStatus,
         workspace_index: usize,
-        is_live: bool,
         highlight_positions: &[usize],
         is_selected: bool,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let running = matches!(
-            status,
-            AgentThreadStatus::Running | AgentThreadStatus::WaitingForConfirmation
-        );
-
         let has_notification = self.contents.is_thread_notified(&session_info.session_id);
 
         let title: SharedString = session_info
@@ -886,59 +880,14 @@ impl Sidebar {
             .unwrap_or_else(|| "Untitled".into());
         let session_info = session_info.clone();
 
-        h_flex()
-            .id(SharedString::from(format!("thread-entry-{}", ix)))
-            .w_full()
-            .px_2()
-            .py_1()
-            .gap_2()
-            .hover(|style| style.bg(cx.theme().colors().ghost_element_hover))
-            .active(|style| style.bg(cx.theme().colors().ghost_element_active))
-            .when(is_selected, |this| {
-                this.bg(cx.theme().colors().ghost_element_selected)
-            })
-            .rounded_md()
-            .cursor_pointer()
-            .child(Icon::new(icon).size(IconSize::Small).color(if running {
-                Color::Accent
-            } else {
-                Color::Muted
-            }))
-            .child(
-                div().flex_1().overflow_hidden().child(
-                    if highlight_positions.is_empty() {
-                        Label::new(title)
-                            .size(LabelSize::Small)
-                            .single_line()
-                            .color(if is_live {
-                                Color::Default
-                            } else {
-                                Color::Muted
-                            })
-                            .into_any_element()
-                    } else {
-                        HighlightedLabel::new(title, highlight_positions.to_vec())
-                            .size(LabelSize::Small)
-                            .single_line()
-                            .color(if is_live {
-                                Color::Default
-                            } else {
-                                Color::Muted
-                            })
-                            .into_any_element()
-                    },
-                ),
-            )
-            .when(running, |this| {
-                this.child(
-                    Label::new("Running")
-                        .size(LabelSize::XSmall)
-                        .color(Color::Accent),
-                )
-            })
-            .when(has_notification, |this| {
-                this.child(div().size_2().rounded_full().bg(cx.theme().status().info))
-            })
+        let id = SharedString::from(format!("thread-entry-{}", ix));
+
+        ThreadItem::new(id, title)
+            .icon(icon)
+            .highlight_positions(highlight_positions.to_vec())
+            .status(status)
+            .notified(has_notification)
+            .selected(is_selected)
             .on_click(cx.listener(move |this, _, window, cx| {
                 this.selection = None;
                 this.activate_thread(session_info.clone(), workspace_index, window, cx);
@@ -1153,11 +1102,13 @@ impl Render for Sidebar {
                     }),
             )
             .child(
-                div().flex_1().overflow_hidden().child(
+                v_flex().flex_1().overflow_hidden().child(
                     list(
                         self.list_state.clone(),
                         cx.processor(Self::render_list_entry),
                     )
+                    // .debug_bg_cyan()
+                    .flex_1()
                     .size_full(),
                 ),
             )
@@ -2129,11 +2080,7 @@ mod tests {
         );
     }
 
-    fn type_in_search(
-        sidebar: &Entity<Sidebar>,
-        query: &str,
-        cx: &mut gpui::VisualTestContext,
-    ) {
+    fn type_in_search(sidebar: &Entity<Sidebar>, query: &str, cx: &mut gpui::VisualTestContext) {
         sidebar.update_in(cx, |sidebar, window, cx| {
             window.focus(&sidebar.filter_editor.focus_handle(cx), cx);
             sidebar.filter_editor.update(cx, |editor, cx| {
@@ -2229,14 +2176,20 @@ mod tests {
         type_in_search(&sidebar, "fix crash", cx);
         assert_eq!(
             visible_entries_as_strings(&sidebar, cx),
-            vec!["v [my-project]", "  Fix Crash In Project Panel  <== selected",]
+            vec![
+                "v [my-project]",
+                "  Fix Crash In Project Panel  <== selected",
+            ]
         );
 
         // Uppercase query also matches the same title.
         type_in_search(&sidebar, "FIX CRASH", cx);
         assert_eq!(
             visible_entries_as_strings(&sidebar, cx),
-            vec!["v [my-project]", "  Fix Crash In Project Panel  <== selected",]
+            vec![
+                "v [my-project]",
+                "  Fix Crash In Project Panel  <== selected",
+            ]
         );
     }
 
@@ -2252,10 +2205,7 @@ mod tests {
         let path_list = PathList::new(&[std::path::PathBuf::from("/my-project")]);
         let thread_store = cx.update(|_window, cx| ThreadStore::global(cx));
 
-        for (id, title, hour) in [
-            ("t-1", "Alpha thread", 2),
-            ("t-2", "Beta thread", 1),
-        ] {
+        for (id, title, hour) in [("t-1", "Alpha thread", 2), ("t-2", "Beta thread", 1)] {
             let save_task = thread_store.update(cx, |store, cx| {
                 store.save_thread(
                     acp::SessionId::new(Arc::from(id)),
@@ -2299,9 +2249,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_search_only_shows_workspace_headers_with_matches(
-        cx: &mut TestAppContext,
-    ) {
+    async fn test_search_only_shows_workspace_headers_with_matches(cx: &mut TestAppContext) {
         let project_a = init_test_project("/project-a", cx).await;
         let (multi_workspace, cx) =
             cx.add_window_view(|window, cx| MultiWorkspace::test_new(project_a, window, cx));
@@ -2490,7 +2438,6 @@ mod tests {
 
     #[gpui::test]
     async fn test_search_then_keyboard_navigate_and_confirm(cx: &mut TestAppContext) {
-        
         let project = init_test_project("/my-project", cx).await;
         let (multi_workspace, cx) =
             cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));

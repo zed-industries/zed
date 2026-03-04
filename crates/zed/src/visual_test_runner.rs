@@ -2892,12 +2892,12 @@ impl gpui::Render for ThreadItemIconDecorationsTestView {
                 container()
                     .child(ThreadItem::new("ti-none", "Default idle thread").timestamp("1:00 AM")),
             )
-            .child(section_label("Blue dot (generation done)"))
+            .child(section_label("Blue dot (notified)"))
             .child(
                 container().child(
                     ThreadItem::new("ti-done", "Generation completed successfully")
                         .timestamp("1:05 AM")
-                        .generation_done(true),
+                        .notified(true),
                 ),
             )
             .child(section_label("Yellow triangle (waiting for confirmation)"))
@@ -2922,18 +2922,17 @@ impl gpui::Render for ThreadItemIconDecorationsTestView {
                     ThreadItem::new("ti-running", "Generating response...")
                         .icon(IconName::AiClaude)
                         .timestamp("1:20 AM")
-                        .running(true),
+                        .status(ui::AgentThreadStatus::Running),
                 ),
             )
             .child(section_label(
-                "Spinner + yellow triangle (running + waiting)",
+                "Spinner + yellow triangle (waiting for confirmation)",
             ))
             .child(
                 container().child(
                     ThreadItem::new("ti-running-waiting", "Running but needs confirmation")
                         .icon(IconName::AiClaude)
                         .timestamp("1:25 AM")
-                        .running(true)
                         .status(ui::AgentThreadStatus::WaitingForConfirmation),
                 ),
             )
