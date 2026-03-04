@@ -1,7 +1,5 @@
 # Zed Feature Process
 
-So you want to add a feature to Zed. Great — here's how we think about taking an idea from spark to shipped.
-
 This document is primarily for external contributors proposing or building a moderate-to-large feature. Something that introduces new UI, changes existing behavior, or cuts across multiple parts of the editor. If you're adding a keybinding, a small settings option, or a context menu entry, you probably don't need all of this. Use your judgment on which steps apply.
 
 > **Before you start:** If you're an external contributor, make sure the feature is something the team wants before investing significant effort. That said, coming prepared with the background prep already done makes it much easier for the team to understand and approve the proposal. Read the [Contributing guide](../../../CONTRIBUTING.md#sending-changes) — if there isn't already a GitHub issue with staff confirmation, start with a GitHub Discussion or a discord message rather than a PR.
