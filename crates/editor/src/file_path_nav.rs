@@ -96,6 +96,11 @@ impl FilePathNav {
             workspace,
         }
     }
+
+    #[cfg(test)]
+    pub(crate) fn component_names(&self) -> Vec<&str> {
+        self.components.iter().map(|c| c.name.as_ref()).collect()
+    }
 }
 
 fn open_breadcrumb_file(

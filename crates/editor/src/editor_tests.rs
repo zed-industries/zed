@@ -33142,6 +33142,148 @@ async fn test_file_path_nav_prefix_none_for_untitled(cx: &mut TestAppContext) {
     });
 }
 
+/// Verifies that a single-worktree project does NOT include the worktree root
+/// name as a leading breadcrumb segment.
+#[gpui::test]
+async fn test_file_path_nav_single_worktree_omits_root(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/project"),
+        json!({
+            "src": {
+                "lib.rs": "pub fn hello() {}",
+            }
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/project/src/lib.rs"), cx)
+        })
+        .await
+        .unwrap();
+
+    let (editor, cx) = cx.add_window_view(|window, cx| {
+        let multibuffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+        build_editor_with_project(project.clone(), multibuffer, window, cx)
+    });
+
+    editor.update_in(cx, |editor, window, cx| {
+        let worktree_count = project.read(cx).visible_worktrees(cx).count();
+        assert_eq!(worktree_count, 1, "test setup should have exactly 1 worktree");
+
+        let prefix = editor.breadcrumb_prefix(window, cx);
+        assert!(prefix.is_some(), "breadcrumb_prefix should return Some for a file");
+
+        let file = editor
+            .buffer
+            .read(cx)
+            .as_singleton()
+            .and_then(|buf| project::File::from_dyn(buf.read(cx).file()))
+            .expect("buffer should have a file");
+        let path = file.path.clone();
+        let worktree_id = file.worktree_id(cx);
+
+        let nav = crate::file_path_nav::FilePathNav::new(
+            worktree_id,
+            path,
+            false,
+            None,
+            project.downgrade(),
+            None,
+        );
+        let names = nav.component_names();
+        assert_eq!(names, vec!["src", "lib.rs"]);
+        assert!(
+            !names.contains(&"project"),
+            "single-worktree breadcrumb should not include the worktree root name"
+        );
+    });
+}
+
+/// Verifies that a multi-worktree project DOES include the worktree root
+/// name as the leading breadcrumb segment.
+#[gpui::test]
+async fn test_file_path_nav_multi_worktree_shows_root(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/project_a"),
+        json!({
+            "src": {
+                "main.rs": "fn main() {}",
+            }
+        }),
+    )
+    .await;
+    fs.insert_tree(
+        path!("/project_b"),
+        json!({
+            "src": {
+                "lib.rs": "pub fn greet() {}",
+            }
+        }),
+    )
+    .await;
+
+    let project = Project::test(
+        fs,
+        [path!("/project_a").as_ref(), path!("/project_b").as_ref()],
+        cx,
+    )
+    .await;
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/project_a/src/main.rs"), cx)
+        })
+        .await
+        .unwrap();
+
+    let (editor, cx) = cx.add_window_view(|window, cx| {
+        let multibuffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+        build_editor_with_project(project.clone(), multibuffer, window, cx)
+    });
+
+    editor.update_in(cx, |editor, window, cx| {
+        let worktree_count = project.read(cx).visible_worktrees(cx).count();
+        assert_eq!(worktree_count, 2, "test setup should have exactly 2 worktrees");
+
+        let prefix = editor.breadcrumb_prefix(window, cx);
+        assert!(prefix.is_some(), "breadcrumb_prefix should return Some for a file");
+
+        let file = editor
+            .buffer
+            .read(cx)
+            .as_singleton()
+            .and_then(|buf| project::File::from_dyn(buf.read(cx).file()))
+            .expect("buffer should have a file");
+        let path = file.path.clone();
+        let worktree_id = file.worktree_id(cx);
+        let root_name = project
+            .read(cx)
+            .worktree_for_id(worktree_id, cx)
+            .map(|wt| SharedString::from(wt.read(cx).root_name_str().to_owned()));
+
+        let nav = crate::file_path_nav::FilePathNav::new(
+            worktree_id,
+            path,
+            true,
+            root_name,
+            project.downgrade(),
+            None,
+        );
+        let names = nav.component_names();
+        assert_eq!(names, vec!["project_a", "src", "main.rs"]);
+    });
+}
+
 /// Exercises the `build_directory_menu` code path with a deeply nested
 /// directory structure to verify recursive menu construction does not panic.
 #[gpui::test]
