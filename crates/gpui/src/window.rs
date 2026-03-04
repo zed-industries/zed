@@ -17,7 +17,7 @@ use crate::{
     TaffyLayoutEngine, Task, TextRenderingMode, TextStyle, TextStyleRefinement, ThermalState,
     TransformationMatrix, Underline, UnderlineStyle, WindowAppearance, WindowBackgroundAppearance,
     WindowBounds, WindowControls, WindowDecorations, WindowOptions, WindowParams, WindowTextSystem,
-    point, prelude::*, px, rems, size, transparent_black,
+    bounds, point, prelude::*, px, rems, size, transparent_black,
 };
 use anyhow::{Context as _, Result, anyhow};
 use collections::{FxHashMap, FxHashSet};
@@ -1940,6 +1940,11 @@ impl Window {
     /// Returns the appearance of the current window.
     pub fn appearance(&self) -> WindowAppearance {
         self.appearance
+    }
+
+    /// Returns the bounds of the drawable area within the window, starting at the origin.
+    pub fn viewport_bounds(&self) -> Bounds<Pixels> {
+        bounds(point(Pixels::ZERO, Pixels::ZERO), self.viewport_size)
     }
 
     /// Returns the size of the drawable area within the window.
@@ -3961,6 +3966,7 @@ impl Window {
                             view: cx.new(|_| paths).into(),
                             cursor_offset: position,
                             cursor_style: None,
+                            is_external: false,
                         });
                     }
                     PlatformInput::MouseMove(MouseMoveEvent {
