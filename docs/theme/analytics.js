@@ -53,7 +53,9 @@ document.addEventListener("DOMContentLoaded", () => {
   };
 
   consentStore.subscribe((state) => {
-    const hideBanner = state.activeUI === "none";
+    const hideBanner =
+      state.activeUI === "none" ||
+      (state.activeUI === "banner" && state.mode === "opt-out");
     banner.style.display = hideBanner ? "none" : "block";
 
     if (state.activeUI === "dialog" && previousActiveUI !== "dialog") {
