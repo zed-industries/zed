@@ -6439,7 +6439,7 @@ impl Repository {
                             changed_paths.remove(repo_path);
                             if cursor.seek_forward(&PathTarget::Path(repo_path), Bias::Left)
                                 && cursor.item().is_some_and(|entry| {
-                                    entry.status == *status || entry.diff_stat == current_diff_stat
+                                    entry.status == *status && entry.diff_stat == current_diff_stat
                                 })
                             {
                                 continue;
