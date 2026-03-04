@@ -6808,8 +6808,14 @@ async fn compute_snapshot(
     let mut events = Vec::new();
     let branches = backend.branches().await?;
     let branch = branches.into_iter().find(|branch| branch.is_head);
-    let has_head = backend.head_sha().await.is_some();
-    let diff_stat_future: BoxFuture<'_, Result<status::GitDiffStat>> = if has_head {
+
+    // Useful when branch is None in detached head state
+    let head_commit = match backend.head_sha().await {
+        Some(head_sha) => backend.show(head_sha).await.log_err(),
+        None => None,
+    };
+
+    let diff_stat_future: BoxFuture<'_, Result<status::GitDiffStat>> = if head_commit.is_some() {
         backend.diff_stat(&[])
     } else {
         future::ready(Ok(status::GitDiffStat {
@@ -6849,12 +6855,6 @@ async fn compute_snapshot(
     if conflicts_changed || statuses_by_path != prev_snapshot.statuses_by_path {
         events.push(RepositoryEvent::StatusesChanged)
     }
-
-    // Useful when branch is None in detached head state
-    let head_commit = match backend.head_sha().await {
-        Some(head_sha) => backend.show(head_sha).await.log_err(),
-        None => None,
-    };
 
     if branch != prev_snapshot.branch || head_commit != prev_snapshot.head_commit {
         events.push(RepositoryEvent::BranchChanged);
