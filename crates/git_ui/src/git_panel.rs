@@ -4113,7 +4113,7 @@ impl GitPanel {
     }
 
     fn render_generate_commit_message_menu(&self, cx: &Context<Self>) -> impl IntoElement {
-        let (providers, selected_model) = self.commit_message_model_options(cx);
+        let (providers, selected_model) = Self::commit_message_model_options(cx);
 
         PopoverMenu::new("generate-commit-message-menu")
             .trigger(
@@ -4188,7 +4188,6 @@ impl GitPanel {
     }
 
     fn commit_message_model_options(
-        &self,
         cx: &App,
     ) -> (
         Vec<(
@@ -4200,6 +4199,21 @@ impl GitPanel {
         Option<(LanguageModelProviderId, LanguageModelId)>,
     ) {
         let model_registry = LanguageModelRegistry::read_global(cx);
+        Self::commit_message_model_options_from_registry(model_registry, cx)
+    }
+
+    fn commit_message_model_options_from_registry(
+        model_registry: &LanguageModelRegistry,
+        cx: &App,
+    ) -> (
+        Vec<(
+            LanguageModelProviderId,
+            SharedString,
+            language_model::IconOrSvg,
+            Vec<(LanguageModelId, SharedString)>,
+        )>,
+        Option<(LanguageModelProviderId, LanguageModelId)>,
+    ) {
         let mut providers = model_registry
             .visible_providers()
             .into_iter()
@@ -6615,11 +6629,19 @@ mod tests {
         repository::repo_path,
         status::{StatusCode, UnmergedStatus, UnmergedStatusCode},
     };
-    use gpui::{TestAppContext, UpdateGlobal, VisualTestContext};
+    use futures::{future::BoxFuture, stream::BoxStream};
+    use gpui::{AnyView, AsyncApp, TestAppContext, UpdateGlobal, VisualTestContext};
     use indoc::indoc;
+    use language_model::{
+        AuthenticateError, ConfigurationViewTargetAgent, LanguageModel,
+        LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelName,
+        LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
+        LanguageModelProviderState, LanguageModelRequest, LanguageModelToolChoice,
+    };
     use project::FakeFs;
     use serde_json::json;
     use settings::SettingsStore;
+    use std::sync::Arc;
     use theme::LoadThemes;
     use util::path;
     use util::rel_path::rel_path;
@@ -7728,6 +7750,170 @@ mod tests {
                 expected_path.map(|s| s.to_string())
             );
         }
+    }
+
+    #[derive(Clone)]
+    struct StaticLanguageModel {
+        id: LanguageModelId,
+        name: LanguageModelName,
+        provider_id: LanguageModelProviderId,
+        provider_name: LanguageModelProviderName,
+    }
+
+    impl LanguageModel for StaticLanguageModel {
+        fn id(&self) -> LanguageModelId {
+            self.id.clone()
+        }
+
+        fn name(&self) -> LanguageModelName {
+            self.name.clone()
+        }
+
+        fn provider_id(&self) -> LanguageModelProviderId {
+            self.provider_id.clone()
+        }
+
+        fn provider_name(&self) -> LanguageModelProviderName {
+            self.provider_name.clone()
+        }
+
+        fn supports_images(&self) -> bool {
+            false
+        }
+
+        fn telemetry_id(&self) -> String {
+            format!("{}/{}", self.provider_id.0, self.id.0)
+        }
+
+        fn max_token_count(&self) -> u64 {
+            10_000
+        }
+
+        fn count_tokens(&self, _request: LanguageModelRequest, _cx: &App) -> BoxFuture<'static, anyhow::Result<u64>> {
+            unimplemented!()
+        }
+
+        fn stream_completion(
+            &self,
+            _request: LanguageModelRequest,
+            _cx: &AsyncApp,
+        ) -> BoxFuture<'static, Result<BoxStream<'static, Result<LanguageModelCompletionEvent, LanguageModelCompletionError>>, LanguageModelCompletionError>> {
+            unimplemented!()
+        }
+
+        fn supports_tools(&self) -> bool {
+            false
+        }
+
+        fn supports_tool_choice(&self, _choice: LanguageModelToolChoice) -> bool {
+            false
+        }
+    }
+
+    #[derive(Clone)]
+    struct StaticLanguageModelProvider {
+        id: LanguageModelProviderId,
+        name: LanguageModelProviderName,
+        authenticated: bool,
+        models: Vec<Arc<dyn LanguageModel>>,
+    }
+
+    impl LanguageModelProviderState for StaticLanguageModelProvider {
+        type ObservableEntity = ();
+
+        fn observable_entity(&self) -> Option<Entity<Self::ObservableEntity>> {
+            None
+        }
+    }
+
+    impl LanguageModelProvider for StaticLanguageModelProvider {
+        fn id(&self) -> LanguageModelProviderId {
+            self.id.clone()
+        }
+
+        fn name(&self) -> LanguageModelProviderName {
+            self.name.clone()
+        }
+
+        fn default_model(&self, _cx: &App) -> Option<Arc<dyn LanguageModel>> {
+            self.models.first().cloned()
+        }
+
+        fn default_fast_model(&self, _cx: &App) -> Option<Arc<dyn LanguageModel>> {
+            self.models.first().cloned()
+        }
+
+        fn provided_models(&self, _cx: &App) -> Vec<Arc<dyn LanguageModel>> {
+            self.models.clone()
+        }
+
+        fn is_authenticated(&self, _cx: &App) -> bool {
+            self.authenticated
+        }
+
+        fn authenticate(&self, _cx: &mut App) -> Task<Result<(), AuthenticateError>> {
+            Task::ready(if self.authenticated {
+                Ok(())
+            } else {
+                Err(AuthenticateError::CredentialsNotFound)
+            })
+        }
+
+        fn configuration_view(
+            &self,
+            _target_agent: ConfigurationViewTargetAgent,
+            _window: &mut Window,
+            _cx: &mut App,
+        ) -> AnyView {
+            panic!("configuration_view is not used in this test")
+        }
+
+        fn reset_credentials(&self, _cx: &mut App) -> Task<anyhow::Result<()>> {
+            Task::ready(Ok(()))
+        }
+    }
+
+    #[gpui::test]
+    fn test_commit_message_model_options_only_include_authenticated_providers(cx: &mut App) {
+        let authenticated_provider = Arc::new(StaticLanguageModelProvider {
+            id: LanguageModelProviderId::from("authenticated".to_string()),
+            name: LanguageModelProviderName::from("Authenticated".to_string()),
+            authenticated: true,
+            models: vec![Arc::new(StaticLanguageModel {
+                id: LanguageModelId::from("auth-model".to_string()),
+                name: LanguageModelName::from("Auth Model".to_string()),
+                provider_id: LanguageModelProviderId::from("authenticated".to_string()),
+                provider_name: LanguageModelProviderName::from("Authenticated".to_string()),
+            })],
+        });
+        let unauthenticated_provider = Arc::new(StaticLanguageModelProvider {
+            id: LanguageModelProviderId::from("unauthenticated".to_string()),
+            name: LanguageModelProviderName::from("Unauthenticated".to_string()),
+            authenticated: false,
+            models: vec![Arc::new(StaticLanguageModel {
+                id: LanguageModelId::from("hidden-model".to_string()),
+                name: LanguageModelName::from("Hidden Model".to_string()),
+                provider_id: LanguageModelProviderId::from("unauthenticated".to_string()),
+                provider_name: LanguageModelProviderName::from("Unauthenticated".to_string()),
+            })],
+        });
+
+        let model_registry = cx.new(|cx| {
+            let mut model_registry = LanguageModelRegistry::default();
+            model_registry.register_provider(authenticated_provider.clone(), cx);
+            model_registry.register_provider(unauthenticated_provider.clone(), cx);
+            model_registry
+        });
+
+        let (providers, selected_model) = model_registry.read_with(cx, |model_registry, cx| {
+            GitPanel::commit_message_model_options_from_registry(model_registry, cx)
+        });
+        assert_eq!(providers.len(), 1);
+        assert_eq!(providers[0].0, LanguageModelProviderId::from("authenticated".to_string()));
+        assert_eq!(providers[0].3.len(), 1);
+        assert_eq!(providers[0].3[0].0, LanguageModelId::from("auth-model".to_string()));
+        assert_eq!(providers[0].3[0].1.as_ref(), "Auth Model");
+        assert!(selected_model.is_none());
     }
 
     #[test]
