@@ -693,6 +693,8 @@ impl GraphData {
 }
 
 pub fn init(cx: &mut App) {
+    workspace::register_serializable_item::<GitGraph>(cx);
+
     cx.observe_new(|workspace: &mut workspace::Workspace, _, _| {
         workspace.register_action_renderer(|div, workspace, _, cx| {
             div.when(
@@ -2333,6 +2335,157 @@ impl Item for GitGraph {
 
     fn to_item_events(event: &Self::Event, f: &mut dyn FnMut(ItemEvent)) {
         f(*event)
+    }
+}
+
+impl workspace::SerializableItem for GitGraph {
+    fn serialized_item_kind() -> &'static str {
+        "GitGraph"
+    }
+
+    fn cleanup(
+        workspace_id: workspace::WorkspaceId,
+        alive_items: Vec<workspace::ItemId>,
+        _window: &mut Window,
+        cx: &mut App,
+    ) -> Task<gpui::Result<()>> {
+        workspace::delete_unloaded_items(
+            alive_items,
+            workspace_id,
+            "git_graphs",
+            &persistence::GIT_GRAPHS,
+            cx,
+        )
+    }
+
+    fn deserialize(
+        project: Entity<project::Project>,
+        workspace: WeakEntity<Workspace>,
+        workspace_id: workspace::WorkspaceId,
+        item_id: workspace::ItemId,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Task<gpui::Result<Entity<Self>>> {
+        let Some(repo_work_path) = persistence::GIT_GRAPHS
+            .get_git_graph(item_id, workspace_id)
+            .ok()
+            .flatten()
+        else {
+            return Task::ready(Err(anyhow::anyhow!("No git graph to deserialize")));
+        };
+
+        let git_store = project.read(cx).git_store().clone();
+        let path = repo_work_path.as_path();
+        let repo_id = git_store
+            .read(cx)
+            .repositories()
+            .iter()
+            .find_map(|(&repo_id, repo)| {
+                if repo.read(cx).snapshot().work_directory_abs_path.as_ref() == path {
+                    Some(repo_id)
+                } else {
+                    None
+                }
+            });
+
+        let Some(repo_id) = repo_id else {
+            return Task::ready(Err(anyhow::anyhow!(
+                "Repository not found for path: {:?}",
+                repo_work_path
+            )));
+        };
+
+        Task::ready(Ok(
+            cx.new(|cx| GitGraph::new(repo_id, git_store, workspace, window, cx))
+        ))
+    }
+
+    fn serialize(
+        &mut self,
+        workspace: &mut Workspace,
+        item_id: workspace::ItemId,
+        _closing: bool,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<Task<gpui::Result<()>>> {
+        let workspace_id = workspace.database_id()?;
+        let repo = self.get_repository(cx)?;
+        let repo_working_path = repo
+            .read(cx)
+            .snapshot()
+            .work_directory_abs_path
+            .to_string_lossy()
+            .to_string();
+
+        Some(cx.background_spawn(async move {
+            persistence::GIT_GRAPHS
+                .save_git_graph(item_id, workspace_id, repo_working_path)
+                .await
+        }))
+    }
+
+    fn should_serialize(&self, event: &Self::Event) -> bool {
+        event == &ItemEvent::UpdateTab
+    }
+}
+
+mod persistence {
+    use std::path::PathBuf;
+
+    use db::{
+        query,
+        sqlez::{domain::Domain, thread_safe_connection::ThreadSafeConnection},
+        sqlez_macros::sql,
+    };
+    use workspace::WorkspaceDb;
+
+    pub struct GitGraphsDb(ThreadSafeConnection);
+
+    impl Domain for GitGraphsDb {
+        const NAME: &str = stringify!(GitGraphsDb);
+
+        const MIGRATIONS: &[&str] = &[
+            sql!(
+                CREATE TABLE git_graphs (
+                    workspace_id INTEGER,
+                    item_id INTEGER UNIQUE,
+                    is_open INTEGER DEFAULT FALSE,
+
+                    PRIMARY KEY(workspace_id, item_id),
+                    FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id)
+                    ON DELETE CASCADE
+                ) STRICT;
+            ),
+            sql!(
+                ALTER TABLE git_graphs ADD COLUMN repo_working_path TEXT;
+            ),
+        ];
+    }
+
+    db::static_connection!(GIT_GRAPHS, GitGraphsDb, [WorkspaceDb]);
+
+    impl GitGraphsDb {
+        query! {
+            pub async fn save_git_graph(
+                item_id: workspace::ItemId,
+                workspace_id: workspace::WorkspaceId,
+                repo_working_path: String
+            ) -> Result<()> {
+                INSERT OR REPLACE INTO git_graphs(item_id, workspace_id, repo_working_path)
+                VALUES (?, ?, ?)
+            }
+        }
+
+        query! {
+            pub fn get_git_graph(
+                item_id: workspace::ItemId,
+                workspace_id: workspace::WorkspaceId
+            ) -> Result<Option<PathBuf>> {
+                SELECT repo_working_path
+                FROM git_graphs
+                WHERE item_id = ? AND workspace_id = ?
+            }
+        }
     }
 }
 
