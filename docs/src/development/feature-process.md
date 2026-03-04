@@ -15,7 +15,9 @@ Every feature starts as an idea. Before writing any code, ground it:
 
 ## 2. What is it?
 
-Write a short, concrete feature statement, then back it up with whatever context helps the team evaluate it — screenshots, links, prior art. If you can't describe the feature in a few sentences, it might be too big or too vague.
+Write a short, concrete feature statement, then back it up with the context gathered above. If you can't describe the feature in a few sentences, it might be too big or too vague.
+
+Here's an example format, though adapt it to whatever your feature needs:
 
 > **Feature:** Inline Git Blame
 > **Purpose:** Show the last commit author and message for each line directly after the editor text, so developers can understand code history without opening the git blame.
@@ -25,6 +27,8 @@ Write a short, concrete feature statement, then back it up with whatever context
 > \[screenshot of Intellij]
 > \[screenshot of Neovim]
 > and has 146 thumbs up on the [github issue](https://github.com).
+> **Decisions:**
+> We have to decide whether to use the git CLI or a git libary. Zed uses a git library but it's blame implementation is too slow for a code editor, so we should use the CLI porcelain.
 
 ## 3. What else does this affect?
 
