@@ -5,7 +5,7 @@ use itertools::Itertools;
 use language::{Buffer, BufferSnapshot};
 use rope::Point;
 use sum_tree::{Dimensions, SumTree};
-use text::{Bias, Edit, OffsetRangeExt, Patch};
+use text::{Bias, BufferId, Edit, OffsetRangeExt, Patch};
 use util::rel_path::RelPath;
 use ztracing::instrument;
 
@@ -468,11 +468,19 @@ impl MultiBuffer {
         cx.emit(Event::BufferUpdated {
             buffer,
             path_key: path_key.clone(),
-            ranges: to_insert.map(|range| range.context.clone()).collect(),
+            ranges: to_insert,
         });
         cx.notify();
 
         (added_new_excerpt, path_key_index)
+    }
+
+    pub fn remove_excerpts_for_buffer(&mut self, buffer: BufferId, cx: &mut Context<Self>) {
+        let snapshot = self.sync_mut(cx);
+        let Some(path) = snapshot.path_for_buffer(buffer).cloned() else {
+            return;
+        };
+        self.remove_excerpts_for_path(path, cx);
     }
 
     pub fn remove_excerpts_for_path(&mut self, path: PathKey, cx: &mut Context<Self>) {

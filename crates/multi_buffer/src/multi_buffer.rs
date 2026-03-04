@@ -106,7 +106,7 @@ pub enum Event {
     BufferUpdated {
         buffer: Entity<Buffer>,
         path_key: PathKey,
-        ranges: Vec<Range<text::Anchor>>,
+        ranges: Vec<ExcerptRange<text::Anchor>>,
     },
     BuffersRemoved {
         removed_buffer_ids: Vec<BufferId>,
@@ -5367,10 +5367,10 @@ impl MultiBufferSnapshot {
         }
     }
 
-    pub fn excerpts(&self) -> impl Iterator<Item = (&BufferSnapshot, ExcerptRange<text::Anchor>)> {
+    pub fn excerpts(&self) -> impl Iterator<Item = (&BufferSnapshot, ExcerptInfo)> {
         self.excerpts
             .iter()
-            .map(|excerpt| (excerpt.buffer_snapshot(self), excerpt.range.clone()))
+            .map(|excerpt| (excerpt.buffer_snapshot(self), excerpt.info()))
     }
 
     fn cursor<'a, MBD, BD>(&'a self) -> MultiBufferCursor<'a, MBD, BD>
