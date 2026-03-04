@@ -6,7 +6,7 @@ const consentInstance = document.querySelector(
 )?.content;
 
 document.addEventListener("DOMContentLoaded", () => {
-  if (consentInstance.length === 0) return;
+  if (!consentInstance || consentInstance.length === 0) return;
   const { getOrCreateConsentRuntime } = window.c15t;
 
   const { consentStore } = getOrCreateConsentRuntime({
@@ -31,15 +31,20 @@ document.addEventListener("DOMContentLoaded", () => {
     ],
   });
 
+  let previousActiveUI = consentStore.getState().activeUI;
   const banner = document.getElementById("c15t-banner");
   const configureSection = document.getElementById("c15t-configure-section");
   const configureBtn = document.getElementById("c15t-configure-btn");
   const measurementToggle = document.getElementById("c15t-toggle-measurement");
+  const marketingToggle = document.getElementById("c15t-toggle-marketing");
 
   const toggleConfigureMode = () => {
     const currentConsents = consentStore.getState().consents;
     measurementToggle.checked = currentConsents
       ? (currentConsents.measurement ?? false)
+      : false;
+    marketingToggle.checked = currentConsents
+      ? (currentConsents.marketing ?? false)
       : false;
     configureSection.style.display = "flex";
     configureBtn.innerHTML = "Save";
@@ -51,9 +56,11 @@ document.addEventListener("DOMContentLoaded", () => {
     const hideBanner = state.activeUI === "none";
     banner.style.display = hideBanner ? "none" : "block";
 
-    if (state.activeUI === "dialog") {
+    if (state.activeUI === "dialog" && previousActiveUI !== "dialog") {
       toggleConfigureMode();
     }
+
+    previousActiveUI = state.activeUI;
   });
 
   configureBtn.addEventListener("click", () => {
@@ -61,8 +68,10 @@ document.addEventListener("DOMContentLoaded", () => {
       consentStore
         .getState()
         .setConsent("measurement", measurementToggle.checked);
+      consentStore.getState().setConsent("marketing", marketingToggle.checked);
+      consentStore.getState().saveConsents("custom");
     } else {
-      toggleConfigureMode();
+      consentStore.getState().setActiveUI("dialog");
     }
   });
 

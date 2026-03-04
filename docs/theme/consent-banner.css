@@ -27,6 +27,7 @@
   --color-accent-blue: hsla(218, 93%, 42%, 1);
 
   position: fixed;
+  z-index: 9999;
   bottom: 16px;
   right: 16px;
   border-radius: 4px;
