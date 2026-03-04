@@ -2203,7 +2203,7 @@ mod tests {
         // Initially, file_read_times should be empty
         let is_empty = action_log.read_with(cx, |action_log, _| {
             action_log
-                .file_read_time(std::path::Path::new("/root/test.txt"))
+                .file_read_time(path!("/root/test.txt").as_ref())
                 .is_none()
         });
         assert!(is_empty, "file_read_times should start empty");
@@ -2232,7 +2232,7 @@ mod tests {
 
         // Verify that file_read_times now contains an entry for the file
         let has_entry = action_log.read_with(cx, |log, _| {
-            log.file_read_time(std::path::Path::new("/root/test.txt"))
+            log.file_read_time(path!("/root/test.txt").as_ref())
                 .is_some()
         });
         assert!(
@@ -2257,7 +2257,7 @@ mod tests {
 
         // Should still have an entry after re-reading
         let has_entry = action_log.read_with(cx, |log, _| {
-            log.file_read_time(std::path::Path::new("/root/test.txt"))
+            log.file_read_time(path!("/root/test.txt").as_ref())
                 .is_some()
         });
         assert!(
