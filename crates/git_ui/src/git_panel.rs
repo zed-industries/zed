@@ -43,7 +43,8 @@ use gpui::{
 use itertools::Itertools;
 use language::{Buffer, BufferEvent, File};
 use language_model::{
-    ConfiguredModel, LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage, Role,
+    ConfiguredModel, LanguageModelId, LanguageModelRegistry, LanguageModelRequest,
+    LanguageModelRequestMessage, LanguageModelProviderId, Role, SelectedModel,
 };
 use menu;
 use multi_buffer::ExcerptInfo;
@@ -58,7 +59,7 @@ use project::{
 use prompt_store::{BuiltInPrompt, PromptId, PromptStore, RULES_FILE_NAMES};
 use proto::RpcError;
 use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsStore, StatusStyle};
+use settings::{LanguageModelSelection, Settings, SettingsStore, StatusStyle};
 use smallvec::SmallVec;
 use std::future::Future;
 use std::ops::Range;
@@ -68,9 +69,9 @@ use strum::{IntoEnumIterator, VariantNames};
 use theme::ThemeSettings;
 use time::OffsetDateTime;
 use ui::{
-    ButtonLike, Checkbox, CommonAnimationExt, ContextMenu, ElevationIndex, IndentGuideColors,
-    PopoverMenu, RenderedIndentGuide, ScrollAxes, Scrollbars, SplitButton, Tooltip, WithScrollbar,
-    prelude::*,
+    ButtonLike, Checkbox, CommonAnimationExt, ContextMenu, ContextMenuEntry, ElevationIndex,
+    IndentGuideColors, PopoverMenu, RenderedIndentGuide, ScrollAxes, Scrollbars, SplitButton,
+    Tooltip, WithScrollbar, prelude::*,
 };
 use util::paths::PathStyle;
 use util::{ResultExt, TryFutureExt, maybe, rel_path::RelPath};
@@ -4078,33 +4079,171 @@ impl GitPanel {
         let editor_focus_handle = self.commit_editor.focus_handle(cx);
 
         Some(
-            IconButton::new("generate-commit-message", IconName::AiEdit)
-                .shape(ui::IconButtonShape::Square)
-                .icon_color(if has_commit_model_configuration_error {
-                    Color::Disabled
-                } else {
-                    Color::Muted
-                })
-                .tooltip(move |_window, cx| {
-                    if !can_commit {
-                        Tooltip::simple("No Changes to Commit", cx)
-                    } else if has_commit_model_configuration_error {
-                        Tooltip::simple("Configure an LLM provider to generate commit messages", cx)
+            SplitButton::new(
+                IconButton::new("generate-commit-message", IconName::AiEdit)
+                    .shape(ui::IconButtonShape::Square)
+                    .icon_color(if has_commit_model_configuration_error {
+                        Color::Disabled
                     } else {
-                        Tooltip::for_action_in(
-                            "Generate Commit Message",
-                            &git::GenerateCommitMessage,
-                            &editor_focus_handle,
-                            cx,
-                        )
-                    }
-                })
-                .disabled(!can_commit || has_commit_model_configuration_error)
-                .on_click(cx.listener(move |this, _event, _window, cx| {
-                    this.generate_commit_message(cx);
-                }))
-                .into_any_element(),
+                        Color::Muted
+                    })
+                    .tooltip(move |_window, cx| {
+                        if !can_commit {
+                            Tooltip::simple("No Changes to Commit", cx)
+                        } else if has_commit_model_configuration_error {
+                            Tooltip::simple("Configure an LLM provider to generate commit messages", cx)
+                        } else {
+                            Tooltip::for_action_in(
+                                "Generate Commit Message",
+                                &git::GenerateCommitMessage,
+                                &editor_focus_handle,
+                                cx,
+                            )
+                        }
+                    })
+                    .disabled(!can_commit || has_commit_model_configuration_error)
+                    .on_click(cx.listener(move |this, _event, _window, cx| {
+                        this.generate_commit_message(cx);
+                    })),
+                self.render_generate_commit_message_menu(cx)
+                    .into_any_element(),
+            )
+            .into_any_element(),
         )
+    }
+
+    fn render_generate_commit_message_menu(&self, cx: &Context<Self>) -> impl IntoElement {
+        let (providers, selected_model) = self.commit_message_model_options(cx);
+
+        PopoverMenu::new("generate-commit-message-menu")
+            .trigger(
+                ui::ButtonLike::new_rounded_right("generate-commit-message-menu-trigger")
+                    .layer(ui::ElevationIndex::ModalSurface)
+                    .size(ButtonSize::None)
+                    .tooltip(move |_window, cx| Tooltip::simple("Select Commit Message Model", cx))
+                    .child(
+                        h_flex()
+                            .px_1()
+                            .h_full()
+                            .justify_center()
+                            .child(Icon::new(IconName::ChevronDown).size(IconSize::XSmall)),
+                    ),
+            )
+            .menu({
+                let git_panel = cx.entity();
+                move |window, cx| {
+                    Some(ContextMenu::build(window, cx, |context_menu, _, _| {
+                        let mut context_menu = context_menu.header("Commit Message Model");
+
+                        if providers.is_empty() {
+                            return context_menu.item(ContextMenuEntry::new("No models available").disabled(true));
+                        }
+
+                        for (provider_id, provider_name, provider_icon, models) in providers.iter().cloned() {
+                            let selected_model = selected_model.clone();
+                            let git_panel = git_panel.downgrade();
+                            context_menu = context_menu.submenu(provider_name.clone(), {
+                                move |mut provider_menu, _, _| {
+                                    for (model_id, model_name) in models.iter().cloned() {
+                                        let is_selected = selected_model.as_ref().is_some_and(
+                                            |(selected_provider_id, selected_model_id)| {
+                                                *selected_provider_id == provider_id
+                                                    && *selected_model_id == model_id
+                                            },
+                                        );
+                                        let mut entry = ContextMenuEntry::new(model_name)
+                                            .toggleable(IconPosition::Start, is_selected);
+                                        entry = match provider_icon.clone() {
+                                            language_model::IconOrSvg::Svg(path) => {
+                                                entry.custom_icon_svg(path)
+                                            }
+                                            language_model::IconOrSvg::Icon(icon) => entry.icon(icon),
+                                        };
+                                        let git_panel = git_panel.clone();
+                                        let provider_id = provider_id.clone();
+                                        provider_menu = provider_menu.item(entry.handler(move |_, cx| {
+                                            git_panel
+                                                .update(cx, |git_panel, cx| {
+                                                    git_panel.set_commit_message_model(
+                                                        provider_id.clone(),
+                                                        model_id.clone(),
+                                                        cx,
+                                                    );
+                                                })
+                                                .ok();
+                                        }));
+                                    }
+
+                                    provider_menu
+                                }
+                            });
+                        }
+
+                        context_menu
+                    }))
+                }
+            })
+            .anchor(Corner::TopRight)
+    }
+
+    fn commit_message_model_options(
+        &self,
+        cx: &App,
+    ) -> (
+        Vec<(
+            LanguageModelProviderId,
+            SharedString,
+            language_model::IconOrSvg,
+            Vec<(LanguageModelId, SharedString)>,
+        )>,
+        Option<(LanguageModelProviderId, LanguageModelId)>,
+    ) {
+        let model_registry = LanguageModelRegistry::read_global(cx);
+        let mut providers = model_registry
+            .visible_providers()
+            .into_iter()
+            .map(|provider| {
+                let mut models = provider
+                    .provided_models(cx)
+                    .into_iter()
+                    .map(|model| (model.id(), model.name().0))
+                    .collect::<Vec<_>>();
+                models.sort_by_key(|(_, name)| name.to_lowercase());
+                (provider.id(), provider.name().0, provider.icon(), models)
+            })
+            .collect::<Vec<_>>();
+        providers.sort_by_key(|(_, name, _, _)| name.to_lowercase());
+
+        let selected_model = model_registry
+            .commit_message_model()
+            .map(|model| (model.provider.id(), model.model.id()));
+
+        (providers, selected_model)
+    }
+
+    fn set_commit_message_model(
+        &mut self,
+        provider_id: LanguageModelProviderId,
+        model_id: LanguageModelId,
+        cx: &mut Context<Self>,
+    ) {
+        let selected_model = SelectedModel {
+            provider: provider_id.clone(),
+            model: model_id.clone(),
+        };
+        LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
+            registry.select_commit_message_model(Some(&selected_model), cx)
+        });
+
+        let selection = LanguageModelSelection {
+            provider: provider_id.0.to_string().into(),
+            model: model_id.0.to_string(),
+            enable_thinking: false,
+            effort: None,
+        };
+        settings::update_settings_file(self.fs.clone(), cx, move |settings, _| {
+            settings.agent.get_or_insert_default().commit_message_model = Some(selection)
+        });
     }
 
     pub(crate) fn render_co_authors(&self, cx: &Context<Self>) -> Option<AnyElement> {
