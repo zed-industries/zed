@@ -1,5 +1,3 @@
-in diff view split view, can you use smaller fontsize than default? only in split view, not stacked view
-
 after next main merge, test this:
 - https://github.com/zed-industries/zed/pull/49802 (project_panel: Add diagnostic count badges and color priority)
 - outline UI ("document_symbols": "on"). (enable this and test) (https://github.com/zed-industries/zed/pull/48780)
