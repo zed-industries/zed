@@ -2930,11 +2930,6 @@ fn git_status_args(path_prefixes: &[RepoPath]) -> Vec<OsString> {
         OsString::from("--no-renames"),
         OsString::from("-z"),
     ];
-    args.extend(
-        path_prefixes
-            .iter()
-            .map(|path_prefix| path_prefix.as_std_path().into()),
-    );
     args.extend(path_prefixes.iter().map(|path_prefix| {
         if path_prefix.is_empty() {
             Path::new(".").into()
