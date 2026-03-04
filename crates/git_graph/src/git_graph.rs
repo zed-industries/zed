@@ -2327,13 +2327,11 @@ impl Render for GitGraph {
                         state.commit_ratio();
                     });
                 }))
-                .on_drag_move::<CanvasDraggedSplitHandle>(cx.listener(
-                    |this, event, window, cx| {
-                        this.canvas_split_state.update(cx, |state, cx| {
-                            state.on_drag_move(event, window, cx);
-                        });
-                    },
-                ))
+                .on_drag_move::<CanvasDraggedSplitHandle>(cx.listener(|this, event, window, cx| {
+                    this.canvas_split_state.update(cx, |state, cx| {
+                        state.on_drag_move(event, window, cx);
+                    });
+                }))
                 .when(self.selected_entry_idx.is_some(), |this| {
                     this.child(self.render_commit_view_resize_handle(window, cx))
                         .child(self.render_commit_detail_panel(window, cx))
