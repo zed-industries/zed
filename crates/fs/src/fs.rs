@@ -1006,8 +1006,8 @@ impl Fs for RealFs {
 
         // Check if path is a symlink and follow the target parent
         if let Ok(canonical) = self.canonicalize(path).await {
-            log::trace!("watch symlink {path:?} -> {target:?}");
             let target = SanitizedPath::new(&canonical).as_path().to_path_buf();
+            log::trace!("watch symlink {path:?} -> {target:?}");
             if target != path {
                 log::trace!("watch resolved path {path:?} -> {target:?}");
                 watcher.add(&target).ok();
