@@ -42,7 +42,27 @@ pub(crate) struct DockerInspectMount {
     pub(crate) destination: String,
 }
 
+pub(crate) async fn pull_image(image: &String) -> Result<(), DevContainerErrorV2> {
+    let mut command = smol::process::Command::new(docker_cli());
+    command.args(&["pull", image]);
+
+    let output = command.output().await.map_err(|e| {
+        log::error!("Error pulling image: {e}");
+        DevContainerErrorV2::UnmappedError
+    })?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        log::error!("Non-success result from docker pull: {stderr}");
+        return Err(DevContainerErrorV2::UnmappedError);
+    }
+    Ok(())
+}
+
 pub(crate) async fn inspect_image(image: &String) -> Result<DockerInspect, DevContainerErrorV2> {
+    // Try to pull the image, continue on failure; Image may be local only, or network unavailable
+    pull_image(image).await.ok();
+
     let command = create_docker_inspect(image);
 
     let Some(docker_inspect): Option<DockerInspect> = evaluate_json_command(command).await? else {

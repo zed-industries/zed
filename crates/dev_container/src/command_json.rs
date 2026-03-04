@@ -18,7 +18,10 @@ where
         DevContainerErrorV2::UnmappedError
     })?;
 
-    deserialize_json_output(output)
+    deserialize_json_output(output).map_err(|e| {
+        log::error!("Error running command {:?}", command);
+        e
+    })
 }
 
 pub(crate) fn deserialize_json_output<T>(output: Output) -> Result<Option<T>, DevContainerErrorV2>

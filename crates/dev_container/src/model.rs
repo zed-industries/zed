@@ -665,13 +665,7 @@ pub(crate) async fn spawn_dev_container_v2(
                 &docker_compose_files.len()
             );
 
-            let running_container = run_docker_compose(
-                docker_compose_files,
-                &labels,
-                &local_project_path,
-                &devcontainer,
-            )
-            .await?;
+            let running_container = run_docker_compose(docker_compose_files, &labels).await?;
 
             dbg!(&running_container);
 
@@ -729,8 +723,6 @@ pub(crate) async fn spawn_dev_container_v2(
 async fn run_docker_compose(
     docker_compose_files: Vec<String>,
     labels: &Vec<(&str, String)>,
-    _local_project_path: &Arc<&Path>,
-    _devcontainer: &DevContainer,
 ) -> Result<DockerInspect, DevContainerErrorV2> {
     let mut command = Command::new(docker_cli());
     // TODO project name how
@@ -755,11 +747,7 @@ async fn run_docker_compose(
 
     if let Some(docker_ps) = check_for_existing_container(&labels).await? {
         log::info!("Dev container already found. Proceeding with it");
-        //     2. If exists and running, return it
-        //
-        let docker_inspect = inspect_image(&docker_ps.id).await?;
-
-        return Ok(docker_inspect);
+        return inspect_image(&docker_ps.id).await;
     }
 
     log::error!("Could not find existing container after docker compose up");
