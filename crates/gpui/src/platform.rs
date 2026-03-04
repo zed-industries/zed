@@ -605,8 +605,12 @@ pub trait PlatformTextSystem: Send + Sync {
         raster_bounds: Bounds<DevicePixels>,
     ) -> Result<(Size<DevicePixels>, Vec<u8>)>;
     fn layout_line(&self, text: &str, font_size: Pixels, runs: &[FontRun]) -> LineLayout;
-    fn recommended_rendering_mode(&self, _font_id: FontId, _font_size: Pixels)
-    -> TextRenderingMode;
+    fn recommended_rendering_mode(
+        &self,
+        font_id: FontId,
+        font_size: Pixels,
+        scale_factor: f32,
+    ) -> TextRenderingMode;
 }
 
 #[expect(missing_docs)]
@@ -734,10 +738,12 @@ impl PlatformTextSystem for NoopTextSystem {
         &self,
         _font_id: FontId,
         _font_size: Pixels,
+        _scale_factor: f32,
     ) -> TextRenderingMode {
         TextRenderingMode::Grayscale
     }
 }
+
 
 // Adapted from https://github.com/microsoft/terminal/blob/1283c0f5b99a2961673249fa77c6b986efb5086c/src/renderer/atlas/dwrite.cpp
 // Copyright (c) Microsoft Corporation.
@@ -1428,14 +1434,20 @@ pub enum WindowBackgroundAppearance {
 }
 
 /// The text rendering mode to use for drawing glyphs.
+/// Scale factor below which a display is considered LoDPI.
+/// Below this threshold, hinting and grayscale AA produce sharper
+/// results than subpixel rendering for small text.
+pub const LODPI_SCALE_FACTOR_THRESHOLD: f32 = 1.5;
+
+/// Font size in logical pixels below which grayscale AA is preferred
+/// over subpixel rendering on LoDPI displays.
+pub const SUBPIXEL_MIN_FONT_SIZE_PX: f32 = 16.0;
+
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
 pub enum TextRenderingMode {
-    /// Use the platform's default text rendering mode.
     #[default]
     PlatformDefault,
-    /// Use subpixel (ClearType-style) text rendering.
     Subpixel,
-    /// Use grayscale text rendering.
     Grayscale,
 }
 
