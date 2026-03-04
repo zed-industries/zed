@@ -10,7 +10,7 @@ use language_model::LanguageModelRegistry;
 use language_models::provider::open_ai_compatible::{AvailableModel, ModelCapabilities};
 use settings::{OpenAiCompatibleSettingsContent, update_settings_file};
 use ui::{
-    Banner, Checkbox, KeyBinding, Modal, ModalFooter, ModalHeader, Section, ToggleState,
+    Banner, Checkbox, KeyBinding, Modal, ModalFooter, ModalHeader, Section, ToggleState, Tooltip,
     WithScrollbar, prelude::*,
 };
 use ui_input::InputField;
@@ -571,24 +571,30 @@ impl Render for AddLlmProviderModal {
                                                         )
                                                         .icon_size(IconSize::Small)
                                                         .icon_color(Color::Muted)
-                                                        .tooltip(|_cx| {
-                                                            Tooltip::text(
-                                                                "Toggle API key visibility",
-                                                            )
+                                                        .tooltip({
+                                                            let tooltip_text =
+                                                                if self.api_key_visible {
+                                                                    "Hide API key"
+                                                                } else {
+                                                                    "Show API key"
+                                                                };
+                                                            Tooltip::text(tooltip_text)
                                                         })
                                                         .on_click(cx.listener(
                                                             |this, _, window, cx| {
                                                                 this.api_key_visible =
                                                                     !this.api_key_visible;
-                                                                this.input
+                                                                let editor = this
+                                                                    .input
                                                                     .api_key
                                                                     .read(cx)
                                                                     .editor()
-                                                                    .set_masked(
-                                                                        !this.api_key_visible,
-                                                                        window,
-                                                                        cx,
-                                                                    );
+                                                                    .clone();
+                                                                editor.set_masked(
+                                                                    !this.api_key_visible,
+                                                                    window,
+                                                                    cx,
+                                                                );
                                                                 cx.notify();
                                                             },
                                                         )),
