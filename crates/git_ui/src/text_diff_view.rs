@@ -12,7 +12,6 @@ use language::{self, Buffer, Point};
 use project::Project;
 use std::{
     any::{Any, TypeId},
-    cmp,
     ops::Range,
     pin::pin,
     sync::Arc,
@@ -61,15 +60,7 @@ impl TextDiffView {
 
             let start = first_selection.start;
             let end = first_selection.end;
-            let expanded_start = Point::new(start.row, 0);
-
-            let expanded_end = if end.column > 0 {
-                let next_row = end.row + 1;
-                cmp::min(max_point, Point::new(next_row, 0))
-            } else {
-                end
-            };
-            Some((source_buffer, expanded_start..expanded_end))
+            Some((source_buffer, start..end))
         });
 
         let Some((source_buffer, expanded_selection_range)) = selection_data else {
@@ -77,27 +68,8 @@ impl TextDiffView {
             return None;
         };
 
-        source_editor.update(cx, |source_editor, cx| {
-            source_editor.change_selections(Default::default(), window, cx, |s| {
-                s.select_ranges(vec![
-                    expanded_selection_range.start..expanded_selection_range.end,
-                ]);
-            })
-        });
-
         let source_buffer_snapshot = source_buffer.read(cx).snapshot();
-        let mut clipboard_text = diff_data.clipboard_text.clone();
-
-        let range_end_offset = source_buffer_snapshot.point_to_offset(expanded_selection_range.end);
-        let source_text_ends_with_newline = range_end_offset > 0
-            && source_buffer_snapshot
-                .reversed_chars_at(range_end_offset)
-                .next()
-                == Some('\n');
-
-        if source_text_ends_with_newline && !clipboard_text.ends_with("\n") {
-            clipboard_text.push_str("\n");
-        }
+        let clipboard_text = diff_data.clipboard_text.clone();
 
         let workspace = workspace.weak_handle();
         let diff_buffer = cx.new(|cx| BufferDiff::new(&source_buffer_snapshot.text, cx));
