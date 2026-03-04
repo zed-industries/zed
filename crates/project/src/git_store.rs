@@ -3594,7 +3594,9 @@ impl RepositorySnapshot {
                             current_new_entry = new_statuses.next();
                         }
                         Ordering::Equal => {
-                            if new_entry.status != old_entry.status {
+                            if new_entry.status != old_entry.status
+                                || new_entry.diff_stat != old_entry.diff_stat
+                            {
                                 updated_statuses.push(new_entry.to_proto());
                             }
                             current_old_entry = old_statuses.next();
