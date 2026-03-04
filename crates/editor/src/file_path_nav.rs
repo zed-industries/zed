@@ -7,7 +7,7 @@ use std::{
 
 use file_icons::FileIcons;
 use gpui::{AnyElement, App, Context, ElementId, IntoElement, WeakEntity, Window};
-use project::{Entry, Project, ProjectPath, WorktreeId};
+use project::{Entry, Project, ProjectPath, Worktree, WorktreeId};
 use ui::{
     ButtonLike, ButtonStyle, Color, ContextMenu, PopoverMenu, PopoverMenuHandle, prelude::*,
 };
@@ -125,6 +125,54 @@ fn open_breadcrumb_file(
     }
 }
 
+fn collect_visible_rows(
+    snapshot: &Worktree,
+    directory_path: &RelPath,
+    depth: usize,
+    expanded_dirs: &HashSet<Arc<RelPath>>,
+    rows: &mut Vec<InlineMenuRow>,
+    cx: &App,
+) {
+    let mut entries: Vec<Entry> = snapshot.child_entries(directory_path).cloned().collect();
+    entries.sort_by(|a, b| match (a.is_dir(), b.is_dir()) {
+        (true, false) => std::cmp::Ordering::Less,
+        (false, true) => std::cmp::Ordering::Greater,
+        _ => a.path.cmp(&b.path),
+    });
+
+    for entry in entries {
+        let Some(name) = entry.path.file_name().map(ToString::to_string) else {
+            continue;
+        };
+
+        if entry.is_dir() {
+            let path = entry.path;
+            let is_expanded = expanded_dirs.contains(&path);
+            rows.push(InlineMenuRow {
+                name: SharedString::from(name),
+                icon_path: FileIcons::get_folder_icon(is_expanded, path.as_std_path(), cx),
+                path: path.clone(),
+                depth,
+                is_directory: true,
+                is_expanded,
+            });
+            if is_expanded {
+                collect_visible_rows(snapshot, &path, depth + 1, expanded_dirs, rows, cx);
+            }
+        } else {
+            let icon_path = FileIcons::get_icon(entry.path.as_std_path(), cx);
+            rows.push(InlineMenuRow {
+                name: SharedString::from(name),
+                path: entry.path,
+                depth,
+                is_directory: false,
+                is_expanded: false,
+                icon_path,
+            });
+        }
+    }
+}
+
 fn build_inline_directory_menu(
     menu: ContextMenu,
     parent_dir: &RelPath,
@@ -156,54 +204,7 @@ fn build_inline_directory_menu(
     let expanded_snapshot = expanded_directories.borrow().clone();
     let mut rows: Vec<InlineMenuRow> = Vec::new();
     let snapshot = worktree.read(cx);
-    let mut stack: Vec<(Arc<RelPath>, usize)> = vec![(Arc::from(parent_dir), 0)];
-
-    while let Some((directory_path, depth)) = stack.pop() {
-        let mut entries: Vec<Entry> = snapshot.child_entries(&directory_path).cloned().collect();
-        entries.sort_by(|a, b| match (a.is_dir(), b.is_dir()) {
-            (true, false) => std::cmp::Ordering::Less,
-            (false, true) => std::cmp::Ordering::Greater,
-            _ => a.path.cmp(&b.path),
-        });
-
-        let mut expanded_children: Vec<Arc<RelPath>> = Vec::new();
-        for entry in entries {
-            let Some(name) = entry.path.file_name().map(ToString::to_string) else {
-                continue;
-            };
-
-            if entry.is_dir() {
-                let path = entry.path;
-                let is_expanded = expanded_snapshot.contains(&path);
-                if is_expanded {
-                    expanded_children.push(path.clone());
-                }
-
-                rows.push(InlineMenuRow {
-                    name: SharedString::from(name),
-                    icon_path: FileIcons::get_folder_icon(is_expanded, path.as_std_path(), cx),
-                    path,
-                    depth,
-                    is_directory: true,
-                    is_expanded,
-                });
-            } else {
-                let icon_path = FileIcons::get_icon(entry.path.as_std_path(), cx);
-                rows.push(InlineMenuRow {
-                    name: SharedString::from(name),
-                    path: entry.path,
-                    depth,
-                    is_directory: false,
-                    is_expanded: false,
-                    icon_path,
-                });
-            }
-        }
-
-        for child in expanded_children.into_iter().rev() {
-            stack.push((child, depth + 1));
-        }
-    }
+    collect_visible_rows(snapshot, parent_dir, 0, &expanded_snapshot, &mut rows, cx);
 
     *visible_rows.borrow_mut() = rows.clone();
 
