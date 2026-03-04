@@ -17,8 +17,8 @@ use std::mem;
 use theme::{ActiveTheme, ThemeSettings};
 use ui::utils::TRAFFIC_LIGHT_PADDING;
 use ui::{
-    AgentThreadStatus, HighlightedLabel, IconButtonShape, KeyBinding, Tab, ThreadItem, Tooltip,
-    prelude::*,
+    AgentThreadStatus, Divider, IconButtonShape, KeyBinding, ListHeader, ListItem, ListSubHeader,
+    Tab, ThreadItem, Tooltip, prelude::*,
 };
 use util::path_list::PathList;
 use workspace::{
@@ -590,7 +590,13 @@ impl Sidebar {
         let is_focused = self.focus_handle.is_focused(window);
         let is_selected = is_focused && self.selection == Some(ix);
 
-        match entry {
+        let is_last_in_group = self
+            .contents
+            .entries
+            .get(ix + 1)
+            .is_some_and(|next| matches!(next, ListEntry::ProjectHeader { .. }));
+
+        let rendered = match entry {
             ListEntry::ProjectHeader { path_list, label } => {
                 self.render_project_header(ix, path_list, label, is_selected, cx)
             }
@@ -615,6 +621,12 @@ impl Sidebar {
                 path_list,
                 remaining_count,
             } => self.render_view_more(ix, path_list, *remaining_count, is_selected, cx),
+        };
+
+        if is_last_in_group {
+            Divider::horizontal().into_any_element()
+        } else {
+            rendered
         }
     }
 
@@ -626,6 +638,9 @@ impl Sidebar {
         is_selected: bool,
         cx: &mut Context<Self>,
     ) -> AnyElement {
+        let id = SharedString::from(format!("project-header-{}", ix));
+        let group = SharedString::from(format!("group-{}", ix));
+
         let is_collapsed = self.collapsed_groups.contains(path_list);
         let disclosure_icon = if is_collapsed {
             IconName::ChevronRight
@@ -634,29 +649,27 @@ impl Sidebar {
         };
         let path_list = path_list.clone();
 
-        h_flex()
-            .id(SharedString::from(format!("project-header-{}", ix)))
-            .w_full()
-            .px_2()
-            .py_1()
-            .gap_1()
-            .hover(|style| style.bg(cx.theme().colors().ghost_element_hover))
-            .active(|style| style.bg(cx.theme().colors().ghost_element_active))
-            .when(is_selected, |this| {
-                this.bg(cx.theme().colors().ghost_element_selected)
-            })
-            .rounded_md()
+        ListItem::new(id)
+            .group_name(&group)
+            .toggle_state(is_selected)
             .child(
-                Icon::new(disclosure_icon)
-                    .size(IconSize::Small)
-                    .color(Color::Muted),
+                h_flex()
+                    .px_1()
+                    .py_1p5()
+                    .gap_0p5()
+                    .child(
+                        Label::new(label.clone())
+                            .size(LabelSize::Small)
+                            .color(Color::Muted),
+                    )
+                    .child(
+                        div().visible_on_hover(group).child(
+                            Icon::new(disclosure_icon)
+                                .size(IconSize::Small)
+                                .color(Color::Muted),
+                        ),
+                    ),
             )
-            .child(
-                Label::new(label.clone())
-                    .size(LabelSize::Small)
-                    .color(Color::Muted),
-            )
-            .cursor_pointer()
             .on_click(cx.listener(move |this, _, window, cx| {
                 this.selection = None;
                 this.toggle_collapse(&path_list, window, cx);
