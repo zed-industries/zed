@@ -39,6 +39,17 @@ Then include any relevant background or context that helps the team understand w
 
 Zed has a lot of features, and many of them interact with each other. Before you start building, walk through the sections below and ask: "Does my feature involve this system or could use this UI?"
 
+### Cross-cutting concerns
+
+These are the systems and features that tend to come up across many different kinds of changes:
+
+- **Actions & keybindings.** What actions does your feature define? What are the default keybindings? Do they conflict with existing ones?
+- **Settings.** Is any behavior configurable? Global vs. per-project vs. per-language? What are the defaults? Don't forget to add any new settings to the Settings UI.
+- **Themes & styling.** Does this need a new semantic token? Does it look right in both light and dark mode?
+- **Vim mode.** Does your feature introduce keybindings or interactive UI, particularly to the editor? Vim users might need specific consideration.
+- **Remote development.** Does your feature assume the project is local? When a project is open over SSH, some things run on the remote machine and some run locally. File paths, shell commands, and environment variables all behave differently.
+- **Persistence across restarts.** If the user sets up some UI state (a panel, several editor tabs, the edits in those buffers), should it be preserved across restarts?
+
 ### If it touches the editor, what needs to keep working?
 
 The editor already has a lot going on. If your feature interacts with the editing surface, these are the existing behaviors it needs to coexist with — things that should still work correctly after your change lands:
@@ -52,33 +63,8 @@ The editor already has a lot going on. If your feature interacts with the editin
 | **Code intelligence** | ...completions, hover info, code actions, or signature help are active? Do these features still work with your change in place? |
 | **Edit predictions** | ...AI edit predictions (ghost text) are visible? Does your feature conflict with or obscure them? |
 | **Folding** | ...code is folded? Does your feature handle folded ranges correctly, or does it break when lines are hidden? |
-| **Multi-buffer** | ...the editor is showing a multi-buffer (search results, diagnostics view)? This is a common blind spot — features that work in a normal buffer often break in multi-buffer contexts. |
+| **Multi-buffer** | ...the editor is showing a multi-buffer (search results, diagnostics view)? This feature might need to be adapted or deactivated when in a multi-buffer. |
 | **Minimap** | ...the minimap is visible? Does your feature need to be represented there? |
-
-This list isn't exhaustive — the editor is one of the most complex parts of Zed. Use it as a starting point, not a complete checklist.
-
-### What systems does it plug into?
-
-These are the cross-cutting infrastructure systems that most features eventually need:
-
-| System | Ask yourself |
-| --- | --- |
-| **Actions & keybindings** | What actions does your feature define? What are the default keybindings? Do they conflict with existing ones? Actions are automatically discoverable in the command palette. |
-| **Settings** | Is any behavior configurable? Global vs. per-project vs. per-language? What are the defaults? Use the `Settings` + `SettingsKey` traits and don't forget to add it to the Settings UI. |
-| **Themes & styling** | Does it introduce new colored elements? Use semantic theme tokens from `cx.theme()` — don't hardcode colors. Does it look right in both light and dark mode? |
-| **Serialization / persistence** | Does this feature add workspace or tab state? That state probably needs to survive restarts. Tab state uses `SerializableItem`. Other state may need the workspace DB or key-value store. |
-| **Search** | Is the content searchable? Implement `SearchableItem` for find/replace support within your view. |
-| **Collaboration** | Does this work when sharing a project? What do guests see? If it's a tab, does it support leader/follower via `FollowableItem`? |
-
-### Commonly forgotten cross-cutting concerns
-
-You'll naturally think about the features that are obviously related to yours. If you're building a Git feature, you already know to look at the git panel. These are the ones people *forget* — the non-obvious intersections that tend to surface late in review:
-
-- **Vim mode.** Does your feature introduce keybindings or interactive UI? Vim users expect modal behavior, and bindings that work great in insert mode might conflict with normal mode. If you add a new action, consider whether it needs Vim-specific bindings.
-- **Remote development.** Does your feature assume the project is local? When a project is open over SSH, some things run on the remote machine and some run locally. File paths, shell commands, and environment variables all behave differently.
-- **AI / Agent context.** Does your feature produce information the agent should know about? Could there be an agent tool for it? Does it provide context that would be useful in a prompt?
-- **Per-language settings.** Is the behavior the same for every language, or might users want different defaults for Rust vs. Python vs. Markdown?
-- **Persistence across restarts.** If the user sets something up (a panel state, a configuration, a selection), is it gone when they reopen the workspace? Should it be?
 
 ### Platform & quality
 
