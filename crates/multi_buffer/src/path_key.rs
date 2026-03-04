@@ -119,7 +119,7 @@ impl MultiBuffer {
         buffer_snapshot: &BufferSnapshot,
         excerpt_ranges: Vec<ExcerptRange<Point>>,
         cx: &mut Context<Self>,
-    ) -> (Vec<Range<Anchor>>, bool) {
+    ) -> (Vec<Range<Anchor>>, PathKeyIndex, bool) {
         let merged = Self::merge_excerpt_ranges(&excerpt_ranges);
         let (inserted, path_key_index) =
             self.set_merged_excerpt_ranges_for_path(path, buffer, buffer_snapshot, merged, cx);
@@ -133,7 +133,7 @@ impl MultiBuffer {
                 )
             })
             .collect::<Vec<_>>();
-        (anchors, inserted)
+        (anchors, path_key_index, inserted)
     }
 
     pub fn set_anchored_excerpts_for_path(

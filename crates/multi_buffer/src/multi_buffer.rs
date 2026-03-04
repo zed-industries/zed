@@ -94,7 +94,7 @@ pub struct MultiBuffer {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct PathKeyIndex(u64);
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct ExcerptInfo {
     path_key_index: PathKeyIndex,
     buffer_id: BufferId,
