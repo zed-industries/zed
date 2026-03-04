@@ -15743,12 +15743,14 @@ dependencies = [
  "language_model",
  "menu",
  "project",
+ "recent_projects",
  "serde_json",
  "settings",
  "theme",
  "ui",
  "util",
  "workspace",
+ "zed_actions",
 ]
 
 [[package]]

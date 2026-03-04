@@ -17,13 +17,13 @@ use std::mem;
 use theme::{ActiveTheme, ThemeSettings};
 use ui::utils::TRAFFIC_LIGHT_PADDING;
 use ui::{
-    AgentThreadStatus, IconButtonShape, KeyBinding, ListItem, Tab, ThreadItem, Tooltip,
+    AgentThreadStatus, IconButtonShape, KeyBinding, PopoverMenu, Tab, ThreadItem, Tooltip,
     WithScrollbar, prelude::*,
 };
 use util::path_list::PathList;
 use workspace::{
-    FocusWorkspaceSidebar, MultiWorkspace, NewWorkspaceInWindow, Sidebar as WorkspaceSidebar,
-    SidebarEvent, ToggleWorkspaceSidebar, Workspace,
+    FocusWorkspaceSidebar, MultiWorkspace, Sidebar as WorkspaceSidebar, SidebarEvent,
+    ToggleWorkspaceSidebar, Workspace,
 };
 
 actions!(
@@ -1081,18 +1081,38 @@ impl Render for Sidebar {
                                 cx.emit(SidebarEvent::Close);
                             }))
                     })
-                    .child(
-                        IconButton::new("new-workspace", IconName::Plus)
-                            .icon_size(IconSize::Small)
-                            .tooltip(|_window, cx| {
-                                Tooltip::for_action("New Workspace", &NewWorkspaceInWindow, cx)
+                    .child({
+                        let workspace = self.multi_workspace.read(cx).workspace().downgrade();
+                        let focus_handle = workspace
+                            .upgrade()
+                            .map(|w| w.read(cx).focus_handle(cx))
+                            .unwrap_or_else(|| cx.focus_handle());
+
+                        PopoverMenu::new("sidebar-recent-projects-menu")
+                            .menu(move |window, cx| {
+                                Some(recent_projects::RecentProjects::popover(
+                                    workspace.clone(),
+                                    false,
+                                    focus_handle.clone(),
+                                    window,
+                                    cx,
+                                ))
                             })
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.multi_workspace.update(cx, |multi_workspace, cx| {
-                                    multi_workspace.create_workspace(window, cx);
-                                });
-                            })),
-                    ),
+                            .trigger(
+                                IconButton::new("new-workspace", IconName::Plus)
+                                    .icon_size(IconSize::Small)
+                                    .tooltip(|_window, cx| {
+                                        Tooltip::for_action(
+                                            "Open Recent Project",
+                                            &zed_actions::OpenRecent {
+                                                create_new_window: false,
+                                            },
+                                            cx,
+                                        )
+                                    }),
+                            )
+                            .anchor(gpui::Corner::TopLeft)
+                    }),
             )
             .child(
                 h_flex()
