@@ -619,6 +619,9 @@ impl<D: PickerDelegate> Picker<D> {
     ) {
         cx.stop_propagation();
         window.prevent_default();
+        if !self.delegate.can_select(ix, window, cx) {
+            return;
+        }
         self.set_selected_index(ix, None, false, window, cx);
         self.do_confirm(secondary, window, cx)
     }
