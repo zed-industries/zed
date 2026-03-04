@@ -280,7 +280,6 @@ impl MentionSet {
                 Some(workspace.downgrade()),
                 Some(image),
                 cx.weak_entity(),
-                mention_uri.clone(),
                 editor.clone(),
                 window,
                 cx,
@@ -297,7 +296,6 @@ impl MentionSet {
                 Some(workspace.downgrade()),
                 None,
                 cx.weak_entity(),
-                mention_uri.clone(),
                 editor.clone(),
                 window,
                 cx,
@@ -798,7 +796,6 @@ pub(crate) async fn insert_images_as_context(
                 None,
                 Some(Task::ready(Ok(image.clone())).shared()),
                 mention_set.downgrade(),
-                MentionUri::PastedImage,
                 editor.clone(),
                 window,
                 cx,
@@ -913,7 +910,6 @@ pub(crate) fn insert_crease_for_mention(
     workspace: Option<WeakEntity<Workspace>>,
     image: Option<Shared<Task<Result<Arc<Image>, String>>>>,
     mention_set: WeakEntity<MentionSet>,
-    mention_uri: MentionUri,
     editor: Entity<Editor>,
     window: &mut Window,
     cx: &mut App,
@@ -940,7 +936,6 @@ pub(crate) fn insert_crease_for_mention(
                 image,
                 cx.weak_entity(),
                 mention_set,
-                mention_uri,
                 cx,
             ),
             merge_adjacent: false,
@@ -1143,10 +1138,13 @@ fn render_mention_fold_button(
     image_task: Option<Shared<Task<Result<Arc<Image>, String>>>>,
     editor: WeakEntity<Editor>,
     mention_set: WeakEntity<MentionSet>,
-    mention_uri: MentionUri,
     cx: &mut App,
 ) -> Arc<dyn Send + Sync + Fn(FoldId, Range<Anchor>, &mut App) -> AnyElement> {
-    let disambiguated_label: SharedString = mention_uri.disambiguated_name().into();
+    let disambiguated_label: SharedString = mention_uri
+        .as_ref()
+        .map(|uri| uri.disambiguated_name())
+        .unwrap_or_default()
+        .into();
     let loading = cx.new(|cx| {
         let loading = cx.spawn(async move |this, cx| {
             loading_finished.recv().await;
@@ -1165,12 +1163,11 @@ fn render_mention_fold_button(
             disambiguated_label,
             icon,
             tooltip,
-            mention_uri: mention_uri.clone(),
+            mention_uri,
             workspace: workspace.clone(),
             range,
             editor,
             mention_set,
-            mention_uri,
             loading: Some(loading),
             image: image_task.clone(),
             _mention_set_subscription,
@@ -1190,7 +1187,6 @@ struct LoadingContext {
     range: Range<Anchor>,
     editor: WeakEntity<Editor>,
     mention_set: WeakEntity<MentionSet>,
-    mention_uri: MentionUri,
     loading: Option<Task<()>>,
     image: Option<Shared<Task<Result<Arc<Image>, String>>>>,
     _mention_set_subscription: Option<Subscription>,
@@ -1206,11 +1202,15 @@ impl Render for LoadingContext {
         let id = ElementId::from(("loading_context", self.id));
 
         let label = if self
-            .mention_set
-            .read_with(cx, |mention_set, _| {
-                mention_set.has_duplicate_filename(&self.mention_uri)
+            .mention_uri
+            .as_ref()
+            .is_some_and(|uri| {
+                self.mention_set
+                    .read_with(cx, |mention_set, _| {
+                        mention_set.has_duplicate_filename(uri)
+                    })
+                    .unwrap_or(false)
             })
-            .unwrap_or(false)
         {
             self.disambiguated_label.clone()
         } else {
