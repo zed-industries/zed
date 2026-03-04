@@ -222,11 +222,9 @@ pub struct UserInfo {
 
 fn send_crash_server_message(message: CrashServerMessage) {
     let Some(crash_server) = CRASH_HANDLER.get() else {
-        dbg!("queueing {:?}", &message);
         PENDING_CRASH_SERVER_MESSAGES.lock().push(message);
         return;
     };
-    dbg!("sending {:?}", &message);
     let data = match serde_json::to_vec(&message) {
         Ok(data) => data,
         Err(err) => {
