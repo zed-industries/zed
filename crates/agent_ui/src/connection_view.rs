@@ -155,9 +155,6 @@ pub(crate) struct Conversation {
     threads: HashMap<acp::SessionId, Entity<AcpThread>>,
     permission_requests: IndexMap<acp::SessionId, Vec<acp::ToolCallId>>,
     subscriptions: Vec<Subscription>,
-    /// Tracks the selected granularity index for each tool call's permission dropdown.
-    /// The index corresponds to the position in the allow_options list.
-    selected_permission_granularity: HashMap<acp::SessionId, HashMap<acp::ToolCallId, usize>>,
 }
 
 impl Conversation {
@@ -197,29 +194,6 @@ impl Conversation {
         self.subscriptions.push(subscription);
         self.threads
             .insert(thread.read(cx).session_id().clone(), thread);
-    }
-
-    pub fn selected_permission_granularity(
-        &self,
-        session_id: &acp::SessionId,
-        tool_call_id: &acp::ToolCallId,
-    ) -> Option<usize> {
-        self.selected_permission_granularity
-            .get(session_id)
-            .and_then(|map| map.get(tool_call_id))
-            .copied()
-    }
-
-    pub fn set_selected_permission_granularity(
-        &mut self,
-        session_id: acp::SessionId,
-        tool_call_id: acp::ToolCallId,
-        granularity: usize,
-    ) {
-        self.selected_permission_granularity
-            .entry(session_id)
-            .or_default()
-            .insert(tool_call_id, granularity);
     }
 
     pub fn pending_tool_call<'a>(

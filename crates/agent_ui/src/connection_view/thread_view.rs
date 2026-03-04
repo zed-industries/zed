@@ -1,3 +1,4 @@
+use crate::SelectPermissionGranularity;
 use acp_thread::ContentBlock;
 use cloud_api_types::{SubmitAgentThreadFeedbackBody, SubmitAgentThreadFeedbackCommentsBody};
 use editor::actions::OpenExcerpts;
@@ -6009,7 +6010,6 @@ impl ThreadView {
         choices: &[PermissionOptionChoice],
         current_label: SharedString,
         entry_ix: usize,
-        session_id: acp::SessionId,
         tool_call_id: acp::ToolCallId,
         selected_index: usize,
         is_first: bool,
@@ -6022,8 +6022,6 @@ impl ThreadView {
             .collect();
 
         let permission_dropdown_handle = self.permission_dropdown_handle.clone();
-
-        let conversation = self.conversation.clone();
 
         PopoverMenu::new(("permission-granularity", entry_ix))
             .with_handle(permission_dropdown_handle)
@@ -6045,8 +6043,6 @@ impl ThreadView {
                     }),
             )
             .menu(move |window, cx| {
-                let session_id = session_id.clone();
-                let conversation = conversation.clone();
                 let tool_call_id = tool_call_id.clone();
                 let options = menu_options.clone();
 
@@ -6054,23 +6050,22 @@ impl ThreadView {
                     for (index, display_name) in options.iter() {
                         let display_name = display_name.clone();
                         let index = *index;
-                        let session_id = session_id.clone();
-                        let conversation = conversation.clone();
-                        let tool_call_id = tool_call_id.clone();
+                        let tool_call_id_for_entry = tool_call_id.clone();
                         let is_selected = index == selected_index;
                         menu = menu.toggleable_entry(
                             display_name,
                             is_selected,
                             IconPosition::End,
                             None,
-                            move |_window, cx| {
-                                conversation.update(cx, |conversation, _cx| {
-                                    conversation.set_selected_permission_granularity(
-                                        session_id.clone(),
-                                        tool_call_id.clone(),
+                            move |window, cx| {
+                                window.dispatch_action(
+                                    SelectPermissionGranularity {
+                                        tool_call_id: tool_call_id_for_entry.0.to_string(),
                                         index,
-                                    );
-                                });
+                                    }
+                                    .boxed_clone(),
+                                    cx,
+                                );
                             },
                         );
                     }
