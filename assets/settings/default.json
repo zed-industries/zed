@@ -800,7 +800,7 @@
     //    "files_first"
     "sort_mode": "directories_first",
     // Whether to show error and warning count badges next to file names in the project panel.
-    "diagnostic_badges": true,
+    "diagnostic_badges": false,
     // Whether to enable drag-and-drop operations in the project panel.
     "drag_and_drop": true,
     // Whether to hide the root entry when only one folder is open in the window;
@@ -1831,8 +1831,8 @@
         "    (",
         "        # multi-char path: first char (not opening delimiter, space, or box drawing char)",
         "        [^({\\[<\"'`\\ \\u2500-\\u257F]",
-        "        # middle chars: non-space, and colon/paren only if not followed by digit/paren",
-        "        ([^\\ :(]|[:(][^0-9()])*",
+        "        # middle chars: non-space, and colon/paren only if not followed by digit/paren/space",
+        "        ([^\\ :(]|[:(][^0-9()\\ ])*",
         "        # last char: not closing delimiter or colon",
         "        [^()}\\]>\"'`.,;:\\ ]",
         "    |",

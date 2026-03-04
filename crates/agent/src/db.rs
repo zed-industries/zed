@@ -64,6 +64,16 @@ pub struct DbThread {
     pub thinking_enabled: bool,
     #[serde(default)]
     pub thinking_effort: Option<String>,
+    #[serde(default)]
+    pub draft_prompt: Option<Vec<acp::ContentBlock>>,
+    #[serde(default)]
+    pub ui_scroll_position: Option<SerializedScrollPosition>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct SerializedScrollPosition {
+    pub item_ix: usize,
+    pub offset_in_item: f32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -105,6 +115,8 @@ impl SharedThread {
             speed: None,
             thinking_enabled: false,
             thinking_effort: None,
+            draft_prompt: None,
+            ui_scroll_position: None,
         }
     }
 
@@ -282,6 +294,8 @@ impl DbThread {
             speed: None,
             thinking_enabled: false,
             thinking_effort: None,
+            draft_prompt: None,
+            ui_scroll_position: None,
         })
     }
 }
@@ -632,6 +646,8 @@ mod tests {
             speed: None,
             thinking_enabled: false,
             thinking_effort: None,
+            draft_prompt: None,
+            ui_scroll_position: None,
         }
     }
 
@@ -712,6 +728,22 @@ mod tests {
         assert!(
             db_thread.subagent_context.is_none(),
             "Legacy threads without subagent_context should default to None"
+        );
+    }
+
+    #[test]
+    fn test_draft_prompt_defaults_to_none() {
+        let json = r#"{
+            "title": "Old Thread",
+            "messages": [],
+            "updated_at": "2024-01-01T00:00:00Z"
+        }"#;
+
+        let db_thread: DbThread = serde_json::from_str(json).expect("Failed to deserialize");
+
+        assert!(
+            db_thread.draft_prompt.is_none(),
+            "Legacy threads without draft_prompt field should default to None"
         );
     }
 
@@ -819,5 +851,54 @@ mod tests {
         let threads = database.list_threads().await.unwrap();
         assert_eq!(threads.len(), 1);
         assert!(threads[0].folder_paths.is_empty());
+    }
+
+    #[test]
+    fn test_scroll_position_defaults_to_none() {
+        let json = r#"{
+            "title": "Old Thread",
+            "messages": [],
+            "updated_at": "2024-01-01T00:00:00Z"
+        }"#;
+
+        let db_thread: DbThread = serde_json::from_str(json).expect("Failed to deserialize");
+
+        assert!(
+            db_thread.ui_scroll_position.is_none(),
+            "Legacy threads without scroll_position field should default to None"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_scroll_position_roundtrips_through_save_load(cx: &mut TestAppContext) {
+        let database = ThreadsDatabase::new(cx.executor()).unwrap();
+
+        let thread_id = session_id("thread-with-scroll");
+
+        let mut thread = make_thread(
+            "Thread With Scroll",
+            Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap(),
+        );
+        thread.ui_scroll_position = Some(SerializedScrollPosition {
+            item_ix: 42,
+            offset_in_item: 13.5,
+        });
+
+        database
+            .save_thread(thread_id.clone(), thread, PathList::default())
+            .await
+            .unwrap();
+
+        let loaded = database
+            .load_thread(thread_id)
+            .await
+            .unwrap()
+            .expect("thread should exist");
+
+        let scroll = loaded
+            .ui_scroll_position
+            .expect("scroll_position should be restored");
+        assert_eq!(scroll.item_ix, 42);
+        assert!((scroll.offset_in_item - 13.5).abs() < f32::EPSILON);
     }
 }

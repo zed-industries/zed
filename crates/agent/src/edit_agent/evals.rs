@@ -1469,6 +1469,7 @@ impl EditAgentTest {
                 Templates::new(),
                 edit_format,
                 true,
+                true,
             ),
             project,
             judge_model,

@@ -8074,7 +8074,7 @@ async fn test_copy_trim_line_mode(cx: &mut TestAppContext) {
 
     cx.set_state(indoc! {"
         «    fn main() {
-                dbg!(1)
+                1
             }ˇ»
     "});
     cx.update_editor(|editor, _window, _cx| editor.selections.set_line_mode(true));
@@ -8082,7 +8082,7 @@ async fn test_copy_trim_line_mode(cx: &mut TestAppContext) {
 
     assert_eq!(
         cx.read_from_clipboard().and_then(|item| item.text()),
-        Some("fn main() {\n    dbg!(1)\n}\n".to_string())
+        Some("fn main() {\n    1\n}\n".to_string())
     );
 
     let clipboard_selections: Vec<ClipboardSelection> = cx
@@ -8099,7 +8099,7 @@ async fn test_copy_trim_line_mode(cx: &mut TestAppContext) {
 
     cx.set_state(indoc! {"
         «fn main() {
-            dbg!(1)
+            1
         }ˇ»
     "});
     cx.update_editor(|editor, _window, _cx| editor.selections.set_line_mode(true));
@@ -8107,7 +8107,7 @@ async fn test_copy_trim_line_mode(cx: &mut TestAppContext) {
 
     assert_eq!(
         cx.read_from_clipboard().and_then(|item| item.text()),
-        Some("fn main() {\n    dbg!(1)\n}\n".to_string())
+        Some("fn main() {\n    1\n}\n".to_string())
     );
 
     let clipboard_selections: Vec<ClipboardSelection> = cx
@@ -8535,6 +8535,26 @@ async fn test_split_selection_into_lines(cx: &mut TestAppContext) {
         &mut cx,
         "aa\nbb«ˇ\ncc\ndd\nee\n»ff\n",
         "aa\nbbˇ\nccˇ\nddˇ\neeˇ\nff\n",
+    );
+}
+
+#[gpui::test]
+async fn test_split_selection_into_lines_does_not_scroll(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+
+    let large_body = "\nline".repeat(300);
+    cx.set_state(&format!("«ˇstart{large_body}\nend»"));
+    let initial_scroll_position = cx.update_editor(|editor, _, cx| editor.scroll_position(cx));
+
+    cx.update_editor(|editor, window, cx| {
+        editor.split_selection_into_lines(&Default::default(), window, cx);
+    });
+
+    let scroll_position_after_split = cx.update_editor(|editor, _, cx| editor.scroll_position(cx));
+    assert_eq!(
+        initial_scroll_position, scroll_position_after_split,
+        "Scroll position should not change after splitting selection into lines"
     );
 }
 
@@ -17284,6 +17304,7 @@ async fn test_no_duplicated_completion_requests(cx: &mut TestAppContext) {
         }
     });
 
+    cx.executor().run_until_parked();
     cx.condition(|editor, _| editor.context_menu_visible())
         .await;
     cx.assert_editor_state("fn main() { let a = 2.ˇ; }");
@@ -24308,6 +24329,77 @@ async fn test_folding_buffers(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_folded_buffers_cleared_on_excerpts_removed(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            "file_a.txt": "File A\nFile A\nFile A",
+            "file_b.txt": "File B\nFile B\nFile B",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let cx = &mut VisualTestContext::from_window(*window, cx);
+    let worktree = project.update(cx, |project, cx| {
+        let mut worktrees = project.worktrees(cx).collect::<Vec<_>>();
+        assert_eq!(worktrees.len(), 1);
+        worktrees.pop().unwrap()
+    });
+    let worktree_id = worktree.update(cx, |worktree, _| worktree.id());
+
+    let buffer_a = project
+        .update(cx, |project, cx| {
+            project.open_buffer((worktree_id, rel_path("file_a.txt")), cx)
+        })
+        .await
+        .unwrap();
+    let buffer_b = project
+        .update(cx, |project, cx| {
+            project.open_buffer((worktree_id, rel_path("file_b.txt")), cx)
+        })
+        .await
+        .unwrap();
+
+    let multi_buffer = cx.new(|cx| {
+        let mut multi_buffer = MultiBuffer::new(ReadWrite);
+        let range_a = Point::new(0, 0)..Point::new(2, 4);
+        let range_b = Point::new(0, 0)..Point::new(2, 4);
+
+        multi_buffer.set_excerpts_for_path(PathKey::sorted(0), buffer_a.clone(), [range_a], 0, cx);
+        multi_buffer.set_excerpts_for_path(PathKey::sorted(1), buffer_b.clone(), [range_b], 0, cx);
+        multi_buffer
+    });
+
+    let editor = cx.new_window_entity(|window, cx| {
+        Editor::new(
+            EditorMode::full(),
+            multi_buffer.clone(),
+            Some(project.clone()),
+            window,
+            cx,
+        )
+    });
+
+    editor.update(cx, |editor, cx| {
+        editor.fold_buffer(buffer_a.read(cx).remote_id(), cx);
+    });
+    assert!(editor.update(cx, |editor, cx| editor.has_any_buffer_folded(cx)));
+
+    // When the excerpts for `buffer_a` are removed, a
+    // `multi_buffer::Event::ExcerptsRemoved` event is emitted, which should be
+    // picked up by the editor and update the display map accordingly.
+    multi_buffer.update(cx, |multi_buffer, cx| {
+        multi_buffer.remove_excerpts_for_path(PathKey::sorted(0), cx)
+    });
+    assert!(!editor.update(cx, |editor, cx| editor.has_any_buffer_folded(cx)));
+}
+
+#[gpui::test]
 async fn test_folding_buffers_with_one_excerpt(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
@@ -26620,6 +26712,48 @@ async fn test_linked_edits_on_typing_punctuation(cx: &mut TestAppContext) {
         editor.handle_input("V", window, cx);
     });
     cx.assert_editor_state("<Animated.Vˇ></Animated.V>");
+}
+
+#[gpui::test]
+async fn test_linked_edits_on_typing_dot_without_language_override(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+    let language = Arc::new(Language::new(
+        LanguageConfig {
+            name: "HTML".into(),
+            matcher: LanguageMatcher {
+                path_suffixes: vec!["html".to_string()],
+                ..LanguageMatcher::default()
+            },
+            brackets: BracketPairConfig {
+                pairs: vec![BracketPair {
+                    start: "<".into(),
+                    end: ">".into(),
+                    close: true,
+                    ..Default::default()
+                }],
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+        Some(tree_sitter_html::LANGUAGE.into()),
+    ));
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
+
+    cx.set_state("<Tableˇ></Table>");
+    cx.update_editor(|editor, _, cx| {
+        set_linked_edit_ranges(
+            (Point::new(0, 1), Point::new(0, 6)),
+            (Point::new(0, 9), Point::new(0, 14)),
+            editor,
+            cx,
+        );
+    });
+    cx.update_editor(|editor, window, cx| {
+        editor.handle_input(".", window, cx);
+    });
+    cx.assert_editor_state("<Table.ˇ></Table.>");
 }
 
 #[gpui::test]
