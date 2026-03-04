@@ -1,4 +1,4 @@
-# Zed Feature Process
+# Zed's Feature Development Process
 
 This is for moderate-to-large features — new UI, behavior changes, or work that cuts across multiple parts of Zed. Small keybindings or settings tweaks don't need all of this.
 
