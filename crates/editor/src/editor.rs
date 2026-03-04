@@ -15544,12 +15544,11 @@ impl Editor {
                     && let Some(oldest_selection) =
                         columnar_selections.iter().find(|s| s.id == *oldest_id)
                 {
-                    let absolute_x_range =
-                        selections_collection::absolute_x_range_for_selection(
-                            &display_map,
-                            oldest_selection,
-                            &text_layout_details,
-                        );
+                    let absolute_x_range = selections_collection::absolute_x_range_for_selection(
+                        &display_map,
+                        oldest_selection,
+                        &text_layout_details,
+                    );
                     for id in &group.stack {
                         map.insert(*id, absolute_x_range.clone());
                     }

@@ -1290,8 +1290,7 @@ pub(crate) fn absolute_x_range_for_selection(
 ) -> Range<Pixels> {
     let start_abs_x =
         absolute_x_for_buffer_point(display_map, selection.start, text_layout_details);
-    let end_abs_x =
-        absolute_x_for_buffer_point(display_map, selection.end, text_layout_details);
+    let end_abs_x = absolute_x_for_buffer_point(display_map, selection.end, text_layout_details);
     start_abs_x.min(end_abs_x)..start_abs_x.max(end_abs_x)
 }
 
