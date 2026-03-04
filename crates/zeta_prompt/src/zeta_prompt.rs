@@ -3516,4 +3516,25 @@ mod tests {
         let cleaned = zeta1::clean_zeta1_model_output(output).unwrap();
         assert_eq!(cleaned, "");
     }
+
+    #[test]
+    fn test_clean_zeta1_model_output_multibyte_utf8() {
+        let output = "<|editable_region_start|>\n┌───┐\n│box│\n└───┘\n<|editable_region_end|>";
+        let cleaned = zeta1::clean_zeta1_model_output(output).unwrap();
+        assert_eq!(cleaned, "┌───┐\n│box│\n└───┘");
+    }
+
+    #[test]
+    fn test_clean_zeta1_model_output_multibyte_before_end_marker() {
+        let output = "<|editable_region_start|>\nsome text┘\n<|editable_region_end|>";
+        let cleaned = zeta1::clean_zeta1_model_output(output).unwrap();
+        assert_eq!(cleaned, "some text┘");
+    }
+
+    #[test]
+    fn test_clean_zeta1_model_output_multibyte_after_start_marker_no_newline() {
+        let output = "<|editable_region_start|>┌some text\n<|editable_region_end|>";
+        let cleaned = zeta1::clean_zeta1_model_output(output).unwrap();
+        assert_eq!(cleaned, "┌some text");
+    }
 }
