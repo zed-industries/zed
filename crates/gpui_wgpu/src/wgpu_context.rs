@@ -12,9 +12,19 @@ pub struct WgpuContext {
     dual_source_blending: bool,
 }
 
+#[cfg(not(target_family = "wasm"))]
+pub struct CompositorGpuHint {
+    pub vendor_id: u32,
+    pub device_id: u32,
+}
+
 impl WgpuContext {
     #[cfg(not(target_family = "wasm"))]
-    pub fn new(instance: wgpu::Instance, surface: &wgpu::Surface<'_>) -> anyhow::Result<Self> {
+    pub fn new(
+        instance: wgpu::Instance,
+        surface: &wgpu::Surface<'_>,
+        compositor_gpu: Option<CompositorGpuHint>,
+    ) -> anyhow::Result<Self> {
         let device_id_filter = match std::env::var("ZED_DEVICE_ID") {
             Ok(val) => parse_pci_id(&val)
                 .context("Failed to parse device ID from `ZED_DEVICE_ID` environment variable")
@@ -27,33 +37,21 @@ impl WgpuContext {
             }
         };
 
-        let adapter = pollster::block_on(Self::select_adapter(
-            &instance,
-            device_id_filter,
-            Some(surface),
-        ))?;
-
-        let caps = surface.get_capabilities(&adapter);
-        if caps.formats.is_empty() {
-            let info = adapter.get_info();
-            anyhow::bail!(
-                "No adapter compatible with the display surface could be found. \
-                 Best candidate {:?} (backend={:?}, device={:#06x}) reports no \
-                 supported surface formats.",
-                info.name,
-                info.backend,
-                info.device,
-            );
-        }
+        // Select an adapter by actually testing surface configuration with the real device.
+        // This is the only reliable way to determine compatibility on hybrid GPU systems.
+        let (adapter, device, queue, dual_source_blending) =
+            pollster::block_on(Self::select_adapter_and_device(
+                &instance,
+                device_id_filter,
+                surface,
+                compositor_gpu.as_ref(),
+            ))?;
 
         log::info!(
             "Selected GPU adapter: {:?} ({:?})",
             adapter.get_info().name,
             adapter.get_info().backend
         );
-
-        let (device, queue, dual_source_blending) =
-            pollster::block_on(Self::create_device(&adapter))?;
 
         Ok(Self {
             instance,
@@ -158,70 +156,165 @@ impl WgpuContext {
         Ok(())
     }
 
+    /// Select an adapter and create a device, testing that the surface can actually be configured.
+    /// This is the only reliable way to determine compatibility on hybrid GPU systems, where
+    /// adapters may report surface compatibility via get_capabilities() but fail when actually
+    /// configuring (e.g., NVIDIA reporting Vulkan Wayland support but failing because the
+    /// Wayland compositor runs on the Intel GPU).
     #[cfg(not(target_family = "wasm"))]
-    async fn select_adapter(
+    async fn select_adapter_and_device(
         instance: &wgpu::Instance,
         device_id_filter: Option<u32>,
-        compatible_surface: Option<&wgpu::Surface<'_>>,
-    ) -> anyhow::Result<wgpu::Adapter> {
+        surface: &wgpu::Surface<'_>,
+        compositor_gpu: Option<&CompositorGpuHint>,
+    ) -> anyhow::Result<(wgpu::Adapter, wgpu::Device, wgpu::Queue, bool)> {
+        let mut adapters: Vec<_> = instance.enumerate_adapters(wgpu::Backends::all()).await;
+
+        if adapters.is_empty() {
+            anyhow::bail!("No GPU adapters found");
+        }
+
         if let Some(device_id) = device_id_filter {
-            let adapters: Vec<_> = instance.enumerate_adapters(wgpu::Backends::all()).await;
+            log::info!("ZED_DEVICE_ID filter: {:#06x}", device_id);
+        }
 
-            if adapters.is_empty() {
-                anyhow::bail!("No GPU adapters found");
-            }
+        // Sort adapters into a single priority order. Tiers (from highest to lowest):
+        //
+        // 1. ZED_DEVICE_ID match — explicit user override
+        // 2. Compositor GPU match — the GPU the display server is rendering on
+        // 3. Device type — WGPU HighPerformance order (Discrete > Integrated >
+        //    Other > Virtual > Cpu). "Other" ranks above "Virtual" because
+        //    backends like OpenGL may report real hardware as "Other".
+        // 4. Backend — prefer Vulkan/Metal/Dx12 over GL/etc.
+        adapters.sort_by_key(|adapter| {
+            let info = adapter.get_info();
 
-            let mut non_matching_adapter_infos: Vec<wgpu::AdapterInfo> = Vec::new();
+            // Backends like OpenGL report device=0 for all adapters, so
+            // device-based matching is only meaningful when non-zero.
+            let device_known = info.device != 0;
 
-            for adapter in adapters.into_iter() {
-                let info = adapter.get_info();
-                if info.device == device_id {
-                    if let Some(surface) = compatible_surface {
-                        let caps = surface.get_capabilities(&adapter);
-                        if caps.formats.is_empty() {
-                            log::warn!(
-                                "GPU matching ZED_DEVICE_ID={:#06x} ({}) is not compatible \
-                                 with the display surface. Falling back to auto-selection.",
-                                device_id,
-                                info.name,
-                            );
-                            break;
-                        }
-                    }
-                    log::info!(
-                        "Found GPU matching ZED_DEVICE_ID={:#06x}: {}",
-                        device_id,
-                        info.name
-                    );
-                    return Ok(adapter);
-                } else {
-                    non_matching_adapter_infos.push(info);
+            let user_override: u8 = match device_id_filter {
+                Some(id) if device_known && info.device == id => 0,
+                _ => 1,
+            };
+
+            let compositor_match: u8 = match compositor_gpu {
+                Some(hint)
+                    if device_known
+                        && info.vendor == hint.vendor_id
+                        && info.device == hint.device_id =>
+                {
+                    0
                 }
-            }
+                _ => 1,
+            };
 
-            log::warn!(
-                "No compatible GPU found matching ZED_DEVICE_ID={:#06x}. Available devices:",
-                device_id
+            let type_priority: u8 = match info.device_type {
+                wgpu::DeviceType::DiscreteGpu => 0,
+                wgpu::DeviceType::IntegratedGpu => 1,
+                wgpu::DeviceType::Other => 2,
+                wgpu::DeviceType::VirtualGpu => 3,
+                wgpu::DeviceType::Cpu => 4,
+            };
+
+            let backend_priority: u8 = match info.backend {
+                wgpu::Backend::Vulkan => 0,
+                wgpu::Backend::Metal => 0,
+                wgpu::Backend::Dx12 => 0,
+                _ => 1,
+            };
+
+            (
+                user_override,
+                compositor_match,
+                type_priority,
+                backend_priority,
+            )
+        });
+
+        // Log all available adapters (in sorted order)
+        log::info!("Found {} GPU adapter(s):", adapters.len());
+        for adapter in &adapters {
+            let info = adapter.get_info();
+            log::info!(
+                "  - {} (vendor={:#06x}, device={:#06x}, backend={:?}, type={:?})",
+                info.name,
+                info.vendor,
+                info.device,
+                info.backend,
+                info.device_type,
             );
+        }
 
-            for info in &non_matching_adapter_infos {
-                log::warn!(
-                    "  - {} (device_id={:#06x}, backend={})",
-                    info.name,
-                    info.device,
-                    info.backend
-                );
+        // Test each adapter by creating a device and configuring the surface
+        for adapter in adapters {
+            let info = adapter.get_info();
+            log::info!("Testing adapter: {} ({:?})...", info.name, info.backend);
+
+            match Self::try_adapter_with_surface(&adapter, surface).await {
+                Ok((device, queue, dual_source_blending)) => {
+                    log::info!(
+                        "Selected GPU (passed configuration test): {} ({:?})",
+                        info.name,
+                        info.backend
+                    );
+                    return Ok((adapter, device, queue, dual_source_blending));
+                }
+                Err(e) => {
+                    log::info!(
+                        "  Adapter {} ({:?}) failed: {}, trying next...",
+                        info.name,
+                        info.backend,
+                        e
+                    );
+                }
             }
         }
 
-        instance
-            .request_adapter(&wgpu::RequestAdapterOptions {
-                power_preference: wgpu::PowerPreference::HighPerformance,
-                compatible_surface,
-                force_fallback_adapter: false,
-            })
-            .await
-            .map_err(|e| anyhow::anyhow!("Failed to request GPU adapter: {e}"))
+        anyhow::bail!("No GPU adapter found that can configure the display surface")
+    }
+
+    /// Try to use an adapter with a surface by creating a device and testing configuration.
+    /// Returns the device and queue if successful, allowing them to be reused.
+    #[cfg(not(target_family = "wasm"))]
+    async fn try_adapter_with_surface(
+        adapter: &wgpu::Adapter,
+        surface: &wgpu::Surface<'_>,
+    ) -> anyhow::Result<(wgpu::Device, wgpu::Queue, bool)> {
+        let caps = surface.get_capabilities(adapter);
+        if caps.formats.is_empty() {
+            anyhow::bail!("no compatible surface formats");
+        }
+        if caps.alpha_modes.is_empty() {
+            anyhow::bail!("no compatible alpha modes");
+        }
+
+        // Create the real device with full features
+        let (device, queue, dual_source_blending) = Self::create_device(adapter).await?;
+
+        // Use an error scope to capture any validation errors during configure
+        let error_scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
+
+        let test_config = wgpu::SurfaceConfiguration {
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            format: caps.formats[0],
+            width: 64,
+            height: 64,
+            present_mode: wgpu::PresentMode::Fifo,
+            desired_maximum_frame_latency: 2,
+            alpha_mode: caps.alpha_modes[0],
+            view_formats: vec![],
+        };
+
+        surface.configure(&device, &test_config);
+
+        // Check if there was a validation error
+        let error = error_scope.pop().await;
+        if let Some(e) = error {
+            anyhow::bail!("surface configuration failed: {e}");
+        }
+
+        Ok((device, queue, dual_source_blending))
     }
 
     pub fn supports_dual_source_blending(&self) -> bool {

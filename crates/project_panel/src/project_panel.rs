@@ -46,6 +46,7 @@ use settings::{
     update_settings_file,
 };
 use smallvec::SmallVec;
+use std::ops::Neg;
 use std::{any::TypeId, time::Instant};
 use std::{
     cell::OnceCell,
@@ -6457,11 +6458,14 @@ impl Render for ProjectPanel {
                             el.on_action(cx.listener(Self::trash))
                         })
                 })
-                .when(project.is_local(), |el| {
-                    el.on_action(cx.listener(Self::reveal_in_finder))
-                        .on_action(cx.listener(Self::open_system))
-                        .on_action(cx.listener(Self::open_in_terminal))
-                })
+                .when(
+                    project.is_local() || project.is_via_wsl_with_host_interop(cx),
+                    |el| {
+                        el.on_action(cx.listener(Self::reveal_in_finder))
+                            .on_action(cx.listener(Self::open_system))
+                            .on_action(cx.listener(Self::open_in_terminal))
+                    },
+                )
                 .when(project.is_via_remote_server(), |el| {
                     el.on_action(cx.listener(Self::open_in_terminal))
                         .on_action(cx.listener(Self::download_from_remote))
@@ -6688,6 +6692,24 @@ impl Render for ProjectPanel {
                                 .id("project-panel-blank-area")
                                 .block_mouse_except_scroll()
                                 .flex_grow()
+                                .on_scroll_wheel({
+                                    let scroll_handle = self.scroll_handle.clone();
+                                    let entity_id = cx.entity().entity_id();
+                                    move |event, window, cx| {
+                                        let state = scroll_handle.0.borrow();
+                                        let base_handle = &state.base_handle;
+                                        let current_offset = base_handle.offset();
+                                        let max_offset = base_handle.max_offset();
+                                        let delta = event.delta.pixel_delta(window.line_height());
+                                        let new_offset = (current_offset + delta)
+                                            .clamp(&max_offset.neg(), &Point::default());
+
+                                        if new_offset != current_offset {
+                                            base_handle.set_offset(new_offset);
+                                            cx.notify(entity_id);
+                                        }
+                                    }
+                                })
                                 .when(
                                     self.drag_target_entry.as_ref().is_some_and(
                                         |entry| match entry {

@@ -893,12 +893,13 @@ pub struct Thread {
     pub(crate) prompt_capabilities_rx: watch::Receiver<acp::PromptCapabilities>,
     pub(crate) project: Entity<Project>,
     pub(crate) action_log: Entity<ActionLog>,
-    /// Tracks the last time files were read by the agent, to detect external modifications
-    pub(crate) file_read_times: HashMap<PathBuf, fs::MTime>,
     /// True if this thread was imported from a shared thread and can be synced.
     imported: bool,
     /// If this is a subagent thread, contains context about the parent
     subagent_context: Option<SubagentContext>,
+    /// The user's unsent prompt text, persisted so it can be restored when reloading the thread.
+    draft_prompt: Option<Vec<acp::ContentBlock>>,
+    ui_scroll_position: Option<gpui::ListOffset>,
     /// Weak references to running subagent threads for cancellation propagation
     running_subagents: Vec<WeakEntity<Thread>>,
 }
@@ -917,12 +918,16 @@ impl Thread {
         let context_server_registry = parent_thread.read(cx).context_server_registry.clone();
         let templates = parent_thread.read(cx).templates.clone();
         let model = parent_thread.read(cx).model().cloned();
-        let mut thread = Self::new(
+        let parent_action_log = parent_thread.read(cx).action_log().clone();
+        let action_log =
+            cx.new(|_cx| ActionLog::new(project.clone()).with_linked_action_log(parent_action_log));
+        let mut thread = Self::new_internal(
             project,
             project_context,
             context_server_registry,
             templates,
             model,
+            action_log,
             cx,
         );
         thread.subagent_context = Some(SubagentContext {
@@ -940,6 +945,26 @@ impl Thread {
         model: Option<Arc<dyn LanguageModel>>,
         cx: &mut Context<Self>,
     ) -> Self {
+        Self::new_internal(
+            project.clone(),
+            project_context,
+            context_server_registry,
+            templates,
+            model,
+            cx.new(|_cx| ActionLog::new(project)),
+            cx,
+        )
+    }
+
+    fn new_internal(
+        project: Entity<Project>,
+        project_context: Entity<ProjectContext>,
+        context_server_registry: Entity<ContextServerRegistry>,
+        templates: Arc<Templates>,
+        model: Option<Arc<dyn LanguageModel>>,
+        action_log: Entity<ActionLog>,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let settings = AgentSettings::get_global(cx);
         let profile_id = settings.default_profile.clone();
         let enable_thinking = settings
@@ -950,7 +975,6 @@ impl Thread {
             .default_model
             .as_ref()
             .and_then(|model| model.effort.clone());
-        let action_log = cx.new(|_cx| ActionLog::new(project.clone()));
         let (prompt_capabilities_tx, prompt_capabilities_rx) =
             watch::channel(Self::prompt_capabilities(model.as_deref()));
         Self {
@@ -988,9 +1012,10 @@ impl Thread {
             prompt_capabilities_rx,
             project,
             action_log,
-            file_read_times: HashMap::default(),
             imported: false,
             subagent_context: None,
+            draft_prompt: None,
+            ui_scroll_position: None,
             running_subagents: Vec::new(),
         }
     }
@@ -1203,9 +1228,13 @@ impl Thread {
             updated_at: db_thread.updated_at,
             prompt_capabilities_tx,
             prompt_capabilities_rx,
-            file_read_times: HashMap::default(),
             imported: db_thread.imported,
             subagent_context: db_thread.subagent_context,
+            draft_prompt: db_thread.draft_prompt,
+            ui_scroll_position: db_thread.ui_scroll_position.map(|sp| gpui::ListOffset {
+                item_ix: sp.item_ix,
+                offset_in_item: gpui::px(sp.offset_in_item),
+            }),
             running_subagents: Vec::new(),
         }
     }
@@ -1230,6 +1259,13 @@ impl Thread {
             speed: self.speed,
             thinking_enabled: self.thinking_enabled,
             thinking_effort: self.thinking_effort.clone(),
+            draft_prompt: self.draft_prompt.clone(),
+            ui_scroll_position: self.ui_scroll_position.map(|lo| {
+                crate::db::SerializedScrollPosition {
+                    item_ix: lo.item_ix,
+                    offset_in_item: lo.offset_in_item.as_f32(),
+                }
+            }),
         };
 
         cx.background_spawn(async move {
@@ -1271,19 +1307,42 @@ impl Thread {
         self.messages.is_empty() && self.title.is_none()
     }
 
+    pub fn draft_prompt(&self) -> Option<&[acp::ContentBlock]> {
+        self.draft_prompt.as_deref()
+    }
+
+    pub fn set_draft_prompt(&mut self, prompt: Option<Vec<acp::ContentBlock>>) {
+        self.draft_prompt = prompt;
+    }
+
+    pub fn ui_scroll_position(&self) -> Option<gpui::ListOffset> {
+        self.ui_scroll_position
+    }
+
+    pub fn set_ui_scroll_position(&mut self, position: Option<gpui::ListOffset>) {
+        self.ui_scroll_position = position;
+    }
+
     pub fn model(&self) -> Option<&Arc<dyn LanguageModel>> {
         self.model.as_ref()
     }
 
     pub fn set_model(&mut self, model: Arc<dyn LanguageModel>, cx: &mut Context<Self>) {
         let old_usage = self.latest_token_usage();
-        self.model = Some(model);
+        self.model = Some(model.clone());
         let new_caps = Self::prompt_capabilities(self.model.as_deref());
         let new_usage = self.latest_token_usage();
         if old_usage != new_usage {
             cx.emit(TokenUsageUpdated(new_usage));
         }
         self.prompt_capabilities_tx.send(new_caps).log_err();
+
+        for subagent in &self.running_subagents {
+            subagent
+                .update(cx, |thread, cx| thread.set_model(model.clone(), cx))
+                .ok();
+        }
+
         cx.notify()
     }
 
@@ -1296,7 +1355,15 @@ impl Thread {
         model: Option<Arc<dyn LanguageModel>>,
         cx: &mut Context<Self>,
     ) {
-        self.summarization_model = model;
+        self.summarization_model = model.clone();
+
+        for subagent in &self.running_subagents {
+            subagent
+                .update(cx, |thread, cx| {
+                    thread.set_summarization_model(model.clone(), cx)
+                })
+                .ok();
+        }
         cx.notify()
     }
 
@@ -1306,6 +1373,12 @@ impl Thread {
 
     pub fn set_thinking_enabled(&mut self, enabled: bool, cx: &mut Context<Self>) {
         self.thinking_enabled = enabled;
+
+        for subagent in &self.running_subagents {
+            subagent
+                .update(cx, |thread, cx| thread.set_thinking_enabled(enabled, cx))
+                .ok();
+        }
         cx.notify();
     }
 
@@ -1314,7 +1387,15 @@ impl Thread {
     }
 
     pub fn set_thinking_effort(&mut self, effort: Option<String>, cx: &mut Context<Self>) {
-        self.thinking_effort = effort;
+        self.thinking_effort = effort.clone();
+
+        for subagent in &self.running_subagents {
+            subagent
+                .update(cx, |thread, cx| {
+                    thread.set_thinking_effort(effort.clone(), cx)
+                })
+                .ok();
+        }
         cx.notify();
     }
 
@@ -1324,15 +1405,17 @@ impl Thread {
 
     pub fn set_speed(&mut self, speed: Speed, cx: &mut Context<Self>) {
         self.speed = Some(speed);
+
+        for subagent in &self.running_subagents {
+            subagent
+                .update(cx, |thread, cx| thread.set_speed(speed, cx))
+                .ok();
+        }
         cx.notify();
     }
 
     pub fn last_message(&self) -> Option<&Message> {
         self.messages.last()
-    }
-
-    pub fn num_messages(&self) -> usize {
-        self.messages.len()
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -1349,6 +1432,9 @@ impl Thread {
         environment: Rc<dyn ThreadEnvironment>,
         cx: &mut Context<Self>,
     ) {
+        // Only update the agent location for the root thread, not for subagents.
+        let update_agent_location = self.parent_thread_id().is_none();
+
         let language_registry = self.project.read(cx).languages().clone();
         self.add_tool(CopyPathTool::new(self.project.clone()));
         self.add_tool(CreateDirectoryTool::new(self.project.clone()));
@@ -1366,6 +1452,7 @@ impl Thread {
         self.add_tool(StreamingEditFileTool::new(
             self.project.clone(),
             cx.weak_entity(),
+            self.action_log.clone(),
             language_registry,
         ));
         self.add_tool(FetchTool::new(self.project.read(cx).client().http_client()));
@@ -1376,9 +1463,9 @@ impl Thread {
         self.add_tool(NowTool);
         self.add_tool(OpenTool::new(self.project.clone()));
         self.add_tool(ReadFileTool::new(
-            cx.weak_entity(),
             self.project.clone(),
             self.action_log.clone(),
+            update_agent_location,
         ));
         self.add_tool(SaveFileTool::new(self.project.clone()));
         self.add_tool(RestoreFileFromDiskTool::new(self.project.clone()));
@@ -1399,6 +1486,7 @@ impl Thread {
         self.tools.insert(T::NAME.into(), tool.erase());
     }
 
+    #[cfg(any(test, feature = "test-support"))]
     pub fn remove_tool(&mut self, name: &str) -> bool {
         self.tools.remove(name).is_some()
     }
@@ -1412,11 +1500,17 @@ impl Thread {
             return;
         }
 
-        self.profile_id = profile_id;
+        self.profile_id = profile_id.clone();
 
         // Swap to the profile's preferred model when available.
         if let Some(model) = Self::resolve_profile_model(&self.profile_id, cx) {
             self.set_model(model, cx);
+        }
+
+        for subagent in &self.running_subagents {
+            subagent
+                .update(cx, |thread, cx| thread.set_profile(profile_id.clone(), cx))
+                .ok();
         }
     }
 
@@ -1866,7 +1960,15 @@ impl Thread {
                 })??;
                 let timer = cx.background_executor().timer(retry.duration);
                 event_stream.send_retry(retry);
-                timer.await;
+                futures::select! {
+                    _ = timer.fuse() => {}
+                    _ = cancellation_rx.changed().fuse() => {
+                        if *cancellation_rx.borrow() {
+                            log::debug!("Turn cancelled during retry delay, exiting");
+                            return Ok(());
+                        }
+                    }
+                }
                 this.update(cx, |this, _cx| {
                     if let Some(Message::Agent(message)) = this.messages.last() {
                         if message.tool_results.is_empty() {
@@ -2234,20 +2336,18 @@ impl Thread {
     ) {
         // Ensure the last message ends in the current tool use
         let last_message = self.pending_message();
-        let push_new_tool_use = last_message.content.last_mut().is_none_or(|content| {
+
+        let has_tool_use = last_message.content.iter_mut().rev().any(|content| {
             if let AgentMessageContent::ToolUse(last_tool_use) = content {
                 if last_tool_use.id == tool_use.id {
                     *last_tool_use = tool_use.clone();
-                    false
-                } else {
-                    true
+                    return true;
                 }
-            } else {
-                true
             }
+            false
         });
 
-        if push_new_tool_use {
+        if !has_tool_use {
             event_stream.send_tool_call(
                 &tool_use.id,
                 &tool_use.name,
@@ -2390,7 +2490,12 @@ impl Thread {
                 anyhow::Ok(())
             };
 
-            if generate.await.context("failed to generate title").is_ok() {
+            if generate
+                .await
+                .context("failed to generate thread title")
+                .log_err()
+                .is_some()
+            {
                 _ = this.update(cx, |this, cx| this.set_title(title.into(), cx));
             }
             _ = this.update(cx, |this, _| this.pending_title_generation = None);
@@ -2530,7 +2635,8 @@ impl Thread {
             }
         }
 
-        let use_streaming_edit_tool = cx.has_flag::<StreamingEditFileToolFeatureFlag>();
+        let use_streaming_edit_tool =
+            cx.has_flag::<StreamingEditFileToolFeatureFlag>() && model.supports_streaming_tools();
 
         let mut tools = self
             .tools
@@ -3771,6 +3877,7 @@ mod tests {
     use super::*;
     use gpui::TestAppContext;
     use language_model::LanguageModelToolUseId;
+    use language_model::fake_provider::FakeLanguageModel;
     use serde_json::json;
     use std::sync::Arc;
 
@@ -3806,6 +3913,181 @@ mod tests {
 
             (thread, event_stream)
         })
+    }
+
+    fn setup_parent_with_subagents(
+        cx: &mut TestAppContext,
+        parent: &Entity<Thread>,
+        count: usize,
+    ) -> Vec<Entity<Thread>> {
+        cx.update(|cx| {
+            let mut subagents = Vec::new();
+            for _ in 0..count {
+                let subagent = cx.new(|cx| Thread::new_subagent(parent, cx));
+                parent.update(cx, |thread, _cx| {
+                    thread.register_running_subagent(subagent.downgrade());
+                });
+                subagents.push(subagent);
+            }
+            subagents
+        })
+    }
+
+    #[gpui::test]
+    async fn test_set_model_propagates_to_subagents(cx: &mut TestAppContext) {
+        let (parent, _event_stream) = setup_thread_for_test(cx).await;
+        let subagents = setup_parent_with_subagents(cx, &parent, 2);
+
+        let new_model: Arc<dyn LanguageModel> = Arc::new(FakeLanguageModel::with_id_and_thinking(
+            "test-provider",
+            "new-model",
+            "New Model",
+            false,
+        ));
+
+        cx.update(|cx| {
+            parent.update(cx, |thread, cx| {
+                thread.set_model(new_model, cx);
+            });
+
+            for subagent in &subagents {
+                let subagent_model_id = subagent.read(cx).model().unwrap().id();
+                assert_eq!(
+                    subagent_model_id.0.as_ref(),
+                    "new-model",
+                    "Subagent model should match parent model after set_model"
+                );
+            }
+        });
+    }
+
+    #[gpui::test]
+    async fn test_set_summarization_model_propagates_to_subagents(cx: &mut TestAppContext) {
+        let (parent, _event_stream) = setup_thread_for_test(cx).await;
+        let subagents = setup_parent_with_subagents(cx, &parent, 2);
+
+        let summary_model: Arc<dyn LanguageModel> =
+            Arc::new(FakeLanguageModel::with_id_and_thinking(
+                "test-provider",
+                "summary-model",
+                "Summary Model",
+                false,
+            ));
+
+        cx.update(|cx| {
+            parent.update(cx, |thread, cx| {
+                thread.set_summarization_model(Some(summary_model), cx);
+            });
+
+            for subagent in &subagents {
+                let subagent_summary_id = subagent.read(cx).summarization_model().unwrap().id();
+                assert_eq!(
+                    subagent_summary_id.0.as_ref(),
+                    "summary-model",
+                    "Subagent summarization model should match parent after set_summarization_model"
+                );
+            }
+        });
+    }
+
+    #[gpui::test]
+    async fn test_set_thinking_enabled_propagates_to_subagents(cx: &mut TestAppContext) {
+        let (parent, _event_stream) = setup_thread_for_test(cx).await;
+        let subagents = setup_parent_with_subagents(cx, &parent, 2);
+
+        cx.update(|cx| {
+            parent.update(cx, |thread, cx| {
+                thread.set_thinking_enabled(true, cx);
+            });
+
+            for subagent in &subagents {
+                assert!(
+                    subagent.read(cx).thinking_enabled(),
+                    "Subagent thinking should be enabled after parent enables it"
+                );
+            }
+
+            parent.update(cx, |thread, cx| {
+                thread.set_thinking_enabled(false, cx);
+            });
+
+            for subagent in &subagents {
+                assert!(
+                    !subagent.read(cx).thinking_enabled(),
+                    "Subagent thinking should be disabled after parent disables it"
+                );
+            }
+        });
+    }
+
+    #[gpui::test]
+    async fn test_set_thinking_effort_propagates_to_subagents(cx: &mut TestAppContext) {
+        let (parent, _event_stream) = setup_thread_for_test(cx).await;
+        let subagents = setup_parent_with_subagents(cx, &parent, 2);
+
+        cx.update(|cx| {
+            parent.update(cx, |thread, cx| {
+                thread.set_thinking_effort(Some("high".to_string()), cx);
+            });
+
+            for subagent in &subagents {
+                assert_eq!(
+                    subagent.read(cx).thinking_effort().map(|s| s.as_str()),
+                    Some("high"),
+                    "Subagent thinking effort should match parent"
+                );
+            }
+
+            parent.update(cx, |thread, cx| {
+                thread.set_thinking_effort(None, cx);
+            });
+
+            for subagent in &subagents {
+                assert_eq!(
+                    subagent.read(cx).thinking_effort(),
+                    None,
+                    "Subagent thinking effort should be None after parent clears it"
+                );
+            }
+        });
+    }
+
+    #[gpui::test]
+    async fn test_set_speed_propagates_to_subagents(cx: &mut TestAppContext) {
+        let (parent, _event_stream) = setup_thread_for_test(cx).await;
+        let subagents = setup_parent_with_subagents(cx, &parent, 2);
+
+        cx.update(|cx| {
+            parent.update(cx, |thread, cx| {
+                thread.set_speed(Speed::Fast, cx);
+            });
+
+            for subagent in &subagents {
+                assert_eq!(
+                    subagent.read(cx).speed(),
+                    Some(Speed::Fast),
+                    "Subagent speed should match parent after set_speed"
+                );
+            }
+        });
+    }
+
+    #[gpui::test]
+    async fn test_dropped_subagent_does_not_panic(cx: &mut TestAppContext) {
+        let (parent, _event_stream) = setup_thread_for_test(cx).await;
+        let subagents = setup_parent_with_subagents(cx, &parent, 1);
+
+        // Drop the subagent so the WeakEntity can no longer be upgraded
+        drop(subagents);
+
+        // Should not panic even though the subagent was dropped
+        cx.update(|cx| {
+            parent.update(cx, |thread, cx| {
+                thread.set_thinking_enabled(true, cx);
+                thread.set_speed(Speed::Fast, cx);
+                thread.set_thinking_effort(Some("high".to_string()), cx);
+            });
+        });
     }
 
     #[gpui::test]
