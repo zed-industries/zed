@@ -638,14 +638,6 @@ impl EditSession {
             log.buffer_edited(buffer.clone(), cx);
         });
 
-        if let Some(new_mtime) = buffer.read_with(cx, |buffer, _| {
-            buffer.file().and_then(|file| file.disk_state().mtime())
-        }) {
-            action_log.update(cx, |log, _cx| {
-                log.record_file_read_time(abs_path.to_path_buf(), new_mtime);
-            });
-        }
-
         let new_snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot());
         let (new_text, unified_diff) = cx
             .background_spawn({

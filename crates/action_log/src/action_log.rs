@@ -85,13 +85,30 @@ impl ActionLog {
         &self.project
     }
 
-    pub fn record_file_read_time(&mut self, path: PathBuf, mtime: MTime) {
-        // We don't send to the linked one so they don't share read times for files they never had in context
-        self.file_read_times.insert(path, mtime);
-    }
-
     pub fn file_read_time(&self, path: &Path) -> Option<MTime> {
         self.file_read_times.get(path).copied()
+    }
+
+    fn update_file_read_time(&mut self, buffer: &Entity<Buffer>, cx: &App) {
+        let buffer = buffer.read(cx);
+        if let Some(file) = buffer.file() {
+            if let Some(local_file) = file.as_local() {
+                if let Some(mtime) = file.disk_state().mtime() {
+                    let abs_path = local_file.abs_path(cx);
+                    self.file_read_times.insert(abs_path, mtime);
+                }
+            }
+        }
+    }
+
+    fn remove_file_read_time(&mut self, buffer: &Entity<Buffer>, cx: &App) {
+        let buffer = buffer.read(cx);
+        if let Some(file) = buffer.file() {
+            if let Some(local_file) = file.as_local() {
+                let abs_path = local_file.abs_path(cx);
+                self.file_read_times.remove(&abs_path);
+            }
+        }
     }
 
     fn track_buffer_internal(
@@ -524,24 +541,69 @@ impl ActionLog {
 
     /// Track a buffer as read by agent, so we can notify the model about user edits.
     pub fn buffer_read(&mut self, buffer: Entity<Buffer>, cx: &mut Context<Self>) {
-        if let Some(linked_action_log) = &mut self.linked_action_log {
-            linked_action_log.update(cx, |log, cx| log.buffer_read(buffer.clone(), cx));
+        self.buffer_read_impl(buffer, true, cx);
+    }
+
+    fn buffer_read_impl(
+        &mut self,
+        buffer: Entity<Buffer>,
+        record_file_read_time: bool,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(linked_action_log) = &self.linked_action_log {
+            // We don't want to share read times since the other agent hasn't read it necessarily
+            linked_action_log.update(cx, |log, cx| {
+                log.buffer_read_impl(buffer.clone(), false, cx);
+            });
+        }
+        if record_file_read_time {
+            self.update_file_read_time(&buffer, cx);
         }
         self.track_buffer_internal(buffer, false, cx);
     }
 
     /// Mark a buffer as created by agent, so we can refresh it in the context
     pub fn buffer_created(&mut self, buffer: Entity<Buffer>, cx: &mut Context<Self>) {
-        if let Some(linked_action_log) = &mut self.linked_action_log {
-            linked_action_log.update(cx, |log, cx| log.buffer_created(buffer.clone(), cx));
+        self.buffer_created_impl(buffer, true, cx);
+    }
+
+    fn buffer_created_impl(
+        &mut self,
+        buffer: Entity<Buffer>,
+        record_file_read_time: bool,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(linked_action_log) = &self.linked_action_log {
+            // We don't want to share read times since the other agent hasn't read it necessarily
+            linked_action_log.update(cx, |log, cx| {
+                log.buffer_created_impl(buffer.clone(), false, cx);
+            });
+        }
+        if record_file_read_time {
+            self.update_file_read_time(&buffer, cx);
         }
         self.track_buffer_internal(buffer, true, cx);
     }
 
     /// Mark a buffer as edited by agent, so we can refresh it in the context
     pub fn buffer_edited(&mut self, buffer: Entity<Buffer>, cx: &mut Context<Self>) {
-        if let Some(linked_action_log) = &mut self.linked_action_log {
-            linked_action_log.update(cx, |log, cx| log.buffer_edited(buffer.clone(), cx));
+        self.buffer_edited_impl(buffer, true, cx);
+    }
+
+    fn buffer_edited_impl(
+        &mut self,
+        buffer: Entity<Buffer>,
+        record_file_read_time: bool,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(linked_action_log) = &self.linked_action_log {
+            // We don't want to share read times since the other agent hasn't read it necessarily
+            linked_action_log.update(cx, |log, cx| {
+                log.buffer_edited_impl(buffer.clone(), false, cx);
+            });
+        }
+        if record_file_read_time {
+            self.update_file_read_time(&buffer, cx);
         }
         let new_version = buffer.read(cx).version();
         let tracked_buffer = self.track_buffer_internal(buffer, false, cx);
@@ -554,6 +616,8 @@ impl ActionLog {
     }
 
     pub fn will_delete_buffer(&mut self, buffer: Entity<Buffer>, cx: &mut Context<Self>) {
+        // Ok to propagate file read time removal to linked action log
+        self.remove_file_read_time(&buffer, cx);
         let has_linked_action_log = self.linked_action_log.is_some();
         let tracked_buffer = self.track_buffer_internal(buffer.clone(), false, cx);
         match tracked_buffer.status {
