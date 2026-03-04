@@ -90,7 +90,7 @@ pub enum EditPredictionProvider {
     Experimental(&'static str),
 }
 
-pub const EXPERIMENTAL_ZETA2_EDIT_PREDICTION_PROVIDER_NAME: &str = "zeta2";
+const EXPERIMENTAL_ZETA2_EDIT_PREDICTION_PROVIDER_NAME: &str = "zeta2";
 
 impl<'de> Deserialize<'de> for EditPredictionProvider {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
@@ -157,10 +157,7 @@ impl EditPredictionProvider {
             EditPredictionProvider::Codestral => Some("Codestral"),
             EditPredictionProvider::Sweep => Some("Sweep"),
             EditPredictionProvider::Mercury => Some("Mercury"),
-            EditPredictionProvider::Experimental(
-                EXPERIMENTAL_ZETA2_EDIT_PREDICTION_PROVIDER_NAME,
-            ) => Some("Zeta2"),
-            EditPredictionProvider::None | EditPredictionProvider::Experimental(_) => None,
+            EditPredictionProvider::Experimental(_) | EditPredictionProvider::None => None,
             EditPredictionProvider::Ollama => Some("Ollama"),
             EditPredictionProvider::OpenAiCompatibleApi => Some("OpenAI-Compatible API"),
         }

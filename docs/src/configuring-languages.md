@@ -122,11 +122,40 @@ You can specify your preference using the `language_servers` setting:
 
 In this example:
 
-- `intelephense` is set as the primary language server
-- `phpactor` is disabled (note the `!` prefix)
-- `...` expands to the rest of the language servers that are registered for PHP
+- `intelephense` is set as the primary language server.
+- `phpactor` and `phptools` are disabled (note the `!` prefix).
+- `"..."` expands to the rest of the language servers registered for PHP that are not already listed.
 
-This configuration allows you to tailor the language server setup to your specific needs, ensuring that you get the most suitable functionality for your development workflow.
+The `"..."` entry acts as a wildcard that includes any registered language server you haven't explicitly mentioned. Servers you list by name keep their position, and `"..."` fills in the remaining ones at that point in the list. Servers prefixed with `!` are excluded entirely. This means that if a new language server extension is installed or a new server is registered for a language, `"..."` will automatically include it. If you want full control over which servers are enabled, omit `"..."` — only the servers you list by name will be used.
+
+#### Examples
+
+Suppose you're working with Ruby. The default configuration is:
+
+```json [settings]
+{
+  "language_servers": [
+    "solargraph",
+    "!ruby-lsp",
+    "!rubocop",
+    "!sorbet",
+    "!steep",
+    "!kanayago",
+    "..."
+  ]
+}
+```
+
+When you override `language_servers` in your settings, your list **replaces** the default entirely. This means default-disabled servers like `kanayago` will be re-enabled by `"..."` unless you explicitly disable them again.
+
+| Configuration                                     | Result                                                             |
+| ------------------------------------------------- | ------------------------------------------------------------------ |
+| `["..."]`                                         | `solargraph`, `ruby-lsp`, `rubocop`, `sorbet`, `steep`, `kanayago` |
+| `["ruby-lsp", "..."]`                             | `ruby-lsp`, `solargraph`, `rubocop`, `sorbet`, `steep`, `kanayago` |
+| `["ruby-lsp", "!solargraph", "!kanayago", "..."]` | `ruby-lsp`, `rubocop`, `sorbet`, `steep`                           |
+| `["ruby-lsp", "solargraph"]`                      | `ruby-lsp`, `solargraph`                                           |
+
+> Note: In the first example, `"..."` includes `kanayago` even though it is disabled by default. The override replaced the default list, so the `"!kanayago"` entry is no longer present. To keep it disabled, you must include `"!kanayago"` in your configuration.
 
 ### Toolchains
 

@@ -3,7 +3,7 @@ use client::{Client, UserStore, zed_urls};
 use cloud_llm_client::UsageLimit;
 use codestral::{self, CodestralEditPredictionDelegate};
 use copilot::Status;
-use edit_prediction::{EditPredictionStore, Zeta2FeatureFlag};
+use edit_prediction::EditPredictionStore;
 use edit_prediction_types::EditPredictionDelegateHandle;
 use editor::{
     Editor, MultiBufferOffset, SelectionEffects, actions::ShowEditPrediction, scroll::Autoscroll,
@@ -22,9 +22,7 @@ use language::{
 };
 use project::{DisableAiSettings, Project};
 use regex::Regex;
-use settings::{
-    EXPERIMENTAL_ZETA2_EDIT_PREDICTION_PROVIDER_NAME, Settings, SettingsStore, update_settings_file,
-};
+use settings::{Settings, SettingsStore, update_settings_file};
 use std::{
     rc::Rc,
     sync::{Arc, LazyLock},
@@ -539,9 +537,15 @@ impl EditPredictionButton {
         edit_prediction::ollama::ensure_authenticated(cx);
         let sweep_api_token_task = edit_prediction::sweep_ai::load_sweep_api_token(cx);
         let mercury_api_token_task = edit_prediction::mercury::load_mercury_api_token(cx);
+        let open_ai_compatible_api_token_task =
+            edit_prediction::open_ai_compatible::load_open_ai_compatible_api_token(cx);
 
         cx.spawn(async move |this, cx| {
-            _ = futures::join!(sweep_api_token_task, mercury_api_token_task);
+            _ = futures::join!(
+                sweep_api_token_task,
+                mercury_api_token_task,
+                open_ai_compatible_api_token_task
+            );
             this.update(cx, |_, cx| {
                 cx.notify();
             })
@@ -770,13 +774,7 @@ impl EditPredictionButton {
 
         menu = menu.separator().header("Privacy");
 
-        if matches!(
-            provider,
-            EditPredictionProvider::Zed
-                | EditPredictionProvider::Experimental(
-                    EXPERIMENTAL_ZETA2_EDIT_PREDICTION_PROVIDER_NAME,
-                )
-        ) {
+        if matches!(provider, EditPredictionProvider::Zed) {
             if let Some(provider) = &self.edit_prediction_provider {
                 let data_collection = provider.data_collection_state(cx);
 
@@ -1398,12 +1396,6 @@ pub fn get_available_providers(cx: &mut App) -> Vec<EditPredictionProvider> {
     let mut providers = Vec::new();
 
     providers.push(EditPredictionProvider::Zed);
-
-    if cx.has_flag::<Zeta2FeatureFlag>() {
-        providers.push(EditPredictionProvider::Experimental(
-            EXPERIMENTAL_ZETA2_EDIT_PREDICTION_PROVIDER_NAME,
-        ));
-    }
 
     if let Some(app_state) = workspace::AppState::global(cx).upgrade()
         && copilot::GlobalCopilotAuth::try_get_or_init(app_state, cx)

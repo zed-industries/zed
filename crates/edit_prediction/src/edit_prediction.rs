@@ -69,6 +69,7 @@ pub mod sweep_ai;
 pub mod udiff;
 
 mod capture_example;
+pub mod open_ai_compatible;
 mod zed_edit_prediction_delegate;
 pub mod zeta;
 
@@ -107,12 +108,7 @@ const EDIT_PREDICTION_SETTLED_EVENT: &str = "Edit Prediction Settled";
 const EDIT_PREDICTION_SETTLED_TTL: Duration = Duration::from_secs(60 * 5);
 const EDIT_PREDICTION_SETTLED_QUIESCENCE: Duration = Duration::from_secs(10);
 
-pub struct Zeta2FeatureFlag;
 pub struct EditPredictionJumpsFeatureFlag;
-
-impl FeatureFlag for Zeta2FeatureFlag {
-    const NAME: &'static str = "zeta2";
-}
 
 impl FeatureFlag for EditPredictionJumpsFeatureFlag {
     const NAME: &'static str = "edit_prediction_jumps";
@@ -2108,7 +2104,7 @@ impl EditPredictionStore {
             active_buffer.clone(),
             position,
             trigger,
-            cx.has_flag::<Zeta2FeatureFlag>(),
+            cx.has_flag::<EditPredictionJumpsFeatureFlag>(),
             cx,
         )
     }
