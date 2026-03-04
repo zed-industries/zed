@@ -215,12 +215,18 @@ impl SweepAi {
                 related_files: inputs.related_files.clone(),
                 cursor_path: full_path.clone(),
                 cursor_excerpt: request_body.file_contents.clone().into(),
-                // we actually don't know
-                editable_range_in_excerpt: 0..inputs.snapshot.len(),
                 cursor_offset_in_excerpt: request_body.cursor_position,
                 excerpt_start_row: Some(0),
-                excerpt_ranges: None,
-                preferred_model: None,
+                excerpt_ranges: zeta_prompt::ExcerptRanges {
+                    editable_150: 0..inputs.snapshot.len(),
+                    editable_180: 0..inputs.snapshot.len(),
+                    editable_350: 0..inputs.snapshot.len(),
+                    editable_150_context_350: 0..inputs.snapshot.len(),
+                    editable_180_context_350: 0..inputs.snapshot.len(),
+                    editable_350_context_150: 0..inputs.snapshot.len(),
+                    ..Default::default()
+                },
+                experiment: None,
                 in_open_source_repo: false,
                 can_collect_data: false,
             };

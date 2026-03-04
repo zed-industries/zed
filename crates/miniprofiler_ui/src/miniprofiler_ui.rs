@@ -544,7 +544,7 @@ impl Render for ProfilerWindow {
 
                                         let path = cx.prompt_for_new_path(
                                             &active_path,
-                                            Some("performance_profile.miniprof"),
+                                            Some("performance_profile.miniprof.json"),
                                         );
 
                                         cx.background_spawn(async move {

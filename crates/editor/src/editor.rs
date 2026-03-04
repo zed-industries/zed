@@ -1973,6 +1973,8 @@ impl Editor {
             .clone_state(&self.scroll_manager, &my_snapshot, &clone_snapshot, cx);
         clone.searchable = self.searchable;
         clone.read_only = self.read_only;
+        clone.buffers_with_disabled_indent_guides =
+            self.buffers_with_disabled_indent_guides.clone();
         clone
     }
 
@@ -15365,7 +15367,7 @@ impl Editor {
     pub fn select_all(&mut self, _: &SelectAll, window: &mut Window, cx: &mut Context<Self>) {
         self.hide_mouse_cursor(HideMouseCursorOrigin::MovementAction, cx);
         self.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
-            s.select_ranges(vec![Anchor::min()..Anchor::max()]);
+            s.select_ranges([Anchor::min()..Anchor::max()]);
         });
     }
 
@@ -15397,7 +15399,7 @@ impl Editor {
             .into_iter()
             .map(|selection| selection.start..selection.end)
             .collect::<Vec<_>>();
-        self.unfold_ranges(&selections, true, true, cx);
+        self.unfold_ranges(&selections, true, false, cx);
 
         let mut new_selection_ranges = Vec::new();
         {
@@ -15439,7 +15441,7 @@ impl Editor {
                 }
             }
         }
-        self.change_selections(Default::default(), window, cx, |s| {
+        self.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
             s.select_ranges(new_selection_ranges);
         });
     }
@@ -24147,6 +24149,11 @@ impl Editor {
                         display_map.clear_lsp_folding_ranges(*buffer_id, cx);
                     });
                 }
+
+                self.display_map.update(cx, |display_map, cx| {
+                    display_map.unfold_buffers(removed_buffer_ids.iter().copied(), cx);
+                });
+
                 jsx_tag_auto_close::refresh_enabled_in_any_buffer(self, multibuffer, cx);
                 cx.emit(EditorEvent::ExcerptsRemoved {
                     ids: ids.clone(),
@@ -28578,7 +28585,7 @@ fn edit_prediction_edit_text(
 }
 
 fn edit_prediction_fallback_text(edits: &[(Range<Anchor>, Arc<str>)], cx: &App) -> HighlightedText {
-    // Fallback for providers that don't provide edit_preview (like Copilot/Supermaven)
+    // Fallback for providers that don't provide edit_preview (like Copilot)
     // Just show the raw edit text with basic styling
     let mut text = String::new();
     let mut highlights = Vec::new();

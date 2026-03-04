@@ -34,7 +34,7 @@ use gpui::{
     WindowDecorations, WindowKind, WindowParams, layer_shell::LayerShellNotSupportedError, px,
     size,
 };
-use gpui_wgpu::{WgpuContext, WgpuRenderer, WgpuSurfaceConfig};
+use gpui_wgpu::{CompositorGpuHint, WgpuContext, WgpuRenderer, WgpuSurfaceConfig};
 
 #[derive(Default)]
 pub(crate) struct Callbacks {
@@ -318,6 +318,7 @@ impl WaylandWindowState {
         client: WaylandClientStatePtr,
         globals: Globals,
         gpu_context: &mut Option<WgpuContext>,
+        compositor_gpu: Option<CompositorGpuHint>,
         options: WindowParams,
         parent: Option<WaylandWindowStatePtr>,
     ) -> anyhow::Result<Self> {
@@ -338,7 +339,7 @@ impl WaylandWindowState {
                 },
                 transparent: true,
             };
-            WgpuRenderer::new(gpu_context, &raw_window, config)?
+            WgpuRenderer::new(gpu_context, &raw_window, config, compositor_gpu)?
         };
 
         if let WaylandSurfaceState::Xdg(ref xdg_state) = surface_state {
@@ -488,6 +489,7 @@ impl WaylandWindow {
         handle: AnyWindowHandle,
         globals: Globals,
         gpu_context: &mut Option<WgpuContext>,
+        compositor_gpu: Option<CompositorGpuHint>,
         client: WaylandClientStatePtr,
         params: WindowParams,
         appearance: WindowAppearance,
@@ -515,6 +517,7 @@ impl WaylandWindow {
                 client,
                 globals,
                 gpu_context,
+                compositor_gpu,
                 params,
                 parent,
             )?)),
