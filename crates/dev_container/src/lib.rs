@@ -39,7 +39,9 @@ use futures::AsyncReadExt;
 use http::Request;
 use http_client::{AsyncBody, HttpClient};
 
+mod command_json;
 mod devcontainer_api;
+mod docker;
 mod model;
 
 use devcontainer_api::read_default_devcontainer_configuration;
@@ -51,6 +53,24 @@ pub use devcontainer_api::{
     DevContainerConfig, find_configs_in_snapshot, find_devcontainer_configs,
     start_dev_container_with_config,
 };
+
+// TODO dedupe
+#[derive(Debug, Eq, PartialEq)]
+pub(crate) enum DevContainerErrorV2 {
+    UnmappedError,
+}
+
+impl Display for DevContainerErrorV2 {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}",
+            match self {
+                DevContainerErrorV2::UnmappedError => "Unmapped Error".to_string(),
+            }
+        )
+    }
+}
 
 #[derive(RegisterSetting)]
 struct DevContainerSettings {
