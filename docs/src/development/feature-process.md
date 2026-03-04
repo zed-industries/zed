@@ -1,8 +1,9 @@
 # Zed Feature Process
 
-> **Before you start:** If you're an external contributor, make sure the feature is something the team wants before investing significant effort. That said, coming prepared with the background prep already done makes it much easier for the team to understand and approve the proposal. Read the [Contributing guide](../../../CONTRIBUTING.md#sending-changes) — if there isn't already a GitHub issue with staff confirmation, start with a GitHub Discussion or a discord message rather than a PR.
-
 This is for moderate-to-large features — new UI, behavior changes, or work that cuts across multiple parts of Zed. Small keybindings or settings tweaks don't need all of this.
+
+> **Before you start:** If you're an external contributor, make sure the feature is something the team wants before investing significant effort. That said, coming prepared with the background prep already done makes it much easier for the team to understand and approve the proposal. Read the [Contributing guide](../../../CONTRIBUTING.md#sending-changes) — if there isn't already a GitHub issue with staff confirmation, start with a GitHub Discussion or a Discord message rather than a PR.
+
 
 ## 1. Why does this matter?
 
@@ -10,8 +11,7 @@ Every feature starts as an idea. Before writing any code, ground it:
 
 - **What problem does this solve?**
 - **What's the evidence?** GitHub issues, Discord requests, thumbs-up counts, blog posts.
-- **Is there prior art?** If it's in VS Code, JetBrains, Neovim, or a wildly popular plugin, that's a strong signal.
-- **What's it based on?** If it's a new idea, name the lineage — "This is X, adapted for Zed's multi-buffers" is far more useful than "I think this would be cool."
+- **Is there prior art?** If it's in VS Code, JetBrains, Neovim, or a wildly popular plugin, that's a strong signal. If the idea is more novel, name what it's based on — "This is X, adapted for Zed's multi-buffers" is far more useful than "I think this would be cool."
 
 ## 2. What is it?
 
@@ -20,11 +20,11 @@ Write a short, concrete feature statement, then back it up with whatever context
 > **Feature:** Inline Git Blame
 > **Purpose:** Show the last commit author and message for each line directly after the editor text, so developers can understand code history without opening the git blame.
 > **Background:**
-> This is standard across all major code editors (
->[screenshot of VSCode]
-> [screenshot of Intellij]
-> [screenshot of Neovim])
-and has 146 thumbs up on the [github issue](link-to-issue).
+> This is standard across all major code editors
+> \[screenshot of VSCode]
+> \[screenshot of Intellij]
+> \[screenshot of Neovim]
+> and has 146 thumbs up on the [github issue](https://github.com).
 
 ## 3. What else does this affect?
 
@@ -44,4 +44,4 @@ If your feature touches the **editor** specifically: the editor has a lot of coe
 
 ## 4. Ship it
 
-Use this thinking as the basis for your GitHub Discussion, issue, or PR description.
+Use this as the basis for your GitHub Discussion, issue, or PR description. Good product research gets everyone aligned on goals, the state of the art, and any tradeoffs we might need to consider.
