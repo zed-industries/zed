@@ -319,7 +319,7 @@ fn test_excerpt_boundaries_and_clipping(cx: &mut App) {
     );
 
     let snapshot = multibuffer.update(cx, |multibuffer, cx| {
-        multibuffer.remove_excerpts_for_path(PathKey::sorted(1), cx);
+        multibuffer.remove_excerpts(PathKey::sorted(1), cx);
         multibuffer.snapshot(cx)
     });
 
@@ -875,11 +875,11 @@ fn test_expand_excerpts(cx: &mut App) {
     multibuffer.update(cx, |multibuffer, cx| {
         let line_zero = multibuffer.snapshot(cx).anchor_before(Point::new(0, 0));
 
-        multibuffer.expand_excerpts_with_paths(
+        multibuffer.expand_excerpts(
             multibuffer
                 .snapshot(cx)
                 .excerpts()
-                .map(|(_, info)| Anchor::in_buffer(info.path_key_index, info.range.context.end)),
+                .map(|(_, info)| Anchor::in_buffer(info.path_key_index, info.range.end)),
             1,
             ExpandExcerptDirection::UpAndDown,
             cx,
@@ -1109,7 +1109,6 @@ fn test_singleton_multibuffer_anchors(cx: &mut App) {
         buffer.edit([(0..0, "X")], None, cx);
         buffer.edit([(5..5, "Y")], None, cx);
     });
-    dbg!("-------");
     let new_snapshot = multibuffer.read(cx).snapshot(cx);
 
     assert_eq!(old_snapshot.text(), "abcd");
@@ -2294,7 +2293,7 @@ impl ReferenceExcerpt {
         ExcerptInfo {
             path_key_index: self.path_key_index,
             buffer_id: self.buffer.read(cx).remote_id(),
-            range: ExcerptRange::new(self.range.clone()),
+            range: self.range.clone(),
         }
     }
 }
@@ -2345,7 +2344,8 @@ impl ReferenceMultibuffer {
                 path_key: path_key.clone(),
                 path_key_index,
                 buffer: buffer.clone(),
-                range: buffer_snapshot.anchor_range_around(range.context),
+                range: buffer_snapshot.anchor_before(range.context.start)
+                    ..buffer_snapshot.anchor_after(range.context.end),
             }),
         );
     }
@@ -2669,7 +2669,7 @@ impl ReferenceMultibuffer {
                             expand_info: expand_direction.zip(region.excerpt_info.clone()).map(
                                 |(direction, excerpt_info)| ExpandInfo {
                                     direction,
-                                    excerpt_range: excerpt_info.range.context,
+                                    excerpt_range: excerpt_info.range,
                                 },
                             ),
                         }
@@ -2787,8 +2787,8 @@ async fn test_random_set_ranges(cx: &mut TestAppContext, mut rng: StdRng) {
         let mut seen_ranges = Vec::default();
 
         for (buf, info) in snapshot.excerpts() {
-            let start = info.range.context.start.to_point(buf);
-            let end = info.range.context.end.to_point(buf);
+            let start = info.range.start.to_point(buf);
+            let end = info.range.end.to_point(buf);
             seen_ranges.push(start..end);
 
             if let Some(last_end) = last_end.take() {
@@ -2865,10 +2865,10 @@ async fn test_random_multibuffer(cx: &mut TestAppContext, mut rng: StdRng) {
                         })
                         .collect::<Vec<_>>();
                     log::info!("Expanding excerpts {excerpt_ixs:?} by {line_count} lines");
-                    multibuffer.expand_excerpts_with_paths(
-                        excerpts.iter().map(|info| {
-                            Anchor::in_buffer(info.path_key_index, info.range.context.end)
-                        }),
+                    multibuffer.expand_excerpts(
+                        excerpts
+                            .iter()
+                            .map(|info| Anchor::in_buffer(info.path_key_index, info.range.end)),
                         line_count,
                         ExpandExcerptDirection::UpAndDown,
                         cx,
@@ -3160,6 +3160,17 @@ fn check_multibuffer(
     );
 
     log::info!("Multibuffer content:\n{}", actual_diff);
+    dbg!(
+        snapshot
+            .excerpts()
+            .map(|(buffer_snapshot, excerpt)| {
+                (
+                    buffer_snapshot.remote_id(),
+                    excerpt.range.to_point(&buffer_snapshot),
+                )
+            })
+            .collect::<Vec<_>>()
+    );
 
     assert_eq!(
         actual_row_infos.len(),
@@ -3182,6 +3193,27 @@ fn check_multibuffer(
             start_row
         );
     }
+    // dbg!(&expected_row_infos);
+
+    // dbg!(
+    //     snapshot
+    //         .excerpts()
+    //         .map(|(buffer_snapshot, excerpt)| {
+    //             (
+    //                 buffer_snapshot.remote_id(),
+    //                 excerpt.range.to_point(&buffer_snapshot),
+    //             )
+    //         })
+    //         .collect::<Vec<_>>()
+    // );
+    // dbg!(&expected_row_infos);
+    // dbg!(
+    //     reference
+    //         .excerpts
+    //         .iter()
+    //         .map(|excerpt| { excerpt.range.to_point(&excerpt.buffer.read(cx).snapshot()) })
+    //         .collect::<Vec<_>>()
+    // );
 
     assert_eq!(
         snapshot.widest_line_number(),
@@ -3623,7 +3655,6 @@ async fn test_summaries_for_anchors(cx: &mut TestAppContext) {
     });
     cx.run_until_parked();
 
-    dbg!("BEFORE");
     let multibuffer = cx.new(|cx| {
         let mut multibuffer = MultiBuffer::new(Capability::ReadWrite);
         multibuffer.set_all_diff_hunks_expanded(cx);
@@ -3646,12 +3677,10 @@ async fn test_summaries_for_anchors(cx: &mut TestAppContext) {
         multibuffer
     });
 
-    dbg!("BEFORE");
     let (mut snapshot, mut subscription) = multibuffer.update(cx, |multibuffer, cx| {
         (multibuffer.snapshot(cx), multibuffer.subscribe())
     });
 
-    dbg!("BEFORE");
     assert_new_snapshot(
         &multibuffer,
         &mut snapshot,
@@ -3668,7 +3697,6 @@ async fn test_summaries_for_anchors(cx: &mut TestAppContext) {
         ),
     );
 
-    dbg!("BEFORE");
     let anchor_1 = multibuffer.read_with(cx, |multibuffer, cx| {
         multibuffer
             .buffer_anchor_to_anchor(
@@ -3678,11 +3706,9 @@ async fn test_summaries_for_anchors(cx: &mut TestAppContext) {
             )
             .unwrap()
     });
-    dbg!("BEFORE");
     let point_1 = snapshot.summaries_for_anchors::<Point, _>([&anchor_1])[0];
     assert_eq!(point_1, Point::new(0, 0));
 
-    dbg!("BEFORE");
     let anchor_2 = multibuffer.read_with(cx, |multibuffer, cx| {
         multibuffer
             .buffer_anchor_to_anchor(
@@ -3692,9 +3718,7 @@ async fn test_summaries_for_anchors(cx: &mut TestAppContext) {
             )
             .unwrap()
     });
-    dbg!("BEFORE");
     let point_2 = snapshot.summaries_for_anchors::<Point, _>([&anchor_2])[0];
-    dbg!("AFTER");
     assert_eq!(point_2, Point::new(3, 0));
 }
 
@@ -4181,7 +4205,7 @@ fn assert_excerpts_match(
     multibuffer.read_with(cx, |multibuffer, cx| {
         for (buffer, info) in multibuffer.snapshot(cx).excerpts() {
             output.push_str("-----\n");
-            output.extend(buffer.text_for_range(info.range.context));
+            output.extend(buffer.text_for_range(info.range));
             if !output.ends_with('\n') {
                 output.push('\n');
             }
@@ -4974,9 +4998,7 @@ fn test_excerpts_containment_functions(cx: &mut App) {
 }
 
 #[gpui::test]
-fn test_range_to_buffer_ranges_with_range_bounds(cx: &mut App) {
-    use std::ops::Bound;
-
+fn test_range_to_buffer_ranges(cx: &mut App) {
     let buffer_1 = cx.new(|cx| Buffer::local("aaa\nbbb", cx));
     let buffer_2 = cx.new(|cx| Buffer::local("ccc", cx));
 
@@ -5009,52 +5031,6 @@ fn test_range_to_buffer_ranges_with_range_bounds(cx: &mut App) {
         ranges_half_open.len(),
         1,
         "Half-open range ending at excerpt start should EXCLUDE that excerpt"
-    );
-    assert_eq!(ranges_half_open[0].1, BufferOffset(0)..BufferOffset(7));
-
-    let ranges_inclusive = snapshot.range_to_buffer_ranges(Point::zero()..=excerpt_2_start);
-    assert_eq!(
-        ranges_inclusive.len(),
-        2,
-        "Inclusive range ending at excerpt start should INCLUDE that excerpt"
-    );
-    assert_eq!(ranges_half_open[0].1, BufferOffset(0)..BufferOffset(7));
-    assert_eq!(
-        ranges_half_open[0].0.remote_id(),
-        buffer_1.read(cx).remote_id()
-    );
-    assert_eq!(ranges_half_open[1].1, BufferOffset(0)..BufferOffset(0));
-    assert_eq!(
-        ranges_half_open[1].0.remote_id(),
-        buffer_2.read(cx).remote_id()
-    );
-
-    let ranges_unbounded =
-        snapshot.range_to_buffer_ranges((Bound::Included(Point::zero()), Bound::Unbounded));
-    assert_eq!(
-        ranges_unbounded.len(),
-        2,
-        "Unbounded end should include all excerpts"
-    );
-    assert_eq!(ranges_half_open[0].1, BufferOffset(0)..BufferOffset(7));
-    assert_eq!(
-        ranges_half_open[0].0.remote_id(),
-        buffer_1.read(cx).remote_id()
-    );
-    assert_eq!(ranges_half_open[1].1, BufferOffset(0)..BufferOffset(3));
-    assert_eq!(
-        ranges_half_open[1].0.remote_id(),
-        buffer_2.read(cx).remote_id()
-    );
-
-    let ranges_excluded_end = snapshot.range_to_buffer_ranges((
-        Bound::Included(Point::zero()),
-        Bound::Excluded(excerpt_2_start),
-    ));
-    assert_eq!(
-        ranges_excluded_end.len(),
-        1,
-        "Excluded end bound should exclude excerpt starting at that point"
     );
     assert_eq!(ranges_half_open[0].1, BufferOffset(0)..BufferOffset(7));
     assert_eq!(
@@ -5096,36 +5072,10 @@ fn test_range_to_buffer_ranges_with_range_bounds(cx: &mut App) {
         snapshot_trailing.range_to_buffer_ranges_with_context(Point::zero()..max_point);
     assert_eq!(
         ranges_half_open_max.len(),
-        1,
-        "Half-open range to max_point should EXCLUDE trailing empty excerpt at max_point"
-    );
-    assert_eq!(ranges_half_open_max[0].2, te_excerpt_1_info.range.context);
-
-    let ranges_inclusive_max =
-        snapshot_trailing.range_to_buffer_ranges_with_context(Point::zero()..=max_point);
-    assert_eq!(
-        ranges_inclusive_max.len(),
         2,
-        "Inclusive range to max_point should INCLUDE trailing empty excerpt"
+        "Should include trailing empty excerpts"
     );
-    assert_eq!(ranges_inclusive_max[0].2, te_excerpt_1_info.range.context);
-    assert_eq!(ranges_inclusive_max[1].2, te_excerpt_2_info.range.context);
-
-    let ranges_unbounded_trailing = snapshot_trailing
-        .range_to_buffer_ranges_with_context((Bound::Included(Point::zero()), Bound::Unbounded));
-    assert_eq!(
-        ranges_unbounded_trailing.len(),
-        2,
-        "Unbounded end should include trailing empty excerpt"
-    );
-    assert_eq!(
-        ranges_unbounded_trailing[0].2,
-        te_excerpt_1_info.range.context
-    );
-    assert_eq!(
-        ranges_unbounded_trailing[1].2,
-        te_excerpt_2_info.range.context
-    );
+    assert_eq!(ranges_half_open_max[0].2, te_excerpt_1_info.range);
 }
 
 #[gpui::test]
@@ -5177,8 +5127,8 @@ fn test_cannot_seek_backward_after_excerpt_replacement(cx: &mut TestAppContext) 
         let e_b2_info = excerpt_infos[1].clone();
         let e_b3_info = excerpt_infos[2].clone();
 
-        let anchor_b2 = Anchor::in_buffer(e_b2_info.path_key_index, e_b2_info.range.context.start);
-        let anchor_b3 = Anchor::in_buffer(e_b3_info.path_key_index, e_b3_info.range.context.start);
+        let anchor_b2 = Anchor::in_buffer(e_b2_info.path_key_index, e_b2_info.range.start);
+        let anchor_b3 = Anchor::in_buffer(e_b3_info.path_key_index, e_b3_info.range.start);
         (anchor_b2, anchor_b3)
     });
 

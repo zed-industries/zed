@@ -69,7 +69,7 @@ impl MultiBuffer {
         let excerpt = snapshot.excerpts_for_path(path).next()?;
         Some(Anchor::in_buffer(
             excerpt.path_key_index,
-            excerpt.range.context.start,
+            excerpt.range.start,
         ))
     }
 
@@ -178,7 +178,7 @@ impl MultiBuffer {
         }
     }
 
-    pub(super) fn expand_excerpts_with_paths(
+    pub fn expand_excerpts(
         &mut self,
         anchors: impl IntoIterator<Item = Anchor>,
         line_count: u32,
@@ -199,6 +199,11 @@ impl MultiBuffer {
                 .path_keys_by_index
                 .get(&path_index)
                 .expect("anchor from wrong multibuffer");
+
+            let mut excerpt_anchors = excerpt_anchors.peekable();
+            let mut ranges = Vec::new();
+
+            cursor.seek_forward(path, Bias::Left);
             let Some((buffer, buffer_snapshot)) = cursor
                 .item()
                 .map(|excerpt| (excerpt.buffer(&self), excerpt.buffer_snapshot(&snapshot)))
@@ -206,10 +211,6 @@ impl MultiBuffer {
                 continue;
             };
 
-            let mut excerpt_anchors = excerpt_anchors.peekable();
-            let mut ranges = Vec::new();
-
-            cursor.seek_forward(path, Bias::Left);
             while let Some(excerpt) = cursor.item()
                 && &excerpt.path_key == path
             {
@@ -324,11 +325,11 @@ impl MultiBuffer {
             .path_for_buffer(buffer_snapshot.remote_id())
             && old_path_key != &path_key
         {
-            self.remove_excerpts_for_path(old_path_key.clone(), cx);
+            self.remove_excerpts(old_path_key.clone(), cx);
         }
 
         if to_insert.len() == 0 {
-            self.remove_excerpts_for_path(path_key.clone(), cx);
+            self.remove_excerpts(path_key.clone(), cx);
 
             return (false, path_key_index);
         }
@@ -406,7 +407,10 @@ impl MultiBuffer {
                         path_key_index,
                         &buffer_snapshot,
                         next_excerpt.clone(),
-                        to_insert.peek().is_some() || cursor.item().is_some(),
+                        to_insert.peek().is_some()
+                            || cursor
+                                .item()
+                                .is_some_and(|item| item.path_key_index != path_key_index),
                     ),
                     (),
                 );
@@ -437,7 +441,10 @@ impl MultiBuffer {
                     path_key_index,
                     &buffer_snapshot,
                     next_excerpt.clone(),
-                    to_insert.peek().is_some() || cursor.item().is_some(),
+                    to_insert.peek().is_some()
+                        || cursor
+                            .item()
+                            .is_some_and(|item| item.path_key_index != path_key_index),
                 ),
                 (),
             );
@@ -481,7 +488,7 @@ impl MultiBuffer {
 
         let edits = Self::sync_diff_transforms(
             &mut snapshot,
-            dbg!(patch.into_inner()),
+            patch.into_inner(),
             DiffChangeKind::BufferEdited,
         );
         if !edits.is_empty() {
@@ -506,10 +513,10 @@ impl MultiBuffer {
         let Some(path) = snapshot.path_for_buffer(buffer).cloned() else {
             return;
         };
-        self.remove_excerpts_for_path(path, cx);
+        self.remove_excerpts(path, cx);
     }
 
-    pub fn remove_excerpts_for_path(&mut self, path: PathKey, cx: &mut Context<Self>) {
+    pub fn remove_excerpts(&mut self, path: PathKey, cx: &mut Context<Self>) {
         assert_eq!(self.history.transaction_depth(), 0);
         self.sync_mut(cx);
 

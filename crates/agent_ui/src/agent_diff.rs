@@ -212,7 +212,7 @@ impl AgentDiffPane {
 
         self.multibuffer.update(cx, |multibuffer, cx| {
             for path in paths_to_delete {
-                multibuffer.remove_excerpts_for_path(path, cx);
+                multibuffer.remove_excerpts(path, cx);
             }
         });
 

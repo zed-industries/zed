@@ -216,6 +216,7 @@ where
 pub trait AnchorRangeExt {
     fn cmp(&self, b: &Range<Anchor>, buffer: &BufferSnapshot) -> Ordering;
     fn overlaps(&self, b: &Range<Anchor>, buffer: &BufferSnapshot) -> bool;
+    fn contains_anchor(&self, b: Anchor, buffer: &BufferSnapshot) -> bool;
 }
 
 impl AnchorRangeExt for Range<Anchor> {
@@ -228,5 +229,9 @@ impl AnchorRangeExt for Range<Anchor> {
 
     fn overlaps(&self, other: &Range<Anchor>, buffer: &BufferSnapshot) -> bool {
         self.start.cmp(&other.end, buffer).is_lt() && other.start.cmp(&self.end, buffer).is_lt()
+    }
+
+    fn contains_anchor(&self, other: Anchor, buffer: &BufferSnapshot) -> bool {
+        self.start.cmp(&other, buffer).is_le() && self.end.cmp(&other, buffer).is_ge()
     }
 }

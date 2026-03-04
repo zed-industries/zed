@@ -18550,7 +18550,7 @@ async fn test_following_with_multiple_excerpts(cx: &mut TestAppContext) {
     // Remove some excerpts.
     leader.update(cx, |leader, cx| {
         leader.buffer.update(cx, |multibuffer, cx| {
-            multibuffer.remove_excerpts_for_path(
+            multibuffer.remove_excerpts(
                 PathKey::with_sort_prefix(1, rel_path("b.txt").into_arc()),
                 cx,
             );

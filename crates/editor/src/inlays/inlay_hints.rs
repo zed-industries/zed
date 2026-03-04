@@ -3060,7 +3060,7 @@ let c = 3;"#
         editor
             .update(cx, |editor, _, cx| {
                 editor.buffer().update(cx, |multibuffer, cx| {
-                    multibuffer.remove_excerpts_for_path(PathKey::sorted(1), cx);
+                    multibuffer.remove_excerpts(PathKey::sorted(1), cx);
                 })
             })
             .unwrap();

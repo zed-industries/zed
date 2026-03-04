@@ -442,10 +442,9 @@ impl InlineAssistant {
         let newest_selection = newest_selection.unwrap();
 
         let mut codegen_ranges = Vec::new();
-        for (buffer, buffer_range, excerpt_id) in
-            snapshot.ranges_to_buffer_ranges(selections.iter().map(|selection| {
-                snapshot.anchor_before(selection.start)..snapshot.anchor_after(selection.end)
-            }))
+        for (buffer, buffer_range, excerpt_id) in selections
+            .iter()
+            .map(|selection| selection.range_to_buffer_range(selection.start..selection.end))
         {
             let anchor_range = Anchor::range_in_buffer(
                 excerpt_id,

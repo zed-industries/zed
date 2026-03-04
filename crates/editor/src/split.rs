@@ -1074,7 +1074,7 @@ impl SplittableEditor {
     pub fn remove_excerpts_for_path(&mut self, path: PathKey, cx: &mut Context<Self>) {
         let Some(lhs) = &self.lhs else {
             self.rhs_multibuffer.update(cx, |rhs_multibuffer, cx| {
-                rhs_multibuffer.remove_excerpts_for_path(path, cx);
+                rhs_multibuffer.remove_excerpts(path, cx);
             });
             return;
         };
@@ -1095,10 +1095,10 @@ impl SplittableEditor {
         }
 
         self.rhs_multibuffer.update(cx, |rhs_multibuffer, cx| {
-            rhs_multibuffer.remove_excerpts_for_path(path.clone(), cx);
+            rhs_multibuffer.remove_excerpts(path.clone(), cx);
         });
         lhs.multibuffer.update(cx, |lhs_multibuffer, cx| {
-            lhs_multibuffer.remove_excerpts_for_path(path, cx);
+            lhs_multibuffer.remove_excerpts(path, cx);
         });
     }
 
@@ -1142,7 +1142,7 @@ impl SplittableEditor {
                     rhs_multibuffer.excerpts_for_path(&path).collect();
                 let Some(excerpt_id) = rhs_excerpt_ids.first().copied() else {
                     lhs.multibuffer.update(cx, |lhs_multibuffer, lhs_cx| {
-                        lhs_multibuffer.remove_excerpts_for_path(path, lhs_cx);
+                        lhs_multibuffer.remove_excerpts(path, lhs_cx);
                     });
                     continue;
                 };

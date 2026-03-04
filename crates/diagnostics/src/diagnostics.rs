@@ -329,7 +329,7 @@ impl ProjectDiagnosticsEditor {
                 continue;
             }
             self.multibuffer.update(cx, |b, cx| {
-                b.remove_excerpts_for_path(PathKey::for_buffer(&buffer, cx), cx);
+                b.remove_excerpts(PathKey::for_buffer(&buffer, cx), cx);
             });
         }
     }
