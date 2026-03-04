@@ -23,7 +23,7 @@ mod toolchain;
 pub mod buffer_tests;
 
 use crate::language_settings::SoftWrap;
-pub use crate::language_settings::{EditPredictionsMode, IndentGuideSettings};
+pub use crate::language_settings::{AutoIndentMode, EditPredictionsMode, IndentGuideSettings};
 use anyhow::{Context as _, Result};
 use async_trait::async_trait;
 use collections::{HashMap, HashSet, IndexSet};
