@@ -6,7 +6,8 @@ use cosmic_text::{
 };
 use gpui::{
     Bounds, DevicePixels, Font, FontFeatures, FontId, FontMetrics, FontRun, GlyphId, LineLayout,
-    Pixels, PlatformTextSystem, RenderGlyphParams, SUBPIXEL_VARIANTS_X, SUBPIXEL_VARIANTS_Y,
+    LODPI_SCALE_FACTOR_THRESHOLD, Pixels, PlatformTextSystem, RenderGlyphParams,
+    SUBPIXEL_MIN_FONT_SIZE_PX, SUBPIXEL_VARIANTS_X, SUBPIXEL_VARIANTS_Y,
     ShapedGlyph, ShapedRun, SharedString, Size, TextRenderingMode, point, size,
 };
 
@@ -182,9 +183,23 @@ impl PlatformTextSystem for CosmicTextSystem {
     fn recommended_rendering_mode(
         &self,
         _font_id: FontId,
-        _font_size: Pixels,
+        font_size: Pixels,
+        scale_factor: f32,
     ) -> TextRenderingMode {
-        TextRenderingMode::Subpixel
+        // On LoDPI displays subpixel rendering produces coloured RGB fringe
+        // artefacts because glyph outlines are not snapped to sub-pixel
+        // boundaries. For small text on a 1x display each stem spans only
+        // 1-2 pixels — grayscale AA plus hinting produces sharper results.
+        // On HiDPI each stem spans enough physical pixels that subpixel
+        // fringing drops below the visible threshold.
+        // Fixes: https://github.com/zed-industries/zed/issues/7992
+        if scale_factor < LODPI_SCALE_FACTOR_THRESHOLD
+            && f32::from(font_size) < SUBPIXEL_MIN_FONT_SIZE_PX
+        {
+            TextRenderingMode::Grayscale
+        } else {
+            TextRenderingMode::Subpixel
+        }
     }
 }
 
@@ -319,11 +334,17 @@ impl CosmicTextSystemState {
             params.subpixel_variant.y as f32 / SUBPIXEL_VARIANTS_Y as f32 / params.scale_factor,
         );
 
+        // Hinting snaps glyph outlines to the pixel grid. Essential on LoDPI
+        // where a stem may span only a single pixel. On HiDPI each stem spans
+        // several physical pixels so hinting distorts the designer's curves
+        // without any legibility benefit.
+        let use_hinting = params.scale_factor < LODPI_SCALE_FACTOR_THRESHOLD;
+
         let mut scaler = self
             .swash_scale_context
             .builder(font_ref)
             .size(pixel_size * params.scale_factor)
-            .hint(true)
+            .hint(use_hinting)
             .build();
 
         let sources: &[Source] = if params.is_emoji {
@@ -642,4 +663,41 @@ fn face_info_into_properties(
 fn check_is_known_emoji_font(postscript_name: &str) -> bool {
     // TODO: Include other common emoji fonts
     postscript_name == "NotoColorEmoji"
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui::{LODPI_SCALE_FACTOR_THRESHOLD, SUBPIXEL_MIN_FONT_SIZE_PX, px};
+
+    #[test]
+    fn test_rendering_mode_lodpi_small_text() {
+        let system = CosmicTextSystem::new("sans-serif");
+        let mode = system.recommended_rendering_mode(
+            FontId(0),
+            px(12.0),
+            1.0,
+        );
+        assert_eq!(mode, TextRenderingMode::Grayscale);
+    }
+
+    #[test]
+    fn test_rendering_mode_lodpi_large_text() {
+        let system = CosmicTextSystem::new("sans-serif");
+        let mode = system.recommended_rendering_mode(
+            FontId(0),
+            px(SUBPIXEL_MIN_FONT_SIZE_PX + 1.0),
+            1.0,
+        );
+        assert_eq!(mode, TextRenderingMode::Subpixel);
+    }
+
+    #[test]
+    fn test_rendering_mode_hidpi_small_text() {
+        let system = CosmicTextSystem::new("sans-serif");
+        let mode = system.recommended_rendering_mode(
+            FontId(0),
+            px(10.0),
+            LODPI_SCALE_FACTOR_THRESHOLD + 0.5,
+        );
+        assert_eq!(mode, TextRenderingMode::Subpixel);
+    }
 }
