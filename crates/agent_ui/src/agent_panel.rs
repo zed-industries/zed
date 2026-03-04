@@ -2041,11 +2041,6 @@ impl AgentPanel {
         }
     }
 
-    fn generate_agent_branch_name() -> Option<String> {
-        let mut rng = rand::rng();
-        crate::branch_names::generate_branch_name(&[], &mut rng)
-    }
-
     /// Partitions the project's visible worktrees into git-backed repositories
     /// and plain (non-git) paths. Git repos will have worktrees created for
     /// them; non-git paths are carried over to the new workspace as-is.
@@ -2245,7 +2240,8 @@ impl AgentPanel {
         self.worktree_creation_status = Some(WorktreeCreationStatus::Creating);
         cx.notify();
 
-        let branch_name = match Self::generate_agent_branch_name() {
+        let mut rng = rand::rng();
+        let branch_name = match crate::branch_names::generate_branch_name(&[], &mut rng) {
             Some(name) => name,
             None => {
                 self.set_worktree_creation_error(
