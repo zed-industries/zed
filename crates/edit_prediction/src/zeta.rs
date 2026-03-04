@@ -186,13 +186,17 @@ pub fn request_prediction_with_zeta(
                     let prompt = format_zeta_prompt(&prompt_input, config.format);
                     let prefill = get_prefill(&prompt_input, config.format);
                     let prompt = format!("{prompt}{prefill}");
+                    let environment = config
+                        .environment
+                        .clone()
+                        .or_else(|| Some(config.format.to_string().to_lowercase()));
                     let request = RawCompletionRequest {
                         model: config.model_id.clone().unwrap_or_default(),
                         prompt,
                         temperature: None,
                         stop: vec![],
                         max_tokens: Some(2048),
-                        environment: Some(config.format.to_string().to_lowercase()),
+                        environment,
                     };
 
                     editable_range_in_excerpt = zeta_prompt::excerpt_range_for_format(

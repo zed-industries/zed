@@ -125,6 +125,7 @@ impl Global for EditPredictionStoreGlobal {}
 #[derive(Clone)]
 pub struct Zeta2RawConfig {
     pub model_id: Option<String>,
+    pub environment: Option<String>,
     pub format: ZetaFormat,
 }
 
@@ -760,7 +761,12 @@ impl EditPredictionStore {
         let version_str = env::var("ZED_ZETA_FORMAT").ok()?;
         let format = ZetaFormat::parse(&version_str).ok()?;
         let model_id = env::var("ZED_ZETA_MODEL").ok();
-        Some(Zeta2RawConfig { model_id, format })
+        let environment = env::var("ZED_ZETA_ENVIRONMENT").ok();
+        Some(Zeta2RawConfig {
+            model_id,
+            environment,
+            format,
+        })
     }
 
     pub fn set_edit_prediction_model(&mut self, model: EditPredictionModel) {
