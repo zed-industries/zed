@@ -28515,6 +28515,8 @@ async fn test_add_selection_skip_soft_wrap_option(cx: &mut TestAppContext) {
     ));
 
     cx.update_editor(|editor, window, cx| {
+        // Enable soft wrapping with a narrow width to force soft wrapping and
+        // confirm that more than 2 rows are being displayed.
         editor.set_wrap_width(Some(100.0.into()), cx);
         assert!(editor.display_text(cx).lines().count() > 2);
 
@@ -28587,6 +28589,8 @@ async fn test_add_selection_skip_soft_wrap_option(cx: &mut TestAppContext) {
     ));
 
     cx.update_editor(|editor, window, cx| {
+        // Enable soft wrapping with a narrow width to force soft wrapping and
+        // confirm that more than 2 rows are being displayed.
         editor.set_wrap_width(Some(100.0.into()), cx);
         assert!(editor.display_text(cx).lines().count() > 2);
 
@@ -28598,6 +28602,7 @@ async fn test_add_selection_skip_soft_wrap_option(cx: &mut TestAppContext) {
             cx,
         );
 
+        // Assert that both selections are visually aligned at the same column.
         let display_map = editor.display_map.update(cx, |map, cx| map.snapshot(cx));
         let selections = editor.selections.all::<Point>(&display_map);
         assert_eq!(selections.len(), 2);
