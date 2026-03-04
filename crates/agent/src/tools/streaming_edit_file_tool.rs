@@ -73,7 +73,7 @@ pub struct StreamingEditFileToolInput {
     /// <example>
     /// `frontend/db.js`
     /// </example>
-    pub path: String,
+    pub path: PathBuf,
 
     /// The mode of operation on the file. Possible values:
     /// - 'write': Replace the entire contents of the file. If the file doesn't exist, it will be created. Requires 'content' field.
@@ -93,7 +93,7 @@ pub struct StreamingEditFileToolInput {
     pub edits: Option<Vec<Edit>>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum StreamingEditFileMode {
     /// Overwrite the file with new content (replacing any existing content).
@@ -264,11 +264,11 @@ impl AgentTool for StreamingEditFileTool {
                         .read(cx)
                         .short_full_path_for_project_path(&project_path, cx)
                 })
-                .unwrap_or(input.path)
+                .unwrap_or(input.path.to_string_lossy().into_owned())
                 .into(),
             Err(raw_input) => {
-                if let Some(input) =
-                    serde_json::from_value::<StreamingEditFileToolPartialInput>(raw_input).ok()
+                if let Ok(input) =
+                    serde_json::from_value::<StreamingEditFileToolPartialInput>(raw_input)
                 {
                     let path = input.path.unwrap_or_default();
                     let path = path.trim();
@@ -311,14 +311,19 @@ impl AgentTool for StreamingEditFileTool {
                     partial = input.recv_partial().fuse() => {
                         let Some(partial_value) = partial else { break };
                         if let Ok(parsed) = serde_json::from_value::<StreamingEditFileToolPartialInput>(partial_value) {
-                            if state.is_none() && let Some(path_str) = &parsed.path
-                                && let Some(display_description) = &parsed.display_description
-                                && let Some(mode) = parsed.mode.clone() {
+                            if state.is_none()
+                                && let StreamingEditFileToolPartialInput {
+                                    path: Some(path),
+                                    display_description: Some(display_description),
+                                    mode: Some(mode),
+                                    ..
+                                } = &parsed
+                            {
                                     state = Some(
                                         EditSession::new(
-                                            path_str,
+                                            &PathBuf::from(path),
                                             display_description,
-                                            mode,
+                                            *mode,
                                             &self,
                                             &event_stream,
                                             cx,
@@ -442,7 +447,6 @@ impl EditPipeline {
     }
 }
 
-/// Compute the `LineIndent` of the first line in a set of query lines.
 fn query_first_line_indent(query_lines: &[String]) -> text::LineIndent {
     let first_line = query_lines.first().map(|s| s.as_str()).unwrap_or("");
     text::LineIndent::from_iter(first_line.chars())
@@ -450,14 +454,13 @@ fn query_first_line_indent(query_lines: &[String]) -> text::LineIndent {
 
 impl EditSession {
     async fn new(
-        path_str: &str,
+        path: &PathBuf,
         display_description: &str,
         mode: StreamingEditFileMode,
         tool: &StreamingEditFileTool,
         event_stream: &ToolCallEventStream,
         cx: &mut AsyncApp,
     ) -> Result<Self, StreamingEditFileToolOutput> {
-        let path = PathBuf::from(path_str);
         let project_path = cx
             .update(|cx| resolve_path(mode.clone(), &path, &tool.project, cx))
             .map_err(|e| StreamingEditFileToolOutput::error(e.to_string()))?;
@@ -465,7 +468,8 @@ impl EditSession {
         let Some(abs_path) = cx.update(|cx| tool.project.read(cx).absolute_path(&project_path, cx))
         else {
             return Err(StreamingEditFileToolOutput::error(format!(
-                "Worktree at '{path_str}' does not exist"
+                "Worktree at '{}' does not exist",
+                path.to_string_lossy()
             )));
         };
 
