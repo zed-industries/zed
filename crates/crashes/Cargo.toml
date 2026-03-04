@@ -12,7 +12,7 @@ crash-handler.workspace = true
 futures.workspace = true
 log.workspace = true
 minidumper.workspace = true
-
+parking_lot.workspace = true
 paths.workspace = true
 release_channel.workspace = true
 smol.workspace = true

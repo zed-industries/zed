@@ -573,6 +573,19 @@ fn main() {
             session.id().to_owned(),
             cx,
         );
+        cx.subscribe(&user_store, {
+            let telemetry = telemetry.clone();
+            move |_, evt: &client::user::Event, _| match evt {
+                client::user::Event::PrivateUserInfoUpdated => {
+                    crashes::set_user_info(crashes::UserInfo {
+                        metrics_id: telemetry.metrics_id().map(|s| s.to_string()),
+                        is_staff: telemetry.is_staff(),
+                    });
+                }
+                _ => {}
+            }
+        })
+        .detach();
 
         // We should rename these in the future to `first app open`, `first app open for release channel`, and `app open`
         if let (Some(system_id), Some(installation_id)) = (&system_id, &installation_id) {
