@@ -3,7 +3,7 @@ use anyhow::{Result, anyhow};
 use collections::HashMap;
 use gpui::SharedString;
 use serde::{Deserialize, Serialize};
-use std::{ops::AddAssign, str::FromStr, sync::Arc};
+use std::{str::FromStr, sync::Arc};
 use util::{ResultExt, rel_path::RelPath};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -584,23 +584,6 @@ impl FromStr for TreeDiff {
 pub struct DiffStat {
     pub added: u32,
     pub deleted: u32,
-}
-
-impl AddAssign for DiffStat {
-    fn add_assign(&mut self, rhs: Self) {
-        self.added += rhs.added;
-        self.deleted += rhs.deleted;
-    }
-}
-
-impl sum_tree::ContextLessSummary for DiffStat {
-    fn zero() -> Self {
-        Default::default()
-    }
-
-    fn add_summary(&mut self, rhs: &Self) {
-        *self += *rhs;
-    }
 }
 
 #[derive(Clone, Debug)]
