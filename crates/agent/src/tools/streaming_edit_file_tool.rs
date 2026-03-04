@@ -2120,7 +2120,7 @@ mod tests {
         .await;
         let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
 
-        cx.update(|cx| resolve_path(mode.clone(), &PathBuf::from(path), &project, cx))
+        cx.update(|cx| resolve_path(*mode, &PathBuf::from(path), &project, cx))
     }
 
     #[track_caller]
