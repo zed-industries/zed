@@ -1,9 +1,9 @@
 use anyhow::Result;
 use client::{Client, UserStore, zed_urls};
 use cloud_llm_client::UsageLimit;
-use codestral::CodestralEditPredictionDelegate;
+use codestral::{self, CodestralEditPredictionDelegate};
 use copilot::Status;
-use edit_prediction::{EditPredictionStore, Zeta2FeatureFlag};
+use edit_prediction::EditPredictionStore;
 use edit_prediction_types::EditPredictionDelegateHandle;
 use editor::{
     Editor, MultiBufferOffset, SelectionEffects, actions::ShowEditPrediction, scroll::Autoscroll,
@@ -22,19 +22,18 @@ use language::{
 };
 use project::{DisableAiSettings, Project};
 use regex::Regex;
-use settings::{
-    EXPERIMENTAL_ZETA2_EDIT_PREDICTION_PROVIDER_NAME, Settings, SettingsStore, update_settings_file,
-};
+use settings::{Settings, SettingsStore, update_settings_file};
 use std::{
+    rc::Rc,
     sync::{Arc, LazyLock},
     time::Duration,
 };
-use supermaven::{AccountStatus, Supermaven};
 use ui::{
     Clickable, ContextMenu, ContextMenuEntry, DocumentationSide, IconButton, IconButtonShape,
     Indicator, PopoverMenu, PopoverMenuHandle, ProgressBar, Tooltip, prelude::*,
 };
 use util::ResultExt as _;
+
 use workspace::{
     StatusItemView, Toast, Workspace, create_and_open_local_file, item::ItemHandle,
     notifications::NotificationId,
@@ -71,13 +70,6 @@ pub struct EditPredictionButton {
     user_store: Entity<UserStore>,
     popover_menu_handle: PopoverMenuHandle<ContextMenu>,
     project: WeakEntity<Project>,
-}
-
-enum SupermavenButtonStatus {
-    Ready,
-    Errored(String),
-    NeedsActivation(String),
-    Initializing,
 }
 
 impl Render for EditPredictionButton {
@@ -117,7 +109,7 @@ impl Render for EditPredictionButton {
                         IconButton::new("copilot-error", icon)
                             .icon_size(IconSize::Small)
                             .on_click(cx.listener(move |_, _, window, cx| {
-                                if let Some(workspace) = window.root::<Workspace>().flatten() {
+                                if let Some(workspace) = Workspace::for_window(window, cx) {
                                     workspace.update(cx, |workspace, cx| {
                                         let copilot = copilot.clone();
                                         workspace.show_toast(
@@ -147,8 +139,20 @@ impl Render for EditPredictionButton {
                 }
                 let this = cx.weak_entity();
                 let project = self.project.clone();
+                let file = self.file.clone();
+                let language = self.language.clone();
                 div().child(
                     PopoverMenu::new("copilot")
+                        .on_open({
+                            let file = file.clone();
+                            let language = language;
+                            let project = project.clone();
+                            Rc::new(move |_window, cx| {
+                                emit_edit_prediction_menu_opened(
+                                    "copilot", &file, &language, &project, cx,
+                                );
+                            })
+                        })
                         .menu(move |window, cx| {
                             let current_status = EditPredictionStore::try_global(cx)
                                 .and_then(|store| {
@@ -174,90 +178,13 @@ impl Render for EditPredictionButton {
                         .with_handle(self.popover_menu_handle.clone()),
                 )
             }
-
-            EditPredictionProvider::Supermaven => {
-                let Some(supermaven) = Supermaven::global(cx) else {
-                    return div();
-                };
-
-                let supermaven = supermaven.read(cx);
-
-                let status = match supermaven {
-                    Supermaven::Starting => SupermavenButtonStatus::Initializing,
-                    Supermaven::FailedDownload { error } => {
-                        SupermavenButtonStatus::Errored(error.to_string())
-                    }
-                    Supermaven::Spawned(agent) => {
-                        let account_status = agent.account_status.clone();
-                        match account_status {
-                            AccountStatus::NeedsActivation { activate_url } => {
-                                SupermavenButtonStatus::NeedsActivation(activate_url)
-                            }
-                            AccountStatus::Unknown => SupermavenButtonStatus::Initializing,
-                            AccountStatus::Ready => SupermavenButtonStatus::Ready,
-                        }
-                    }
-                    Supermaven::Error { error } => {
-                        SupermavenButtonStatus::Errored(error.to_string())
-                    }
-                };
-
-                let icon = status.to_icon();
-                let tooltip_text = status.to_tooltip();
-                let has_menu = status.has_menu();
-                let this = cx.weak_entity();
-                let fs = self.fs.clone();
-
-                div().child(
-                    PopoverMenu::new("supermaven")
-                        .menu(move |window, cx| match &status {
-                            SupermavenButtonStatus::NeedsActivation(activate_url) => {
-                                Some(ContextMenu::build(window, cx, |menu, _, _| {
-                                    let fs = fs.clone();
-                                    let activate_url = activate_url.clone();
-
-                                    menu.entry("Sign In", None, move |_, cx| {
-                                        cx.open_url(activate_url.as_str())
-                                    })
-                                    .entry(
-                                        "Use Zed AI",
-                                        None,
-                                        move |_, cx| {
-                                            set_completion_provider(
-                                                fs.clone(),
-                                                cx,
-                                                EditPredictionProvider::Zed,
-                                            )
-                                        },
-                                    )
-                                }))
-                            }
-                            SupermavenButtonStatus::Ready => this
-                                .update(cx, |this, cx| {
-                                    this.build_supermaven_context_menu(window, cx)
-                                })
-                                .ok(),
-                            _ => None,
-                        })
-                        .anchor(Corner::BottomRight)
-                        .trigger_with_tooltip(
-                            IconButton::new("supermaven-icon", icon),
-                            move |window, cx| {
-                                if has_menu {
-                                    Tooltip::for_action(tooltip_text.clone(), &ToggleMenu, cx)
-                                } else {
-                                    Tooltip::text(tooltip_text.clone())(window, cx)
-                                }
-                            },
-                        )
-                        .with_handle(self.popover_menu_handle.clone()),
-                )
-            }
-
             EditPredictionProvider::Codestral => {
                 let enabled = self.editor_enabled.unwrap_or(true);
-                let has_api_key = CodestralEditPredictionDelegate::has_api_key(cx);
+                let has_api_key = codestral::codestral_api_key(cx).is_some();
                 let this = cx.weak_entity();
+                let file = self.file.clone();
+                let language = self.language.clone();
+                let project = self.project.clone();
 
                 let tooltip_meta = if has_api_key {
                     "Powered by Codestral"
@@ -267,6 +194,20 @@ impl Render for EditPredictionButton {
 
                 div().child(
                     PopoverMenu::new("codestral")
+                        .on_open({
+                            let file = file.clone();
+                            let language = language;
+                            let project = project;
+                            Rc::new(move |_window, cx| {
+                                emit_edit_prediction_menu_opened(
+                                    "codestral",
+                                    &file,
+                                    &language,
+                                    &project,
+                                    cx,
+                                );
+                            })
+                        })
                         .menu(move |window, cx| {
                             this.update(cx, |this, cx| {
                                 this.build_codestral_context_menu(window, cx)
@@ -301,6 +242,36 @@ impl Render for EditPredictionButton {
                         .with_handle(self.popover_menu_handle.clone()),
                 )
             }
+            EditPredictionProvider::OpenAiCompatibleApi => {
+                let enabled = self.editor_enabled.unwrap_or(true);
+                let this = cx.weak_entity();
+
+                div().child(
+                    PopoverMenu::new("openai-compatible-api")
+                        .menu(move |window, cx| {
+                            this.update(cx, |this, cx| {
+                                this.build_edit_prediction_context_menu(
+                                    EditPredictionProvider::OpenAiCompatibleApi,
+                                    window,
+                                    cx,
+                                )
+                            })
+                            .ok()
+                        })
+                        .anchor(Corner::BottomRight)
+                        .trigger(
+                            IconButton::new("openai-compatible-api-icon", IconName::AiOpenAiCompat)
+                                .shape(IconButtonShape::Square)
+                                .when(!enabled, |this| {
+                                    this.indicator(Indicator::dot().color(Color::Ignored))
+                                        .indicator_border_color(Some(
+                                            cx.theme().colors().status_bar_background,
+                                        ))
+                                }),
+                        )
+                        .with_handle(self.popover_menu_handle.clone()),
+                )
+            }
             EditPredictionProvider::Ollama => {
                 let enabled = self.editor_enabled.unwrap_or(true);
                 let this = cx.weak_entity();
@@ -329,14 +300,9 @@ impl Render for EditPredictionButton {
                                 }),
                             move |_window, cx| {
                                 let settings = all_language_settings(None, cx);
-                                let tooltip_meta = match settings
-                                    .edit_predictions
-                                    .ollama
-                                    .model
-                                    .as_deref()
-                                {
-                                    Some(model) if !model.trim().is_empty() => {
-                                        format!("Powered by Ollama ({model})")
+                                let tooltip_meta = match settings.edit_predictions.ollama.as_ref() {
+                                    Some(settings) if !settings.model.trim().is_empty() => {
+                                        format!("Powered by Ollama ({})", settings.model)
                                     }
                                     _ => {
                                         "Ollama model not configured — configure a model before use"
@@ -360,6 +326,14 @@ impl Render for EditPredictionButton {
             | EditPredictionProvider::Sweep
             | EditPredictionProvider::Mercury) => {
                 let enabled = self.editor_enabled.unwrap_or(true);
+                let file = self.file.clone();
+                let language = self.language.clone();
+                let project = self.project.clone();
+                let provider_name: &'static str = match provider {
+                    EditPredictionProvider::Experimental(name) => name,
+                    EditPredictionProvider::Zed => "zed",
+                    _ => "unknown",
+                };
                 let icons = self
                     .edit_prediction_provider
                     .as_ref()
@@ -486,6 +460,20 @@ impl Render for EditPredictionButton {
                 let this = cx.weak_entity();
 
                 let mut popover_menu = PopoverMenu::new("edit-prediction")
+                    .on_open({
+                        let file = file.clone();
+                        let language = language;
+                        let project = project;
+                        Rc::new(move |_window, cx| {
+                            emit_edit_prediction_menu_opened(
+                                provider_name,
+                                &file,
+                                &language,
+                                &project,
+                                cx,
+                            );
+                        })
+                    })
                     .map(|popover_menu| {
                         let this = this.clone();
                         popover_menu.menu(move |window, cx| {
@@ -530,7 +518,6 @@ impl EditPredictionButton {
         fs: Arc<dyn Fs>,
         user_store: Entity<UserStore>,
         popover_menu_handle: PopoverMenuHandle<ContextMenu>,
-        client: Arc<Client>,
         project: Entity<Project>,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -550,9 +537,15 @@ impl EditPredictionButton {
         edit_prediction::ollama::ensure_authenticated(cx);
         let sweep_api_token_task = edit_prediction::sweep_ai::load_sweep_api_token(cx);
         let mercury_api_token_task = edit_prediction::mercury::load_mercury_api_token(cx);
+        let open_ai_compatible_api_token_task =
+            edit_prediction::open_ai_compatible::load_open_ai_compatible_api_token(cx);
 
         cx.spawn(async move |this, cx| {
-            _ = futures::join!(sweep_api_token_task, mercury_api_token_task);
+            _ = futures::join!(
+                sweep_api_token_task,
+                mercury_api_token_task,
+                open_ai_compatible_api_token_task
+            );
             this.update(cx, |_, cx| {
                 cx.notify();
             })
@@ -560,7 +553,7 @@ impl EditPredictionButton {
         })
         .detach();
 
-        CodestralEditPredictionDelegate::ensure_api_key_loaded(client.http_client(), cx);
+        CodestralEditPredictionDelegate::ensure_api_key_loaded(cx);
 
         Self {
             editor_subscription: None,
@@ -622,6 +615,11 @@ impl EditPredictionButton {
         let project = self.project.clone();
         ContextMenu::build(window, cx, |menu, _, _| {
             menu.entry("Sign In to Copilot", None, move |window, cx| {
+                telemetry::event!(
+                    "Edit Prediction Menu Action",
+                    action = "sign_in",
+                    provider = "copilot",
+                );
                 if let Some(copilot) = EditPredictionStore::try_global(cx).and_then(|store| {
                     store.update(cx, |this, cx| {
                         this.start_copilot_for_project(&project.upgrade()?, cx)
@@ -632,7 +630,14 @@ impl EditPredictionButton {
             })
             .entry("Disable Copilot", None, {
                 let fs = fs.clone();
-                move |_window, cx| hide_copilot(fs.clone(), cx)
+                move |_window, cx| {
+                    telemetry::event!(
+                        "Edit Prediction Menu Action",
+                        action = "disable_provider",
+                        provider = "copilot",
+                    );
+                    hide_copilot(fs.clone(), cx)
+                }
             })
             .separator()
             .entry("Use Zed AI", None, {
@@ -692,13 +697,20 @@ impl EditPredictionButton {
 
         if let Some((language, language_enabled)) = language_state {
             let fs = fs.clone();
+            let language_name = language.name();
 
             menu = menu.toggleable_entry(
-                language.name(),
+                language_name.clone(),
                 language_enabled,
                 IconPosition::Start,
                 None,
                 move |_, cx| {
+                    telemetry::event!(
+                        "Edit Prediction Setting Changed",
+                        setting = "language",
+                        language = language_name.to_string(),
+                        enabled = !language_enabled,
+                    );
                     toggle_show_edit_predictions_for_language(language.clone(), fs.clone(), cx)
                 },
             );
@@ -732,6 +744,11 @@ impl EditPredictionButton {
                         .handler({
                             let fs = fs.clone();
                             move |_, cx| {
+                                telemetry::event!(
+                                    "Edit Prediction Setting Changed",
+                                    setting = "mode",
+                                    value = "eager",
+                                );
                                 toggle_edit_prediction_mode(fs.clone(), EditPredictionsMode::Eager, cx)
                             }
                         }),
@@ -745,6 +762,11 @@ impl EditPredictionButton {
                         .handler({
                             let fs = fs.clone();
                             move |_, cx| {
+                                telemetry::event!(
+                                    "Edit Prediction Setting Changed",
+                                    setting = "mode",
+                                    value = "subtle",
+                                );
                                 toggle_edit_prediction_mode(fs.clone(), EditPredictionsMode::Subtle, cx)
                             }
                         }),
@@ -752,13 +774,7 @@ impl EditPredictionButton {
 
         menu = menu.separator().header("Privacy");
 
-        if matches!(
-            provider,
-            EditPredictionProvider::Zed
-                | EditPredictionProvider::Experimental(
-                    EXPERIMENTAL_ZETA2_EDIT_PREDICTION_PROVIDER_NAME,
-                )
-        ) {
+        if matches!(provider, EditPredictionProvider::Zed) {
             if let Some(provider) = &self.edit_prediction_provider {
                 let data_collection = provider.data_collection_state(cx);
 
@@ -868,7 +884,11 @@ impl EditPredictionButton {
                         Open your settings to add sensitive paths for which Zed will never predict edits."}).into_any_element()
                 })
                 .handler(move |window, cx| {
-                    if let Some(workspace) = window.root().flatten() {
+                    telemetry::event!(
+                        "Edit Prediction Menu Action",
+                        action = "configure_excluded_files",
+                    );
+                    if let Some(workspace) = Workspace::for_window(window, cx) {
                         let workspace = workspace.downgrade();
                         window
                             .spawn(cx, async |cx| {
@@ -885,6 +905,10 @@ impl EditPredictionButton {
                 .icon(IconName::FileGeneric)
                 .icon_color(Color::Muted)
                 .handler(move |_, cx| {
+                    telemetry::event!(
+                        "Edit Prediction Menu Action",
+                        action = "view_docs",
+                    );
                     cx.open_url(PRIVACY_DOCS);
                 })
         );
@@ -915,6 +939,10 @@ impl EditPredictionButton {
                     {
                         let editor_focus_handle = editor_focus_handle.clone();
                         move |window, cx| {
+                            telemetry::event!(
+                                "Edit Prediction Menu Action",
+                                action = "predict_at_cursor",
+                            );
                             editor_focus_handle.dispatch_action(&ShowEditPrediction, window, cx);
                         }
                     },
@@ -987,21 +1015,6 @@ impl EditPredictionButton {
         })
     }
 
-    fn build_supermaven_context_menu(
-        &self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Entity<ContextMenu> {
-        ContextMenu::build(window, cx, |menu, window, cx| {
-            let menu = self.build_language_settings_menu(menu, window, cx);
-            let menu =
-                self.add_provider_switching_section(menu, EditPredictionProvider::Supermaven, cx);
-
-            menu.separator()
-                .action("Sign Out", supermaven::SignOut.boxed_clone())
-        })
-    }
-
     fn build_codestral_context_menu(
         &self,
         window: &mut Window,
@@ -1053,6 +1066,11 @@ impl EditPredictionButton {
                     })
                     .separator()
                     .entry("Sign In & Start Using", None, |window, cx| {
+                        telemetry::event!(
+                            "Edit Prediction Menu Action",
+                            action = "sign_in",
+                            provider = "zed",
+                        );
                         let client = Client::global(cx);
                         window
                             .spawn(cx, async move |cx| {
@@ -1063,12 +1081,19 @@ impl EditPredictionButton {
                             })
                             .detach();
                     })
-                    .link(
+                    .link_with_handler(
                         "Learn More",
                         OpenBrowser {
                             url: zed_urls::edit_prediction_docs(cx),
                         }
                         .boxed_clone(),
+                        |_window, _cx| {
+                            telemetry::event!(
+                                "Edit Prediction Menu Action",
+                                action = "view_docs",
+                                source = "upsell",
+                            );
+                        },
                     )
                     .separator();
             } else if let Some(usage) = self
@@ -1111,6 +1136,11 @@ impl EditPredictionButton {
                     )
                     .when(usage.over_limit(), |menu| -> ContextMenu {
                         menu.entry("Subscribe to increase your limit", None, |_window, cx| {
+                            telemetry::event!(
+                                "Edit Prediction Menu Action",
+                                action = "upsell_clicked",
+                                reason = "usage_limit",
+                            );
                             cx.open_url(&zed_urls::account_url(cx))
                         })
                     })
@@ -1127,6 +1157,11 @@ impl EditPredictionButton {
                         |_window, cx| cx.open_url(&zed_urls::account_url(cx)),
                     )
                     .entry("Upgrade to Zed Pro or contact us.", None, |_window, cx| {
+                        telemetry::event!(
+                            "Edit Prediction Menu Action",
+                            action = "upsell_clicked",
+                            reason = "account_age",
+                        );
                         cx.open_url(&zed_urls::account_url(cx))
                     })
                     .separator();
@@ -1157,12 +1192,66 @@ impl EditPredictionButton {
                 menu = self.build_language_settings_menu(menu, window, cx);
             }
             menu = self.add_provider_switching_section(menu, provider, cx);
+
+            if cx.is_staff() {
+                if let Some(store) = EditPredictionStore::try_global(cx) {
+                    let store = store.read(cx);
+                    let experiments = store.available_experiments().to_vec();
+                    let preferred = store.preferred_experiment().map(|s| s.to_owned());
+
+                    let preferred_for_submenu = preferred.clone();
+                    menu = menu
+                        .separator()
+                        .submenu("Experiment", move |menu, _window, _cx| {
+                            let mut menu = menu.toggleable_entry(
+                                "Default",
+                                preferred_for_submenu.is_none(),
+                                IconPosition::Start,
+                                None,
+                                {
+                                    move |_window, cx| {
+                                        if let Some(store) = EditPredictionStore::try_global(cx) {
+                                            store.update(cx, |store, _cx| {
+                                                store.set_preferred_experiment(None);
+                                            });
+                                        }
+                                    }
+                                },
+                            );
+                            for experiment in &experiments {
+                                let is_selected = preferred.as_deref() == Some(experiment.as_str());
+                                let experiment_name = experiment.clone();
+                                menu = menu.toggleable_entry(
+                                    experiment.clone(),
+                                    is_selected,
+                                    IconPosition::Start,
+                                    None,
+                                    move |_window, cx| {
+                                        if let Some(store) = EditPredictionStore::try_global(cx) {
+                                            store.update(cx, |store, _cx| {
+                                                store.set_preferred_experiment(Some(
+                                                    experiment_name.clone(),
+                                                ));
+                                            });
+                                        }
+                                    },
+                                );
+                            }
+                            menu
+                        });
+                }
+            }
+
             menu = menu.separator().item(
                 ContextMenuEntry::new("Configure Providers")
                     .icon(IconName::Settings)
                     .icon_position(IconPosition::Start)
                     .icon_color(Color::Muted)
                     .handler(move |window, cx| {
+                        telemetry::event!(
+                            "Edit Prediction Menu Action",
+                            action = "configure_providers",
+                        );
                         window.dispatch_action(
                             OpenSettingsAt {
                                 path: "edit_predictions.providers".to_string(),
@@ -1222,33 +1311,6 @@ impl StatusItemView for EditPredictionButton {
             self.editor_enabled = None;
         }
         cx.notify();
-    }
-}
-
-impl SupermavenButtonStatus {
-    fn to_icon(&self) -> IconName {
-        match self {
-            SupermavenButtonStatus::Ready => IconName::Supermaven,
-            SupermavenButtonStatus::Errored(_) => IconName::SupermavenError,
-            SupermavenButtonStatus::NeedsActivation(_) => IconName::SupermavenInit,
-            SupermavenButtonStatus::Initializing => IconName::SupermavenInit,
-        }
-    }
-
-    fn to_tooltip(&self) -> String {
-        match self {
-            SupermavenButtonStatus::Ready => "Supermaven is ready".to_string(),
-            SupermavenButtonStatus::Errored(error) => format!("Supermaven error: {}", error),
-            SupermavenButtonStatus::NeedsActivation(_) => "Supermaven needs activation".to_string(),
-            SupermavenButtonStatus::Initializing => "Supermaven initializing".to_string(),
-        }
-    }
-
-    fn has_menu(&self) -> bool {
-        match self {
-            SupermavenButtonStatus::Ready | SupermavenButtonStatus::NeedsActivation(_) => true,
-            SupermavenButtonStatus::Errored(_) | SupermavenButtonStatus::Initializing => false,
-        }
     }
 }
 
@@ -1335,12 +1397,6 @@ pub fn get_available_providers(cx: &mut App) -> Vec<EditPredictionProvider> {
 
     providers.push(EditPredictionProvider::Zed);
 
-    if cx.has_flag::<Zeta2FeatureFlag>() {
-        providers.push(EditPredictionProvider::Experimental(
-            EXPERIMENTAL_ZETA2_EDIT_PREDICTION_PROVIDER_NAME,
-        ));
-    }
-
     if let Some(app_state) = workspace::AppState::global(cx).upgrade()
         && copilot::GlobalCopilotAuth::try_get_or_init(app_state, cx)
             .is_some_and(|copilot| copilot.0.read(cx).is_authenticated())
@@ -1348,20 +1404,20 @@ pub fn get_available_providers(cx: &mut App) -> Vec<EditPredictionProvider> {
         providers.push(EditPredictionProvider::Copilot);
     };
 
-    if let Some(supermaven) = Supermaven::global(cx) {
-        if let Supermaven::Spawned(agent) = supermaven.read(cx) {
-            if matches!(agent.account_status, AccountStatus::Ready) {
-                providers.push(EditPredictionProvider::Supermaven);
-            }
-        }
-    }
-
-    if CodestralEditPredictionDelegate::has_api_key(cx) {
+    if codestral::codestral_api_key(cx).is_some() {
         providers.push(EditPredictionProvider::Codestral);
     }
 
     if edit_prediction::ollama::is_available(cx) {
         providers.push(EditPredictionProvider::Ollama);
+    }
+
+    if all_language_settings(None, cx)
+        .edit_predictions
+        .open_ai_compatible_api
+        .is_some()
+    {
+        providers.push(EditPredictionProvider::OpenAiCompatibleApi);
     }
 
     if edit_prediction::sweep_ai::sweep_api_token(cx)
@@ -1496,6 +1552,39 @@ fn render_zeta_tab_animation(cx: &App) -> impl IntoElement {
         .child(tab_sequence(true))
         .child(Icon::new(IconName::ZedPredict))
         .child(tab_sequence(false))
+}
+
+fn emit_edit_prediction_menu_opened(
+    provider: &str,
+    file: &Option<Arc<dyn File>>,
+    language: &Option<Arc<Language>>,
+    project: &WeakEntity<Project>,
+    cx: &App,
+) {
+    let language_name = language.as_ref().map(|l| l.name());
+    let edit_predictions_enabled_for_language =
+        language_settings::language_settings(language_name, file.as_ref(), cx)
+            .show_edit_predictions;
+    let file_extension = file
+        .as_ref()
+        .and_then(|f| {
+            std::path::Path::new(f.file_name(cx))
+                .extension()
+                .and_then(|e| e.to_str())
+        })
+        .map(|s| s.to_string());
+    let is_via_ssh = project
+        .upgrade()
+        .map(|p| p.read(cx).is_via_remote_server())
+        .unwrap_or(false);
+    telemetry::event!(
+        "Toolbar Menu Opened",
+        name = "Edit Predictions",
+        provider,
+        file_extension,
+        edit_predictions_enabled_for_language,
+        is_via_ssh,
+    );
 }
 
 fn copilot_settings_url(enterprise_uri: Option<&str>) -> String {

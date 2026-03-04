@@ -145,11 +145,7 @@ impl TextDiffView {
         let multibuffer = cx.new(|cx| {
             let mut multibuffer = MultiBuffer::new(language::Capability::ReadWrite);
 
-            multibuffer.push_excerpts(
-                source_buffer.clone(),
-                [editor::ExcerptRange::new(source_range)],
-                cx,
-            );
+            multibuffer.set_excerpts_for_buffer(source_buffer.clone(), [source_range], 0, cx);
 
             multibuffer.add_diff(diff_buffer.clone(), cx);
             multibuffer
@@ -316,7 +312,7 @@ impl Item for TextDiffView {
         self.path.clone()
     }
 
-    fn to_item_events(event: &EditorEvent, f: impl FnMut(ItemEvent)) {
+    fn to_item_events(event: &EditorEvent, f: &mut dyn FnMut(ItemEvent)) {
         Editor::to_item_events(event, f)
     }
 
@@ -450,6 +446,7 @@ mod tests {
     use settings::SettingsStore;
     use unindent::unindent;
     use util::{path, test::marked_text_ranges};
+    use workspace::MultiWorkspace;
 
     fn init_test(cx: &mut TestAppContext) {
         cx.update(|cx| {
@@ -675,8 +672,9 @@ mod tests {
 
         let project = Project::test(fs, [project_root.as_ref()], cx).await;
 
-        let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
         let buffer = project
             .update(cx, |project, cx| project.open_local_buffer(file_path, cx))

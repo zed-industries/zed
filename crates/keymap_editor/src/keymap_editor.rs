@@ -1319,7 +1319,7 @@ impl KeymapEditor {
         cx.spawn(async move |_, _| {
             remove_keybinding(to_remove, &fs, keyboard_mapper.as_ref()).await
         })
-        .detach_and_notify_err(window, cx);
+        .detach_and_notify_err(self.workspace.clone(), window, cx);
     }
 
     fn copy_context_to_clipboard(

@@ -309,6 +309,7 @@ impl LspAdapter for ExtensionLspAdapter {
     async fn initialization_options(
         self: Arc<Self>,
         delegate: &Arc<dyn LspAdapterDelegate>,
+        _: &mut AsyncApp,
     ) -> Result<Option<serde_json::Value>> {
         let delegate = Arc::new(WorktreeDelegateAdapter(delegate.clone())) as _;
         let json_options = self
@@ -421,16 +422,23 @@ impl LspAdapter for ExtensionLspAdapter {
 
     async fn labels_for_symbols(
         self: Arc<Self>,
-        symbols: &[(String, lsp::SymbolKind)],
+        symbols: &[language::Symbol],
         language: &Arc<Language>,
     ) -> Result<Vec<Option<CodeLabel>>> {
         let symbols = symbols
             .iter()
             .cloned()
-            .map(|(name, kind)| extension::Symbol {
-                name,
-                kind: lsp_symbol_kind_to_extension(kind),
-            })
+            .map(
+                |language::Symbol {
+                     name,
+                     kind,
+                     container_name,
+                 }| extension::Symbol {
+                    name,
+                    kind: lsp_symbol_kind_to_extension(kind),
+                    container_name,
+                },
+            )
             .collect::<Vec<_>>();
 
         let labels = self

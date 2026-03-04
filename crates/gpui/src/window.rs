@@ -14,7 +14,7 @@ use crate::{
     Replay, ResizeEdge, SMOOTH_SVG_SCALE_FACTOR, SUBPIXEL_VARIANTS_X, SUBPIXEL_VARIANTS_Y,
     ScaledPixels, Scene, Shadow, SharedString, Size, StrikethroughStyle, Style, SubpixelSprite,
     SubscriberSet, Subscription, SystemWindowTab, SystemWindowTabController, TabStopMap,
-    TaffyLayoutEngine, Task, TextRenderingMode, TextStyle, TextStyleRefinement,
+    TaffyLayoutEngine, Task, TextRenderingMode, TextStyle, TextStyleRefinement, ThermalState,
     TransformationMatrix, Underline, UnderlineStyle, WindowAppearance, WindowBackgroundAppearance,
     WindowBounds, WindowControls, WindowDecorations, WindowOptions, WindowParams, WindowTextSystem,
     point, prelude::*, px, rems, size, transparent_black,
@@ -26,11 +26,14 @@ use core_video::pixel_buffer::CVPixelBuffer;
 use derive_more::{Deref, DerefMut};
 use futures::FutureExt;
 use futures::channel::oneshot;
+use gpui_util::post_inc;
+use gpui_util::{ResultExt, measure};
 use itertools::FoldWhile::{Continue, Done};
 use itertools::Itertools;
 use parking_lot::RwLock;
 use raw_window_handle::{HandleError, HasDisplayHandle, HasWindowHandle};
 use refineable::Refineable;
+use scheduler::Instant;
 use slotmap::SlotMap;
 use smallvec::SmallVec;
 use std::{
@@ -48,10 +51,8 @@ use std::{
         Arc, Weak,
         atomic::{AtomicUsize, Ordering::SeqCst},
     },
-    time::{Duration, Instant},
+    time::Duration,
 };
-use util::post_inc;
-use util::{ResultExt, measure};
 use uuid::Uuid;
 
 mod prompts;
@@ -59,7 +60,8 @@ mod prompts;
 use crate::util::atomic_incr_if_not_zero;
 pub use prompts::*;
 
-pub(crate) const DEFAULT_WINDOW_SIZE: Size<Pixels> = size(px(1536.), px(864.));
+/// Default window size used when no explicit size is provided.
+pub const DEFAULT_WINDOW_SIZE: Size<Pixels> = size(px(1536.), px(864.));
 
 /// A 6:5 aspect ratio minimum window size to be used for functional,
 /// additional-to-main-Zed windows, like the settings and rules library windows.
@@ -724,6 +726,7 @@ pub(crate) struct DeferredDraw {
     parent_node: DispatchNodeId,
     element_id_stack: SmallVec<[ElementId; 32]>,
     text_style_stack: Vec<TextStyleRefinement>,
+    content_mask: Option<ContentMask<Pixels>>,
     rem_size: Pixels,
     element: Option<AnyElement>,
     absolute_offset: Point<Pixels>,
@@ -1155,6 +1158,7 @@ impl Window {
         let needs_present = Rc::new(Cell::new(false));
         let next_frame_callbacks: Rc<RefCell<Vec<FrameCallback>>> = Default::default();
         let input_rate_tracker = Rc::new(RefCell::new(InputRateTracker::default()));
+        let last_frame_time = Rc::new(Cell::new(None));
 
         platform_window
             .request_decorations(window_decorations.unwrap_or(WindowDecorations::Server));
@@ -1184,6 +1188,23 @@ impl Window {
             let next_frame_callbacks = next_frame_callbacks.clone();
             let input_rate_tracker = input_rate_tracker.clone();
             move |request_frame_options| {
+                let thermal_state = handle
+                    .update(&mut cx, |_, _, cx| cx.thermal_state())
+                    .log_err();
+
+                if thermal_state == Some(ThermalState::Serious)
+                    || thermal_state == Some(ThermalState::Critical)
+                {
+                    let now = Instant::now();
+                    let last_frame_time = last_frame_time.replace(Some(now));
+
+                    if let Some(last_frame) = last_frame_time
+                        && now.duration_since(last_frame) < Duration::from_micros(16667)
+                    {
+                        return;
+                    }
+                }
+
                 let next_frame_callbacks = next_frame_callbacks.take();
                 if !next_frame_callbacks.is_empty() {
                     handle
@@ -1432,7 +1453,8 @@ impl Window {
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub(crate) struct DispatchEventResult {
+#[expect(missing_docs)]
+pub struct DispatchEventResult {
     pub propagate: bool,
     pub default_prevented: bool,
 }
@@ -2221,9 +2243,8 @@ impl Window {
     }
 
     fn record_entities_accessed(&mut self, cx: &mut App) {
-        let mut entities_ref = cx.entities.accessed_entities.borrow_mut();
+        let mut entities_ref = cx.entities.accessed_entities.get_mut();
         let mut entities = mem::take(entities_ref.deref_mut());
-        drop(entities_ref);
         let handle = self.handle;
         cx.record_entities_accessed(
             handle,
@@ -2231,7 +2252,7 @@ impl Window {
             self.invalidator.clone(),
             &entities,
         );
-        let mut entities_ref = cx.entities.accessed_entities.borrow_mut();
+        let mut entities_ref = cx.entities.accessed_entities.get_mut();
         mem::swap(&mut entities, entities_ref.deref_mut());
     }
 
@@ -2409,15 +2430,18 @@ impl Window {
                 .set_active_node(deferred_draw.parent_node);
 
             let prepaint_start = self.prepaint_index();
+            let content_mask = deferred_draw.content_mask.clone();
             if let Some(element) = deferred_draw.element.as_mut() {
                 self.with_rendered_view(deferred_draw.current_view, |window| {
-                    window.with_rem_size(Some(deferred_draw.rem_size), |window| {
-                        window.with_absolute_element_offset(
-                            deferred_draw.absolute_offset,
-                            |window| {
-                                element.prepaint(window, cx);
-                            },
-                        );
+                    window.with_content_mask(content_mask, |window| {
+                        window.with_rem_size(Some(deferred_draw.rem_size), |window| {
+                            window.with_absolute_element_offset(
+                                deferred_draw.absolute_offset,
+                                |window| {
+                                    element.prepaint(window, cx);
+                                },
+                            );
+                        });
                     });
                 })
             } else {
@@ -2449,10 +2473,13 @@ impl Window {
                 .set_active_node(deferred_draw.parent_node);
 
             let paint_start = self.paint_index();
+            let content_mask = deferred_draw.content_mask.clone();
             if let Some(element) = deferred_draw.element.as_mut() {
                 self.with_rendered_view(deferred_draw.current_view, |window| {
-                    window.with_rem_size(Some(deferred_draw.rem_size), |window| {
-                        element.paint(window, cx);
+                    window.with_content_mask(content_mask, |window| {
+                        window.with_rem_size(Some(deferred_draw.rem_size), |window| {
+                            element.paint(window, cx);
+                        });
                     })
                 })
             } else {
@@ -2516,6 +2543,7 @@ impl Window {
                     parent_node: reused_subtree.refresh_node_id(deferred_draw.parent_node),
                     element_id_stack: deferred_draw.element_id_stack.clone(),
                     text_style_stack: deferred_draw.text_style_stack.clone(),
+                    content_mask: deferred_draw.content_mask.clone(),
                     rem_size: deferred_draw.rem_size,
                     priority: deferred_draw.priority,
                     element: None,
@@ -2999,12 +3027,16 @@ impl Window {
     /// at a later time. The `priority` parameter determines the drawing order relative to other deferred elements,
     /// with higher values being drawn on top.
     ///
+    /// When `content_mask` is provided, the deferred element will be clipped to that region during
+    /// both prepaint and paint. When `None`, no additional clipping is applied.
+    ///
     /// This method should only be called as part of the prepaint phase of element drawing.
     pub fn defer_draw(
         &mut self,
         element: AnyElement,
         absolute_offset: Point<Pixels>,
         priority: usize,
+        content_mask: Option<ContentMask<Pixels>>,
     ) {
         self.invalidator.debug_assert_prepaint();
         let parent_node = self.next_frame.dispatch_tree.active_node_id().unwrap();
@@ -3013,6 +3045,7 @@ impl Window {
             parent_node,
             element_id_stack: self.element_id_stack.clone(),
             text_style_stack: self.text_style_stack.clone(),
+            content_mask,
             rem_size: self.rem_size(),
             priority,
             element: Some(element),

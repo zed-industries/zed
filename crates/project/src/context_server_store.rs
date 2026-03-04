@@ -8,8 +8,9 @@ use std::time::Duration;
 use anyhow::{Context as _, Result};
 use collections::{HashMap, HashSet};
 use context_server::{ContextServer, ContextServerCommand, ContextServerId};
-use futures::{FutureExt as _, future::join_all};
+use futures::{FutureExt as _, future::Either, future::join_all};
 use gpui::{App, AsyncApp, Context, Entity, EventEmitter, Subscription, Task, WeakEntity, actions};
+use itertools::Itertools;
 use registry::ContextServerDescriptorRegistry;
 use remote::RemoteClient;
 use rpc::{AnyProtoClient, TypedEnvelope, proto};
@@ -17,7 +18,7 @@ use settings::{Settings as _, SettingsStore};
 use util::{ResultExt as _, rel_path::RelPath};
 
 use crate::{
-    Project,
+    DisableAiSettings, Project,
     project_settings::{ContextServerSettings, ProjectSettings},
     worktree_store::WorktreeStore,
 };
@@ -140,6 +141,8 @@ impl ContextServerConfiguration {
         worktree_store: Entity<WorktreeStore>,
         cx: &AsyncApp,
     ) -> Option<Self> {
+        const EXTENSION_COMMAND_TIMEOUT: Duration = Duration::from_secs(30);
+
         match settings {
             ContextServerSettings::Stdio {
                 enabled: _,
@@ -154,15 +157,24 @@ impl ContextServerConfiguration {
                 let descriptor =
                     cx.update(|cx| registry.read(cx).context_server_descriptor(&id.0))?;
 
-                match descriptor.command(worktree_store, cx).await {
-                    Ok(command) => Some(ContextServerConfiguration::Extension {
+                let command_future = descriptor.command(worktree_store, cx);
+                let timeout_future = cx.background_executor().timer(EXTENSION_COMMAND_TIMEOUT);
+
+                match futures::future::select(command_future, timeout_future).await {
+                    Either::Left((Ok(command), _)) => Some(ContextServerConfiguration::Extension {
                         command,
                         settings,
                         remote,
                     }),
-                    Err(e) => {
+                    Either::Left((Err(e), _)) => {
                         log::error!(
                             "Failed to create context server configuration from settings: {e:#}"
+                        );
+                        None
+                    }
+                    Either::Right(_) => {
+                        log::error!(
+                            "Timed out resolving command for extension context server {id}"
                         );
                         None
                     }
@@ -203,6 +215,7 @@ pub struct ContextServerStore {
     state: ContextServerStoreState,
     context_server_settings: HashMap<Arc<str>, ContextServerSettings>,
     servers: HashMap<ContextServerId, ContextServerState>,
+    server_ids: Vec<ContextServerId>,
     worktree_store: Entity<WorktreeStore>,
     project: Option<WeakEntity<Project>>,
     registry: Entity<ContextServerDescriptorRegistry>,
@@ -212,14 +225,12 @@ pub struct ContextServerStore {
     _subscriptions: Vec<Subscription>,
 }
 
-pub enum Event {
-    ServerStatusChanged {
-        server_id: ContextServerId,
-        status: ContextServerStatus,
-    },
+pub struct ServerStatusChangedEvent {
+    pub server_id: ContextServerId,
+    pub status: ContextServerStatus,
 }
 
-impl EventEmitter<Event> for ContextServerStore {}
+impl EventEmitter<ServerStatusChangedEvent> for ContextServerStore {}
 
 impl ContextServerStore {
     pub fn local(
@@ -394,6 +405,7 @@ impl ContextServerStore {
             registry,
             needs_server_update: false,
             servers: HashMap::default(),
+            server_ids: Default::default(),
             update_servers_task: None,
             context_server_factory,
         };
@@ -426,8 +438,16 @@ impl ContextServerStore {
         self.servers.get(id).map(|state| state.configuration())
     }
 
-    pub fn server_ids(&self, cx: &App) -> HashSet<ContextServerId> {
-        self.servers
+    /// Returns a sorted slice of available unique context server IDs. Within the
+    /// slice, context servers which have `mcp-server-` as a prefix in their ID will
+    /// appear after servers that do not have this prefix in their ID.
+    pub fn server_ids(&self) -> &[ContextServerId] {
+        self.server_ids.as_slice()
+    }
+
+    fn populate_server_ids(&mut self, cx: &App) {
+        self.server_ids = self
+            .servers
             .keys()
             .cloned()
             .chain(
@@ -437,7 +457,27 @@ impl ContextServerStore {
                     .into_iter()
                     .map(|(id, _)| ContextServerId(id)),
             )
-            .collect()
+            .chain(
+                self.context_server_settings
+                    .keys()
+                    .map(|id| ContextServerId(id.clone())),
+            )
+            .unique()
+            .sorted_unstable_by(
+                // Sort context servers: ones without mcp-server- prefix first, then prefixed ones
+                |a, b| {
+                    const MCP_PREFIX: &str = "mcp-server-";
+                    match (a.0.strip_prefix(MCP_PREFIX), b.0.strip_prefix(MCP_PREFIX)) {
+                        // If one has mcp-server- prefix and other doesn't, non-mcp comes first
+                        (Some(_), None) => std::cmp::Ordering::Greater,
+                        (None, Some(_)) => std::cmp::Ordering::Less,
+                        // If both have same prefix status, sort by appropriate key
+                        (Some(a), Some(b)) => a.cmp(b),
+                        (None, None) => a.0.cmp(&b.0),
+                    }
+                },
+            )
+            .collect();
     }
 
     pub fn running_servers(&self) -> Vec<Arc<ContextServer>> {
@@ -591,7 +631,7 @@ impl ContextServerStore {
             .remove(id)
             .context("Context server not found")?;
         drop(state);
-        cx.emit(Event::ServerStatusChanged {
+        cx.emit(ServerStatusChangedEvent {
             server_id: id.clone(),
             status: ContextServerStatus::Stopped,
         });
@@ -808,7 +848,7 @@ impl ContextServerStore {
     ) {
         let status = ContextServerStatus::from_state(&state);
         self.servers.insert(id.clone(), state);
-        cx.emit(Event::ServerStatusChanged {
+        cx.emit(ServerStatusChangedEvent {
             server_id: id,
             status,
         });
@@ -825,6 +865,8 @@ impl ContextServerStore {
                 }
 
                 this.update(cx, |this, cx| {
+                    this.populate_server_ids(cx);
+                    cx.notify();
                     this.update_servers_task.take();
                     if this.needs_server_update {
                         this.available_context_servers_changed(cx);
@@ -837,6 +879,19 @@ impl ContextServerStore {
     }
 
     async fn maintain_servers(this: WeakEntity<Self>, cx: &mut AsyncApp) -> Result<()> {
+        // Don't start context servers if AI is disabled
+        let ai_disabled = this.update(cx, |_, cx| DisableAiSettings::get_global(cx).disable_ai)?;
+        if ai_disabled {
+            // Stop all running servers when AI is disabled
+            this.update(cx, |this, cx| {
+                let server_ids: Vec<_> = this.servers.keys().cloned().collect();
+                for id in server_ids {
+                    let _ = this.stop_server(&id, cx);
+                }
+            })?;
+            return Ok(());
+        }
+
         let (mut configured_servers, registry, worktree_store) = this.update(cx, |this, _| {
             (
                 this.context_server_settings.clone(),
@@ -916,11 +971,23 @@ impl ContextServerStore {
         })??;
 
         for (id, config) in servers_to_start {
-            let (server, config) =
-                Self::create_context_server(this.clone(), id, config, cx).await?;
-            this.update(cx, |this, cx| {
-                this.run_server(server, config, cx);
-            })?;
+            match Self::create_context_server(this.clone(), id.clone(), config, cx).await {
+                Ok((server, config)) => {
+                    this.update(cx, |this, cx| {
+                        this.run_server(server, config, cx);
+                    })?;
+                }
+                Err(err) => {
+                    log::error!("{id} context server failed to create: {err:#}");
+                    this.update(cx, |_this, cx| {
+                        cx.emit(ServerStatusChangedEvent {
+                            server_id: id,
+                            status: ContextServerStatus::Error(err.to_string().into()),
+                        });
+                        cx.notify();
+                    })?;
+                }
+            }
         }
 
         Ok(())

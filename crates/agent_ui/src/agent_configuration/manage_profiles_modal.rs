@@ -263,6 +263,10 @@ impl ManageProfilesModal {
                                     profile.default_model = Some(LanguageModelSelection {
                                         provider: LanguageModelProviderSetting(provider.clone()),
                                         model: model_id.clone(),
+                                        enable_thinking: model.supports_thinking(),
+                                        effort: model
+                                            .default_effort_level()
+                                            .map(|effort| effort.value.to_string()),
                                     });
                                 }
                             }
@@ -350,14 +354,18 @@ impl ManageProfilesModal {
             return;
         };
 
-        //todo: This causes the web search tool to show up even it only works when using zed hosted models
-        let tool_names: Vec<Arc<str>> = agent::supported_built_in_tool_names(
-            self.active_model.as_ref().map(|model| model.provider_id()),
-            cx,
-        )
-        .into_iter()
-        .map(|s| Arc::from(s))
-        .collect();
+        let provider = self.active_model.as_ref().map(|model| model.provider_id());
+        let tool_names: Vec<Arc<str>> = agent::ALL_TOOL_NAMES
+            .iter()
+            .copied()
+            .filter(|name| {
+                let supported_by_provider = provider.as_ref().map_or(true, |provider| {
+                    agent::tool_supports_provider(name, provider)
+                });
+                supported_by_provider
+            })
+            .map(Arc::from)
+            .collect();
 
         let tool_picker = cx.new(|cx| {
             let delegate = ToolPickerDelegate::builtin_tools(

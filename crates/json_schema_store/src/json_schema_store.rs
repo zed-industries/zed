@@ -3,7 +3,10 @@ use std::sync::{Arc, LazyLock};
 use anyhow::{Context as _, Result};
 use collections::HashMap;
 use gpui::{App, AsyncApp, BorrowAppContext as _, Entity, Task, WeakEntity};
-use language::{LanguageRegistry, LspAdapterDelegate, language_settings::AllLanguageSettings};
+use language::{
+    LanguageRegistry, LanguageServerName, LspAdapterDelegate,
+    language_settings::AllLanguageSettings,
+};
 use parking_lot::RwLock;
 use project::{LspStore, lsp_store::LocalLspAdapterDelegate};
 use settings::{LSP_SETTINGS_SCHEMA_URL_PREFIX, Settings as _, SettingsLocation};
@@ -209,7 +212,7 @@ async fn resolve_dynamic_schema(
 
     let schema = match schema_name {
         "settings" if rest.is_some_and(|r| r.starts_with("lsp/")) => {
-            let lsp_name = rest
+            let lsp_path = rest
                 .and_then(|r| {
                     r.strip_prefix(
                         LSP_SETTINGS_SCHEMA_URL_PREFIX
@@ -220,10 +223,33 @@ async fn resolve_dynamic_schema(
                 })
                 .context("Invalid LSP schema path")?;
 
+            // Parse the schema type from the path:
+            // - "rust-analyzer/initialization_options" → initialization_options_schema
+            // - "rust-analyzer/settings" → settings_schema
+            enum LspSchemaKind {
+                InitializationOptions,
+                Settings,
+            }
+            let (lsp_name, schema_kind) = if let Some(adapter_name) =
+                lsp_path.strip_suffix("/initialization_options")
+            {
+                (adapter_name, LspSchemaKind::InitializationOptions)
+            } else if let Some(adapter_name) = lsp_path.strip_suffix("/settings") {
+                (adapter_name, LspSchemaKind::Settings)
+            } else {
+                anyhow::bail!(
+                    "Invalid LSP schema path: expected '{{adapter}}/initialization_options' or '{{adapter}}/settings', got '{}'",
+                    lsp_path
+                );
+            };
+
             let adapter = languages
                 .all_lsp_adapters()
                 .into_iter()
                 .find(|adapter| adapter.name().as_ref() as &str == lsp_name)
+                .or_else(|| {
+                    languages.load_available_lsp_adapter(&LanguageServerName::from(lsp_name))
+                })
                 .with_context(|| format!("LSP adapter not found: {}", lsp_name))?;
 
             let delegate: Arc<dyn LspAdapterDelegate> = cx
@@ -246,22 +272,41 @@ async fn resolve_dynamic_schema(
                     "either LSP store is not in local mode or no worktree is available"
                 ))?;
 
-            adapter
-                .initialization_options_schema(&delegate, cx)
-                .await
-                .unwrap_or_else(|| {
-                    serde_json::json!({
-                        "type": "object",
-                        "additionalProperties": true
-                    })
+            let schema = match schema_kind {
+                LspSchemaKind::InitializationOptions => {
+                    adapter.initialization_options_schema(&delegate, cx).await
+                }
+                LspSchemaKind::Settings => adapter.settings_schema(&delegate, cx).await,
+            };
+
+            schema.unwrap_or_else(|| {
+                serde_json::json!({
+                    "type": "object",
+                    "additionalProperties": true
                 })
+            })
         }
         "settings" => {
-            let lsp_adapter_names = languages
+            let mut lsp_adapter_names: Vec<String> = languages
                 .all_lsp_adapters()
                 .into_iter()
-                .map(|adapter| adapter.name().to_string())
-                .collect::<Vec<_>>();
+                .map(|adapter| adapter.name())
+                .chain(languages.available_lsp_adapter_names().into_iter())
+                .map(|name| name.to_string())
+                .collect();
+
+            let mut i = 0;
+            while i < lsp_adapter_names.len() {
+                let mut j = i + 1;
+                while j < lsp_adapter_names.len() {
+                    if lsp_adapter_names[i] == lsp_adapter_names[j] {
+                        lsp_adapter_names.swap_remove(j);
+                    } else {
+                        j += 1;
+                    }
+                }
+                i += 1;
+            }
 
             cx.update(|cx| {
                 let font_names = &cx.text_system().all_font_names();
@@ -285,15 +330,13 @@ async fn resolve_dynamic_schema(
                 let icon_theme_names = icon_theme_names.as_slice();
                 let theme_names = theme_names.as_slice();
 
-                cx.global::<settings::SettingsStore>().json_schema(
-                    &settings::SettingsJsonSchemaParams {
-                        language_names,
-                        font_names,
-                        theme_names,
-                        icon_theme_names,
-                        lsp_adapter_names: &lsp_adapter_names,
-                    },
-                )
+                settings::SettingsStore::json_schema(&settings::SettingsJsonSchemaParams {
+                    language_names,
+                    font_names,
+                    theme_names,
+                    icon_theme_names,
+                    lsp_adapter_names: &lsp_adapter_names,
+                })
             })
         }
         "project_settings" => {
@@ -303,25 +346,21 @@ async fn resolve_dynamic_schema(
                 .map(|adapter| adapter.name().to_string())
                 .collect::<Vec<_>>();
 
-            cx.update(|cx| {
-                let language_names = &languages
-                    .language_names()
-                    .into_iter()
-                    .map(|name| name.to_string())
-                    .collect::<Vec<_>>();
+            let language_names = &languages
+                .language_names()
+                .into_iter()
+                .map(|name| name.to_string())
+                .collect::<Vec<_>>();
 
-                cx.global::<settings::SettingsStore>().project_json_schema(
-                    &settings::SettingsJsonSchemaParams {
-                        language_names,
-                        lsp_adapter_names: &lsp_adapter_names,
-                        // These are not allowed in project-specific settings but
-                        // they're still fields required by the
-                        // `SettingsJsonSchemaParams` struct.
-                        font_names: &[],
-                        theme_names: &[],
-                        icon_theme_names: &[],
-                    },
-                )
+            settings::SettingsStore::project_json_schema(&settings::SettingsJsonSchemaParams {
+                language_names,
+                lsp_adapter_names: &lsp_adapter_names,
+                // These are not allowed in project-specific settings but
+                // they're still fields required by the
+                // `SettingsJsonSchemaParams` struct.
+                font_names: &[],
+                theme_names: &[],
+                icon_theme_names: &[],
             })
         }
         "debug_tasks" => {

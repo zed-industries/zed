@@ -16,7 +16,7 @@ use multi_buffer::{
 };
 use parking_lot::Mutex;
 use std::{
-    cell::RefCell,
+    cell::{Cell, RefCell},
     cmp::{self, Ordering},
     fmt::Debug,
     ops::{Deref, DerefMut, Not, Range, RangeBounds, RangeInclusive},
@@ -27,7 +27,7 @@ use std::{
 };
 use sum_tree::{Bias, ContextLessSummary, Dimensions, SumTree, TreeMap};
 use text::{BufferId, Edit};
-use ui::ElementId;
+use ui::{ElementId, IntoElement};
 
 const NEWLINES: &[u8; rope::Chunk::MASK_BITS] = &[b'\n'; _];
 const BULLETS: &[u8; rope::Chunk::MASK_BITS] = &[b'*'; _];
@@ -45,10 +45,11 @@ pub struct BlockMap {
     excerpt_header_height: u32,
     pub(super) folded_buffers: HashSet<BufferId>,
     buffers_with_disabled_headers: HashSet<BufferId>,
+    pub(super) deferred_edits: Cell<Patch<WrapRow>>,
 }
 
 pub struct BlockMapReader<'a> {
-    blocks: &'a Vec<Arc<CustomBlock>>,
+    pub blocks: &'a Vec<Arc<CustomBlock>>,
     pub snapshot: BlockSnapshot,
 }
 
@@ -57,14 +58,17 @@ pub struct BlockMapWriter<'a> {
     companion: Option<BlockMapWriterCompanion<'a>>,
 }
 
-struct BlockMapWriterCompanion<'a>(CompanionView<'a>);
+/// Auxiliary data needed when modifying a BlockMap whose parent DisplayMap has a companion.
+struct BlockMapWriterCompanion<'a> {
+    display_map_id: EntityId,
+    companion_wrap_snapshot: WrapSnapshot,
+    companion: &'a Companion,
+    inverse: Option<BlockMapInverseWriter<'a>>,
+}
 
-impl<'a> Deref for BlockMapWriterCompanion<'a> {
-    type Target = CompanionView<'a>;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
+struct BlockMapInverseWriter<'a> {
+    companion_multibuffer: &'a MultiBuffer,
+    companion_writer: Box<BlockMapWriter<'a>>,
 }
 
 #[derive(Clone)]
@@ -74,6 +78,7 @@ pub struct BlockSnapshot {
     custom_blocks_by_id: TreeMap<CustomBlockId, Arc<CustomBlock>>,
     pub(super) buffer_header_height: u32,
     pub(super) excerpt_header_height: u32,
+    pub(super) buffers_with_disabled_headers: HashSet<BufferId>,
 }
 
 impl Deref for BlockSnapshot {
@@ -261,6 +266,10 @@ impl<P: Debug> Debug for BlockProperties<P> {
 pub enum BlockStyle {
     Fixed,
     Flex,
+    /// Like `Flex` but doesn't use the gutter:
+    /// - block content scrolls with buffer content
+    /// - doesn't paint in gutter
+    Spacer,
     Sticky,
 }
 
@@ -268,6 +277,7 @@ pub enum BlockStyle {
 pub struct EditorMargins {
     pub gutter: GutterDimensions,
     pub right: Pixels,
+    pub extended_right: Pixels,
 }
 
 #[derive(gpui::AppContext, gpui::VisualContext)]
@@ -282,8 +292,10 @@ pub struct BlockContext<'a, 'b> {
     pub em_width: Pixels,
     pub line_height: Pixels,
     pub block_id: BlockId,
+    pub height: u32,
     pub selected: bool,
     pub editor_style: &'b EditorStyle,
+    pub indent_guide_padding: Pixels,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Ord, PartialOrd, Hash)]
@@ -388,8 +400,8 @@ impl Block {
             Block::Custom(block) => block.style,
             Block::ExcerptBoundary { .. }
             | Block::FoldedBuffer { .. }
-            | Block::BufferHeader { .. }
-            | Block::Spacer { .. } => BlockStyle::Sticky,
+            | Block::BufferHeader { .. } => BlockStyle::Sticky,
+            Block::Spacer { .. } => BlockStyle::Spacer,
         }
     }
 
@@ -520,24 +532,78 @@ pub struct BlockRows<'a> {
 
 #[derive(Clone, Copy)]
 pub struct CompanionView<'a> {
-    entity_id: EntityId,
-    wrap_snapshot: &'a WrapSnapshot,
-    wrap_edits: &'a WrapPatch,
+    display_map_id: EntityId,
+    companion_wrap_snapshot: &'a WrapSnapshot,
+    companion_wrap_edits: &'a WrapPatch,
     companion: &'a Companion,
 }
 
 impl<'a> CompanionView<'a> {
     pub(crate) fn new(
-        entity_id: EntityId,
-        wrap_snapshot: &'a WrapSnapshot,
-        wrap_edits: &'a WrapPatch,
+        display_map_id: EntityId,
+        companion_wrap_snapshot: &'a WrapSnapshot,
+        companion_wrap_edits: &'a WrapPatch,
         companion: &'a Companion,
     ) -> Self {
         Self {
-            entity_id,
-            wrap_snapshot,
-            wrap_edits,
+            display_map_id,
+            companion_wrap_snapshot,
+            companion_wrap_edits,
             companion,
+        }
+    }
+}
+
+impl<'a> From<CompanionViewMut<'a>> for CompanionView<'a> {
+    fn from(view_mut: CompanionViewMut<'a>) -> Self {
+        Self {
+            display_map_id: view_mut.display_map_id,
+            companion_wrap_snapshot: view_mut.companion_wrap_snapshot,
+            companion_wrap_edits: view_mut.companion_wrap_edits,
+            companion: view_mut.companion,
+        }
+    }
+}
+
+impl<'a> From<&'a CompanionViewMut<'a>> for CompanionView<'a> {
+    fn from(view_mut: &'a CompanionViewMut<'a>) -> Self {
+        Self {
+            display_map_id: view_mut.display_map_id,
+            companion_wrap_snapshot: view_mut.companion_wrap_snapshot,
+            companion_wrap_edits: view_mut.companion_wrap_edits,
+            companion: view_mut.companion,
+        }
+    }
+}
+
+pub struct CompanionViewMut<'a> {
+    display_map_id: EntityId,
+    companion_display_map_id: EntityId,
+    companion_wrap_snapshot: &'a WrapSnapshot,
+    companion_wrap_edits: &'a WrapPatch,
+    companion_multibuffer: &'a MultiBuffer,
+    companion_block_map: &'a mut BlockMap,
+    companion: &'a Companion,
+}
+
+impl<'a> CompanionViewMut<'a> {
+    pub(crate) fn new(
+        display_map_id: EntityId,
+        companion_display_map_id: EntityId,
+        companion_wrap_snapshot: &'a WrapSnapshot,
+        companion_wrap_edits: &'a WrapPatch,
+        companion_multibuffer: &'a MultiBuffer,
+        companion: &'a Companion,
+        companion_block_map: &'a mut BlockMap,
+    ) -> Self {
+        Self {
+            display_map_id,
+            companion_display_map_id,
+            companion_wrap_snapshot,
+            companion_wrap_edits,
+            companion_multibuffer,
+            companion,
+            companion_block_map,
         }
     }
 }
@@ -562,6 +628,7 @@ impl BlockMap {
             wrap_snapshot: RefCell::new(wrap_snapshot.clone()),
             buffer_header_height,
             excerpt_header_height,
+            deferred_edits: Cell::default(),
         };
         map.sync(
             &wrap_snapshot,
@@ -591,6 +658,7 @@ impl BlockMap {
                 custom_blocks_by_id: self.custom_blocks_by_id.clone(),
                 buffer_header_height: self.buffer_header_height,
                 excerpt_header_height: self.excerpt_header_height,
+                buffers_with_disabled_headers: self.buffers_with_disabled_headers.clone(),
             },
         }
     }
@@ -600,14 +668,98 @@ impl BlockMap {
         &'a mut self,
         wrap_snapshot: WrapSnapshot,
         edits: WrapPatch,
-        companion_view: Option<CompanionView<'a>>,
+        companion_view: Option<CompanionViewMut<'a>>,
     ) -> BlockMapWriter<'a> {
-        self.sync(&wrap_snapshot, edits, companion_view);
-        *self.wrap_snapshot.borrow_mut() = wrap_snapshot;
+        self.sync(
+            &wrap_snapshot,
+            edits.clone(),
+            companion_view.as_ref().map(CompanionView::from),
+        );
+        *self.wrap_snapshot.borrow_mut() = wrap_snapshot.clone();
+        let companion = if let Some(companion_view) = companion_view {
+            companion_view.companion_block_map.sync(
+                companion_view.companion_wrap_snapshot,
+                companion_view.companion_wrap_edits.clone(),
+                Some(CompanionView::new(
+                    companion_view.companion_display_map_id,
+                    &wrap_snapshot,
+                    &edits,
+                    companion_view.companion,
+                )),
+            );
+            *companion_view
+                .companion_block_map
+                .wrap_snapshot
+                .borrow_mut() = companion_view.companion_wrap_snapshot.clone();
+            Some(BlockMapWriterCompanion {
+                display_map_id: companion_view.display_map_id,
+                companion_wrap_snapshot: companion_view.companion_wrap_snapshot.clone(),
+                companion: companion_view.companion,
+                inverse: Some(BlockMapInverseWriter {
+                    companion_multibuffer: companion_view.companion_multibuffer,
+                    companion_writer: Box::new(BlockMapWriter {
+                        block_map: companion_view.companion_block_map,
+                        companion: Some(BlockMapWriterCompanion {
+                            display_map_id: companion_view.companion_display_map_id,
+                            companion_wrap_snapshot: wrap_snapshot,
+                            companion: companion_view.companion,
+                            inverse: None,
+                        }),
+                    }),
+                }),
+            })
+        } else {
+            None
+        };
         BlockMapWriter {
             block_map: self,
-            companion: companion_view.map(BlockMapWriterCompanion),
+            companion,
         }
+    }
+
+    // Warning: doesn't sync the block map, use advisedly
+    pub(crate) fn insert_block_raw(
+        &mut self,
+        block: BlockProperties<Anchor>,
+        buffer: &MultiBufferSnapshot,
+    ) -> CustomBlockId {
+        let id = CustomBlockId(self.next_block_id.fetch_add(1, SeqCst));
+        let block_ix = match self
+            .custom_blocks
+            .binary_search_by(|probe| probe.placement.cmp(&block.placement, &buffer))
+        {
+            Ok(ix) | Err(ix) => ix,
+        };
+        let new_block = Arc::new(CustomBlock {
+            id,
+            placement: block.placement.clone(),
+            height: block.height,
+            style: block.style,
+            render: Arc::new(Mutex::new(block.render.clone())),
+            priority: block.priority,
+        });
+        self.custom_blocks.insert(block_ix, new_block.clone());
+        self.custom_blocks_by_id.insert(id, new_block);
+        id
+    }
+
+    // Warning: doesn't sync the block map, use advisedly
+    pub(crate) fn retain_blocks_raw(&mut self, pred: &mut dyn FnMut(&Arc<CustomBlock>) -> bool) {
+        let mut ids_to_remove = HashSet::default();
+        self.custom_blocks.retain(|block| {
+            let keep = pred(block);
+            if !keep {
+                ids_to_remove.insert(block.id);
+            }
+            keep
+        });
+        self.custom_blocks_by_id
+            .retain(|id, _| !ids_to_remove.contains(id));
+    }
+
+    // Warning: doesn't sync the block map, use advisedly
+    pub(crate) fn blocks_raw(&self) -> impl Iterator<Item = &Arc<CustomBlock>> {
+        self.custom_blocks.iter()
     }
 
     #[ztracing::instrument(skip_all, fields(edits = ?edits))]
@@ -618,6 +770,8 @@ impl BlockMap {
         companion_view: Option<CompanionView>,
     ) {
         let buffer = wrap_snapshot.buffer_snapshot();
+
+        edits = self.deferred_edits.take().compose(edits);
 
         // Handle changing the last excerpt if it is empty.
         if buffer.trailing_excerpt_update_count()
@@ -638,10 +792,10 @@ impl BlockMap {
 
         // Pull in companion edits to ensure we recompute spacers in ranges that have changed in the companion.
         if let Some(CompanionView {
-            wrap_snapshot: companion_new_snapshot,
-            wrap_edits: companion_edits,
+            companion_wrap_snapshot: companion_new_snapshot,
+            companion_wrap_edits: companion_edits,
             companion,
-            entity_id: display_map_id,
+            display_map_id,
             ..
         }) = companion_view
         {
@@ -895,17 +1049,18 @@ impl BlockMap {
                 |point, bias| {
                     wrap_point_cursor
                         .map(
-                            tab_point_cursor
-                                .map(fold_point_cursor.map(inlay_point_cursor.map(point), bias)),
+                            tab_point_cursor.map(
+                                fold_point_cursor.map(inlay_point_cursor.map(point, bias), bias),
+                            ),
                         )
                         .row()
                 },
             ));
 
             if let Some(CompanionView {
-                wrap_snapshot: companion_snapshot,
+                companion_wrap_snapshot: companion_snapshot,
                 companion,
-                entity_id: display_map_id,
+                display_map_id,
                 ..
             }) = companion_view
             {
@@ -1105,25 +1260,33 @@ impl BlockMap {
         let mut our_tab_point_cursor = wrap_snapshot.tab_point_cursor();
         let mut our_wrap_point_cursor = wrap_snapshot.wrap_point_cursor();
 
-        let mut companion_inlay_point_cursor = companion_snapshot.inlay_point_cursor();
-        let mut companion_fold_point_cursor = companion_snapshot.fold_point_cursor();
-        let mut companion_tab_point_cursor = companion_snapshot.tab_point_cursor();
-        let mut companion_wrap_point_cursor = companion_snapshot.wrap_point_cursor();
-
-        let mut determine_spacer = |our_point: Point, their_point: Point, delta: i32| {
-            let our_wrap = our_wrap_point_cursor
+        let mut our_wrapper = |our_point: Point, bias: Bias| {
+            our_wrap_point_cursor
                 .map(our_tab_point_cursor.map(
-                    our_fold_point_cursor.map(our_inlay_point_cursor.map(our_point), Bias::Left),
+                    our_fold_point_cursor.map(our_inlay_point_cursor.map(our_point, bias), bias),
                 ))
-                .row();
-            let companion_wrap = companion_wrap_point_cursor
-                .map(
-                    companion_tab_point_cursor.map(
-                        companion_fold_point_cursor
-                            .map(companion_inlay_point_cursor.map(their_point), Bias::Left),
-                    ),
-                )
-                .row();
+                .row()
+        };
+        let mut companion_wrapper = |their_point: Point, bias: Bias| {
+            // TODO(split-diff) fix companion points being passed in decreasing order
+            let inlay_point = companion_snapshot
+                .inlay_snapshot
+                .inlay_point_cursor()
+                .map(their_point, bias);
+            let fold_point = companion_snapshot.to_fold_point(inlay_point, bias);
+            let tab_point = companion_snapshot.fold_point_to_tab_point(fold_point);
+            companion_snapshot.tab_point_to_wrap_point(tab_point).row()
+        };
+        fn determine_spacer(
+            our_wrapper: &mut dyn FnMut(Point, Bias) -> WrapRow,
+            companion_wrapper: &mut dyn FnMut(Point, Bias) -> WrapRow,
+            our_point: Point,
+            their_point: Point,
+            delta: i32,
+            bias: Bias,
+        ) -> (i32, Option<(WrapRow, u32)>) {
+            let our_wrap = our_wrapper(our_point, bias);
+            let companion_wrap = companion_wrapper(their_point, bias);
             let new_delta = companion_wrap.0 as i32 - our_wrap.0 as i32;
 
             let spacer = if new_delta > delta {
@@ -1133,7 +1296,7 @@ impl BlockMap {
                 None
             };
             (new_delta, spacer)
-        };
+        }
 
         let mut result = Vec::new();
 
@@ -1179,12 +1342,11 @@ impl BlockMap {
                 // Case 3: We are at the start of the excerpt--no previous row to use as the baseline.
                 (first_point, edit_for_first_point.new.start)
             };
-            let our_baseline = wrap_snapshot
-                .make_wrap_point(our_baseline, Bias::Left)
-                .row();
-            let their_baseline = companion_snapshot
-                .make_wrap_point(their_baseline, Bias::Left)
-                .row();
+            let our_baseline = our_wrapper(our_baseline, Bias::Left);
+            let their_baseline = companion_wrapper(
+                their_baseline.min(excerpt.target_excerpt_range.end),
+                Bias::Left,
+            );
 
             let mut delta = their_baseline.0 as i32 - our_baseline.0 as i32;
 
@@ -1201,8 +1363,14 @@ impl BlockMap {
                     current_boundary = next_point;
                 }
 
-                let (new_delta, spacer) =
-                    determine_spacer(current_boundary, current_range.end, delta);
+                let (new_delta, spacer) = determine_spacer(
+                    &mut our_wrapper,
+                    &mut companion_wrapper,
+                    current_boundary,
+                    current_range.end.min(excerpt.target_excerpt_range.end),
+                    delta,
+                    Bias::Left,
+                );
 
                 delta = new_delta;
                 if let Some((wrap_row, height)) = spacer {
@@ -1229,8 +1397,14 @@ impl BlockMap {
                 }
 
                 // Align the two sides at the start of this group.
-                let (delta_at_start, mut spacer_at_start) =
-                    determine_spacer(current_boundary, current_range.start, delta);
+                let (delta_at_start, mut spacer_at_start) = determine_spacer(
+                    &mut our_wrapper,
+                    &mut companion_wrapper,
+                    current_boundary,
+                    current_range.start.min(excerpt.target_excerpt_range.end),
+                    delta,
+                    Bias::Left,
+                );
                 delta = delta_at_start;
 
                 while let Some(next_point) = source_points.peek().copied() {
@@ -1260,9 +1434,23 @@ impl BlockMap {
                     break;
                 }
 
-                let (delta_at_end, spacer_at_end) =
-                    determine_spacer(current_boundary, current_range.end, delta);
-                delta = delta_at_end;
+                let edit_for_current_boundary =
+                    excerpt.patch.edit_for_old_position(current_boundary);
+
+                let spacer_at_end = if current_boundary == edit_for_current_boundary.old.end {
+                    let (delta_at_end, spacer_at_end) = determine_spacer(
+                        &mut our_wrapper,
+                        &mut companion_wrapper,
+                        current_boundary,
+                        current_range.end.min(excerpt.target_excerpt_range.end),
+                        delta,
+                        Bias::Left,
+                    );
+                    delta = delta_at_end;
+                    spacer_at_end
+                } else {
+                    None
+                };
 
                 if let Some((wrap_row, mut height)) = spacer_at_start {
                     if let Some((_, additional_height)) = spacer_at_end {
@@ -1289,8 +1477,14 @@ impl BlockMap {
             }
 
             if last_source_point == excerpt.source_excerpt_range.end {
-                let (_new_delta, spacer) =
-                    determine_spacer(last_source_point, excerpt.target_excerpt_range.end, delta);
+                let (_new_delta, spacer) = determine_spacer(
+                    &mut our_wrapper,
+                    &mut companion_wrapper,
+                    last_source_point,
+                    excerpt.target_excerpt_range.end,
+                    delta,
+                    Bias::Right,
+                );
                 if let Some((wrap_row, height)) = spacer {
                     result.push((
                         BlockPlacement::Below(wrap_row),
@@ -1485,6 +1679,64 @@ impl BlockMapReader<'_> {
     }
 }
 
+pub(crate) fn balancing_block(
+    my_block: &BlockProperties<Anchor>,
+    my_snapshot: &MultiBufferSnapshot,
+    their_snapshot: &MultiBufferSnapshot,
+    my_display_map_id: EntityId,
+    companion: &Companion,
+) -> Option<BlockProperties<Anchor>> {
+    let my_anchor = my_block.placement.start();
+    let my_point = my_anchor.to_point(&my_snapshot);
+    let their_range = companion.convert_point_to_companion(
+        my_display_map_id,
+        my_snapshot,
+        their_snapshot,
+        my_point,
+    );
+    let their_anchor = their_snapshot.anchor_at(their_range.start, my_anchor.bias());
+    let their_placement = match my_block.placement {
+        BlockPlacement::Above(_) => BlockPlacement::Above(their_anchor),
+        BlockPlacement::Below(_) => {
+            if their_range.is_empty() {
+                BlockPlacement::Above(their_anchor)
+            } else {
+                BlockPlacement::Below(their_anchor)
+            }
+        }
+        // Not supported for balancing
+        BlockPlacement::Near(_) | BlockPlacement::Replace(_) => return None,
+    };
+    Some(BlockProperties {
+        placement: their_placement,
+        height: my_block.height,
+        style: BlockStyle::Spacer,
+        render: Arc::new(move |cx| {
+            crate::EditorElement::render_spacer_block(
+                cx.block_id,
+                cx.height,
+                cx.line_height,
+                cx.indent_guide_padding,
+                cx.window,
+                cx.app,
+            )
+        }),
+        priority: my_block.priority,
+    })
+}
+
+impl BlockMapWriterCompanion<'_> {
+    fn companion_view(&self) -> CompanionView<'_> {
+        static EMPTY_PATCH: Patch<WrapRow> = Patch::empty();
+        CompanionView {
+            display_map_id: self.display_map_id,
+            companion_wrap_snapshot: &self.companion_wrap_snapshot,
+            companion_wrap_edits: &EMPTY_PATCH,
+            companion: self.companion,
+        }
+    }
+}
+
 impl BlockMapWriter<'_> {
     #[ztracing::instrument(skip_all)]
     pub fn insert(
@@ -1494,20 +1746,21 @@ impl BlockMapWriter<'_> {
         let blocks = blocks.into_iter();
         let mut ids = Vec::with_capacity(blocks.size_hint().1.unwrap_or(0));
         let mut edits = Patch::default();
-        let wrap_snapshot = &*self.block_map.wrap_snapshot.borrow();
+        let wrap_snapshot = self.block_map.wrap_snapshot.borrow().clone();
         let buffer = wrap_snapshot.buffer_snapshot();
 
         let mut previous_wrap_row_range: Option<Range<WrapRow>> = None;
+        let mut companion_blocks = Vec::new();
         for block in blocks {
             if let BlockPlacement::Replace(_) = &block.placement {
                 debug_assert!(block.height.unwrap() > 0);
             }
 
-            let id = CustomBlockId(self.block_map.next_block_id.fetch_add(1, SeqCst));
+            let id = self.block_map.insert_block_raw(block.clone(), &buffer);
             ids.push(id);
 
-            let start = block.placement.start().to_point(buffer);
-            let end = block.placement.end().to_point(buffer);
+            let start = block.placement.start().to_point(&buffer);
+            let end = block.placement.end().to_point(&buffer);
             let start_wrap_row = wrap_snapshot.make_wrap_point(start, Bias::Left).row();
             let end_wrap_row = wrap_snapshot.make_wrap_point(end, Bias::Left).row();
 
@@ -1525,25 +1778,19 @@ impl BlockMapWriter<'_> {
                 });
                 (range.start, range.end)
             };
-            let block_ix = match self
-                .block_map
-                .custom_blocks
-                .binary_search_by(|probe| probe.placement.cmp(&block.placement, buffer))
+
+            // Insert a matching custom block in the companion (if any)
+            if let Some(companion) = &mut self.companion
+                && companion.inverse.is_some()
             {
-                Ok(ix) | Err(ix) => ix,
-            };
-            let new_block = Arc::new(CustomBlock {
-                id,
-                placement: block.placement,
-                height: block.height,
-                render: Arc::new(Mutex::new(block.render)),
-                style: block.style,
-                priority: block.priority,
-            });
-            self.block_map
-                .custom_blocks
-                .insert(block_ix, new_block.clone());
-            self.block_map.custom_blocks_by_id.insert(id, new_block);
+                companion_blocks.extend(balancing_block(
+                    &block,
+                    &buffer,
+                    companion.companion_wrap_snapshot.buffer(),
+                    companion.display_map_id,
+                    companion.companion,
+                ));
+            }
 
             edits = edits.compose([Edit {
                 old: start_row..end_row,
@@ -1551,31 +1798,36 @@ impl BlockMapWriter<'_> {
             }]);
         }
 
-        let default_patch = Patch::default();
         self.block_map.sync(
-            wrap_snapshot,
+            &wrap_snapshot,
             edits,
-            self.companion.as_deref().map(
-                |&CompanionView {
-                     entity_id,
-                     wrap_snapshot,
-                     companion,
-                     ..
-                 }| {
-                    CompanionView::new(entity_id, wrap_snapshot, &default_patch, companion)
-                },
-            ),
+            self.companion
+                .as_ref()
+                .map(BlockMapWriterCompanion::companion_view),
         );
+
+        if let Some(companion) = &mut self.companion
+            && let Some(inverse) = &mut companion.inverse
+        {
+            let companion_ids = inverse.companion_writer.insert(companion_blocks);
+            companion
+                .companion
+                .custom_block_to_balancing_block(companion.display_map_id)
+                .borrow_mut()
+                .extend(ids.iter().copied().zip(companion_ids));
+        }
+
         ids
     }
 
     #[ztracing::instrument(skip_all)]
     pub fn resize(&mut self, mut heights: HashMap<CustomBlockId, u32>) {
-        let wrap_snapshot = &*self.block_map.wrap_snapshot.borrow();
+        let wrap_snapshot = self.block_map.wrap_snapshot.borrow().clone();
         let buffer = wrap_snapshot.buffer_snapshot();
         let mut edits = Patch::default();
         let mut last_block_buffer_row = None;
 
+        let mut companion_heights = HashMap::default();
         for block in &mut self.block_map.custom_blocks {
             if let Some(new_height) = heights.remove(&block.id) {
                 if let BlockPlacement::Replace(_) = &block.placement {
@@ -1596,6 +1848,18 @@ impl BlockMapWriter<'_> {
                     self.block_map
                         .custom_blocks_by_id
                         .insert(block.id, new_block);
+
+                    if let Some(companion) = &self.companion
+                        && companion.inverse.is_some()
+                        && let Some(companion_block_id) = companion
+                            .companion
+                            .custom_block_to_balancing_block(companion.display_map_id)
+                            .borrow()
+                            .get(&block.id)
+                            .copied()
+                    {
+                        companion_heights.insert(companion_block_id, new_height);
+                    }
 
                     let start_row = block.placement.start().to_point(buffer).row;
                     let end_row = block.placement.end().to_point(buffer).row;
@@ -1621,21 +1885,18 @@ impl BlockMapWriter<'_> {
             }
         }
 
-        let default_patch = Patch::default();
         self.block_map.sync(
-            wrap_snapshot,
+            &wrap_snapshot,
             edits,
-            self.companion.as_deref().map(
-                |&CompanionView {
-                     entity_id,
-                     wrap_snapshot,
-                     companion,
-                     ..
-                 }| {
-                    CompanionView::new(entity_id, wrap_snapshot, &default_patch, companion)
-                },
-            ),
+            self.companion
+                .as_ref()
+                .map(BlockMapWriterCompanion::companion_view),
         );
+        if let Some(companion) = &mut self.companion
+            && let Some(inverse) = &mut companion.inverse
+        {
+            inverse.companion_writer.resize(companion_heights);
+        }
     }
 
     #[ztracing::instrument(skip_all)]
@@ -1645,6 +1906,7 @@ impl BlockMapWriter<'_> {
         let mut edits = Patch::default();
         let mut last_block_buffer_row = None;
         let mut previous_wrap_row_range: Option<Range<WrapRow>> = None;
+        let mut companion_block_ids: HashSet<CustomBlockId> = HashSet::default();
         self.block_map.custom_blocks.retain(|block| {
             if block_ids.contains(&block.id) {
                 let start = block.placement.start().to_point(buffer);
@@ -1673,6 +1935,18 @@ impl BlockMapWriter<'_> {
                         new: start_row..end_row,
                     })
                 }
+                if let Some(companion) = &self.companion
+                    && companion.inverse.is_some()
+                {
+                    companion_block_ids.extend(
+                        companion
+                            .companion
+                            .custom_block_to_balancing_block(companion.display_map_id)
+                            .borrow()
+                            .get(&block.id)
+                            .copied(),
+                    );
+                }
                 false
             } else {
                 true
@@ -1681,21 +1955,24 @@ impl BlockMapWriter<'_> {
         self.block_map
             .custom_blocks_by_id
             .retain(|id, _| !block_ids.contains(id));
-        let default_patch = Patch::default();
+
         self.block_map.sync(
             wrap_snapshot,
             edits,
-            self.companion.as_deref().map(
-                |&CompanionView {
-                     entity_id,
-                     wrap_snapshot,
-                     companion,
-                     ..
-                 }| {
-                    CompanionView::new(entity_id, wrap_snapshot, &default_patch, companion)
-                },
-            ),
+            self.companion
+                .as_ref()
+                .map(BlockMapWriterCompanion::companion_view),
         );
+        if let Some(companion) = &mut self.companion
+            && let Some(inverse) = &mut companion.inverse
+        {
+            companion
+                .companion
+                .custom_block_to_balancing_block(companion.display_map_id)
+                .borrow_mut()
+                .retain(|id, _| !block_ids.contains(&id));
+            inverse.companion_writer.remove(companion_block_ids);
+        }
     }
 
     #[ztracing::instrument(skip_all)]
@@ -1752,6 +2029,7 @@ impl BlockMapWriter<'_> {
         cx: &App,
     ) {
         let mut ranges = Vec::new();
+        let mut companion_buffer_ids = HashSet::default();
         for buffer_id in buffer_ids {
             if fold {
                 self.block_map.folded_buffers.insert(buffer_id);
@@ -1759,6 +2037,17 @@ impl BlockMapWriter<'_> {
                 self.block_map.folded_buffers.remove(&buffer_id);
             }
             ranges.extend(multi_buffer.excerpt_ranges_for_buffer(buffer_id, cx));
+            if let Some(companion) = &self.companion
+                && companion.inverse.is_some()
+            {
+                companion_buffer_ids.extend(
+                    companion
+                        .companion
+                        .buffer_to_companion_buffer(companion.display_map_id)
+                        .get(&buffer_id)
+                        .copied(),
+                )
+            }
         }
         ranges.sort_unstable_by_key(|range| range.start);
 
@@ -1776,21 +2065,23 @@ impl BlockMapWriter<'_> {
             });
         }
 
-        let default_patch = Patch::default();
         self.block_map.sync(
             &wrap_snapshot,
-            edits,
-            self.companion.as_deref().map(
-                |&CompanionView {
-                     entity_id,
-                     wrap_snapshot,
-                     companion,
-                     ..
-                 }| {
-                    CompanionView::new(entity_id, wrap_snapshot, &default_patch, companion)
-                },
-            ),
+            edits.clone(),
+            self.companion
+                .as_ref()
+                .map(BlockMapWriterCompanion::companion_view),
         );
+        if let Some(companion) = &mut self.companion
+            && let Some(inverse) = &mut companion.inverse
+        {
+            inverse.companion_writer.fold_or_unfold_buffers(
+                fold,
+                companion_buffer_ids,
+                inverse.companion_multibuffer,
+                cx,
+            );
+        }
     }
 
     #[ztracing::instrument(skip_all)]
@@ -2348,9 +2639,11 @@ impl<'a> Iterator for BlockChunks<'a> {
         self.input_chunk.text = suffix;
         self.input_chunk.tabs >>= prefix_bytes.saturating_sub(1);
         self.input_chunk.chars >>= prefix_bytes.saturating_sub(1);
+        self.input_chunk.newlines >>= prefix_bytes.saturating_sub(1);
 
         let mut tabs = self.input_chunk.tabs;
         let mut chars = self.input_chunk.chars;
+        let mut newlines = self.input_chunk.newlines;
 
         if self.masked {
             // Not great for multibyte text because to keep cursor math correct we
@@ -2360,12 +2653,14 @@ impl<'a> Iterator for BlockChunks<'a> {
             prefix = unsafe { std::str::from_utf8_unchecked(&BULLETS[..bullet_len]) };
             chars = 1u128.unbounded_shl(bullet_len as u32).wrapping_sub(1);
             tabs = 0;
+            newlines = 0;
         }
 
         let chunk = Chunk {
             text: prefix,
             tabs,
             chars,
+            newlines,
             ..self.input_chunk.clone()
         };
 
@@ -2501,6 +2796,19 @@ impl CustomBlock {
     pub fn style(&self) -> BlockStyle {
         self.style
     }
+
+    pub fn properties(&self) -> BlockProperties<Anchor> {
+        BlockProperties {
+            placement: self.placement.clone(),
+            height: self.height,
+            style: self.style,
+            render: Arc::new(|_| {
+                // Not used
+                gpui::Empty.into_any_element()
+            }),
+            priority: self.priority,
+        }
+    }
 }
 
 impl Debug for CustomBlock {
@@ -2546,8 +2854,8 @@ mod tests {
     use buffer_diff::BufferDiff;
     use gpui::{App, AppContext as _, Element, div, font, px};
     use itertools::Itertools;
-    use language::{Buffer, Capability};
-    use multi_buffer::{ExcerptRange, MultiBuffer};
+    use language::{Buffer, Capability, Point};
+    use multi_buffer::{MultiBuffer, PathKey};
     use rand::prelude::*;
     use settings::SettingsStore;
     use std::env;
@@ -2757,27 +3065,32 @@ mod tests {
         let buffer2 = cx.new(|cx| Buffer::local("Buffer 2", cx));
         let buffer3 = cx.new(|cx| Buffer::local("Buffer 3", cx));
 
-        let mut excerpt_ids = Vec::new();
         let multi_buffer = cx.new(|cx| {
             let mut multi_buffer = MultiBuffer::new(Capability::ReadWrite);
-            excerpt_ids.extend(multi_buffer.push_excerpts(
+            multi_buffer.set_excerpts_for_path(
+                PathKey::sorted(0),
                 buffer1.clone(),
-                [ExcerptRange::new(0..buffer1.read(cx).len())],
+                [Point::zero()..buffer1.read(cx).max_point()],
+                0,
                 cx,
-            ));
-            excerpt_ids.extend(multi_buffer.push_excerpts(
+            );
+            multi_buffer.set_excerpts_for_path(
+                PathKey::sorted(1),
                 buffer2.clone(),
-                [ExcerptRange::new(0..buffer2.read(cx).len())],
+                [Point::zero()..buffer2.read(cx).max_point()],
+                0,
                 cx,
-            ));
-            excerpt_ids.extend(multi_buffer.push_excerpts(
+            );
+            multi_buffer.set_excerpts_for_path(
+                PathKey::sorted(2),
                 buffer3.clone(),
-                [ExcerptRange::new(0..buffer3.read(cx).len())],
+                [Point::zero()..buffer3.read(cx).max_point()],
+                0,
                 cx,
-            ));
-
+            );
             multi_buffer
         });
+        let excerpt_ids = multi_buffer.read_with(cx, |mb, _| mb.excerpt_ids());
 
         let font = test_font();
         let font_size = px(14.);
@@ -3104,30 +3417,32 @@ mod tests {
     fn test_custom_blocks_inside_buffer_folds(cx: &mut gpui::TestAppContext) {
         cx.update(init_test);
 
-        let text = "111\n222\n333\n444\n555\n666";
+        let text = "111\n\n222\n\n333\n\n444\n\n555\n\n666";
 
         let buffer = cx.update(|cx| {
-            MultiBuffer::build_multi(
+            let multibuffer = MultiBuffer::build_multi(
                 [
                     (text, vec![Point::new(0, 0)..Point::new(0, 3)]),
                     (
                         text,
                         vec![
-                            Point::new(1, 0)..Point::new(1, 3),
                             Point::new(2, 0)..Point::new(2, 3),
-                            Point::new(3, 0)..Point::new(3, 3),
+                            Point::new(4, 0)..Point::new(4, 3),
+                            Point::new(6, 0)..Point::new(6, 3),
                         ],
                     ),
                     (
                         text,
                         vec![
-                            Point::new(4, 0)..Point::new(4, 3),
-                            Point::new(5, 0)..Point::new(5, 3),
+                            Point::new(8, 0)..Point::new(8, 3),
+                            Point::new(10, 0)..Point::new(10, 3),
                         ],
                     ),
                 ],
                 cx,
-            )
+            );
+            assert_eq!(multibuffer.read(cx).excerpt_ids().len(), 6);
+            multibuffer
         });
         let buffer_snapshot = cx.update(|cx| buffer.read(cx).snapshot(cx));
         let buffer_ids = buffer_snapshot
@@ -3163,16 +3478,16 @@ mod tests {
                 Some(0),
                 None,
                 None,
-                Some(1),
-                None,
                 Some(2),
-                None,
-                Some(3),
-                None,
                 None,
                 Some(4),
                 None,
-                Some(5),
+                Some(6),
+                None,
+                None,
+                Some(8),
+                None,
+                Some(10),
             ]
         );
 
@@ -3234,19 +3549,19 @@ mod tests {
                 None,
                 None,
                 None,
-                Some(1),
-                None,
-                None,
                 Some(2),
-                None,
-                Some(3),
-                None,
-                None,
                 None,
                 None,
                 Some(4),
                 None,
-                Some(5),
+                Some(6),
+                None,
+                None,
+                None,
+                None,
+                Some(8),
+                None,
+                Some(10),
                 None,
             ]
         );
@@ -3302,19 +3617,19 @@ mod tests {
                 None,
                 None,
                 None,
-                Some(1),
-                None,
-                None,
                 Some(2),
-                None,
-                Some(3),
-                None,
-                None,
                 None,
                 None,
                 Some(4),
                 None,
-                Some(5),
+                Some(6),
+                None,
+                None,
+                None,
+                None,
+                Some(8),
+                None,
+                Some(10),
                 None,
             ]
         );
@@ -3365,9 +3680,9 @@ mod tests {
                 None,
                 None,
                 None,
-                Some(4),
+                Some(8),
                 None,
-                Some(5),
+                Some(10),
                 None,
             ]
         );
@@ -3421,9 +3736,9 @@ mod tests {
                 None,
                 None,
                 None,
-                Some(4),
+                Some(8),
                 None,
-                Some(5),
+                Some(10),
                 None,
             ]
         );
@@ -3798,8 +4113,9 @@ mod tests {
                 |point, bias| {
                     wrap_point_cursor
                         .map(
-                            tab_point_cursor
-                                .map(fold_point_cursor.map(inlay_point_cursor.map(point), bias)),
+                            tab_point_cursor.map(
+                                fold_point_cursor.map(inlay_point_cursor.map(point, bias), bias),
+                            ),
                         )
                         .row()
                 },
@@ -4286,23 +4602,25 @@ mod tests {
         let diff = cx.new(|cx| {
             BufferDiff::new_with_base_text(base_text, &rhs_buffer.read(cx).text_snapshot(), cx)
         });
-        let lhs_buffer = diff.read_with(cx, |diff, _| diff.base_text_buffer());
+        let lhs_buffer = diff.read_with(cx, |diff, _| diff.base_text_buffer().clone());
 
         let lhs_multibuffer = cx.new(|cx| {
             let mut mb = MultiBuffer::new(Capability::ReadWrite);
-            mb.push_excerpts(
+            mb.set_excerpts_for_buffer(
                 lhs_buffer.clone(),
-                [ExcerptRange::new(text::Anchor::MIN..text::Anchor::MAX)],
+                [Point::zero()..lhs_buffer.read(cx).max_point()],
+                0,
                 cx,
             );
-            mb.add_inverted_diff(diff.clone(), cx);
+            mb.add_inverted_diff(diff.clone(), rhs_buffer.clone(), cx);
             mb
         });
         let rhs_multibuffer = cx.new(|cx| {
             let mut mb = MultiBuffer::new(Capability::ReadWrite);
-            mb.push_excerpts(
+            mb.set_excerpts_for_buffer(
                 rhs_buffer.clone(),
-                [ExcerptRange::new(text::Anchor::MIN..text::Anchor::MAX)],
+                [Point::zero()..rhs_buffer.read(cx).max_point()],
+                0,
                 cx,
             );
             mb.add_diff(diff.clone(), cx);
@@ -4339,7 +4657,6 @@ mod tests {
         let companion = cx.new(|_| {
             let mut c = Companion::new(
                 rhs_entity_id,
-                Default::default(),
                 convert_rhs_rows_to_lhs,
                 convert_lhs_rows_to_rhs,
             );

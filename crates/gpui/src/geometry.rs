@@ -1592,7 +1592,7 @@ impl<T: Clone + Debug + Default + PartialEq + Display + Add<T, Output = T>> Disp
 
 impl Size<DevicePixels> {
     /// Converts the size from physical to logical pixels.
-    pub(crate) fn to_pixels(self, scale_factor: f32) -> Size<Pixels> {
+    pub fn to_pixels(self, scale_factor: f32) -> Size<Pixels> {
         size(
             px(self.width.0 as f32 / scale_factor),
             px(self.height.0 as f32 / scale_factor),
@@ -1602,7 +1602,7 @@ impl Size<DevicePixels> {
 
 impl Size<Pixels> {
     /// Converts the size from logical to physical pixels.
-    pub(crate) fn to_device_pixels(self, scale_factor: f32) -> Size<DevicePixels> {
+    pub fn to_device_pixels(self, scale_factor: f32) -> Size<DevicePixels> {
         size(
             DevicePixels((self.width.0 * scale_factor).round() as i32),
             DevicePixels((self.height.0 * scale_factor).round() as i32),
@@ -2683,6 +2683,11 @@ impl Pixels {
     /// The minimum value that can be represented by `Pixels`.
     pub const MIN: Pixels = Pixels(f32::MIN);
 
+    /// Returns the raw `f32` value of this `Pixels`.
+    pub fn as_f32(self) -> f32 {
+        self.0
+    }
+
     /// Floors the `Pixels` value to the nearest whole number.
     ///
     /// # Returns
@@ -2964,9 +2969,14 @@ impl From<usize> for DevicePixels {
 /// display resolutions.
 #[derive(Clone, Copy, Default, Add, AddAssign, Sub, SubAssign, Div, DivAssign, PartialEq)]
 #[repr(transparent)]
-pub struct ScaledPixels(pub(crate) f32);
+pub struct ScaledPixels(pub f32);
 
 impl ScaledPixels {
+    /// Returns the raw `f32` value of this `ScaledPixels`.
+    pub fn as_f32(self) -> f32 {
+        self.0
+    }
+
     /// Floors the `ScaledPixels` value to the nearest whole number.
     ///
     /// # Returns

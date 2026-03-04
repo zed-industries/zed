@@ -56,7 +56,9 @@ use workspace::{
         BreadcrumbText, Item, ItemEvent, SerializableItem, TabContentParams, TabTooltipContent,
     },
     register_serializable_item,
-    searchable::{Direction, SearchEvent, SearchOptions, SearchableItem, SearchableItemHandle},
+    searchable::{
+        Direction, SearchEvent, SearchOptions, SearchToken, SearchableItem, SearchableItemHandle,
+    },
 };
 use zed_actions::{agent::AddSelectionToThread, assistant::InlineAssist};
 
@@ -1494,7 +1496,7 @@ impl Item for TerminalView {
         }
     }
 
-    fn breadcrumbs(&self, _: &theme::Theme, cx: &App) -> Option<Vec<BreadcrumbText>> {
+    fn breadcrumbs(&self, cx: &App) -> Option<Vec<BreadcrumbText>> {
         Some(vec![BreadcrumbText {
             text: self.terminal().read(cx).breadcrumb_text.clone(),
             highlights: None,
@@ -1524,7 +1526,7 @@ impl Item for TerminalView {
         }
     }
 
-    fn to_item_events(event: &Self::Event, mut f: impl FnMut(ItemEvent)) {
+    fn to_item_events(event: &Self::Event, f: &mut dyn FnMut(ItemEvent)) {
         f(*event)
     }
 }
@@ -1664,6 +1666,7 @@ impl SearchableItem for TerminalView {
         &mut self,
         matches: &[Self::Match],
         _active_match_index: Option<usize>,
+        _token: SearchToken,
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -1686,6 +1689,7 @@ impl SearchableItem for TerminalView {
         &mut self,
         index: usize,
         _: &[Self::Match],
+        _token: SearchToken,
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -1695,7 +1699,13 @@ impl SearchableItem for TerminalView {
     }
 
     /// Add selections for all matches given.
-    fn select_matches(&mut self, matches: &[Self::Match], _: &mut Window, cx: &mut Context<Self>) {
+    fn select_matches(
+        &mut self,
+        matches: &[Self::Match],
+        _token: SearchToken,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.terminal()
             .update(cx, |term, _| term.select_matches(matches));
         cx.notify();
@@ -1721,6 +1731,7 @@ impl SearchableItem for TerminalView {
         &mut self,
         direction: Direction,
         matches: &[Self::Match],
+        _token: SearchToken,
         _: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<usize> {
@@ -1774,6 +1785,7 @@ impl SearchableItem for TerminalView {
         &mut self,
         _: &Self::Match,
         _: &SearchQuery,
+        _token: SearchToken,
         _window: &mut Window,
         _: &mut Context<Self>,
     ) {
@@ -1831,7 +1843,7 @@ mod tests {
     use std::path::Path;
     use util::paths::PathStyle;
     use util::rel_path::RelPath;
-    use workspace::AppState;
+    use workspace::{AppState, MultiWorkspace};
 
     // Working directory calculation tests
 
@@ -2008,9 +2020,10 @@ mod tests {
         });
 
         let project = Project::test(params.fs.clone(), [], cx).await;
-        let workspace = cx
-            .add_window(|window, cx| Workspace::test_new(project.clone(), window, cx))
-            .root(cx)
+        let window_handle =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = window_handle
+            .read_with(cx, |mw, _| mw.workspace().clone())
             .unwrap();
 
         (project, workspace)

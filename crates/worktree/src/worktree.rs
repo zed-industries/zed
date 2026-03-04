@@ -2495,7 +2495,7 @@ impl Snapshot {
     ///
     /// Relative paths that do not exist in the worktree may
     /// still be found using the `PATH` environment variable.
-    pub fn resolve_executable_path(&self, path: PathBuf) -> PathBuf {
+    pub fn resolve_relative_path(&self, path: PathBuf) -> PathBuf {
         if let Some(path_str) = path.to_str() {
             if let Some(remaining_path) = path_str.strip_prefix("~/") {
                 return home_dir().join(remaining_path);
@@ -2945,7 +2945,7 @@ impl BackgroundScannerState {
         self.snapshot.check_invariants(false);
     }
 
-    fn remove_path(&mut self, path: &RelPath) {
+    fn remove_path(&mut self, path: &RelPath, watcher: &dyn Watcher) {
         log::trace!("background scanner removing path {path:?}");
         let mut new_entries;
         let removed_entries;
@@ -2961,7 +2961,12 @@ impl BackgroundScannerState {
         self.snapshot.entries_by_path = new_entries;
 
         let mut removed_ids = Vec::with_capacity(removed_entries.summary().count);
+        let mut removed_dir_abs_paths = Vec::new();
         for entry in removed_entries.cursor::<()>(()) {
+            if entry.is_dir() {
+                removed_dir_abs_paths.push(self.snapshot.absolutize(&entry.path));
+            }
+
             match self.removed_entries.entry(entry.inode) {
                 hash_map::Entry::Occupied(mut e) => {
                     let prev_removed_entry = e.get_mut();
@@ -2996,6 +3001,10 @@ impl BackgroundScannerState {
         self.snapshot
             .git_repositories
             .retain(|id, _| removed_ids.binary_search(id).is_err());
+
+        for removed_dir_abs_path in removed_dir_abs_paths {
+            watcher.remove(&removed_dir_abs_path).log_err();
+        }
 
         #[cfg(feature = "test-support")]
         self.snapshot.check_invariants(false);
@@ -3800,8 +3809,9 @@ impl BackgroundScanner {
 
         log::trace!("containing git repository: {containing_git_repository:?}");
 
+        let global_gitignore_file = paths::global_gitignore_path();
         let mut global_gitignore_events = if let Some(global_gitignore_path) =
-            &paths::global_gitignore_path()
+            &global_gitignore_file
             && scanning_enabled
         {
             let is_file = self.fs.is_file(&global_gitignore_path).await;
@@ -3813,9 +3823,7 @@ impl BackgroundScanner {
             } else {
                 None
             };
-            if is_file
-                || matches!(global_gitignore_path.parent(), Some(path) if self.fs.is_dir(path).await)
-            {
+            if is_file {
                 self.fs
                     .watch(global_gitignore_path, FS_WATCH_LATENCY)
                     .await
@@ -3931,12 +3939,9 @@ impl BackgroundScanner {
                     self.process_events(paths.into_iter().filter(|e| e.kind.is_some()).map(Into::into).collect()).await;
                 }
 
-                paths = global_gitignore_events.next().fuse() => {
-                    match paths.as_deref() {
-                        Some([event, ..]) => {
-                            self.update_global_gitignore(&event.path).await;
-                        }
-                        _ => (),
+                _ = global_gitignore_events.next().fuse() => {
+                    if let Some(path) = &global_gitignore_file {
+                        self.update_global_gitignore(&path).await;
                     }
                 }
             }
@@ -4465,7 +4470,10 @@ impl BackgroundScanner {
 
             if self.settings.is_path_excluded(&child_path) {
                 log::debug!("skipping excluded child entry {child_path:?}");
-                self.state.lock().await.remove_path(&child_path);
+                self.state
+                    .lock()
+                    .await
+                    .remove_path(&child_path, self.watcher.as_ref());
                 continue;
             }
 
@@ -4473,7 +4481,7 @@ impl BackgroundScanner {
                 Ok(Some(metadata)) => metadata,
                 Ok(None) => continue,
                 Err(err) => {
-                    log::error!("error processing {child_abs_path:?}: {err:#}");
+                    log::error!("error processing {:?}: {err:#}", child_abs_path.display());
                     continue;
                 }
             };
@@ -4655,7 +4663,7 @@ impl BackgroundScanner {
         // detected regardless of the order of the paths.
         for (path, metadata) in relative_paths.iter().zip(metadata.iter()) {
             if matches!(metadata, Ok(None)) || doing_recursive_update {
-                state.remove_path(path);
+                state.remove_path(path, self.watcher.as_ref());
             }
         }
 
@@ -6129,4 +6137,6 @@ fn is_known_binary_header(bytes: &[u8]) -> bool {
         || bytes.starts_with(b"\xFF\xD8\xFF") // JPEG
         || bytes.starts_with(b"GIF87a") // GIF87a
         || bytes.starts_with(b"GIF89a") // GIF89a
+        || bytes.starts_with(b"IWAD") // Doom IWAD archive
+        || bytes.starts_with(b"PWAD") // Doom PWAD archive
 }

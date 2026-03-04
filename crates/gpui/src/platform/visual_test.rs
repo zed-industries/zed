@@ -5,11 +5,10 @@
 //! - Deterministic task scheduling via TestDispatcher
 //! - Controllable time via `advance_clock`
 
-#[cfg(feature = "screen-capture")]
 use crate::ScreenCaptureSource;
 use crate::{
     AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, ForegroundExecutor, Keymap,
-    MacPlatform, Menu, MenuItem, OwnedMenu, PathPromptOptions, Platform, PlatformDisplay,
+    Menu, MenuItem, OwnedMenu, PathPromptOptions, Platform, PlatformDisplay,
     PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem, PlatformWindow, Task,
     TestDispatcher, WindowAppearance, WindowParams,
 };
@@ -33,7 +32,7 @@ pub struct VisualTestPlatform {
     dispatcher: TestDispatcher,
     background_executor: BackgroundExecutor,
     foreground_executor: ForegroundExecutor,
-    mac_platform: MacPlatform,
+    platform: Rc<dyn Platform>,
     clipboard: Mutex<Option<ClipboardItem>>,
     find_pasteboard: Mutex<Option<ClipboardItem>>,
 }
@@ -42,20 +41,18 @@ impl VisualTestPlatform {
     /// Creates a new VisualTestPlatform with the given random seed.
     ///
     /// The seed is used for deterministic random number generation in the TestDispatcher.
-    pub fn new(seed: u64) -> Self {
+    pub fn new(platform: Rc<dyn Platform>, seed: u64) -> Self {
         let dispatcher = TestDispatcher::new(seed);
         let arc_dispatcher = Arc::new(dispatcher.clone());
 
         let background_executor = BackgroundExecutor::new(arc_dispatcher.clone());
         let foreground_executor = ForegroundExecutor::new(arc_dispatcher);
 
-        let mac_platform = MacPlatform::new(false);
-
         Self {
             dispatcher,
             background_executor,
             foreground_executor,
-            mac_platform,
+            platform,
             clipboard: Mutex::new(None),
             find_pasteboard: Mutex::new(None),
         }
@@ -77,7 +74,7 @@ impl Platform for VisualTestPlatform {
     }
 
     fn text_system(&self) -> Arc<dyn PlatformTextSystem> {
-        self.mac_platform.text_system()
+        self.platform.text_system()
     }
 
     fn run(&self, _on_finish_launching: Box<dyn 'static + FnOnce()>) {
@@ -97,31 +94,29 @@ impl Platform for VisualTestPlatform {
     fn unhide_other_apps(&self) {}
 
     fn displays(&self) -> Vec<Rc<dyn PlatformDisplay>> {
-        self.mac_platform.displays()
+        self.platform.displays()
     }
 
     fn primary_display(&self) -> Option<Rc<dyn PlatformDisplay>> {
-        self.mac_platform.primary_display()
+        self.platform.primary_display()
     }
 
     fn active_window(&self) -> Option<AnyWindowHandle> {
-        self.mac_platform.active_window()
+        self.platform.active_window()
     }
 
     fn window_stack(&self) -> Option<Vec<AnyWindowHandle>> {
-        self.mac_platform.window_stack()
+        self.platform.window_stack()
     }
 
-    #[cfg(feature = "screen-capture")]
     fn is_screen_capture_supported(&self) -> bool {
-        self.mac_platform.is_screen_capture_supported()
+        self.platform.is_screen_capture_supported()
     }
 
-    #[cfg(feature = "screen-capture")]
     fn screen_capture_sources(
         &self,
     ) -> oneshot::Receiver<Result<Vec<Rc<dyn ScreenCaptureSource>>>> {
-        self.mac_platform.screen_capture_sources()
+        self.platform.screen_capture_sources()
     }
 
     fn open_window(
@@ -129,15 +124,15 @@ impl Platform for VisualTestPlatform {
         handle: AnyWindowHandle,
         options: WindowParams,
     ) -> Result<Box<dyn PlatformWindow>> {
-        self.mac_platform.open_window(handle, options)
+        self.platform.open_window(handle, options)
     }
 
     fn window_appearance(&self) -> WindowAppearance {
-        self.mac_platform.window_appearance()
+        self.platform.window_appearance()
     }
 
     fn open_url(&self, url: &str) {
-        self.mac_platform.open_url(url)
+        self.platform.open_url(url)
     }
 
     fn on_open_urls(&self, _callback: Box<dyn FnMut(Vec<String>)>) {}
@@ -170,11 +165,11 @@ impl Platform for VisualTestPlatform {
     }
 
     fn reveal_path(&self, path: &Path) {
-        self.mac_platform.reveal_path(path)
+        self.platform.reveal_path(path)
     }
 
     fn open_with_system(&self, path: &Path) {
-        self.mac_platform.open_with_system(path)
+        self.platform.open_with_system(path)
     }
 
     fn on_quit(&self, _callback: Box<dyn FnMut()>) {}
@@ -196,19 +191,19 @@ impl Platform for VisualTestPlatform {
     fn on_validate_app_menu_command(&self, _callback: Box<dyn FnMut(&dyn crate::Action) -> bool>) {}
 
     fn app_path(&self) -> Result<PathBuf> {
-        self.mac_platform.app_path()
+        self.platform.app_path()
     }
 
     fn path_for_auxiliary_executable(&self, name: &str) -> Result<PathBuf> {
-        self.mac_platform.path_for_auxiliary_executable(name)
+        self.platform.path_for_auxiliary_executable(name)
     }
 
     fn set_cursor_style(&self, style: CursorStyle) {
-        self.mac_platform.set_cursor_style(style)
+        self.platform.set_cursor_style(style)
     }
 
     fn should_auto_hide_scrollbars(&self) -> bool {
-        self.mac_platform.should_auto_hide_scrollbars()
+        self.platform.should_auto_hide_scrollbars()
     }
 
     fn read_from_clipboard(&self) -> Option<ClipboardItem> {
@@ -242,12 +237,18 @@ impl Platform for VisualTestPlatform {
     }
 
     fn keyboard_layout(&self) -> Box<dyn PlatformKeyboardLayout> {
-        self.mac_platform.keyboard_layout()
+        self.platform.keyboard_layout()
     }
 
     fn keyboard_mapper(&self) -> Rc<dyn PlatformKeyboardMapper> {
-        self.mac_platform.keyboard_mapper()
+        self.platform.keyboard_mapper()
     }
 
     fn on_keyboard_layout_change(&self, _callback: Box<dyn FnMut()>) {}
+
+    fn thermal_state(&self) -> super::ThermalState {
+        super::ThermalState::Nominal
+    }
+
+    fn on_thermal_state_change(&self, _callback: Box<dyn FnMut()>) {}
 }

@@ -25,7 +25,7 @@ use util::ResultExt;
 use workspace::notifications::DetachAndPromptErr;
 use workspace::{ModalView, Workspace};
 
-use crate::{branch_picker, git_panel::show_error_toast};
+use crate::{branch_picker, git_panel::show_error_toast, resolve_active_repository};
 
 actions!(
     branch_picker,
@@ -62,33 +62,7 @@ pub fn open(
     cx: &mut Context<Workspace>,
 ) {
     let workspace_handle = workspace.weak_handle();
-    let project = workspace.project().clone();
-
-    // Check if there's a worktree override from the project dropdown.
-    // This ensures the branch picker shows branches for the project the user
-    // explicitly selected in the title bar, not just the focused file's project.
-    // This is only relevant if for multi-projects workspaces.
-    let repository = workspace
-        .active_worktree_override()
-        .and_then(|override_id| {
-            let project_ref = project.read(cx);
-            project_ref
-                .worktree_for_id(override_id, cx)
-                .and_then(|worktree| {
-                    let worktree_abs_path = worktree.read(cx).abs_path();
-                    let git_store = project_ref.git_store().read(cx);
-                    git_store
-                        .repositories()
-                        .values()
-                        .find(|repo| {
-                            let repo_path = &repo.read(cx).work_directory_abs_path;
-                            *repo_path == worktree_abs_path
-                                || worktree_abs_path.starts_with(repo_path.as_ref())
-                        })
-                        .cloned()
-                })
-        })
-        .or_else(|| project.read(cx).active_repository(cx));
+    let repository = resolve_active_repository(workspace, cx);
 
     workspace.toggle_modal(window, cx, |window, cx| {
         BranchList::new(
@@ -1317,6 +1291,7 @@ mod tests {
     use serde_json::json;
     use settings::SettingsStore;
     use util::path;
+    use workspace::MultiWorkspace;
 
     fn init_test(cx: &mut TestAppContext) {
         cx.update(|cx| {
@@ -1369,13 +1344,17 @@ mod tests {
         let fs = FakeFs::new(cx.executor());
         let project = Project::test(fs, [], cx).await;
 
-        let workspace = cx.add_window(|window, cx| Workspace::test_new(project, window, cx));
+        let window_handle =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let workspace = window_handle
+            .read_with(cx, |mw, _| mw.workspace().clone())
+            .unwrap();
 
-        let branch_list = workspace
-            .update(cx, |workspace, window, cx| {
+        let branch_list = window_handle
+            .update(cx, |_multi_workspace, window, cx| {
                 cx.new(|cx| {
                     let mut delegate = BranchListDelegate::new(
-                        workspace.weak_handle(),
+                        workspace.downgrade(),
                         repository,
                         BranchListStyle::Modal,
                         cx,
@@ -1402,12 +1381,14 @@ mod tests {
             })
             .unwrap();
 
-        let cx = VisualTestContext::from_window(*workspace, cx);
+        let cx = VisualTestContext::from_window(window_handle.into(), cx);
 
         (branch_list, cx)
     }
 
-    async fn init_fake_repository(cx: &mut TestAppContext) -> Entity<Repository> {
+    async fn init_fake_repository(
+        cx: &mut TestAppContext,
+    ) -> (Entity<Project>, Entity<Repository>) {
         let fs = FakeFs::new(cx.executor());
         fs.insert_tree(
             path!("/dir"),
@@ -1430,7 +1411,7 @@ mod tests {
         let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
         let repository = cx.read(|cx| project.read(cx).active_repository(cx));
 
-        repository.unwrap()
+        (project, repository.unwrap())
     }
 
     #[gpui::test]
@@ -1493,7 +1474,7 @@ mod tests {
     #[gpui::test]
     async fn test_delete_branch(cx: &mut TestAppContext) {
         init_test(cx);
-        let repository = init_fake_repository(cx).await;
+        let (_project, repository) = init_fake_repository(cx).await;
 
         let branches = create_test_branches();
 
@@ -1551,7 +1532,7 @@ mod tests {
     #[gpui::test]
     async fn test_delete_remote(cx: &mut TestAppContext) {
         init_test(cx);
-        let repository = init_fake_repository(cx).await;
+        let (_project, repository) = init_fake_repository(cx).await;
         let branches = vec![
             create_test_branch("main", true, Some("origin"), Some(1000)),
             create_test_branch("feature-auth", false, Some("origin"), Some(900)),
@@ -1738,7 +1719,7 @@ mod tests {
         const NEW_BRANCH: &str = "new-feature-branch";
 
         init_test(test_cx);
-        let repository = init_fake_repository(test_cx).await;
+        let (_project, repository) = init_fake_repository(test_cx).await;
 
         let branches = vec![
             create_test_branch(MAIN_BRANCH, true, None, Some(1000)),
@@ -1802,7 +1783,7 @@ mod tests {
     #[gpui::test]
     async fn test_remote_url_detection_https(cx: &mut TestAppContext) {
         init_test(cx);
-        let repository = init_fake_repository(cx).await;
+        let (_project, repository) = init_fake_repository(cx).await;
         let branches = vec![create_test_branch("main", true, None, Some(1000))];
 
         let (branch_list, mut ctx) = init_branch_list_test(repository.into(), branches, cx).await;

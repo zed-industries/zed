@@ -13,25 +13,34 @@ use project::lsp_store::rust_analyzer_ext::CARGO_DIAGNOSTICS_SOURCE_NAME;
 use project::project_settings::ProjectSettings;
 use regex::Regex;
 use serde_json::json;
-use settings::Settings as _;
+use settings::{SemanticTokenRules, Settings as _};
 use smallvec::SmallVec;
 use smol::fs::{self};
 use std::cmp::Reverse;
 use std::fmt::Display;
 use std::ops::Range;
-use std::process::Stdio;
 use std::{
     borrow::Cow,
     path::{Path, PathBuf},
     sync::{Arc, LazyLock},
 };
 use task::{TaskTemplate, TaskTemplates, TaskVariables, VariableName};
+use util::command::Stdio;
 use util::fs::{make_file_executable, remove_matching};
 use util::merge_json_value_into;
 use util::rel_path::RelPath;
 use util::{ResultExt, maybe};
 
+use crate::LanguageDir;
 use crate::language_settings::language_settings;
+
+pub(crate) fn semantic_token_rules() -> SemanticTokenRules {
+    let content = LanguageDir::get("rust/semantic_token_rules.json")
+        .expect("missing rust/semantic_token_rules.json");
+    let json = std::str::from_utf8(&content.data).expect("invalid utf-8 in semantic_token_rules");
+    settings::parse_json_with_comments::<SemanticTokenRules>(json)
+        .expect("failed to parse rust semantic_token_rules.json")
+}
 
 pub struct RustLspAdapter;
 
@@ -135,13 +144,9 @@ impl RustLspAdapter {
         use futures::pin_mut;
 
         async fn from_ldd_version() -> Option<LibcType> {
-            use util::command::new_smol_command;
+            use util::command::new_command;
 
-            let ldd_output = new_smol_command("ldd")
-                .arg("--version")
-                .output()
-                .await
-                .ok()?;
+            let ldd_output = new_command("ldd").arg("--version").output().await.ok()?;
             let ldd_version = String::from_utf8_lossy(&ldd_output.stdout);
 
             if ldd_version.contains("GNU libc") || ldd_version.contains("GLIBC") {
@@ -534,7 +539,7 @@ impl LspAdapter for RustLspAdapter {
             .0
             .ok()?;
 
-        let mut command = util::command::new_smol_command(&binary.path);
+        let mut command = util::command::new_command(&binary.path);
         command
             .arg("--print-config-schema")
             .stdout(Stdio::piped())
@@ -563,11 +568,11 @@ impl LspAdapter for RustLspAdapter {
 
     async fn label_for_symbol(
         &self,
-        name: &str,
-        kind: lsp::SymbolKind,
+        symbol: &language::Symbol,
         language: &Arc<Language>,
     ) -> Option<CodeLabel> {
-        let (prefix, suffix) = match kind {
+        let name = &symbol.name;
+        let (prefix, suffix) = match symbol.kind {
             lsp::SymbolKind::METHOD | lsp::SymbolKind::FUNCTION => ("fn ", "();"),
             lsp::SymbolKind::STRUCT => ("struct ", ";"),
             lsp::SymbolKind::ENUM => ("enum ", "{}"),
@@ -1131,7 +1136,7 @@ async fn target_info_from_abs_path(
     abs_path: &Path,
     project_env: Option<&HashMap<String, String>>,
 ) -> Option<(Option<TargetInfo>, Arc<Path>)> {
-    let mut command = util::command::new_smol_command("cargo");
+    let mut command = util::command::new_command("cargo");
     if let Some(envs) = project_env {
         command.envs(envs);
     }
@@ -1206,7 +1211,7 @@ async fn human_readable_package_name(
     package_directory: &Path,
     project_env: Option<&HashMap<String, String>>,
 ) -> Option<String> {
-    let mut command = util::command::new_smol_command("cargo");
+    let mut command = util::command::new_command("cargo");
     if let Some(envs) = project_env {
         command.envs(envs);
     }
@@ -1817,7 +1822,14 @@ mod tests {
 
         assert_eq!(
             adapter
-                .label_for_symbol("hello", lsp::SymbolKind::FUNCTION, &language)
+                .label_for_symbol(
+                    &language::Symbol {
+                        name: "hello".to_string(),
+                        kind: lsp::SymbolKind::FUNCTION,
+                        container_name: None,
+                    },
+                    &language
+                )
                 .await,
             Some(CodeLabel::new(
                 "fn hello".to_string(),
@@ -1828,7 +1840,14 @@ mod tests {
 
         assert_eq!(
             adapter
-                .label_for_symbol("World", lsp::SymbolKind::TYPE_PARAMETER, &language)
+                .label_for_symbol(
+                    &language::Symbol {
+                        name: "World".to_string(),
+                        kind: lsp::SymbolKind::TYPE_PARAMETER,
+                        container_name: None,
+                    },
+                    &language
+                )
                 .await,
             Some(CodeLabel::new(
                 "type World".to_string(),
@@ -1839,7 +1858,14 @@ mod tests {
 
         assert_eq!(
             adapter
-                .label_for_symbol("zed", lsp::SymbolKind::PACKAGE, &language)
+                .label_for_symbol(
+                    &language::Symbol {
+                        name: "zed".to_string(),
+                        kind: lsp::SymbolKind::PACKAGE,
+                        container_name: None,
+                    },
+                    &language
+                )
                 .await,
             Some(CodeLabel::new(
                 "extern crate zed".to_string(),
@@ -1850,7 +1876,14 @@ mod tests {
 
         assert_eq!(
             adapter
-                .label_for_symbol("Variant", lsp::SymbolKind::ENUM_MEMBER, &language)
+                .label_for_symbol(
+                    &language::Symbol {
+                        name: "Variant".to_string(),
+                        kind: lsp::SymbolKind::ENUM_MEMBER,
+                        container_name: None,
+                    },
+                    &language
+                )
                 .await,
             Some(CodeLabel::new(
                 "Variant".to_string(),

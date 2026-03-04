@@ -2,6 +2,12 @@ use std::{ops::Range, sync::Arc};
 
 use client::EditPredictionUsage;
 use gpui::{App, Context, Entity, SharedString};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EditPredictionDiscardReason {
+    Rejected,
+    Ignored,
+}
 use icons::IconName;
 use language::{Anchor, Buffer, OffsetRangeExt};
 
@@ -178,7 +184,7 @@ pub trait EditPredictionDelegate: 'static + Sized {
         cx: &mut Context<Self>,
     );
     fn accept(&mut self, cx: &mut Context<Self>);
-    fn discard(&mut self, cx: &mut Context<Self>);
+    fn discard(&mut self, reason: EditPredictionDiscardReason, cx: &mut Context<Self>);
     fn did_show(&mut self, _display_type: SuggestionDisplayType, _cx: &mut Context<Self>) {}
     fn suggest(
         &mut self,
@@ -214,7 +220,7 @@ pub trait EditPredictionDelegateHandle {
     );
     fn did_show(&self, display_type: SuggestionDisplayType, cx: &mut App);
     fn accept(&self, cx: &mut App);
-    fn discard(&self, cx: &mut App);
+    fn discard(&self, reason: EditPredictionDiscardReason, cx: &mut App);
     fn suggest(
         &self,
         buffer: &Entity<Buffer>,
@@ -292,8 +298,8 @@ where
         self.update(cx, |this, cx| this.accept(cx))
     }
 
-    fn discard(&self, cx: &mut App) {
-        self.update(cx, |this, cx| this.discard(cx))
+    fn discard(&self, reason: EditPredictionDiscardReason, cx: &mut App) {
+        self.update(cx, |this, cx| this.discard(reason, cx))
     }
 
     fn did_show(&self, display_type: SuggestionDisplayType, cx: &mut App) {

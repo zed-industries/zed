@@ -36,9 +36,9 @@ impl Example for Planets {
         let mut terminal_tool_uses = 0;
 
         for tool_use in response.tool_calls() {
-            if tool_use.name == OpenTool::name() {
+            if tool_use.name == OpenTool::NAME {
                 open_tool_uses += 1;
-            } else if tool_use.name == TerminalTool::name() {
+            } else if tool_use.name == TerminalTool::NAME {
                 terminal_tool_uses += 1;
             }
         }

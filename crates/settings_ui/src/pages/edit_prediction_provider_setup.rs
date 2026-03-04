@@ -1,12 +1,14 @@
+use codestral::{CODESTRAL_API_URL, codestral_api_key_state, codestral_api_url};
 use edit_prediction::{
     ApiKeyState,
     mercury::{MERCURY_CREDENTIALS_URL, mercury_api_token},
+    open_ai_compatible::{open_ai_compatible_api_token, open_ai_compatible_api_url},
     sweep_ai::{SWEEP_CREDENTIALS_URL, sweep_api_token},
 };
 use edit_prediction_ui::{get_available_providers, set_completion_provider};
 use gpui::{Entity, ScrollHandle, prelude::*};
 use language::language_settings::AllLanguageSettings;
-use language_models::provider::mistral::{CODESTRAL_API_URL, codestral_api_key};
+
 use settings::Settings as _;
 use ui::{ButtonLink, ConfiguredApiCard, ContextMenu, DropdownMenu, DropdownStyle, prelude::*};
 use workspace::AppState;
@@ -32,7 +34,9 @@ pub(crate) fn render_edit_prediction_setup_page(
             render_api_key_provider(
                 IconName::Inception,
                 "Mercury",
-                "https://platform.inceptionlabs.ai/dashboard/api-keys".into(),
+                ApiKeyDocs::Link {
+                    dashboard_url: "https://platform.inceptionlabs.ai/dashboard/api-keys".into(),
+                },
                 mercury_api_token(cx),
                 |_cx| MERCURY_CREDENTIALS_URL,
                 None,
@@ -45,7 +49,9 @@ pub(crate) fn render_edit_prediction_setup_page(
             render_api_key_provider(
                 IconName::SweepAi,
                 "Sweep",
-                "https://app.sweep.dev/".into(),
+                ApiKeyDocs::Link {
+                    dashboard_url: "https://app.sweep.dev/".into(),
+                },
                 sweep_api_token(cx),
                 |_cx| SWEEP_CREDENTIALS_URL,
                 Some(
@@ -63,18 +69,45 @@ pub(crate) fn render_edit_prediction_setup_page(
             )
             .into_any_element(),
         ),
-        Some(render_ollama_provider(settings_window, window, cx).into_any_element()),
         Some(
             render_api_key_provider(
                 IconName::AiMistral,
                 "Codestral",
-                "https://console.mistral.ai/codestral".into(),
-                codestral_api_key(cx),
-                |cx| language_models::MistralLanguageModelProvider::api_url(cx),
+                ApiKeyDocs::Link {
+                    dashboard_url: "https://console.mistral.ai/codestral".into(),
+                },
+                codestral_api_key_state(cx),
+                |cx| codestral_api_url(cx),
                 Some(
                     settings_window
                         .render_sub_page_items_section(
                             codestral_settings().iter().enumerate(),
+                            true,
+                            window,
+                            cx,
+                        )
+                        .into_any_element(),
+                ),
+                window,
+                cx,
+            )
+            .into_any_element(),
+        ),
+        Some(render_ollama_provider(settings_window, window, cx).into_any_element()),
+        Some(
+            render_api_key_provider(
+                IconName::AiOpenAiCompat,
+                "OpenAI Compatible API",
+                ApiKeyDocs::Custom {
+                    message: "Set an API key here. It will be sent as Authorization: Bearer {key}."
+                        .into(),
+                },
+                open_ai_compatible_api_token(cx),
+                |cx| open_ai_compatible_api_url(cx),
+                Some(
+                    settings_window
+                        .render_sub_page_items_section(
+                            open_ai_compatible_settings().iter().enumerate(),
                             true,
                             window,
                             cx,
@@ -134,11 +167,7 @@ fn render_provider_dropdown(window: &mut Window, cx: &mut App) -> AnyElement {
         .id("provider-selector")
         .min_w_0()
         .gap_1p5()
-        .child(
-            SettingsSectionHeader::new("Active Provider")
-                .icon(IconName::Sparkle)
-                .no_padding(true),
-        )
+        .child(SettingsSectionHeader::new("Active Provider").no_padding(true))
         .child(
             h_flex()
                 .pt_2p5()
@@ -157,16 +186,22 @@ fn render_provider_dropdown(window: &mut Window, cx: &mut App) -> AnyElement {
                 )
                 .child(
                     DropdownMenu::new("provider-dropdown", current_provider_name, menu)
+                        .tab_index(0)
                         .style(DropdownStyle::Outlined),
                 ),
         )
         .into_any_element()
 }
 
+enum ApiKeyDocs {
+    Link { dashboard_url: SharedString },
+    Custom { message: SharedString },
+}
+
 fn render_api_key_provider(
     icon: IconName,
     title: &'static str,
-    link: SharedString,
+    docs: ApiKeyDocs,
     api_key_state: Entity<ApiKeyState>,
     current_url: fn(&mut App) -> SharedString,
     additional_fields: Option<AnyElement>,
@@ -174,7 +209,7 @@ fn render_api_key_provider(
     cx: &mut Context<SettingsWindow>,
 ) -> impl IntoElement {
     let weak_page = cx.weak_entity();
-    _ = window.use_keyed_state(title, cx, |_, cx| {
+    _ = window.use_keyed_state(current_url(cx), cx, |_, cx| {
         let task = api_key_state.update(cx, |key_state, cx| {
             key_state.load_if_needed(current_url(cx), |state| state, cx)
         });
@@ -210,25 +245,32 @@ fn render_api_key_provider(
         .icon(icon)
         .no_padding(true);
     let button_link_label = format!("{} dashboard", title);
-    let description = h_flex()
-        .min_w_0()
-        .gap_0p5()
-        .child(
-            Label::new("Visit the")
+    let description = match docs {
+        ApiKeyDocs::Custom { message } => h_flex().min_w_0().gap_0p5().child(
+            Label::new(message)
                 .size(LabelSize::Small)
                 .color(Color::Muted),
-        )
-        .child(
-            ButtonLink::new(button_link_label, link)
-                .no_icon(true)
-                .label_size(LabelSize::Small)
-                .label_color(Color::Muted),
-        )
-        .child(
-            Label::new("to generate an API key.")
-                .size(LabelSize::Small)
-                .color(Color::Muted),
-        );
+        ),
+        ApiKeyDocs::Link { dashboard_url } => h_flex()
+            .min_w_0()
+            .gap_0p5()
+            .child(
+                Label::new("Visit the")
+                    .size(LabelSize::Small)
+                    .color(Color::Muted),
+            )
+            .child(
+                ButtonLink::new(button_link_label, dashboard_url)
+                    .no_icon(true)
+                    .label_size(LabelSize::Small)
+                    .label_color(Color::Muted),
+            )
+            .child(
+                Label::new("to generate an API key.")
+                    .size(LabelSize::Small)
+                    .color(Color::Muted),
+            ),
+    };
     let configured_card_label = if is_from_env_var {
         "API Key Set in Environment Variable"
     } else {
@@ -348,13 +390,8 @@ fn render_ollama_provider(
         .gap_1p5()
         .child(
             SettingsSectionHeader::new("Ollama")
-                .icon(IconName::ZedPredict)
+                .icon(IconName::AiOllama)
                 .no_padding(true),
-        )
-        .child(
-            Label::new("Configure the local Ollama server and model used for edit predictions.")
-                .size(LabelSize::Small)
-                .color(Color::Muted),
         )
         .child(div().px_neg_8().child(additional_fields))
 }
@@ -428,6 +465,36 @@ fn ollama_settings() -> Box<[SettingsPageItem]> {
             files: USER,
         }),
         SettingsPageItem::SettingItem(SettingItem {
+            title: "Prompt Format",
+            description: "The prompt format to use when requesting predictions. Set to Infer to have the format inferred based on the model name",
+            field: Box::new(SettingField {
+                pick: |settings| {
+                    settings
+                        .project
+                        .all_languages
+                        .edit_predictions
+                        .as_ref()?
+                        .ollama
+                        .as_ref()?
+                        .prompt_format
+                        .as_ref()
+                },
+                write: |settings, value| {
+                    settings
+                        .project
+                        .all_languages
+                        .edit_predictions
+                        .get_or_insert_default()
+                        .ollama
+                        .get_or_insert_default()
+                        .prompt_format = value;
+                },
+                json_path: Some("edit_predictions.ollama.prompt_format"),
+            }),
+            files: USER,
+            metadata: None,
+        }),
+        SettingsPageItem::SettingItem(SettingItem {
             title: "Max Output Tokens",
             description: "The maximum number of tokens to generate.",
             field: Box::new(SettingField {
@@ -453,6 +520,137 @@ fn ollama_settings() -> Box<[SettingsPageItem]> {
                         .max_output_tokens = value;
                 },
                 json_path: Some("edit_predictions.ollama.max_output_tokens"),
+            }),
+            metadata: None,
+            files: USER,
+        }),
+    ])
+}
+
+fn open_ai_compatible_settings() -> Box<[SettingsPageItem]> {
+    Box::new([
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "API URL",
+            description: "The URL of your OpenAI-compatible server's completions API.",
+            field: Box::new(SettingField {
+                pick: |settings| {
+                    settings
+                        .project
+                        .all_languages
+                        .edit_predictions
+                        .as_ref()?
+                        .open_ai_compatible_api
+                        .as_ref()?
+                        .api_url
+                        .as_ref()
+                },
+                write: |settings, value| {
+                    settings
+                        .project
+                        .all_languages
+                        .edit_predictions
+                        .get_or_insert_default()
+                        .open_ai_compatible_api
+                        .get_or_insert_default()
+                        .api_url = value;
+                },
+                json_path: Some("edit_predictions.open_ai_compatible_api.api_url"),
+            }),
+            metadata: Some(Box::new(SettingsFieldMetadata {
+                placeholder: Some(OLLAMA_API_URL_PLACEHOLDER),
+                ..Default::default()
+            })),
+            files: USER,
+        }),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Model",
+            description: "The model string to pass to the OpenAI-compatible server.",
+            field: Box::new(SettingField {
+                pick: |settings| {
+                    settings
+                        .project
+                        .all_languages
+                        .edit_predictions
+                        .as_ref()?
+                        .open_ai_compatible_api
+                        .as_ref()?
+                        .model
+                        .as_ref()
+                },
+                write: |settings, value| {
+                    settings
+                        .project
+                        .all_languages
+                        .edit_predictions
+                        .get_or_insert_default()
+                        .open_ai_compatible_api
+                        .get_or_insert_default()
+                        .model = value;
+                },
+                json_path: Some("edit_predictions.open_ai_compatible_api.model"),
+            }),
+            metadata: Some(Box::new(SettingsFieldMetadata {
+                placeholder: Some(OLLAMA_MODEL_PLACEHOLDER),
+                ..Default::default()
+            })),
+            files: USER,
+        }),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Prompt Format",
+            description: "The prompt format to use when requesting predictions. Set to Infer to have the format inferred based on the model name",
+            field: Box::new(SettingField {
+                pick: |settings| {
+                    settings
+                        .project
+                        .all_languages
+                        .edit_predictions
+                        .as_ref()?
+                        .open_ai_compatible_api
+                        .as_ref()?
+                        .prompt_format
+                        .as_ref()
+                },
+                write: |settings, value| {
+                    settings
+                        .project
+                        .all_languages
+                        .edit_predictions
+                        .get_or_insert_default()
+                        .open_ai_compatible_api
+                        .get_or_insert_default()
+                        .prompt_format = value;
+                },
+                json_path: Some("edit_predictions.open_ai_compatible_api.prompt_format"),
+            }),
+            files: USER,
+            metadata: None,
+        }),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Max Output Tokens",
+            description: "The maximum number of tokens to generate.",
+            field: Box::new(SettingField {
+                pick: |settings| {
+                    settings
+                        .project
+                        .all_languages
+                        .edit_predictions
+                        .as_ref()?
+                        .open_ai_compatible_api
+                        .as_ref()?
+                        .max_output_tokens
+                        .as_ref()
+                },
+                write: |settings, value| {
+                    settings
+                        .project
+                        .all_languages
+                        .edit_predictions
+                        .get_or_insert_default()
+                        .open_ai_compatible_api
+                        .get_or_insert_default()
+                        .max_output_tokens = value;
+                },
+                json_path: Some("edit_predictions.open_ai_compatible_api.max_output_tokens"),
             }),
             metadata: None,
             files: USER,

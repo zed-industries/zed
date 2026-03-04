@@ -67,6 +67,7 @@ impl ParentElement for Banner {
 impl RenderOnce for Banner {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let banner = h_flex()
+            .min_w_0()
             .py_0p5()
             .gap_1p5()
             .when(self.wrap_content, |this| this.flex_wrap())

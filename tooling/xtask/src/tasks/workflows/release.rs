@@ -13,9 +13,9 @@ const CURRENT_ACTION_RUN_URL: &str =
     "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}";
 
 pub(crate) fn release() -> Workflow {
-    let macos_tests = run_tests::run_platform_tests(Platform::Mac);
-    let linux_tests = run_tests::run_platform_tests(Platform::Linux);
-    let windows_tests = run_tests::run_platform_tests(Platform::Windows);
+    let macos_tests = run_tests::run_platform_tests_no_filter(Platform::Mac);
+    let linux_tests = run_tests::run_platform_tests_no_filter(Platform::Linux);
+    let windows_tests = run_tests::run_platform_tests_no_filter(Platform::Windows);
     let macos_clippy = run_tests::clippy(Platform::Mac);
     let linux_clippy = run_tests::clippy(Platform::Linux);
     let windows_clippy = run_tests::clippy(Platform::Windows);
@@ -254,9 +254,8 @@ fn create_draft_release() -> NamedJob {
             // 25 was chosen arbitrarily.
             .add_step(
                 steps::checkout_repo()
-                    .add_with(("fetch-depth", 25))
-                    .add_with(("clean", false))
-                    .add_with(("ref", "${{ github.ref }}")),
+                    .with_custom_fetch_depth(25)
+                    .with_ref("${{ github.ref }}"),
             )
             .add_step(steps::script("script/determine-release-channel"))
             .add_step(steps::script("mkdir -p target/"))
