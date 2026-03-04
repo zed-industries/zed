@@ -2239,10 +2239,7 @@ impl ProjectPanel {
                 let task = self.project.update(cx, |project, cx| {
                     project.rename_entry(entry_id, old_path.clone(), cx)
                 });
-                cx.spawn(async move |_, _| {
-                    task.await?;
-                    Ok(())
-                })
+                cx.spawn(async move |_, _| task.await.map(|_| ()))
             }
             ProjectPanelOperation::Create {
                 is_directory: _,
@@ -2262,10 +2259,7 @@ impl ProjectPanel {
                 else {
                     return Task::ready(Err(anyhow!("failed to trash entry")));
                 };
-                cx.spawn(async move |_, _cx| {
-                    task.await?;
-                    Ok(())
-                })
+                cx.spawn(async move |_, _cx| task.await.map(|_| ()))
             }
             ProjectPanelOperation::Batch(operations) => {
                 let tasks: Vec<_> = operations
@@ -4614,9 +4608,7 @@ impl ProjectPanel {
                                 if operations.len() == 1 {
                                     this.record_operation(operations.pop().unwrap());
                                 } else {
-                                    this.record_operation(ProjectPanelOperation::Batch(
-                                        operations,
-                                    ));
+                                    this.record_operation(ProjectPanelOperation::Batch(operations));
                                 }
                             })
                             .ok();
@@ -4652,9 +4644,7 @@ impl ProjectPanel {
                                 if operations.len() == 1 {
                                     this.record_operation(operations.pop().unwrap());
                                 } else {
-                                    this.record_operation(ProjectPanelOperation::Batch(
-                                        operations,
-                                    ));
+                                    this.record_operation(ProjectPanelOperation::Batch(operations));
                                 }
                             })
                             .ok();
