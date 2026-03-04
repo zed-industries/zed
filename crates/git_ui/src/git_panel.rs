@@ -653,6 +653,7 @@ pub struct GitPanel {
     local_committer_task: Option<Task<()>>,
     bulk_staging: Option<BulkStaging>,
     stash_entries: GitStash,
+    push_rejected_for_branch: Option<SharedString>,
     diff_stats: HashMap<RepoPath, DiffStat>,
     diff_stats_task: Task<()>,
     _settings_subscription: Subscription,
@@ -858,6 +859,7 @@ impl GitPanel {
                 entry_count: 0,
                 bulk_staging: None,
                 stash_entries: Default::default(),
+                push_rejected_for_branch: None,
                 diff_stats: HashMap::default(),
                 diff_stats_task: Task::ready(()),
                 _settings_subscription,
@@ -3056,7 +3058,10 @@ impl GitPanel {
 
             let action = RemoteAction::Pull(remote);
             this.update(cx, |this, cx| match remote_message {
-                Ok(remote_message) => this.show_remote_output(action, remote_message, cx),
+                Ok(remote_message) => {
+                    this.push_rejected_for_branch = None;
+                    this.show_remote_output(action, remote_message, cx)
+                }
                 Err(e) => {
                     log::error!("Error while pulling {:?}", e);
                     this.show_error_toast(action.name(), e, cx)
@@ -3140,12 +3145,17 @@ impl GitPanel {
 
             let remote_output = push.await?;
 
-            let action = RemoteAction::Push(branch.name().to_owned().into(), remote);
+            let action = RemoteAction::Push(branch.name().to_owned().into(), remote.clone());
             this.update(cx, |this, cx| match remote_output {
                 Ok(remote_message) => this.show_remote_output(action, remote_message, cx),
                 Err(e) => {
                     log::error!("Error while pushing {:?}", e);
-                    this.show_error_toast(action.name(), e, cx)
+                    let error_message = e.to_string();
+                    if is_non_fast_forward_error(&error_message) {
+                        this.show_push_rejected_toast(branch.clone(), cx);
+                    } else {
+                        this.show_error_toast(action.name(), e, cx)
+                    }
                 }
             })?;
 
@@ -3874,6 +3884,26 @@ impl GitPanel {
         show_error_toast(workspace, action, e, cx)
     }
 
+    fn show_push_rejected_toast(&mut self, branch: Branch, cx: &mut Context<Self>) {
+        self.push_rejected_for_branch = Some(branch.name().to_owned().into());
+        cx.notify();
+
+        let Some(workspace) = self.workspace.upgrade() else {
+            return;
+        };
+
+        workspace.update(cx, |workspace, cx| {
+            let toast = StatusToast::new(
+                "Push rejected: remote has newer commits",
+                cx,
+                |this_toast, _cx| {
+                    this_toast.icon(ToastIcon::new(IconName::Warning).color(Color::Warning))
+                },
+            );
+            workspace.toggle_status_toast(toast, cx);
+        });
+    }
+
     fn show_commit_message_error<E>(weak_this: &WeakEntity<Self>, err: &E, cx: &mut AsyncApp)
     where
         E: std::fmt::Debug + std::fmt::Display,
@@ -4332,6 +4362,18 @@ impl GitPanel {
         if !self.can_push_and_pull(cx) {
             return None;
         }
+
+        let needs_reconciliation = self
+            .push_rejected_for_branch
+            .as_ref()
+            .map(|rejected| {
+                branch
+                    .as_ref()
+                    .map(|b| b.name() == rejected.as_ref())
+                    .unwrap_or(false)
+            })
+            .unwrap_or(false);
+
         Some(
             h_flex()
                 .gap_1()
@@ -4344,6 +4386,7 @@ impl GitPanel {
                         &branch,
                         focus_handle,
                         true,
+                        needs_reconciliation,
                     ))
                 })
                 .into_any_element(),
@@ -6414,6 +6457,12 @@ fn open_output(
     workspace.add_item_to_center(Box::new(editor), window, cx);
 }
 
+fn is_non_fast_forward_error(error_message: &str) -> bool {
+    (error_message.contains("[rejected]") && error_message.contains("(non-fast-forward)"))
+        || (error_message.contains("Updates were rejected")
+            && (error_message.contains("behind") || error_message.contains("remote")))
+}
+
 pub(crate) fn show_error_toast(
     workspace: Entity<Workspace>,
     action: impl Into<SharedString>,
@@ -7836,5 +7885,82 @@ mod tests {
         // "Update tracked"
         let message = panel.update(cx, |panel, cx| panel.suggest_commit_message(cx));
         assert_eq!(message, Some("Update tracked".to_string()));
+    }
+
+    #[test]
+    fn test_is_non_fast_forward_error_standard_format() {
+        let error = "error: failed to push some refs to 'origin'\n\
+                     To https://github.com/user/repo.git\n\
+                     ! [rejected]        main -> main (non-fast-forward)";
+        assert!(is_non_fast_forward_error(error));
+    }
+
+    #[test]
+    fn test_is_non_fast_forward_error_behind_variant() {
+        let error = "Updates were rejected because the tip of your current branch is behind\n\
+                     its remote counterpart.";
+        assert!(is_non_fast_forward_error(error));
+    }
+
+    #[test]
+    fn test_is_non_fast_forward_error_remote_variant() {
+        let error = "Updates were rejected because the remote contains work that you do\n\
+                     not have locally.";
+        assert!(is_non_fast_forward_error(error));
+    }
+
+    #[test]
+    fn test_is_non_fast_forward_error_combined_patterns() {
+        let error = "! [rejected]        main -> main (non-fast-forward)\n\
+                     error: failed to push some refs to 'https://github.com/user/repo.git'\n\
+                     hint: Updates were rejected because the remote contains work that you do\n\
+                     hint: not have locally.";
+        assert!(is_non_fast_forward_error(error));
+    }
+
+    #[test]
+    fn test_is_non_fast_forward_error_false_positives() {
+        assert!(!is_non_fast_forward_error("error: failed to push"));
+
+        assert!(!is_non_fast_forward_error("fatal: Authentication failed"));
+
+        assert!(!is_non_fast_forward_error(
+            "error: RPC failed; curl 56 OpenSSL"
+        ));
+
+        assert!(!is_non_fast_forward_error("[rejected]"));
+        assert!(!is_non_fast_forward_error("Updates were rejected"));
+        assert!(!is_non_fast_forward_error("(non-fast-forward)"));
+
+        assert!(!is_non_fast_forward_error("fatal: could not read Username"));
+    }
+
+    #[test]
+    fn test_is_non_fast_forward_error_edge_cases() {
+        assert!(!is_non_fast_forward_error(""));
+
+        assert!(!is_non_fast_forward_error("   "));
+        assert!(!is_non_fast_forward_error("\n\n"));
+
+        assert!(!is_non_fast_forward_error("random error message"));
+
+        assert!(!is_non_fast_forward_error(
+            "! [REJECTED] main -> main (NON-FAST-FORWARD)"
+        ));
+    }
+
+    #[test]
+    fn test_is_non_fast_forward_error_multiline_real_world() {
+        let error = indoc! {"
+            To https://github.com/user/repo.git
+             ! [rejected]        feature-branch -> feature-branch (non-fast-forward)
+            error: failed to push some refs to 'https://github.com/user/repo.git'
+            hint: Updates were rejected because the remote contains work that you do
+            hint: not have locally. This is usually caused by another repository pushing
+            hint: to the same ref. You may want to first integrate the remote changes
+            hint: (e.g., 'git pull ...') before pushing again.
+            hint: See the 'Note about fast-forwards' in 'git push --help' for details.
+        "};
+        assert!(is_non_fast_forward_error(error));
     }
 }
