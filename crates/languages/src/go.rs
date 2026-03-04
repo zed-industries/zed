@@ -8,8 +8,9 @@ pub use language::*;
 use language::{LanguageToolchainStore, LspAdapterDelegate, LspInstaller};
 use lsp::{LanguageServerBinary, LanguageServerName};
 
+use project::lsp_store::language_server_settings;
 use regex::Regex;
-use serde_json::json;
+use serde_json::{Value, json};
 use smol::fs;
 use std::{
     borrow::Cow,
@@ -24,7 +25,7 @@ use std::{
     },
 };
 use task::{TaskTemplate, TaskTemplates, TaskVariables, VariableName};
-use util::{ResultExt, fs::remove_matching, maybe};
+use util::{ResultExt, fs::remove_matching, maybe, merge_json_value_into};
 
 fn server_binary_arguments() -> Vec<OsString> {
     vec!["-mode=stdio".into()]
@@ -192,9 +193,10 @@ impl LspAdapter for GoLspAdapter {
 
     async fn initialization_options(
         self: Arc<Self>,
-        _: &Arc<dyn LspAdapterDelegate>,
+        delegate: &Arc<dyn LspAdapterDelegate>,
+        cx: &mut AsyncApp,
     ) -> Result<Option<serde_json::Value>> {
-        Ok(Some(json!({
+        let mut default_config = json!({
             "usePlaceholders": false,
             "hints": {
                 "assignVariableTypes": true,
@@ -205,7 +207,33 @@ impl LspAdapter for GoLspAdapter {
                 "parameterNames": true,
                 "rangeVariableTypes": true
             }
-        })))
+        });
+
+        let project_initialization_options = cx.update(|cx| {
+            language_server_settings(delegate.as_ref(), &self.name(), cx)
+                .and_then(|s| s.initialization_options.clone())
+        });
+
+        if let Some(override_options) = project_initialization_options {
+            merge_json_value_into(override_options, &mut default_config);
+        }
+
+        Ok(Some(default_config))
+    }
+
+    async fn workspace_configuration(
+        self: Arc<Self>,
+        delegate: &Arc<dyn LspAdapterDelegate>,
+        _: Option<Toolchain>,
+        _: Option<lsp::Uri>,
+        cx: &mut AsyncApp,
+    ) -> Result<Value> {
+        Ok(cx
+            .update(|cx| {
+                language_server_settings(delegate.as_ref(), &self.name(), cx)
+                    .and_then(|settings| settings.settings.clone())
+            })
+            .unwrap_or_default())
     }
 
     async fn label_for_completion(

@@ -99,11 +99,11 @@ You can switch between modes at any time. Your preference applies to [Project Di
 
 File History shows the commit history for an individual file. Each entry displays the commit's author, timestamp, and message. Selecting a commit opens a diff view filtered to show only the changes made to that file in that commit.
 
-To open File History:
+To view File History:
 
-- Right-click on a file in the Project Panel and select "Open File History"
-- Right-click on a file in the Git Panel and select "Open File History"
-- Right-click on an editor tab and select "Open File History"
+- Right-click on a file in the Project Panel and select "View File History"
+- Right-click on a file in the Git Panel and select "View File History"
+- Right-click on an editor tab and select "View File History"
 - Use the Command Palette and search for "file history"
 
 ## Fetch, Push, and Pull

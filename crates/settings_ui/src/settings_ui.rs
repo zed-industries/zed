@@ -1574,8 +1574,10 @@ impl SettingsWindow {
                 };
 
                 this_weak
-                    .update(cx, |this, cx| {
-                        this.fetch_files(window, cx);
+                    .update(cx, |_, cx| {
+                        cx.defer_in(window, |settings_window, window, cx| {
+                            settings_window.fetch_files(window, cx)
+                        });
                         cx.observe_release_in(&project, window, |_, _, window, cx| {
                             cx.defer_in(window, |this, window, cx| this.fetch_files(window, cx));
                         })
