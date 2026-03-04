@@ -2673,20 +2673,16 @@ impl GitRepository for RealGitRepository {
 
         // Note: Do not spawn these commands on the background thread, as this causes some git hooks to hang.
         async move {
-            let git = git_binary?;
+            let git_binary = git_binary?;
 
-            if !git.is_trusted {
-                bail!("Can't run git commit hooks in restrictive workspace");
-            }
-
-            let working_directory = git.working_directory.clone();
+            let working_directory = git_binary.working_directory.clone();
             if !help_output
                 .await
                 .lines()
                 .any(|line| line.trim().starts_with("hook "))
             {
                 let hook_abs_path = repository.lock().path().join("hooks").join(hook.as_str());
-                if hook_abs_path.is_file() {
+                if hook_abs_path.is_file() && git_binary.is_trusted {
                     #[allow(clippy::disallowed_methods)]
                     let output = new_command(&hook_abs_path)
                         .envs(env.iter())
@@ -2707,9 +2703,12 @@ impl GitRepository for RealGitRepository {
                 return Ok(());
             }
 
-            let git = git.envs(HashMap::clone(&env));
-            git.run(&["hook", "run", "--ignore-missing", hook.as_str()])
-                .await?;
+            if git_binary.is_trusted {
+                let git_binary = git_binary.envs(HashMap::clone(&env));
+                git_binary
+                    .run(&["hook", "run", "--ignore-missing", hook.as_str()])
+                    .await?;
+            }
             Ok(())
         }
         .boxed()
@@ -3116,8 +3115,14 @@ impl GitBinary {
         let mut command = new_command(&self.git_binary_path);
         command.current_dir(&self.working_directory);
         command.args(["-c", "core.fsmonitor=false"]);
+        command.arg("--no-pager");
+
         if !self.is_trusted {
             command.args(["-c", "core.hooksPath=/dev/null"]);
+            command.args(["-c", "core.sshCommand=ssh"]);
+            command.args(["-c", "credential.helper="]);
+            command.args(["-c", "protocol.ext.allow=never"]);
+            command.args(["-c", "diff.external="]);
         }
         command.args(args);
         if let Some(index_file_path) = self.index_file_path.as_ref() {
