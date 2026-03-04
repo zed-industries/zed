@@ -889,7 +889,7 @@ mod tests {
             ResponseStreamEvent {
                 id: Some("response_123".into()),
                 created: 1234567890,
-                model: "google/gemini-3-pro-preview".into(),
+                model: "google/gemini-3.1-pro-preview".into(),
                 choices: vec![ChoiceDelta {
                     index: 0,
                     delta: ResponseMessageDelta {
@@ -914,7 +914,7 @@ mod tests {
             ResponseStreamEvent {
                 id: Some("response_123".into()),
                 created: 1234567890,
-                model: "google/gemini-3-pro-preview".into(),
+                model: "google/gemini-3.1-pro-preview".into(),
                 choices: vec![ChoiceDelta {
                     index: 0,
                     delta: ResponseMessageDelta {
@@ -940,7 +940,7 @@ mod tests {
             ResponseStreamEvent {
                 id: Some("response_123".into()),
                 created: 1234567890,
-                model: "google/gemini-3-pro-preview".into(),
+                model: "google/gemini-3.1-pro-preview".into(),
                 choices: vec![ChoiceDelta {
                     index: 0,
                     delta: ResponseMessageDelta {
@@ -967,7 +967,7 @@ mod tests {
             ResponseStreamEvent {
                 id: Some("response_123".into()),
                 created: 1234567890,
-                model: "google/gemini-3-pro-preview".into(),
+                model: "google/gemini-3.1-pro-preview".into(),
                 choices: vec![ChoiceDelta {
                     index: 0,
                     delta: ResponseMessageDelta {
