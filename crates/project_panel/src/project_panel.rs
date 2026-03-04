@@ -2255,7 +2255,7 @@ impl ProjectPanel {
                 };
                 let Some(task) = self
                     .project
-                    .update(cx, |project, cx| project.delete_entry(entry_id, true, cx))
+                    .update(cx, |project, cx| project.delete_entry(entry_id, false, cx))
                 else {
                     return Task::ready(Err(anyhow!("failed to trash entry")));
                 };
