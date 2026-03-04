@@ -357,9 +357,10 @@ impl TextSystem {
         &self,
         font_id: FontId,
         font_size: Pixels,
+        scale_factor: f32,
     ) -> TextRenderingMode {
         self.platform_text_system
-            .recommended_rendering_mode(font_id, font_size)
+            .recommended_rendering_mode(font_id, font_size, scale_factor)
     }
 }
 
