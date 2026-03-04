@@ -64,6 +64,7 @@ indoc.workspace = true
 language = { workspace = true, features = ["test-support"] }
 lsp = { workspace = true, features = ["test-support"] }
 node_runtime = { workspace = true, features = ["test-support"] }
+pretty_assertions.workspace = true
 project = { workspace = true, features = ["test-support"] }
 rpc = { workspace = true, features = ["test-support"] }
 serde_json.workspace = true

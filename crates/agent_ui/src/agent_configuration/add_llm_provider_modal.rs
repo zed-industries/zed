@@ -117,7 +117,7 @@ impl ModelInput {
 
         let model_name = single_line_input(
             "Model Name",
-            "e.g. gpt-4o, claude-opus-4, gemini-2.5-pro",
+            "e.g. gpt-5, claude-opus-4, gemini-2.5-pro",
             None,
             base_tab_index + 1,
             window,
@@ -540,6 +540,7 @@ impl Render for AddLlmProviderModal {
                                     .max_h(modal_max_height)
                                     .pl_3()
                                     .pr_4()
+                                    .pb_2()
                                     .gap_2()
                                     .overflow_y_scroll()
                                     .track_scroll(&self.scroll_handle)
@@ -599,6 +600,7 @@ mod tests {
     use project::Project;
     use settings::SettingsStore;
     use util::path;
+    use workspace::MultiWorkspace;
 
     #[gpui::test]
     async fn test_save_provider_invalid_inputs(cx: &mut TestAppContext) {
@@ -815,8 +817,9 @@ mod tests {
         let fs = FakeFs::new(cx.executor());
         cx.update(|cx| <dyn Fs>::set_global(fs.clone(), cx));
         let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
-        let (_, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let _workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
         cx
     }

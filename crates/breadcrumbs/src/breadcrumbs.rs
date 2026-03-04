@@ -1,10 +1,24 @@
-use editor::render_breadcrumb_text;
-use gpui::{Context, EventEmitter, IntoElement, Render, Subscription, Window};
+use gpui::{
+    AnyElement, App, Context, EventEmitter, Global, IntoElement, Render, Subscription, Window,
+};
 use ui::prelude::*;
 use workspace::{
     ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView,
-    item::{ItemEvent, ItemHandle},
+    item::{BreadcrumbText, ItemEvent, ItemHandle},
 };
+
+type RenderBreadcrumbTextFn = fn(
+    Vec<BreadcrumbText>,
+    Option<AnyElement>,
+    &dyn ItemHandle,
+    bool,
+    &mut Window,
+    &App,
+) -> AnyElement;
+
+pub struct RenderBreadcrumbText(pub RenderBreadcrumbTextFn);
+
+impl Global for RenderBreadcrumbText {}
 
 pub struct Breadcrumbs {
     pane_focused: bool,
@@ -49,15 +63,18 @@ impl Render for Breadcrumbs {
 
         let prefix_element = active_item.breadcrumb_prefix(window, cx);
 
-        render_breadcrumb_text(
-            segments,
-            prefix_element,
-            active_item.as_ref(),
-            false,
-            window,
-            cx,
-        )
-        .into_any_element()
+        if let Some(render_fn) = cx.try_global::<RenderBreadcrumbText>() {
+            (render_fn.0)(
+                segments,
+                prefix_element,
+                active_item.as_ref(),
+                false,
+                window,
+                cx,
+            )
+        } else {
+            element.into_any_element()
+        }
     }
 }
 

@@ -1,6 +1,8 @@
 ; Identifier naming conventions; these "soft conventions" should stay at the top of the file as they're often overridden
 (identifier) @variable
-(attribute attribute: (identifier) @property)
+
+(attribute
+  attribute: (identifier) @property)
 
 ; CamelCase for classes
 ((identifier) @type.class
@@ -10,45 +12,56 @@
 ((identifier) @constant
   (#match? @constant "^_*[A-Z][A-Z0-9_]*$"))
 
-(type (identifier) @type)
-(generic_type (identifier) @type)
+(type
+  (identifier) @type)
+
+(generic_type
+  (identifier) @type)
+
 (comment) @comment
+
 (string) @string
+
 (escape_sequence) @string.escape
 
 ; Type alias
-(type_alias_statement "type" @keyword)
+(type_alias_statement
+  "type" @keyword)
 
 ; TypeVar with constraints in type parameters
 (type
-  (tuple (identifier) @type)
-)
+  (tuple
+    (identifier) @type))
 
 ; Forward references
 (type
-  (string) @type
-)
-
+  (string) @type)
 
 ; Function calls
-
 (call
-  function: (attribute attribute: (identifier) @function.method.call))
+  function: (attribute
+    attribute: (identifier) @function.method.call))
+
 (call
   function: (identifier) @function.call)
 
-(decorator "@" @punctuation.special)
+(decorator
+  "@" @punctuation.special)
+
 (decorator
   "@" @punctuation.special
   [
     (identifier) @function.decorator
-    (attribute attribute: (identifier) @function.decorator)
-    (call function: (identifier) @function.decorator.call)
-    (call (attribute attribute: (identifier) @function.decorator.call))
+    (attribute
+      attribute: (identifier) @function.decorator)
+    (call
+      function: (identifier) @function.decorator.call)
+    (call
+      (attribute
+        attribute: (identifier) @function.decorator.call))
   ])
 
 ; Function and class definitions
-
 (function_definition
   name: (identifier) @function.definition)
 
@@ -69,15 +82,15 @@
 ; Function arguments
 (function_definition
   parameters: (parameters
-  [
-      (identifier) @variable.parameter; Simple parameters
+    [
+      (identifier) @variable.parameter ; Simple parameters
       (typed_parameter
         (identifier) @variable.parameter) ; Typed parameters
       (default_parameter
         name: (identifier) @variable.parameter) ; Default parameters
       (typed_default_parameter
         name: (identifier) @variable.parameter) ; Typed default parameters
-  ]))
+    ]))
 
 ; Keyword arguments
 (call
@@ -86,28 +99,30 @@
       name: (identifier) @function.kwargs)))
 
 ; Class definitions and calling: needs to come after the regex matching above
-
 (class_definition
   name: (identifier) @type.class.definition)
 
 (class_definition
   superclasses: (argument_list
-  (identifier) @type.class.inheritance))
+    (identifier) @type.class.inheritance))
 
 (call
   function: (identifier) @type.class.call
   (#match? @type.class.call "^_*[A-Z][A-Za-z0-9_]*$"))
 
 ; Builtins
-
 ((call
   function: (identifier) @function.builtin)
- (#any-of?
-   @function.builtin
-   "abs" "all" "any" "ascii" "bin" "bool" "breakpoint" "bytearray" "bytes" "callable" "chr" "classmethod" "compile" "complex" "delattr" "dict" "dir" "divmod" "enumerate" "eval" "exec" "filter" "float" "format" "frozenset" "getattr" "globals" "hasattr" "hash" "help" "hex" "id" "input" "int" "isinstance" "issubclass" "iter" "len" "list" "locals" "map" "max" "memoryview" "min" "next" "object" "oct" "open" "ord" "pow" "print" "property" "range" "repr" "reversed" "round" "set" "setattr" "slice" "sorted" "staticmethod" "str" "sum" "super" "tuple" "type" "vars" "zip" "__import__"))
+  (#any-of? @function.builtin
+    "abs" "all" "any" "ascii" "bin" "bool" "breakpoint" "bytearray" "bytes" "callable" "chr"
+    "classmethod" "compile" "complex" "delattr" "dict" "dir" "divmod" "enumerate" "eval" "exec"
+    "filter" "float" "format" "frozenset" "getattr" "globals" "hasattr" "hash" "help" "hex" "id"
+    "input" "int" "isinstance" "issubclass" "iter" "len" "list" "locals" "map" "max" "memoryview"
+    "min" "next" "object" "oct" "open" "ord" "pow" "print" "property" "range" "repr" "reversed"
+    "round" "set" "setattr" "slice" "sorted" "staticmethod" "str" "sum" "super" "tuple" "type"
+    "vars" "zip" "__import__"))
 
 ; Literals
-
 [
   (true)
   (false)
@@ -124,10 +139,11 @@
 ] @number
 
 ; Self references
-
 [
-  (parameters (identifier) @variable.special)
-  (attribute (identifier) @variable.special)
+  (parameters
+    (identifier) @variable.special)
+  (attribute
+    (identifier) @variable.special)
   (#any-of? @variable.special "self" "cls")
 ]
 
@@ -152,37 +168,57 @@
 
 ; Docstrings.
 ([
-  (expression_statement (assignment))
+  (expression_statement
+    (assignment))
   (type_alias_statement)
 ]
-. (expression_statement (string) @string.doc)+)
+  .
+  (expression_statement
+    (string) @string.doc)+)
 
 (module
-  .(expression_statement (string) @string.doc)+)
+  .
+  (expression_statement
+    (string) @string.doc)+)
 
 (class_definition
-  body: (block .(expression_statement (string) @string.doc)+))
+  body: (block
+    .
+    (expression_statement
+      (string) @string.doc)+))
 
 (function_definition
   "async"?
   "def"
   name: (_)
   (parameters)?
-  body: (block .(expression_statement (string) @string.doc)+))
+  body: (block
+    .
+    (expression_statement
+      (string) @string.doc)+))
 
 (class_definition
   body: (block
-    . (comment) @comment*
-    . (expression_statement (string) @string.doc)+))
+    .
+    (comment) @comment*
+    .
+    (expression_statement
+      (string) @string.doc)+))
 
 (module
-  . (comment) @comment*
-  . (expression_statement (string) @string.doc)+)
+  .
+  (comment) @comment*
+  .
+  (expression_statement
+    (string) @string.doc)+)
 
 (class_definition
   body: (block
-    (expression_statement (assignment))
-    . (expression_statement (string) @string.doc)+))
+    (expression_statement
+      (assignment))
+    .
+    (expression_statement
+      (string) @string.doc)+))
 
 (class_definition
   body: (block
@@ -190,9 +226,11 @@
       name: (identifier) @function.method.constructor
       (#eq? @function.method.constructor "__init__")
       body: (block
-        (expression_statement (assignment))
-        . (expression_statement (string) @string.doc)+))))
-
+        (expression_statement
+          (assignment))
+        .
+        (expression_statement
+          (string) @string.doc)+))))
 
 [
   "-"
@@ -286,18 +324,23 @@
   "lambda"
 ] @keyword.definition
 
-(decorator (identifier) @attribute.builtin
+(decorator
+  (identifier) @attribute.builtin
   (#any-of? @attribute.builtin "classmethod" "staticmethod" "property"))
 
 ; Builtin types as identifiers
 [
   (call
     function: (identifier) @type.builtin)
-  (type (identifier) @type.builtin)
-  (generic_type (identifier) @type.builtin)
+  (type
+    (identifier) @type.builtin)
+  (generic_type
+    (identifier) @type.builtin)
   ; also check if type binary operator left identifier for union types
   (type
     (binary_operator
       left: (identifier) @type.builtin))
-  (#any-of? @type.builtin "bool" "bytearray" "bytes" "complex" "dict" "float" "frozenset" "int" "list" "memoryview" "object" "range" "set" "slice" "str" "tuple")
+  (#any-of? @type.builtin
+    "bool" "bytearray" "bytes" "complex" "dict" "float" "frozenset" "int" "list" "memoryview"
+    "object" "range" "set" "slice" "str" "tuple")
 ]

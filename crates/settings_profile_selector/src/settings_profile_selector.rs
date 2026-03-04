@@ -287,7 +287,7 @@ mod tests {
     use serde_json::json;
     use settings::Settings;
     use theme::{self, ThemeSettings};
-    use workspace::{self, AppState};
+    use workspace::{self, AppState, MultiWorkspace};
     use zed_actions::settings_profile_selector;
 
     async fn init_test(
@@ -320,8 +320,11 @@ mod tests {
 
         let fs = FakeFs::new(cx.executor());
         let project = Project::test(fs, ["/test".as_ref()], cx).await;
-        let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let cx = VisualTestContext::from_window(*window, cx).into_mut();
+        let workspace = window
+            .read_with(cx, |mw, _| mw.workspace().clone())
+            .unwrap();
 
         cx.update(|_, cx| {
             assert!(!cx.has_global::<ActiveSettingsProfileName>());

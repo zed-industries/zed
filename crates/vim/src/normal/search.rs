@@ -555,7 +555,7 @@ impl Vim {
         let replacement = action.replacement.clone();
         let Some(((pane, workspace), editor)) = self
             .pane(window, cx)
-            .zip(self.workspace(window))
+            .zip(self.workspace(window, cx))
             .zip(self.editor())
         else {
             return;

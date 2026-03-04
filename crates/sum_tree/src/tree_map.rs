@@ -53,6 +53,10 @@ impl<K: Clone + Ord, V: Clone> TreeMap<K, V> {
         self.0.is_empty()
     }
 
+    pub fn contains_key(&self, key: &K) -> bool {
+        self.get(key).is_some()
+    }
+
     pub fn get(&self, key: &K) -> Option<&V> {
         let (.., item) = self
             .0
@@ -83,9 +87,6 @@ impl<K: Clone + Ord, V: Clone> TreeMap<K, V> {
             .into_iter()
             .map(|(key, value)| Edit::Insert(MapEntry { key, value }))
             .collect();
-        if edits.is_empty() {
-            return;
-        }
         self.0.edit(edits, ());
     }
 

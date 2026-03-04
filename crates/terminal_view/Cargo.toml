@@ -35,7 +35,7 @@ project.workspace = true
 regex.workspace = true
 task.workspace = true
 schemars.workspace = true
-search.workspace = true
+
 serde.workspace = true
 serde_json.workspace = true
 settings.workspace = true
