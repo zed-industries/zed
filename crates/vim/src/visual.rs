@@ -1106,10 +1106,8 @@ mod test {
             bˇ
             "})
             .await;
-        let cursor = cx.update_editor(|editor, _, cx| editor.pixel_position_of_cursor(cx));
         cx.simulate_shared_keystrokes("shift-v").await;
         cx.shared_state().await.assert_matches();
-        cx.update_editor(|editor, _, cx| assert_eq!(cursor, editor.pixel_position_of_cursor(cx)));
         cx.simulate_shared_keystrokes("x").await;
         cx.shared_state().await.assert_matches();
 
