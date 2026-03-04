@@ -24147,9 +24147,13 @@ impl Editor {
                     self.display_map.update(cx, |display_map, cx| {
                         display_map.invalidate_semantic_highlights(*buffer_id);
                         display_map.clear_lsp_folding_ranges(*buffer_id, cx);
-                        display_map.clear_folded_buffer(*buffer_id);
                     });
                 }
+
+                self.display_map.update(cx, |display_map, cx| {
+                    display_map.unfold_buffers(removed_buffer_ids.iter().copied(), cx);
+                });
+
                 jsx_tag_auto_close::refresh_enabled_in_any_buffer(self, multibuffer, cx);
                 cx.emit(EditorEvent::ExcerptsRemoved {
                     ids: ids.clone(),

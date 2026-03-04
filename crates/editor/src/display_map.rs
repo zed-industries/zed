@@ -1007,11 +1007,6 @@ impl DisplayMap {
     }
 
     #[instrument(skip_all)]
-    pub(super) fn clear_folded_buffer(&mut self, buffer_id: language::BufferId) {
-        self.block_map.folded_buffers.remove(&buffer_id);
-    }
-
-    #[instrument(skip_all)]
     pub fn insert_creases(
         &mut self,
         creases: impl IntoIterator<Item = Crease<Anchor>>,
