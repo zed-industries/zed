@@ -290,12 +290,18 @@ impl PlatformTextSystem for DirectWriteTextSystem {
     fn recommended_rendering_mode(
         &self,
         _font_id: FontId,
-        _font_size: Pixels,
+        font_size: Pixels,
+        scale_factor: f32,
     ) -> TextRenderingMode {
-        if self.components.system_subpixel_rendering {
-            TextRenderingMode::Subpixel
-        } else {
+        if !self.components.system_subpixel_rendering {
+            return TextRenderingMode::Grayscale;
+        }
+        if scale_factor < LODPI_SCALE_FACTOR_THRESHOLD
+            && f32::from(font_size) < SUBPIXEL_MIN_FONT_SIZE_PX
+        {
             TextRenderingMode::Grayscale
+        } else {
+            TextRenderingMode::Subpixel
         }
     }
 }
