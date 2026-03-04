@@ -43,10 +43,6 @@ is_executable = "1.0.5"
 notify = "8.2.0"
 trash = { git = "https://github.com/dinocosta/trash-rs", branch = "5039-macos-restore" }
 
-[target.'cfg(target_os = "macos")'.dependencies]
-objc.workspace = true
-cocoa = "0.26"
-
 [target.'cfg(target_os = "windows")'.dependencies]
 windows.workspace = true
 

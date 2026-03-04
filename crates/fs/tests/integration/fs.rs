@@ -736,8 +736,12 @@ async fn test_fake_fs_restore(executor: BackgroundExecutor) {
         ]
     );
 
-    // TODO!: Assert that the file contents are still "New File A".
+    let file_contents = fs.files_with_contents(path);
     assert!(fs.restore(trashed_entry).await.is_err());
+    assert_eq!(
+        file_contents,
+        vec![(PathBuf::from(path), b"New File A".to_vec())]
+    );
 
     // A collision error should be returned in case a directory is being
     // restored to a path where a directory already exists.
@@ -761,27 +765,4 @@ async fn test_fake_fs_restore(executor: BackgroundExecutor) {
 
     assert_eq!(fs.files(), vec![PathBuf::from(path!("/root/file_c.txt"))]);
     assert_eq!(fs.trash_entries().len(), 2);
-
-    // assert_eq!
-    // let root_path = PathBuf::from(path!("/root"));
-    // let path = path!("/root/src").as_ref();
-    // let trashed_entry = fs
-    //     .trash_dir(
-    //         path,
-    //         RemoveOptions {
-    //             recursive: true,
-    //             ..Default::default()
-    //         },
-    //     )
-    //     .await
-    //     .expect("should be able to trash {path:?}");
-
-    // assert_eq!(trashed_entry.name, "src");
-    // assert_eq!(trashed_entry.original_parent, root_path);
-    // assert_eq!(fs.files(), vec![PathBuf::from(path!("/root/file_c.txt"))]);
-
-    // let trash_entries = fs.trash_entries();
-    // assert_eq!(trash_entries.len(), 1);
-    // assert_eq!(trash_entries[0].name, "src");
-    // assert_eq!(trash_entries[0].original_parent, root_path);
 }
