@@ -306,6 +306,8 @@ fn read_feature_option_defaults(
             RenameMeError::UnmappedError
         })?;
 
+    dbg!(&feature_json);
+
     let mut defaults = HashMap::new();
     for (name, definition) in &feature_json.options {
         if let Some(default_value) = &definition.default {
@@ -570,12 +572,30 @@ struct DockerInspectConfig {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, Eq, PartialEq, Default)]
+struct DockerComposeServiceBuild {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    context: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    dockerfile: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    args: Option<HashMap<String, String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    additional_contexts: Option<HashMap<String, String>>, // TODO you gotta address this when you reformat feature stuff
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, Eq, PartialEq, Default)]
 struct DockerComposeService {
     image: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     entrypoint: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     cap_add: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     security_opt: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     labels: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    build: Option<DockerComposeServiceBuild>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, Eq, PartialEq)]
@@ -747,6 +767,7 @@ pub(crate) async fn spawn_dev_container_v2(
             )
             .await?;
 
+            dbg!(&built_docker_image);
             let running_container =
                 run_docker_image(&built_docker_image, &labels, &local_project_path).await?;
 
@@ -799,7 +820,8 @@ async fn run_docker_compose(
     })?;
 
     if !output.status.success() {
-        log::error!("Non-success status from docker compose up");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        log::error!("Non-success status from docker compose up: {}", stderr);
         return Err(RenameMeError::UnmappedError);
     }
 
@@ -847,11 +869,18 @@ async fn build_and_extend_compose_files(
         return Err(RenameMeError::UnmappedError);
     };
 
+    // TODO
+    // The CLI determines the image user from `imageDetails.Config.User || 'root'`.
+    // Our DockerInspect doesn't yet carry the User field, so we default to "root".
+    let image_user = "root";
+
+    let build_info = prepare_features_build_info(devcontainer, image_user)?; // can this just get re-used?
+
     dbg!(&docker_compose_config);
 
     let (main_service_name, main_service) =
         find_primary_service(&docker_compose_config, devcontainer)?;
-    if let Some(image) = &main_service.image {
+    let built_service_image = if let Some(image) = &main_service.image {
         // if no features
         if devcontainer
             .features
@@ -859,58 +888,168 @@ async fn build_and_extend_compose_files(
             .is_none_or(|features| features.is_empty())
         {
             // Do the build here also though
-            let docker_image = inspect_image(image).await?;
-            let runtime_override_file = build_runtime_override_file(
-                &main_service_name,
-                &docker_image,
+            inspect_image(image).await?
+        } else {
+            construct_features_build_resources(
                 devcontainer,
-                labels,
-            )?;
+                &build_info,
+                &http_client,
+                None, // TODO this should be the dockerfile found from docker-compose.yml
+            )
+            .await?;
 
-            dbg!(&runtime_override_file);
+            let build_override = DockerComposeConfig {
+                name: None,
+                services: HashMap::from([(
+                    main_service_name.clone(),
+                    DockerComposeService {
+                        image: Some(build_info.image_tag.clone()),
+                        entrypoint: None,
+                        cap_add: None,
+                        security_opt: None,
+                        labels: None,
+                        build: Some(DockerComposeServiceBuild {
+                            context: Some(build_info.empty_context_dir.display().to_string()),
+                            dockerfile: Some(build_info.dockerfile_path.display().to_string()),
+                            args: Some(HashMap::from([
+                                ("BUILDKIT_INLINE_CACHE".to_string(), "1".to_string()),
+                                ("_DEV_CONTAINERS_BASE_IMAGE".to_string(), image.clone()),
+                                ("_DEV_CONTAINERS_IMAGE_USER".to_string(), "root".to_string()), // TODO this has to get wired up
+                            ])),
+                            additional_contexts: Some(HashMap::from([(
+                                "dev_containers_feature_content_source".to_string(),
+                                build_info.features_content_dir.display().to_string(),
+                            )])),
+                        }),
+                    },
+                )]),
+            };
 
-            docker_compose_full_paths.push(runtime_override_file);
+            let temp_base = std::env::temp_dir().join("devcontainer-zed");
+            let config_location = temp_base.join("docker_compose_build.yml");
+
+            let config_json = serde_json_lenient::to_string(&build_override).map_err(|e| {
+                log::error!("Error serializing docker compose runtime override: {e}");
+                RenameMeError::UnmappedError
+            })?;
+
+            std::fs::write(&config_location, config_json).map_err(|e| {
+                log::error!("Error writing the runtime override file: {e}");
+                RenameMeError::UnmappedError
+            })?;
+
+            docker_compose_full_paths.push(config_location.display().to_string());
+
+            run_docker_compose_build(&docker_compose_full_paths).await?;
+
+            inspect_image(&build_info.image_tag).await?
         }
-        // //build the runtime override
-        // Return existing compose files + runtime override
-        //
-        // If features
-        // // build the build override
-        // // build the runtime override
-        // // return all compose files
-    }
-    // If main_service.uses_image and dev_container.no_features:
-    // // Build the runtime override
-    // // Return existing compose files + runtime override
-    // if main_service uses dockerfile
-    // // Build the buildtime override
-    // // build the runtime override
+    } else if let Some(dockerfile) = main_service // TODO this has to be reversed, I think?
+        .build
+        .as_ref()
+        .and_then(|b| b.dockerfile.as_ref())
+    {
+        let dockerfile_location = devcontainer_dir.join(dockerfile);
+        construct_features_build_resources(
+            devcontainer,
+            &build_info,
+            &http_client,
+            Some(dockerfile_location),
+        )
+        .await?;
 
-    // TODO
-    // The CLI determines the image user from `imageDetails.Config.User || 'root'`.
-    // Our DockerInspect doesn't yet carry the User field, so we default to "root".
-    let image_user = "root";
+        let build_override = DockerComposeConfig {
+            name: None,
+            services: HashMap::from([(
+                main_service_name.clone(),
+                DockerComposeService {
+                    image: Some(build_info.image_tag.clone()),
+                    entrypoint: None,
+                    cap_add: None,
+                    security_opt: None,
+                    labels: None,
+                    build: Some(DockerComposeServiceBuild {
+                        context: Some(build_info.empty_context_dir.display().to_string()),
+                        dockerfile: Some(build_info.dockerfile_path.display().to_string()),
+                        args: Some(HashMap::from([
+                            ("BUILDKIT_INLINE_CACHE".to_string(), "1".to_string()),
+                            (
+                                "_DEV_CONTAINERS_BASE_IMAGE".to_string(),
+                                "dev_container_auto_added_stage_label".to_string(),
+                            ), // TODO Well this has gotta be cleaner
+                            ("_DEV_CONTAINERS_IMAGE_USER".to_string(), "root".to_string()), // TODO this has to get wired up
+                        ])),
+                        additional_contexts: Some(HashMap::from([(
+                            "dev_containers_feature_content_source".to_string(),
+                            build_info.features_content_dir.display().to_string(),
+                        )])),
+                    }),
+                },
+            )]),
+        };
 
-    let build_info = prepare_features_build_info(devcontainer, image_user)?; // can this just get re-used?
-    // I think I can re-use this, but i would then need to create an override service definition with what I've got here. So basically has to be wrapped in some stuff
+        let temp_base = std::env::temp_dir().join("devcontainer-zed");
+        let config_location = temp_base.join("docker_compose_build.yml");
 
-    // Use http_client to do the actual OCI retrieval here
-    construct_features_build_resources(
+        let config_json = serde_json_lenient::to_string(&build_override).map_err(|e| {
+            log::error!("Error serializing docker compose runtime override: {e}");
+            RenameMeError::UnmappedError
+        })?;
+
+        std::fs::write(&config_location, config_json).map_err(|e| {
+            log::error!("Error writing the runtime override file: {e}");
+            RenameMeError::UnmappedError
+        })?;
+
+        docker_compose_full_paths.push(config_location.display().to_string());
+
+        run_docker_compose_build(&docker_compose_full_paths).await?;
+
+        inspect_image(&build_info.image_tag).await?
+    } else {
+        log::error!("Docker compose must have either image or dockerfile defined");
+        return Err(RenameMeError::UnmappedError);
+    };
+
+    let runtime_override_file = build_runtime_override_file(
+        &main_service_name,
+        &built_service_image,
         devcontainer,
-        &build_info,
-        &http_client,
-        None, // TODO this should be the dockerfile found from docker-compose.yml
-    )
-    .await?; // Can this just get re-used?
-    // I think I can re-use this too. Dockerfile_dir should be the location of the dockerfile, if any, defined in the main docker-compose service
+        labels,
+    )?;
 
-    // let mut command = create_docker_build(&build_info, dev_container, &dockerfile_dir)?; equivalent is: create_docker_compose build
-    // Execute the build, assert success
-    // Construct the runtime override, return the files
+    dbg!(&runtime_override_file);
+
+    docker_compose_full_paths.push(runtime_override_file);
 
     dbg!(&docker_compose_full_paths);
 
     Ok(docker_compose_full_paths)
+}
+
+async fn run_docker_compose_build(docker_compose_files: &Vec<String>) -> Result<(), RenameMeError> {
+    let mut command = Command::new(docker_cli());
+    // TODO project name how
+    command.args(&["compose", "--project-name", "rustwebstarter_devcontainer"]);
+    for docker_compose_file in docker_compose_files {
+        command.args(&["-f", &docker_compose_file]);
+    }
+    command.arg("build");
+
+    dbg!(&command);
+
+    let output = command.output().await.map_err(|e| {
+        log::error!("Error running docker compose up: {e}");
+        RenameMeError::UnmappedError
+    })?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        log::error!("Non-success status from docker compose up: {}", stderr);
+        return Err(RenameMeError::UnmappedError);
+    }
+
+    Ok(())
 }
 
 fn build_runtime_override_file(
@@ -1619,24 +1758,6 @@ async fn construct_features_build_resources(
         feature_layers.push_str(&generate_feature_layer(&consecutive_id));
     }
 
-    // TODO this should either be build_type is Dockerfile or (DockerCompose + dockercompose service is a dockerfile)
-    // Or more graecefully, the caller should just provide the full path to dockerfile_location as an Option, and we read it if it's there
-    // let dockerfile_base_content = if dev_container.build_type() == DevContainerBuildType::Dockerfile
-    // {
-    //     let Some(build) = &dev_container.build else {
-    //         return Err(RenameMeError::UnmappedError);
-    //     };
-
-    //     let dockerfile_relative_location = &build.dockerfile;
-    //     let dockerfile_location = PathBuf::from(dockerfile_dir).join(dockerfile_relative_location);
-
-    //     Some(std::fs::read_to_string(dockerfile_location).map_err(|e| {
-    //         log::error!("Unable to read dockerfile defined in devcontainer: {e}");
-    //         RenameMeError::UnmappedError
-    //     })?)
-    // } else {
-    //     None
-    // };
     let dockerfile_base_content = dockerfile_location
         .as_ref()
         .and_then(|path_buf| std::fs::read_to_string(path_buf).log_err());
