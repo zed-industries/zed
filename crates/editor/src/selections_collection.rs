@@ -407,48 +407,53 @@ impl SelectionsCollection {
         })
     }
 
-    /// Attempts to build a selection in the provided buffer row using the
-    /// same buffer column range as specified.
+    /// Attempts to build a selection in the provided buffer row using
+    /// absolute pixel positions measured from the start of the buffer line.
     /// Returns `None` if the range is not empty but it starts past the line's
     /// length, meaning that the line isn't long enough to be contained within
     /// part of the provided range.
-    pub fn build_columnar_selection_from_buffer_columns(
+    pub fn build_columnar_selection_from_buffer_row(
         &mut self,
         display_map: &DisplaySnapshot,
         buffer_row: u32,
-        positions: &Range<u32>,
+        absolute_x_range: &Range<Pixels>,
         reversed: bool,
         text_layout_details: &TextLayoutDetails,
     ) -> Option<Selection<Point>> {
-        let is_empty = positions.start == positions.end;
-        let line_len = display_map
-            .buffer_snapshot()
-            .line_len(multi_buffer::MultiBufferRow(buffer_row));
+        let is_empty = absolute_x_range.start == absolute_x_range.end;
+        let start_display = resolve_absolute_x_to_display_point(
+            display_map,
+            buffer_row,
+            absolute_x_range.start,
+            text_layout_details,
+        );
 
         let (start, end) = if is_empty {
-            let column = std::cmp::min(positions.start, line_len);
-            let point = Point::new(buffer_row, column);
-            (point, point)
+            (start_display, start_display)
         } else {
-            if positions.start >= line_len {
+            let buffer_line_len = display_map
+                .buffer_snapshot()
+                .line_len(multi_buffer::MultiBufferRow(buffer_row));
+            let start_buffer = start_display.to_point(display_map);
+            if start_buffer.column >= buffer_line_len {
                 return None;
             }
-
-            let start = Point::new(buffer_row, positions.start);
-            let end_column = std::cmp::min(positions.end, line_len);
-            let end = Point::new(buffer_row, end_column);
-            (start, end)
+            let end_display = resolve_absolute_x_to_display_point(
+                display_map,
+                buffer_row,
+                absolute_x_range.end,
+                text_layout_details,
+            );
+            (start_display, end_display)
         };
 
-        let start_display_point = start.to_display_point(display_map);
-        let end_display_point = end.to_display_point(display_map);
-        let start_x = display_map.x_for_display_point(start_display_point, text_layout_details);
-        let end_x = display_map.x_for_display_point(end_display_point, text_layout_details);
+        let start_x = display_map.x_for_display_point(start, text_layout_details);
+        let end_x = display_map.x_for_display_point(end, text_layout_details);
 
         Some(Selection {
             id: post_inc(&mut self.next_selection_id),
-            start,
-            end,
+            start: start.to_point(display_map),
+            end: end.to_point(display_map),
             reversed,
             goal: SelectionGoal::HorizontalRange {
                 start: start_x.min(end_x).into(),
@@ -498,7 +503,7 @@ impl SelectionsCollection {
         start_row: DisplayRow,
         end_row: DisplayRow,
         above: bool,
-        goal_columns: &Range<u32>,
+        absolute_x_range: &Range<Pixels>,
         reversed: bool,
         text_layout_details: &TextLayoutDetails,
     ) -> Option<Selection<Point>> {
@@ -507,13 +512,17 @@ impl SelectionsCollection {
         while row != end_row {
             let new_row =
                 display_map.start_of_relative_buffer_row(DisplayPoint::new(row, 0), direction);
-            row = new_row.row();
+            let new_display_row = new_row.row();
+            if new_display_row == row {
+                break;
+            }
+            row = new_display_row;
             let buffer_row = new_row.to_point(display_map).row;
 
-            if let Some(selection) = self.build_columnar_selection_from_buffer_columns(
+            if let Some(selection) = self.build_columnar_selection_from_buffer_row(
                 display_map,
                 buffer_row,
-                goal_columns,
+                absolute_x_range,
                 reversed,
                 text_layout_details,
             ) {
@@ -1246,6 +1255,80 @@ fn resolve_selections_display<'a>(
         }
     });
     coalesce_selections(selections)
+}
+
+/// For wrapped lines, accumulates the content widths of preceding wrapped
+/// display rows to get the absolute x from buffer line start.
+pub(crate) fn absolute_x_for_buffer_point(
+    display_map: &DisplaySnapshot,
+    buffer_point: Point,
+    text_layout_details: &TextLayoutDetails,
+) -> Pixels {
+    let first_display_row = Point::new(buffer_point.row, 0)
+        .to_display_point(display_map)
+        .row();
+    let target_display_point = buffer_point.to_display_point(display_map);
+    let target_row = target_display_point.row();
+
+    let mut absolute_x = gpui::px(0.);
+    let mut row = first_display_row;
+    while row < target_row {
+        absolute_x += display_map.layout_row(row, text_layout_details).width;
+        row.0 += 1;
+    }
+    absolute_x += display_map.x_for_display_point(target_display_point, text_layout_details);
+
+    absolute_x
+}
+
+/// Computes the absolute pixel x range for a selection's start and end points,
+/// normalized so that `range.start <= range.end`.
+pub(crate) fn absolute_x_range_for_selection(
+    display_map: &DisplaySnapshot,
+    selection: &Selection<Point>,
+    text_layout_details: &TextLayoutDetails,
+) -> Range<Pixels> {
+    let start_abs_x =
+        absolute_x_for_buffer_point(display_map, selection.start, text_layout_details);
+    let end_abs_x =
+        absolute_x_for_buffer_point(display_map, selection.end, text_layout_details);
+    start_abs_x.min(end_abs_x)..start_abs_x.max(end_abs_x)
+}
+
+/// Iterates through a buffer line's wrapped display rows, subtracting each
+/// row's content width, to find which display row the absolute x falls on.
+fn resolve_absolute_x_to_display_point(
+    display_map: &DisplaySnapshot,
+    buffer_row: u32,
+    absolute_x: Pixels,
+    text_layout_details: &TextLayoutDetails,
+) -> DisplayPoint {
+    let first_display_row = Point::new(buffer_row, 0)
+        .to_display_point(display_map)
+        .row();
+    let mut row = first_display_row;
+    let mut remaining_x = absolute_x;
+    let max_row = display_map.max_point().row();
+
+    loop {
+        let line = display_map.layout_row(row, text_layout_details);
+        let content_width = line.width;
+
+        let next_row = DisplayRow(row.0 + 1);
+        let is_last_row_of_buffer = next_row > max_row
+            || DisplayPoint::new(next_row, 0).to_point(display_map).row != buffer_row;
+
+        // Use `<=` so that a point exactly at a wrap boundary stays on the current
+        // wrapped row. This is not a round-trip identity for wrap-boundary positions,
+        // but we only resolve across different buffer rows, so it's fine.
+        if remaining_x <= content_width || is_last_row_of_buffer {
+            let col = line.closest_index_for_x(remaining_x) as u32;
+            return DisplayPoint::new(row, col);
+        }
+
+        remaining_x -= content_width;
+        row = next_row;
+    }
 }
 
 /// Resolves the passed in anchors to [`MultiBufferDimension`]s `D`

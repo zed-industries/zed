@@ -28581,8 +28581,8 @@ async fn test_add_selection_skip_soft_wrap_option(cx: &mut TestAppContext) {
 
     // Set up text where selections are in the middle of a soft-wrapped line.
     // When adding selection below with `skip_soft_wrap` set to `true`, the new
-    // selection should be at the same buffer column, not the same pixel
-    // position.
+    // selection should land on the next buffer line, not the next wrapped
+    // display row.
     cx.set_state(indoc!(
         r#"1. Very long line to show «howˇ» a wrapped line would look
            2. Very long line to show how a wrapped line would look"#
@@ -28602,14 +28602,107 @@ async fn test_add_selection_skip_soft_wrap_option(cx: &mut TestAppContext) {
             cx,
         );
 
-        // Assert that there's now 2 selections, both selecting the same column
-        // range in the buffer row.
+        // Both lines have identical content, so visual pixel alignment
+        // produces the same buffer columns.
         let display_map = editor.display_map.update(cx, |map, cx| map.snapshot(cx));
         let selections = editor.selections.all::<Point>(&display_map);
         assert_eq!(selections.len(), 2);
         assert_eq!(selections[0].start.column, selections[1].start.column);
         assert_eq!(selections[0].end.column, selections[1].end.column);
     });
+}
+
+#[gpui::test]
+async fn test_add_selection_above_below_multibyte(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+
+    // 'á' is 2 bytes in UTF-8. Cursor after 3 'a's at pixel 3em should
+    // land at the same visual position after 3 'á's (byte 6), not at
+    // byte 3 which is in the middle of the second 'á'.
+    cx.set_state(indoc! {"
+        aaaˇaaa
+        áááááá
+    "});
+
+    cx.update_editor(|editor, window, cx| {
+        editor.add_selection_below(
+            &AddSelectionBelow {
+                skip_soft_wrap: true,
+            },
+            window,
+            cx,
+        );
+    });
+
+    cx.assert_editor_state(indoc! {"
+        aaaˇaaa
+        áááˇááá
+    "});
+
+    // Same alignment going upward.
+    cx.set_state(indoc! {"
+        aaaaaa
+        áááˇááá
+    "});
+
+    cx.update_editor(|editor, window, cx| {
+        editor.add_selection_above(
+            &AddSelectionAbove {
+                skip_soft_wrap: true,
+            },
+            window,
+            cx,
+        );
+    });
+
+    cx.assert_editor_state(indoc! {"
+        aaaˇaaa
+        áááˇááá
+    "});
+
+    // Selection range: selecting first 3 chars should select the visually
+    // equivalent range on the multibyte line.
+    cx.set_state(indoc! {"
+        «aaaˇ»aaa
+        áááááá
+    "});
+
+    cx.update_editor(|editor, window, cx| {
+        editor.add_selection_below(
+            &AddSelectionBelow {
+                skip_soft_wrap: true,
+            },
+            window,
+            cx,
+        );
+    });
+
+    cx.assert_editor_state(indoc! {"
+        «aaaˇ»aaa
+        «áááˇ»ááá
+    "});
+
+    // Selection range going upward.
+    cx.set_state(indoc! {"
+        aaaaaa
+        «áááˇ»ááá
+    "});
+
+    cx.update_editor(|editor, window, cx| {
+        editor.add_selection_above(
+            &AddSelectionAbove {
+                skip_soft_wrap: true,
+            },
+            window,
+            cx,
+        );
+    });
+
+    cx.assert_editor_state(indoc! {"
+        «aaaˇ»aaa
+        «áááˇ»ááá
+    "});
 }
 
 #[gpui::test]
