@@ -6,6 +6,9 @@ pub mod pending_op;
 use crate::{
     ProjectEnvironment, ProjectItem, ProjectPath,
     buffer_store::{BufferStore, BufferStoreEvent},
+    trusted_worktrees::{
+        PathTrust, TrustedWorktrees, TrustedWorktreesEvent, TrustedWorktreesStore,
+    },
     worktree_store::{WorktreeStore, WorktreeStoreEvent},
 };
 use anyhow::{Context as _, Result, anyhow, bail};
@@ -354,6 +357,7 @@ impl LocalRepositoryState {
         dot_git_abs_path: Arc<Path>,
         project_environment: WeakEntity<ProjectEnvironment>,
         fs: Arc<dyn Fs>,
+        is_trusted: bool,
         cx: &mut AsyncApp,
     ) -> anyhow::Result<Self> {
         let environment = project_environment
@@ -381,6 +385,7 @@ impl LocalRepositoryState {
                 }
             })
             .await?;
+        backend.set_trusted(is_trusted);
         Ok(LocalRepositoryState {
             backend,
             environment: Arc::new(environment),
@@ -495,10 +500,14 @@ impl GitStore {
         state: GitStoreState,
         cx: &mut Context<Self>,
     ) -> Self {
-        let _subscriptions = vec![
+        let mut _subscriptions = vec![
             cx.subscribe(&worktree_store, Self::on_worktree_store_event),
             cx.subscribe(&buffer_store, Self::on_buffer_store_event),
         ];
+
+        if let Some(trusted_worktrees) = TrustedWorktrees::try_get_global(cx) {
+            _subscriptions.push(cx.subscribe(&trusted_worktrees, Self::on_trusted_worktrees_event));
+        }
 
         GitStore {
             state,
@@ -1517,6 +1526,13 @@ impl GitStore {
                 let original_repo_abs_path: Arc<Path> =
                     git::repository::original_repo_path_from_common_dir(common_dir_abs_path).into();
                 let id = RepositoryId(next_repository_id.fetch_add(1, atomic::Ordering::Release));
+                let is_trusted = TrustedWorktrees::try_get_global(cx)
+                    .map(|trusted_worktrees| {
+                        trusted_worktrees.update(cx, |trusted_worktrees, cx| {
+                            trusted_worktrees.can_trust(&self.worktree_store, worktree_id, cx)
+                        })
+                    })
+                    .unwrap_or(false);
                 let git_store = cx.weak_entity();
                 let repo = cx.new(|cx| {
                     let mut repo = Repository::local(
@@ -1526,6 +1542,7 @@ impl GitStore {
                         dot_git_abs_path.clone(),
                         project_environment.downgrade(),
                         fs.clone(),
+                        is_trusted,
                         git_store,
                         cx,
                     );
@@ -1562,6 +1579,39 @@ impl GitStore {
                 updates_tx
                     .unbounded_send(DownstreamUpdate::RemoveRepository(id))
                     .ok();
+            }
+        }
+    }
+
+    fn on_trusted_worktrees_event(
+        &mut self,
+        _: Entity<TrustedWorktreesStore>,
+        event: &TrustedWorktreesEvent,
+        cx: &mut Context<Self>,
+    ) {
+        if !matches!(self.state, GitStoreState::Local { .. }) {
+            return;
+        }
+
+        let (is_trusted, event_paths) = match event {
+            TrustedWorktreesEvent::Trusted(_, trusted_paths) => (true, trusted_paths),
+            TrustedWorktreesEvent::Restricted(_, restricted_paths) => (false, restricted_paths),
+        };
+
+        for (repo_id, worktree_ids) in &self.worktree_ids {
+            if worktree_ids
+                .iter()
+                .any(|worktree_id| event_paths.contains(&PathTrust::Worktree(*worktree_id)))
+            {
+                if let Some(repo) = self.repositories.get(repo_id) {
+                    let repository_state = repo.read(cx).repository_state.clone();
+                    cx.background_spawn(async move {
+                        if let Ok(RepositoryState::Local(state)) = repository_state.await {
+                            state.backend.set_trusted(is_trusted);
+                        }
+                    })
+                    .detach();
+                }
             }
         }
     }
@@ -3763,6 +3813,13 @@ impl MergeDetails {
 }
 
 impl Repository {
+    pub fn is_trusted(&self) -> bool {
+        match self.repository_state.peek() {
+            Some(Ok(RepositoryState::Local(state))) => state.backend.is_trusted(),
+            _ => false,
+        }
+    }
+
     pub fn snapshot(&self) -> RepositorySnapshot {
         self.snapshot.clone()
     }
@@ -3788,6 +3845,7 @@ impl Repository {
         dot_git_abs_path: Arc<Path>,
         project_environment: WeakEntity<ProjectEnvironment>,
         fs: Arc<dyn Fs>,
+        is_trusted: bool,
         git_store: WeakEntity<GitStore>,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -3804,6 +3862,7 @@ impl Repository {
                     dot_git_abs_path,
                     project_environment,
                     fs,
+                    is_trusted,
                     cx,
                 )
                 .await

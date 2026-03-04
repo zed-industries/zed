@@ -204,6 +204,7 @@
   {
     "context": "Editor && editor_agent_diff",
     "bindings": {
+      "alt-y": "agent::Keep",
       "ctrl-alt-y": "agent::Keep",
       "ctrl-alt-z": "agent::Reject",
       "shift-alt-y": "agent::KeepAll",
@@ -214,6 +215,7 @@
   {
     "context": "AgentDiff",
     "bindings": {
+      "alt-y": "agent::Keep",
       "ctrl-alt-y": "agent::Keep",
       "ctrl-alt-z": "agent::Reject",
       "shift-alt-y": "agent::KeepAll",

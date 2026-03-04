@@ -98,7 +98,6 @@ pub struct WgpuRenderer {
     queue: Arc<wgpu::Queue>,
     surface: wgpu::Surface<'static>,
     surface_config: wgpu::SurfaceConfiguration,
-    surface_configured: bool,
     pipelines: WgpuPipelines,
     bind_group_layouts: WgpuBindGroupLayouts,
     atlas: Arc<WgpuAtlas>,
@@ -381,7 +380,6 @@ impl WgpuRenderer {
             queue,
             surface,
             surface_config,
-            surface_configured: true,
             pipelines,
             bind_group_layouts,
             atlas,
@@ -875,9 +873,7 @@ impl WgpuRenderer {
 
             self.surface_config.width = clamped_width.max(1);
             self.surface_config.height = clamped_height.max(1);
-            if self.surface_configured {
-                self.surface.configure(&self.device, &self.surface_config);
-            }
+            self.surface.configure(&self.device, &self.surface_config);
 
             // Invalidate intermediate textures - they will be lazily recreated
             // in draw() after we confirm the surface is healthy. This avoids
@@ -928,9 +924,7 @@ impl WgpuRenderer {
 
         if new_alpha_mode != self.surface_config.alpha_mode {
             self.surface_config.alpha_mode = new_alpha_mode;
-            if self.surface_configured {
-                self.surface.configure(&self.device, &self.surface_config);
-            }
+            self.surface.configure(&self.device, &self.surface_config);
             self.pipelines = Self::create_pipelines(
                 &self.device,
                 &self.bind_group_layouts,
@@ -991,7 +985,7 @@ impl WgpuRenderer {
         let frame = match self.surface.get_current_texture() {
             Ok(frame) => frame,
             Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {
-                self.surface_configured = false;
+                self.surface.configure(&self.device, &self.surface_config);
                 return;
             }
             Err(e) => {

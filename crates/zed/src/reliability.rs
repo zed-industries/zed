@@ -144,7 +144,7 @@ fn cleanup_old_hang_traces() {
                 entry
                     .path()
                     .extension()
-                    .is_some_and(|ext| ext == "miniprof")
+                    .is_some_and(|ext| ext == "json" || ext == "miniprof")
             })
             .collect();
 
@@ -175,7 +175,7 @@ fn save_hang_trace(
         .collect::<Vec<_>>();
 
     let trace_path = paths::hang_traces_dir().join(&format!(
-        "hang-{}.miniprof",
+        "hang-{}.miniprof.json",
         hang_time.format("%Y-%m-%d_%H-%M-%S")
     ));
 
@@ -193,7 +193,7 @@ fn save_hang_trace(
                 entry
                     .path()
                     .extension()
-                    .is_some_and(|ext| ext == "miniprof")
+                    .is_some_and(|ext| ext == "json" || ext == "miniprof")
             })
             .collect();
 
