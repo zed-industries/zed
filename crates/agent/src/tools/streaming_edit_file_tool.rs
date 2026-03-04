@@ -322,21 +322,29 @@ impl AgentTool for StreamingEditFileTool {
                                     ..
                                 } = &parsed
                             {
-                                    state = Some(
-                                        EditSession::new(
-                                            &PathBuf::from(path),
-                                            display_description,
-                                            *mode,
-                                            &self,
-                                            &event_stream,
-                                            cx,
-                                        )
-                                        .await?,
-                                    );
+                                match EditSession::new(
+                                    &PathBuf::from(path),
+                                    display_description,
+                                    *mode,
+                                    &self,
+                                    &event_stream,
+                                    cx,
+                                )
+                                .await
+                                {
+                                    Ok(session) => state = Some(session),
+                                    Err(e) => {
+                                        log::error!("Failed to create edit session: {}", e);
+                                        return Err(e);
+                                    }
+                                }
                             }
 
                             if let Some(state) = &mut state {
-                                state.process(parsed, &self, &event_stream, cx)?;
+                                if let Err(e) = state.process(parsed, &self, &event_stream, cx) {
+                                    log::error!("Failed to process edit: {}", e);
+                                    return Err(e);
+                                }
                             }
                         }
                     }
@@ -349,12 +357,16 @@ impl AgentTool for StreamingEditFileTool {
                 input
                     .recv()
                     .await
-                    .map_err(|e| StreamingEditFileToolOutput::error(format!("Failed to receive tool input: {e}")))?;
+                    .map_err(|e| {
+                        let err = StreamingEditFileToolOutput::error(format!("Failed to receive tool input: {e}"));
+                        log::error!("Failed to receive tool input: {e}");
+                        err
+                    })?;
 
             let mut state = if let Some(state) = state {
                 state
             } else {
-                EditSession::new(
+                match EditSession::new(
                     &full_input.path,
                     &full_input.display_description,
                     full_input.mode.clone(),
@@ -362,9 +374,22 @@ impl AgentTool for StreamingEditFileTool {
                     &event_stream,
                     cx,
                 )
-                .await?
+                .await
+                {
+                    Ok(session) => session,
+                    Err(e) => {
+                        log::error!("Failed to create edit session: {}", e);
+                        return Err(e);
+                    }
+                }
             };
-            state.finalize(full_input, &self, &event_stream, cx).await
+            match state.finalize(full_input, &self, &event_stream, cx).await {
+                Ok(output) => Ok(output),
+                Err(e) => {
+                    log::error!("Failed to finalize edit: {}", e);
+                    Err(e)
+                }
+            }
         })
     }
 
