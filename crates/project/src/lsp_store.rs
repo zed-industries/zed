@@ -1778,12 +1778,10 @@ impl LocalLspStore {
                                 }
                             })
                         }
-                        settings::LanguageServerFormatterSpecifier::Current => {
-                            adapters_and_servers
-                                .iter()
-                                .find(|(_, server)| Self::server_supports_formatting(server))
-                                .map(|(_, server)| server.clone())
-                        }
+                        settings::LanguageServerFormatterSpecifier::Current => adapters_and_servers
+                            .iter()
+                            .find(|(_, server)| Self::server_supports_formatting(server))
+                            .map(|(_, server)| server.clone()),
                     };
 
                     let Some(language_server) = language_server else {
