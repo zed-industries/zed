@@ -1273,13 +1273,9 @@ impl Vim {
                         selection.collapse_to(point, selection.goal)
                     } else if !last_mode.is_visual() && mode.is_visual() {
                         if selection.is_empty() {
-                            let selection_start = selection.start.to_point(map);
-                            let line_length = map
-                                .buffer_snapshot()
-                                .line_len(multi_buffer::MultiBufferRow(selection_start.row));
-
-                            if selection_start.column == line_length && line_length > 0 {
-                                selection.start = movement::left(map, selection.start);
+                            let clipped_start = map.clip_at_line_end(selection.start);
+                            if clipped_start != selection.start {
+                                selection.start = clipped_start;
                             } else {
                                 selection.end = movement::right(map, selection.start);
                             }
