@@ -275,8 +275,11 @@ fn build_inline_directory_menu(
             }
 
             let next_index = (segment_index + 1) % segment_count;
-            segment_handles_for_next[segment_index].hide(cx);
-            segment_handles_for_next[next_index].show(window, cx);
+            let handles = segment_handles_for_next.clone();
+            window.defer(cx, move |window, cx| {
+                handles[segment_index].hide(cx);
+                handles[next_index].show(window, cx);
+            });
             true
         })
         .select_previous_target_handler(move |_menu, window, cx| {
@@ -290,8 +293,11 @@ fn build_inline_directory_menu(
             } else {
                 segment_index - 1
             };
-            segment_handles_for_previous[segment_index].hide(cx);
-            segment_handles_for_previous[previous_index].show(window, cx);
+            let handles = segment_handles_for_previous.clone();
+            window.defer(cx, move |window, cx| {
+                handles[segment_index].hide(cx);
+                handles[previous_index].show(window, cx);
+            });
             true
         });
 
