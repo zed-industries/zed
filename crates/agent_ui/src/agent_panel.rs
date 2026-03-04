@@ -2041,10 +2041,9 @@ impl AgentPanel {
         }
     }
 
-    fn generate_agent_branch_name() -> String {
+    fn generate_agent_branch_name() -> Option<String> {
         let mut rng = rand::rng();
         crate::branch_names::generate_branch_name(&[], &mut rng)
-            .expect("should always succeed with no disallowed names")
     }
 
     /// Partitions the project's visible worktrees into git-backed repositories
@@ -2246,7 +2245,17 @@ impl AgentPanel {
         self.worktree_creation_status = Some(WorktreeCreationStatus::Creating);
         cx.notify();
 
-        let branch_name = Self::generate_agent_branch_name();
+        let branch_name = match Self::generate_agent_branch_name() {
+            Some(name) => name,
+            None => {
+                self.set_worktree_creation_error(
+                    "Failed to generate a branch name".into(),
+                    window,
+                    cx,
+                );
+                return;
+            }
+        };
 
         let (git_repos, non_git_paths) = self.classify_worktrees(cx);
 
