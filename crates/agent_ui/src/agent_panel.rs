@@ -2251,7 +2251,7 @@ impl AgentPanel {
             return;
         }
 
-        // Kick off branch fetches as early as possible so they can run
+        // Kick off branch listing as early as possible so it can run
         // concurrently with the remaining synchronous setup work.
         let branch_receivers: Vec<_> = git_repos
             .iter()
@@ -2279,7 +2279,7 @@ impl AgentPanel {
             .downcast::<workspace::MultiWorkspace>();
 
         let task = cx.spawn_in(window, async move |this, cx| {
-            // Await all the branch fetches we kicked off earlier.
+            // Await the branch listings we kicked off earlier.
             let mut existing_branches = Vec::new();
             for result in futures::future::join_all(branch_receivers).await {
                 if let Ok(Ok(branches)) = result {
