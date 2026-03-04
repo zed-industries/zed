@@ -1185,11 +1185,13 @@ fn wr_distance(
 
 fn micromamba_shell_name(kind: ShellKind) -> &'static str {
     match kind {
-        ShellKind::Csh => "csh",
+        ShellKind::Csh | ShellKind::Tcsh => "csh",
         ShellKind::Fish => "fish",
         ShellKind::Nushell => "nu",
-        ShellKind::PowerShell => "powershell",
+        ShellKind::PowerShell | ShellKind::Pwsh => "powershell",
         ShellKind::Cmd => "cmd.exe",
+        ShellKind::Xonsh => "xonsh",
+        ShellKind::Elvish => "elvish",
         // default / catch-all:
         _ => "posix",
     }
@@ -1385,7 +1387,7 @@ impl ToolchainLister for PythonToolchainProvider {
                         return vec![];
                     }
 
-                    let manager = match conda_manager {
+                    let manager_name = match conda_manager {
                         settings::CondaManager::Conda => "conda",
                         settings::CondaManager::Mamba => "mamba",
                         settings::CondaManager::Micromamba => "micromamba",
@@ -1398,27 +1400,107 @@ impl ToolchainLister for PythonToolchainProvider {
                             .filter(|name| matches!(*name, "conda" | "mamba" | "micromamba"))
                             .unwrap_or("conda"),
                     };
+                    let manager_path = manager_info.executable.to_string_lossy();
 
-                    // Activate micromamba shell in the child shell
-                    // [required for micromamba]
-                    if manager == "micromamba" {
-                        let shell = micromamba_shell_name(shell);
-                        activation_script
-                            .push(format!(r#"eval "$({manager} shell hook --shell {shell})""#));
+                    // Activate the manager in the child shell.
+                    // This is required for `conda activate` to work.
+                    match manager_name {
+                        "micromamba" => {
+                            let shell_arg = micromamba_shell_name(shell);
+                            match shell {
+                                ShellKind::Fish => {
+                                    activation_script.push(format!(
+                                        r#"eval ("{manager_path}" shell hook --shell {shell_arg})"#
+                                    ));
+                                }
+                                ShellKind::PowerShell | ShellKind::Pwsh => {
+                                    activation_script.push(format!(
+                                        r#"(& "{manager_path}" "shell" "hook" "--shell" "{shell_arg}") | Out-String | Invoke-Expression"#
+                                    ));
+                                }
+                                ShellKind::Csh | ShellKind::Tcsh => {
+                                    activation_script.push(format!(
+                                        r#"eval "`"{manager_path}" shell hook --shell {shell_arg}`""#
+                                    ));
+                                }
+                                ShellKind::Posix => {
+                                    activation_script.push(format!(
+                                        r#"eval "$("{manager_path}" shell hook --shell {shell_arg})""#
+                                    ));
+                                }
+                                ShellKind::Xonsh => {
+                                    activation_script.push(format!(
+                                        r#"exec($("{manager_path}" shell hook --shell {shell_arg}))"#
+                                    ));
+                                }
+                                _ => {}
+                            }
+                        }
+                        "conda" | "mamba" => {
+                            // `conda` and `mamba` use the same shell hook syntax:
+                            // `eval "$(/path/to/conda shell.<shell> hook)"`
+                            let shell_name = match shell {
+                                ShellKind::Posix => "bash",
+                                ShellKind::Csh => "csh",
+                                ShellKind::Tcsh => "tcsh",
+                                ShellKind::Fish => "fish",
+                                ShellKind::PowerShell => "powershell",
+                                ShellKind::Pwsh => "powershell",
+                                ShellKind::Xonsh => "xonsh",
+                                ShellKind::Cmd => "cmd.exe",
+                                ShellKind::Elvish => "elvish",
+                                ShellKind::Rc => "rc",
+                                ShellKind::Nushell => "nushell",
+                            };
+
+                            match shell {
+                                ShellKind::Fish => {
+                                    activation_script.push(format!(
+                                        r#"eval ("{manager_path}" shell.fish hook)"#
+                                    ));
+                                }
+                                ShellKind::PowerShell | ShellKind::Pwsh => {
+                                    activation_script.push(format!(r#"(& "{manager_path}" "shell.powershell" "hook") | Out-String | Invoke-Expression"#));
+                                }
+                                ShellKind::Csh | ShellKind::Tcsh => {
+                                    activation_script.push(format!(
+                                        r#"eval "`"{manager_path}" shell.{shell_name} hook`""#
+                                    ));
+                                }
+                                ShellKind::Posix => {
+                                    activation_script.push(format!(
+                                        r#"eval "$("{manager_path}" shell.{shell_name} hook)""#
+                                    ));
+                                }
+                                ShellKind::Xonsh => {
+                                    activation_script.push(format!(
+                                        r#"exec($("{manager_path}" shell.{shell_name} hook))"#
+                                    ));
+                                }
+                                // Unsupported shells
+                                // check: https://docs.conda.io/projects/conda/en/latest/commands/init.html#conda.cli.conda_argparse-generate_parser-positional-arguments                                ShellKind::Rc
+                                ShellKind::Rc
+                                | ShellKind::Nushell
+                                | ShellKind::Cmd
+                                | ShellKind::Elvish => {}
+                            };
+                        }
+                        _ => {}
                     }
 
                     if let Some(name) = &toolchain.environment.name {
                         if let Some(quoted_name) = shell.try_quote(name) {
-                            activation_script.push(format!("{manager} activate {quoted_name}"));
+                            activation_script
+                                .push(format!("{manager_name} activate {quoted_name}"));
                         } else {
                             log::warn!(
                                 "Could not safely quote environment name {:?}, falling back to base",
                                 name
                             );
-                            activation_script.push(format!("{manager} activate base"));
+                            activation_script.push(format!("{manager_name} activate base"));
                         }
                     } else {
-                        activation_script.push(format!("{manager} activate base"));
+                        activation_script.push(format!("{manager_name} activate base"));
                     }
                 }
                 Some(
@@ -2693,6 +2775,7 @@ mod tests {
         let malicious_name = "foo; rm -rf /";
 
         let manager_executable = std::env::current_exe().unwrap();
+        let manager_path = manager_executable.to_string_lossy().into_owned();
 
         let data = serde_json::json!({
             "name": malicious_name,
@@ -2718,16 +2801,123 @@ mod tests {
             as_json: data,
         };
 
-        let script = cx
+        let posix_script = cx
             .update(|cx| provider.activation_script(&toolchain, ShellKind::Posix, cx))
             .await;
 
         assert!(
-            script
+            posix_script
                 .iter()
-                .any(|s| s.contains("conda activate 'foo; rm -rf /'")),
-            "Script should contain quoted malicious name, actual: {:?}",
-            script
+                .any(|line| line == &format!(r#"eval "$("{manager_path}" shell.bash hook)""#)),
+            "Posix script should contain conda hook evaluation with resolved manager, actual: {:?}",
+            posix_script
+        );
+        assert!(
+            posix_script
+                .iter()
+                .any(|line| line.contains("conda activate 'foo; rm -rf /'")),
+            "Posix script should contain quoted malicious name, actual: {:?}",
+            posix_script
+        );
+
+        let powershell_script = cx
+            .update(|cx| provider.activation_script(&toolchain, ShellKind::PowerShell, cx))
+            .await;
+
+        assert!(
+            powershell_script.iter().any(|line| {
+                line
+                    == &format!(
+                        r#"(& "{manager_path}" "shell.powershell" "hook") | Out-String | Invoke-Expression"#
+                    )
+            }),
+            "PowerShell script should contain conda hook evaluation with resolved manager, actual: {:?}",
+            powershell_script
+        );
+        assert!(
+            powershell_script
+                .iter()
+                .any(|line| line.contains(r#"conda activate "foo; rm -rf /""#)),
+            "PowerShell script should contain quoted malicious name, actual: {:?}",
+            powershell_script
+        );
+    }
+
+    #[gpui::test]
+    async fn test_conda_activation_uses_same_resolved_manager_for_hook_and_activate(
+        cx: &mut TestAppContext,
+    ) {
+        use language::{LanguageName, Toolchain, ToolchainLister};
+        use settings::{CondaManager, VenvSettings};
+        use task::ShellKind;
+
+        use crate::python::PythonToolchainProvider;
+
+        cx.executor().allow_parking();
+
+        cx.update(|cx| {
+            let test_settings = SettingsStore::test(cx);
+            cx.set_global(test_settings);
+            cx.update_global::<SettingsStore, _>(|store, cx| {
+                store.update_user_settings(cx, |s| {
+                    s.terminal
+                        .get_or_insert_with(Default::default)
+                        .project
+                        .detect_venv = Some(VenvSettings::On {
+                        activate_script: None,
+                        venv_name: None,
+                        directories: None,
+                        conda_manager: Some(CondaManager::Conda),
+                    });
+                });
+            });
+        });
+
+        let provider = PythonToolchainProvider;
+
+        let manager_executable = std::env::current_exe().unwrap();
+        let manager_path = manager_executable.to_string_lossy().into_owned();
+
+        let data = serde_json::json!({
+            "name": "same-manager-check",
+            "kind": "Conda",
+            "executable": "/tmp/conda/bin/python",
+            "version": serde_json::Value::Null,
+            "prefix": serde_json::Value::Null,
+            "arch": serde_json::Value::Null,
+            "displayName": serde_json::Value::Null,
+            "project": serde_json::Value::Null,
+            "symlinks": serde_json::Value::Null,
+            "manager": {
+                "executable": manager_executable,
+                "version": serde_json::Value::Null,
+                "tool": "Conda",
+            },
+        });
+
+        let toolchain = Toolchain {
+            name: "test".into(),
+            path: "/tmp/conda".into(),
+            language_name: LanguageName::new_static("Python"),
+            as_json: data,
+        };
+
+        let posix_script = cx
+            .update(|cx| provider.activation_script(&toolchain, ShellKind::Posix, cx))
+            .await;
+
+        let hook_line = format!(r#"eval "$("{manager_path}" shell.bash hook)""#);
+        let activate_line = "conda activate same-manager-check".to_string();
+
+        assert!(
+            posix_script.iter().any(|line| line == &hook_line),
+            "Posix script should contain hook line for resolved manager, actual: {:?}",
+            posix_script
+        );
+        assert!(
+            posix_script.iter().any(|line| line == &activate_line),
+            "Posix script should contain activate line for same manager name, actual: {:?}",
+            posix_script
         );
     }
 
