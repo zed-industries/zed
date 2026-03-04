@@ -483,7 +483,12 @@ impl EditSession {
             .await
             .map_err(|e| StreamingEditFileToolOutput::error(e.to_string()))?;
 
-        ensure_buffer_saved(&buffer, &abs_path, tool, cx)?;
+        let action_log = tool
+            .thread
+            .read_with(cx, |thread, _cx| thread.action_log().clone())
+            .ok();
+
+        ensure_buffer_saved(&buffer, &abs_path, tool, action_log.as_ref(), cx)?;
 
         let diff = cx.new(|cx| Diff::new(buffer.clone(), cx));
         event_stream.update_diff(diff.clone());
@@ -495,13 +500,9 @@ impl EditSession {
             }
         }) as Box<dyn FnOnce()>);
 
-        tool.thread
-            .update(cx, |thread, cx| {
-                thread
-                    .action_log()
-                    .update(cx, |log, cx| log.buffer_read(buffer.clone(), cx))
-            })
-            .ok();
+        if let Some(action_log) = &action_log {
+            action_log.update(cx, |log, cx| log.buffer_read(buffer.clone(), cx));
+        }
 
         let old_snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot());
         let old_text = cx
@@ -636,18 +637,6 @@ impl EditSession {
         action_log.update(cx, |log, cx| {
             log.buffer_edited(buffer.clone(), cx);
         });
-
-        if let Some(new_mtime) = buffer.read_with(cx, |buffer, _| {
-            buffer.file().and_then(|file| file.disk_state().mtime())
-        }) {
-            tool.thread
-                .update(cx, |thread, _| {
-                    thread
-                        .file_read_times
-                        .insert(abs_path.to_path_buf(), new_mtime);
-                })
-                .map_err(|e| StreamingEditFileToolOutput::error(e.to_string()))?;
-        }
 
         let new_snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot());
         let (new_text, unified_diff) = cx
@@ -1018,10 +1007,12 @@ fn ensure_buffer_saved(
     buffer: &Entity<Buffer>,
     abs_path: &PathBuf,
     tool: &StreamingEditFileTool,
+    action_log: Option<&Entity<ActionLog>>,
     cx: &mut AsyncApp,
 ) -> Result<(), StreamingEditFileToolOutput> {
-    let check_result = tool.thread.update(cx, |thread, cx| {
-        let last_read = thread.file_read_times.get(abs_path).copied();
+    let last_read_mtime =
+        action_log.and_then(|log| log.read_with(cx, |log, _| log.file_read_time(abs_path)));
+    let check_result = tool.thread.read_with(cx, |thread, cx| {
         let current = buffer
             .read(cx)
             .file()
@@ -1029,12 +1020,10 @@ fn ensure_buffer_saved(
         let dirty = buffer.read(cx).is_dirty();
         let has_save = thread.has_tool(SaveFileTool::NAME);
         let has_restore = thread.has_tool(RestoreFileFromDiskTool::NAME);
-        (last_read, current, dirty, has_save, has_restore)
+        (current, dirty, has_save, has_restore)
     });
 
-    let Ok((last_read_mtime, current_mtime, is_dirty, has_save_tool, has_restore_tool)) =
-        check_result
-    else {
+    let Ok((current_mtime, is_dirty, has_save_tool, has_restore_tool)) = check_result else {
         return Ok(());
     };
 
@@ -4006,11 +3995,7 @@ mod tests {
         let languages = project.read_with(cx, |project, _| project.languages().clone());
         let action_log = thread.read_with(cx, |thread, _| thread.action_log().clone());
 
-        let read_tool = Arc::new(crate::ReadFileTool::new(
-            thread.downgrade(),
-            project.clone(),
-            action_log,
-        ));
+        let read_tool = Arc::new(crate::ReadFileTool::new(project.clone(), action_log, true));
         let edit_tool = Arc::new(StreamingEditFileTool::new(
             project.clone(),
             thread.downgrade(),
@@ -4112,11 +4097,7 @@ mod tests {
         let languages = project.read_with(cx, |project, _| project.languages().clone());
         let action_log = thread.read_with(cx, |thread, _| thread.action_log().clone());
 
-        let read_tool = Arc::new(crate::ReadFileTool::new(
-            thread.downgrade(),
-            project.clone(),
-            action_log,
-        ));
+        let read_tool = Arc::new(crate::ReadFileTool::new(project.clone(), action_log, true));
         let edit_tool = Arc::new(StreamingEditFileTool::new(
             project.clone(),
             thread.downgrade(),
@@ -4225,11 +4206,7 @@ mod tests {
         let languages = project.read_with(cx, |project, _| project.languages().clone());
         let action_log = thread.read_with(cx, |thread, _| thread.action_log().clone());
 
-        let read_tool = Arc::new(crate::ReadFileTool::new(
-            thread.downgrade(),
-            project.clone(),
-            action_log,
-        ));
+        let read_tool = Arc::new(crate::ReadFileTool::new(project.clone(), action_log, true));
         let edit_tool = Arc::new(StreamingEditFileTool::new(
             project.clone(),
             thread.downgrade(),

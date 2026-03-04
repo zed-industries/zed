@@ -305,13 +305,13 @@ impl AgentTool for EditFileTool {
 
                 // Check if the file has been modified since the agent last read it
                 if let Some(abs_path) = abs_path.as_ref() {
-                    let (last_read_mtime, current_mtime, is_dirty, has_save_tool, has_restore_tool) = self.thread.update(cx, |thread, cx| {
-                        let last_read = thread.file_read_times.get(abs_path).copied();
+                    let last_read_mtime = action_log.read_with(cx, |log, _| log.file_read_time(abs_path));
+                    let (current_mtime, is_dirty, has_save_tool, has_restore_tool) = self.thread.read_with(cx, |thread, cx| {
                         let current = buffer.read(cx).file().and_then(|file| file.disk_state().mtime());
                         let dirty = buffer.read(cx).is_dirty();
                         let has_save = thread.has_tool(SaveFileTool::NAME);
                         let has_restore = thread.has_tool(RestoreFileFromDiskTool::NAME);
-                        (last_read, current, dirty, has_save, has_restore)
+                        (current, dirty, has_save, has_restore)
                     })?;
 
                     // Check for unsaved changes first - these indicate modifications we don't know about
@@ -469,17 +469,6 @@ impl AgentTool for EditFileTool {
                 action_log.update(cx, |log, cx| {
                     log.buffer_edited(buffer.clone(), cx);
                 });
-
-                // Update the recorded read time after a successful edit so consecutive edits work
-                if let Some(abs_path) = abs_path.as_ref() {
-                    if let Some(new_mtime) = buffer.read_with(cx, |buffer, _| {
-                        buffer.file().and_then(|file| file.disk_state().mtime())
-                    }) {
-                        self.thread.update(cx, |thread, _| {
-                            thread.file_read_times.insert(abs_path.to_path_buf(), new_mtime);
-                        })?;
-                    }
-                }
 
                 let new_snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot());
                 let (new_text, unified_diff) = cx
@@ -2212,14 +2201,18 @@ mod tests {
         let action_log = thread.read_with(cx, |thread, _| thread.action_log().clone());
 
         // Initially, file_read_times should be empty
-        let is_empty = thread.read_with(cx, |thread, _| thread.file_read_times.is_empty());
+        let is_empty = action_log.read_with(cx, |action_log, _| {
+            action_log
+                .file_read_time(path!("/root/test.txt").as_ref())
+                .is_none()
+        });
         assert!(is_empty, "file_read_times should start empty");
 
         // Create read tool
         let read_tool = Arc::new(crate::ReadFileTool::new(
-            thread.downgrade(),
             project.clone(),
-            action_log,
+            action_log.clone(),
+            true,
         ));
 
         // Read the file to record the read time
@@ -2238,12 +2231,9 @@ mod tests {
         .unwrap();
 
         // Verify that file_read_times now contains an entry for the file
-        let has_entry = thread.read_with(cx, |thread, _| {
-            thread.file_read_times.len() == 1
-                && thread
-                    .file_read_times
-                    .keys()
-                    .any(|path| path.ends_with("test.txt"))
+        let has_entry = action_log.read_with(cx, |log, _| {
+            log.file_read_time(path!("/root/test.txt").as_ref())
+                .is_some()
         });
         assert!(
             has_entry,
@@ -2265,11 +2255,14 @@ mod tests {
         .await
         .unwrap();
 
-        // Should still have exactly one entry
-        let has_one_entry = thread.read_with(cx, |thread, _| thread.file_read_times.len() == 1);
+        // Should still have an entry after re-reading
+        let has_entry = action_log.read_with(cx, |log, _| {
+            log.file_read_time(path!("/root/test.txt").as_ref())
+                .is_some()
+        });
         assert!(
-            has_one_entry,
-            "file_read_times should still have one entry after re-reading"
+            has_entry,
+            "file_read_times should still have an entry after re-reading"
         );
     }
 
@@ -2309,11 +2302,7 @@ mod tests {
         let languages = project.read_with(cx, |project, _| project.languages().clone());
         let action_log = thread.read_with(cx, |thread, _| thread.action_log().clone());
 
-        let read_tool = Arc::new(crate::ReadFileTool::new(
-            thread.downgrade(),
-            project.clone(),
-            action_log,
-        ));
+        let read_tool = Arc::new(crate::ReadFileTool::new(project.clone(), action_log, true));
         let edit_tool = Arc::new(EditFileTool::new(
             project.clone(),
             thread.downgrade(),
@@ -2423,11 +2412,7 @@ mod tests {
         let languages = project.read_with(cx, |project, _| project.languages().clone());
         let action_log = thread.read_with(cx, |thread, _| thread.action_log().clone());
 
-        let read_tool = Arc::new(crate::ReadFileTool::new(
-            thread.downgrade(),
-            project.clone(),
-            action_log,
-        ));
+        let read_tool = Arc::new(crate::ReadFileTool::new(project.clone(), action_log, true));
         let edit_tool = Arc::new(EditFileTool::new(
             project.clone(),
             thread.downgrade(),
@@ -2534,11 +2519,7 @@ mod tests {
         let languages = project.read_with(cx, |project, _| project.languages().clone());
         let action_log = thread.read_with(cx, |thread, _| thread.action_log().clone());
 
-        let read_tool = Arc::new(crate::ReadFileTool::new(
-            thread.downgrade(),
-            project.clone(),
-            action_log,
-        ));
+        let read_tool = Arc::new(crate::ReadFileTool::new(project.clone(), action_log, true));
         let edit_tool = Arc::new(EditFileTool::new(
             project.clone(),
             thread.downgrade(),
