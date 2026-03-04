@@ -6691,6 +6691,30 @@ impl Render for ProjectPanel {
                                 .id("project-panel-blank-area")
                                 .block_mouse_except_scroll()
                                 .flex_grow()
+                                .on_scroll_wheel({
+                                    let scroll_handle = self.scroll_handle.clone();
+                                    let entity_id = cx.entity().entity_id();
+                                    move |event, window, cx| {
+                                        let state = scroll_handle.0.borrow();
+                                        let base_handle = &state.base_handle;
+                                        let old_offset = base_handle.offset();
+                                        let max_offset = base_handle.max_offset();
+                                        let line_height = window.line_height();
+                                        let delta = event.delta.pixel_delta(line_height);
+
+                                        let new_offset = point(
+                                            (old_offset.x + delta.x)
+                                                .clamp(-max_offset.width, px(0.)),
+                                            (old_offset.y + delta.y)
+                                                .clamp(-max_offset.height, px(0.)),
+                                        );
+
+                                        if new_offset != old_offset {
+                                            base_handle.set_offset(new_offset);
+                                            cx.notify(entity_id);
+                                        }
+                                    }
+                                })
                                 .when(
                                     self.drag_target_entry.as_ref().is_some_and(
                                         |entry| match entry {
