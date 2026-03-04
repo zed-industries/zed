@@ -134,7 +134,7 @@ fn build_extension_to_language_map() -> HashMap<String, String> {
     };
 
     for entry in entries.flatten() {
-        let config_path = entry.path().join(LanguageConfig::FILE_NAME);
+        let config_path = entry.path().join("config.toml");
         if !config_path.exists() {
             continue;
         }
