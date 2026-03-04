@@ -1,11 +1,11 @@
 use crate::{
     BuildCommitPermalinkParams, GitHostingProviderRegistry, GitRemote, Oid, parse_git_remote_url,
-    repository::GitBinary, status::StatusCode,
+    status::StatusCode,
 };
 use anyhow::{Context as _, Result};
 use collections::HashMap;
 use gpui::SharedString;
-use std::sync::Arc;
+use std::{path::Path, sync::Arc};
 
 #[derive(Clone, Debug, Default)]
 pub struct ParsedCommitMessage {
@@ -48,7 +48,7 @@ impl ParsedCommitMessage {
     }
 }
 
-pub(crate) async fn get_messages(git: &GitBinary, shas: &[Oid]) -> Result<HashMap<Oid, String>> {
+pub async fn get_messages(working_directory: &Path, shas: &[Oid]) -> Result<HashMap<Oid, String>> {
     if shas.is_empty() {
         return Ok(HashMap::default());
     }
@@ -63,12 +63,12 @@ pub(crate) async fn get_messages(git: &GitBinary, shas: &[Oid]) -> Result<HashMa
 
         let mut result = vec![];
         for shas in shas.chunks(MAX_ENTRIES_PER_INVOCATION) {
-            let partial = get_messages_impl(git, shas).await?;
+            let partial = get_messages_impl(working_directory, shas).await?;
             result.extend(partial);
         }
         result
     } else {
-        get_messages_impl(git, shas).await?
+        get_messages_impl(working_directory, shas).await?
     };
 
     Ok(shas
@@ -78,10 +78,11 @@ pub(crate) async fn get_messages(git: &GitBinary, shas: &[Oid]) -> Result<HashMa
         .collect::<HashMap<Oid, String>>())
 }
 
-async fn get_messages_impl(git: &GitBinary, shas: &[Oid]) -> Result<Vec<String>> {
+async fn get_messages_impl(working_directory: &Path, shas: &[Oid]) -> Result<Vec<String>> {
     const MARKER: &str = "<MARKER>";
-    let output = git
-        .build_command(["show"])
+    let output = util::command::new_command("git")
+        .current_dir(working_directory)
+        .arg("show")
         .arg("-s")
         .arg(format!("--format=%B{}", MARKER))
         .args(shas.iter().map(ToString::to_string))
