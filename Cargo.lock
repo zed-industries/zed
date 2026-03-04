@@ -10025,6 +10025,7 @@ dependencies = [
  "ctor",
  "futures 0.3.31",
  "gpui",
+ "gpui_util",
  "log",
  "lsp-types",
  "parking_lot",

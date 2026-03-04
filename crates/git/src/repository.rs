@@ -924,8 +924,8 @@ pub trait GitRepository: Send + Sync {
 
     fn diff_stat(
         &self,
-        diff: DiffType,
-    ) -> BoxFuture<'_, Result<HashMap<RepoPath, crate::status::DiffStat>>>;
+        path_prefixes: &[RepoPath],
+    ) -> BoxFuture<'_, Result<crate::status::GitDiffStat>>;
 
     /// Creates a checkpoint for the repository.
     fn checkpoint(&self) -> BoxFuture<'static, Result<GitRepositoryCheckpoint>>;
@@ -1997,42 +1997,30 @@ impl GitRepository for RealGitRepository {
 
     fn diff_stat(
         &self,
-        diff: DiffType,
-    ) -> BoxFuture<'_, Result<HashMap<RepoPath, crate::status::DiffStat>>> {
+        path_prefixes: &[RepoPath],
+    ) -> BoxFuture<'_, Result<crate::status::GitDiffStat>> {
+        let path_prefixes = path_prefixes.to_vec();
         let git_binary = self.git_binary();
+
         self.executor
             .spawn(async move {
-                let git = git_binary?;
-                let output = match diff {
-                    DiffType::HeadToIndex => {
-                        git.build_command(["diff", "--numstat", "--staged"])
-                            .output()
-                            .await?
-                    }
-                    DiffType::HeadToWorktree => {
-                        git.build_command(["diff", "--numstat"]).output().await?
-                    }
-                    DiffType::MergeBase { base_ref } => {
-                        git.build_command([
-                            "diff",
-                            "--numstat",
-                            "--merge-base",
-                            base_ref.as_ref(),
-                            "HEAD",
-                        ])
-                        .output()
-                        .await?
-                    }
-                };
-
-                anyhow::ensure!(
-                    output.status.success(),
-                    "Failed to run git diff --numstat:\n{}",
-                    String::from_utf8_lossy(&output.stderr)
-                );
-                Ok(crate::status::parse_numstat(&String::from_utf8_lossy(
-                    &output.stdout,
-                )))
+                let git_binary = git_binary?;
+                let mut args: Vec<String> = vec![
+                    "diff".into(),
+                    "--numstat".into(),
+                    "--no-renames".into(),
+                    "HEAD".into(),
+                ];
+                if !path_prefixes.is_empty() {
+                    args.push("--".into());
+                    args.extend(
+                        path_prefixes
+                            .iter()
+                            .map(|p| p.as_std_path().to_string_lossy().into_owned()),
+                    );
+                }
+                let output = git_binary.run(&args).await?;
+                Ok(crate::status::parse_numstat(&output))
             })
             .boxed()
     }
@@ -2942,11 +2930,6 @@ fn git_status_args(path_prefixes: &[RepoPath]) -> Vec<OsString> {
         OsString::from("--no-renames"),
         OsString::from("-z"),
     ];
-    args.extend(
-        path_prefixes
-            .iter()
-            .map(|path_prefix| path_prefix.as_std_path().into()),
-    );
     args.extend(path_prefixes.iter().map(|path_prefix| {
         if path_prefix.is_empty() {
             Path::new(".").into()
