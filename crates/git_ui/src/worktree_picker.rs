@@ -24,7 +24,14 @@ use workspace::{ModalView, MultiWorkspace, Workspace, notifications::DetachAndPr
 
 use crate::git_panel::show_error_toast;
 
-actions!(git, [WorktreeFromDefault, WorktreeFromDefaultOnWindow, DeleteWorktree]);
+actions!(
+    git,
+    [
+        WorktreeFromDefault,
+        WorktreeFromDefaultOnWindow,
+        DeleteWorktree
+    ]
+);
 
 pub fn open(
     workspace: &mut Workspace,
