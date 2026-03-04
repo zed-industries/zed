@@ -22,7 +22,7 @@ You don't need all of these, but the more you have, the more confidence we and t
 Now that you know *why* this should exist, describe *what* it is. Write a short, concrete feature statement:
 
 > **Feature:** Inline Git Blame
-> **Purpose:** Show the last commit author and message for each line directly in the editor gutter, so developers can understand code history without leaving their editing context.
+> **Purpose:** Show the last commit author and message for each line directly after the editor text, so developers can understand the code history without opening the git blame.
 
 Keep this tight. If you can't describe the feature in a few sentences, it might be too big or too vague.
 
