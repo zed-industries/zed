@@ -18,7 +18,7 @@ use theme::{ActiveTheme, ThemeSettings};
 use ui::utils::TRAFFIC_LIGHT_PADDING;
 use ui::{
     AgentThreadStatus, IconButtonShape, KeyBinding, PopoverMenu, Tab, ThreadItem, Tooltip,
-    prelude::*,
+    WithScrollbar, prelude::*,
 };
 use util::path_list::PathList;
 use workspace::{
@@ -590,7 +590,10 @@ impl Sidebar {
         let is_focused = self.focus_handle.is_focused(window);
         let is_selected = is_focused && self.selection == Some(ix);
 
-        match entry {
+        let is_group_header_after_first =
+            ix > 0 && matches!(entry, ListEntry::ProjectHeader { .. });
+
+        let rendered = match entry {
             ListEntry::ProjectHeader { path_list, label } => {
                 self.render_project_header(ix, path_list, label, is_selected, cx)
             }
@@ -615,6 +618,17 @@ impl Sidebar {
                 path_list,
                 remaining_count,
             } => self.render_view_more(ix, path_list, *remaining_count, is_selected, cx),
+        };
+
+        if is_group_header_after_first {
+            v_flex()
+                .w_full()
+                .border_t_1()
+                .border_color(cx.theme().colors().border_variant)
+                .child(rendered)
+                .into_any_element()
+        } else {
+            rendered
         }
     }
 
@@ -626,6 +640,9 @@ impl Sidebar {
         is_selected: bool,
         cx: &mut Context<Self>,
     ) -> AnyElement {
+        let id = SharedString::from(format!("project-header-{}", ix));
+        let group = SharedString::from(format!("group-{}", ix));
+
         let is_collapsed = self.collapsed_groups.contains(path_list);
         let disclosure_icon = if is_collapsed {
             IconName::ChevronRight
@@ -634,29 +651,27 @@ impl Sidebar {
         };
         let path_list = path_list.clone();
 
-        h_flex()
-            .id(SharedString::from(format!("project-header-{}", ix)))
-            .w_full()
-            .px_2()
-            .py_1()
-            .gap_1()
-            .hover(|style| style.bg(cx.theme().colors().ghost_element_hover))
-            .active(|style| style.bg(cx.theme().colors().ghost_element_active))
-            .when(is_selected, |this| {
-                this.bg(cx.theme().colors().ghost_element_selected)
-            })
-            .rounded_md()
+        ListItem::new(id)
+            .group_name(&group)
+            .toggle_state(is_selected)
             .child(
-                Icon::new(disclosure_icon)
-                    .size(IconSize::Small)
-                    .color(Color::Muted),
+                h_flex()
+                    .px_1()
+                    .py_1p5()
+                    .gap_0p5()
+                    .child(
+                        Label::new(label.clone())
+                            .size(LabelSize::Small)
+                            .color(Color::Muted),
+                    )
+                    .child(
+                        div().visible_on_hover(group).child(
+                            Icon::new(disclosure_icon)
+                                .size(IconSize::Small)
+                                .color(Color::Muted),
+                        ),
+                    ),
             )
-            .child(
-                Label::new(label.clone())
-                    .size(LabelSize::Small)
-                    .color(Color::Muted),
-            )
-            .cursor_pointer()
             .on_click(cx.listener(move |this, _, window, cx| {
                 this.selection = None;
                 this.toggle_collapse(&path_list, window, cx);
@@ -928,23 +943,27 @@ impl Sidebar {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let path_list = path_list.clone();
+        let id = SharedString::from(format!("view-more-{}", ix));
 
-        h_flex()
-            .id(SharedString::from(format!("view-more-{}", ix)))
-            .w_full()
-            .px_2()
-            .py_1()
-            .hover(|style| style.bg(cx.theme().colors().ghost_element_hover))
-            .active(|style| style.bg(cx.theme().colors().ghost_element_active))
-            .when(is_selected, |this| {
-                this.bg(cx.theme().colors().ghost_element_selected)
-            })
-            .rounded_md()
-            .cursor_pointer()
+        let label = format!("View More ({})", remaining_count);
+
+        ListItem::new(id)
+            .toggle_state(is_selected)
             .child(
-                Label::new(format!("+ View More ({})", remaining_count))
-                    .size(LabelSize::Small)
-                    .color(Color::Accent),
+                h_flex()
+                    .px_1()
+                    .py_1p5()
+                    .gap_0p5()
+                    .child(
+                        Icon::new(IconName::Plus)
+                            .size(IconSize::Small)
+                            .color(Color::Muted),
+                    )
+                    .child(
+                        Label::new(label.clone())
+                            .size(LabelSize::Small)
+                            .color(Color::Muted),
+                    ),
             )
             .on_click(cx.listener(move |this, _, window, cx| {
                 this.selection = None;
@@ -1122,15 +1141,18 @@ impl Render for Sidebar {
                     }),
             )
             .child(
-                v_flex().flex_1().overflow_hidden().child(
-                    list(
-                        self.list_state.clone(),
-                        cx.processor(Self::render_list_entry),
-                    )
-                    // .debug_bg_cyan()
+                v_flex()
                     .flex_1()
-                    .size_full(),
-                ),
+                    .overflow_hidden()
+                    .child(
+                        list(
+                            self.list_state.clone(),
+                            cx.processor(Self::render_list_entry),
+                        )
+                        .flex_1()
+                        .size_full(),
+                    )
+                    .vertical_scrollbar_for(&self.list_state, window, cx),
             )
     }
 }
