@@ -6768,6 +6768,31 @@ impl ThreadView {
                     .read(cx)
                     .pending_tool_call(thread.read(cx).session_id(), cx);
 
+                let session_id = thread.read(cx).session_id().clone();
+
+                let fullscreen_toggle = h_flex()
+                    .id(entry_ix)
+                    .py_1()
+                    .w_full()
+                    .justify_center()
+                    .border_t_1()
+                    .when(is_failed, |this| this.border_dashed())
+                    .border_color(self.tool_card_border_color(cx))
+                    .hover(|s| s.bg(cx.theme().colors().element_hover))
+                    .child(
+                        Icon::new(IconName::Maximize)
+                            .color(Color::Muted)
+                            .size(IconSize::Small),
+                    )
+                    .tooltip(Tooltip::text("Make Subagent Full Screen"))
+                    .on_click(cx.listener(move |this, _event, window, cx| {
+                        this.server_view
+                            .update(cx, |this, cx| {
+                                this.navigate_to_session(session_id.clone(), window, cx);
+                            })
+                            .ok();
+                    }));
+
                 if is_running && let Some((_, subagent_tool_call_id, _)) = pending_tool_call {
                     if let Some((entry_ix, tool_call)) =
                         thread.read(cx).tool_call(&subagent_tool_call_id)
@@ -6782,11 +6807,11 @@ impl ThreadView {
                                 window,
                                 cx,
                             ))
+                            .child(fullscreen_toggle)
                     } else {
                         this
                     }
                 } else {
-                    let session_id = thread.read(cx).session_id().clone();
                     this.when(is_expanded, |this| {
                         this.child(self.render_subagent_expanded_content(
                             thread_view,
@@ -6803,34 +6828,7 @@ impl ThreadView {
                                     .title(message),
                             )
                         })
-                        .child(
-                            h_flex()
-                                .id(entry_ix)
-                                .py_1()
-                                .w_full()
-                                .justify_center()
-                                .border_t_1()
-                                .when(is_failed, |this| this.border_dashed())
-                                .border_color(self.tool_card_border_color(cx))
-                                .hover(|s| s.bg(cx.theme().colors().element_hover))
-                                .child(
-                                    Icon::new(IconName::Maximize)
-                                        .color(Color::Muted)
-                                        .size(IconSize::Small),
-                                )
-                                .tooltip(Tooltip::text("Make Subagent Full Screen"))
-                                .on_click(cx.listener(move |this, _event, window, cx| {
-                                    this.server_view
-                                        .update(cx, |this, cx| {
-                                            this.navigate_to_session(
-                                                session_id.clone(),
-                                                window,
-                                                cx,
-                                            );
-                                        })
-                                        .ok();
-                                })),
-                        )
+                        .child(fullscreen_toggle)
                     })
                 }
             })
