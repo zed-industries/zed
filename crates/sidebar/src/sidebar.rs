@@ -590,11 +590,8 @@ impl Sidebar {
         let is_focused = self.focus_handle.is_focused(window);
         let is_selected = is_focused && self.selection == Some(ix);
 
-        let is_last_in_group = self
-            .contents
-            .entries
-            .get(ix + 1)
-            .is_some_and(|next| matches!(next, ListEntry::ProjectHeader { .. }));
+        let is_group_header_after_first =
+            ix > 0 && matches!(entry, ListEntry::ProjectHeader { .. });
 
         let rendered = match entry {
             ListEntry::ProjectHeader { path_list, label } => {
@@ -623,8 +620,13 @@ impl Sidebar {
             } => self.render_view_more(ix, path_list, *remaining_count, is_selected, cx),
         };
 
-        if is_last_in_group {
-            Divider::horizontal().into_any_element()
+        if is_group_header_after_first {
+            v_flex()
+                .w_full()
+                .border_t_1()
+                .border_color(cx.theme().colors().border_variant)
+                .child(rendered)
+                .into_any_element()
         } else {
             rendered
         }
