@@ -126,8 +126,6 @@ pub struct Request {
     pub response_format: Option<ResponseFormat>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tools: Vec<ToolDefinition>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub parallel_tool_calls: Option<bool>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

@@ -385,7 +385,6 @@ pub fn into_deepseek(
         }
     }
 
-    let has_tools = !request.tools.is_empty();
     deepseek::Request {
         model: model.id().to_string(),
         messages,
@@ -408,7 +407,6 @@ pub fn into_deepseek(
                 },
             })
             .collect(),
-        parallel_tool_calls: if has_tools { Some(false) } else { None },
     }
 }
 
