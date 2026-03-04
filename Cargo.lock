@@ -9141,9 +9141,9 @@ dependencies = [
 
 [[package]]
 name = "jupyter-protocol"
-version = "1.2.1"
+version = "1.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8c75a69caf8b8e781224badfb76c4a8da4d49856de36ce72ae3cf5d4a1c94e42"
+checksum = "4649647741f9794a7a02e3be976f1b248ba28a37dbfc626d5089316fd4fbf4c8"
 dependencies = [
  "async-trait",
  "bytes 1.11.1",
@@ -10785,9 +10785,9 @@ dependencies = [
 
 [[package]]
 name = "nbformat"
-version = "1.1.0"
+version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b10a89a2d910233ec3fca4de359b16ebe95e833c8b2162643ef98c6053a0549d"
+checksum = "d4983a40792c45e8639f77ef8e4461c55679cbc618f4b9e83830e8c7e79c8383"
 dependencies = [
  "anyhow",
  "chrono",
@@ -14648,9 +14648,9 @@ dependencies = [
 
 [[package]]
 name = "runtimelib"
-version = "1.2.0"
+version = "1.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d80685459e1e5fa5603182058351ae91c98ca458dfef4e85f0a37be4f7cf1e6c"
+checksum = "fa84884e45ed4a1e663120cef3fc11f14d1a2a1933776e1c31599f7bd2dd0c9e"
 dependencies = [
  "async-dispatcher",
  "async-std",
