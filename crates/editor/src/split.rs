@@ -16,7 +16,7 @@ use rope::Point;
 use text::{OffsetRangeExt as _, Patch, ToPoint as _};
 use ui::{
     App, Context, InteractiveElement as _, IntoElement as _, ParentElement as _, Render,
-    Styled as _, Window, div,
+    Styled as _, Window, div, px,
 };
 
 use crate::{
@@ -891,6 +891,9 @@ impl SplittableEditor {
             rhs.display_map.update(cx, |dm, cx| {
                 dm.set_companion(None, cx);
             });
+            // Reset cached style so font size is recalculated when returning to stacked view,
+            // since split view uses a reduced font size
+            rhs.style = None;
         });
         lhs.editor.update(cx, |editor, _cx| {
             editor.set_on_local_selections_changed(None);
@@ -1520,7 +1523,9 @@ impl Render for SplittableEditor {
         cx: &mut ui::Context<Self>,
     ) -> impl ui::IntoElement {
         let inner = if self.lhs.is_some() {
-            let style = self.rhs_editor.read(cx).create_style(cx);
+            let mut style = self.rhs_editor.read(cx).create_style(cx);
+            // Reduce font size by 30% in split view
+            style.text.font_size = (style.text.font_size.to_pixels(px(16.0)) * 0.7).into();
             SplitEditorView::new(cx.entity(), style, self.split_state.clone()).into_any_element()
         } else {
             self.rhs_editor.clone().into_any_element()
