@@ -3307,7 +3307,7 @@ impl Window {
         let mode = match self.text_rendering_mode.get() {
             TextRenderingMode::PlatformDefault => self
                 .text_system()
-                .recommended_rendering_mode(font_id, font_size),
+                .recommended_rendering_mode(font_id, font_size, self.scale_factor()),
             mode => mode,
         };
 
