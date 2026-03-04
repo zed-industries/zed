@@ -485,13 +485,14 @@ impl Sidebar {
     fn render_list_entry(
         &mut self,
         ix: usize,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let Some(entry) = self.contents.entries.get(ix) else {
             return div().into_any_element();
         };
-        let is_selected = self.selection == Some(ix);
+        let is_focused = self.focus_handle.is_focused(window);
+        let is_selected = is_focused && self.selection == Some(ix);
 
         match entry {
             ListEntry::ProjectHeader { path_list, label } => {
@@ -561,6 +562,7 @@ impl Sidebar {
             )
             .cursor_pointer()
             .on_click(cx.listener(move |this, _, window, cx| {
+                this.selection = None;
                 this.toggle_collapse(&path_list, window, cx);
             }))
             .into_any_element()
@@ -802,6 +804,7 @@ impl Sidebar {
                 this.child(div().size_2().rounded_full().bg(cx.theme().status().info))
             })
             .on_click(cx.listener(move |this, _, window, cx| {
+                this.selection = None;
                 this.activate_thread(session_info.clone(), workspace_index, window, cx);
             }))
             .into_any_element()
@@ -835,6 +838,7 @@ impl Sidebar {
                     .color(Color::Accent),
             )
             .on_click(cx.listener(move |this, _, window, cx| {
+                this.selection = None;
                 this.expanded_groups.insert(path_list.clone());
                 this.update_entries(window, cx);
             }))
