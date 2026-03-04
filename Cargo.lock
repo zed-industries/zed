@@ -4126,13 +4126,13 @@ dependencies = [
 name = "crashes"
 version = "0.1.0"
 dependencies = [
- "bincode",
  "cfg-if",
  "crash-handler",
  "futures 0.3.31",
  "log",
  "mach2 0.5.0",
  "minidumper",
+ "parking_lot",
  "paths",
  "release_channel",
  "serde",
@@ -21735,7 +21735,6 @@ dependencies = [
  "audio",
  "auto_update",
  "auto_update_ui",
- "bincode",
  "breadcrumbs",
  "call",
  "channel",
