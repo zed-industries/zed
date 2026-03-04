@@ -68,7 +68,8 @@ enum ListEntry {
         icon: IconName,
         status: AgentThreadStatus,
         diff_stats: Option<(usize, usize)>,
-        workspace_index: Option<usize>,
+        workspace_index: usize,
+        is_live: bool,
         is_background: bool,
     },
     ViewMore {
@@ -299,9 +300,9 @@ impl Sidebar {
             .iter()
             .filter_map(|entry| match entry {
                 ListEntry::Thread {
-                    workspace_index: Some(_),
                     session_info,
                     status,
+                    is_live: true,
                     ..
                 } => Some((session_info.session_id.clone(), *status)),
                 _ => None,
@@ -332,7 +333,8 @@ impl Sidebar {
                         icon: IconName::ZedAgent,
                         status: AgentThreadStatus::default(),
                         diff_stats: None,
-                        workspace_index: None,
+                        workspace_index: index,
+                        is_live: false,
                         is_background: false,
                     });
                 }
@@ -350,7 +352,8 @@ impl Sidebar {
                         session_info,
                         status,
                         icon,
-                        workspace_index,
+                        workspace_index: _,
+                        is_live,
                         is_background,
                         ..
                     } = existing
@@ -358,7 +361,7 @@ impl Sidebar {
                         session_info.title = Some(info.title.clone());
                         *status = info.status;
                         *icon = info.icon;
-                        *workspace_index = Some(index);
+                        *is_live = true;
                         *is_background = info.is_background;
                     }
                 } else {
@@ -367,7 +370,8 @@ impl Sidebar {
                         icon: info.icon,
                         status: info.status,
                         diff_stats: None,
-                        workspace_index: Some(index),
+                        workspace_index: index,
+                        is_live: true,
                         is_background: info.is_background,
                     });
                 }
@@ -376,7 +380,7 @@ impl Sidebar {
             // Update notification state for live threads.
             for thread in &threads {
                 if let ListEntry::Thread {
-                    workspace_index: Some(workspace_idx),
+                    workspace_index,
                     session_info,
                     status,
                     is_background,
@@ -387,13 +391,13 @@ impl Sidebar {
                     if *is_background && *status == AgentThreadStatus::Completed {
                         notified_threads.insert(session_id.clone());
                     } else if *status == AgentThreadStatus::Completed
-                        && *workspace_idx != active_workspace_index
+                        && *workspace_index != active_workspace_index
                         && old_statuses.get(session_id) == Some(&AgentThreadStatus::Running)
                     {
                         notified_threads.insert(session_id.clone());
                     }
 
-                    if *workspace_idx == active_workspace_index && !*is_background {
+                    if *workspace_index == active_workspace_index && !*is_background {
                         notified_threads.remove(session_id);
                     }
                 }
@@ -498,6 +502,7 @@ impl Sidebar {
                 icon,
                 status,
                 workspace_index,
+                is_live,
                 ..
             } => self.render_thread(
                 ix,
@@ -505,6 +510,7 @@ impl Sidebar {
                 *icon,
                 *status,
                 *workspace_index,
+                *is_live,
                 is_selected,
                 cx,
             ),
@@ -655,20 +661,17 @@ impl Sidebar {
     fn activate_thread(
         &mut self,
         session_info: acp_thread::AgentSessionInfo,
-        workspace_index: Option<usize>,
+        workspace_index: usize,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(target_index) = workspace_index else {
-            return;
-        };
         let multi_workspace = self.multi_workspace.clone();
 
         multi_workspace.update(cx, |multi_workspace, cx| {
-            multi_workspace.activate_index(target_index, window, cx);
+            multi_workspace.activate_index(workspace_index, window, cx);
         });
         let workspaces = multi_workspace.read(cx).workspaces().to_vec();
-        if let Some(workspace) = workspaces.get(target_index) {
+        if let Some(workspace) = workspaces.get(workspace_index) {
             if let Some(agent_panel) = workspace.read(cx).panel::<AgentPanel>(cx) {
                 agent_panel.update(cx, |panel, cx| {
                     panel.load_agent_thread(session_info, window, cx);
@@ -740,7 +743,8 @@ impl Sidebar {
         session_info: &acp_thread::AgentSessionInfo,
         icon: IconName,
         status: AgentThreadStatus,
-        workspace_index: Option<usize>,
+        workspace_index: usize,
+        is_live: bool,
         is_selected: bool,
         cx: &mut Context<Self>,
     ) -> AnyElement {
@@ -750,8 +754,6 @@ impl Sidebar {
         );
 
         let has_notification = self.contents.is_thread_notified(&session_info.session_id);
-
-        let is_active = workspace_index.is_some();
 
         let title: SharedString = session_info
             .title
@@ -782,7 +784,7 @@ impl Sidebar {
                     Label::new(title)
                         .size(LabelSize::Small)
                         .single_line()
-                        .color(if is_active {
+                        .color(if is_live {
                             Color::Default
                         } else {
                             Color::Muted
@@ -1072,7 +1074,7 @@ mod tests {
                         ListEntry::Thread {
                             session_info,
                             status,
-                            workspace_index,
+                            is_live,
                             ..
                         } => {
                             let title = session_info
@@ -1080,7 +1082,7 @@ mod tests {
                                 .as_ref()
                                 .map(|s| s.as_ref())
                                 .unwrap_or("Untitled");
-                            let active = if workspace_index.is_some() { " *" } else { "" };
+                            let active = if *is_live { " *" } else { "" };
                             let status_str = match status {
                                 AgentThreadStatus::Running => " (running)",
                                 AgentThreadStatus::Error => " (error)",
@@ -1361,7 +1363,8 @@ mod tests {
                     icon: IconName::ZedAgent,
                     status: AgentThreadStatus::Completed,
                     diff_stats: None,
-                    workspace_index: None,
+                    workspace_index: 0,
+                    is_live: false,
                     is_background: false,
                 },
                 // Active thread with Running status
@@ -1376,7 +1379,8 @@ mod tests {
                     icon: IconName::ZedAgent,
                     status: AgentThreadStatus::Running,
                     diff_stats: None,
-                    workspace_index: Some(0),
+                    workspace_index: 0,
+                    is_live: true,
                     is_background: false,
                 },
                 // Active thread with Error status
@@ -1391,7 +1395,8 @@ mod tests {
                     icon: IconName::ZedAgent,
                     status: AgentThreadStatus::Error,
                     diff_stats: None,
-                    workspace_index: Some(1),
+                    workspace_index: 1,
+                    is_live: true,
                     is_background: false,
                 },
                 // Thread with WaitingForConfirmation status, not active
@@ -1406,7 +1411,8 @@ mod tests {
                     icon: IconName::ZedAgent,
                     status: AgentThreadStatus::WaitingForConfirmation,
                     diff_stats: None,
-                    workspace_index: None,
+                    workspace_index: 0,
+                    is_live: false,
                     is_background: false,
                 },
                 // Background thread that completed (should show notification)
@@ -1421,7 +1427,8 @@ mod tests {
                     icon: IconName::ZedAgent,
                     status: AgentThreadStatus::Completed,
                     diff_stats: None,
-                    workspace_index: Some(1),
+                    workspace_index: 1,
+                    is_live: true,
                     is_background: true,
                 },
                 // View More entry
