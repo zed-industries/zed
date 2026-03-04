@@ -21,7 +21,6 @@ fn single_line_input(
     placeholder: &str,
     text: Option<&str>,
     tab_index: isize,
-    masked: bool,
     window: &mut Window,
     cx: &mut App,
 ) -> Entity<InputField> {
@@ -30,8 +29,6 @@ fn single_line_input(
             .label(label)
             .tab_index(tab_index)
             .tab_stop(true);
-
-        input.editor().set_masked(masked, window, cx);
 
         if let Some(text) = text {
             input.set_text(text, window, cx);
@@ -69,17 +66,19 @@ struct AddLlmProviderInput {
 impl AddLlmProviderInput {
     fn new(provider: LlmCompatibleProvider, window: &mut Window, cx: &mut App) -> Self {
         let provider_name =
-            single_line_input("Provider Name", provider.name(), None, 1, false, window, cx);
-        let api_url = single_line_input("API URL", provider.api_url(), None, 2, false, window, cx);
-        let api_key = single_line_input(
-            "API Key",
-            "000000000000000000000000000000000000000000000000",
-            None,
-            3,
-            true,
-            window,
-            cx,
-        );
+            single_line_input("Provider Name", provider.name(), None, 1, window, cx);
+        let api_url = single_line_input("API URL", provider.api_url(), None, 2, window, cx);
+        let api_key = cx.new(|cx| {
+            let input = InputField::new(
+                window,
+                cx,
+                "000000000000000000000000000000000000000000000000",
+            )
+            .tab_index(3)
+            .tab_stop(true);
+            input.editor().set_masked(true, window, cx);
+            input
+        });
 
         Self {
             provider_name,
@@ -124,7 +123,6 @@ impl ModelInput {
             "e.g. gpt-5, claude-opus-4, gemini-2.5-pro",
             None,
             base_tab_index + 1,
-            false,
             window,
             cx,
         );
@@ -133,7 +131,6 @@ impl ModelInput {
             "200000",
             Some("200000"),
             base_tab_index + 2,
-            false,
             window,
             cx,
         );
@@ -142,7 +139,6 @@ impl ModelInput {
             "Max Output Tokens",
             Some("32000"),
             base_tab_index + 3,
-            false,
             window,
             cx,
         );
@@ -151,7 +147,6 @@ impl ModelInput {
             "Max Tokens",
             Some("200000"),
             base_tab_index + 4,
-            false,
             window,
             cx,
         );
@@ -292,6 +287,7 @@ fn save_provider_to_settings(
 pub struct AddLlmProviderModal {
     provider: LlmCompatibleProvider,
     input: AddLlmProviderInput,
+    api_key_visible: bool,
     scroll_handle: ScrollHandle,
     focus_handle: FocusHandle,
     last_error: Option<SharedString>,
@@ -311,6 +307,7 @@ impl AddLlmProviderModal {
         Self {
             input: AddLlmProviderInput::new(provider, window, cx),
             provider,
+            api_key_visible: false,
             last_error: None,
             focus_handle: cx.focus_handle(),
             scroll_handle: ScrollHandle::new(),
@@ -554,7 +551,50 @@ impl Render for AddLlmProviderModal {
                                     .track_scroll(&self.scroll_handle)
                                     .child(self.input.provider_name.clone())
                                     .child(self.input.api_url.clone())
-                                    .child(self.input.api_key.clone())
+                                    .child(
+                                        v_flex()
+                                            .gap_1()
+                                            .child(Label::new("API Key").size(LabelSize::Small))
+                                            .child(
+                                                h_flex()
+                                                    .items_center()
+                                                    .gap_1()
+                                                    .child(self.input.api_key.clone())
+                                                    .child(
+                                                        IconButton::new(
+                                                            "toggle-api-key-visibility",
+                                                            if self.api_key_visible {
+                                                                IconName::EyeOff
+                                                            } else {
+                                                                IconName::Eye
+                                                            },
+                                                        )
+                                                        .icon_size(IconSize::Small)
+                                                        .icon_color(Color::Muted)
+                                                        .tooltip(|_cx| {
+                                                            Tooltip::text(
+                                                                "Toggle API key visibility",
+                                                            )
+                                                        })
+                                                        .on_click(cx.listener(
+                                                            |this, _, window, cx| {
+                                                                this.api_key_visible =
+                                                                    !this.api_key_visible;
+                                                                this.input
+                                                                    .api_key
+                                                                    .read(cx)
+                                                                    .editor()
+                                                                    .set_masked(
+                                                                        !this.api_key_visible,
+                                                                        window,
+                                                                        cx,
+                                                                    );
+                                                                cx.notify();
+                                                            },
+                                                        )),
+                                                    ),
+                                            ),
+                                    )
                                     .child(self.render_model_section(cx)),
                             ),
                     )
