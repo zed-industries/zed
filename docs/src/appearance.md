@@ -15,7 +15,7 @@ Here's how to make Zed feel like home:
 
 1. **Pick a theme**: Press {#kb theme_selector::Toggle} to open the Theme Selector. Arrow through the list to preview themes in real time, and press Enter to apply.
 
-2. **Toggle light/dark mode quickly**: Press {#kb theme_mode::Toggle}. If you currently use a static `"theme": "..."` value, the first toggle converts it to dynamic mode settings.
+2. **Toggle light/dark mode quickly**: Press {#kb theme_mode::Toggle}. If you currently use a static `"theme": "..."` value, the first toggle converts it to dynamic mode settings with default themes.
 
 3. **Choose an icon theme**: Run `icon theme selector: toggle` from the command palette to browse icon themes.
 
