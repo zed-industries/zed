@@ -46,6 +46,7 @@ use settings::{
     update_settings_file,
 };
 use smallvec::SmallVec;
+use std::ops::Neg;
 use std::{any::TypeId, time::Instant};
 use std::{
     cell::OnceCell,
@@ -6697,19 +6698,13 @@ impl Render for ProjectPanel {
                                     move |event, window, cx| {
                                         let state = scroll_handle.0.borrow();
                                         let base_handle = &state.base_handle;
-                                        let old_offset = base_handle.offset();
+                                        let current_offset = base_handle.offset();
                                         let max_offset = base_handle.max_offset();
-                                        let line_height = window.line_height();
-                                        let delta = event.delta.pixel_delta(line_height);
+                                        let delta = event.delta.pixel_delta(window.line_height());
+                                        let new_offset = (current_offset + delta)
+                                            .clamp(&max_offset.neg(), &Point::default());
 
-                                        let new_offset = point(
-                                            (old_offset.x + delta.x)
-                                                .clamp(-max_offset.width, px(0.)),
-                                            (old_offset.y + delta.y)
-                                                .clamp(-max_offset.height, px(0.)),
-                                        );
-
-                                        if new_offset != old_offset {
+                                        if new_offset != current_offset {
                                             base_handle.set_offset(new_offset);
                                             cx.notify(entity_id);
                                         }
