@@ -15,8 +15,8 @@ use std::{
 };
 
 use crate::{
-    AgentTool, ThreadEnvironment, ToolCallEventStream, ToolInput, ToolPermissionDecision,
-    decide_permission_from_settings,
+    AgentTool, CommandQueue, ThreadEnvironment, ToolCallEventStream, ToolInput,
+    ToolPermissionDecision, configured_command_timeout, decide_permission_from_settings,
 };
 
 const COMMAND_OUTPUT_LIMIT: u64 = 16 * 1024;
@@ -89,6 +89,9 @@ impl AgentTool for TerminalTool {
         event_stream: ToolCallEventStream,
         cx: &mut App,
     ) -> Task<Result<Self::Output, Self::Output>> {
+        let queue = CommandQueue::try_global(cx);
+        let global_timeout = configured_command_timeout(cx);
+
         cx.spawn(async move |cx| {
             let input = input
                 .recv()
@@ -128,6 +131,15 @@ impl AgentTool for TerminalTool {
                 authorize.await.map_err(|e| e.to_string())?;
             }
 
+            // Acquire the serialization gate so only one command runs at a
+            // time. The guard is held until the child process exits (or times
+            // out / is cancelled), preventing the next queued command from
+            // starting prematurely.
+            let _command_guard = match &queue {
+                Some(queue) => Some(queue.acquire().await),
+                None => None,
+            };
+
             let terminal = self
                 .environment
                 .create_terminal(
@@ -144,7 +156,15 @@ impl AgentTool for TerminalTool {
                 acp::ToolCallContent::Terminal(acp::Terminal::new(terminal_id)),
             ]));
 
-            let timeout = input.timeout_ms.map(Duration::from_millis);
+            // The global `agent.command_timeout` setting determines precedence:
+            // - "never": override any model-provided timeout_ms and wait indefinitely.
+            // - "seconds(x)": override any model-provided timeout_ms and wait x seconds.
+            // - "auto": use the model's timeout_ms, and wait indefinitely if it isn't set.
+            let timeout = match global_timeout {
+                agent_settings::CommandTimeout::Never => None,
+                agent_settings::CommandTimeout::Seconds(s) => Some(Duration::from_secs_f64(s)),
+                agent_settings::CommandTimeout::Auto => input.timeout_ms.map(Duration::from_millis),
+            };
 
             let mut timed_out = false;
             let mut user_stopped_via_signal = false;
@@ -179,6 +199,9 @@ impl AgentTool for TerminalTool {
                     }
                 }
             };
+
+            // _command_guard is dropped here (end of scope), releasing the
+            // serialization lock so the next queued command can proceed.
 
             // Check if user stopped - we check both:
             // 1. The cancellation signal from RunningTurn::cancel (e.g. user pressed main Stop button)

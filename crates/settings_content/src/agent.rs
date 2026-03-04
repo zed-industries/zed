@@ -122,6 +122,41 @@ pub struct AgentSettingsContent {
     /// `always_confirm`) match against the tool's text input (command, path,
     /// URL, etc.).
     pub tool_permissions: Option<ToolPermissionsContent>,
+    /// How long to wait for an agent terminal command to complete before killing it.
+    /// - `"auto"`: Use the timeout provided by the model (default)
+    /// - `"never"`: Never timeout, allow commands to run indefinitely
+    /// - `<number>`: Force a specific timeout in seconds, ignoring the model's timeout
+    ///
+    /// Default: auto
+    pub command_timeout: Option<CommandTimeoutContent>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
+#[serde(untagged)]
+pub enum CommandTimeoutContent {
+    /// Force a specific timeout in seconds
+    Seconds(f64),
+    /// "auto" or "never"
+    Mode(CommandTimeoutModeContent),
+}
+
+impl crate::merge_from::MergeFrom for CommandTimeoutContent {
+    fn merge_from(&mut self, other: &Self) {
+        *self = other.clone();
+    }
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum CommandTimeoutModeContent {
+    Auto,
+    Never,
+}
+
+impl crate::merge_from::MergeFrom for CommandTimeoutModeContent {
+    fn merge_from(&mut self, other: &Self) {
+        *self = *other;
+    }
 }
 
 impl AgentSettingsContent {
