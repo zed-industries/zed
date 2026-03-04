@@ -4590,30 +4590,53 @@ impl Project {
         let worktrees_with_ids: Vec<_> = self
             .worktrees(cx)
             .map(|worktree| {
-                let id = worktree.read(cx).id();
-                (worktree, id)
+                let read = worktree.read(cx);
+                let id = read.id();
+                (
+                    worktree,
+                    id,
+                    read.is_visible().then(|| read.root_name_arc()),
+                )
             })
             .collect();
 
         cx.spawn(async move |_, cx| {
             if let Some(buffer_worktree_id) = buffer_worktree_id
-                && let Some((worktree, _)) = worktrees_with_ids
+                && let Some((worktree, _, root_name)) = worktrees_with_ids
                     .iter()
-                    .find(|(_, id)| *id == buffer_worktree_id)
+                    .find(|(_, id, _)| *id == buffer_worktree_id)
             {
                 for candidate in candidates.iter() {
                     if let Some(path) = Self::resolve_path_in_worktree(worktree, candidate, cx) {
                         return Some(path);
                     }
+                    if let Some(root_name) = root_name {
+                        if let Ok(candidate) = candidate.strip_prefix(root_name) {
+                            if let Some(path) =
+                                Self::resolve_path_in_worktree(worktree, candidate, cx)
+                            {
+                                return Some(path);
+                            }
+                        }
+                    }
                 }
             }
-            for (worktree, id) in worktrees_with_ids {
+            for (worktree, id, root_name) in worktrees_with_ids {
                 if Some(id) == buffer_worktree_id {
                     continue;
                 }
                 for candidate in candidates.iter() {
                     if let Some(path) = Self::resolve_path_in_worktree(&worktree, candidate, cx) {
                         return Some(path);
+                    }
+                    if let Some(root_name) = &root_name {
+                        if let Ok(candidate) = candidate.strip_prefix(root_name) {
+                            if let Some(path) =
+                                Self::resolve_path_in_worktree(&worktree, candidate, cx)
+                            {
+                                return Some(path);
+                            }
+                        }
                     }
                 }
             }
