@@ -758,19 +758,18 @@ impl EditSession {
 
                     if let EditPipelineEntry::ResolvingOldText { matcher } =
                         &mut pipeline.edits[*edit_index]
+                        && !chunk.is_empty()
                     {
-                        if !chunk.is_empty() {
-                            if let Some(match_range) = matcher.push(chunk, None) {
-                                let anchor_range = buffer.read_with(cx, |buffer, _cx| {
-                                    buffer.anchor_range_between(match_range.clone())
-                                });
-                                diff.update(cx, |diff, cx| diff.reveal_range(anchor_range, cx));
+                        if let Some(match_range) = matcher.push(chunk, None) {
+                            let anchor_range = buffer.read_with(cx, |buffer, _cx| {
+                                buffer.anchor_range_between(match_range.clone())
+                            });
+                            diff.update(cx, |diff, cx| diff.reveal_range(anchor_range, cx));
 
-                                cx.update(|cx| {
-                                    let position = buffer.read(cx).anchor_before(match_range.end);
-                                    tool.set_agent_location(buffer.downgrade(), position, cx);
-                                });
-                            }
+                            cx.update(|cx| {
+                                let position = buffer.read(cx).anchor_before(match_range.end);
+                                tool.set_agent_location(buffer.downgrade(), position, cx);
+                            });
                         }
                     }
                 }
@@ -791,32 +790,7 @@ impl EditSession {
                     if !chunk.is_empty() {
                         matcher.push(chunk, None);
                     }
-                    let matches = matcher.finish();
-
-                    if matches.is_empty() {
-                        return Err(StreamingEditFileToolOutput::error(format!(
-                            "Could not find matching text for edit at index {}. \
-                                 The old_text did not match any content in the file. \
-                                 Please read the file again to get the current content.",
-                            edit_index,
-                        )));
-                    }
-                    if matches.len() > 1 {
-                        let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot());
-                        let lines = matches
-                            .iter()
-                            .map(|r| (snapshot.offset_to_point(r.start).row + 1).to_string())
-                            .collect::<Vec<_>>()
-                            .join(", ");
-                        return Err(StreamingEditFileToolOutput::error(format!(
-                            "Edit {} matched multiple locations in the file at lines: {}. \
-                                 Please provide more context in old_text to uniquely \
-                                 identify the location.",
-                            edit_index, lines
-                        )));
-                    }
-
-                    let range = matches.into_iter().next().expect("checked len above");
+                    let range = extract_match(matcher.finish(), buffer, edit_index, cx)?;
 
                     let anchor_range = buffer
                         .read_with(cx, |buffer, _cx| buffer.anchor_range_between(range.clone()));
@@ -979,6 +953,37 @@ impl EditSession {
                     *edit_cursor += bytes;
                 }
             }
+        }
+    }
+}
+
+fn extract_match(
+    matches: Vec<Range<usize>>,
+    buffer: &Entity<Buffer>,
+    edit_index: &usize,
+    cx: &mut AsyncApp,
+) -> Result<Range<usize>, StreamingEditFileToolOutput> {
+    match matches.len() {
+        0 => Err(StreamingEditFileToolOutput::error(format!(
+            "Could not find matching text for edit at index {}. \
+                The old_text did not match any content in the file. \
+                Please read the file again to get the current content.",
+            edit_index,
+        ))),
+        1 => Ok(matches.into_iter().next().unwrap()),
+        _ => {
+            let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot());
+            let lines = matches
+                .iter()
+                .map(|r| (snapshot.offset_to_point(r.start).row + 1).to_string())
+                .collect::<Vec<_>>()
+                .join(", ");
+            Err(StreamingEditFileToolOutput::error(format!(
+                "Edit {} matched multiple locations in the file at lines: {}. \
+                    Please provide more context in old_text to uniquely \
+                    identify the location.",
+                edit_index, lines
+            )))
         }
     }
 }
