@@ -1321,7 +1321,7 @@ fn resolve_absolute_x_to_display_point(
         // Use `<=` so that a point exactly at a wrap boundary stays on the current
         // wrapped row. This is not a round-trip identity for wrap-boundary positions,
         // but we only resolve across different buffer rows, so it's fine.
-        if remaining_x <= content_width || is_last_row_of_buffer {
+        if remaining_x <= content_width + gpui::px(0.1) || is_last_row_of_buffer {
             let col = line.closest_index_for_x(remaining_x) as u32;
             return DisplayPoint::new(row, col);
         }

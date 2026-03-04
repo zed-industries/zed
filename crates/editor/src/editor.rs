@@ -15570,11 +15570,8 @@ impl Editor {
         for selection in columnar_selections {
             if let Some(group) = last_added_item_per_group.get_mut(&selection.id) {
                 if above == group.above {
-                    let range = selection.display_range(&display_map).sorted();
-                    debug_assert_eq!(range.start.row(), range.end.row());
-                    let row = range.start.row();
-
                     let maybe_new_selection = if skip_soft_wrap {
+                        let row = selection.start.to_display_point(&display_map).row();
                         let absolute_x_range = absolute_x_ranges_by_selection_id
                             .remove(&selection.id)
                             .unwrap_or_else(|| {
@@ -15594,6 +15591,9 @@ impl Editor {
                             &text_layout_details,
                         )
                     } else {
+                        let range = selection.display_range(&display_map).sorted();
+                        debug_assert_eq!(range.start.row(), range.end.row());
+                        let row = range.start.row();
                         let positions =
                             if let SelectionGoal::HorizontalRange { start, end } = selection.goal {
                                 Pixels::from(start)..Pixels::from(end)

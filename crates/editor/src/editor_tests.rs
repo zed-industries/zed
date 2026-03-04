@@ -28515,8 +28515,6 @@ async fn test_add_selection_skip_soft_wrap_option(cx: &mut TestAppContext) {
     ));
 
     cx.update_editor(|editor, window, cx| {
-        // Enable soft wrapping with a narrow width to force soft wrapping and
-        // confirm that more than 2 rows are being displayed.
         editor.set_wrap_width(Some(100.0.into()), cx);
         assert!(editor.display_text(cx).lines().count() > 2);
 
@@ -28589,8 +28587,6 @@ async fn test_add_selection_skip_soft_wrap_option(cx: &mut TestAppContext) {
     ));
 
     cx.update_editor(|editor, window, cx| {
-        // Enable soft wrapping with a narrow width to force soft wrapping and
-        // confirm that more than 2 rows are being displayed.
         editor.set_wrap_width(Some(100.0.into()), cx);
         assert!(editor.display_text(cx).lines().count() > 2);
 
@@ -28602,8 +28598,6 @@ async fn test_add_selection_skip_soft_wrap_option(cx: &mut TestAppContext) {
             cx,
         );
 
-        // Both lines have identical content, so visual pixel alignment
-        // produces the same buffer columns.
         let display_map = editor.display_map.update(cx, |map, cx| map.snapshot(cx));
         let selections = editor.selections.all::<Point>(&display_map);
         assert_eq!(selections.len(), 2);
@@ -28703,6 +28697,50 @@ async fn test_add_selection_above_below_multibyte(cx: &mut TestAppContext) {
         «aaaˇ»aaa
         «áááˇ»ááá
     "});
+}
+
+#[gpui::test]
+async fn test_add_selection_below_cross_wrap_boundary(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+
+    // Line 1 wraps at col 11 (word boundary after "bbbbb"), line 2 wraps
+    // at col 8 (word boundary after "aaaaaaa"). The selection at cols 6-10
+    // fits within line 1's first display row but crosses line 2's earlier
+    // wrap boundary, producing a cross-display-row selection.
+    cx.set_state(indoc!(
+        r#"aaaa b«bbbbˇ» cccc ddd
+           aaaaaaa bbbbb cccc
+           aaaa bbbbb cccc ddd"#
+    ));
+
+    cx.update_editor(|editor, window, cx| {
+        editor.set_wrap_width(Some(100.0.into()), cx);
+
+        editor.add_selection_below(
+            &AddSelectionBelow {
+                skip_soft_wrap: true,
+            },
+            window,
+            cx,
+        );
+
+        editor.add_selection_below(
+            &AddSelectionBelow {
+                skip_soft_wrap: true,
+            },
+            window,
+            cx,
+        );
+
+        let display_map = editor.display_map.update(cx, |map, cx| map.snapshot(cx));
+        let selections = editor.selections.all::<Point>(&display_map);
+        assert_eq!(selections.len(), 3);
+        for (i, selection) in selections.iter().enumerate() {
+            assert_eq!(selection.start, Point::new(i as u32, 6));
+            assert_eq!(selection.end, Point::new(i as u32, 10));
+        }
+    });
 }
 
 #[gpui::test]
