@@ -28,7 +28,7 @@ Here's an example format, though adapt it to whatever your feature needs:
 > \[screenshot of Neovim]
 > and has 146 thumbs up on the [github issue](https://github.com).
 > **Decisions:**
-> We have to decide whether to use the git CLI or a git libary. Zed uses a git library but it's blame implementation is too slow for a code editor, so we should use the CLI porcelain.
+> We have to decide whether to use the git CLI or a git library. Zed uses a git library but its blame implementation is too slow for a code editor, so we should use the CLI's porcelain interface.
 
 ## 3. What else does this affect?
 
