@@ -6138,10 +6138,12 @@ impl LspStore {
                             let buffer = buffer.clone();
                             let language = language.clone();
                             let lsp_adapter = language.as_ref().and_then(|language| {
-                                language_registry
-                                    .lsp_adapters(&language.name())
-                                    .into_iter()
+                                let adapters = language_registry.lsp_adapters(&language.name());
+                                adapters
+                                    .iter()
                                     .find(|adapter| adapter.name() == server_name)
+                                    .or_else(|| adapters.first())
+                                    .cloned()
                             });
                             let upstream_client = upstream_client.clone();
                             let response = this
