@@ -12,7 +12,7 @@ Ask yourself:
 
 - **What problem does this solve?** Who hits this problem, and how often?
 - **What social context supports this?** Are people asking for this in Discord? Are blog posts or tweets calling it out? Is there a lot of thumbs up on the github issue?
-- **Is there prior art in other editors?** If VS Code, Cursor, JetBrains, Neovim, or a wildly popular plugin, that's a strong signal.
+- **Is there prior art in other editors?** If it's in VS Code (or derivatives), JetBrains, Neovim, or there's a wildly popular plugin that implements this feature, that's a strong signal.
 - **Is there a conceptual lineage?** Even if your idea is novel, it probably relates to something that already exists. "This is a reformulation of X, adapted to work with Zed's multi-buffers" is far more useful than "I think this would be cool."
 
 You don't need all of these, but the more you have, the more confidence we and the team can have in the direction.
