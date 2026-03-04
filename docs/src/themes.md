@@ -52,11 +52,11 @@ If your settings currently use a static theme value, like:
 
 ```json [settings]
 {
-  "theme": "One Dark"
+  "theme": "Any Theme"
 }
 ```
 
-the first toggle converts it to dynamic theme selection:
+the first toggle converts it to dynamic theme selection with default themes:
 
 ```json [settings]
 {
