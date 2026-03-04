@@ -2240,19 +2240,6 @@ impl AgentPanel {
         self.worktree_creation_status = Some(WorktreeCreationStatus::Creating);
         cx.notify();
 
-        let mut rng = rand::rng();
-        let branch_name = match crate::branch_names::generate_branch_name(&[], &mut rng) {
-            Some(name) => name,
-            None => {
-                self.set_worktree_creation_error(
-                    "Failed to generate a branch name".into(),
-                    window,
-                    cx,
-                );
-                return;
-            }
-        };
-
         let (git_repos, non_git_paths) = self.classify_worktrees(cx);
 
         if git_repos.is_empty() {
@@ -2264,27 +2251,17 @@ impl AgentPanel {
             return;
         }
 
+        // Kick off branch fetches as early as possible so they can run
+        // concurrently with the remaining synchronous setup work.
+        let branch_receivers: Vec<_> = git_repos
+            .iter()
+            .map(|repo| repo.update(cx, |repo, _cx| repo.branches()))
+            .collect();
+
         let worktree_directory_setting = ProjectSettings::get_global(cx)
             .git
             .worktree_directory
             .clone();
-
-        let (creation_infos, path_remapping) = match Self::start_worktree_creations(
-            &git_repos,
-            &branch_name,
-            &worktree_directory_setting,
-            cx,
-        ) {
-            Ok(result) => result,
-            Err(err) => {
-                self.set_worktree_creation_error(
-                    format!("Failed to validate worktree directory: {err}").into(),
-                    window,
-                    cx,
-                );
-                return;
-            }
-        };
 
         let (dock_structure, open_file_paths) = self
             .workspace
@@ -2302,6 +2279,45 @@ impl AgentPanel {
             .downcast::<workspace::MultiWorkspace>();
 
         let task = cx.spawn_in(window, async move |this, cx| {
+            // Await all the branch fetches we kicked off earlier.
+            let mut existing_branches = Vec::new();
+            for result in futures::future::join_all(branch_receivers).await {
+                if let Ok(Ok(branches)) = result {
+                    for branch in branches {
+                        existing_branches.push(branch.name().to_string());
+                    }
+                }
+            }
+
+            let existing_branch_refs: Vec<&str> =
+                existing_branches.iter().map(|s| s.as_str()).collect();
+            let mut rng = rand::rng();
+            let branch_name =
+                match crate::branch_names::generate_branch_name(&existing_branch_refs, &mut rng) {
+                    Some(name) => name,
+                    None => {
+                        this.update_in(cx, |this, window, cx| {
+                            this.set_worktree_creation_error(
+                                "Failed to generate a branch name: all typewriter names are taken"
+                                    .into(),
+                                window,
+                                cx,
+                            );
+                        })?;
+                        return anyhow::Ok(());
+                    }
+                };
+
+            let (creation_infos, path_remapping) =
+                this.update_in(cx, |_this, _window, cx| {
+                    Self::start_worktree_creations(
+                        &git_repos,
+                        &branch_name,
+                        &worktree_directory_setting,
+                        cx,
+                    )
+                })??;
+
             let created_paths = match Self::await_and_rollback_on_failure(creation_infos, cx).await
             {
                 Ok(paths) => paths,

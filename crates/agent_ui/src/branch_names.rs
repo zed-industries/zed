@@ -766,4 +766,49 @@ mod tests {
         let result = generate_branch_name(&branch_name_refs, &mut rng);
         assert!(result.is_none());
     }
+
+    #[gpui::test(iterations = 100)]
+    fn test_generate_branch_name_never_reuses_taken_prefix(mut rng: StdRng) {
+        let existing = &["olivetti-123abc", "selectric-def456"];
+        let branch_name = generate_branch_name(existing, &mut rng).unwrap();
+        let (prefix, _) = branch_name.rsplit_once('-').unwrap();
+        assert_ne!(prefix, "olivetti");
+        assert_ne!(prefix, "selectric");
+    }
+
+    #[gpui::test(iterations = 100)]
+    fn test_generate_branch_name_avoids_multiple_taken_prefixes(mut rng: StdRng) {
+        let existing = &[
+            "olivetti-aaa11111",
+            "selectric-bbb22222",
+            "corona-ccc33333",
+            "remington-ddd44444",
+            "underwood-eee55555",
+        ];
+        let taken_prefixes: HashSet<&str> = existing
+            .iter()
+            .filter_map(|b| b.rsplit_once('-').map(|(prefix, _)| prefix))
+            .collect();
+        let branch_name = generate_branch_name(existing, &mut rng).unwrap();
+        let (prefix, _) = branch_name.rsplit_once('-').unwrap();
+        assert!(
+            !taken_prefixes.contains(prefix),
+            "generated prefix {prefix:?} collides with an existing branch"
+        );
+    }
+
+    #[gpui::test(iterations = 100)]
+    fn test_generate_branch_name_with_varied_hash_suffixes(mut rng: StdRng) {
+        let existing = &[
+            "olivetti-aaaaaaaa",
+            "olivetti-bbbbbbbb",
+            "olivetti-cccccccc",
+        ];
+        let branch_name = generate_branch_name(existing, &mut rng).unwrap();
+        let (prefix, _) = branch_name.rsplit_once('-').unwrap();
+        assert_ne!(
+            prefix, "olivetti",
+            "should avoid olivetti regardless of how many variants exist"
+        );
+    }
 }
