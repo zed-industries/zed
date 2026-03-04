@@ -170,7 +170,7 @@ dependencies = [
  "context_server",
  "ctor",
  "db",
- "derive_more 0.99.20",
+ "derive_more",
  "editor",
  "env_logger 0.11.8",
  "eval_utils",
@@ -242,7 +242,7 @@ dependencies = [
  "anyhow",
  "async-broadcast",
  "async-trait",
- "derive_more 2.0.1",
+ "derive_more",
  "futures 0.3.31",
  "log",
  "serde",
@@ -256,7 +256,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "44bc1fef9c32f03bce2ab44af35b6f483bfd169bf55cc59beeb2e3b1a00ae4d1"
 dependencies = [
  "anyhow",
- "derive_more 2.0.1",
+ "derive_more",
  "schemars",
  "serde",
  "serde_json",
@@ -815,7 +815,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "collections",
- "derive_more 0.99.20",
+ "derive_more",
  "extension",
  "futures 0.3.31",
  "gpui",
@@ -3002,7 +3002,7 @@ dependencies = [
  "cloud_llm_client",
  "collections",
  "credentials_provider",
- "derive_more 0.99.20",
+ "derive_more",
  "feature_flags",
  "fs",
  "futures 0.3.31",
@@ -3440,7 +3440,7 @@ name = "command_palette_hooks"
 version = "0.1.0"
 dependencies = [
  "collections",
- "derive_more 0.99.20",
+ "derive_more",
  "gpui",
  "workspace",
 ]
@@ -3616,15 +3616,18 @@ dependencies = [
 
 [[package]]
 name = "convert_case"
-version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6245d59a3e82a7fc217c5828a6692dbc6dfb63a0c8c90495621f7b9d79704a0e"
-
-[[package]]
-name = "convert_case"
 version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "baaaa0ecca5b51987b9423ccdc971514dd8b0bb7b4060b983d3664dad3f1f89f"
+dependencies = [
+ "unicode-segmentation",
+]
+
+[[package]]
+name = "convert_case"
+version = "0.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "633458d4ef8c78b72454de2d54fd6ab2e60f9e02be22f3c6104cdc8a4e0fceb9"
 dependencies = [
  "unicode-segmentation",
 ]
@@ -4794,34 +4797,23 @@ dependencies = [
 
 [[package]]
 name = "derive_more"
-version = "0.99.20"
+version = "2.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6edb4b64a43d977b8e99788fe3a04d483834fba1215a7e02caa415b626497f7f"
-dependencies = [
- "convert_case 0.4.0",
- "proc-macro2",
- "quote",
- "rustc_version",
- "syn 2.0.106",
-]
-
-[[package]]
-name = "derive_more"
-version = "2.0.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "093242cf7570c207c83073cf82f79706fe7b8317e98620a47d5be7c3d8497678"
+checksum = "d751e9e49156b02b44f9c1815bcb94b984cdcc4396ecc32521c739452808b134"
 dependencies = [
  "derive_more-impl",
 ]
 
 [[package]]
 name = "derive_more-impl"
-version = "2.0.1"
+version = "2.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bda628edc44c4bb645fbe0f758797143e4e07926f7ebf4e9bdfbd3d2ce621df3"
+checksum = "799a97264921d8623a957f6c3b9011f3b5492f557bbb7a5a19b7fa6d06ba8dcb"
 dependencies = [
+ "convert_case 0.10.0",
  "proc-macro2",
  "quote",
+ "rustc_version",
  "syn 2.0.106",
  "unicode-xid",
 ]
@@ -7130,7 +7122,7 @@ version = "0.8.0"
 source = "git+https://github.com/zed-industries/gh-workflow?rev=c9eac0ed361583e1072860d96776fa52775b82ac#c9eac0ed361583e1072860d96776fa52775b82ac"
 dependencies = [
  "async-trait",
- "derive_more 2.0.1",
+ "derive_more",
  "derive_setters",
  "gh-workflow-macros",
  "indexmap",
@@ -7199,7 +7191,7 @@ dependencies = [
  "askpass",
  "async-trait",
  "collections",
- "derive_more 0.99.20",
+ "derive_more",
  "futures 0.3.31",
  "git2",
  "gpui",
@@ -7578,7 +7570,7 @@ dependencies = [
  "core-text",
  "core-video",
  "ctor",
- "derive_more 0.99.20",
+ "derive_more",
  "embed-resource",
  "env_logger 0.11.8",
  "etagere",
@@ -7706,7 +7698,7 @@ dependencies = [
  "core-text",
  "core-video",
  "ctor",
- "derive_more 0.99.20",
+ "derive_more",
  "dispatch2",
  "etagere",
  "foreign-types 0.5.0",
@@ -8264,7 +8256,7 @@ dependencies = [
  "async-fs",
  "async-tar",
  "bytes 1.11.1",
- "derive_more 0.99.20",
+ "derive_more",
  "futures 0.3.31",
  "http 1.3.1",
  "http-body 1.0.1",
@@ -15556,7 +15548,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "collections",
- "derive_more 0.99.20",
+ "derive_more",
  "gpui",
  "log",
  "schemars",
@@ -17339,7 +17331,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "collections",
- "derive_more 0.99.20",
+ "derive_more",
  "fs",
  "futures 0.3.31",
  "gpui",
