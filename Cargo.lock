@@ -19851,6 +19851,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "client",
+ "cloud_api_types",
  "cloud_llm_client",
  "futures 0.3.31",
  "gpui",
