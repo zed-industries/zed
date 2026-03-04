@@ -18,7 +18,7 @@ use theme::{ActiveTheme, ThemeSettings};
 use ui::utils::TRAFFIC_LIGHT_PADDING;
 use ui::{
     AgentThreadStatus, Divider, IconButtonShape, KeyBinding, ListHeader, ListItem, ListSubHeader,
-    Tab, ThreadItem, Tooltip, prelude::*,
+    Tab, ThreadItem, Tooltip, WithScrollbar, prelude::*,
 };
 use util::path_list::PathList;
 use workspace::{
@@ -1117,15 +1117,18 @@ impl Render for Sidebar {
                     }),
             )
             .child(
-                v_flex().flex_1().overflow_hidden().child(
-                    list(
-                        self.list_state.clone(),
-                        cx.processor(Self::render_list_entry),
-                    )
-                    // .debug_bg_cyan()
+                v_flex()
                     .flex_1()
-                    .size_full(),
-                ),
+                    .overflow_hidden()
+                    .child(
+                        list(
+                            self.list_state.clone(),
+                            cx.processor(Self::render_list_entry),
+                        )
+                        .flex_1()
+                        .size_full(),
+                    )
+                    .vertical_scrollbar_for(&self.list_state, window, cx),
             )
     }
 }
