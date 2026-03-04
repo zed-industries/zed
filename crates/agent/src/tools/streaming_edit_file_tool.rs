@@ -369,7 +369,7 @@ impl AgentTool for StreamingEditFileTool {
                 match EditSession::new(
                     &full_input.path,
                     &full_input.display_description,
-                    full_input.mode.clone(),
+                    full_input.mode,
                     &self,
                     &event_stream,
                     cx,
@@ -485,7 +485,7 @@ impl EditSession {
         cx: &mut AsyncApp,
     ) -> Result<Self, StreamingEditFileToolOutput> {
         let project_path = cx
-            .update(|cx| resolve_path(mode.clone(), &path, &tool.project, cx))
+            .update(|cx| resolve_path(mode, &path, &tool.project, cx))
             .map_err(|e| StreamingEditFileToolOutput::error(e.to_string()))?;
 
         let Some(abs_path) = cx.update(|cx| tool.project.read(cx).absolute_path(&project_path, cx))
@@ -635,7 +635,7 @@ impl EditSession {
             .await;
 
         let output = StreamingEditFileToolOutput::Success {
-            input_path: PathBuf::from(input.path),
+            input_path: input.path,
             new_text,
             old_text: old_text.clone(),
             diff: unified_diff,
