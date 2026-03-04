@@ -101,6 +101,12 @@ pub struct ExcerptInfo {
     range: ExcerptRange<text::Anchor>,
 }
 
+impl ExcerptInfo {
+    pub fn end_anchor(&self) -> Anchor {
+        Anchor::in_buffer(self.path_key_index, self.range.context.end)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Event {
     BufferUpdated {
@@ -624,7 +630,6 @@ struct BufferStateSnapshot {
 pub struct MultiBufferSnapshot {
     excerpts: SumTree<Excerpt>,
     buffers: TreeMap<BufferId, BufferStateSnapshot>,
-    path_keys_by_buffer: TreeMap<BufferId, PathKey>,
     path_keys_by_index: TreeMap<PathKeyIndex, PathKey>,
     diffs: TreeMap<BufferId, DiffStateSnapshot>,
     diff_transforms: SumTree<DiffTransform>,
@@ -1749,7 +1754,6 @@ impl MultiBuffer {
             show_deleted_hunks: _,
             use_extended_diff_range: _,
             show_headers: _,
-            path_keys_by_buffer: _,
             path_keys_by_index: _,
             buffers,
         } = self.snapshot.get_mut();
@@ -1800,12 +1804,13 @@ impl MultiBuffer {
             .cursor::<Dimensions<ExcerptPoint, OutputDimension<Point>>>(());
         diff_transforms.next();
         let mut result = Vec::new();
-        let Some(path_key) = snapshot.path_keys_by_buffer.get(&buffer_id) else {
+        let Some(buffer_state) = snapshot.buffers.get(&buffer_id) else {
             return result;
         };
+        let path_key = buffer_state.path_key.clone();
 
         while let Some(excerpt) = excerpts.item()
-            && &excerpt.path_key == path_key
+            && excerpt.path_key == path_key
         {
             let excerpt_start = excerpts.start().1;
             let excerpt_end = excerpt_start + excerpt.text_summary.lines;
@@ -2456,7 +2461,7 @@ impl MultiBuffer {
         let snapshot = self.snapshot.borrow().clone();
         let ranges = ranges.iter().map(move |range| {
             let excerpt_end = snapshot
-                .excerpt_at(range.end)
+                .excerpt_containing(range.end..range.end)
                 .map(|excerpt| excerpt.end_anchor().into())
                 .unwrap_or(Anchor::Max);
             let range = range.to_point(&snapshot);
@@ -2500,6 +2505,7 @@ impl MultiBuffer {
             return snapshot;
         }
         let edits = Self::sync_from_buffer_changes(snapshot, &self.buffers, &self.diffs, cx);
+        dbg!(&edits);
 
         if !edits.is_empty() {
             self.subscriptions.publish(edits);
@@ -2518,7 +2524,6 @@ impl MultiBuffer {
             excerpts,
             diffs: buffer_diff,
             buffers: buffer_snapshots,
-            path_keys_by_buffer,
             path_keys_by_index: _,
             diff_transforms: _,
             non_text_state_update_count,
@@ -2579,13 +2584,15 @@ impl MultiBuffer {
 
             let buffer_edited =
                 current_version.changed_since(last_snapshot.buffer_snapshot.version());
+            dbg!(
+                &current_version,
+                last_snapshot.buffer_snapshot.version().clone()
+            );
             let buffer_non_text_state_updated = non_text_state_update_count
                 > last_snapshot.buffer_snapshot.non_text_state_update_count();
-            if (buffer_edited || buffer_non_text_state_updated)
-                && let Some(path_key) = path_keys_by_buffer.get(&buffer.remote_id())
-            {
+            if buffer_edited || buffer_non_text_state_updated {
                 paths_to_edit.push((
-                    path_key.clone(),
+                    last_snapshot.path_key.clone(),
                     buffer_state.buffer.clone(),
                     if buffer_edited {
                         Some(last_snapshot.buffer_snapshot.version().clone())
@@ -2617,6 +2624,7 @@ impl MultiBuffer {
         let mut cursor = excerpts.cursor::<ExcerptSummary>(());
 
         for (path, buffer, prev_version) in paths_to_edit {
+            dbg!(&prev_version, buffer.read(cx).version());
             new_excerpts.append(cursor.slice(&path, Bias::Left), ());
             let old_excerpt = cursor.item().unwrap();
             let buffer = buffer.read(cx);
@@ -2635,9 +2643,10 @@ impl MultiBuffer {
                     buffer
                         .edits_since_in_range::<usize>(
                             &prev_version,
-                            old_excerpt.range.context.clone(),
+                            dbg!(old_excerpt.range.context.clone()),
                         )
                         .map(|edit| {
+                            dbg!(&edit);
                             let excerpt_old_start = cursor.start().len();
                             let excerpt_new_start =
                                 ExcerptDimension(new_excerpts.summary().text.len);
@@ -2679,6 +2688,7 @@ impl MultiBuffer {
         excerpt_edits: Vec<text::Edit<ExcerptOffset>>,
         change_kind: DiffChangeKind,
     ) -> Vec<Edit<MultiBufferOffset>> {
+        dbg!(&excerpt_edits);
         if excerpt_edits.is_empty() {
             return vec![];
         }
@@ -3121,7 +3131,7 @@ impl MultiBuffer {
     pub fn toggle_single_diff_hunk(&mut self, range: Range<Anchor>, cx: &mut Context<Self>) {
         let snapshot = self.snapshot(cx);
         let excerpt_end = snapshot
-            .excerpt_at(range.end)
+            .excerpt_containing(range.end..range.end)
             .map(|excerpt| excerpt.end_anchor().into())
             .unwrap_or(Anchor::Max);
         let point_range = range.to_point(&snapshot);
@@ -3316,10 +3326,11 @@ impl MultiBuffer {
                 let path_key = self
                     .snapshot
                     .borrow()
-                    .path_keys_by_buffer
+                    .buffers
                     .get(&buffer_ids.choose(rng).unwrap())
-                    .cloned()
-                    .unwrap();
+                    .unwrap()
+                    .path_key
+                    .clone();
                 log::info!("Removing excerpts {:?}", path_key);
                 self.remove_excerpts_for_path(path_key, cx);
             }
@@ -3588,7 +3599,8 @@ impl MultiBufferSnapshot {
             let mut same_buffer_anchors =
                 anchors.peeking_take_while(|a| a.buffer_id.is_some_and(|b| buffer_id == b));
 
-            if let Some(path) = self.path_keys_by_buffer.get(&buffer_id) {
+            if let Some(buffer) = self.buffers.get(&buffer_id) {
+                let path = &buffer.path_key;
                 let Some(mut next) = same_buffer_anchors.next() else {
                     continue 'anchors;
                 };
@@ -3664,6 +3676,7 @@ impl MultiBufferSnapshot {
         })
     }
 
+    // todo!() can we make this not RangeBounds
     pub fn range_to_buffer_ranges<R, T>(
         &self,
         range: R,
@@ -4219,6 +4232,7 @@ impl MultiBufferSnapshot {
     }
 
     pub fn row_infos(&self, start_row: MultiBufferRow) -> MultiBufferRows<'_> {
+        dbg!(self.diff_transforms.is_empty());
         let mut cursor = self.cursor::<Point, Point>();
         cursor.seek(&Point::new(start_row.0, 0));
         let mut result = MultiBufferRows {
@@ -5184,12 +5198,13 @@ impl MultiBufferSnapshot {
     }
 
     fn excerpts_for_buffer(&self, buffer_id: BufferId) -> impl Iterator<Item = &Excerpt> {
-        if let Some(path_key) = self.path_keys_by_buffer.get(&buffer_id) {
+        if let Some(buffer_state) = self.buffers.get(&buffer_id) {
+            let path_key = buffer_state.path_key.clone();
             let mut cursor = self.excerpts.cursor::<PathKey>(());
-            cursor.seek_forward(path_key, Bias::Left);
+            cursor.seek_forward(&path_key, Bias::Left);
             Some(iter::from_fn(move || {
                 let excerpt = cursor.item()?;
-                if &excerpt.path_key != path_key {
+                if excerpt.path_key != path_key {
                     return None;
                 }
                 cursor.next();
@@ -6262,7 +6277,7 @@ impl MultiBufferSnapshot {
     }
 
     pub fn path_for_buffer(&self, buffer_id: BufferId) -> Option<&PathKey> {
-        self.path_keys_by_buffer.get(&buffer_id)
+        Some(&self.buffers.get(&buffer_id)?.path_key)
     }
 
     pub fn path_key_index_for_buffer(&self, buffer_id: BufferId) -> Option<PathKeyIndex> {
@@ -6271,8 +6286,8 @@ impl MultiBufferSnapshot {
     }
 
     pub fn first_excerpt_for_buffer(&self, buffer_id: BufferId) -> Option<&Excerpt> {
-        let path_key = self.path_keys_by_buffer.get(&buffer_id)?;
-        self.first_excerpt_for_path(&path_key)
+        let path_key = &self.buffers.get(&buffer_id)?.path_key;
+        self.first_excerpt_for_path(path_key)
     }
 
     pub fn first_excerpt_for_path(&self, path_key: &PathKey) -> Option<&Excerpt> {
@@ -6283,7 +6298,7 @@ impl MultiBufferSnapshot {
     }
 
     pub fn buffer_for_id(&self, id: BufferId) -> Option<&BufferSnapshot> {
-        self.buffer_for_path(self.path_keys_by_buffer.get(&id)?)
+        self.buffer_for_path(self.path_for_buffer(id)?)
     }
 
     fn try_path_for_anchor(&self, anchor: ExcerptAnchor) -> Option<PathKey> {
@@ -6325,11 +6340,6 @@ impl MultiBufferSnapshot {
         // } else {
         //     None
         // }
-    }
-
-    // todo!() sort out excerpt_containing etc.
-    fn excerpt_at(&self, _position: impl ToOffset) -> Option<&Excerpt> {
-        todo!()
     }
 
     /// Returns the excerpt containing range and its offset start within the multibuffer or none if `range` spans multiple excerpts
@@ -6545,7 +6555,8 @@ impl MultiBufferSnapshot {
     fn check_invariants(&self) {
         let excerpts = self.excerpts.items(());
 
-        let all_buffer_path_keys = HashSet::from_iter(self.path_keys_by_buffer.values().cloned());
+        let all_buffer_path_keys =
+            HashSet::from_iter(self.buffers.values().map(|b| b.path_key.clone()));
         let all_excerpt_path_keys = HashSet::from_iter(excerpts.iter().map(|e| e.path_key.clone()));
 
         for (ix, excerpt) in excerpts.iter().enumerate() {
@@ -6644,7 +6655,8 @@ where
         }
 
         self.excerpts.seek(&excerpt_position, Bias::Right);
-        if self.excerpts.item().is_none() && excerpt_position == *self.excerpts.start() {
+        if self.excerpts.item().is_none() && dbg!(excerpt_position) == *self.excerpts.start() {
+            dbg!("NONE");
             self.excerpts.prev();
         }
     }
@@ -6813,6 +6825,7 @@ where
 
     fn build_region(&self) -> Option<MultiBufferRegion<'a, MBD, BD>> {
         let excerpt = self.excerpts.item()?;
+        dbg!("GOT EXCERPT");
         match self.diff_transforms.item()? {
             DiffTransform::DeletedHunk {
                 buffer_id,
@@ -6945,6 +6958,7 @@ impl Excerpt {
         range: ExcerptRange<text::Anchor>,
         has_trailing_newline: bool,
     ) -> Self {
+        dbg!(&path_key, &range, has_trailing_newline);
         Excerpt {
             path_key,
             path_key_index,
@@ -7059,11 +7073,11 @@ impl Excerpt {
     }
 
     fn start_anchor(&self) -> ExcerptAnchor {
-        todo!()
+        ExcerptAnchor::in_buffer(self.path_key_index, self.range.context.start)
     }
 
     fn end_anchor(&self) -> ExcerptAnchor {
-        todo!()
+        ExcerptAnchor::in_buffer(self.path_key_index, self.range.context.end)
     }
 }
 
@@ -7604,11 +7618,13 @@ impl Iterator for MultiBufferRows<'_> {
         }
 
         let mut region = self.cursor.region()?.clone();
+        dbg!("REGION");
         while self.point >= region.range.end {
             self.cursor.next();
             if let Some(next_region) = self.cursor.region() {
                 region = next_region.clone();
-            } else if self.point == self.cursor.diff_transforms.end().output_dimension.0 {
+            } else if dbg!(self.point) == dbg!(self.cursor.diff_transforms.end().output_dimension.0)
+            {
                 let multibuffer_row = MultiBufferRow(self.point.row);
                 let last_excerpt = self
                     .cursor

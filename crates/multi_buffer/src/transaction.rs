@@ -333,6 +333,7 @@ impl MultiBuffer {
             let Some(excerpt) = snapshot.first_excerpt_for_buffer(*buffer_id) else {
                 continue;
             };
+            let buffer_snapshot = buffer.read(cx).snapshot();
 
             for range in buffer
                 .read(cx)
@@ -340,11 +341,11 @@ impl MultiBuffer {
             {
                 buffer_anchors.push(Anchor::in_buffer(
                     excerpt.path_key_index,
-                    excerpt.buffer_snapshot.anchor_at(range.start, Bias::Left),
+                    buffer_snapshot.anchor_at(range.start, Bias::Left),
                 ));
                 buffer_anchors.push(Anchor::in_buffer(
                     excerpt.path_key_index,
-                    excerpt.buffer_snapshot.anchor_at(range.end, Bias::Right),
+                    buffer_snapshot.anchor_at(range.end, Bias::Right),
                 ));
             }
         }

@@ -14,7 +14,7 @@ use text::BufferId;
 
 /// A multibuffer anchor derived from an anchor into a specific excerpted buffer.
 #[derive(Clone, Copy, Eq, PartialEq, Hash)]
-pub(crate) struct ExcerptAnchor {
+pub struct ExcerptAnchor {
     /// The position within the excerpt's underlying buffer. This is a stable
     /// reference that remains valid as the buffer text is edited.
     pub(crate) timestamp: clock::Lamport,
@@ -190,6 +190,7 @@ impl ExcerptAnchor {
         }
     }
 
+    #[track_caller]
     pub(crate) fn in_buffer(path: PathKeyIndex, text_anchor: text::Anchor) -> Self {
         let Some(buffer_id) = text_anchor.buffer_id else {
             panic!("text_anchor must have a buffer_id");

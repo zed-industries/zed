@@ -278,8 +278,10 @@ impl MultiBuffer {
         let anchor_ranges = new
             .into_iter()
             .map(|r| ExcerptRange {
-                context: buffer_snapshot.anchor_range_around(r.context),
-                primary: buffer_snapshot.anchor_range_around(r.primary),
+                context: buffer_snapshot.anchor_before(r.context.start)
+                    ..buffer_snapshot.anchor_after(r.context.end),
+                primary: buffer_snapshot.anchor_before(r.primary.start)
+                    ..buffer_snapshot.anchor_after(r.primary.end),
             })
             .collect::<Vec<_>>();
         self.update_path_excerpts(path, buffer, buffer_snapshot, &anchor_ranges, cx)
@@ -335,26 +337,13 @@ impl MultiBuffer {
 
         let buffer_id = buffer_snapshot.remote_id();
 
-        self.buffers.entry(buffer_id).or_insert_with(|| {
-            self.buffer_changed_since_sync.replace(true);
-            buffer.update(cx, |buffer, _| {
-                buffer.record_changes(Rc::downgrade(&self.buffer_changed_since_sync));
-            });
-            BufferState {
-                _subscriptions: [
-                    cx.observe(&buffer, |_, _, cx| cx.notify()),
-                    cx.subscribe(&buffer, Self::on_buffer_event),
-                ],
-                buffer: buffer.clone(),
-            }
-        });
-
         let mut snapshot = self.snapshot.get_mut();
         let mut cursor = snapshot
             .excerpts
             .cursor::<Dimensions<PathKey, ExcerptOffset>>(());
         let mut new_excerpts = SumTree::new(());
 
+        let new_ranges = to_insert.clone();
         let mut to_insert = to_insert.iter().peekable();
         let mut patch = Patch::empty();
         let mut added_new_excerpt = false;
@@ -410,18 +399,19 @@ impl MultiBuffer {
                 let next_excerpt = to_insert.next().unwrap();
                 added_new_excerpt = true;
                 let before = new_excerpts.summary().len();
+                new_excerpts.update_last(|excerpt| excerpt.has_trailing_newline = true, ());
                 new_excerpts.push(
                     Excerpt::new(
                         path_key.clone(),
                         path_key_index,
                         &buffer_snapshot,
                         next_excerpt.clone(),
-                        to_insert.peek().is_some(),
+                        to_insert.peek().is_some() || cursor.item().is_some(),
                     ),
                     (),
                 );
                 let after = new_excerpts.summary().len();
-                patch.push(Edit {
+                patch.push_maybe_empty(Edit {
                     old: cursor.position.1..cursor.position.1,
                     new: before..after,
                 });
@@ -437,6 +427,27 @@ impl MultiBuffer {
             new: new_excerpts.summary().len()..new_excerpts.summary().len(),
         });
 
+        while let Some(next_excerpt) = to_insert.next() {
+            added_new_excerpt = true;
+            let before = new_excerpts.summary().len();
+            new_excerpts.update_last(|excerpt| excerpt.has_trailing_newline = true, ());
+            new_excerpts.push(
+                Excerpt::new(
+                    path_key.clone(),
+                    path_key_index,
+                    &buffer_snapshot,
+                    next_excerpt.clone(),
+                    to_insert.peek().is_some() || cursor.item().is_some(),
+                ),
+                (),
+            );
+            let after = new_excerpts.summary().len();
+            patch.push_maybe_empty(Edit {
+                old: cursor.position.1..cursor.position.1,
+                new: before..after,
+            });
+        }
+
         let suffix = cursor.suffix();
         let changed_trailing_excerpt = suffix.is_empty();
         new_excerpts.append(suffix, ());
@@ -449,13 +460,28 @@ impl MultiBuffer {
                 buffer_snapshot: buffer_snapshot.clone(),
             },
         );
+
+        self.buffers.entry(buffer_id).or_insert_with(|| {
+            self.buffer_changed_since_sync.replace(true);
+            buffer.update(cx, |buffer, _| {
+                buffer.record_changes(Rc::downgrade(&self.buffer_changed_since_sync));
+            });
+            BufferState {
+                _subscriptions: [
+                    cx.observe(&buffer, |_, _, cx| cx.notify()),
+                    cx.subscribe(&buffer, Self::on_buffer_event),
+                ],
+                buffer: buffer.clone(),
+            }
+        });
+
         if changed_trailing_excerpt {
             snapshot.trailing_excerpt_update_count += 1;
         }
 
         let edits = Self::sync_diff_transforms(
             &mut snapshot,
-            patch.into_inner(),
+            dbg!(patch.into_inner()),
             DiffChangeKind::BufferEdited,
         );
         if !edits.is_empty() {
@@ -468,7 +494,7 @@ impl MultiBuffer {
         cx.emit(Event::BufferUpdated {
             buffer,
             path_key: path_key.clone(),
-            ranges: to_insert,
+            ranges: new_ranges,
         });
         cx.notify();
 
