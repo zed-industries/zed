@@ -1,8 +1,10 @@
 use crate::notification_window_options;
-use call::{ActiveCall, IncomingCall};
+use audio::Audio;
+use call::{call_settings::CallSettings, ActiveCall, IncomingCall};
 use futures::StreamExt;
 use gpui::{App, WindowHandle, prelude::*};
 
+use settings::Settings;
 use std::sync::{Arc, Weak};
 use ui::{CollabNotification, prelude::*};
 use util::ResultExt;
@@ -22,6 +24,8 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut App) {
                     .log_err();
             }
 
+            cx.update(|cx| Audio::stop_incoming_call_ring(cx));
+
             if let Some(incoming_call) = incoming_call {
                 let unique_screens = cx.update(|cx| cx.displays());
                 let window_size = gpui::Size {
@@ -40,8 +44,18 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut App) {
                         notification_windows.push(window);
                     }
                 }
+
+                if !notification_windows.is_empty() {
+                    cx.update(|cx| {
+                        if CallSettings::get_global(cx).play_incoming_call_ring {
+                            Audio::play_incoming_call_ring(cx);
+                        }
+                    });
+                }
             }
         }
+
+        cx.update(|cx| Audio::stop_incoming_call_ring(cx));
 
         for window in notification_windows.drain(..) {
             window
@@ -68,6 +82,8 @@ impl IncomingCallNotificationState {
     }
 
     fn respond(&self, accept: bool, cx: &mut App) {
+        Audio::stop_incoming_call_ring(cx);
+
         let active_call = ActiveCall::global(cx);
         if accept {
             let join = active_call.update(cx, |active_call, cx| active_call.accept_incoming(cx));

@@ -25,7 +25,13 @@ use rodio::{
     source::{AutomaticGainControlSettings, Buffered},
 };
 use settings::Settings;
-use std::{io::Cursor, num::NonZero, path::PathBuf, sync::atomic::Ordering, time::Duration};
+use std::{
+    io::Cursor,
+    num::NonZero,
+    path::PathBuf,
+    sync::atomic::{AtomicBool, Ordering},
+    time::Duration,
+};
 use util::ResultExt;
 
 mod audio_settings;
@@ -83,6 +89,7 @@ pub enum Sound {
     StartScreenshare,
     StopScreenshare,
     AgentDone,
+    IncomingCall,
 }
 
 impl Sound {
@@ -96,6 +103,7 @@ impl Sound {
             Self::StartScreenshare => "start_screenshare",
             Self::StopScreenshare => "stop_screenshare",
             Self::AgentDone => "agent_done",
+            Self::IncomingCall => "incoming_call",
         }
     }
 }
@@ -106,6 +114,7 @@ pub struct Audio {
     pub echo_canceller: Arc<Mutex<apm::AudioProcessingModule>>,
     source_cache: HashMap<Sound, Buffered<Decoder<Cursor<Vec<u8>>>>>,
     replays: replays::Replays,
+    incoming_call_ring_stop: Option<Arc<AtomicBool>>,
 }
 
 impl Default for Audio {
@@ -121,6 +130,7 @@ impl Default for Audio {
             ))),
             source_cache: Default::default(),
             replays: Default::default(),
+            incoming_call_ring_stop: None,
         }
     }
 }
@@ -289,6 +299,50 @@ impl Audio {
 
             output_mixer.add(source);
             Some(())
+        });
+    }
+
+    /// Plays the incoming call ring tone in a loop. Call `stop_incoming_call_ring` when the
+    /// notification is dismissed.
+    pub fn play_incoming_call_ring(cx: &mut App) {
+        let output_audio_device = AudioSettings::get_global(cx).output_audio_device.clone();
+        cx.update_default_global(|this: &mut Self, cx| {
+            // Stop any existing ring first.
+            if let Some(stop) = this.incoming_call_ring_stop.take() {
+                stop.store(true, Ordering::Relaxed);
+            }
+
+            let source = this.sound_source(Sound::IncomingCall, cx).log_err()?;
+            let stop_flag = Arc::new(AtomicBool::new(false));
+            let stop_flag_for_closure = stop_flag.clone();
+            let source = source
+                .repeat_infinite()
+                .stoppable()
+                .periodic_access(
+                    Duration::from_millis(100),
+                    move |stoppable: &mut rodio::source::Stoppable<_>| {
+                        if stop_flag_for_closure.load(Ordering::Relaxed) {
+                            stoppable.stop();
+                        }
+                    },
+                );
+            let output_mixer = this
+                .ensure_output_exists(output_audio_device)
+                .context("Could not get output mixer")
+                .log_err()?;
+
+            output_mixer.add(source);
+            this.incoming_call_ring_stop = Some(stop_flag);
+            Some(())
+        });
+    }
+
+    /// Stops the incoming call ring tone.
+    pub fn stop_incoming_call_ring(cx: &mut App) {
+        cx.update_default_global(|this: &mut Self, _cx| {
+            if let Some(stop) = this.incoming_call_ring_stop.take() {
+                stop.store(true, Ordering::Relaxed);
+            }
         });
     }
 
