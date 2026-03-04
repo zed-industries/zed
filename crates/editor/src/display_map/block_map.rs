@@ -16,7 +16,7 @@ use multi_buffer::{
 };
 use parking_lot::Mutex;
 use std::{
-    cell::RefCell,
+    cell::{Cell, RefCell},
     cmp::{self, Ordering},
     fmt::Debug,
     ops::{Deref, DerefMut, Not, Range, RangeBounds, RangeInclusive},
@@ -45,6 +45,7 @@ pub struct BlockMap {
     excerpt_header_height: u32,
     pub(super) folded_buffers: HashSet<BufferId>,
     buffers_with_disabled_headers: HashSet<BufferId>,
+    pub(super) deferred_edits: Cell<Patch<WrapRow>>,
 }
 
 pub struct BlockMapReader<'a> {
@@ -264,6 +265,10 @@ impl<P: Debug> Debug for BlockProperties<P> {
 pub enum BlockStyle {
     Fixed,
     Flex,
+    /// Like `Flex` but doesn't use the gutter:
+    /// - block content scrolls with buffer content
+    /// - doesn't paint in gutter
+    Spacer,
     Sticky,
 }
 
@@ -271,6 +276,7 @@ pub enum BlockStyle {
 pub struct EditorMargins {
     pub gutter: GutterDimensions,
     pub right: Pixels,
+    pub extended_right: Pixels,
 }
 
 #[derive(gpui::AppContext, gpui::VisualContext)]
@@ -288,6 +294,7 @@ pub struct BlockContext<'a, 'b> {
     pub height: u32,
     pub selected: bool,
     pub editor_style: &'b EditorStyle,
+    pub indent_guide_padding: Pixels,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Ord, PartialOrd, Hash)]
@@ -392,8 +399,8 @@ impl Block {
             Block::Custom(block) => block.style,
             Block::ExcerptBoundary { .. }
             | Block::FoldedBuffer { .. }
-            | Block::BufferHeader { .. }
-            | Block::Spacer { .. } => BlockStyle::Sticky,
+            | Block::BufferHeader { .. } => BlockStyle::Sticky,
+            Block::Spacer { .. } => BlockStyle::Spacer,
         }
     }
 
@@ -620,6 +627,7 @@ impl BlockMap {
             wrap_snapshot: RefCell::new(wrap_snapshot.clone()),
             buffer_header_height,
             excerpt_header_height,
+            deferred_edits: Cell::default(),
         };
         map.sync(
             &wrap_snapshot,
@@ -707,6 +715,7 @@ impl BlockMap {
         }
     }
 
+    // Warning: doesn't sync the block map, use advisedly
     pub(crate) fn insert_block_raw(
         &mut self,
         block: BlockProperties<Anchor>,
@@ -732,6 +741,25 @@ impl BlockMap {
         id
     }
 
+    // Warning: doesn't sync the block map, use advisedly
+    pub(crate) fn retain_blocks_raw(&mut self, pred: &mut dyn FnMut(&Arc<CustomBlock>) -> bool) {
+        let mut ids_to_remove = HashSet::default();
+        self.custom_blocks.retain(|block| {
+            let keep = pred(block);
+            if !keep {
+                ids_to_remove.insert(block.id);
+            }
+            keep
+        });
+        self.custom_blocks_by_id
+            .retain(|id, _| !ids_to_remove.contains(id));
+    }
+
+    // Warning: doesn't sync the block map, use advisedly
+    pub(crate) fn blocks_raw(&self) -> impl Iterator<Item = &Arc<CustomBlock>> {
+        self.custom_blocks.iter()
+    }
+
     #[ztracing::instrument(skip_all, fields(edits = ?edits))]
     fn sync(
         &self,
@@ -740,6 +768,8 @@ impl BlockMap {
         companion_view: Option<CompanionView>,
     ) {
         let buffer = wrap_snapshot.buffer_snapshot();
+
+        edits = self.deferred_edits.take().compose(edits);
 
         // Handle changing the last excerpt if it is empty.
         if buffer.trailing_excerpt_update_count()
@@ -1017,8 +1047,9 @@ impl BlockMap {
                 |point, bias| {
                     wrap_point_cursor
                         .map(
-                            tab_point_cursor
-                                .map(fold_point_cursor.map(inlay_point_cursor.map(point), bias)),
+                            tab_point_cursor.map(
+                                fold_point_cursor.map(inlay_point_cursor.map(point, bias), bias),
+                            ),
                         )
                         .row()
                 },
@@ -1227,37 +1258,33 @@ impl BlockMap {
         let mut our_tab_point_cursor = wrap_snapshot.tab_point_cursor();
         let mut our_wrap_point_cursor = wrap_snapshot.wrap_point_cursor();
 
-        let mut companion_inlay_point_cursor = companion_snapshot.inlay_point_cursor();
-        let mut companion_fold_point_cursor = companion_snapshot.fold_point_cursor();
-        let mut companion_tab_point_cursor = companion_snapshot.tab_point_cursor();
-        let mut companion_wrap_point_cursor = companion_snapshot.wrap_point_cursor();
-
-        let mut our_wrapper = |our_point: Point| {
+        let mut our_wrapper = |our_point: Point, bias: Bias| {
             our_wrap_point_cursor
                 .map(our_tab_point_cursor.map(
-                    our_fold_point_cursor.map(our_inlay_point_cursor.map(our_point), Bias::Left),
+                    our_fold_point_cursor.map(our_inlay_point_cursor.map(our_point, bias), bias),
                 ))
                 .row()
         };
-        let mut companion_wrapper = |their_point: Point| {
-            companion_wrap_point_cursor
-                .map(
-                    companion_tab_point_cursor.map(
-                        companion_fold_point_cursor
-                            .map(companion_inlay_point_cursor.map(their_point), Bias::Left),
-                    ),
-                )
-                .row()
+        let mut companion_wrapper = |their_point: Point, bias: Bias| {
+            // TODO(split-diff) fix companion points being passed in decreasing order
+            let inlay_point = companion_snapshot
+                .inlay_snapshot
+                .inlay_point_cursor()
+                .map(their_point, bias);
+            let fold_point = companion_snapshot.to_fold_point(inlay_point, bias);
+            let tab_point = companion_snapshot.fold_point_to_tab_point(fold_point);
+            companion_snapshot.tab_point_to_wrap_point(tab_point).row()
         };
         fn determine_spacer(
-            our_wrapper: &mut impl FnMut(Point) -> WrapRow,
-            companion_wrapper: &mut impl FnMut(Point) -> WrapRow,
+            our_wrapper: &mut dyn FnMut(Point, Bias) -> WrapRow,
+            companion_wrapper: &mut dyn FnMut(Point, Bias) -> WrapRow,
             our_point: Point,
             their_point: Point,
             delta: i32,
+            bias: Bias,
         ) -> (i32, Option<(WrapRow, u32)>) {
-            let our_wrap = our_wrapper(our_point);
-            let companion_wrap = companion_wrapper(their_point);
+            let our_wrap = our_wrapper(our_point, bias);
+            let companion_wrap = companion_wrapper(their_point, bias);
             let new_delta = companion_wrap.0 as i32 - our_wrap.0 as i32;
 
             let spacer = if new_delta > delta {
@@ -1313,9 +1340,11 @@ impl BlockMap {
                 // Case 3: We are at the start of the excerpt--no previous row to use as the baseline.
                 (first_point, edit_for_first_point.new.start)
             };
-            let our_baseline = our_wrapper(our_baseline);
-            let their_baseline =
-                companion_wrapper(their_baseline.min(excerpt.target_excerpt_range.end));
+            let our_baseline = our_wrapper(our_baseline, Bias::Left);
+            let their_baseline = companion_wrapper(
+                their_baseline.min(excerpt.target_excerpt_range.end),
+                Bias::Left,
+            );
 
             let mut delta = their_baseline.0 as i32 - our_baseline.0 as i32;
 
@@ -1338,6 +1367,7 @@ impl BlockMap {
                     current_boundary,
                     current_range.end.min(excerpt.target_excerpt_range.end),
                     delta,
+                    Bias::Left,
                 );
 
                 delta = new_delta;
@@ -1371,6 +1401,7 @@ impl BlockMap {
                     current_boundary,
                     current_range.start.min(excerpt.target_excerpt_range.end),
                     delta,
+                    Bias::Left,
                 );
                 delta = delta_at_start;
 
@@ -1411,6 +1442,7 @@ impl BlockMap {
                         current_boundary,
                         current_range.end.min(excerpt.target_excerpt_range.end),
                         delta,
+                        Bias::Left,
                     );
                     delta = delta_at_end;
                     spacer_at_end
@@ -1449,6 +1481,7 @@ impl BlockMap {
                     last_source_point,
                     excerpt.target_excerpt_range.end,
                     delta,
+                    Bias::Right,
                 );
                 if let Some((wrap_row, height)) = spacer {
                     result.push((
@@ -1675,12 +1708,13 @@ pub(crate) fn balancing_block(
     Some(BlockProperties {
         placement: their_placement,
         height: my_block.height,
-        style: BlockStyle::Sticky,
+        style: BlockStyle::Spacer,
         render: Arc::new(move |cx| {
             crate::EditorElement::render_spacer_block(
                 cx.block_id,
                 cx.height,
                 cx.line_height,
+                cx.indent_guide_padding,
                 cx.window,
                 cx.app,
             )
@@ -2603,9 +2637,11 @@ impl<'a> Iterator for BlockChunks<'a> {
         self.input_chunk.text = suffix;
         self.input_chunk.tabs >>= prefix_bytes.saturating_sub(1);
         self.input_chunk.chars >>= prefix_bytes.saturating_sub(1);
+        self.input_chunk.newlines >>= prefix_bytes.saturating_sub(1);
 
         let mut tabs = self.input_chunk.tabs;
         let mut chars = self.input_chunk.chars;
+        let mut newlines = self.input_chunk.newlines;
 
         if self.masked {
             // Not great for multibyte text because to keep cursor math correct we
@@ -2615,12 +2651,14 @@ impl<'a> Iterator for BlockChunks<'a> {
             prefix = unsafe { std::str::from_utf8_unchecked(&BULLETS[..bullet_len]) };
             chars = 1u128.unbounded_shl(bullet_len as u32).wrapping_sub(1);
             tabs = 0;
+            newlines = 0;
         }
 
         let chunk = Chunk {
             text: prefix,
             tabs,
             chars,
+            newlines,
             ..self.input_chunk.clone()
         };
 
@@ -2814,8 +2852,8 @@ mod tests {
     use buffer_diff::BufferDiff;
     use gpui::{App, AppContext as _, Element, div, font, px};
     use itertools::Itertools;
-    use language::{Buffer, Capability};
-    use multi_buffer::{ExcerptRange, MultiBuffer};
+    use language::{Buffer, Capability, Point};
+    use multi_buffer::{MultiBuffer, PathKey};
     use rand::prelude::*;
     use settings::SettingsStore;
     use std::env;
@@ -3025,27 +3063,32 @@ mod tests {
         let buffer2 = cx.new(|cx| Buffer::local("Buffer 2", cx));
         let buffer3 = cx.new(|cx| Buffer::local("Buffer 3", cx));
 
-        let mut excerpt_ids = Vec::new();
         let multi_buffer = cx.new(|cx| {
             let mut multi_buffer = MultiBuffer::new(Capability::ReadWrite);
-            excerpt_ids.extend(multi_buffer.push_excerpts(
+            multi_buffer.set_excerpts_for_path(
+                PathKey::sorted(0),
                 buffer1.clone(),
-                [ExcerptRange::new(0..buffer1.read(cx).len())],
+                [Point::zero()..buffer1.read(cx).max_point()],
+                0,
                 cx,
-            ));
-            excerpt_ids.extend(multi_buffer.push_excerpts(
+            );
+            multi_buffer.set_excerpts_for_path(
+                PathKey::sorted(1),
                 buffer2.clone(),
-                [ExcerptRange::new(0..buffer2.read(cx).len())],
+                [Point::zero()..buffer2.read(cx).max_point()],
+                0,
                 cx,
-            ));
-            excerpt_ids.extend(multi_buffer.push_excerpts(
+            );
+            multi_buffer.set_excerpts_for_path(
+                PathKey::sorted(2),
                 buffer3.clone(),
-                [ExcerptRange::new(0..buffer3.read(cx).len())],
+                [Point::zero()..buffer3.read(cx).max_point()],
+                0,
                 cx,
-            ));
-
+            );
             multi_buffer
         });
+        let excerpt_ids = multi_buffer.read_with(cx, |mb, _| mb.excerpt_ids());
 
         let font = test_font();
         let font_size = px(14.);
@@ -3372,30 +3415,32 @@ mod tests {
     fn test_custom_blocks_inside_buffer_folds(cx: &mut gpui::TestAppContext) {
         cx.update(init_test);
 
-        let text = "111\n222\n333\n444\n555\n666";
+        let text = "111\n\n222\n\n333\n\n444\n\n555\n\n666";
 
         let buffer = cx.update(|cx| {
-            MultiBuffer::build_multi(
+            let multibuffer = MultiBuffer::build_multi(
                 [
                     (text, vec![Point::new(0, 0)..Point::new(0, 3)]),
                     (
                         text,
                         vec![
-                            Point::new(1, 0)..Point::new(1, 3),
                             Point::new(2, 0)..Point::new(2, 3),
-                            Point::new(3, 0)..Point::new(3, 3),
+                            Point::new(4, 0)..Point::new(4, 3),
+                            Point::new(6, 0)..Point::new(6, 3),
                         ],
                     ),
                     (
                         text,
                         vec![
-                            Point::new(4, 0)..Point::new(4, 3),
-                            Point::new(5, 0)..Point::new(5, 3),
+                            Point::new(8, 0)..Point::new(8, 3),
+                            Point::new(10, 0)..Point::new(10, 3),
                         ],
                     ),
                 ],
                 cx,
-            )
+            );
+            assert_eq!(multibuffer.read(cx).excerpt_ids().len(), 6);
+            multibuffer
         });
         let buffer_snapshot = cx.update(|cx| buffer.read(cx).snapshot(cx));
         let buffer_ids = buffer_snapshot
@@ -3431,16 +3476,16 @@ mod tests {
                 Some(0),
                 None,
                 None,
-                Some(1),
-                None,
                 Some(2),
-                None,
-                Some(3),
-                None,
                 None,
                 Some(4),
                 None,
-                Some(5),
+                Some(6),
+                None,
+                None,
+                Some(8),
+                None,
+                Some(10),
             ]
         );
 
@@ -3502,19 +3547,19 @@ mod tests {
                 None,
                 None,
                 None,
-                Some(1),
-                None,
-                None,
                 Some(2),
-                None,
-                Some(3),
-                None,
-                None,
                 None,
                 None,
                 Some(4),
                 None,
-                Some(5),
+                Some(6),
+                None,
+                None,
+                None,
+                None,
+                Some(8),
+                None,
+                Some(10),
                 None,
             ]
         );
@@ -3570,19 +3615,19 @@ mod tests {
                 None,
                 None,
                 None,
-                Some(1),
-                None,
-                None,
                 Some(2),
-                None,
-                Some(3),
-                None,
-                None,
                 None,
                 None,
                 Some(4),
                 None,
-                Some(5),
+                Some(6),
+                None,
+                None,
+                None,
+                None,
+                Some(8),
+                None,
+                Some(10),
                 None,
             ]
         );
@@ -3633,9 +3678,9 @@ mod tests {
                 None,
                 None,
                 None,
-                Some(4),
+                Some(8),
                 None,
-                Some(5),
+                Some(10),
                 None,
             ]
         );
@@ -3689,9 +3734,9 @@ mod tests {
                 None,
                 None,
                 None,
-                Some(4),
+                Some(8),
                 None,
-                Some(5),
+                Some(10),
                 None,
             ]
         );
@@ -4066,8 +4111,9 @@ mod tests {
                 |point, bias| {
                     wrap_point_cursor
                         .map(
-                            tab_point_cursor
-                                .map(fold_point_cursor.map(inlay_point_cursor.map(point), bias)),
+                            tab_point_cursor.map(
+                                fold_point_cursor.map(inlay_point_cursor.map(point, bias), bias),
+                            ),
                         )
                         .row()
                 },
@@ -4554,23 +4600,25 @@ mod tests {
         let diff = cx.new(|cx| {
             BufferDiff::new_with_base_text(base_text, &rhs_buffer.read(cx).text_snapshot(), cx)
         });
-        let lhs_buffer = diff.read_with(cx, |diff, _| diff.base_text_buffer());
+        let lhs_buffer = diff.read_with(cx, |diff, _| diff.base_text_buffer().clone());
 
         let lhs_multibuffer = cx.new(|cx| {
             let mut mb = MultiBuffer::new(Capability::ReadWrite);
-            mb.push_excerpts(
+            mb.set_excerpts_for_buffer(
                 lhs_buffer.clone(),
-                [ExcerptRange::new(text::Anchor::MIN..text::Anchor::MAX)],
+                [Point::zero()..lhs_buffer.read(cx).max_point()],
+                0,
                 cx,
             );
-            mb.add_inverted_diff(diff.clone(), cx);
+            mb.add_inverted_diff(diff.clone(), rhs_buffer.clone(), cx);
             mb
         });
         let rhs_multibuffer = cx.new(|cx| {
             let mut mb = MultiBuffer::new(Capability::ReadWrite);
-            mb.push_excerpts(
+            mb.set_excerpts_for_buffer(
                 rhs_buffer.clone(),
-                [ExcerptRange::new(text::Anchor::MIN..text::Anchor::MAX)],
+                [Point::zero()..rhs_buffer.read(cx).max_point()],
+                0,
                 cx,
             );
             mb.add_diff(diff.clone(), cx);

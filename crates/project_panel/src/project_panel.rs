@@ -1,4 +1,4 @@
-mod project_panel_settings;
+pub mod project_panel_settings;
 mod utils;
 
 use anyhow::{Context as _, Result};
@@ -75,7 +75,10 @@ use workspace::{
     notifications::{DetachAndPromptErr, NotifyResultExt, NotifyTaskExt},
 };
 use worktree::CreatedEntry;
-use zed_actions::{project_panel::ToggleFocus, workspace::OpenWithSystem};
+use zed_actions::{
+    project_panel::{Toggle, ToggleFocus},
+    workspace::OpenWithSystem,
+};
 
 const PROJECT_PANEL_KEY: &str = "ProjectPanel";
 const NEW_ENTRY_ID: ProjectEntryId = ProjectEntryId::MAX;
@@ -143,6 +146,7 @@ pub struct ProjectPanel {
     width: Option<Pixels>,
     pending_serialization: Task<Option<()>>,
     diagnostics: HashMap<(WorktreeId, Arc<RelPath>), DiagnosticSeverity>,
+    diagnostic_counts: HashMap<(WorktreeId, Arc<RelPath>), DiagnosticCount>,
     diagnostic_summary_update: Task<()>,
     // We keep track of the mouse down state on entries so we don't flash the UI
     // in case a user clicks to open a file.
@@ -229,6 +233,30 @@ enum ClipboardEntry {
     Cut(BTreeSet<SelectedEntry>),
 }
 
+#[derive(Debug, Default, PartialEq, Eq, Clone, Copy)]
+struct DiagnosticCount {
+    error_count: usize,
+    warning_count: usize,
+}
+
+impl DiagnosticCount {
+    fn capped_error_count(&self) -> String {
+        Self::capped_count(self.error_count)
+    }
+
+    fn capped_warning_count(&self) -> String {
+        Self::capped_count(self.warning_count)
+    }
+
+    fn capped_count(count: usize) -> String {
+        if count > 99 {
+            "99+".to_string()
+        } else {
+            count.to_string()
+        }
+    }
+}
+
 #[derive(Debug, PartialEq, Eq, Clone)]
 struct EntryDetails {
     filename: String,
@@ -246,6 +274,7 @@ struct EntryDetails {
     sticky: Option<StickyDetails>,
     filename_text_color: Color,
     diagnostic_severity: Option<DiagnosticSeverity>,
+    diagnostic_count: Option<DiagnosticCount>,
     git_status: GitSummary,
     is_private: bool,
     worktree_id: WorktreeId,
@@ -417,6 +446,11 @@ pub fn init(cx: &mut App) {
     cx.observe_new(|workspace: &mut Workspace, _, _| {
         workspace.register_action(|workspace, _: &ToggleFocus, window, cx| {
             workspace.toggle_panel_focus::<ProjectPanel>(window, cx);
+        });
+        workspace.register_action(|workspace, _: &Toggle, window, cx| {
+            if !workspace.toggle_panel_focus::<ProjectPanel>(window, cx) {
+                workspace.close_panel::<ProjectPanel>(window, cx);
+            }
         });
 
         workspace.register_action(|workspace, _: &ToggleHideGitIgnore, _, cx| {
@@ -839,6 +873,7 @@ impl ProjectPanel {
                 width: None,
                 pending_serialization: Task::ready(None),
                 diagnostics: Default::default(),
+                diagnostic_counts: Default::default(),
                 diagnostic_summary_update: Task::ready(()),
                 scroll_handle,
                 mouse_down: false,
@@ -1021,6 +1056,26 @@ impl ProjectPanel {
                 });
         }
         self.diagnostics = diagnostics;
+
+        let diagnostic_badges = ProjectPanelSettings::get_global(cx).diagnostic_badges;
+        self.diagnostic_counts =
+            if diagnostic_badges && show_diagnostics_setting != ShowDiagnostics::Off {
+                self.project.read(cx).diagnostic_summaries(false, cx).fold(
+                    HashMap::default(),
+                    |mut counts, (project_path, _, summary)| {
+                        let entry = counts
+                            .entry((project_path.worktree_id, project_path.path))
+                            .or_default();
+                        entry.error_count += summary.error_count;
+                        if show_diagnostics_setting == ShowDiagnostics::All {
+                            entry.warning_count += summary.warning_count;
+                        }
+                        counts
+                    },
+                )
+            } else {
+                Default::default()
+            };
     }
 
     fn update_strongest_diagnostic_severity(
@@ -1168,7 +1223,7 @@ impl ProjectPanel {
                             })
                             .when(should_show_compare, |menu| {
                                 menu.separator()
-                                    .action("Compare marked files", Box::new(CompareMarkedFiles))
+                                    .action("Compare Marked Files", Box::new(CompareMarkedFiles))
                             })
                             .separator()
                             .action("Cut", Box::new(Cut))
@@ -2656,7 +2711,7 @@ impl ProjectPanel {
         let selection = self.find_entry(
             self.selection.as_ref(),
             true,
-            |entry, worktree_id| {
+            &|entry: GitEntryRef, worktree_id: WorktreeId| {
                 self.selection.is_none_or(|selection| {
                     if selection.worktree_id == worktree_id {
                         selection.entry_id != entry.id
@@ -2695,7 +2750,7 @@ impl ProjectPanel {
         let selection = self.find_entry(
             self.selection.as_ref(),
             false,
-            |entry, worktree_id| {
+            &|entry: GitEntryRef, worktree_id: WorktreeId| {
                 self.selection.is_none_or(|selection| {
                     if selection.worktree_id == worktree_id {
                         selection.entry_id != entry.id
@@ -2734,7 +2789,7 @@ impl ProjectPanel {
         let selection = self.find_entry(
             self.selection.as_ref(),
             true,
-            |entry, worktree_id| {
+            &|entry: GitEntryRef, worktree_id: WorktreeId| {
                 (self.selection.is_none()
                     || self.selection.is_some_and(|selection| {
                         if selection.worktree_id == worktree_id {
@@ -2772,7 +2827,7 @@ impl ProjectPanel {
         let selection = self.find_visible_entry(
             self.selection.as_ref(),
             true,
-            |entry, worktree_id| {
+            &|entry: GitEntryRef, worktree_id: WorktreeId| {
                 self.selection.is_none_or(|selection| {
                     if selection.worktree_id == worktree_id {
                         selection.entry_id != entry.id
@@ -2800,7 +2855,7 @@ impl ProjectPanel {
         let selection = self.find_visible_entry(
             self.selection.as_ref(),
             false,
-            |entry, worktree_id| {
+            &|entry: GitEntryRef, worktree_id: WorktreeId| {
                 self.selection.is_none_or(|selection| {
                     if selection.worktree_id == worktree_id {
                         selection.entry_id != entry.id
@@ -2828,7 +2883,7 @@ impl ProjectPanel {
         let selection = self.find_entry(
             self.selection.as_ref(),
             false,
-            |entry, worktree_id| {
+            &|entry: GitEntryRef, worktree_id: WorktreeId| {
                 self.selection.is_none_or(|selection| {
                     if selection.worktree_id == worktree_id {
                         selection.entry_id != entry.id
@@ -4471,7 +4526,7 @@ impl ProjectPanel {
         range: Range<usize>,
         window: &mut Window,
         cx: &mut Context<ProjectPanel>,
-        mut callback: impl FnMut(
+        callback: &mut dyn FnMut(
             &Entry,
             usize,
             &HashSet<Arc<RelPath>>,
@@ -4509,7 +4564,12 @@ impl ProjectPanel {
         range: Range<usize>,
         window: &mut Window,
         cx: &mut Context<ProjectPanel>,
-        mut callback: impl FnMut(ProjectEntryId, EntryDetails, &mut Window, &mut Context<ProjectPanel>),
+        callback: &mut dyn FnMut(
+            ProjectEntryId,
+            EntryDetails,
+            &mut Window,
+            &mut Context<ProjectPanel>,
+        ),
     ) {
         let mut ix = 0;
         for visible in &self.state.visible_entries {
@@ -4624,7 +4684,7 @@ impl ProjectPanel {
         worktree_id: WorktreeId,
         reverse_search: bool,
         only_visible_entries: bool,
-        predicate: impl Fn(GitEntryRef, WorktreeId) -> bool,
+        predicate: &dyn Fn(GitEntryRef, WorktreeId) -> bool,
         cx: &mut Context<Self>,
     ) -> Option<GitEntry> {
         if only_visible_entries {
@@ -4667,7 +4727,7 @@ impl ProjectPanel {
         &self,
         start: Option<&SelectedEntry>,
         reverse_search: bool,
-        predicate: impl Fn(GitEntryRef, WorktreeId) -> bool,
+        predicate: &dyn Fn(GitEntryRef, WorktreeId) -> bool,
         cx: &mut Context<Self>,
     ) -> Option<SelectedEntry> {
         let mut worktree_ids: Vec<_> = self
@@ -4784,7 +4844,7 @@ impl ProjectPanel {
         &self,
         start: Option<&SelectedEntry>,
         reverse_search: bool,
-        predicate: impl Fn(GitEntryRef, WorktreeId) -> bool,
+        predicate: &dyn Fn(GitEntryRef, WorktreeId) -> bool,
         cx: &mut Context<Self>,
     ) -> Option<SelectedEntry> {
         let mut worktree_ids: Vec<_> = self
@@ -5031,6 +5091,7 @@ impl ProjectPanel {
 
         let filename_text_color = details.filename_text_color;
         let diagnostic_severity = details.diagnostic_severity;
+        let diagnostic_count = details.diagnostic_count;
         let item_colors = get_item_color(is_sticky, cx);
 
         let canonical_path = details
@@ -5385,7 +5446,7 @@ impl ProjectPanel {
                                 range_start..range_end,
                                 window,
                                 cx,
-                                |entry_id, details, _, _| {
+                                &mut |entry_id, details, _, _| {
                                     new_selections.push(SelectedEntry {
                                         entry_id,
                                         worktree_id: details.worktree_id,
@@ -5469,22 +5530,55 @@ impl ProjectPanel {
                         ProjectPanelEntrySpacing::Standard => ListItemSpacing::ExtraDense,
                     })
                     .selectable(false)
-                    .when_some(canonical_path, |this, path| {
-                        this.end_slot::<AnyElement>(
-                            div()
-                                .id("symlink_icon")
-                                .pr_3()
-                                .tooltip(move |_window, cx| {
-                                    Tooltip::with_meta(path.to_string(), None, "Symbolic Link", cx)
-                                })
-                                .child(
-                                    Icon::new(IconName::ArrowUpRight)
-                                        .size(IconSize::Indicator)
-                                        .color(filename_text_color),
-                                )
-                                .into_any_element(),
-                        )
-                    })
+                    .when(
+                        canonical_path.is_some() || diagnostic_count.is_some(),
+                        |this| {
+                            let symlink_element = canonical_path.map(|path| {
+                                div()
+                                    .id("symlink_icon")
+                                    .tooltip(move |_window, cx| {
+                                        Tooltip::with_meta(
+                                            path.to_string(),
+                                            None,
+                                            "Symbolic Link",
+                                            cx,
+                                        )
+                                    })
+                                    .child(
+                                        Icon::new(IconName::ArrowUpRight)
+                                            .size(IconSize::Indicator)
+                                            .color(filename_text_color),
+                                    )
+                            });
+                            this.end_slot::<AnyElement>(
+                                h_flex()
+                                    .gap_1()
+                                    .flex_none()
+                                    .pr_3()
+                                    .when_some(diagnostic_count, |this, count| {
+                                        this.when(count.error_count > 0, |this| {
+                                            this.child(
+                                                Label::new(count.capped_error_count())
+                                                    .size(LabelSize::Small)
+                                                    .color(Color::Error),
+                                            )
+                                        })
+                                        .when(
+                                            count.warning_count > 0,
+                                            |this| {
+                                                this.child(
+                                                    Label::new(count.capped_warning_count())
+                                                        .size(LabelSize::Small)
+                                                        .color(Color::Warning),
+                                                )
+                                            },
+                                        )
+                                    })
+                                    .when_some(symlink_element, |this, el| this.child(el))
+                                    .into_any_element(),
+                            )
+                        },
+                    )
                     .child(if let Some(icon) = &icon {
                         if let Some((_, decoration_color)) =
                             entry_diagnostic_aware_icon_decoration_and_color(diagnostic_severity)
@@ -5894,6 +5988,11 @@ impl ProjectPanel {
             .get(&(worktree_id, entry.path.clone()))
             .cloned();
 
+        let diagnostic_count = self
+            .diagnostic_counts
+            .get(&(worktree_id, entry.path.clone()))
+            .copied();
+
         let filename_text_color =
             entry_git_aware_label_color(git_status, entry.is_ignored, is_marked);
 
@@ -5918,6 +6017,7 @@ impl ProjectPanel {
             sticky,
             filename_text_color,
             diagnostic_severity,
+            diagnostic_count,
             git_status,
             is_private: entry.is_private,
             worktree_id,
@@ -5953,12 +6053,27 @@ impl ProjectPanel {
             .worktree_for_entry(entry_id, cx)
             .context("can't reveal a non-existent entry in the project panel")?;
         let worktree = worktree.read(cx);
-        if skip_ignored
-            && worktree
-                .entry_for_id(entry_id)
-                .is_none_or(|entry| entry.is_ignored && !entry.is_always_included)
-        {
-            anyhow::bail!("can't reveal an ignored entry in the project panel");
+        let worktree_id = worktree.id();
+        let is_ignored = worktree
+            .entry_for_id(entry_id)
+            .is_none_or(|entry| entry.is_ignored && !entry.is_always_included);
+        if skip_ignored && is_ignored {
+            if self.index_for_entry(entry_id, worktree_id).is_none() {
+                anyhow::bail!("can't reveal an ignored entry in the project panel");
+            }
+
+            self.selection = Some(SelectedEntry {
+                worktree_id,
+                entry_id,
+            });
+            self.marked_entries.clear();
+            self.marked_entries.push(SelectedEntry {
+                worktree_id,
+                entry_id,
+            });
+            self.autoscroll(cx);
+            cx.notify();
+            return Ok(());
         }
         let is_active_item_file_diff_view = self
             .workspace
@@ -5970,7 +6085,6 @@ impl ProjectPanel {
             return Ok(());
         }
 
-        let worktree_id = worktree.id();
         self.expand_entry(worktree_id, entry_id, cx);
         self.update_visible_entries(Some((worktree_id, entry_id)), false, true, window, cx);
         self.marked_entries.clear();
@@ -6364,7 +6478,7 @@ impl Render for ProjectPanel {
                                         range,
                                         window,
                                         cx,
-                                        |id, details, window, cx| {
+                                        &mut |id, details, window, cx| {
                                             items.push(this.render_entry(id, details, window, cx));
                                         },
                                     );
@@ -6386,7 +6500,7 @@ impl Render for ProjectPanel {
                                                 range,
                                                 window,
                                                 cx,
-                                                |entry, _, entries, _, _| {
+                                                &mut |entry, _, entries, _, _| {
                                                     let (depth, _) =
                                                         Self::calculate_depth_and_difference(
                                                             entry, entries,
@@ -6499,7 +6613,7 @@ impl Render for ProjectPanel {
                                             range,
                                             window,
                                             cx,
-                                            |entry, index, entries, _, _| {
+                                            &mut |entry, index, entries, _, _| {
                                                 let (depth, _) =
                                                     Self::calculate_depth_and_difference(
                                                         entry, entries,

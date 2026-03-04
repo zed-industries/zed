@@ -117,7 +117,7 @@ impl ModelInput {
 
         let model_name = single_line_input(
             "Model Name",
-            "e.g. gpt-4o, claude-opus-4, gemini-2.5-pro",
+            "e.g. gpt-5, claude-opus-4, gemini-2.5-pro",
             None,
             base_tab_index + 1,
             window,

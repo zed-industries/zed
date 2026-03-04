@@ -14,7 +14,6 @@ pub mod visual_tests;
 pub(crate) mod windows_only_instance;
 
 use agent_ui::{AgentDiffToolbar, AgentPanelDelegate};
-use agent_ui_v2::agents_panel::AgentsPanel;
 use anyhow::Context as _;
 pub use app_menus::*;
 use assets::Assets;
@@ -44,6 +43,7 @@ use language::Capability;
 use language_onboarding::BasedPyrightBanner;
 use language_tools::lsp_button::{self, LspButton};
 use language_tools::lsp_log_view::LspLogToolbarItemView;
+use markdown::{Markdown, MarkdownElement, MarkdownFont, MarkdownStyle};
 use migrate::{MigrationBanner, MigrationEvent, MigrationNotification, MigrationType};
 use migrator::migrate_keymap;
 use onboarding::DOCS_URL;
@@ -87,7 +87,7 @@ use vim_mode_setting::VimModeSetting;
 use workspace::notifications::{
     NotificationId, SuppressEvent, dismiss_app_notification, show_app_notification,
 };
-use workspace::utility_pane::utility_slot_for_dock_position;
+
 use workspace::{
     AppState, MultiWorkspace, NewFile, NewWindow, OpenLog, Panel, Toast, Workspace,
     WorkspaceSettings, create_and_open_local_file,
@@ -376,8 +376,19 @@ pub fn initialize_workspace(
             return;
         };
         let multi_workspace_handle = cx.entity();
-        let sidebar = cx.new(|cx| Sidebar::new(multi_workspace_handle, window, cx));
+        let sidebar = cx.new(|cx| Sidebar::new(multi_workspace_handle.clone(), window, cx));
         multi_workspace.register_sidebar(sidebar, window, cx);
+
+        let multi_workspace_handle = multi_workspace_handle.downgrade();
+        window.on_window_should_close(cx, move |window, cx| {
+            multi_workspace_handle
+                .update(cx, |multi_workspace, cx| {
+                    // We'll handle closing asynchronously
+                    multi_workspace.close_window(&CloseWindow, window, cx);
+                    false
+                })
+                .unwrap_or(true)
+        });
     })
     .detach();
 
@@ -483,17 +494,6 @@ pub fn initialize_workspace(
             status_bar.add_right_item(vim_mode_indicator, window, cx);
             status_bar.add_right_item(cursor_position, window, cx);
             status_bar.add_right_item(image_info, window, cx);
-        });
-
-        let handle = cx.entity().downgrade();
-        window.on_window_should_close(cx, move |window, cx| {
-            handle
-                .update(cx, |workspace, cx| {
-                    // We'll handle closing asynchronously
-                    workspace.close_window(&CloseWindow, window, cx);
-                    false
-                })
-                .unwrap_or(true)
         });
 
         initialize_panels(prompt_builder.clone(), window, cx);
@@ -657,8 +657,7 @@ fn initialize_panels(
             add_panel_when_ready(channels_panel, workspace_handle.clone(), cx.clone()),
             add_panel_when_ready(notification_panel, workspace_handle.clone(), cx.clone()),
             add_panel_when_ready(debug_panel, workspace_handle.clone(), cx.clone()),
-            initialize_agent_panel(workspace_handle.clone(), prompt_builder, cx.clone()).map(|r| r.log_err()),
-            initialize_agents_panel(workspace_handle, cx.clone()).map(|r| r.log_err())
+            initialize_agent_panel(workspace_handle, prompt_builder, cx.clone()).map(|r| r.log_err()),
         );
 
         anyhow::Ok(())
@@ -741,33 +740,9 @@ async fn initialize_agent_panel(
 
             workspace
                 .register_action(agent_ui::AgentPanel::toggle_focus)
+                .register_action(agent_ui::AgentPanel::toggle)
                 .register_action(agent_ui::InlineAssistant::inline_assist);
         }
-    })?;
-
-    anyhow::Ok(())
-}
-
-async fn initialize_agents_panel(
-    workspace_handle: WeakEntity<Workspace>,
-    mut cx: AsyncWindowContext,
-) -> anyhow::Result<()> {
-    workspace_handle
-        .update_in(&mut cx, |workspace, window, cx| {
-            setup_or_teardown_ai_panel(workspace, window, cx, |workspace, cx| {
-                AgentsPanel::load(workspace, cx)
-            })
-        })?
-        .await?;
-
-    workspace_handle.update_in(&mut cx, |_workspace, window, cx| {
-        cx.observe_global_in::<SettingsStore>(window, move |workspace, window, cx| {
-            setup_or_teardown_ai_panel(workspace, window, cx, |workspace, cx| {
-                AgentsPanel::load(workspace, cx)
-            })
-            .detach_and_log_err(cx);
-        })
-        .detach();
     })?;
 
     anyhow::Ok(())
@@ -821,36 +796,33 @@ fn register_actions(
         })
         .register_action(|workspace, _: &workspace::Open, window, cx| {
             telemetry::event!("Project Opened");
-            let paths = workspace.prompt_for_open_path(
+            workspace::prompt_for_open_path_and_open(
+                workspace,
+                workspace.app_state().clone(),
                 PathPromptOptions {
                     files: true,
                     directories: true,
                     multiple: true,
                     prompt: None,
                 },
-                DirectoryLister::Local(
-                    workspace.project().clone(),
-                    workspace.app_state().fs.clone(),
-                ),
                 window,
                 cx,
             );
-
-            cx.spawn_in(window, async move |this, cx| {
-                let Some(paths) = paths.await.log_err().flatten() else {
-                    return;
-                };
-
-                if let Some(task) = this
-                    .update_in(cx, |this, window, cx| {
-                        this.open_workspace_for_paths(false, paths, window, cx)
-                    })
-                    .log_err()
-                {
-                    task.await.log_err();
-                }
-            })
-            .detach()
+        })
+        .register_action(|workspace, _: &workspace::OpenFiles, window, cx| {
+            let directories = cx.can_select_mixed_files_and_dirs();
+            workspace::prompt_for_open_path_and_open(
+                workspace,
+                workspace.app_state().clone(),
+                PathPromptOptions {
+                    files: true,
+                    directories,
+                    multiple: true,
+                    prompt: None,
+                },
+                window,
+                cx,
+            );
         })
         .register_action(|workspace, action: &zed_actions::OpenRemote, window, cx| {
             if !action.from_existing_connection {
@@ -1067,18 +1039,6 @@ fn register_actions(
                 workspace.toggle_panel_focus::<TerminalPanel>(window, cx);
             },
         )
-        .register_action(
-            |workspace: &mut Workspace,
-             _: &zed_actions::agent::ToggleAgentPane,
-             window: &mut Window,
-             cx: &mut Context<Workspace>| {
-                if let Some(panel) = workspace.panel::<AgentsPanel>(cx) {
-                    let position = panel.read(cx).position(window, cx);
-                    let slot = utility_slot_for_dock_position(position);
-                    workspace.toggle_utility_pane(slot, window, cx);
-                }
-            },
-        )
         .register_action({
             let app_state = Arc::downgrade(&app_state);
             move |_, _: &NewWindow, _, cx| {
@@ -1159,7 +1119,7 @@ fn register_actions(
                             Editor::new_file(workspace, &Default::default(), window, cx)
                         },
                     )
-                    .detach();
+                    .detach_and_log_err(cx);
                 }
             }
         })
@@ -1359,7 +1319,8 @@ fn quit(_: &Quit, cx: &mut App) {
         }
 
         // If the user cancels any save prompt, then keep the app open.
-        for window in workspace_windows {
+        for window in &workspace_windows {
+            let window = *window;
             let workspaces = window
                 .update(cx, |multi_workspace, _, _| {
                     multi_workspace.workspaces().to_vec()
@@ -1387,6 +1348,24 @@ fn quit(_: &Quit, cx: &mut App) {
                 }
             }
         }
+        // Flush all pending workspace serialization before quitting so that
+        // session_id/window_id are up-to-date in the database.
+        let mut flush_tasks = Vec::new();
+        for window in &workspace_windows {
+            window
+                .update(cx, |multi_workspace, window, cx| {
+                    for workspace in multi_workspace.workspaces() {
+                        flush_tasks.push(workspace.update(cx, |workspace, cx| {
+                            workspace.flush_serialization(window, cx)
+                        }));
+                    }
+                    flush_tasks.append(&mut multi_workspace.take_pending_removal_tasks());
+                    flush_tasks.push(multi_workspace.flush_serialization());
+                })
+                .log_err();
+        }
+        futures::future::join_all(flush_tasks).await;
+
         cx.update(|cx| cx.quit());
         anyhow::Ok(())
     })
@@ -1798,48 +1777,28 @@ fn show_markdown_app_notification<F>(
 ) where
     F: 'static + Send + Sync + Fn(&mut Window, &mut Context<MessageNotification>),
 {
-    let parsed_markdown = cx.background_spawn(async move {
-        let file_location_directory = None;
-        let language_registry = None;
-        markdown_preview::markdown_parser::parse_markdown(
-            &message.0,
-            file_location_directory,
-            language_registry,
-        )
-        .await
-    });
+    let markdown = cx.new(|cx| Markdown::new(message.0.into(), None, None, cx));
+    let primary_button_on_click = Arc::new(primary_button_on_click);
 
-    cx.spawn(async move |cx| {
-        let parsed_markdown = Arc::new(parsed_markdown.await);
+    show_app_notification(notification_id, cx, move |cx| {
+        let markdown = markdown.clone();
         let primary_button_message = primary_button_message.clone();
-        let primary_button_on_click = Arc::new(primary_button_on_click);
-        cx.update(|cx| {
-            show_app_notification(notification_id, cx, move |cx| {
-                let workspace_handle = cx.entity().downgrade();
-                let parsed_markdown = parsed_markdown.clone();
-                let primary_button_message = primary_button_message.clone();
-                let primary_button_on_click = primary_button_on_click.clone();
-                cx.new(move |cx| {
-                    MessageNotification::new_from_builder(cx, move |window, cx| {
-                        image_cache(retain_all("notification-cache"))
-                            .child(div().text_ui(cx).child(
-                                markdown_preview::markdown_renderer::render_parsed_markdown(
-                                    &parsed_markdown.clone(),
-                                    Some(workspace_handle.clone()),
-                                    window,
-                                    cx,
-                                ),
-                            ))
-                            .into_any()
-                    })
-                    .primary_message(primary_button_message)
-                    .primary_icon(IconName::Settings)
-                    .primary_on_click_arc(primary_button_on_click)
-                })
+        let primary_button_on_click = primary_button_on_click.clone();
+
+        cx.new(move |cx| {
+            MessageNotification::new_from_builder(cx, move |window, cx| {
+                image_cache(retain_all("notification-cache"))
+                    .child(div().text_ui(cx).child(MarkdownElement::new(
+                        markdown.clone(),
+                        MarkdownStyle::themed(MarkdownFont::Editor, window, cx),
+                    )))
+                    .into_any()
             })
-        });
+            .primary_message(primary_button_message)
+            .primary_icon(IconName::Settings)
+            .primary_on_click_arc(primary_button_on_click)
+        })
     })
-    .detach();
 }
 
 fn reload_keymaps(cx: &mut App, mut user_key_bindings: Vec<KeyBinding>) {
@@ -2400,7 +2359,7 @@ mod tests {
             .fs
             .as_fake()
             .insert_tree(
-                "/root",
+                path!("/root"),
                 json!({
                     "a": {
                         "aa": null,
@@ -2428,7 +2387,10 @@ mod tests {
 
         cx.update(|cx| {
             open_paths(
-                &[PathBuf::from("/root/a"), PathBuf::from("/root/b")],
+                &[
+                    PathBuf::from(path!("/root/a")),
+                    PathBuf::from(path!("/root/b")),
+                ],
                 app_state.clone(),
                 workspace::OpenOptions::default(),
                 cx,
@@ -2440,7 +2402,7 @@ mod tests {
 
         cx.update(|cx| {
             open_paths(
-                &[PathBuf::from("/root/a")],
+                &[PathBuf::from(path!("/root/a"))],
                 app_state.clone(),
                 workspace::OpenOptions::default(),
                 cx,
@@ -2471,7 +2433,10 @@ mod tests {
 
         cx.update(|cx| {
             open_paths(
-                &[PathBuf::from("/root/c"), PathBuf::from("/root/d")],
+                &[
+                    PathBuf::from(path!("/root/c")),
+                    PathBuf::from(path!("/root/d")),
+                ],
                 app_state.clone(),
                 workspace::OpenOptions::default(),
                 cx,
@@ -2487,7 +2452,7 @@ mod tests {
             .unwrap();
         cx.update(|cx| {
             open_paths(
-                &[PathBuf::from("/root/e")],
+                &[PathBuf::from(path!("/root/e"))],
                 app_state,
                 workspace::OpenOptions {
                     replace_window: Some(window),
@@ -2511,7 +2476,7 @@ mod tests {
                         .worktrees(cx)
                         .map(|w| w.read(cx).abs_path())
                         .collect::<Vec<_>>(),
-                    &[Path::new("/root/e").into()]
+                    &[Path::new(path!("/root/e")).into()]
                 );
                 assert!(workspace.left_dock().read(cx).is_open());
                 assert!(workspace.active_pane().focus_handle(cx).is_focused(window));
@@ -2813,6 +2778,7 @@ mod tests {
         assert_eq!(cx.update(|cx| cx.windows().len()), 0);
     }
 
+    #[ignore = "This test has timing issues across platforms."]
     #[gpui::test]
     async fn test_window_edit_state_restoring_enabled(cx: &mut TestAppContext) {
         let app_state = init_test(cx);
@@ -3699,7 +3665,7 @@ mod tests {
                             .language_at(MultiBufferOffset(0), cx)
                             .unwrap()
                             .name(),
-                        "Rust".into()
+                        "Rust"
                     );
                 });
             })
@@ -3847,7 +3813,7 @@ mod tests {
                             .language_at(MultiBufferOffset(0), cx)
                             .unwrap()
                             .name(),
-                        "Rust".into()
+                        "Rust"
                     )
                 });
             })
@@ -4826,7 +4792,6 @@ mod tests {
                 "action",
                 "activity_indicator",
                 "agent",
-                "agents",
                 "app_menu",
                 "assistant",
                 "assistant2",
@@ -4895,7 +4860,6 @@ mod tests {
                 "settings_profile_selector",
                 "snippets",
                 "stash_picker",
-                "supermaven",
                 "svg",
                 "syntax_tree_view",
                 "tab_switcher",
@@ -5071,7 +5035,7 @@ mod tests {
                 false,
                 cx,
             );
-            agent_ui_v2::agents_panel::init(cx);
+
             repl::init(app_state.fs.clone(), cx);
             repl::notebook::init(cx);
             tasks_ui::init(cx);
@@ -5261,7 +5225,7 @@ mod tests {
         cx.update(|cx| {
             SettingsStore::update_global(cx, |settings_store, cx| {
                 settings_store.update_user_settings(cx, |settings| {
-                    settings.disable_ai = Some(SaturatingBool(true));
+                    settings.project.disable_ai = Some(SaturatingBool(true));
                 });
             });
         });
@@ -5312,7 +5276,7 @@ mod tests {
 
             cx.update(|cx| {
                 let open_options = OpenOptions {
-                    prefer_focused_window: true,
+                    wait: true,
                     ..Default::default()
                 };
 

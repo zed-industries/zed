@@ -4799,17 +4799,10 @@ impl LspCommand for GetFoldingRanges {
                 );
                 let start = snapshot.anchor_after(start);
                 let end = snapshot.anchor_before(end);
-                let collapsed_text =
-                    folding_range
-                        .collapsed_text
-                        .filter(|t| !t.is_empty())
-                        .map(|t| {
-                            if t.contains('\n') {
-                                SharedString::from(t.replace('\n', " "))
-                            } else {
-                                SharedString::from(t)
-                            }
-                        });
+                let collapsed_text = folding_range
+                    .collapsed_text
+                    .filter(|t| !t.is_empty())
+                    .map(|t| SharedString::from(crate::lsp_store::collapse_newlines(&t, " ")));
                 LspFoldingRange {
                     range: start..end,
                     collapsed_text,

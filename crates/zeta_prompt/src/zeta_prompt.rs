@@ -18,7 +18,39 @@ fn estimate_tokens(bytes: usize) -> usize {
     bytes / 3
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+/// The client's preferred edit prediction model. The server may override this.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum EditPredictionModelKind {
+    Zeta1,
+    Zeta2,
+}
+
+/// Pre-computed byte offset ranges within `cursor_excerpt` for different
+/// editable and context token budgets. Allows the server to select the
+/// appropriate ranges for whichever model it uses.
+#[derive(Clone, Debug, PartialEq, Hash, Serialize, Deserialize)]
+pub struct ExcerptRanges {
+    /// Editable region computed with a 150-token budget.
+    pub editable_150: Range<usize>,
+    /// Editable region computed with a 180-token budget.
+    pub editable_180: Range<usize>,
+    /// Editable region computed with a 350-token budget.
+    pub editable_350: Range<usize>,
+    /// Editable region computed with a 350-token budget.
+    pub editable_512: Option<Range<usize>>,
+    /// Context boundary when using editable_150 with 350 tokens of additional context.
+    pub editable_150_context_350: Range<usize>,
+    /// Context boundary when using editable_180 with 350 tokens of additional context.
+    pub editable_180_context_350: Range<usize>,
+    /// Context boundary when using editable_350 with 150 tokens of additional context.
+    pub editable_350_context_150: Range<usize>,
+    pub editable_350_context_512: Option<Range<usize>>,
+    pub editable_350_context_1024: Option<Range<usize>>,
+    pub context_4096: Option<Range<usize>>,
+    pub context_8192: Option<Range<usize>>,
+}
+
+#[derive(Clone, Debug, PartialEq, Hash, Serialize, Deserialize)]
 pub struct ZetaPromptInput {
     pub cursor_path: Arc<Path>,
     pub cursor_excerpt: Arc<str>,
@@ -28,6 +60,19 @@ pub struct ZetaPromptInput {
     pub excerpt_start_row: Option<u32>,
     pub events: Vec<Arc<Event>>,
     pub related_files: Vec<RelatedFile>,
+    /// When set, the excerpt was computed with a larger budget (~512 tokens)
+    /// and these ranges let the server select model-appropriate subsets.
+    /// When absent, the excerpt IS the context region and
+    /// `editable_range_in_excerpt` is the only editable range.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub excerpt_ranges: Option<ExcerptRanges>,
+    /// Client's preferred model. The server may override.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preferred_model: Option<EditPredictionModelKind>,
+    #[serde(default)]
+    pub in_open_source_repo: bool,
+    #[serde(default)]
+    pub can_collect_data: bool,
 }
 
 #[derive(
@@ -47,9 +92,9 @@ pub struct ZetaPromptInput {
 pub enum ZetaFormat {
     V0112MiddleAtEnd,
     V0113Ordered,
-    #[default]
     V0114180EditableRegion,
     V0120GitMergeMarkers,
+    #[default]
     V0131GitMergeMarkersPrefix,
     V0211Prefill,
     V0211SeedCoder,
@@ -89,9 +134,28 @@ impl ZetaFormat {
             .collect::<Vec<_>>()
             .concat()
     }
+
+    pub fn special_tokens(&self) -> &'static [&'static str] {
+        match self {
+            ZetaFormat::V0112MiddleAtEnd
+            | ZetaFormat::V0113Ordered
+            | ZetaFormat::V0114180EditableRegion => &[
+                "<|fim_prefix|>",
+                "<|fim_suffix|>",
+                "<|fim_middle|>",
+                "<|file_sep|>",
+                CURSOR_MARKER,
+            ],
+            ZetaFormat::V0120GitMergeMarkers => v0120_git_merge_markers::special_tokens(),
+            ZetaFormat::V0131GitMergeMarkersPrefix | ZetaFormat::V0211Prefill => {
+                v0131_git_merge_markers_prefix::special_tokens()
+            }
+            ZetaFormat::V0211SeedCoder => seed_coder::special_tokens(),
+        }
+    }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Hash, Serialize, Deserialize)]
 #[serde(tag = "event")]
 pub enum Event {
     BufferChange {
@@ -101,6 +165,17 @@ pub enum Event {
         predicted: bool,
         in_open_source_repo: bool,
     },
+}
+
+impl Event {
+    pub fn in_open_source_repo(&self) -> bool {
+        match self {
+            Event::BufferChange {
+                in_open_source_repo,
+                ..
+            } => *in_open_source_repo,
+        }
+    }
 }
 
 pub fn write_event(prompt: &mut String, event: &Event) {
@@ -131,17 +206,28 @@ pub fn write_event(prompt: &mut String, event: &Event) {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Hash, Serialize, Deserialize)]
 pub struct RelatedFile {
     pub path: Arc<Path>,
     pub max_row: u32,
     pub excerpts: Vec<RelatedExcerpt>,
+    #[serde(default)]
+    pub in_open_source_repo: bool,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Hash, Serialize, Deserialize)]
 pub struct RelatedExcerpt {
     pub row_range: Range<u32>,
     pub text: Arc<str>,
+    #[serde(default)]
+    pub order: usize,
+}
+
+pub fn prompt_input_contains_special_tokens(input: &ZetaPromptInput, format: ZetaFormat) -> bool {
+    format
+        .special_tokens()
+        .iter()
+        .any(|token| input.cursor_excerpt.contains(token))
 }
 
 pub fn format_zeta_prompt(input: &ZetaPromptInput, format: ZetaFormat) -> String {
@@ -164,27 +250,102 @@ pub fn clean_zeta2_model_output(output: &str, format: ZetaFormat) -> &str {
     }
 }
 
+pub fn excerpt_range_for_format(
+    format: ZetaFormat,
+    ranges: &ExcerptRanges,
+) -> (Range<usize>, Range<usize>) {
+    match format {
+        ZetaFormat::V0112MiddleAtEnd | ZetaFormat::V0113Ordered => (
+            ranges.editable_150.clone(),
+            ranges.editable_150_context_350.clone(),
+        ),
+        ZetaFormat::V0114180EditableRegion
+        | ZetaFormat::V0120GitMergeMarkers
+        | ZetaFormat::V0131GitMergeMarkersPrefix
+        | ZetaFormat::V0211Prefill
+        | ZetaFormat::V0211SeedCoder => (
+            ranges.editable_350.clone(),
+            ranges.editable_350_context_150.clone(),
+        ),
+    }
+}
+
+pub fn resolve_cursor_region(
+    input: &ZetaPromptInput,
+    format: ZetaFormat,
+) -> (&str, Range<usize>, usize) {
+    let Some(ranges) = &input.excerpt_ranges else {
+        return (
+            &input.cursor_excerpt,
+            input.editable_range_in_excerpt.clone(),
+            input.cursor_offset_in_excerpt,
+        );
+    };
+
+    let (editable_range, context_range) = excerpt_range_for_format(format, ranges);
+    let context_start = context_range.start;
+    let context_text = &input.cursor_excerpt[context_range];
+    let adjusted_editable =
+        (editable_range.start - context_start)..(editable_range.end - context_start);
+    let adjusted_cursor = input.cursor_offset_in_excerpt - context_start;
+
+    (context_text, adjusted_editable, adjusted_cursor)
+}
+
 fn format_zeta_prompt_with_budget(
     input: &ZetaPromptInput,
     format: ZetaFormat,
     max_tokens: usize,
 ) -> String {
+    let (context, editable_range, cursor_offset) = resolve_cursor_region(input, format);
+    let path = &*input.cursor_path;
+
     let mut cursor_section = String::new();
     match format {
         ZetaFormat::V0112MiddleAtEnd => {
-            v0112_middle_at_end::write_cursor_excerpt_section(&mut cursor_section, input);
+            v0112_middle_at_end::write_cursor_excerpt_section(
+                &mut cursor_section,
+                path,
+                context,
+                &editable_range,
+                cursor_offset,
+            );
         }
         ZetaFormat::V0113Ordered | ZetaFormat::V0114180EditableRegion => {
-            v0113_ordered::write_cursor_excerpt_section(&mut cursor_section, input)
+            v0113_ordered::write_cursor_excerpt_section(
+                &mut cursor_section,
+                path,
+                context,
+                &editable_range,
+                cursor_offset,
+            )
         }
-        ZetaFormat::V0120GitMergeMarkers => {
-            v0120_git_merge_markers::write_cursor_excerpt_section(&mut cursor_section, input)
-        }
+        ZetaFormat::V0120GitMergeMarkers => v0120_git_merge_markers::write_cursor_excerpt_section(
+            &mut cursor_section,
+            path,
+            context,
+            &editable_range,
+            cursor_offset,
+        ),
         ZetaFormat::V0131GitMergeMarkersPrefix | ZetaFormat::V0211Prefill => {
-            v0131_git_merge_markers_prefix::write_cursor_excerpt_section(&mut cursor_section, input)
+            v0131_git_merge_markers_prefix::write_cursor_excerpt_section(
+                &mut cursor_section,
+                path,
+                context,
+                &editable_range,
+                cursor_offset,
+            )
         }
         ZetaFormat::V0211SeedCoder => {
-            return seed_coder::format_prompt_with_budget(input, max_tokens);
+            return seed_coder::format_prompt_with_budget(
+                path,
+                context,
+                &editable_range,
+                cursor_offset,
+                &input.events,
+                &input.related_files,
+                max_tokens,
+            );
         }
     }
 
@@ -203,6 +364,7 @@ fn format_zeta_prompt_with_budget(
     let related_files_section = format_related_files_within_budget(
         &input.related_files,
         "<|file_sep|>",
+        "",
         budget_after_edit_history,
     );
 
@@ -221,7 +383,10 @@ pub fn get_prefill(input: &ZetaPromptInput, format: ZetaFormat) -> String {
         | ZetaFormat::V0120GitMergeMarkers
         | ZetaFormat::V0131GitMergeMarkersPrefix
         | ZetaFormat::V0211SeedCoder => String::new(),
-        ZetaFormat::V0211Prefill => v0211_prefill::get_prefill(input),
+        ZetaFormat::V0211Prefill => {
+            let (context, editable_range, _) = resolve_cursor_region(input, format);
+            v0211_prefill::get_prefill(context, &editable_range)
+        }
     }
 }
 
@@ -263,53 +428,98 @@ fn format_edit_history_within_budget(
     result
 }
 
-fn format_related_files_within_budget(
+fn excerpt_rendered_tokens(excerpt: &RelatedExcerpt, file_max_row: u32) -> usize {
+    let needs_newline = !excerpt.text.ends_with('\n');
+    let needs_ellipsis = excerpt.row_range.end < file_max_row;
+    let len = excerpt.text.len()
+        + if needs_newline { "\n".len() } else { 0 }
+        + if needs_ellipsis { "...\n".len() } else { 0 };
+    estimate_tokens(len)
+}
+
+pub fn format_related_files_within_budget(
     related_files: &[RelatedFile],
-    file_marker: &str,
+    file_prefix: &str,
+    file_suffix: &str,
     max_tokens: usize,
 ) -> String {
-    let mut result = String::new();
+    struct ExcerptCandidate {
+        file_ix: usize,
+        excerpt_ix: usize,
+        order: usize,
+    }
+
+    let mut excerpt_candidates: Vec<ExcerptCandidate> = related_files
+        .iter()
+        .enumerate()
+        .flat_map(|(file_ix, file)| {
+            file.excerpts
+                .iter()
+                .enumerate()
+                .map(move |(excerpt_ix, e)| ExcerptCandidate {
+                    file_ix,
+                    excerpt_ix,
+                    order: e.order,
+                })
+        })
+        .collect();
+
+    // Pre-compute file header strings and their token costs.
+    let file_headers: Vec<String> = related_files
+        .iter()
+        .map(|file| {
+            let path_str = file.path.to_string_lossy();
+            format!("{}{}\n", file_prefix, path_str)
+        })
+        .collect();
+
+    // Sort the excerpts by their order and determine how many fit within the budget.
     let mut total_tokens = 0;
-
-    for file in related_files {
-        let path_str = file.path.to_string_lossy();
-        let header = format!("{}{}\n", file_marker, path_str);
-        let header_tokens = estimate_tokens(header.len());
-
-        if total_tokens + header_tokens > max_tokens {
+    let mut included_excerpt_count = 0_usize;
+    let mut included_file_indices = vec![false; related_files.len()];
+    excerpt_candidates.sort_by_key(|e| (e.order, e.file_ix, e.excerpt_ix));
+    for candidate in &excerpt_candidates {
+        let file = &related_files[candidate.file_ix];
+        let excerpt = &file.excerpts[candidate.excerpt_ix];
+        let file_already_included = included_file_indices[candidate.file_ix];
+        let header_cost = if file_already_included {
+            0
+        } else {
+            estimate_tokens(file_headers[candidate.file_ix].len() + file_suffix.len())
+        };
+        let excerpt_cost = excerpt_rendered_tokens(excerpt, file.max_row);
+        if total_tokens + header_cost + excerpt_cost > max_tokens {
             break;
         }
-
-        let mut file_tokens = header_tokens;
-        let mut excerpts_to_include = 0;
-
-        for excerpt in &file.excerpts {
-            let needs_newline = !excerpt.text.ends_with('\n');
-            let needs_ellipsis = excerpt.row_range.end < file.max_row;
-            let excerpt_len = excerpt.text.len()
-                + if needs_newline { "\n".len() } else { 0 }
-                + if needs_ellipsis { "...\n".len() } else { 0 };
-
-            let excerpt_tokens = estimate_tokens(excerpt_len);
-            if total_tokens + file_tokens + excerpt_tokens > max_tokens {
-                break;
-            }
-            file_tokens += excerpt_tokens;
-            excerpts_to_include += 1;
+        total_tokens += header_cost + excerpt_cost;
+        if !file_already_included {
+            included_file_indices[candidate.file_ix] = true;
         }
+        included_excerpt_count += 1;
+    }
 
-        if excerpts_to_include > 0 {
-            total_tokens += file_tokens;
-            result.push_str(&header);
-            for excerpt in file.excerpts.iter().take(excerpts_to_include) {
-                result.push_str(&excerpt.text);
-                if !result.ends_with('\n') {
-                    result.push('\n');
-                }
-                if excerpt.row_range.end < file.max_row {
-                    result.push_str("...\n");
-                }
+    excerpt_candidates.truncate(included_excerpt_count);
+    excerpt_candidates.sort_unstable_by_key(|c| (c.file_ix, c.excerpt_ix));
+
+    // Render all of the files that fit within the token budget, in the original order.
+    let mut result = String::new();
+    let mut last_file_ix = None;
+    for candidate in &excerpt_candidates {
+        if last_file_ix != Some(candidate.file_ix) {
+            if last_file_ix.is_some() {
+                result.push_str(file_suffix);
             }
+            result.push_str(&file_headers[candidate.file_ix]);
+            last_file_ix = Some(candidate.file_ix);
+        }
+        let file = &related_files[candidate.file_ix];
+        let excerpt = &file.excerpts[candidate.excerpt_ix];
+        result.push_str(&excerpt.text);
+        if !result.ends_with('\n') {
+            result.push('\n');
+        }
+        if excerpt.row_range.end < file.max_row {
+            result.push_str("...\n");
         }
     }
 
@@ -343,29 +553,29 @@ pub fn write_related_files(
 mod v0112_middle_at_end {
     use super::*;
 
-    pub fn write_cursor_excerpt_section(prompt: &mut String, input: &ZetaPromptInput) {
-        let path_str = input.cursor_path.to_string_lossy();
+    pub fn write_cursor_excerpt_section(
+        prompt: &mut String,
+        path: &Path,
+        context: &str,
+        editable_range: &Range<usize>,
+        cursor_offset: usize,
+    ) {
+        let path_str = path.to_string_lossy();
         write!(prompt, "<|file_sep|>{}\n", path_str).ok();
 
         prompt.push_str("<|fim_prefix|>\n");
-        prompt.push_str(&input.cursor_excerpt[..input.editable_range_in_excerpt.start]);
+        prompt.push_str(&context[..editable_range.start]);
 
         prompt.push_str("<|fim_suffix|>\n");
-        prompt.push_str(&input.cursor_excerpt[input.editable_range_in_excerpt.end..]);
+        prompt.push_str(&context[editable_range.end..]);
         if !prompt.ends_with('\n') {
             prompt.push('\n');
         }
 
         prompt.push_str("<|fim_middle|>current\n");
-        prompt.push_str(
-            &input.cursor_excerpt
-                [input.editable_range_in_excerpt.start..input.cursor_offset_in_excerpt],
-        );
+        prompt.push_str(&context[editable_range.start..cursor_offset]);
         prompt.push_str(CURSOR_MARKER);
-        prompt.push_str(
-            &input.cursor_excerpt
-                [input.cursor_offset_in_excerpt..input.editable_range_in_excerpt.end],
-        );
+        prompt.push_str(&context[cursor_offset..editable_range.end]);
         if !prompt.ends_with('\n') {
             prompt.push('\n');
         }
@@ -377,32 +587,32 @@ mod v0112_middle_at_end {
 mod v0113_ordered {
     use super::*;
 
-    pub fn write_cursor_excerpt_section(prompt: &mut String, input: &ZetaPromptInput) {
-        let path_str = input.cursor_path.to_string_lossy();
+    pub fn write_cursor_excerpt_section(
+        prompt: &mut String,
+        path: &Path,
+        context: &str,
+        editable_range: &Range<usize>,
+        cursor_offset: usize,
+    ) {
+        let path_str = path.to_string_lossy();
         write!(prompt, "<|file_sep|>{}\n", path_str).ok();
 
         prompt.push_str("<|fim_prefix|>\n");
-        prompt.push_str(&input.cursor_excerpt[..input.editable_range_in_excerpt.start]);
+        prompt.push_str(&context[..editable_range.start]);
         if !prompt.ends_with('\n') {
             prompt.push('\n');
         }
 
         prompt.push_str("<|fim_middle|>current\n");
-        prompt.push_str(
-            &input.cursor_excerpt
-                [input.editable_range_in_excerpt.start..input.cursor_offset_in_excerpt],
-        );
+        prompt.push_str(&context[editable_range.start..cursor_offset]);
         prompt.push_str(CURSOR_MARKER);
-        prompt.push_str(
-            &input.cursor_excerpt
-                [input.cursor_offset_in_excerpt..input.editable_range_in_excerpt.end],
-        );
+        prompt.push_str(&context[cursor_offset..editable_range.end]);
         if !prompt.ends_with('\n') {
             prompt.push('\n');
         }
 
         prompt.push_str("<|fim_suffix|>\n");
-        prompt.push_str(&input.cursor_excerpt[input.editable_range_in_excerpt.end..]);
+        prompt.push_str(&context[editable_range.end..]);
         if !prompt.ends_with('\n') {
             prompt.push('\n');
         }
@@ -441,30 +651,43 @@ pub mod v0120_git_merge_markers {
     pub const SEPARATOR: &str = "=======\n";
     pub const END_MARKER: &str = ">>>>>>> UPDATED\n";
 
-    pub fn write_cursor_excerpt_section(prompt: &mut String, input: &ZetaPromptInput) {
-        let path_str = input.cursor_path.to_string_lossy();
+    pub fn special_tokens() -> &'static [&'static str] {
+        &[
+            "<|fim_prefix|>",
+            "<|fim_suffix|>",
+            "<|fim_middle|>",
+            "<|file_sep|>",
+            START_MARKER,
+            SEPARATOR,
+            END_MARKER,
+            CURSOR_MARKER,
+        ]
+    }
+
+    pub fn write_cursor_excerpt_section(
+        prompt: &mut String,
+        path: &Path,
+        context: &str,
+        editable_range: &Range<usize>,
+        cursor_offset: usize,
+    ) {
+        let path_str = path.to_string_lossy();
         write!(prompt, "<|file_sep|>{}\n", path_str).ok();
 
         prompt.push_str("<|fim_prefix|>");
-        prompt.push_str(&input.cursor_excerpt[..input.editable_range_in_excerpt.start]);
+        prompt.push_str(&context[..editable_range.start]);
 
         prompt.push_str("<|fim_suffix|>");
-        prompt.push_str(&input.cursor_excerpt[input.editable_range_in_excerpt.end..]);
+        prompt.push_str(&context[editable_range.end..]);
         if !prompt.ends_with('\n') {
             prompt.push('\n');
         }
 
         prompt.push_str("<|fim_middle|>");
         prompt.push_str(START_MARKER);
-        prompt.push_str(
-            &input.cursor_excerpt
-                [input.editable_range_in_excerpt.start..input.cursor_offset_in_excerpt],
-        );
+        prompt.push_str(&context[editable_range.start..cursor_offset]);
         prompt.push_str(CURSOR_MARKER);
-        prompt.push_str(
-            &input.cursor_excerpt
-                [input.cursor_offset_in_excerpt..input.editable_range_in_excerpt.end],
-        );
+        prompt.push_str(&context[cursor_offset..editable_range.end]);
         if !prompt.ends_with('\n') {
             prompt.push('\n');
         }
@@ -502,29 +725,42 @@ pub mod v0131_git_merge_markers_prefix {
     pub const SEPARATOR: &str = "=======\n";
     pub const END_MARKER: &str = ">>>>>>> UPDATED\n";
 
-    pub fn write_cursor_excerpt_section(prompt: &mut String, input: &ZetaPromptInput) {
-        let path_str = input.cursor_path.to_string_lossy();
+    pub fn special_tokens() -> &'static [&'static str] {
+        &[
+            "<|fim_prefix|>",
+            "<|fim_suffix|>",
+            "<|fim_middle|>",
+            "<|file_sep|>",
+            START_MARKER,
+            SEPARATOR,
+            END_MARKER,
+            CURSOR_MARKER,
+        ]
+    }
+
+    pub fn write_cursor_excerpt_section(
+        prompt: &mut String,
+        path: &Path,
+        context: &str,
+        editable_range: &Range<usize>,
+        cursor_offset: usize,
+    ) {
+        let path_str = path.to_string_lossy();
         write!(prompt, "<|file_sep|>{}\n", path_str).ok();
 
         prompt.push_str("<|fim_prefix|>");
-        prompt.push_str(&input.cursor_excerpt[..input.editable_range_in_excerpt.start]);
+        prompt.push_str(&context[..editable_range.start]);
         prompt.push_str(START_MARKER);
-        prompt.push_str(
-            &input.cursor_excerpt
-                [input.editable_range_in_excerpt.start..input.cursor_offset_in_excerpt],
-        );
+        prompt.push_str(&context[editable_range.start..cursor_offset]);
         prompt.push_str(CURSOR_MARKER);
-        prompt.push_str(
-            &input.cursor_excerpt
-                [input.cursor_offset_in_excerpt..input.editable_range_in_excerpt.end],
-        );
+        prompt.push_str(&context[cursor_offset..editable_range.end]);
         if !prompt.ends_with('\n') {
             prompt.push('\n');
         }
         prompt.push_str(SEPARATOR);
 
         prompt.push_str("<|fim_suffix|>");
-        prompt.push_str(&input.cursor_excerpt[input.editable_range_in_excerpt.end..]);
+        prompt.push_str(&context[editable_range.end..]);
         if !prompt.ends_with('\n') {
             prompt.push('\n');
         }
@@ -536,9 +772,8 @@ pub mod v0131_git_merge_markers_prefix {
 pub mod v0211_prefill {
     use super::*;
 
-    pub fn get_prefill(input: &ZetaPromptInput) -> String {
-        let editable_region = &input.cursor_excerpt
-            [input.editable_range_in_excerpt.start..input.editable_range_in_excerpt.end];
+    pub fn get_prefill(context: &str, editable_range: &Range<usize>) -> String {
+        let editable_region = &context[editable_range.start..editable_range.end];
 
         let prefill_len = (editable_region.len() as f64 * PREFILL_RATIO) as usize;
         let prefill_len = editable_region.floor_char_boundary(prefill_len);
@@ -619,16 +854,38 @@ pub mod seed_coder {
     pub const SEPARATOR: &str = "=======\n";
     pub const END_MARKER: &str = ">>>>>>> UPDATED\n";
 
-    pub fn format_prompt_with_budget(input: &ZetaPromptInput, max_tokens: usize) -> String {
-        let suffix_section = build_suffix_section(input);
-        let cursor_prefix_section = build_cursor_prefix_section(input);
+    pub fn special_tokens() -> &'static [&'static str] {
+        &[
+            FIM_SUFFIX,
+            FIM_PREFIX,
+            FIM_MIDDLE,
+            FILE_MARKER,
+            START_MARKER,
+            SEPARATOR,
+            END_MARKER,
+            CURSOR_MARKER,
+        ]
+    }
+
+    pub fn format_prompt_with_budget(
+        path: &Path,
+        context: &str,
+        editable_range: &Range<usize>,
+        cursor_offset: usize,
+        events: &[Arc<Event>],
+        related_files: &[RelatedFile],
+        max_tokens: usize,
+    ) -> String {
+        let suffix_section = build_suffix_section(context, editable_range);
+        let cursor_prefix_section =
+            build_cursor_prefix_section(path, context, editable_range, cursor_offset);
 
         let suffix_tokens = estimate_tokens(suffix_section.len());
         let cursor_prefix_tokens = estimate_tokens(cursor_prefix_section.len());
         let budget_after_cursor = max_tokens.saturating_sub(suffix_tokens + cursor_prefix_tokens);
 
         let edit_history_section = super::format_edit_history_within_budget(
-            &input.events,
+            events,
             FILE_MARKER,
             "edit_history",
             budget_after_cursor,
@@ -637,8 +894,9 @@ pub mod seed_coder {
         let budget_after_edit_history = budget_after_cursor.saturating_sub(edit_history_tokens);
 
         let related_files_section = super::format_related_files_within_budget(
-            &input.related_files,
+            related_files,
             FILE_MARKER,
+            "",
             budget_after_edit_history,
         );
 
@@ -658,32 +916,31 @@ pub mod seed_coder {
         prompt
     }
 
-    fn build_suffix_section(input: &ZetaPromptInput) -> String {
+    fn build_suffix_section(context: &str, editable_range: &Range<usize>) -> String {
         let mut section = String::new();
         section.push_str(FIM_SUFFIX);
-        section.push_str(&input.cursor_excerpt[input.editable_range_in_excerpt.end..]);
+        section.push_str(&context[editable_range.end..]);
         if !section.ends_with('\n') {
             section.push('\n');
         }
         section
     }
 
-    fn build_cursor_prefix_section(input: &ZetaPromptInput) -> String {
+    fn build_cursor_prefix_section(
+        path: &Path,
+        context: &str,
+        editable_range: &Range<usize>,
+        cursor_offset: usize,
+    ) -> String {
         let mut section = String::new();
-        let path_str = input.cursor_path.to_string_lossy();
+        let path_str = path.to_string_lossy();
         write!(section, "{}{}\n", FILE_MARKER, path_str).ok();
 
-        section.push_str(&input.cursor_excerpt[..input.editable_range_in_excerpt.start]);
+        section.push_str(&context[..editable_range.start]);
         section.push_str(START_MARKER);
-        section.push_str(
-            &input.cursor_excerpt
-                [input.editable_range_in_excerpt.start..input.cursor_offset_in_excerpt],
-        );
+        section.push_str(&context[editable_range.start..cursor_offset]);
         section.push_str(CURSOR_MARKER);
-        section.push_str(
-            &input.cursor_excerpt
-                [input.cursor_offset_in_excerpt..input.editable_range_in_excerpt.end],
-        );
+        section.push_str(&context[cursor_offset..editable_range.end]);
         if !section.ends_with('\n') {
             section.push('\n');
         }
@@ -694,6 +951,9 @@ pub mod seed_coder {
 
 /// The zeta1 prompt format
 pub mod zeta1 {
+    use super::*;
+    use std::fmt::Write;
+
     pub const CURSOR_MARKER: &str = "<|user_cursor_is_here|>";
     pub const START_OF_FILE_MARKER: &str = "<|start_of_file|>";
     pub const EDITABLE_REGION_START_MARKER: &str = "<|editable_region_start|>";
@@ -725,6 +985,166 @@ pub mod zeta1 {
         prompt.push_str(RESPONSE_HEADER);
         prompt
     }
+
+    /// Formats a complete zeta1 prompt from a `ZetaPromptInput` using the given
+    /// editable and context byte-offset ranges within `cursor_excerpt`.
+    pub fn format_zeta1_from_input(
+        input: &ZetaPromptInput,
+        editable_range: Range<usize>,
+        context_range: Range<usize>,
+    ) -> String {
+        let events = format_zeta1_events(&input.events);
+        let excerpt = format_zeta1_excerpt(input, editable_range, context_range);
+        format_zeta1_prompt(&events, &excerpt)
+    }
+
+    /// Formats events in zeta1 style (oldest first).
+    fn format_zeta1_events(events: &[Arc<Event>]) -> String {
+        let mut result = String::new();
+        for event in events {
+            let event_string = format_zeta1_event(event);
+            if event_string.is_empty() {
+                continue;
+            }
+            if !result.is_empty() {
+                result.push_str("\n\n");
+            }
+            result.push_str(&event_string);
+        }
+        result
+    }
+
+    fn format_zeta1_event(event: &Event) -> String {
+        match event {
+            Event::BufferChange {
+                path,
+                old_path,
+                diff,
+                ..
+            } => {
+                let mut prompt = String::new();
+                if old_path != path {
+                    writeln!(
+                        prompt,
+                        "User renamed {} to {}\n",
+                        old_path.display(),
+                        path.display()
+                    )
+                    .ok();
+                }
+                if !diff.is_empty() {
+                    write!(
+                        prompt,
+                        "User edited {}:\n```diff\n{}\n```",
+                        path.display(),
+                        diff
+                    )
+                    .ok();
+                }
+                prompt
+            }
+        }
+    }
+
+    /// Formats the excerpt section of a zeta1 prompt using byte-offset ranges
+    /// within `cursor_excerpt`.
+    fn format_zeta1_excerpt(
+        input: &ZetaPromptInput,
+        editable_range: Range<usize>,
+        context_range: Range<usize>,
+    ) -> String {
+        let path_str = input.cursor_path.to_string_lossy();
+        let excerpt = &*input.cursor_excerpt;
+        let cursor_offset = input.cursor_offset_in_excerpt;
+
+        let mut prompt = String::new();
+        writeln!(&mut prompt, "```{path_str}").ok();
+
+        let starts_at_file_beginning =
+            input.excerpt_start_row == Some(0) && context_range.start == 0;
+        if starts_at_file_beginning {
+            writeln!(&mut prompt, "{START_OF_FILE_MARKER}").ok();
+        }
+
+        prompt.push_str(&excerpt[context_range.start..editable_range.start]);
+
+        writeln!(&mut prompt, "{EDITABLE_REGION_START_MARKER}").ok();
+        prompt.push_str(&excerpt[editable_range.start..cursor_offset]);
+        prompt.push_str(CURSOR_MARKER);
+        prompt.push_str(&excerpt[cursor_offset..editable_range.end]);
+        write!(&mut prompt, "\n{EDITABLE_REGION_END_MARKER}").ok();
+
+        prompt.push_str(&excerpt[editable_range.end..context_range.end]);
+        write!(prompt, "\n```").ok();
+
+        prompt
+    }
+
+    /// Cleans zeta1 model output by extracting content between editable region
+    /// markers and converting the zeta1 cursor marker to the universal one.
+    /// Returns `None` if the output doesn't contain the expected markers.
+    pub fn clean_zeta1_model_output(output: &str) -> Option<String> {
+        let content = output.replace(CURSOR_MARKER, "");
+
+        let content_start = content
+            .find(EDITABLE_REGION_START_MARKER)
+            .map(|pos| pos + EDITABLE_REGION_START_MARKER.len())
+            .map(|pos| {
+                if content.as_bytes().get(pos) == Some(&b'\n') {
+                    pos + 1
+                } else {
+                    pos
+                }
+            })
+            .unwrap_or(0);
+
+        let content_end = content
+            .find(EDITABLE_REGION_END_MARKER)
+            .map(|pos| {
+                if pos > 0 && content.as_bytes().get(pos - 1) == Some(&b'\n') {
+                    pos - 1
+                } else {
+                    pos
+                }
+            })
+            .unwrap_or(content.len());
+
+        if content_start > content_end {
+            return Some(String::new());
+        }
+
+        let extracted = &content[content_start..content_end];
+
+        let cursor_offset = output.find(CURSOR_MARKER).map(|zeta1_cursor_pos| {
+            let text_before_cursor = output[..zeta1_cursor_pos].replace(CURSOR_MARKER, "");
+            let text_before_cursor = text_before_cursor
+                .find(EDITABLE_REGION_START_MARKER)
+                .map(|pos| {
+                    let after_marker = pos + EDITABLE_REGION_START_MARKER.len();
+                    if text_before_cursor.as_bytes().get(after_marker) == Some(&b'\n') {
+                        after_marker + 1
+                    } else {
+                        after_marker
+                    }
+                })
+                .unwrap_or(0);
+            let offset_in_extracted = zeta1_cursor_pos
+                .saturating_sub(text_before_cursor)
+                .min(extracted.len());
+            offset_in_extracted
+        });
+
+        let mut result = String::with_capacity(extracted.len() + super::CURSOR_MARKER.len());
+        if let Some(offset) = cursor_offset {
+            result.push_str(&extracted[..offset]);
+            result.push_str(super::CURSOR_MARKER);
+            result.push_str(&extracted[offset..]);
+        } else {
+            result.push_str(extracted);
+        }
+
+        Some(result)
+    }
 }
 
 #[cfg(test)]
@@ -747,6 +1167,10 @@ mod tests {
             excerpt_start_row: None,
             events: events.into_iter().map(Arc::new).collect(),
             related_files,
+            excerpt_ranges: None,
+            preferred_model: None,
+            in_open_source_repo: false,
+            can_collect_data: false,
         }
     }
 
@@ -767,7 +1191,9 @@ mod tests {
             excerpts: vec![RelatedExcerpt {
                 row_range: 0..content.lines().count() as u32,
                 text: content.into(),
+                order: 0,
             }],
+            in_open_source_repo: false,
         }
     }
 
@@ -869,18 +1295,22 @@ mod tests {
             vec![RelatedFile {
                 path: Path::new("big.rs").into(),
                 max_row: 30,
+                in_open_source_repo: false,
                 excerpts: vec![
                     RelatedExcerpt {
                         row_range: 0..10,
                         text: "first excerpt\n".into(),
+                        order: 0,
                     },
                     RelatedExcerpt {
                         row_range: 10..20,
                         text: "second excerpt\n".into(),
+                        order: 0,
                     },
                     RelatedExcerpt {
                         row_range: 20..30,
                         text: "third excerpt\n".into(),
+                        order: 0,
                     },
                 ],
             }],
@@ -909,6 +1339,149 @@ mod tests {
             indoc! {r#"
                 <|file_sep|>big.rs
                 first excerpt
+                ...
+                <|file_sep|>test.rs
+                <|fim_prefix|>
+                <|fim_middle|>current
+                <|user_cursor|>x
+                <|fim_suffix|>
+                <|fim_middle|>updated
+            "#}
+        );
+    }
+
+    #[test]
+    fn test_truncation_prioritizes_lower_order_excerpts() {
+        // Two files: file_a has a high-order excerpt, file_b has a low-order one.
+        // With tight budget, only the lower-order excerpt from file_b should be included.
+        let input = make_input(
+            "x",
+            0..1,
+            0,
+            vec![],
+            vec![
+                RelatedFile {
+                    path: Path::new("file_a.rs").into(),
+                    max_row: 10,
+                    in_open_source_repo: false,
+                    excerpts: vec![RelatedExcerpt {
+                        row_range: 0..10,
+                        text: "low priority content\n".into(),
+                        order: 5,
+                    }],
+                },
+                RelatedFile {
+                    path: Path::new("file_b.rs").into(),
+                    max_row: 10,
+                    in_open_source_repo: false,
+                    excerpts: vec![RelatedExcerpt {
+                        row_range: 0..10,
+                        text: "high priority content\n".into(),
+                        order: 1,
+                    }],
+                },
+            ],
+        );
+
+        // With large budget, both files included; rendered in stable lexicographic order.
+        assert_eq!(
+            format_with_budget(&input, 10000),
+            indoc! {r#"
+                <|file_sep|>file_a.rs
+                low priority content
+                <|file_sep|>file_b.rs
+                high priority content
+                <|file_sep|>test.rs
+                <|fim_prefix|>
+                <|fim_middle|>current
+                <|user_cursor|>x
+                <|fim_suffix|>
+                <|fim_middle|>updated
+            "#}
+        );
+
+        // With tight budget, only file_b (lower order) fits.
+        // Cursor section is ~37 tokens, so budget 52 leaves ~15 for related files.
+        // file_b header (7) + excerpt (7) = 14 tokens, which fits.
+        // file_a would need another 14 tokens, which doesn't fit.
+        assert_eq!(
+            format_with_budget(&input, 52),
+            indoc! {r#"
+                <|file_sep|>file_b.rs
+                high priority content
+                <|file_sep|>test.rs
+                <|fim_prefix|>
+                <|fim_middle|>current
+                <|user_cursor|>x
+                <|fim_suffix|>
+                <|fim_middle|>updated
+            "#}
+        );
+    }
+
+    #[test]
+    fn test_truncation_drops_high_order_excerpts_within_file() {
+        // A single file has excerpts at order 1 and order 3. With a tight budget,
+        // only the order-1 excerpts are included while the order-3 excerpt is
+        // dropped — even though they belong to the same file. This also preserves
+        // the parent invariant: parent outline items have order ≤ their best
+        // child, so they're always included when any child is.
+        let input = make_input(
+            "x",
+            0..1,
+            0,
+            vec![],
+            vec![RelatedFile {
+                path: Path::new("mod.rs").into(),
+                max_row: 30,
+                in_open_source_repo: false,
+                excerpts: vec![
+                    RelatedExcerpt {
+                        row_range: 0..5,
+                        text: "mod header\n".into(),
+                        order: 1,
+                    },
+                    RelatedExcerpt {
+                        row_range: 5..15,
+                        text: "important fn\n".into(),
+                        order: 1,
+                    },
+                    RelatedExcerpt {
+                        row_range: 15..30,
+                        text: "less important fn\n".into(),
+                        order: 3,
+                    },
+                ],
+            }],
+        );
+
+        // With large budget, all three excerpts included.
+        assert_eq!(
+            format_with_budget(&input, 10000),
+            indoc! {r#"
+                <|file_sep|>mod.rs
+                mod header
+                ...
+                important fn
+                ...
+                less important fn
+                <|file_sep|>test.rs
+                <|fim_prefix|>
+                <|fim_middle|>current
+                <|user_cursor|>x
+                <|fim_suffix|>
+                <|fim_middle|>updated
+            "#}
+        );
+
+        // With tight budget, only order<=1 excerpts included (header + important fn).
+        assert_eq!(
+            format_with_budget(&input, 55),
+            indoc! {r#"
+                <|file_sep|>mod.rs
+                mod header
+                ...
+                important fn
                 ...
                 <|file_sep|>test.rs
                 <|fim_prefix|>
@@ -1093,6 +1666,72 @@ mod tests {
     }
 
     #[test]
+    fn test_seed_coder_truncation_prioritizes_lower_order() {
+        let input = make_input(
+            "code",
+            0..4,
+            2,
+            vec![],
+            vec![
+                RelatedFile {
+                    path: Path::new("low_prio.rs").into(),
+                    max_row: 5,
+                    in_open_source_repo: false,
+                    excerpts: vec![RelatedExcerpt {
+                        row_range: 0..5,
+                        text: "low prio\n".into(),
+                        order: 10,
+                    }],
+                },
+                RelatedFile {
+                    path: Path::new("high_prio.rs").into(),
+                    max_row: 5,
+                    in_open_source_repo: false,
+                    excerpts: vec![RelatedExcerpt {
+                        row_range: 0..5,
+                        text: "high prio\n".into(),
+                        order: 1,
+                    }],
+                },
+            ],
+        );
+
+        // With large budget, both included; rendered in stable lexicographic order.
+        assert_eq!(
+            format_seed_coder(&input),
+            indoc! {r#"
+                <[fim-suffix]>
+                <[fim-prefix]><filename>low_prio.rs
+                low prio
+                <filename>high_prio.rs
+                high prio
+
+                <filename>test.rs
+                <<<<<<< CURRENT
+                co<|user_cursor|>de
+                =======
+                <[fim-middle]>"#}
+        );
+
+        // With tight budget, only high_prio included.
+        // Cursor sections cost 25 tokens, so budget 44 leaves 19 for related files.
+        // high_prio header (7) + excerpt (3) = 10, fits. low_prio would add 10 more = 20 > 19.
+        assert_eq!(
+            format_seed_coder_with_budget(&input, 44),
+            indoc! {r#"
+                <[fim-suffix]>
+                <[fim-prefix]><filename>high_prio.rs
+                high prio
+
+                <filename>test.rs
+                <<<<<<< CURRENT
+                co<|user_cursor|>de
+                =======
+                <[fim-middle]>"#}
+        );
+    }
+
+    #[test]
     fn test_seed_coder_clean_output() {
         let output_with_marker = "new code\n>>>>>>> UPDATED\n";
         let output_without_marker = "new code\n";
@@ -1105,5 +1744,205 @@ mod tests {
             clean_zeta2_model_output(output_without_marker, ZetaFormat::V0211SeedCoder),
             "new code\n"
         );
+    }
+
+    #[test]
+    fn test_format_zeta1_from_input_basic() {
+        let excerpt = "fn before() {}\nfn foo() {\n    let x = 1;\n}\nfn after() {}\n";
+        let input = ZetaPromptInput {
+            cursor_path: Path::new("src/main.rs").into(),
+            cursor_excerpt: excerpt.into(),
+            editable_range_in_excerpt: 15..41,
+            cursor_offset_in_excerpt: 30,
+            excerpt_start_row: Some(0),
+            events: vec![Arc::new(make_event("other.rs", "-old\n+new\n"))],
+            related_files: vec![],
+            excerpt_ranges: None,
+            preferred_model: None,
+            in_open_source_repo: false,
+            can_collect_data: false,
+        };
+
+        let prompt = zeta1::format_zeta1_from_input(&input, 15..41, 0..excerpt.len());
+
+        assert_eq!(
+            prompt,
+            concat!(
+                "### Instruction:\n",
+                "You are a code completion assistant and your task is to analyze user edits and then rewrite an ",
+                "excerpt that the user provides, suggesting the appropriate edits within the excerpt, taking ",
+                "into account the cursor location.\n",
+                "\n",
+                "### User Edits:\n",
+                "\n",
+                "User edited other.rs:\n",
+                "```diff\n",
+                "-old\n",
+                "+new\n",
+                "\n",
+                "```\n",
+                "\n",
+                "### User Excerpt:\n",
+                "\n",
+                "```src/main.rs\n",
+                "<|start_of_file|>\n",
+                "fn before() {}\n",
+                "<|editable_region_start|>\n",
+                "fn foo() {\n",
+                "    <|user_cursor_is_here|>let x = 1;\n",
+                "\n",
+                "<|editable_region_end|>}\n",
+                "fn after() {}\n",
+                "\n",
+                "```\n",
+                "\n",
+                "### Response:\n",
+            ),
+        );
+    }
+
+    #[test]
+    fn test_format_zeta1_from_input_no_start_of_file() {
+        let excerpt = "fn foo() {\n    let x = 1;\n}\n";
+        let input = ZetaPromptInput {
+            cursor_path: Path::new("src/main.rs").into(),
+            cursor_excerpt: excerpt.into(),
+            editable_range_in_excerpt: 0..28,
+            cursor_offset_in_excerpt: 15,
+            excerpt_start_row: Some(10),
+            events: vec![],
+            related_files: vec![],
+            excerpt_ranges: None,
+            preferred_model: None,
+            in_open_source_repo: false,
+            can_collect_data: false,
+        };
+
+        let prompt = zeta1::format_zeta1_from_input(&input, 0..28, 0..28);
+
+        assert_eq!(
+            prompt,
+            concat!(
+                "### Instruction:\n",
+                "You are a code completion assistant and your task is to analyze user edits and then rewrite an ",
+                "excerpt that the user provides, suggesting the appropriate edits within the excerpt, taking ",
+                "into account the cursor location.\n",
+                "\n",
+                "### User Edits:\n",
+                "\n",
+                "\n",
+                "\n",
+                "### User Excerpt:\n",
+                "\n",
+                "```src/main.rs\n",
+                "<|editable_region_start|>\n",
+                "fn foo() {\n",
+                "    <|user_cursor_is_here|>let x = 1;\n",
+                "}\n",
+                "\n",
+                "<|editable_region_end|>\n",
+                "```\n",
+                "\n",
+                "### Response:\n",
+            ),
+        );
+    }
+
+    #[test]
+    fn test_format_zeta1_from_input_with_sub_ranges() {
+        let excerpt = "// prefix\nfn foo() {\n    let x = 1;\n}\n// suffix\n";
+        let editable_range = 10..37;
+        let context_range = 0..excerpt.len();
+
+        let input = ZetaPromptInput {
+            cursor_path: Path::new("test.rs").into(),
+            cursor_excerpt: excerpt.into(),
+            editable_range_in_excerpt: editable_range.clone(),
+            cursor_offset_in_excerpt: 25,
+            excerpt_start_row: Some(0),
+            events: vec![],
+            related_files: vec![],
+            excerpt_ranges: None,
+            preferred_model: None,
+            in_open_source_repo: false,
+            can_collect_data: false,
+        };
+
+        let prompt = zeta1::format_zeta1_from_input(&input, editable_range, context_range);
+
+        assert_eq!(
+            prompt,
+            concat!(
+                "### Instruction:\n",
+                "You are a code completion assistant and your task is to analyze user edits and then rewrite an ",
+                "excerpt that the user provides, suggesting the appropriate edits within the excerpt, taking ",
+                "into account the cursor location.\n",
+                "\n",
+                "### User Edits:\n",
+                "\n",
+                "\n",
+                "\n",
+                "### User Excerpt:\n",
+                "\n",
+                "```test.rs\n",
+                "<|start_of_file|>\n",
+                "// prefix\n",
+                "<|editable_region_start|>\n",
+                "fn foo() {\n",
+                "    <|user_cursor_is_here|>let x = 1;\n",
+                "}\n",
+                "<|editable_region_end|>\n",
+                "// suffix\n",
+                "\n",
+                "```\n",
+                "\n",
+                "### Response:\n",
+            ),
+        );
+    }
+
+    #[test]
+    fn test_clean_zeta1_model_output_basic() {
+        let output = indoc! {"
+            <|editable_region_start|>
+            fn main() {
+                println!(\"hello\");
+            }
+            <|editable_region_end|>
+        "};
+
+        let cleaned = zeta1::clean_zeta1_model_output(output).unwrap();
+        assert_eq!(cleaned, "fn main() {\n    println!(\"hello\");\n}");
+    }
+
+    #[test]
+    fn test_clean_zeta1_model_output_with_cursor() {
+        let output = indoc! {"
+            <|editable_region_start|>
+            fn main() {
+                <|user_cursor_is_here|>println!(\"hello\");
+            }
+            <|editable_region_end|>
+        "};
+
+        let cleaned = zeta1::clean_zeta1_model_output(output).unwrap();
+        assert_eq!(
+            cleaned,
+            "fn main() {\n    <|user_cursor|>println!(\"hello\");\n}"
+        );
+    }
+
+    #[test]
+    fn test_clean_zeta1_model_output_no_markers() {
+        let output = "fn main() {}\n";
+        let cleaned = zeta1::clean_zeta1_model_output(output).unwrap();
+        assert_eq!(cleaned, "fn main() {}\n");
+    }
+
+    #[test]
+    fn test_clean_zeta1_model_output_empty_region() {
+        let output = "<|editable_region_start|>\n<|editable_region_end|>\n";
+        let cleaned = zeta1::clean_zeta1_model_output(output).unwrap();
+        assert_eq!(cleaned, "");
     }
 }

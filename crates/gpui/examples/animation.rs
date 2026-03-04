@@ -1,11 +1,14 @@
+#![cfg_attr(target_family = "wasm", no_main)]
+
 use std::time::Duration;
 
 use anyhow::Result;
 use gpui::{
-    Animation, AnimationExt as _, App, Application, AssetSource, Bounds, Context, SharedString,
-    Transformation, Window, WindowBounds, WindowOptions, bounce, div, ease_in_out, percentage,
-    prelude::*, px, size, svg,
+    Animation, AnimationExt as _, App, AssetSource, Bounds, Context, SharedString, Transformation,
+    Window, WindowBounds, WindowOptions, bounce, div, ease_in_out, percentage, prelude::*, px,
+    size, svg,
 };
+use gpui_platform::application;
 
 struct Assets {}
 
@@ -100,22 +103,32 @@ impl Render for AnimationExample {
     }
 }
 
+fn run_example() {
+    application().with_assets(Assets {}).run(|cx: &mut App| {
+        let options = WindowOptions {
+            window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
+                None,
+                size(px(300.), px(300.)),
+                cx,
+            ))),
+            ..Default::default()
+        };
+        cx.open_window(options, |_, cx| {
+            cx.activate(false);
+            cx.new(|_| AnimationExample {})
+        })
+        .unwrap();
+    });
+}
+
+#[cfg(not(target_family = "wasm"))]
 fn main() {
-    Application::new()
-        .with_assets(Assets {})
-        .run(|cx: &mut App| {
-            let options = WindowOptions {
-                window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
-                    None,
-                    size(px(300.), px(300.)),
-                    cx,
-                ))),
-                ..Default::default()
-            };
-            cx.open_window(options, |_, cx| {
-                cx.activate(false);
-                cx.new(|_| AnimationExample {})
-            })
-            .unwrap();
-        });
+    run_example();
+}
+
+#[cfg(target_family = "wasm")]
+#[wasm_bindgen::prelude::wasm_bindgen(start)]
+pub fn start() {
+    gpui_platform::web_init();
+    run_example();
 }

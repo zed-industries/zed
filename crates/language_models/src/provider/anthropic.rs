@@ -24,6 +24,8 @@ use ui::{ButtonLink, ConfiguredApiCard, List, ListBulletItem, prelude::*};
 use ui_input::InputField;
 use util::ResultExt;
 
+use crate::provider::util::parse_tool_arguments;
+
 pub use settings::AnthropicAvailableModel as AvailableModel;
 
 const PROVIDER_ID: LanguageModelProviderId = language_model::ANTHROPIC_PROVIDER_ID;
@@ -139,8 +141,8 @@ impl LanguageModelProvider for AnthropicLanguageModelProvider {
 
     fn recommended_models(&self, _cx: &App) -> Vec<Arc<dyn LanguageModel>> {
         [
-            anthropic::Model::ClaudeSonnet4_5,
-            anthropic::Model::ClaudeSonnet4_5Thinking,
+            anthropic::Model::ClaudeSonnet4_6,
+            anthropic::Model::ClaudeSonnet4_6Thinking,
         ]
         .into_iter()
         .map(|model| self.create_language_model(model))
@@ -368,6 +370,7 @@ pub fn into_anthropic_count_tokens_request(
                 name: tool.name,
                 description: tool.description,
                 input_schema: tool.input_schema,
+                eager_input_streaming: tool.use_input_streaming,
             })
             .collect(),
         tool_choice: request.tool_choice.map(|choice| match choice {
@@ -511,6 +514,10 @@ impl LanguageModel for AnthropicModel {
             | LanguageModelToolChoice::Any
             | LanguageModelToolChoice::None => true,
         }
+    }
+
+    fn supports_thinking(&self) -> bool {
+        matches!(self.model.mode(), AnthropicModelMode::Thinking { .. })
     }
 
     fn telemetry_id(&self) -> String {
@@ -707,6 +714,7 @@ pub fn into_anthropic(
                 name: tool.name,
                 description: tool.description,
                 input_schema: tool.input_schema,
+                eager_input_streaming: tool.use_input_streaming,
             })
             .collect(),
         tool_choice: request.tool_choice.map(|choice| match choice {
@@ -717,6 +725,7 @@ pub fn into_anthropic(
         metadata: None,
         output_config: None,
         stop_sequences: Vec::new(),
+        speed: request.speed.map(From::from),
         temperature: request.temperature.or(Some(default_temperature)),
         top_k: None,
         top_p: None,
@@ -829,12 +838,7 @@ impl AnthropicEventMapper {
             Event::ContentBlockStop { index } => {
                 if let Some(tool_use) = self.tool_uses_by_index.remove(&index) {
                     let input_json = tool_use.input_json.trim();
-                    let input_value = if input_json.is_empty() {
-                        Ok(serde_json::Value::Object(serde_json::Map::default()))
-                    } else {
-                        serde_json::Value::from_str(input_json)
-                    };
-                    let event_result = match input_value {
+                    let event_result = match parse_tool_arguments(input_json) {
                         Ok(input) => Ok(LanguageModelCompletionEvent::ToolUse(
                             LanguageModelToolUse {
                                 id: tool_use.id.into(),
@@ -1102,6 +1106,7 @@ mod tests {
             tool_choice: None,
             thinking_allowed: true,
             thinking_effort: None,
+            speed: None,
         };
 
         let anthropic_request = into_anthropic(
@@ -1164,6 +1169,7 @@ mod tests {
             tools: vec![],
             tool_choice: None,
             thinking_allowed: true,
+            speed: None,
         };
         request.messages.push(LanguageModelRequestMessage {
             role: Role::Assistant,

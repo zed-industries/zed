@@ -22,6 +22,9 @@ impl FeatureFlag for AgentV2FeatureFlag {
     }
 }
 
+/// A feature flag for granting access to beta ACP features.
+///
+/// We reuse this feature flag for new betas, so don't delete it if it is not currently in use.
 pub struct AcpBetaFeatureFlag;
 
 impl FeatureFlag for AcpBetaFeatureFlag {
@@ -34,16 +37,6 @@ impl FeatureFlag for AgentSharingFeatureFlag {
     const NAME: &'static str = "agent-sharing";
 }
 
-pub struct SubagentsFeatureFlag;
-
-impl FeatureFlag for SubagentsFeatureFlag {
-    const NAME: &'static str = "subagents";
-
-    fn enabled_for_staff() -> bool {
-        false
-    }
-}
-
 pub struct DiffReviewFeatureFlag;
 
 impl FeatureFlag for DiffReviewFeatureFlag {
@@ -54,12 +47,16 @@ impl FeatureFlag for DiffReviewFeatureFlag {
     }
 }
 
-/// Controls whether we show the new thinking and effort level controls in the Agent Panel when using applicable models
-/// through the Zed provider (Cloud).
-pub struct CloudThinkingEffortFeatureFlag;
+pub struct GitGraphFeatureFlag;
 
-impl FeatureFlag for CloudThinkingEffortFeatureFlag {
-    const NAME: &'static str = "cloud-thinking-effort";
+impl FeatureFlag for GitGraphFeatureFlag {
+    const NAME: &'static str = "git-graph";
+}
+
+pub struct StreamingEditFileToolFeatureFlag;
+
+impl FeatureFlag for StreamingEditFileToolFeatureFlag {
+    const NAME: &'static str = "streaming-edit-file-tool";
 
     fn enabled_for_staff() -> bool {
         false
