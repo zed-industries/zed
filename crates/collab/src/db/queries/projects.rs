@@ -1002,7 +1002,7 @@ impl Database {
                     repositories.push(proto::UpdateRepository {
                         project_id: db_repository_entry.project_id.0 as u64,
                         id: db_repository_entry.id as u64,
-                        abs_path: db_repository_entry.abs_path,
+                        abs_path: db_repository_entry.abs_path.clone(),
                         entry_ids,
                         updated_statuses,
                         removed_statuses: Vec::new(),
@@ -1015,6 +1015,7 @@ impl Database {
                         stash_entries: Vec::new(),
                         remote_upstream_url: db_repository_entry.remote_upstream_url.clone(),
                         remote_origin_url: db_repository_entry.remote_origin_url.clone(),
+                        original_repo_abs_path: Some(db_repository_entry.abs_path),
                     });
                 }
             }

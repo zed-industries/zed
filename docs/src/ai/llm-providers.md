@@ -88,7 +88,7 @@ With that done, choose one of the three authentication methods:
 While it's possible to configure through the Agent Panel settings UI by entering your AWS access key and secret directly, we recommend using named profiles instead for better security practices.
 To do this:
 
-1. Create an IAM User that you can assume in the [IAM Console](https://us-east-1.console.aws.amazon.com/iam/home?region=us-east-1#/users).
+1. Create an IAM User in the [IAM Console](https://us-east-1.console.aws.amazon.com/iam/home?region=us-east-1#/users).
 2. Create security credentials for that User, save them and keep them secure.
 3. Open the Agent Configuration with (`agent: open settings`) and go to the Amazon Bedrock section
 4. Copy the credentials from Step 2 into the respective **Access Key ID**, **Secret Access Key**, and **Region** fields.

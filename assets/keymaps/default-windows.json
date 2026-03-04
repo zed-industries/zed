@@ -203,6 +203,7 @@
     "context": "Editor && editor_agent_diff",
     "use_key_equivalents": true,
     "bindings": {
+      "alt-y": "agent::Keep",
       "ctrl-alt-y": "agent::Keep",
       "ctrl-alt-z": "agent::Reject",
       "shift-alt-y": "agent::KeepAll",
@@ -214,6 +215,7 @@
     "context": "AgentDiff",
     "use_key_equivalents": true,
     "bindings": {
+      "alt-y": "agent::Keep",
       "ctrl-alt-y": "agent::Keep",
       "ctrl-alt-z": "agent::Reject",
       "shift-alt-y": "agent::KeepAll",

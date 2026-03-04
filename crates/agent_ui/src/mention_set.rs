@@ -276,6 +276,8 @@ impl MentionSet {
                 mention_uri.name().into(),
                 IconName::Image.path().into(),
                 mention_uri.tooltip_text(),
+                Some(mention_uri.clone()),
+                Some(workspace.downgrade()),
                 Some(image),
                 cx.weak_entity(),
                 mention_uri.clone(),
@@ -291,6 +293,8 @@ impl MentionSet {
                 crease_text,
                 mention_uri.icon_path(cx),
                 mention_uri.tooltip_text(),
+                Some(mention_uri.clone()),
+                Some(workspace.downgrade()),
                 None,
                 cx.weak_entity(),
                 mention_uri.clone(),
@@ -790,6 +794,8 @@ pub(crate) async fn insert_images_as_context(
                 MentionUri::PastedImage.name().into(),
                 IconName::Image.path().into(),
                 None,
+                None,
+                None,
                 Some(Task::ready(Ok(image.clone())).shared()),
                 mention_set.downgrade(),
                 MentionUri::PastedImage,
@@ -903,6 +909,8 @@ pub(crate) fn insert_crease_for_mention(
     crease_label: SharedString,
     crease_icon: SharedString,
     crease_tooltip: Option<SharedString>,
+    mention_uri: Option<MentionUri>,
+    workspace: Option<WeakEntity<Workspace>>,
     image: Option<Shared<Task<Result<Arc<Image>, String>>>>,
     mention_set: WeakEntity<MentionSet>,
     mention_uri: MentionUri,
@@ -925,6 +933,8 @@ pub(crate) fn insert_crease_for_mention(
                 crease_label.clone(),
                 crease_icon.clone(),
                 crease_tooltip,
+                mention_uri.clone(),
+                workspace.clone(),
                 start..end,
                 rx,
                 image,
@@ -1126,6 +1136,8 @@ fn render_mention_fold_button(
     label: SharedString,
     icon: SharedString,
     tooltip: Option<SharedString>,
+    mention_uri: Option<MentionUri>,
+    workspace: Option<WeakEntity<Workspace>>,
     range: Range<Anchor>,
     mut loading_finished: postage::barrier::Receiver,
     image_task: Option<Shared<Task<Result<Arc<Image>, String>>>>,
@@ -1153,6 +1165,8 @@ fn render_mention_fold_button(
             disambiguated_label,
             icon,
             tooltip,
+            mention_uri: mention_uri.clone(),
+            workspace: workspace.clone(),
             range,
             editor,
             mention_set,
@@ -1171,6 +1185,8 @@ struct LoadingContext {
     disambiguated_label: SharedString,
     icon: SharedString,
     tooltip: Option<SharedString>,
+    mention_uri: Option<MentionUri>,
+    workspace: Option<WeakEntity<Workspace>>,
     range: Range<Anchor>,
     editor: WeakEntity<Editor>,
     mention_set: WeakEntity<MentionSet>,
@@ -1202,6 +1218,8 @@ impl Render for LoadingContext {
         };
 
         MentionCrease::new(id, self.icon.clone(), label)
+            .mention_uri(self.mention_uri.clone())
+            .workspace(self.workspace.clone())
             .is_toggled(is_in_text_selection)
             .is_loading(self.loading.is_some())
             .when_some(self.tooltip.clone(), |this, tooltip_text| {

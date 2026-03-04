@@ -159,7 +159,7 @@ impl crate::TerminalHandle for FakeTerminalHandle {
 
 struct FakeSubagentHandle {
     session_id: acp::SessionId,
-    wait_for_summary_task: Shared<Task<String>>,
+    send_task: Shared<Task<String>>,
 }
 
 impl SubagentHandle for FakeSubagentHandle {
@@ -167,8 +167,12 @@ impl SubagentHandle for FakeSubagentHandle {
         self.session_id.clone()
     }
 
+    fn num_entries(&self, _cx: &App) -> usize {
+        unimplemented!()
+    }
+
     fn send(&self, _message: String, cx: &AsyncApp) -> Task<Result<String>> {
-        let task = self.wait_for_summary_task.clone();
+        let task = self.send_task.clone();
         cx.background_spawn(async move { Ok(task.await) })
     }
 }
@@ -273,8 +277,17 @@ async fn test_echo(cx: &mut TestAppContext) {
 
     let events = events.collect().await;
     thread.update(cx, |thread, _cx| {
-        assert_eq!(thread.last_message().unwrap().role(), Role::Assistant);
-        assert_eq!(thread.last_message().unwrap().to_markdown(), "Hello\n")
+        assert_eq!(
+            thread.last_received_or_pending_message().unwrap().role(),
+            Role::Assistant
+        );
+        assert_eq!(
+            thread
+                .last_received_or_pending_message()
+                .unwrap()
+                .to_markdown(),
+            "Hello\n"
+        )
     });
     assert_eq!(stop_events(events), vec![acp::StopReason::EndTurn]);
 }
@@ -426,9 +439,15 @@ async fn test_thinking(cx: &mut TestAppContext) {
 
     let events = events.collect().await;
     thread.update(cx, |thread, _cx| {
-        assert_eq!(thread.last_message().unwrap().role(), Role::Assistant);
         assert_eq!(
-            thread.last_message().unwrap().to_markdown(),
+            thread.last_received_or_pending_message().unwrap().role(),
+            Role::Assistant
+        );
+        assert_eq!(
+            thread
+                .last_received_or_pending_message()
+                .unwrap()
+                .to_markdown(),
             indoc! {"
                 <think>Think</think>
                 Hello
@@ -706,7 +725,7 @@ async fn test_basic_tool_calls(cx: &mut TestAppContext) {
     thread.update(cx, |thread, _cx| {
         assert!(
             thread
-                .last_message()
+                .last_received_or_pending_message()
                 .unwrap()
                 .as_agent_message()
                 .unwrap()
@@ -743,7 +762,7 @@ async fn test_streaming_tool_calls(cx: &mut TestAppContext) {
         if let Ok(ThreadEvent::ToolCall(tool_call)) = event {
             thread.update(cx, |thread, _cx| {
                 // Look for a tool use in the thread's last message
-                let message = thread.last_message().unwrap();
+                let message = thread.last_received_or_pending_message().unwrap();
                 let agent_message = message.as_agent_message().unwrap();
                 let last_content = agent_message.content.last().unwrap();
                 if let AgentMessageContent::ToolUse(last_tool_use) = last_content {
@@ -1213,7 +1232,7 @@ async fn test_concurrent_tool_calls(cx: &mut TestAppContext) {
     assert_eq!(stop_reasons, vec![acp::StopReason::EndTurn]);
 
     thread.update(cx, |thread, _cx| {
-        let last_message = thread.last_message().unwrap();
+        let last_message = thread.last_received_or_pending_message().unwrap();
         let agent_message = last_message.as_agent_message().unwrap();
         let text = agent_message
             .content
@@ -1919,7 +1938,7 @@ async fn test_cancellation(cx: &mut TestAppContext) {
         .collect::<Vec<_>>()
         .await;
     thread.update(cx, |thread, _cx| {
-        let message = thread.last_message().unwrap();
+        let message = thread.last_received_or_pending_message().unwrap();
         let agent_message = message.as_agent_message().unwrap();
         assert_eq!(
             agent_message.content,
@@ -1988,7 +2007,7 @@ async fn test_terminal_tool_cancellation_captures_output(cx: &mut TestAppContext
 
     // Verify the tool result contains the terminal output, not just "Tool canceled by user"
     thread.update(cx, |thread, _cx| {
-        let message = thread.last_message().unwrap();
+        let message = thread.last_received_or_pending_message().unwrap();
         let agent_message = message.as_agent_message().unwrap();
 
         let tool_use = agent_message
@@ -2144,7 +2163,7 @@ async fn verify_thread_recovery(
 
     let events = events.collect::<Vec<_>>().await;
     thread.update(cx, |thread, _cx| {
-        let message = thread.last_message().unwrap();
+        let message = thread.last_received_or_pending_message().unwrap();
         let agent_message = message.as_agent_message().unwrap();
         assert_eq!(
             agent_message.content,
@@ -2453,7 +2472,7 @@ async fn test_terminal_tool_stopped_via_terminal_card_button(cx: &mut TestAppCon
 
     // Verify the tool result indicates user stopped
     thread.update(cx, |thread, _cx| {
-        let message = thread.last_message().unwrap();
+        let message = thread.last_received_or_pending_message().unwrap();
         let agent_message = message.as_agent_message().unwrap();
 
         let tool_use = agent_message
@@ -2548,7 +2567,7 @@ async fn test_terminal_tool_timeout_expires(cx: &mut TestAppContext) {
 
     // Verify the tool result indicates timeout, not user stopped
     thread.update(cx, |thread, _cx| {
-        let message = thread.last_message().unwrap();
+        let message = thread.last_received_or_pending_message().unwrap();
         let agent_message = message.as_agent_message().unwrap();
 
         let tool_use = agent_message
@@ -2608,6 +2627,84 @@ async fn test_in_progress_send_canceled_by_next_send(cx: &mut TestAppContext) {
 
     let events_1 = events_1.collect::<Vec<_>>().await;
     assert_eq!(stop_events(events_1), vec![acp::StopReason::Cancelled]);
+    let events_2 = events_2.collect::<Vec<_>>().await;
+    assert_eq!(stop_events(events_2), vec![acp::StopReason::EndTurn]);
+}
+
+#[gpui::test]
+async fn test_retry_cancelled_promptly_on_new_send(cx: &mut TestAppContext) {
+    // Regression test: when a completion fails with a retryable error (e.g. upstream 500),
+    // the retry loop waits on a timer. If the user switches models and sends a new message
+    // during that delay, the old turn should exit immediately instead of retrying with the
+    // stale model.
+    let ThreadTest { model, thread, .. } = setup(cx, TestModel::Fake).await;
+    let model_a = model.as_fake();
+
+    // Start a turn with model_a.
+    let events_1 = thread
+        .update(cx, |thread, cx| {
+            thread.send(UserMessageId::new(), ["Hello"], cx)
+        })
+        .unwrap();
+    cx.run_until_parked();
+    assert_eq!(model_a.completion_count(), 1);
+
+    // Model returns a retryable upstream 500. The turn enters the retry delay.
+    model_a.send_last_completion_stream_error(
+        LanguageModelCompletionError::UpstreamProviderError {
+            message: "Internal server error".to_string(),
+            status: http_client::StatusCode::INTERNAL_SERVER_ERROR,
+            retry_after: None,
+        },
+    );
+    model_a.end_last_completion_stream();
+    cx.run_until_parked();
+
+    // The old completion was consumed; model_a has no pending requests yet because the
+    // retry timer hasn't fired.
+    assert_eq!(model_a.completion_count(), 0);
+
+    // Switch to model_b and send a new message. This cancels the old turn.
+    let model_b = Arc::new(FakeLanguageModel::with_id_and_thinking(
+        "fake", "model-b", "Model B", false,
+    ));
+    thread.update(cx, |thread, cx| {
+        thread.set_model(model_b.clone(), cx);
+    });
+    let events_2 = thread
+        .update(cx, |thread, cx| {
+            thread.send(UserMessageId::new(), ["Continue"], cx)
+        })
+        .unwrap();
+    cx.run_until_parked();
+
+    // model_b should have received its completion request.
+    assert_eq!(model_b.as_fake().completion_count(), 1);
+
+    // Advance the clock well past the retry delay (BASE_RETRY_DELAY = 5s).
+    cx.executor().advance_clock(Duration::from_secs(10));
+    cx.run_until_parked();
+
+    // model_a must NOT have received another completion request — the cancelled turn
+    // should have exited during the retry delay rather than retrying with the old model.
+    assert_eq!(
+        model_a.completion_count(),
+        0,
+        "old model should not receive a retry request after cancellation"
+    );
+
+    // Complete model_b's turn.
+    model_b
+        .as_fake()
+        .send_last_completion_stream_text_chunk("Done!");
+    model_b
+        .as_fake()
+        .send_last_completion_stream_event(LanguageModelCompletionEvent::Stop(StopReason::EndTurn));
+    model_b.as_fake().end_last_completion_stream();
+
+    let events_1 = events_1.collect::<Vec<_>>().await;
+    assert_eq!(stop_events(events_1), vec![acp::StopReason::Cancelled]);
+
     let events_2 = events_2.collect::<Vec<_>>().await;
     assert_eq!(stop_events(events_2), vec![acp::StopReason::EndTurn]);
 }
@@ -3444,7 +3541,7 @@ async fn test_send_retry_finishes_tool_calls_on_error(cx: &mut TestAppContext) {
     events.collect::<Vec<_>>().await;
     thread.read_with(cx, |thread, _cx| {
         assert_eq!(
-            thread.last_message(),
+            thread.last_received_or_pending_message(),
             Some(Message::Agent(AgentMessage {
                 content: vec![AgentMessageContent::Text("Done".into())],
                 tool_results: IndexMap::default(),

@@ -156,6 +156,7 @@ reqwest_client = { workspace = true, features = ["test-support"] }
 
 [target.'cfg(target_family = "wasm")'.dev-dependencies]
 wasm-bindgen = { workspace = true }
+gpui_web.workspace = true
 
 [build-dependencies]
 embed-resource = { version = "3.0", optional = true }
