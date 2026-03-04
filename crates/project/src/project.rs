@@ -1928,9 +1928,29 @@ impl Project {
             .detach()
         }
 
+        let process_shutdown = |this: &mut Project, cx: &mut App| {
+            this.lsp_store.update(cx, |lsp_store, cx| {
+                if let Some(local) = lsp_store.as_local_mut() {
+                    let shutdown = local.shutdown_language_servers_on_quit();
+                    cx.background_spawn(shutdown).detach();
+                }
+            });
+
+            this.dap_store.update(cx, |dap_store, cx| {
+                dap_store.shutdown_sessions(cx).detach();
+            });
+
+            this.context_server_store.update(cx, |store, cx| {
+                store.stop_all_servers(cx);
+            });
+        };
+
         match &self.client_state {
-            ProjectClientState::Local => {}
+            ProjectClientState::Local => {
+                process_shutdown(self, cx);
+            }
             ProjectClientState::Shared { .. } => {
+                process_shutdown(self, cx);
                 let _ = self.unshare_internal(cx);
             }
             ProjectClientState::Remote { remote_id, .. } => {

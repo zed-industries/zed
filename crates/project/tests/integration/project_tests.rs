@@ -11320,6 +11320,64 @@ async fn test_undo_encoding_change(cx: &mut gpui::TestAppContext) {
     });
 }
 
+#[gpui::test]
+async fn test_language_servers_shut_down_on_project_release(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/project"),
+        json!({
+            ".git": {},
+            "main.rs": "fn main() {}"
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
+
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+    let mut fake_servers = language_registry.register_fake_lsp("Rust", FakeLspAdapter::default());
+
+    let (buffer, _handle) = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/project/main.rs"), cx)
+        })
+        .await
+        .unwrap();
+
+    let mut fake_server = fake_servers.next().await.unwrap();
+    cx.executor().run_until_parked();
+
+    // Verify the server is running.
+    project.read_with(cx, |project, cx| {
+        assert!(
+            project.language_server_statuses(cx).count() > 0,
+            "language server should be running"
+        );
+    });
+
+    let held_server = project.read_with(cx, |project, cx| {
+        let lsp_store = project.lsp_store().read(cx);
+        let (server_id, _status) = lsp_store.language_server_statuses().next().unwrap();
+        lsp_store.language_server_for_id(server_id).unwrap()
+    });
+
+    drop(_handle);
+    drop(buffer);
+    drop(project);
+
+    cx.update(|_| {});
+    cx.executor().run_until_parked();
+
+    fake_server
+        .receive_notification::<lsp::notification::Exit>()
+        .await;
+
+    drop(held_server);
+}
+
 pub fn init_test(cx: &mut gpui::TestAppContext) {
     zlog::init_test();
 

@@ -1037,7 +1037,13 @@ impl EditPredictionStore {
                 _subscriptions: [
                     cx.subscribe(&project, Self::handle_project_event),
                     cx.observe_release(&project, move |this, _, cx| {
-                        this.projects.remove(&entity_id);
+                        if let Some(state) = this.projects.remove(&entity_id) {
+                            if let Some(copilot) = state.copilot {
+                                let shutdown = copilot
+                                    .update(cx, |copilot, cx| copilot.shutdown_language_server(cx));
+                                cx.background_spawn(shutdown).detach();
+                            }
+                        }
                         cx.notify();
                     }),
                 ],
