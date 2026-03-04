@@ -29,11 +29,13 @@ use std::{
 };
 
 // set once the crash handler has initialized and the client has connected to it
-pub static CRASH_HANDLER: OnceLock<Arc<Client>> = OnceLock::new();
+static CRASH_HANDLER: OnceLock<Arc<Client>> = OnceLock::new();
 // set when the first minidump request is made to avoid generating duplicate crash reports
 pub static REQUESTED_MINIDUMP: AtomicBool = AtomicBool::new(false);
 const CRASH_HANDLER_PING_TIMEOUT: Duration = Duration::from_secs(60);
 const CRASH_HANDLER_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+
+static PENDING_CRASH_SERVER_MESSAGES: Mutex<Vec<CrashServerMessage>> = Mutex::new(Vec::new());
 
 #[cfg(target_os = "macos")]
 static PANIC_THREAD_ID: AtomicU32 = AtomicU32::new(0);
@@ -120,6 +122,7 @@ async fn connect_and_keepalive(crash_init: InitCrashHandler, handler: CrashHandl
     spawn_crash_handler_windows(&exe, &socket_name);
 
     info!("spawning crash handler process");
+    send_crash_server_message(CrashServerMessage::Init(crash_init));
 
     let mut elapsed = Duration::ZERO;
     let retry_frequency = Duration::from_millis(100);
@@ -144,7 +147,10 @@ async fn connect_and_keepalive(crash_init: InitCrashHandler, handler: CrashHandl
     // Publishing the client to the OnceLock makes it visible to the signal
     // handler callback installed earlier.
     CRASH_HANDLER.set(client.clone()).ok();
-    send_crash_server_mssage(CrashServerMessage::Init(crash_init));
+    let messages: Vec<_> = mem::take(PENDING_CRASH_SERVER_MESSAGES.lock().as_mut());
+    for message in messages.into_iter() {
+        send_crash_server_message(message);
+    }
     // mem::forget so that the drop is not called
     mem::forget(handler);
     info!("crash handler registered");
@@ -214,27 +220,35 @@ pub struct UserInfo {
     pub is_staff: Option<bool>,
 }
 
-fn send_crash_server_mssage(message: CrashServerMessage) {
-    let data = serde_json::to_vec(&message).ok();
-
-    let Some((crash_server, message)) = CRASH_HANDLER.get().zip(data) else {
-        log::warn!("Failed to send data to crash server (not running?)");
+fn send_crash_server_message(message: CrashServerMessage) {
+    let Some(crash_server) = CRASH_HANDLER.get() else {
+        dbg!("queueing {:?}", &message);
+        PENDING_CRASH_SERVER_MESSAGES.lock().push(message);
         return;
     };
-    if let Err(err) = crash_server.send_message(0, message) {
-        log::warn!("Failed to send data to crash server {:?}", err)
+    dbg!("sending {:?}", &message);
+    let data = match serde_json::to_vec(&message) {
+        Ok(data) => data,
+        Err(err) => {
+            log::warn!("Failed to serialize crash server message: {:?}", err);
+            return;
+        }
+    };
+
+    if let Err(err) = crash_server.send_message(0, data) {
+        log::warn!("Failed to send data to crash server {:?}", err);
     }
 }
 
 pub fn set_gpu_info(specs: GpuSpecs) {
-    send_crash_server_mssage(CrashServerMessage::GPUInfo(specs));
+    send_crash_server_message(CrashServerMessage::GPUInfo(specs));
 }
 
 pub fn set_user_info(info: UserInfo) {
-    send_crash_server_mssage(CrashServerMessage::UserInfo(info));
+    send_crash_server_message(CrashServerMessage::UserInfo(info));
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 enum CrashServerMessage {
     Init(InitCrashHandler),
     Panic(CrashPanic),
@@ -363,7 +377,7 @@ pub fn panic_hook(info: &PanicHookInfo) {
         .map_or_else(|| "<unknown>".to_owned(), |location| location.to_string());
     log::error!("thread '{thread_name}' panicked at {location}:\n{message}...");
 
-    send_crash_server_mssage(CrashServerMessage::Panic(CrashPanic { message, span }));
+    send_crash_server_message(CrashServerMessage::Panic(CrashPanic { message, span }));
     log::error!("triggering a crash to generate a minidump...");
 
     #[cfg(target_os = "macos")]
@@ -376,7 +390,6 @@ pub fn panic_hook(info: &PanicHookInfo) {
         if #[cfg(target_os = "windows")] {
             // https://learn.microsoft.com/en-us/windows/win32/debug/system-error-codes--0-499-
             CrashHandler.simulate_exception(Some(234)); // (MORE_DATA_AVAILABLE)
-            break;
         } else {
             std::process::abort();
         }

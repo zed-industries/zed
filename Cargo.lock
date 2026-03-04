@@ -4122,7 +4122,6 @@ dependencies = [
 name = "crashes"
 version = "0.1.0"
 dependencies = [
- "bincode",
  "cfg-if",
  "crash-handler",
  "futures 0.3.31",
