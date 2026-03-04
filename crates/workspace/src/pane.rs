@@ -4820,7 +4820,7 @@ impl Render for DraggedTab {
 
 #[cfg(test)]
 mod tests {
-    use std::{iter::zip, num::NonZero};
+    use std::{cell::Cell, iter::zip, num::NonZero};
 
     use super::*;
     use crate::{
@@ -4832,6 +4832,65 @@ mod tests {
     use settings::SettingsStore;
     use theme::LoadThemes;
     use util::TryFutureExt;
+
+    // drop_call_count is a Cell here because `handle_drop` takes &self, not &mut self.
+    struct CustomDropHandlingItem {
+        focus_handle: gpui::FocusHandle,
+        drop_call_count: Cell<usize>,
+    }
+
+    impl CustomDropHandlingItem {
+        fn new(cx: &mut Context<Self>) -> Self {
+            Self {
+                focus_handle: cx.focus_handle(),
+                drop_call_count: Cell::new(0),
+            }
+        }
+
+        fn drop_call_count(&self) -> usize {
+            self.drop_call_count.get()
+        }
+    }
+
+    impl EventEmitter<()> for CustomDropHandlingItem {}
+
+    impl Focusable for CustomDropHandlingItem {
+        fn focus_handle(&self, _cx: &App) -> gpui::FocusHandle {
+            self.focus_handle.clone()
+        }
+    }
+
+    impl Render for CustomDropHandlingItem {
+        fn render(
+            &mut self,
+            _window: &mut Window,
+            _cx: &mut Context<Self>,
+        ) -> impl gpui::IntoElement {
+            gpui::Empty
+        }
+    }
+
+    impl Item for CustomDropHandlingItem {
+        type Event = ();
+
+        fn tab_content_text(&self, _detail: usize, _cx: &App) -> gpui::SharedString {
+            "custom_drop_handling_item".into()
+        }
+
+        fn handle_drop(
+            &self,
+            _active_pane: &Pane,
+            dropped: &dyn std::any::Any,
+            _window: &mut Window,
+            _cx: &mut App,
+        ) -> bool {
+            let is_dragged_tab = dropped.downcast_ref::<DraggedTab>().is_some();
+            if is_dragged_tab {
+                self.drop_call_count.set(self.drop_call_count.get() + 1);
+            }
+            is_dragged_tab
+        }
+    }
 
     #[gpui::test]
     async fn test_add_item_capped_to_max_tabs(cx: &mut TestAppContext) {
@@ -5656,6 +5715,83 @@ mod tests {
             pane.unpin_tab_at(ix, window, cx);
         });
         assert_item_labels(&pane, ["C", "A", "B*"], cx);
+    }
+
+    #[gpui::test]
+    async fn test_handle_tab_drop_respects_is_pane_target(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let source_pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        let item_a = add_labeled_item(&source_pane, "A", false, cx);
+        let item_b = add_labeled_item(&source_pane, "B", false, cx);
+
+        let target_pane = workspace.update_in(cx, |workspace, window, cx| {
+            workspace.split_pane(source_pane.clone(), SplitDirection::Right, window, cx)
+        });
+
+        let custom_item = target_pane.update_in(cx, |pane, window, cx| {
+            let custom_item = Box::new(cx.new(CustomDropHandlingItem::new));
+            pane.add_item(custom_item.clone(), true, true, None, window, cx);
+            custom_item
+        });
+
+        let moved_item_id = item_a.item_id();
+        let other_item_id = item_b.item_id();
+        let custom_item_id = custom_item.item_id();
+
+        let pane_item_ids = |pane: &Entity<Pane>, cx: &mut VisualTestContext| {
+            pane.read_with(cx, |pane, _| {
+                pane.items().map(|item| item.item_id()).collect::<Vec<_>>()
+            })
+        };
+
+        let source_before_item_ids = pane_item_ids(&source_pane, cx);
+        assert_eq!(source_before_item_ids, vec![moved_item_id, other_item_id]);
+
+        let target_before_item_ids = pane_item_ids(&target_pane, cx);
+        assert_eq!(target_before_item_ids, vec![custom_item_id]);
+
+        let dragged_tab = DraggedTab {
+            pane: source_pane.clone(),
+            item: item_a.boxed_clone(),
+            ix: 0,
+            detail: 0,
+            is_active: true,
+        };
+
+        // Dropping item_a onto the target pane itself means the
+        // custom item handles the drop and no tab move should occur
+        target_pane.update_in(cx, |pane, window, cx| {
+            pane.handle_tab_drop(&dragged_tab, pane.active_item_index(), true, window, cx);
+        });
+        cx.run_until_parked();
+
+        assert_eq!(
+            custom_item.read_with(cx, |item, _| item.drop_call_count()),
+            1
+        );
+        assert_eq!(pane_item_ids(&source_pane, cx), source_before_item_ids);
+        assert_eq!(pane_item_ids(&target_pane, cx), target_before_item_ids);
+
+        // Dropping item_a onto the tab target means the custom handler
+        // should be skipped and the pane's default tab drop behavior should run.
+        target_pane.update_in(cx, |pane, window, cx| {
+            pane.handle_tab_drop(&dragged_tab, pane.active_item_index(), false, window, cx);
+        });
+        cx.run_until_parked();
+
+        assert_eq!(
+            custom_item.read_with(cx, |item, _| item.drop_call_count()),
+            1
+        );
+        assert_eq!(pane_item_ids(&source_pane, cx), vec![other_item_id]);
+
+        let target_item_ids = pane_item_ids(&target_pane, cx);
+        assert_eq!(target_item_ids, vec![moved_item_id, custom_item_id]);
     }
 
     #[gpui::test]
