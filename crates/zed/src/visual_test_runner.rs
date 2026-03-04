@@ -2032,32 +2032,9 @@ fn run_agent_thread_view_test(
 
     // Create the necessary entities for the ReadFileTool
     let action_log = cx.update(|cx| cx.new(|_| action_log::ActionLog::new(project.clone())));
-    let context_server_registry = cx.update(|cx| {
-        cx.new(|cx| agent::ContextServerRegistry::new(project.read(cx).context_server_store(), cx))
-    });
-    let fake_model = Arc::new(language_model::fake_provider::FakeLanguageModel::default());
-    let project_context = cx.update(|cx| cx.new(|_| prompt_store::ProjectContext::default()));
-
-    // Create the agent Thread
-    let thread = cx.update(|cx| {
-        cx.new(|cx| {
-            agent::Thread::new(
-                project.clone(),
-                project_context,
-                context_server_registry,
-                agent::Templates::new(),
-                Some(fake_model),
-                cx,
-            )
-        })
-    });
 
     // Create the ReadFileTool
-    let tool = Arc::new(agent::ReadFileTool::new(
-        thread.downgrade(),
-        project.clone(),
-        action_log,
-    ));
+    let tool = Arc::new(agent::ReadFileTool::new(project.clone(), action_log, true));
 
     // Create a test event stream to capture tool output
     let (event_stream, mut event_receiver) = agent::ToolCallEventStream::test();
