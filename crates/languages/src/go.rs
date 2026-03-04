@@ -11,6 +11,7 @@ use lsp::{LanguageServerBinary, LanguageServerName};
 use project::lsp_store::language_server_settings;
 use regex::Regex;
 use serde_json::{Value, json};
+use settings::SemanticTokenRules;
 use smol::fs;
 use std::{
     borrow::Cow,
@@ -25,7 +26,6 @@ use std::{
     },
 };
 use task::{TaskTemplate, TaskTemplates, TaskVariables, VariableName};
-use settings::SemanticTokenRules;
 use util::{ResultExt, fs::remove_matching, maybe, merge_json_value_into};
 
 use crate::LanguageDir;
