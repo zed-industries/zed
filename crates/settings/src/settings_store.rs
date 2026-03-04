@@ -1519,60 +1519,6 @@ mod tests {
         }
     }
 
-    fn apply_theme_mode(content: &mut SettingsContent, mode: ThemeAppearanceMode) {
-        let theme = content.theme.as_mut();
-
-        if let Some(selection) = theme.theme.as_mut() {
-            match selection {
-                ThemeSelection::Static(theme_name) => {
-                    *selection = ThemeSelection::Dynamic {
-                        mode,
-                        light: theme_name.clone(),
-                        dark: theme_name.clone(),
-                    };
-                }
-                ThemeSelection::Dynamic {
-                    mode: mode_to_update,
-                    ..
-                } => *mode_to_update = mode,
-            }
-        } else {
-            let mut selection = ThemeSelection::default();
-            if let ThemeSelection::Dynamic {
-                mode: mode_to_update,
-                ..
-            } = &mut selection
-            {
-                *mode_to_update = mode;
-            }
-            theme.theme = Some(selection);
-        }
-    }
-
-    fn toggle_theme_mode(content: &mut SettingsContent, active_appearance: ThemeAppearanceMode) {
-        let current_mode = content
-            .theme
-            .theme
-            .as_ref()
-            .and_then(|selection| match selection {
-                ThemeSelection::Static(_) => None,
-                ThemeSelection::Dynamic { mode, .. } => Some(*mode),
-            });
-
-        let next_mode = match current_mode {
-            Some(ThemeAppearanceMode::Light) => ThemeAppearanceMode::Dark,
-            Some(ThemeAppearanceMode::Dark) => ThemeAppearanceMode::Light,
-            Some(ThemeAppearanceMode::System) | None => match active_appearance {
-                ThemeAppearanceMode::Light => ThemeAppearanceMode::Dark,
-                ThemeAppearanceMode::Dark | ThemeAppearanceMode::System => {
-                    ThemeAppearanceMode::Light
-                }
-            },
-        };
-
-        apply_theme_mode(content, next_mode);
-    }
-
     #[derive(Debug, PartialEq)]
     struct DefaultLanguageSettings {
         tab_size: NonZeroU32,
@@ -1739,7 +1685,9 @@ mod tests {
             }"#
             .unindent(),
             |settings| {
-                toggle_theme_mode(settings, ThemeAppearanceMode::Dark);
+                if let Some(ThemeSelection::Dynamic { mode, .. }) = settings.theme.theme.as_mut() {
+                    *mode = ThemeAppearanceMode::Dark;
+                }
             },
             r#"{
                 "theme": {
@@ -1763,7 +1711,9 @@ mod tests {
             }"#
             .unindent(),
             |settings| {
-                toggle_theme_mode(settings, ThemeAppearanceMode::Light);
+                if let Some(ThemeSelection::Dynamic { mode, .. }) = settings.theme.theme.as_mut() {
+                    *mode = ThemeAppearanceMode::Light;
+                }
             },
             r#"{
                 "theme": {
@@ -1787,11 +1737,13 @@ mod tests {
             }"#
             .unindent(),
             |settings| {
-                toggle_theme_mode(settings, ThemeAppearanceMode::Dark);
+                if let Some(ThemeSelection::Dynamic { mode, .. }) = settings.theme.theme.as_mut() {
+                    *mode = ThemeAppearanceMode::Dark;
+                }
             },
             r#"{
                 "theme": {
-                    "mode": "light",
+                    "mode": "dark",
                     "light": "One Light",
                     "dark": "One Dark"
                 }
@@ -1812,12 +1764,16 @@ mod tests {
             }"#
             .unindent(),
             |settings| {
-                toggle_theme_mode(settings, ThemeAppearanceMode::Light);
+                settings.theme.theme = Some(ThemeSelection::Dynamic {
+                    mode: ThemeAppearanceMode::System,
+                    light: ThemeName("One Light".into()),
+                    dark: ThemeName("One Dark".into()),
+                });
             },
             r#"{
                 "theme": {
-                    "mode": "dark",
-                    "light": "One Dark",
+                    "mode": "system",
+                    "light": "One Light",
                     "dark": "One Dark"
                 }
             }"#

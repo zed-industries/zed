@@ -7014,13 +7014,9 @@ impl Workspace {
             },
         };
 
-        self.set_theme_mode(next_mode, cx);
-    }
-
-    fn set_theme_mode(&mut self, mode: theme::ThemeAppearanceMode, cx: &mut Context<Self>) {
         let fs = self.project().read(cx).fs().clone();
         settings::update_settings_file(fs, cx, move |settings, _cx| {
-            theme::set_mode(settings, mode);
+            theme::set_mode(settings, next_mode);
         });
     }
 

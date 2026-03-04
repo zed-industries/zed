@@ -61,12 +61,14 @@ the first toggle converts it to dynamic theme selection:
 ```json [settings]
 {
   "theme": {
-    "mode": "light",
-    "light": "One Dark",
+    "mode": "system",
+    "light": "One Light",
     "dark": "One Dark"
   }
 }
 ```
+
+You are required to set both `light` and `dark` themes manually after the first toogle.
 
 After that, toggling updates only `theme.mode`.
 If `light` and `dark` are the same theme, the first toggle may not produce a visible UI change until you set different values for `light` and `dark`.
