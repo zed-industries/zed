@@ -677,18 +677,18 @@ impl EditSession {
         for event in events {
             match event {
                 ToolEditEvent::ContentChunk { chunk } => {
-                    let (buffer_id, insert_at) = self.buffer.read_with(cx, |buffer, _cx| {
-                        let insert_at = if !self.pipeline.content_written && buffer.len() > 0 {
-                            0..buffer.len()
-                        } else {
-                            let len = buffer.len();
-                            len..len
-                        };
-                        (buffer.remote_id(), insert_at)
-                    });
+                    let (buffer_id, buffer_len) = self
+                        .buffer
+                        .read_with(cx, |buffer, _cx| (buffer.remote_id(), buffer.len()));
+                    let edit_range = if self.pipeline.content_written {
+                        buffer_len..buffer_len
+                    } else {
+                        0..buffer_len
+                    };
+
                     agent_edit_buffer(
                         &self.buffer,
-                        [(insert_at, chunk.as_str())],
+                        [(edit_range, chunk.as_str())],
                         &tool.action_log,
                         cx,
                     );
@@ -824,7 +824,7 @@ impl EditSession {
                     }
 
                     let char_ops = streaming_diff.push_new(&reindented);
-                    Self::apply_char_operations(
+                    apply_char_operations(
                         &char_ops,
                         &self.buffer,
                         original_snapshot,
@@ -867,7 +867,7 @@ impl EditSession {
 
                     if !final_text.is_empty() {
                         let char_ops = streaming_diff.push_new(&final_text);
-                        Self::apply_char_operations(
+                        apply_char_operations(
                             &char_ops,
                             &self.buffer,
                             &original_snapshot,
@@ -878,7 +878,7 @@ impl EditSession {
                     }
 
                     let remaining_ops = streaming_diff.finish();
-                    Self::apply_char_operations(
+                    apply_char_operations(
                         &remaining_ops,
                         &self.buffer,
                         &original_snapshot,
@@ -896,30 +896,30 @@ impl EditSession {
         }
         Ok(())
     }
+}
 
-    fn apply_char_operations(
-        ops: &[CharOperation],
-        buffer: &Entity<Buffer>,
-        snapshot: &text::BufferSnapshot,
-        edit_cursor: &mut usize,
-        action_log: &Entity<ActionLog>,
-        cx: &mut AsyncApp,
-    ) {
-        for op in ops {
-            match op {
-                CharOperation::Insert { text } => {
-                    let anchor = snapshot.anchor_after(*edit_cursor);
-                    agent_edit_buffer(&buffer, [(anchor..anchor, text.as_str())], action_log, cx);
-                }
-                CharOperation::Delete { bytes } => {
-                    let delete_end = *edit_cursor + bytes;
-                    let anchor_range = snapshot.anchor_range_around(*edit_cursor..delete_end);
-                    agent_edit_buffer(&buffer, [(anchor_range, "")], action_log, cx);
-                    *edit_cursor = delete_end;
-                }
-                CharOperation::Keep { bytes } => {
-                    *edit_cursor += bytes;
-                }
+fn apply_char_operations(
+    ops: &[CharOperation],
+    buffer: &Entity<Buffer>,
+    snapshot: &text::BufferSnapshot,
+    edit_cursor: &mut usize,
+    action_log: &Entity<ActionLog>,
+    cx: &mut AsyncApp,
+) {
+    for op in ops {
+        match op {
+            CharOperation::Insert { text } => {
+                let anchor = snapshot.anchor_after(*edit_cursor);
+                agent_edit_buffer(&buffer, [(anchor..anchor, text.as_str())], action_log, cx);
+            }
+            CharOperation::Delete { bytes } => {
+                let delete_end = *edit_cursor + bytes;
+                let anchor_range = snapshot.anchor_range_around(*edit_cursor..delete_end);
+                agent_edit_buffer(&buffer, [(anchor_range, "")], action_log, cx);
+                *edit_cursor = delete_end;
+            }
+            CharOperation::Keep { bytes } => {
+                *edit_cursor += bytes;
             }
         }
     }
