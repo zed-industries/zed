@@ -148,7 +148,12 @@ pub async fn run_prediction(
         if let PredictionProvider::Zeta2(format) = provider {
             if format != ZetaFormat::default() {
                 let model_id = std::env::var("ZED_ZETA_MODEL").ok();
-                store.set_zeta2_raw_config(Zeta2RawConfig { model_id, format });
+                let environment = std::env::var("ZED_ZETA_ENVIRONMENT").ok();
+                store.set_zeta2_raw_config(Zeta2RawConfig {
+                    model_id,
+                    environment,
+                    format,
+                });
             }
         }
     });
