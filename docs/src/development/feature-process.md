@@ -39,22 +39,6 @@ Then include any relevant background or context that helps the team understand w
 
 Zed has a lot of features, and many of them interact with each other. Before you start building, walk through the sections below and ask: "Does my feature involve this system or could use this UI?"
 
-
-### Where does it live in the UI?
-
-Most features need a home. Start from what your feature *does*, and that tells you where it belongs:
-
-| If your feature... | It belongs in a... | Examples | Trait / API |
-| --- | --- | --- | --- |
-| Shows rich content the user works with over time | **Tab / Item** in the central pane | Editor, preview, diagnostics view | `Item` trait |
-| Provides an always-available tool the user docks to the side | **Panel** in a dock (left, bottom, right) | Project panel, terminal, git panel | `Panel` trait |
-| Involves a transient interaction — pick something, then dismiss | **Modal** overlay | File finder, command palette, branch picker | `ModalView` trait |
-| Augments whatever item is currently active in the pane | **Toolbar** strip above the editor | Search bar, breadcrumbs | `ToolbarItemView` trait |
-| Provides a persistent, glanceable indicator | **Status bar** at the bottom of the window | Diagnostics count, git branch, language server progress | `StatusItemView` trait |
-| Tells the user something happened, with an optional action | **Toast / Notification** | "Copied to clipboard", "Update available" | `Workspace::show_toast()`, `show_notification()` |
-| Adds an action relevant to a specific right-click context | **Context menu** entry | "Reveal in Finder", "Copy Path", "Stage Hunk" | `ContextMenu` builder |
-| Appears anchored near the cursor or a specific element | **Popover** | Hover info, completions, signature help | Popover elements |
-
 ### If it touches the editor, what needs to keep working?
 
 The editor already has a lot going on. If your feature interacts with the editing surface, these are the existing behaviors it needs to coexist with — things that should still work correctly after your change lands:
