@@ -105,10 +105,6 @@ jobs:
       working-directory: zed
     - name: extension_workflow_rollout::rollout_workflows_to_extension::sync_workflow_files
       run: |
-        EXAMPLE_FAILURE=${{ steps.calc-changes.outputs.removed_files }}
-
-        echo "$EXAMPLE_FAILURE"
-
         mkdir -p extension/.github/workflows
         cd extension/.github/workflows
 
