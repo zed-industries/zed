@@ -335,7 +335,13 @@ fn main() {
     crashes::init(
         InitCrashHandler {
             session_id,
-            zed_version: app_version.to_string(),
+            // strip the build and channel information from the version string, we send them separately
+            zed_version: semver::Version::new(
+                app_version.major,
+                app_version.minor,
+                app_version.patch,
+            )
+            .to_string(),
             binary: "zed".to_string(),
             release_channel: release_channel::RELEASE_CHANNEL_NAME.clone(),
             commit_sha: app_commit_sha
