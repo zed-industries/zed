@@ -31,7 +31,7 @@ use x11rb::{
         AtomEnum, ChangeWindowAttributesAux, ClientMessageData, ClientMessageEvent,
         ConnectionExt as _, EventMask, ModMask, Visibility,
     },
-    protocol::{Event, randr, render, xinput, xkb, xproto},
+    protocol::{Event, dri3, randr, render, xinput, xkb, xproto},
     resource_manager::Database,
     wrapper::ConnectionExt as _,
     xcb_ffi::XCBConnection,
@@ -64,7 +64,7 @@ use gpui::{
     PlatformKeyboardLayout, PlatformWindow, Point, RequestFrameOptions, ScrollDelta, Size,
     TouchPhase, WindowParams, point, px,
 };
-use gpui_wgpu::WgpuContext;
+use gpui_wgpu::{CompositorGpuHint, WgpuContext};
 
 /// Value for DeviceId parameters which selects all devices.
 pub(crate) const XINPUT_ALL_DEVICES: xinput::DeviceId = 0;
@@ -178,6 +178,7 @@ pub struct X11ClientState {
     pub(crate) current_count: usize,
 
     pub(crate) gpu_context: Option<WgpuContext>,
+    pub(crate) compositor_gpu: Option<CompositorGpuHint>,
 
     pub(crate) scale_factor: f32,
 
@@ -430,6 +431,9 @@ impl X11Client {
 
         let clipboard = Clipboard::new().context("Failed to initialize clipboard")?;
 
+        let screen = &xcb_connection.setup().roots[x_root_index];
+        let compositor_gpu = detect_compositor_gpu(&xcb_connection, screen);
+
         let xcb_connection = Rc::new(xcb_connection);
 
         let ximc = X11rbClient::init(Rc::clone(&xcb_connection), x_root_index, None).ok();
@@ -490,6 +494,7 @@ impl X11Client {
             last_location: Point::new(px(0.0), px(0.0)),
             current_count: 0,
             gpu_context: None,
+            compositor_gpu,
             scale_factor,
 
             xkb_context,
@@ -1514,11 +1519,13 @@ impl LinuxClient for X11Client {
         let atoms = state.atoms;
         let scale_factor = state.scale_factor;
         let appearance = state.common.appearance;
+        let compositor_gpu = state.compositor_gpu.take();
         let window = X11Window::new(
             handle,
             X11ClientStatePtr(Rc::downgrade(&self.0)),
             state.common.foreground_executor.clone(),
             &mut state.gpu_context,
+            compositor_gpu,
             params,
             &xcb_connection,
             client_side_decorations_supported,
@@ -1976,7 +1983,30 @@ fn fp3232_to_f32(value: xinput::Fp3232) -> f32 {
     value.integral as f32 + value.frac as f32 / u32::MAX as f32
 }
 
-fn check_compositor_present(xcb_connection: &XCBConnection, root: u32) -> bool {
+fn detect_compositor_gpu(
+    xcb_connection: &XCBConnection,
+    screen: &xproto::Screen,
+) -> Option<CompositorGpuHint> {
+    use std::os::fd::AsRawFd;
+    use std::os::unix::fs::MetadataExt;
+
+    xcb_connection
+        .extension_information(dri3::X11_EXTENSION_NAME)
+        .ok()??;
+
+    let reply = dri3::open(xcb_connection, screen.root, 0)
+        .ok()?
+        .reply()
+        .ok()?;
+    let fd = reply.device_fd;
+
+    let path = format!("/proc/self/fd/{}", fd.as_raw_fd());
+    let metadata = std::fs::metadata(&path).ok()?;
+
+    crate::linux::compositor_gpu_hint_from_dev_t(metadata.rdev())
+}
+
+fn check_compositor_present(xcb_connection: &XCBConnection, root: xproto::Window) -> bool {
     // Method 1: Check for _NET_WM_CM_S{root}
     let atom_name = format!("_NET_WM_CM_S{}", root);
     let atom1 = get_reply(
