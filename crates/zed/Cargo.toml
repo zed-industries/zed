@@ -94,6 +94,7 @@ copilot.workspace = true
 copilot_chat.workspace = true
 copilot_ui.workspace = true
 crashes.workspace = true
+csv_preview.workspace = true
 dap_adapters.workspace = true
 db.workspace = true
 debug_adapter_extension.workspace = true
@@ -189,7 +190,6 @@ sidebar.workspace = true
 smol.workspace = true
 snippet_provider.workspace = true
 snippets_ui.workspace = true
-supermaven.workspace = true
 svg_preview.workspace = true
 sysinfo.workspace = true
 tab_switcher.workspace = true
@@ -241,6 +241,9 @@ gpui = { workspace = true, features = [
     "x11",
 ] }
 ashpd.workspace = true
+
+[target.'cfg(target_os = "linux")'.build-dependencies]
+pkg-config = "0.3.22"
 
 [dev-dependencies]
 call = { workspace = true, features = ["test-support"] }

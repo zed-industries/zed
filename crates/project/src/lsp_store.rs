@@ -548,6 +548,7 @@ impl LocalLspStore {
                     let mut initialization_options = Self::initialization_options_for_adapter(
                         adapter.adapter.clone(),
                         &delegate,
+                        cx,
                     )
                     .await?;
 
@@ -3157,7 +3158,7 @@ impl LocalLspStore {
                 .map(|edit| (range_from_lsp(edit.range), edit.new_text))
                 .collect::<Vec<_>>();
 
-            lsp_edits.sort_by_key(|(range, _)| (range.start, range.end));
+            lsp_edits.sort_unstable_by_key(|(range, _)| (range.start, range.end));
 
             let mut lsp_edits = lsp_edits.into_iter().peekable();
             let mut edits = Vec::new();
@@ -3771,9 +3772,10 @@ impl LocalLspStore {
     async fn initialization_options_for_adapter(
         adapter: Arc<dyn LspAdapter>,
         delegate: &Arc<dyn LspAdapterDelegate>,
+        cx: &mut AsyncApp,
     ) -> Result<Option<serde_json::Value>> {
         let Some(mut initialization_config) =
-            adapter.clone().initialization_options(delegate).await?
+            adapter.clone().initialization_options(delegate, cx).await?
         else {
             return Ok(None);
         };
@@ -4999,10 +5001,6 @@ impl LspStore {
         };
 
         let status = request.status();
-        if !request.check_capabilities(language_server.adapter_server_capabilities()) {
-            return Task::ready(Ok(Default::default()));
-        }
-
         let request_timeout = ProjectSettings::get_global(cx)
             .global_lsp_settings
             .get_request_timeout();
@@ -5104,6 +5102,10 @@ impl LspStore {
             .clone();
         self.semantic_token_config
             .update_rules(new_semantic_token_rules);
+        // Always clear cached stylizers so that changes to language-specific
+        // semantic token rules (e.g. from extension install/uninstall) are
+        // picked up. Stylizers are recreated lazily, so this is cheap.
+        self.semantic_token_config.clear_stylizers();
 
         let new_global_semantic_tokens_mode =
             all_language_settings(None, cx).defaults.semantic_tokens;
@@ -13986,6 +13988,7 @@ impl LspAdapter for SshLspAdapter {
     async fn initialization_options(
         self: Arc<Self>,
         _: &Arc<dyn LspAdapterDelegate>,
+        _: &mut AsyncApp,
     ) -> Result<Option<serde_json::Value>> {
         let Some(options) = &self.initialization_options else {
             return Ok(None);

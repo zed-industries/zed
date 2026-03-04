@@ -81,7 +81,6 @@ pub enum EditPredictionProvider {
     None,
     #[default]
     Copilot,
-    Supermaven,
     Zed,
     Codestral,
     Ollama,
@@ -91,7 +90,7 @@ pub enum EditPredictionProvider {
     Experimental(&'static str),
 }
 
-pub const EXPERIMENTAL_ZETA2_EDIT_PREDICTION_PROVIDER_NAME: &str = "zeta2";
+const EXPERIMENTAL_ZETA2_EDIT_PREDICTION_PROVIDER_NAME: &str = "zeta2";
 
 impl<'de> Deserialize<'de> for EditPredictionProvider {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
@@ -103,7 +102,6 @@ impl<'de> Deserialize<'de> for EditPredictionProvider {
         pub enum Content {
             None,
             Copilot,
-            Supermaven,
             Zed,
             Codestral,
             Ollama,
@@ -116,7 +114,6 @@ impl<'de> Deserialize<'de> for EditPredictionProvider {
         Ok(match Content::deserialize(deserializer)? {
             Content::None => EditPredictionProvider::None,
             Content::Copilot => EditPredictionProvider::Copilot,
-            Content::Supermaven => EditPredictionProvider::Supermaven,
             Content::Zed => EditPredictionProvider::Zed,
             Content::Codestral => EditPredictionProvider::Codestral,
             Content::Ollama => EditPredictionProvider::Ollama,
@@ -126,9 +123,7 @@ impl<'de> Deserialize<'de> for EditPredictionProvider {
             Content::Experimental(name)
                 if name == EXPERIMENTAL_ZETA2_EDIT_PREDICTION_PROVIDER_NAME =>
             {
-                EditPredictionProvider::Experimental(
-                    EXPERIMENTAL_ZETA2_EDIT_PREDICTION_PROVIDER_NAME,
-                )
+                EditPredictionProvider::Zed
             }
             Content::Experimental(name) => {
                 return Err(D::Error::custom(format!(
@@ -146,7 +141,6 @@ impl EditPredictionProvider {
             EditPredictionProvider::Zed => true,
             EditPredictionProvider::None
             | EditPredictionProvider::Copilot
-            | EditPredictionProvider::Supermaven
             | EditPredictionProvider::Codestral
             | EditPredictionProvider::Ollama
             | EditPredictionProvider::OpenAiCompatibleApi
@@ -160,14 +154,10 @@ impl EditPredictionProvider {
         match self {
             EditPredictionProvider::Zed => Some("Zed AI"),
             EditPredictionProvider::Copilot => Some("GitHub Copilot"),
-            EditPredictionProvider::Supermaven => Some("Supermaven"),
             EditPredictionProvider::Codestral => Some("Codestral"),
             EditPredictionProvider::Sweep => Some("Sweep"),
             EditPredictionProvider::Mercury => Some("Mercury"),
-            EditPredictionProvider::Experimental(
-                EXPERIMENTAL_ZETA2_EDIT_PREDICTION_PROVIDER_NAME,
-            ) => Some("Zeta2"),
-            EditPredictionProvider::None | EditPredictionProvider::Experimental(_) => None,
+            EditPredictionProvider::Experimental(_) | EditPredictionProvider::None => None,
             EditPredictionProvider::Ollama => Some("Ollama"),
             EditPredictionProvider::OpenAiCompatibleApi => Some("OpenAI-Compatible API"),
         }
@@ -245,6 +235,7 @@ pub enum EditPredictionPromptFormat {
     #[default]
     Infer,
     Zeta,
+    Zeta2,
     CodeLlama,
     StarCoder,
     DeepseekCoder,

@@ -396,8 +396,7 @@ impl InlayHintSettings {
     }
 }
 
-/// The settings for edit predictions, such as [GitHub Copilot](https://github.com/features/copilot)
-/// or [Supermaven](https://supermaven.com).
+/// The settings for edit predictions, such as [GitHub Copilot](https://github.com/features/copilot).
 #[derive(Clone, Debug, Default)]
 pub struct EditPredictionSettings {
     /// The provider that supplies edit predictions.

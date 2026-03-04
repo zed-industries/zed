@@ -37,13 +37,13 @@ impl FeatureFlag for AgentSharingFeatureFlag {
     const NAME: &'static str = "agent-sharing";
 }
 
-pub struct SubagentsFeatureFlag;
+pub struct AgentGitWorktreesFeatureFlag;
 
-impl FeatureFlag for SubagentsFeatureFlag {
-    const NAME: &'static str = "subagents";
+impl FeatureFlag for AgentGitWorktreesFeatureFlag {
+    const NAME: &'static str = "agent-git-worktrees";
 
     fn enabled_for_staff() -> bool {
-        true
+        false
     }
 }
 
