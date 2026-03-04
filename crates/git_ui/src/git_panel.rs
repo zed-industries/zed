@@ -4183,7 +4183,8 @@ impl GitPanel {
                     }))
                 }
             })
-            .anchor(Corner::TopRight)
+            .anchor(Corner::BottomLeft)
+            .offset(point(px(0.), px(-2.)))
     }
 
     fn commit_message_model_options(
@@ -4202,14 +4203,22 @@ impl GitPanel {
         let mut providers = model_registry
             .visible_providers()
             .into_iter()
-            .map(|provider| {
+            .filter_map(|provider| {
+                if !provider.is_authenticated(cx) {
+                    return None;
+                }
+
                 let mut models = provider
                     .provided_models(cx)
                     .into_iter()
                     .map(|model| (model.id(), model.name().0))
                     .collect::<Vec<_>>();
                 models.sort_by_key(|(_, name)| name.to_lowercase());
-                (provider.id(), provider.name().0, provider.icon(), models)
+                if models.is_empty() {
+                    None
+                } else {
+                    Some((provider.id(), provider.name().0, provider.icon(), models))
+                }
             })
             .collect::<Vec<_>>();
         providers.sort_by_key(|(_, name, _, _)| name.to_lowercase());
