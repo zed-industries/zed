@@ -496,7 +496,8 @@ pub fn initialize_workspace(
             status_bar.add_right_item(image_info, window, cx);
         });
 
-        initialize_panels(prompt_builder.clone(), window, cx);
+        let panels_task = initialize_panels(prompt_builder.clone(), window, cx);
+        workspace.set_panels_task(panels_task);
         register_actions(app_state.clone(), workspace, window, cx);
 
         workspace.focus_handle(cx).focus(window, cx);
@@ -620,7 +621,7 @@ fn initialize_panels(
     prompt_builder: Arc<PromptBuilder>,
     window: &mut Window,
     cx: &mut Context<Workspace>,
-) {
+) -> Task<anyhow::Result<()>> {
     cx.spawn_in(window, async move |workspace_handle, cx| {
         let project_panel = ProjectPanel::load(workspace_handle.clone(), cx.clone());
         let outline_panel = OutlinePanel::load(workspace_handle.clone(), cx.clone());
@@ -662,7 +663,6 @@ fn initialize_panels(
 
         anyhow::Ok(())
     })
-    .detach();
 }
 
 fn setup_or_teardown_ai_panel<P: Panel>(
@@ -1103,7 +1103,7 @@ fn register_actions(
                             );
                         },
                     )
-                    .detach();
+                    .detach_and_log_err(cx);
                 }
             }
         })
@@ -4809,6 +4809,7 @@ mod tests {
                 "console",
                 "context_server",
                 "copilot",
+                "csv",
                 "debug_panel",
                 "debugger",
                 "dev",
@@ -4860,7 +4861,6 @@ mod tests {
                 "settings_profile_selector",
                 "snippets",
                 "stash_picker",
-                "supermaven",
                 "svg",
                 "syntax_tree_view",
                 "tab_switcher",
@@ -5021,7 +5021,7 @@ mod tests {
             language_models::init(app_state.user_store.clone(), app_state.client.clone(), cx);
             web_search::init(cx);
             git_graph::init(cx);
-            web_search_providers::init(app_state.client.clone(), cx);
+            web_search_providers::init(app_state.client.clone(), app_state.user_store.clone(), cx);
             let prompt_builder = PromptBuilder::load(app_state.fs.clone(), false, cx);
             project::AgentRegistryStore::init_global(
                 cx,
@@ -5808,7 +5808,15 @@ mod tests {
         //   Window B: workspace for dir3
         let (window_a, _) = cx
             .update(|cx| {
-                Workspace::new_local(vec![dir1.into()], app_state.clone(), None, None, None, cx)
+                Workspace::new_local(
+                    vec![dir1.into()],
+                    app_state.clone(),
+                    None,
+                    None,
+                    None,
+                    true,
+                    cx,
+                )
             })
             .await
             .expect("failed to open first workspace");
@@ -5824,7 +5832,15 @@ mod tests {
 
         let (window_b, _) = cx
             .update(|cx| {
-                Workspace::new_local(vec![dir3.into()], app_state.clone(), None, None, None, cx)
+                Workspace::new_local(
+                    vec![dir3.into()],
+                    app_state.clone(),
+                    None,
+                    None,
+                    None,
+                    true,
+                    cx,
+                )
             })
             .await
             .expect("failed to open third workspace");

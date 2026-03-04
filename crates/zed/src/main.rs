@@ -638,7 +638,6 @@ fn main() {
         );
 
         copilot_ui::init(&app_state, cx);
-        supermaven::init(app_state.client.clone(), cx);
         language_model::init(app_state.client.clone(), cx);
         language_models::init(app_state.user_store.clone(), app_state.client.clone(), cx);
         acp_tools::init(cx);
@@ -646,7 +645,7 @@ fn main() {
         zed::remote_debug::init(cx);
         edit_prediction_ui::init(cx);
         web_search::init(cx);
-        web_search_providers::init(app_state.client.clone(), cx);
+        web_search_providers::init(app_state.client.clone(), app_state.user_store.clone(), cx);
         snippet_provider::init(cx);
         edit_prediction_registry::init(app_state.client.clone(), app_state.user_store.clone(), cx);
         let prompt_builder = PromptBuilder::load(app_state.fs.clone(), stdout_is_a_pty(), cx);
@@ -716,6 +715,7 @@ fn main() {
         git_graph::init(cx);
         feedback::init(cx);
         markdown_preview::init(cx);
+        csv_preview::init(cx);
         svg_preview::init(cx);
         onboarding::init(cx);
         settings_ui::init(cx);

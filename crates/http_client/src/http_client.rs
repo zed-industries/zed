@@ -5,7 +5,7 @@ pub mod github;
 pub mod github_download;
 
 pub use anyhow::{Result, anyhow};
-pub use async_body::{AsyncBody, Inner};
+pub use async_body::{AsyncBody, Inner, Json};
 use derive_more::Deref;
 use http::HeaderValue;
 pub use http::{self, Method, Request, Response, StatusCode, Uri, request::Builder};

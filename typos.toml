@@ -42,6 +42,8 @@ extend-exclude = [
     "crates/gpui_windows/src/window.rs",
     # Some typos in the base mdBook CSS.
     "docs/theme/css/",
+    # Automatically generated JS.
+    "docs/theme/c15t@*.js",
     # Spellcheck triggers on `|Fixe[sd]|` regex part.
     "script/danger/dangerfile.ts",
     # Eval examples for prompts and criteria

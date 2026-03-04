@@ -26,10 +26,10 @@ use fs::Fs;
 use futures::FutureExt as _;
 use gpui::{
     Action, Animation, AnimationExt, AnyView, App, ClickEvent, ClipboardItem, CursorStyle,
-    ElementId, Empty, Entity, FocusHandle, Focusable, Hsla, ListOffset, ListState, ObjectFit,
-    PlatformDisplay, ScrollHandle, SharedString, Subscription, Task, TextStyle, WeakEntity, Window,
-    WindowHandle, div, ease_in_out, img, linear_color_stop, linear_gradient, list, point,
-    pulsating_between,
+    ElementId, Empty, Entity, EventEmitter, FocusHandle, Focusable, Hsla, ListOffset, ListState,
+    ObjectFit, PlatformDisplay, ScrollHandle, SharedString, Subscription, Task, TextStyle,
+    WeakEntity, Window, WindowHandle, div, ease_in_out, img, linear_color_stop, linear_gradient,
+    list, point, pulsating_between,
 };
 use language::Buffer;
 use language_model::LanguageModelRegistry;
@@ -295,6 +295,12 @@ impl Conversation {
     }
 }
 
+pub enum AcpServerViewEvent {
+    ActiveThreadChanged,
+}
+
+impl EventEmitter<AcpServerViewEvent> for ConnectionView {}
+
 pub struct ConnectionView {
     agent: Rc<dyn AgentServer>,
     agent_server_store: Entity<AgentServerStore>,
@@ -386,6 +392,7 @@ impl ConnectionView {
         if let Some(view) = self.active_thread() {
             view.focus_handle(cx).focus(window, cx);
         }
+        cx.emit(AcpServerViewEvent::ActiveThreadChanged);
         cx.notify();
     }
 }
@@ -524,6 +531,7 @@ impl ConnectionView {
         }
 
         self.server_state = state;
+        cx.emit(AcpServerViewEvent::ActiveThreadChanged);
         cx.notify();
     }
 
@@ -728,6 +736,14 @@ impl ConnectionView {
                         }
 
                         let id = current.read(cx).thread.read(cx).session_id().clone();
+                        let session_list = if connection.supports_session_history() {
+                            connection.session_list(cx)
+                        } else {
+                            None
+                        };
+                        this.history.update(cx, |history, cx| {
+                            history.set_session_list(session_list, cx);
+                        });
                         this.set_server_state(
                             ServerState::Connected(ConnectedServerState {
                                 connection,
@@ -829,18 +845,14 @@ impl ConnectionView {
             );
         });
 
+        if let Some(scroll_position) = thread.read(cx).ui_scroll_position() {
+            list_state.scroll_to(scroll_position);
+        }
+
         AgentDiff::set_active_thread(&self.workspace, thread.clone(), window, cx);
 
         let connection = thread.read(cx).connection().clone();
         let session_id = thread.read(cx).session_id().clone();
-        let session_list = if connection.supports_session_history() {
-            connection.session_list(cx)
-        } else {
-            None
-        };
-        self.history.update(cx, |history, cx| {
-            history.set_session_list(session_list, cx);
-        });
 
         // Check for config options first
         // Config options take precedence over legacy mode/model selectors
@@ -1161,6 +1173,20 @@ impl ConnectionView {
         if let Some(active) = self.active_thread() {
             active.update(cx, |active, cx| {
                 active.send_queued_message_at_index(index, is_send_now, window, cx);
+            });
+        }
+    }
+
+    fn move_queued_message_to_main_editor(
+        &mut self,
+        index: usize,
+        inserted_text: Option<&str>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(active) = self.active_thread() {
+            active.update(cx, |active, cx| {
+                active.move_queued_message_to_main_editor(index, inserted_text, window, cx);
             });
         }
     }
@@ -2162,6 +2188,7 @@ impl ConnectionView {
             for (index, editor) in editors.into_iter().enumerate() {
                 if let Some(content) = queued_messages.get(index) {
                     editor.update(cx, |editor, cx| {
+                        editor.set_read_only(true, cx);
                         editor.set_message(content.clone(), window, cx);
                     });
                 }
@@ -2190,6 +2217,7 @@ impl ConnectionView {
                     window,
                     cx,
                 );
+                editor.set_read_only(true, cx);
                 editor.set_message(content, window, cx);
                 editor
             });
@@ -2198,6 +2226,8 @@ impl ConnectionView {
                 &editor,
                 window,
                 move |this, _editor, event, window, cx| match event {
+                    MessageEditorEvent::InputAttempted(text) => this
+                        .move_queued_message_to_main_editor(index, Some(text.as_ref()), window, cx),
                     MessageEditorEvent::LostFocus => {
                         this.save_queued_message_at_index(index, cx);
                     }
@@ -2813,6 +2843,33 @@ pub(crate) mod tests {
             assert_eq!(
                 view.recent_history_entries[0].session_id,
                 session_b.session_id
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_new_thread_creation_triggers_session_list_refresh(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let session = AgentSessionInfo::new(SessionId::new("history-session"));
+        let (thread_view, history, cx) = setup_thread_view_with_history(
+            StubAgentServer::new(SessionHistoryConnection::new(vec![session.clone()])),
+            cx,
+        )
+        .await;
+
+        history.read_with(cx, |history, _cx| {
+            assert!(
+                history.has_session_list(),
+                "session list should be attached after thread creation"
+            );
+        });
+
+        active_thread(&thread_view, cx).read_with(cx, |view, _cx| {
+            assert_eq!(view.recent_history_entries.len(), 1);
+            assert_eq!(
+                view.recent_history_entries[0].session_id,
+                session.session_id
             );
         });
     }
@@ -3464,6 +3521,18 @@ pub(crate) mod tests {
         agent: impl AgentServer + 'static,
         cx: &mut TestAppContext,
     ) -> (Entity<ConnectionView>, &mut VisualTestContext) {
+        let (thread_view, _history, cx) = setup_thread_view_with_history(agent, cx).await;
+        (thread_view, cx)
+    }
+
+    async fn setup_thread_view_with_history(
+        agent: impl AgentServer + 'static,
+        cx: &mut TestAppContext,
+    ) -> (
+        Entity<ConnectionView>,
+        Entity<ThreadHistory>,
+        &mut VisualTestContext,
+    ) {
         let fs = FakeFs::new(cx.executor());
         let project = Project::test(fs, [], cx).await;
         let (multi_workspace, cx) =
@@ -3483,14 +3552,14 @@ pub(crate) mod tests {
                     project,
                     Some(thread_store),
                     None,
-                    history,
+                    history.clone(),
                     window,
                     cx,
                 )
             })
         });
         cx.run_until_parked();
-        (thread_view, cx)
+        (thread_view, history, cx)
     }
 
     fn add_to_workspace(thread_view: Entity<ConnectionView>, cx: &mut VisualTestContext) {
@@ -3630,6 +3699,102 @@ pub(crate) mod tests {
         ) -> Task<anyhow::Result<AgentSessionListResponse>> {
             Task::ready(Ok(AgentSessionListResponse::new(self.sessions.clone())))
         }
+
+        fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
+            self
+        }
+    }
+
+    #[derive(Clone)]
+    struct SessionHistoryConnection {
+        sessions: Vec<AgentSessionInfo>,
+    }
+
+    impl SessionHistoryConnection {
+        fn new(sessions: Vec<AgentSessionInfo>) -> Self {
+            Self { sessions }
+        }
+    }
+
+    fn build_test_thread(
+        connection: Rc<dyn AgentConnection>,
+        project: Entity<Project>,
+        name: &'static str,
+        session_id: SessionId,
+        cx: &mut App,
+    ) -> Entity<AcpThread> {
+        let action_log = cx.new(|_| ActionLog::new(project.clone()));
+        cx.new(|cx| {
+            AcpThread::new(
+                None,
+                name,
+                connection,
+                project,
+                action_log,
+                session_id,
+                watch::Receiver::constant(
+                    acp::PromptCapabilities::new()
+                        .image(true)
+                        .audio(true)
+                        .embedded_context(true),
+                ),
+                cx,
+            )
+        })
+    }
+
+    impl AgentConnection for SessionHistoryConnection {
+        fn telemetry_id(&self) -> SharedString {
+            "history-connection".into()
+        }
+
+        fn new_session(
+            self: Rc<Self>,
+            project: Entity<Project>,
+            _cwd: &Path,
+            cx: &mut App,
+        ) -> Task<anyhow::Result<Entity<AcpThread>>> {
+            let thread = build_test_thread(
+                self,
+                project,
+                "SessionHistoryConnection",
+                SessionId::new("history-session"),
+                cx,
+            );
+            Task::ready(Ok(thread))
+        }
+
+        fn supports_load_session(&self) -> bool {
+            true
+        }
+
+        fn session_list(&self, _cx: &mut App) -> Option<Rc<dyn AgentSessionList>> {
+            Some(Rc::new(StubSessionList::new(self.sessions.clone())))
+        }
+
+        fn auth_methods(&self) -> &[acp::AuthMethod] {
+            &[]
+        }
+
+        fn authenticate(
+            &self,
+            _method_id: acp::AuthMethodId,
+            _cx: &mut App,
+        ) -> Task<anyhow::Result<()>> {
+            Task::ready(Ok(()))
+        }
+
+        fn prompt(
+            &self,
+            _id: Option<acp_thread::UserMessageId>,
+            _params: acp::PromptRequest,
+            _cx: &mut App,
+        ) -> Task<anyhow::Result<acp::PromptResponse>> {
+            Task::ready(Ok(acp::PromptResponse::new(acp::StopReason::EndTurn)))
+        }
+
+        fn cancel(&self, _session_id: &acp::SessionId, _cx: &mut App) {}
+
         fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
             self
         }
@@ -3649,24 +3814,13 @@ pub(crate) mod tests {
             _cwd: &Path,
             cx: &mut gpui::App,
         ) -> Task<gpui::Result<Entity<AcpThread>>> {
-            let action_log = cx.new(|_| ActionLog::new(project.clone()));
-            let thread = cx.new(|cx| {
-                AcpThread::new(
-                    None,
-                    "ResumeOnlyAgentConnection",
-                    self.clone(),
-                    project,
-                    action_log,
-                    SessionId::new("new-session"),
-                    watch::Receiver::constant(
-                        acp::PromptCapabilities::new()
-                            .image(true)
-                            .audio(true)
-                            .embedded_context(true),
-                    ),
-                    cx,
-                )
-            });
+            let thread = build_test_thread(
+                self,
+                project,
+                "ResumeOnlyAgentConnection",
+                SessionId::new("new-session"),
+                cx,
+            );
             Task::ready(Ok(thread))
         }
 
@@ -3681,24 +3835,13 @@ pub(crate) mod tests {
             _cwd: &Path,
             cx: &mut App,
         ) -> Task<gpui::Result<Entity<AcpThread>>> {
-            let action_log = cx.new(|_| ActionLog::new(project.clone()));
-            let thread = cx.new(|cx| {
-                AcpThread::new(
-                    None,
-                    "ResumeOnlyAgentConnection",
-                    self.clone(),
-                    project,
-                    action_log,
-                    session.session_id,
-                    watch::Receiver::constant(
-                        acp::PromptCapabilities::new()
-                            .image(true)
-                            .audio(true)
-                            .embedded_context(true),
-                    ),
-                    cx,
-                )
-            });
+            let thread = build_test_thread(
+                self,
+                project,
+                "ResumeOnlyAgentConnection",
+                session.session_id,
+                cx,
+            );
             Task::ready(Ok(thread))
         }
 
@@ -6083,5 +6226,87 @@ pub(crate) mod tests {
             assert_eq!(session_id, acp::SessionId::new("thread-b"));
             assert_eq!(tool_call_id, acp::ToolCallId::new("tc-b"));
         });
+    }
+
+    #[gpui::test]
+    async fn test_move_queued_message_to_empty_main_editor(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let (connection_view, cx) =
+            setup_thread_view(StubAgentServer::default_response(), cx).await;
+
+        // Add a plain-text message to the queue directly.
+        active_thread(&connection_view, cx).update_in(cx, |thread, window, cx| {
+            thread.add_to_queue(
+                vec![acp::ContentBlock::Text(acp::TextContent::new(
+                    "queued message".to_string(),
+                ))],
+                vec![],
+                cx,
+            );
+            // Main editor must be empty for this path — it is by default, but
+            // assert to make the precondition explicit.
+            assert!(thread.message_editor.read(cx).is_empty(cx));
+            thread.move_queued_message_to_main_editor(0, None, window, cx);
+        });
+
+        cx.run_until_parked();
+
+        // Queue should now be empty.
+        let queue_len = active_thread(&connection_view, cx)
+            .read_with(cx, |thread, _cx| thread.local_queued_messages.len());
+        assert_eq!(queue_len, 0, "Queue should be empty after move");
+
+        // Main editor should contain the queued message text.
+        let text = message_editor(&connection_view, cx).update(cx, |editor, cx| editor.text(cx));
+        assert_eq!(
+            text, "queued message",
+            "Main editor should contain the moved queued message"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_move_queued_message_to_non_empty_main_editor(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let (connection_view, cx) =
+            setup_thread_view(StubAgentServer::default_response(), cx).await;
+
+        // Seed the main editor with existing content.
+        message_editor(&connection_view, cx).update_in(cx, |editor, window, cx| {
+            editor.set_message(
+                vec![acp::ContentBlock::Text(acp::TextContent::new(
+                    "existing content".to_string(),
+                ))],
+                window,
+                cx,
+            );
+        });
+
+        // Add a plain-text message to the queue.
+        active_thread(&connection_view, cx).update_in(cx, |thread, window, cx| {
+            thread.add_to_queue(
+                vec![acp::ContentBlock::Text(acp::TextContent::new(
+                    "queued message".to_string(),
+                ))],
+                vec![],
+                cx,
+            );
+            thread.move_queued_message_to_main_editor(0, None, window, cx);
+        });
+
+        cx.run_until_parked();
+
+        // Queue should now be empty.
+        let queue_len = active_thread(&connection_view, cx)
+            .read_with(cx, |thread, _cx| thread.local_queued_messages.len());
+        assert_eq!(queue_len, 0, "Queue should be empty after move");
+
+        // Main editor should contain existing content + separator + queued content.
+        let text = message_editor(&connection_view, cx).update(cx, |editor, cx| editor.text(cx));
+        assert_eq!(
+            text, "existing content\n\nqueued message",
+            "Main editor should have existing content and queued message separated by two newlines"
+        );
     }
 }

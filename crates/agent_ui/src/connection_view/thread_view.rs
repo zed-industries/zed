@@ -1,10 +1,13 @@
 use acp_thread::ContentBlock;
 use cloud_api_types::{SubmitAgentThreadFeedbackBody, SubmitAgentThreadFeedbackCommentsBody};
 use editor::actions::OpenExcerpts;
+
+use crate::StartThreadIn;
 use gpui::{Corner, List};
 use language_model::{LanguageModelEffortLevel, Speed};
 use settings::update_settings_file;
 use ui::{ButtonLike, SplitButton, SplitButtonStyle, Tab};
+use workspace::SERIALIZATION_THROTTLE_TIME;
 
 use super::*;
 
@@ -45,6 +48,7 @@ impl ThreadFeedbackState {
             }
         }
         let session_id = thread.read(cx).session_id().clone();
+        let parent_session_id = thread.read(cx).parent_session_id().cloned();
         let agent_telemetry_id = thread.read(cx).connection().telemetry_id();
         let task = telemetry.thread_data(&session_id, cx);
         let rating = match feedback {
@@ -60,6 +64,7 @@ impl ThreadFeedbackState {
                     organization_id: organization.map(|organization| organization.id.clone()),
                     agent: agent_telemetry_id.to_string(),
                     session_id: session_id.to_string(),
+                    parent_session_id: parent_session_id.map(|id| id.to_string()),
                     rating: rating.to_string(),
                     thread,
                 })
@@ -188,6 +193,12 @@ impl DiffStats {
     }
 }
 
+pub enum AcpThreadViewEvent {
+    FirstSendRequested { content: Vec<acp::ContentBlock> },
+}
+
+impl EventEmitter<AcpThreadViewEvent> for ThreadView {}
+
 pub struct ThreadView {
     pub id: acp::SessionId,
     pub parent_id: Option<acp::SessionId>,
@@ -237,6 +248,8 @@ pub struct ThreadView {
     pub resumed_without_history: bool,
     pub resume_thread_metadata: Option<AgentSessionInfo>,
     pub _cancel_task: Option<Task<()>>,
+    _save_task: Option<Task<()>>,
+    _draft_resolve_task: Option<Task<()>>,
     pub skip_queue_processing_count: usize,
     pub user_interrupted_generation: bool,
     pub can_fast_track_queue: bool,
@@ -343,6 +356,8 @@ impl ThreadView {
                         editor.set_message(blocks, window, cx);
                     }
                 }
+            } else if let Some(draft) = thread.read(cx).draft_prompt() {
+                editor.set_message(draft.to_vec(), window, cx);
             }
             editor
         });
@@ -374,6 +389,30 @@ impl ThreadView {
             window,
             Self::handle_message_editor_event,
         ));
+
+        subscriptions.push(cx.observe(&message_editor, |this, editor, cx| {
+            let is_empty = editor.read(cx).text(cx).is_empty();
+            let draft_contents_task = if is_empty {
+                None
+            } else {
+                Some(editor.update(cx, |editor, cx| editor.draft_contents(cx)))
+            };
+            this._draft_resolve_task = Some(cx.spawn(async move |this, cx| {
+                let draft = if let Some(task) = draft_contents_task {
+                    let blocks = task.await.ok().filter(|b| !b.is_empty());
+                    blocks
+                } else {
+                    None
+                };
+                this.update(cx, |this, cx| {
+                    this.thread.update(cx, |thread, _cx| {
+                        thread.set_draft_prompt(draft);
+                    });
+                    this.schedule_save(cx);
+                })
+                .ok();
+            }));
+        }));
 
         let recent_history_entries = history.read(cx).get_recent_sessions(3);
 
@@ -425,6 +464,8 @@ impl ThreadView {
             is_loading_contents: false,
             new_server_version_available: None,
             _cancel_task: None,
+            _save_task: None,
+            _draft_resolve_task: None,
             skip_queue_processing_count: 0,
             user_interrupted_generation: false,
             can_fast_track_queue: false,
@@ -440,10 +481,48 @@ impl ThreadView {
             _history_subscription: history_subscription,
             show_codex_windows_warning,
         };
+        let list_state_for_scroll = this.list_state.clone();
+        let thread_view = cx.entity().downgrade();
+        this.list_state
+            .set_scroll_handler(move |_event, _window, cx| {
+                let list_state = list_state_for_scroll.clone();
+                let thread_view = thread_view.clone();
+                // N.B. We must defer because the scroll handler is called while the
+                // ListState's RefCell is mutably borrowed. Reading logical_scroll_top()
+                // directly would panic from a double borrow.
+                cx.defer(move |cx| {
+                    let scroll_top = list_state.logical_scroll_top();
+                    let _ = thread_view.update(cx, |this, cx| {
+                        if let Some(thread) = this.as_native_thread(cx) {
+                            thread.update(cx, |thread, _cx| {
+                                thread.set_ui_scroll_position(Some(scroll_top));
+                            });
+                        }
+                        this.schedule_save(cx);
+                    });
+                });
+            });
+
         if should_auto_submit {
             this.send(window, cx);
         }
         this
+    }
+
+    /// Schedule a throttled save of the thread state (draft prompt, scroll position, etc.).
+    /// Multiple calls within `SERIALIZATION_THROTTLE_TIME` are coalesced into a single save.
+    fn schedule_save(&mut self, cx: &mut Context<Self>) {
+        self._save_task = Some(cx.spawn(async move |this, cx| {
+            cx.background_executor()
+                .timer(SERIALIZATION_THROTTLE_TIME)
+                .await;
+            this.update(cx, |this, cx| {
+                if let Some(thread) = this.as_native_thread(cx) {
+                    thread.update(cx, |_thread, cx| cx.notify());
+                }
+            })
+            .ok();
+        }));
     }
 
     pub fn handle_message_editor_event(
@@ -461,6 +540,7 @@ impl ThreadView {
                 self.cancel_editing(&Default::default(), window, cx);
             }
             MessageEditorEvent::LostFocus => {}
+            MessageEditorEvent::InputAttempted(_) => {}
         }
     }
 
@@ -476,6 +556,24 @@ impl ThreadView {
         let acp_thread = self.thread.read(cx);
         self.as_native_connection(cx)?
             .thread(acp_thread.session_id(), cx)
+    }
+
+    /// Resolves the message editor's contents into content blocks. For profiles
+    /// that do not enable any tools, directory mentions are expanded to inline
+    /// file contents since the agent can't read files on its own.
+    fn resolve_message_contents(
+        &self,
+        message_editor: &Entity<MessageEditor>,
+        cx: &mut App,
+    ) -> Task<Result<(Vec<acp::ContentBlock>, Vec<Entity<Buffer>>)>> {
+        let expand = self.as_native_thread(cx).is_some_and(|thread| {
+            let thread = thread.read(cx);
+            AgentSettings::get_global(cx)
+                .profiles
+                .get(thread.profile())
+                .is_some_and(|profile| profile.tools.is_empty())
+        });
+        message_editor.update(cx, |message_editor, cx| message_editor.contents(expand, cx))
     }
 
     pub fn current_model_id(&self, cx: &App) -> Option<String> {
@@ -575,6 +673,7 @@ impl ThreadView {
             ViewEvent::MessageEditorEvent(_editor, MessageEditorEvent::Cancel) => {
                 self.cancel_editing(&Default::default(), window, cx);
             }
+            ViewEvent::MessageEditorEvent(_editor, MessageEditorEvent::InputAttempted(_)) => {}
             ViewEvent::OpenDiffLocation {
                 path,
                 position,
@@ -690,6 +789,46 @@ impl ThreadView {
         }
 
         let message_editor = self.message_editor.clone();
+
+        // Intercept the first send so the agent panel can capture the full
+        // content blocks — needed for "Start thread in New Worktree",
+        // which must create a workspace before sending the message there.
+        let intercept_first_send = self.thread.read(cx).entries().is_empty()
+            && !message_editor.read(cx).is_empty(cx)
+            && self
+                .workspace
+                .upgrade()
+                .and_then(|workspace| workspace.read(cx).panel::<AgentPanel>(cx))
+                .is_some_and(|panel| {
+                    panel.read(cx).start_thread_in() == &StartThreadIn::NewWorktree
+                });
+
+        if intercept_first_send {
+            let content_task = self.resolve_message_contents(&message_editor, cx);
+
+            cx.spawn(async move |this, cx| match content_task.await {
+                Ok((content, _tracked_buffers)) => {
+                    if content.is_empty() {
+                        return;
+                    }
+
+                    this.update(cx, |_, cx| {
+                        cx.emit(AcpThreadViewEvent::FirstSendRequested { content });
+                    })
+                    .ok();
+                }
+                Err(error) => {
+                    this.update(cx, |this, cx| {
+                        this.handle_thread_error(error, cx);
+                    })
+                    .ok();
+                }
+            })
+            .detach();
+
+            return;
+        }
+
         let is_editor_empty = message_editor.read(cx).is_empty(cx);
         let is_generating = thread.read(cx).status() != ThreadStatus::Idle;
 
@@ -753,18 +892,7 @@ impl ThreadView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let full_mention_content = self.as_native_thread(cx).is_some_and(|thread| {
-            // Include full contents when using minimal profile
-            let thread = thread.read(cx);
-            AgentSettings::get_global(cx)
-                .profiles
-                .get(thread.profile())
-                .is_some_and(|profile| profile.tools.is_empty())
-        });
-
-        let contents = message_editor.update(cx, |message_editor, cx| {
-            message_editor.contents(full_mention_content, cx)
-        });
+        let contents = self.resolve_message_contents(&message_editor, cx);
 
         self.thread_error.take();
         self.thread_feedback.clear();
@@ -804,6 +932,7 @@ impl ThreadView {
         cx: &mut Context<Self>,
     ) {
         let session_id = self.thread.read(cx).session_id().clone();
+        let parent_session_id = self.thread.read(cx).parent_session_id().cloned();
         let agent_telemetry_id = self.thread.read(cx).connection().telemetry_id();
         let thread = self.thread.downgrade();
 
@@ -858,6 +987,7 @@ impl ThreadView {
                     "Agent Message Sent",
                     agent = agent_telemetry_id,
                     session = session_id,
+                    parent_session_id = parent_session_id.as_ref().map(|id| id.to_string()),
                     model = model_id,
                     mode = mode_id
                 );
@@ -877,6 +1007,7 @@ impl ThreadView {
                 "Agent Turn Completed",
                 agent = agent_telemetry_id,
                 session = session_id,
+                parent_session_id = parent_session_id.as_ref().map(|id| id.to_string()),
                 model = model_id,
                 mode = mode_id,
                 status,
@@ -985,11 +1116,17 @@ impl ThreadView {
 
         let agent_telemetry_id = self.thread.read(cx).connection().telemetry_id();
         let session_id = self.thread.read(cx).session_id().clone();
+        let parent_session_id = self
+            .thread
+            .read(cx)
+            .parent_session_id()
+            .map(|id| id.to_string());
 
         telemetry::event!(
             "Agent Panel Error Shown",
             agent = agent_telemetry_id,
             session_id = session_id,
+            parent_session_id = parent_session_id,
             kind = error_kind,
             acp_error_code = acp_error_code,
             message = message,
@@ -1090,21 +1227,11 @@ impl ThreadView {
         let is_idle = self.thread.read(cx).status() == acp_thread::ThreadStatus::Idle;
 
         if is_idle {
-            self.send_impl(message_editor.clone(), window, cx);
+            self.send_impl(message_editor, window, cx);
             return;
         }
 
-        let full_mention_content = self.as_native_thread(cx).is_some_and(|thread| {
-            let thread = thread.read(cx);
-            AgentSettings::get_global(cx)
-                .profiles
-                .get(thread.profile())
-                .is_some_and(|profile| profile.tools.is_empty())
-        });
-
-        let contents = message_editor.update(cx, |message_editor, cx| {
-            message_editor.contents(full_mention_content, cx)
-        });
+        let contents = self.resolve_message_contents(&message_editor, cx);
 
         cx.spawn_in(window, async move |this, cx| {
             let (content, tracked_buffers) = contents.await?;
@@ -1204,6 +1331,44 @@ impl ThreadView {
         });
 
         self.send_content(contents_task, window, cx);
+    }
+
+    pub fn move_queued_message_to_main_editor(
+        &mut self,
+        index: usize,
+        inserted_text: Option<&str>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(queued_message) = self.remove_from_queue(index, cx) else {
+            return false;
+        };
+        let queued_content = queued_message.content;
+        let message_editor = self.message_editor.clone();
+        let inserted_text = inserted_text.map(ToOwned::to_owned);
+
+        window.focus(&message_editor.focus_handle(cx), cx);
+
+        if message_editor.read(cx).is_empty(cx) {
+            message_editor.update(cx, |editor, cx| {
+                editor.set_message(queued_content, window, cx);
+                if let Some(inserted_text) = inserted_text.as_deref() {
+                    editor.insert_text(inserted_text, window, cx);
+                }
+            });
+            cx.notify();
+            return true;
+        }
+
+        message_editor.update(cx, |editor, cx| {
+            editor.append_message(queued_content, Some("\n\n"), window, cx);
+            if let Some(inserted_text) = inserted_text.as_deref() {
+                editor.insert_text(inserted_text, window, cx);
+            }
+        });
+
+        cx.notify();
+        true
     }
 
     // editor methods
@@ -2652,50 +2817,24 @@ impl ThreadView {
                             .child(if editor_focused {
                                 h_flex()
                                     .gap_1()
-                                    .min_w_40()
+                                    .min_w(rems_from_px(150.))
+                                    .justify_end()
                                     .child(
-                                        IconButton::new(("cancel_edit", index), IconName::Close)
+                                        IconButton::new(("edit", index), IconName::Pencil)
                                             .icon_size(IconSize::Small)
-                                            .icon_color(Color::Error)
-                                            .tooltip({
-                                                let focus_handle = editor.focus_handle(cx);
-                                                move |_window, cx| {
-                                                    Tooltip::for_action_in(
-                                                        "Cancel Edit",
-                                                        &editor::actions::Cancel,
-                                                        &focus_handle,
-                                                        cx,
-                                                    )
-                                                }
+                                            .tooltip(|_window, cx| {
+                                                Tooltip::with_meta(
+                                                    "Edit Queued Message",
+                                                    None,
+                                                    "Type anything to edit",
+                                                    cx,
+                                                )
                                             })
-                                            .on_click({
-                                                let main_editor = self.message_editor.clone();
-                                                cx.listener(move |_, _, window, cx| {
-                                                    window.focus(&main_editor.focus_handle(cx), cx);
-                                                })
-                                            }),
-                                    )
-                                    .child(
-                                        IconButton::new(("save_edit", index), IconName::Check)
-                                            .icon_size(IconSize::Small)
-                                            .icon_color(Color::Success)
-                                            .tooltip({
-                                                let focus_handle = editor.focus_handle(cx);
-                                                move |_window, cx| {
-                                                    Tooltip::for_action_in(
-                                                        "Save Edit",
-                                                        &Chat,
-                                                        &focus_handle,
-                                                        cx,
-                                                    )
-                                                }
-                                            })
-                                            .on_click({
-                                                let main_editor = self.message_editor.clone();
-                                                cx.listener(move |_, _, window, cx| {
-                                                    window.focus(&main_editor.focus_handle(cx), cx);
-                                                })
-                                            }),
+                                            .on_click(cx.listener(move |this, _, window, cx| {
+                                                this.move_queued_message_to_main_editor(
+                                                    index, None, window, cx,
+                                                );
+                                            })),
                                     )
                                     .child(
                                         Button::new(("send_now_focused", index), "Send Now")
@@ -2717,33 +2856,10 @@ impl ThreadView {
                                     )
                             } else {
                                 h_flex()
-                                    .gap_1()
                                     .when(!is_next, |this| this.visible_on_hover("queue_entry"))
-                                    .child(
-                                        IconButton::new(("edit", index), IconName::Pencil)
-                                            .icon_size(IconSize::Small)
-                                            .tooltip({
-                                                let focus_handle = focus_handle.clone();
-                                                move |_window, cx| {
-                                                    if is_next {
-                                                        Tooltip::for_action_in(
-                                                            "Edit",
-                                                            &EditFirstQueuedMessage,
-                                                            &focus_handle,
-                                                            cx,
-                                                        )
-                                                    } else {
-                                                        Tooltip::simple("Edit", cx)
-                                                    }
-                                                }
-                                            })
-                                            .on_click({
-                                                let editor = editor.clone();
-                                                cx.listener(move |_, _, window, cx| {
-                                                    window.focus(&editor.focus_handle(cx), cx);
-                                                })
-                                            }),
-                                    )
+                                    .gap_1()
+                                    .min_w(rems_from_px(150.))
+                                    .justify_end()
                                     .child(
                                         IconButton::new(("delete", index), IconName::Trash)
                                             .icon_size(IconSize::Small)
@@ -2771,8 +2887,33 @@ impl ThreadView {
                                             })),
                                     )
                                     .child(
+                                        IconButton::new(("edit", index), IconName::Pencil)
+                                            .icon_size(IconSize::Small)
+                                            .tooltip({
+                                                let focus_handle = focus_handle.clone();
+                                                move |_window, cx| {
+                                                    if is_next {
+                                                        Tooltip::for_action_in(
+                                                            "Edit",
+                                                            &EditFirstQueuedMessage,
+                                                            &focus_handle,
+                                                            cx,
+                                                        )
+                                                    } else {
+                                                        Tooltip::simple("Edit", cx)
+                                                    }
+                                                }
+                                            })
+                                            .on_click(cx.listener(move |this, _, window, cx| {
+                                                this.move_queued_message_to_main_editor(
+                                                    index, None, window, cx,
+                                                );
+                                            })),
+                                    )
+                                    .child(
                                         Button::new(("send_now", index), "Send Now")
                                             .label_size(LabelSize::Small)
+                                            .when(is_next, |this| this.style(ButtonStyle::Outlined))
                                             .when(is_next && message_editor.is_empty(cx), |this| {
                                                 let action: Box<dyn gpui::Action> =
                                                     if can_fast_track {
@@ -2781,7 +2922,7 @@ impl ThreadView {
                                                         Box::new(SendNextQueuedMessage)
                                                     };
 
-                                                this.style(ButtonStyle::Outlined).key_binding(
+                                                this.key_binding(
                                                     KeyBinding::for_action_in(
                                                         action.as_ref(),
                                                         &focus_handle.clone(),
@@ -2789,9 +2930,6 @@ impl ThreadView {
                                                     )
                                                     .map(|kb| kb.size(keybinding_size)),
                                                 )
-                                            })
-                                            .when(is_next && !message_editor.is_empty(cx), |this| {
-                                                this.style(ButtonStyle::Outlined)
                                             })
                                             .on_click(cx.listener(move |this, _, window, cx| {
                                                 this.send_queued_message_at_index(
@@ -3270,7 +3408,12 @@ impl ThreadView {
                 .on_click(cx.listener(|this, _event, _, cx| this.cancel_generation(cx)))
                 .into_any_element()
         } else {
-            IconButton::new("send-message", IconName::Send)
+            let send_icon = if is_generating {
+                IconName::QueueMessage
+            } else {
+                IconName::Send
+            };
+            IconButton::new("send-message", send_icon)
                 .style(ButtonStyle::Filled)
                 .map(|this| {
                     if is_editor_empty && !is_generating {
@@ -4296,6 +4439,8 @@ impl ThreadView {
             })
             .flatten();
 
+        let is_blocked_on_terminal_command =
+            !confirmation && self.is_blocked_on_terminal_command(cx);
         let is_waiting = confirmation || self.thread.read(cx).has_in_progress_tool_calls();
 
         let turn_tokens_label = elapsed_label
@@ -4333,6 +4478,8 @@ impl ThreadView {
                                 .color(Color::Muted),
                         ),
                     )
+                } else if is_blocked_on_terminal_command {
+                    this
                 } else {
                     this.child(SpinnerLabel::new().size(LabelSize::Small))
                 }
@@ -4621,51 +4768,74 @@ impl ThreadView {
         if text.is_empty() { None } else { Some(text) }
     }
 
+    fn is_blocked_on_terminal_command(&self, cx: &App) -> bool {
+        let thread = self.thread.read(cx);
+        if !matches!(thread.status(), ThreadStatus::Generating) {
+            return false;
+        }
+
+        let mut has_running_terminal_call = false;
+
+        for entry in thread.entries().iter().rev() {
+            match entry {
+                AgentThreadEntry::UserMessage(_) => break,
+                AgentThreadEntry::ToolCall(tool_call)
+                    if matches!(
+                        tool_call.status,
+                        ToolCallStatus::InProgress | ToolCallStatus::Pending
+                    ) =>
+                {
+                    if matches!(tool_call.kind, acp::ToolKind::Execute) {
+                        has_running_terminal_call = true;
+                    } else {
+                        return false;
+                    }
+                }
+                AgentThreadEntry::ToolCall(_) | AgentThreadEntry::AssistantMessage(_) => {}
+            }
+        }
+
+        has_running_terminal_call
+    }
+
     fn render_collapsible_command(
         &self,
+        group: SharedString,
         is_preview: bool,
         command_source: &str,
-        tool_call_id: &acp::ToolCallId,
         cx: &Context<Self>,
     ) -> Div {
-        let command_group =
-            SharedString::from(format!("collapsible-command-group-{}", tool_call_id));
-
         v_flex()
-            .group(command_group.clone())
+            .p_1p5()
             .bg(self.tool_card_header_bg(cx))
-            .child(
-                v_flex()
-                    .p_1p5()
-                    .when(is_preview, |this| {
-                        this.pt_1().child(
-                            // Wrapping this label on a container with 24px height to avoid
-                            // layout shift when it changes from being a preview label
-                            // to the actual path where the command will run in
-                            h_flex().h_6().child(
-                                Label::new("Run Command")
-                                    .buffer_font(cx)
-                                    .size(LabelSize::XSmall)
-                                    .color(Color::Muted),
-                            ),
-                        )
-                    })
-                    .children(command_source.lines().map(|line| {
-                        let text: SharedString = if line.is_empty() {
-                            " ".into()
-                        } else {
-                            line.to_string().into()
-                        };
-
-                        Label::new(text).buffer_font(cx).size(LabelSize::Small)
-                    }))
-                    .child(
-                        div().absolute().top_1().right_1().child(
-                            CopyButton::new("copy-command", command_source.to_string())
-                                .tooltip_label("Copy Command")
-                                .visible_on_hover(command_group),
-                        ),
+            .when(is_preview, |this| {
+                this.pt_1().child(
+                    // Wrapping this label on a container with 24px height to avoid
+                    // layout shift when it changes from being a preview label
+                    // to the actual path where the command will run in
+                    h_flex().h_6().child(
+                        Label::new("Run Command")
+                            .buffer_font(cx)
+                            .size(LabelSize::XSmall)
+                            .color(Color::Muted),
                     ),
+                )
+            })
+            .children(command_source.lines().map(|line| {
+                let text: SharedString = if line.is_empty() {
+                    " ".into()
+                } else {
+                    line.to_string().into()
+                };
+
+                Label::new(text).buffer_font(cx).size(LabelSize::Small)
+            }))
+            .child(
+                div().absolute().top_1().right_1().child(
+                    CopyButton::new("copy-command", command_source.to_string())
+                        .tooltip_label("Copy Command")
+                        .visible_on_hover(group),
+                ),
             )
     }
 
@@ -4697,7 +4867,11 @@ impl ThreadView {
         let needs_confirmation = confirmation_options.is_some();
 
         let output = terminal_data.output();
-        let command_finished = output.is_some();
+        let command_finished = output.is_some()
+            && !matches!(
+                tool_call.status,
+                ToolCallStatus::InProgress | ToolCallStatus::Pending
+            );
         let truncated_output =
             output.is_some_and(|output| output.original_content_len > output.content.len());
         let output_line_count = output.map(|output| output.content_line_count).unwrap_or(0);
@@ -4739,14 +4913,15 @@ impl ThreadView {
             .unwrap_or(&command_source);
 
         let command_element =
-            self.render_collapsible_command(false, command_content, &tool_call.id, cx);
+            self.render_collapsible_command(header_group.clone(), false, command_content, cx);
 
         let is_expanded = self.expanded_tool_calls.contains(&tool_call.id);
 
         let header = h_flex()
             .id(header_id)
-            .px_1p5()
             .pt_1()
+            .pl_1p5()
+            .pr_1()
             .flex_none()
             .gap_1()
             .justify_between()
@@ -4764,19 +4939,54 @@ impl ThreadView {
                             .color(Color::Muted),
                     ),
             )
+            .child(
+                Disclosure::new(
+                    SharedString::from(format!(
+                        "terminal-tool-disclosure-{}",
+                        terminal.entity_id()
+                    )),
+                    is_expanded,
+                )
+                .opened_icon(IconName::ChevronUp)
+                .closed_icon(IconName::ChevronDown)
+                .visible_on_hover(&header_group)
+                .on_click(cx.listener({
+                    let id = tool_call.id.clone();
+                    move |this, _event, _window, cx| {
+                        if is_expanded {
+                            this.expanded_tool_calls.remove(&id);
+                        } else {
+                            this.expanded_tool_calls.insert(id.clone());
+                        }
+                        cx.notify();
+                    }
+                })),
+            )
+            .when(time_elapsed > Duration::from_secs(10), |header| {
+                header.child(
+                    Label::new(format!("({})", duration_alt_display(time_elapsed)))
+                        .buffer_font(cx)
+                        .color(Color::Muted)
+                        .size(LabelSize::XSmall),
+                )
+            })
             .when(!command_finished && !needs_confirmation, |header| {
                 header
                     .gap_1p5()
                     .child(
-                        Button::new(
+                        Icon::new(IconName::ArrowCircle)
+                            .size(IconSize::XSmall)
+                            .color(Color::Muted)
+                            .with_rotate_animation(2)
+                    )
+                    .child(div().h(relative(0.6)).ml_1p5().child(Divider::vertical().color(DividerColor::Border)))
+                    .child(
+                        IconButton::new(
                             SharedString::from(format!("stop-terminal-{}", terminal.entity_id())),
-                            "Stop",
+                            IconName::Stop
                         )
-                        .icon(IconName::Stop)
-                        .icon_position(IconPosition::Start)
                         .icon_size(IconSize::Small)
                         .icon_color(Color::Error)
-                        .label_size(LabelSize::Small)
                         .tooltip(move |_window, cx| {
                             Tooltip::with_meta(
                                 "Stop This Command",
@@ -4796,13 +5006,6 @@ impl ThreadView {
                                 }
                             })
                         }),
-                    )
-                    .child(Divider::vertical())
-                    .child(
-                        Icon::new(IconName::ArrowCircle)
-                            .size(IconSize::XSmall)
-                            .color(Color::Info)
-                            .with_rotate_animation(2)
                     )
             })
             .when(truncated_output, |header| {
@@ -4839,14 +5042,6 @@ impl ThreadView {
                         .tooltip(Tooltip::text(tooltip)),
                 )
             })
-            .when(time_elapsed > Duration::from_secs(10), |header| {
-                header.child(
-                    Label::new(format!("({})", duration_alt_display(time_elapsed)))
-                        .buffer_font(cx)
-                        .color(Color::Muted)
-                        .size(LabelSize::XSmall),
-                )
-            })
             .when(tool_failed || command_failed, |header| {
                 header.child(
                     div()
@@ -4864,29 +5059,7 @@ impl ThreadView {
                         }),
                 )
             })
-            .child(
-                Disclosure::new(
-                    SharedString::from(format!(
-                        "terminal-tool-disclosure-{}",
-                        terminal.entity_id()
-                    )),
-                    is_expanded,
-                )
-                .opened_icon(IconName::ChevronUp)
-                .closed_icon(IconName::ChevronDown)
-                .visible_on_hover(&header_group)
-                .on_click(cx.listener({
-                    let id = tool_call.id.clone();
-                    move |this, _event, _window, cx| {
-                        if is_expanded {
-                            this.expanded_tool_calls.remove(&id);
-                        } else {
-                            this.expanded_tool_calls.insert(id.clone());
-                        }
-                        cx.notify();
-                    }
-                })),
-            );
+;
 
         let terminal_view = self
             .entry_view_state
@@ -5283,9 +5456,9 @@ impl ThreadView {
                 if is_terminal_tool {
                     let label_source = tool_call.label.read(cx).source();
                     this.child(self.render_collapsible_command(
+                        card_header_id.clone(),
                         true,
                         label_source,
-                        &tool_call.id,
                         cx,
                     ))
                 } else {
@@ -6595,6 +6768,31 @@ impl ThreadView {
                     .read(cx)
                     .pending_tool_call(thread.read(cx).session_id(), cx);
 
+                let session_id = thread.read(cx).session_id().clone();
+
+                let fullscreen_toggle = h_flex()
+                    .id(entry_ix)
+                    .py_1()
+                    .w_full()
+                    .justify_center()
+                    .border_t_1()
+                    .when(is_failed, |this| this.border_dashed())
+                    .border_color(self.tool_card_border_color(cx))
+                    .hover(|s| s.bg(cx.theme().colors().element_hover))
+                    .child(
+                        Icon::new(IconName::Maximize)
+                            .color(Color::Muted)
+                            .size(IconSize::Small),
+                    )
+                    .tooltip(Tooltip::text("Make Subagent Full Screen"))
+                    .on_click(cx.listener(move |this, _event, window, cx| {
+                        this.server_view
+                            .update(cx, |this, cx| {
+                                this.navigate_to_session(session_id.clone(), window, cx);
+                            })
+                            .ok();
+                    }));
+
                 if is_running && let Some((_, subagent_tool_call_id, _)) = pending_tool_call {
                     if let Some((entry_ix, tool_call)) =
                         thread.read(cx).tool_call(&subagent_tool_call_id)
@@ -6609,11 +6807,11 @@ impl ThreadView {
                                 window,
                                 cx,
                             ))
+                            .child(fullscreen_toggle)
                     } else {
                         this
                     }
                 } else {
-                    let session_id = thread.read(cx).session_id().clone();
                     this.when(is_expanded, |this| {
                         this.child(self.render_subagent_expanded_content(
                             thread_view,
@@ -6630,34 +6828,7 @@ impl ThreadView {
                                     .title(message),
                             )
                         })
-                        .child(
-                            h_flex()
-                                .id(entry_ix)
-                                .py_1()
-                                .w_full()
-                                .justify_center()
-                                .border_t_1()
-                                .when(is_failed, |this| this.border_dashed())
-                                .border_color(self.tool_card_border_color(cx))
-                                .hover(|s| s.bg(cx.theme().colors().element_hover))
-                                .child(
-                                    Icon::new(IconName::Maximize)
-                                        .color(Color::Muted)
-                                        .size(IconSize::Small),
-                                )
-                                .tooltip(Tooltip::text("Make Subagent Full Screen"))
-                                .on_click(cx.listener(move |this, _event, window, cx| {
-                                    this.server_view
-                                        .update(cx, |this, cx| {
-                                            this.navigate_to_session(
-                                                session_id.clone(),
-                                                window,
-                                                cx,
-                                            );
-                                        })
-                                        .ok();
-                                })),
-                        )
+                        .child(fullscreen_toggle)
                     })
                 }
             })
@@ -7536,9 +7707,7 @@ impl Render for ThreadView {
                 cx.notify();
             }))
             .on_action(cx.listener(|this, _: &EditFirstQueuedMessage, window, cx| {
-                if let Some(editor) = this.queued_message_editors.first() {
-                    window.focus(&editor.focus_handle(cx), cx);
-                }
+                this.move_queued_message_to_main_editor(0, None, window, cx);
             }))
             .on_action(cx.listener(|this, _: &ClearMessageQueue, _, cx| {
                 this.local_queued_messages.clear();

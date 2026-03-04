@@ -45,6 +45,7 @@ members = [
     "crates/copilot_chat",
     "crates/crashes",
     "crates/credentials_provider",
+    "crates/csv_preview",
     "crates/dap",
     "crates/dap_adapters",
     "crates/db",
@@ -182,8 +183,6 @@ members = [
     "crates/storybook",
     "crates/streaming_diff",
     "crates/sum_tree",
-    "crates/supermaven",
-    "crates/supermaven_api",
     "crates/svg_preview",
     "crates/system_specs",
     "crates/tab_switcher",
@@ -300,6 +299,7 @@ copilot_ui = { path = "crates/copilot_ui" }
 crashes = { path = "crates/crashes" }
 credentials_provider = { path = "crates/credentials_provider" }
 crossbeam = "0.8.4"
+csv_preview = { path = "crates/csv_preview"}
 dap = { path = "crates/dap" }
 dap_adapters = { path = "crates/dap_adapters" }
 db = { path = "crates/db" }
@@ -427,8 +427,6 @@ sqlez_macros = { path = "crates/sqlez_macros" }
 story = { path = "crates/story" }
 streaming_diff = { path = "crates/streaming_diff" }
 sum_tree = { path = "crates/sum_tree" }
-supermaven = { path = "crates/supermaven" }
-supermaven_api = { path = "crates/supermaven_api" }
 codestral = { path = "crates/codestral" }
 system_specs = { path = "crates/system_specs" }
 tab_switcher = { path = "crates/tab_switcher" }
@@ -772,7 +770,7 @@ wax = "0.7"
 which = "6.0.0"
 wasm-bindgen = "0.2.113"
 web-time = "1.1.0"
-wgpu = "28.0"
+wgpu = { git = "https://github.com/zed-industries/wgpu", rev = "6e0c2546d99dad72ce6ffb5b04349e6a4ce96e6d" }
 windows-core = "0.61"
 yawc = "0.2.5"
 zeroize = "1.8"
@@ -817,6 +815,7 @@ features = [
     "Win32_System_Ole",
     "Win32_System_Performance",
     "Win32_System_Pipes",
+    "Win32_System_RestartManager",
     "Win32_System_SystemInformation",
     "Win32_System_SystemServices",
     "Win32_System_Threading",
@@ -839,8 +838,8 @@ notify = { git = "https://github.com/zed-industries/notify.git", rev = "ce58c24c
 notify-types = { git = "https://github.com/zed-industries/notify.git", rev = "ce58c24cad542c28e04ced02e20325a4ec28a31d" }
 windows-capture = { git = "https://github.com/zed-industries/windows-capture.git", rev = "f0d6c1b6691db75461b732f6d5ff56eed002eeb9" }
 calloop = { git = "https://github.com/zed-industries/calloop" }
-livekit = { git = "https://github.com/zed-industries/livekit-rust-sdks", rev = "fccf29d1d0d0a139b2e50746b0b9a1bac828fa04" }
-libwebrtc = { git = "https://github.com/zed-industries/livekit-rust-sdks", rev = "fccf29d1d0d0a139b2e50746b0b9a1bac828fa04" }
+livekit = { git = "https://github.com/zed-industries/livekit-rust-sdks", rev = "37835f840d0070d45ac8b31cce6a6ae7aca3f459" }
+libwebrtc = { git = "https://github.com/zed-industries/livekit-rust-sdks", rev = "37835f840d0070d45ac8b31cce6a6ae7aca3f459" }
 
 [profile.dev]
 split-debuginfo = "unpacked"
@@ -900,7 +899,6 @@ sidebar = { codegen-units = 1 }
 snippet = { codegen-units = 1 }
 snippets_ui = { codegen-units = 1 }
 story = { codegen-units = 1 }
-supermaven_api = { codegen-units = 1 }
 telemetry_events = { codegen-units = 1 }
 theme_selector = { codegen-units = 1 }
 time_format = { codegen-units = 1 }
