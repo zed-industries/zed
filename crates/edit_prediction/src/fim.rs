@@ -1,6 +1,7 @@
 use crate::{
-    EditPredictionId, EditPredictionModelInput, cursor_excerpt, prediction::EditPredictionResult,
-    zeta,
+    EditPredictionId, EditPredictionModelInput, cursor_excerpt,
+    open_ai_compatible::{self, load_open_ai_compatible_api_key_if_needed},
+    prediction::EditPredictionResult,
 };
 use anyhow::{Context as _, Result, anyhow};
 use gpui::{App, AppContext as _, Entity, Task};
@@ -58,6 +59,8 @@ pub fn request_prediction(
         return Task::ready(Err(anyhow!("Unsupported edit prediction provider for FIM")));
     };
 
+    let api_key = load_open_ai_compatible_api_key_if_needed(provider, cx);
+
     let result = cx.background_spawn(async move {
         let (excerpt_range, _) = cursor_excerpt::editable_and_context_ranges_for_cursor_position(
             cursor_point,
@@ -72,16 +75,14 @@ pub fn request_prediction(
             events,
             related_files: Vec::new(),
             cursor_offset_in_excerpt: cursor_offset - excerpt_offset_range.start,
-            editable_range_in_excerpt: cursor_offset - excerpt_offset_range.start
-                ..cursor_offset - excerpt_offset_range.start,
             cursor_path: full_path.clone(),
             excerpt_start_row: Some(excerpt_range.start.row),
             cursor_excerpt: snapshot
                 .text_for_range(excerpt_range)
                 .collect::<String>()
                 .into(),
-            excerpt_ranges: None,
-            preferred_model: None,
+            excerpt_ranges: Default::default(),
+            experiment: None,
             in_open_source_repo: false,
             can_collect_data: false,
         };
@@ -92,12 +93,14 @@ pub fn request_prediction(
         let stop_tokens = get_fim_stop_tokens();
 
         let max_tokens = settings.max_output_tokens;
-        let (response_text, request_id) = zeta::send_custom_server_request(
+
+        let (response_text, request_id) = open_ai_compatible::send_custom_server_request(
             provider,
             &settings,
             prompt,
             max_tokens,
             stop_tokens,
+            api_key,
             &http_client,
         )
         .await?;
