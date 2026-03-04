@@ -269,8 +269,7 @@ impl LanguageModel for XAiLanguageModel {
         }
     }
     fn tool_input_format(&self) -> LanguageModelToolSchemaFormat {
-        let model_id = self.model.id().trim().to_lowercase();
-        if model_id.eq(x_ai::Model::Grok4.id()) || model_id.eq(x_ai::Model::GrokCodeFast1.id()) {
+        if self.model.requires_json_schema_subset() {
             LanguageModelToolSchemaFormat::JsonSchemaSubset
         } else {
             LanguageModelToolSchemaFormat::JsonSchema
