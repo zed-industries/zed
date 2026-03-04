@@ -5732,7 +5732,7 @@ impl Repository {
 
     pub fn remove_worktree(&mut self, path: PathBuf, force: bool) -> oneshot::Receiver<Result<()>> {
         self.send_job(
-            Some("git worktree remove".into()),
+            Some(format!("git worktree remove: {}", path.display()).into()),
             move |repo, _cx| async move {
                 match repo {
                     RepositoryState::Local(LocalRepositoryState { backend, .. }) => {

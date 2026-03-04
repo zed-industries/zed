@@ -1417,6 +1417,7 @@
     "bindings": {
       "ctrl-shift-space": "git::WorktreeFromDefaultOnWindow",
       "ctrl-space": "git::WorktreeFromDefault",
+      "cmd-shift-backspace": "git::DeleteWorktree",
     },
   },
   {
