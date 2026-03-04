@@ -1874,7 +1874,7 @@ fn test_beginning_of_line_single_line_editor(cx: &mut TestAppContext) {
         editor.set_text("  indented text", window, cx);
         editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
             s.select_display_ranges([
-                DisplayPoint::new(DisplayRow(0), 10)..DisplayPoint::new(DisplayRow(0), 10),
+                DisplayPoint::new(DisplayRow(0), 10)..DisplayPoint::new(DisplayRow(0), 10)
             ]);
         });
 
@@ -1895,7 +1895,7 @@ fn test_beginning_of_line_single_line_editor(cx: &mut TestAppContext) {
     _ = editor.update(cx, |editor, window, cx| {
         editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
             s.select_display_ranges([
-                DisplayPoint::new(DisplayRow(0), 10)..DisplayPoint::new(DisplayRow(0), 10),
+                DisplayPoint::new(DisplayRow(0), 10)..DisplayPoint::new(DisplayRow(0), 10)
             ]);
         });
 
