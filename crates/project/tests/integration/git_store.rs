@@ -1345,62 +1345,6 @@ mod trust_tests {
     }
 
     #[gpui::test]
-    async fn test_repository_starts_untrusted_then_becomes_trusted(cx: &mut TestAppContext) {
-        init_test(cx);
-        let fs = FakeFs::new(cx.background_executor.clone());
-        fs.insert_tree(
-            path!("/project"),
-            json!({
-                ".git": {},
-                "a.txt": "hello",
-            }),
-        )
-        .await;
-
-        cx.update(|cx| {
-            project::trusted_worktrees::init(DbTrustedPaths::default(), cx);
-        });
-
-        let project =
-            Project::test_with_worktree_trust(fs.clone(), [path!("/project").as_ref()], cx).await;
-        cx.executor().run_until_parked();
-
-        let worktree_store = project.read_with(cx, |project, _| project.worktree_store());
-        let worktree_id = worktree_store.read_with(cx, |store, cx| {
-            store.worktrees().next().unwrap().read(cx).id()
-        });
-
-        let repository = project.read_with(cx, |project, cx| {
-            project.repositories(cx).values().next().unwrap().clone()
-        });
-
-        repository.read_with(cx, |repo, _| {
-            assert!(
-                !repo.is_trusted(),
-                "repository should be untrusted when worktree is restricted"
-            );
-        });
-
-        let trusted_worktrees = cx
-            .update(|cx| TrustedWorktrees::try_get_global(cx).expect("trust global should be set"));
-        trusted_worktrees.update(cx, |store, cx| {
-            store.trust(
-                &worktree_store,
-                HashSet::from_iter([PathTrust::Worktree(worktree_id)]),
-                cx,
-            );
-        });
-        cx.executor().run_until_parked();
-
-        repository.read_with(cx, |repo, _| {
-            assert!(
-                repo.is_trusted(),
-                "repository should be trusted after worktree is trusted"
-            );
-        });
-    }
-
-    #[gpui::test]
     async fn test_multiple_repos_trust_with_single_worktree(cx: &mut TestAppContext) {
         init_test(cx);
         let fs = FakeFs::new(cx.background_executor.clone());
@@ -1466,5 +1410,91 @@ mod trust_tests {
                 );
             });
         }
+    }
+
+    #[gpui::test]
+    async fn test_repository_trust_restrict_trust_cycle(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                ".git": {},
+                "a.txt": "hello",
+            }),
+        )
+        .await;
+
+        cx.update(|cx| {
+            project::trusted_worktrees::init(DbTrustedPaths::default(), cx);
+        });
+
+        let project =
+            Project::test_with_worktree_trust(fs.clone(), [path!("/project").as_ref()], cx).await;
+        cx.executor().run_until_parked();
+
+        let worktree_store = project.read_with(cx, |project, _| project.worktree_store());
+        let worktree_id = worktree_store.read_with(cx, |store, cx| {
+            store.worktrees().next().unwrap().read(cx).id()
+        });
+
+        let repository = project.read_with(cx, |project, cx| {
+            project.repositories(cx).values().next().unwrap().clone()
+        });
+
+        repository.read_with(cx, |repo, _| {
+            assert!(!repo.is_trusted(), "repository should start untrusted");
+        });
+
+        let trusted_worktrees = cx
+            .update(|cx| TrustedWorktrees::try_get_global(cx).expect("trust global should be set"));
+
+        trusted_worktrees.update(cx, |store, cx| {
+            store.trust(
+                &worktree_store,
+                HashSet::from_iter([PathTrust::Worktree(worktree_id)]),
+                cx,
+            );
+        });
+        cx.executor().run_until_parked();
+
+        repository.read_with(cx, |repo, _| {
+            assert!(
+                repo.is_trusted(),
+                "repository should be trusted after worktree is trusted"
+            );
+        });
+
+        trusted_worktrees.update(cx, |store, cx| {
+            store.restrict(
+                worktree_store.downgrade(),
+                HashSet::from_iter([PathTrust::Worktree(worktree_id)]),
+                cx,
+            );
+        });
+        cx.executor().run_until_parked();
+
+        repository.read_with(cx, |repo, _| {
+            assert!(
+                !repo.is_trusted(),
+                "repository should be untrusted after worktree is restricted"
+            );
+        });
+
+        trusted_worktrees.update(cx, |store, cx| {
+            store.trust(
+                &worktree_store,
+                HashSet::from_iter([PathTrust::Worktree(worktree_id)]),
+                cx,
+            );
+        });
+        cx.executor().run_until_parked();
+
+        repository.read_with(cx, |repo, _| {
+            assert!(
+                repo.is_trusted(),
+                "repository should be trusted again after second trust"
+            );
+        });
     }
 }

@@ -1592,21 +1592,25 @@ impl GitStore {
         if !matches!(self.state, GitStoreState::Local { .. }) {
             return;
         }
-        if let TrustedWorktreesEvent::Trusted(_, trusted_paths) = event {
-            for (repo_id, worktree_ids) in &self.worktree_ids {
-                if worktree_ids
-                    .iter()
-                    .any(|wid| trusted_paths.contains(&PathTrust::Worktree(*wid)))
-                {
-                    if let Some(repo) = self.repositories.get(repo_id) {
-                        let repository_state = repo.read(cx).repository_state.clone();
-                        cx.background_spawn(async move {
-                            if let Ok(RepositoryState::Local(state)) = repository_state.await {
-                                state.backend.set_trusted(true);
-                            }
-                        })
-                        .detach();
-                    }
+
+        let (is_trusted, event_paths) = match event {
+            TrustedWorktreesEvent::Trusted(_, trusted_paths) => (true, trusted_paths),
+            TrustedWorktreesEvent::Restricted(_, restricted_paths) => (false, restricted_paths),
+        };
+
+        for (repo_id, worktree_ids) in &self.worktree_ids {
+            if worktree_ids
+                .iter()
+                .any(|worktree_id| event_paths.contains(&PathTrust::Worktree(*worktree_id)))
+            {
+                if let Some(repo) = self.repositories.get(repo_id) {
+                    let repository_state = repo.read(cx).repository_state.clone();
+                    cx.background_spawn(async move {
+                        if let Ok(RepositoryState::Local(state)) = repository_state.await {
+                            state.backend.set_trusted(is_trusted);
+                        }
+                    })
+                    .detach();
                 }
             }
         }
