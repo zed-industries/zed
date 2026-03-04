@@ -7,7 +7,6 @@ use client::{Client, UserStore};
 use clock::FakeSystemClock;
 use collections::{HashMap, HashSet};
 use language_model::LanguageModelToolResultContent;
-use prompt_store::ProjectContext;
 
 use extension::ExtensionHostProxy;
 use fs::{FakeFs, Fs};
