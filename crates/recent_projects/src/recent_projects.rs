@@ -30,6 +30,7 @@ use gpui::{
 use picker::{
     Picker, PickerDelegate,
     highlighted_match_with_paths::{HighlightedMatch, HighlightedMatchWithPaths},
+    stable_id::StableId,
 };
 use project::{Worktree, git_store::Repository};
 pub use remote_connections::RemoteSettings;
@@ -692,8 +693,18 @@ impl RecentProjectsDelegate {
     }
 }
 impl EventEmitter<DismissEvent> for RecentProjectsDelegate {}
+
+#[derive(Clone, Eq, PartialEq, Hash, Debug)]
+pub enum RecentProjectsStableId {
+    OpenFolder(WorktreeId),
+    RecentProject(WorkspaceId),
+}
+
+impl StableId for RecentProjectsStableId {}
+
 impl PickerDelegate for RecentProjectsDelegate {
     type ListItem = AnyElement;
+    type StableId = RecentProjectsStableId;
 
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
         "Search projects…".into()
@@ -735,6 +746,43 @@ impl PickerDelegate for RecentProjectsDelegate {
 
     fn match_count(&self) -> usize {
         self.filtered_entries.len()
+    }
+
+    fn match_stable_id(&self, ix: usize) -> Option<Self::StableId> {
+        let entry = self.filtered_entries.get(ix)?;
+        match entry {
+            ProjectPickerEntry::OpenFolder { index, .. } => {
+                let folder = self.open_folders.get(*index)?;
+                Some(RecentProjectsStableId::OpenFolder(folder.worktree_id))
+            }
+            ProjectPickerEntry::RecentProject(mat) => {
+                let (workspace_id, _, _, _) = self.workspaces.get(mat.candidate_id)?;
+                Some(RecentProjectsStableId::RecentProject(*workspace_id))
+            }
+            ProjectPickerEntry::Header(_) => None,
+        }
+    }
+
+    fn find_match_by_stable_id(&self, stable_id: &Self::StableId) -> Option<usize> {
+        self.filtered_entries
+            .iter()
+            .position(|entry| match (entry, stable_id) {
+                (
+                    ProjectPickerEntry::OpenFolder { index, .. },
+                    RecentProjectsStableId::OpenFolder(worktree_id),
+                ) => self
+                    .open_folders
+                    .get(*index)
+                    .is_some_and(|folder| folder.worktree_id == *worktree_id),
+                (
+                    ProjectPickerEntry::RecentProject(mat),
+                    RecentProjectsStableId::RecentProject(workspace_id),
+                ) => self
+                    .workspaces
+                    .get(mat.candidate_id)
+                    .is_some_and(|(id, _, _, _)| id == workspace_id),
+                _ => false,
+            })
     }
 
     fn selected_index(&self) -> usize {

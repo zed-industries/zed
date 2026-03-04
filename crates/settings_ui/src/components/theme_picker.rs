@@ -53,6 +53,7 @@ impl ThemePickerDelegate {
 
 impl PickerDelegate for ThemePickerDelegate {
     type ListItem = AnyElement;
+    type StableId = ();
 
     fn match_count(&self) -> usize {
         self.filtered_themes.len()

@@ -202,6 +202,7 @@ impl DevContainerPickerDelegate {
 
 impl PickerDelegate for DevContainerPickerDelegate {
     type ListItem = AnyElement;
+    type StableId = ();
 
     fn match_count(&self) -> usize {
         self.matching_candidates.len()
