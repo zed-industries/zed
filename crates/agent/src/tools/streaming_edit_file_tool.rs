@@ -187,20 +187,23 @@ impl From<StreamingEditFileToolOutput> for LanguageModelToolResultContent {
 }
 
 pub struct StreamingEditFileTool {
-    thread: WeakEntity<Thread>,
-    language_registry: Arc<LanguageRegistry>,
     project: Entity<Project>,
+    thread: WeakEntity<Thread>,
+    action_log: Entity<ActionLog>,
+    language_registry: Arc<LanguageRegistry>,
 }
 
 impl StreamingEditFileTool {
     pub fn new(
         project: Entity<Project>,
         thread: WeakEntity<Thread>,
+        action_log: Entity<ActionLog>,
         language_registry: Arc<LanguageRegistry>,
     ) -> Self {
         Self {
             project,
             thread,
+            action_log,
             language_registry,
         }
     }
@@ -447,11 +450,6 @@ impl EditPipeline {
     }
 }
 
-fn query_first_line_indent(query_lines: &[String]) -> text::LineIndent {
-    let first_line = query_lines.first().map(|s| s.as_str()).unwrap_or("");
-    text::LineIndent::from_iter(first_line.chars())
-}
-
 impl EditSession {
     async fn new(
         path: &PathBuf,
@@ -487,12 +485,7 @@ impl EditSession {
             .await
             .map_err(|e| StreamingEditFileToolOutput::error(e.to_string()))?;
 
-        let action_log = tool
-            .thread
-            .read_with(cx, |thread, _cx| thread.action_log().clone())
-            .ok();
-
-        ensure_buffer_saved(&buffer, &abs_path, tool, action_log.as_ref(), cx)?;
+        ensure_buffer_saved(&buffer, &abs_path, tool, cx)?;
 
         let diff = cx.new(|cx| Diff::new(buffer.clone(), cx));
         event_stream.update_diff(diff.clone());
@@ -504,9 +497,8 @@ impl EditSession {
             }
         }) as Box<dyn FnOnce()>);
 
-        if let Some(action_log) = &action_log {
-            action_log.update(cx, |log, cx| log.buffer_read(buffer.clone(), cx));
-        }
+        tool.action_log
+            .update(cx, |log, cx| log.buffer_read(buffer.clone(), cx));
 
         let old_snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot());
         let old_text = cx
@@ -537,11 +529,6 @@ impl EditSession {
     ) -> Result<StreamingEditFileToolOutput, StreamingEditFileToolOutput> {
         let old_text = self.old_text.clone();
 
-        let action_log = tool
-            .thread
-            .read_with(cx, |thread, _cx| thread.action_log().clone())
-            .map_err(|e| StreamingEditFileToolOutput::error(e.to_string()))?;
-
         match input.mode {
             StreamingEditFileMode::Write => {
                 let content = input.content.ok_or_else(|| {
@@ -551,7 +538,7 @@ impl EditSession {
                 let events = self.parser.finalize_content(&content);
                 self.process_events(&events, tool, event_stream, cx)?;
 
-                action_log.update(cx, |log, cx| {
+                tool.action_log.update(cx, |log, cx| {
                     log.buffer_created(self.buffer.clone(), cx);
                 });
             }
@@ -574,7 +561,7 @@ impl EditSession {
         });
 
         if format_on_save_enabled {
-            action_log.update(cx, |log, cx| {
+            tool.action_log.update(cx, |log, cx| {
                 log.buffer_edited(self.buffer.clone(), cx);
             });
 
@@ -605,7 +592,7 @@ impl EditSession {
             }
         };
 
-        action_log.update(cx, |log, cx| {
+        tool.action_log.update(cx, |log, cx| {
             log.buffer_edited(self.buffer.clone(), cx);
         });
 
@@ -662,11 +649,6 @@ impl EditSession {
         event_stream: &ToolCallEventStream,
         cx: &mut AsyncApp,
     ) -> Result<(), StreamingEditFileToolOutput> {
-        let action_log = tool
-            .thread
-            .read_with(cx, |thread, _cx| thread.action_log().clone())
-            .ok();
-
         for event in events {
             match event {
                 ToolEditEvent::ContentChunk { chunk } => {
@@ -682,7 +664,7 @@ impl EditSession {
                     agent_edit_buffer(
                         &self.buffer,
                         [(insert_at, chunk.as_str())],
-                        action_log.as_ref(),
+                        &tool.action_log,
                         cx,
                     );
                     cx.update(|cx| {
@@ -763,7 +745,14 @@ impl EditSession {
                     };
                     let buffer_indent =
                         snapshot.line_indent_for_row(snapshot.offset_to_point(range.start).row);
-                    let query_indent = query_first_line_indent(matcher.query_lines());
+                    let query_indent = text::LineIndent::from_iter(
+                        matcher
+                            .query_lines()
+                            .first()
+                            .map(|s| s.as_str())
+                            .unwrap_or("")
+                            .chars(),
+                    );
                     let indent_delta = compute_indent_delta(buffer_indent, query_indent);
 
                     let old_text_in_buffer =
@@ -815,7 +804,7 @@ impl EditSession {
                         &self.buffer,
                         original_snapshot,
                         edit_cursor,
-                        action_log.as_ref(),
+                        &tool.action_log,
                         cx,
                     );
 
@@ -858,7 +847,7 @@ impl EditSession {
                             &self.buffer,
                             &original_snapshot,
                             &mut edit_cursor,
-                            action_log.as_ref(),
+                            &tool.action_log,
                             cx,
                         );
                     }
@@ -869,7 +858,7 @@ impl EditSession {
                         &self.buffer,
                         &original_snapshot,
                         &mut edit_cursor,
-                        action_log.as_ref(),
+                        &tool.action_log,
                         cx,
                     );
 
@@ -888,7 +877,7 @@ impl EditSession {
         buffer: &Entity<Buffer>,
         snapshot: &text::BufferSnapshot,
         edit_cursor: &mut usize,
-        action_log: Option<&Entity<ActionLog>>,
+        action_log: &Entity<ActionLog>,
         cx: &mut AsyncApp,
     ) {
         for op in ops {
@@ -949,7 +938,7 @@ fn extract_match(
 fn agent_edit_buffer<I, S, T>(
     buffer: &Entity<Buffer>,
     edits: I,
-    action_log: Option<&Entity<ActionLog>>,
+    action_log: &Entity<ActionLog>,
     cx: &mut AsyncApp,
 ) where
     I: IntoIterator<Item = (Range<S>, T)>,
@@ -960,9 +949,7 @@ fn agent_edit_buffer<I, S, T>(
         buffer.update(cx, |buffer, cx| {
             buffer.edit(edits, None, cx);
         });
-        if let Some(action_log) = action_log {
-            action_log.update(cx, |log, cx| log.buffer_edited(buffer.clone(), cx));
-        }
+        action_log.update(cx, |log, cx| log.buffer_edited(buffer.clone(), cx));
     });
 }
 
@@ -970,11 +957,11 @@ fn ensure_buffer_saved(
     buffer: &Entity<Buffer>,
     abs_path: &PathBuf,
     tool: &StreamingEditFileTool,
-    action_log: Option<&Entity<ActionLog>>,
     cx: &mut AsyncApp,
 ) -> Result<(), StreamingEditFileToolOutput> {
-    let last_read_mtime =
-        action_log.and_then(|log| log.read_with(cx, |log, _| log.file_read_time(abs_path)));
+    let last_read_mtime = tool
+        .action_log
+        .read_with(cx, |log, _| log.file_read_time(abs_path));
     let check_result = tool.thread.read_with(cx, |thread, cx| {
         let current = buffer
             .read(cx)
@@ -1135,6 +1122,7 @@ mod tests {
                 Arc::new(StreamingEditFileTool::new(
                     project.clone(),
                     thread.downgrade(),
+                    thread.read(cx).action_log().clone(),
                     language_registry,
                 ))
                 .run(
@@ -1187,6 +1175,7 @@ mod tests {
                 Arc::new(StreamingEditFileTool::new(
                     project.clone(),
                     thread.downgrade(),
+                    thread.read(cx).action_log().clone(),
                     language_registry,
                 ))
                 .run(
@@ -1250,6 +1239,7 @@ mod tests {
                 Arc::new(StreamingEditFileTool::new(
                     project.clone(),
                     thread.downgrade(),
+                    thread.read(cx).action_log().clone(),
                     language_registry,
                 ))
                 .run(
@@ -1315,6 +1305,7 @@ mod tests {
                 Arc::new(StreamingEditFileTool::new(
                     project.clone(),
                     thread.downgrade(),
+                    thread.read(cx).action_log().clone(),
                     language_registry,
                 ))
                 .run(
@@ -1383,6 +1374,7 @@ mod tests {
                 Arc::new(StreamingEditFileTool::new(
                     project.clone(),
                     thread.downgrade(),
+                    thread.read(cx).action_log().clone(),
                     language_registry,
                 ))
                 .run(
@@ -1451,6 +1443,7 @@ mod tests {
                 Arc::new(StreamingEditFileTool::new(
                     project.clone(),
                     thread.downgrade(),
+                    thread.read(cx).action_log().clone(),
                     language_registry,
                 ))
                 .run(
@@ -1507,6 +1500,7 @@ mod tests {
                 Arc::new(StreamingEditFileTool::new(
                     project,
                     thread.downgrade(),
+                    thread.read(cx).action_log().clone(),
                     language_registry,
                 ))
                 .run(
@@ -1561,6 +1555,7 @@ mod tests {
                 Arc::new(StreamingEditFileTool::new(
                     project,
                     thread.downgrade(),
+                    thread.read(cx).action_log().clone(),
                     language_registry,
                 ))
                 .run(
@@ -1611,9 +1606,11 @@ mod tests {
         let (sender, input) = ToolInput::<StreamingEditFileToolInput>::test();
         let (event_stream, _receiver) = ToolCallEventStream::test();
 
+        let action_log = thread.read_with(cx, |thread, _| thread.action_log().clone());
         let tool = Arc::new(StreamingEditFileTool::new(
             project.clone(),
             thread.downgrade(),
+            action_log,
             language_registry,
         ));
 
@@ -1683,9 +1680,11 @@ mod tests {
         let (sender, input) = ToolInput::<StreamingEditFileToolInput>::test();
         let (event_stream, _receiver) = ToolCallEventStream::test();
 
+        let action_log = thread.read_with(cx, |thread, _| thread.action_log().clone());
         let tool = Arc::new(StreamingEditFileTool::new(
             project.clone(),
             thread.downgrade(),
+            action_log,
             language_registry,
         ));
 
@@ -1753,9 +1752,11 @@ mod tests {
         let (event_stream, _receiver, mut cancellation_tx) =
             ToolCallEventStream::test_with_cancellation();
 
+        let action_log = thread.read_with(cx, |thread, _| thread.action_log().clone());
         let tool = Arc::new(StreamingEditFileTool::new(
             project.clone(),
             thread.downgrade(),
+            action_log,
             language_registry,
         ));
 
@@ -1814,9 +1815,11 @@ mod tests {
         let (sender, input) = ToolInput::<StreamingEditFileToolInput>::test();
         let (event_stream, _receiver) = ToolCallEventStream::test();
 
+        let action_log = thread.read_with(cx, |thread, _| thread.action_log().clone());
         let tool = Arc::new(StreamingEditFileTool::new(
             project.clone(),
             thread.downgrade(),
+            action_log,
             language_registry,
         ));
 
@@ -1904,9 +1907,11 @@ mod tests {
         let (sender, input) = ToolInput::<StreamingEditFileToolInput>::test();
         let (event_stream, _receiver) = ToolCallEventStream::test();
 
+        let action_log = thread.read_with(cx, |thread, _| thread.action_log().clone());
         let tool = Arc::new(StreamingEditFileTool::new(
             project.clone(),
             thread.downgrade(),
+            action_log,
             language_registry,
         ));
 
@@ -1977,9 +1982,11 @@ mod tests {
         let (sender, input) = ToolInput::<StreamingEditFileToolInput>::test();
         let (event_stream, _receiver) = ToolCallEventStream::test();
 
+        let action_log = thread.read_with(cx, |thread, _| thread.action_log().clone());
         let tool = Arc::new(StreamingEditFileTool::new(
             project.clone(),
             thread.downgrade(),
+            action_log,
             language_registry,
         ));
 
@@ -2031,9 +2038,11 @@ mod tests {
         let (sender, input) = ToolInput::<StreamingEditFileToolInput>::test();
         let (event_stream, _receiver) = ToolCallEventStream::test();
 
+        let action_log = thread.read_with(cx, |thread, _| thread.action_log().clone());
         let tool = Arc::new(StreamingEditFileTool::new(
             project.clone(),
             thread.downgrade(),
+            action_log,
             language_registry,
         ));
 
@@ -2160,9 +2169,11 @@ mod tests {
         let (sender, input) = ToolInput::<StreamingEditFileToolInput>::test();
         let (event_stream, _receiver) = ToolCallEventStream::test();
 
+        let action_log = thread.read_with(cx, |thread, _| thread.action_log().clone());
         let tool = Arc::new(StreamingEditFileTool::new(
             project.clone(),
             thread.downgrade(),
+            action_log,
             language_registry,
         ));
 
@@ -2281,9 +2292,11 @@ mod tests {
         let (sender, input) = ToolInput::<StreamingEditFileToolInput>::test();
         let (event_stream, _receiver) = ToolCallEventStream::test();
 
+        let action_log = thread.read_with(cx, |thread, _| thread.action_log().clone());
         let tool = Arc::new(StreamingEditFileTool::new(
             project.clone(),
             thread.downgrade(),
+            action_log,
             language_registry,
         ));
 
@@ -2393,9 +2406,11 @@ mod tests {
         let (sender, input) = ToolInput::<StreamingEditFileToolInput>::test();
         let (event_stream, _receiver) = ToolCallEventStream::test();
 
+        let action_log = thread.read_with(cx, |thread, _| thread.action_log().clone());
         let tool = Arc::new(StreamingEditFileTool::new(
             project.clone(),
             thread.downgrade(),
+            action_log,
             language_registry,
         ));
 
@@ -2477,6 +2492,7 @@ mod tests {
             Arc::new(StreamingEditFileTool::new(
                 project.clone(),
                 thread.downgrade(),
+                thread.read(cx).action_log().clone(),
                 language_registry,
             ))
             .run(input, event_stream, cx)
@@ -2554,6 +2570,7 @@ mod tests {
             Arc::new(StreamingEditFileTool::new(
                 project.clone(),
                 thread.downgrade(),
+                thread.read(cx).action_log().clone(),
                 language_registry,
             ))
             .run(input, event_stream, cx)
@@ -2607,6 +2624,7 @@ mod tests {
             Arc::new(StreamingEditFileTool::new(
                 project.clone(),
                 thread.downgrade(),
+                thread.read(cx).action_log().clone(),
                 language_registry,
             ))
             .run(input, event_stream, cx)
@@ -2818,9 +2836,11 @@ mod tests {
         let (sender, input) = ToolInput::<StreamingEditFileToolInput>::test();
         let (event_stream, _receiver) = ToolCallEventStream::test();
 
+        let action_log = thread.read_with(cx, |thread, _| thread.action_log().clone());
         let tool = Arc::new(StreamingEditFileTool::new(
             project.clone(),
             thread.downgrade(),
+            action_log,
             language_registry.clone(),
         ));
 
@@ -2875,9 +2895,11 @@ mod tests {
         let (sender, input) = ToolInput::<StreamingEditFileToolInput>::test();
         let (event_stream, _receiver) = ToolCallEventStream::test();
 
+        let action_log = thread.read_with(cx, |thread, _| thread.action_log().clone());
         let tool = Arc::new(StreamingEditFileTool::new(
             project.clone(),
             thread.downgrade(),
+            action_log,
             language_registry,
         ));
 
@@ -2969,6 +2991,7 @@ mod tests {
                 Arc::new(StreamingEditFileTool::new(
                     project.clone(),
                     thread.downgrade(),
+                    thread.read(cx).action_log().clone(),
                     language_registry.clone(),
                 ))
                 .run(
@@ -3016,6 +3039,7 @@ mod tests {
                 Arc::new(StreamingEditFileTool::new(
                     project.clone(),
                     thread.downgrade(),
+                    thread.read(cx).action_log().clone(),
                     language_registry,
                 ))
                 .run(
@@ -3056,9 +3080,11 @@ mod tests {
                 cx,
             )
         });
+        let action_log = thread.read_with(cx, |thread, _| thread.action_log().clone());
         let tool = Arc::new(StreamingEditFileTool::new(
             project.clone(),
             thread.downgrade(),
+            action_log,
             language_registry,
         ));
         fs.insert_tree("/root", json!({})).await;
@@ -3198,9 +3224,11 @@ mod tests {
                 cx,
             )
         });
+        let action_log = thread.read_with(cx, |thread, _| thread.action_log().clone());
         let tool = Arc::new(StreamingEditFileTool::new(
             project,
             thread.downgrade(),
+            action_log,
             language_registry,
         ));
 
@@ -3283,9 +3311,11 @@ mod tests {
                 cx,
             )
         });
+        let action_log = thread.read_with(cx, |thread, _| thread.action_log().clone());
         let tool = Arc::new(StreamingEditFileTool::new(
             project.clone(),
             thread.downgrade(),
+            action_log,
             language_registry,
         ));
 
@@ -3350,9 +3380,11 @@ mod tests {
                 cx,
             )
         });
+        let action_log = thread.read_with(cx, |thread, _| thread.action_log().clone());
         let tool = Arc::new(StreamingEditFileTool::new(
             project.clone(),
             thread.downgrade(),
+            action_log,
             language_registry,
         ));
 
@@ -3427,9 +3459,11 @@ mod tests {
                 cx,
             )
         });
+        let action_log = thread.read_with(cx, |thread, _| thread.action_log().clone());
         let tool = Arc::new(StreamingEditFileTool::new(
             project.clone(),
             thread.downgrade(),
+            action_log,
             language_registry,
         ));
 
@@ -3475,9 +3509,11 @@ mod tests {
                 cx,
             )
         });
+        let action_log = thread.read_with(cx, |thread, _| thread.action_log().clone());
         let tool = Arc::new(StreamingEditFileTool::new(
             project.clone(),
             thread.downgrade(),
+            action_log,
             language_registry,
         ));
 
@@ -3575,9 +3611,11 @@ mod tests {
                 cx,
             )
         });
+        let action_log = thread.read_with(cx, |thread, _| thread.action_log().clone());
         let tool = Arc::new(StreamingEditFileTool::new(
             project.clone(),
             thread.downgrade(),
+            action_log,
             language_registry,
         ));
 
@@ -3649,9 +3687,11 @@ mod tests {
                 cx,
             )
         });
+        let action_log = thread.read_with(cx, |thread, _| thread.action_log().clone());
         let tool = Arc::new(StreamingEditFileTool::new(
             project.clone(),
             thread.downgrade(),
+            action_log,
             language_registry,
         ));
 
@@ -3724,9 +3764,11 @@ mod tests {
                 cx,
             )
         });
+        let action_log = thread.read_with(cx, |thread, _| thread.action_log().clone());
         let tool = Arc::new(StreamingEditFileTool::new(
             project.clone(),
             thread.downgrade(),
+            action_log,
             language_registry,
         ));
 
@@ -3794,9 +3836,11 @@ mod tests {
                 cx,
             )
         });
+        let action_log = thread.read_with(cx, |thread, _| thread.action_log().clone());
         let tool = Arc::new(StreamingEditFileTool::new(
             project,
             thread.downgrade(),
+            action_log,
             language_registry,
         ));
 
@@ -3870,11 +3914,13 @@ mod tests {
             )
         });
 
+        let action_log = thread.read_with(cx, |thread, _| thread.action_log().clone());
         // Ensure the diff is finalized after the edit completes.
         {
             let tool = Arc::new(StreamingEditFileTool::new(
                 project.clone(),
                 thread.downgrade(),
+                action_log.clone(),
                 languages.clone(),
             ));
             let (stream_tx, mut stream_rx) = ToolCallEventStream::test();
@@ -3904,6 +3950,7 @@ mod tests {
             let tool = Arc::new(StreamingEditFileTool::new(
                 project.clone(),
                 thread.downgrade(),
+                action_log,
                 languages.clone(),
             ));
             let (stream_tx, mut stream_rx) = ToolCallEventStream::test();
@@ -3958,10 +4005,15 @@ mod tests {
         let languages = project.read_with(cx, |project, _| project.languages().clone());
         let action_log = thread.read_with(cx, |thread, _| thread.action_log().clone());
 
-        let read_tool = Arc::new(crate::ReadFileTool::new(project.clone(), action_log, true));
+        let read_tool = Arc::new(crate::ReadFileTool::new(
+            project.clone(),
+            action_log.clone(),
+            true,
+        ));
         let edit_tool = Arc::new(StreamingEditFileTool::new(
             project.clone(),
             thread.downgrade(),
+            action_log,
             languages,
         ));
 
@@ -4060,10 +4112,15 @@ mod tests {
         let languages = project.read_with(cx, |project, _| project.languages().clone());
         let action_log = thread.read_with(cx, |thread, _| thread.action_log().clone());
 
-        let read_tool = Arc::new(crate::ReadFileTool::new(project.clone(), action_log, true));
+        let read_tool = Arc::new(crate::ReadFileTool::new(
+            project.clone(),
+            action_log.clone(),
+            true,
+        ));
         let edit_tool = Arc::new(StreamingEditFileTool::new(
             project.clone(),
             thread.downgrade(),
+            action_log,
             languages,
         ));
 
@@ -4169,10 +4226,15 @@ mod tests {
         let languages = project.read_with(cx, |project, _| project.languages().clone());
         let action_log = thread.read_with(cx, |thread, _| thread.action_log().clone());
 
-        let read_tool = Arc::new(crate::ReadFileTool::new(project.clone(), action_log, true));
+        let read_tool = Arc::new(crate::ReadFileTool::new(
+            project.clone(),
+            action_log.clone(),
+            true,
+        ));
         let edit_tool = Arc::new(StreamingEditFileTool::new(
             project.clone(),
             thread.downgrade(),
+            action_log,
             languages,
         ));
 
@@ -4285,9 +4347,11 @@ mod tests {
         let (sender, input) = ToolInput::<StreamingEditFileToolInput>::test();
         let (event_stream, _receiver) = ToolCallEventStream::test();
 
+        let action_log = thread.read_with(cx, |thread, _| thread.action_log().clone());
         let tool = Arc::new(StreamingEditFileTool::new(
             project.clone(),
             thread.downgrade(),
+            action_log,
             language_registry,
         ));
 
@@ -4362,9 +4426,11 @@ mod tests {
         let (sender, input) = ToolInput::<StreamingEditFileToolInput>::test();
         let (event_stream, _receiver) = ToolCallEventStream::test();
 
+        let action_log = thread.read_with(cx, |thread, _| thread.action_log().clone());
         let tool = Arc::new(StreamingEditFileTool::new(
             project.clone(),
             thread.downgrade(),
+            action_log,
             language_registry,
         ));
 
@@ -4465,9 +4531,11 @@ mod tests {
         let (sender, input) = ToolInput::<StreamingEditFileToolInput>::test();
         let (event_stream, mut receiver) = ToolCallEventStream::test();
 
+        let action_log = thread.read_with(cx, |thread, _| thread.action_log().clone());
         let tool = Arc::new(StreamingEditFileTool::new(
             project.clone(),
             thread.downgrade(),
+            action_log,
             language_registry,
         ));
 
@@ -4558,9 +4626,11 @@ mod tests {
         let (sender, input) = ToolInput::<StreamingEditFileToolInput>::test();
         let (event_stream, _receiver) = ToolCallEventStream::test();
 
+        let action_log = thread.read_with(cx, |thread, _| thread.action_log().clone());
         let tool = Arc::new(StreamingEditFileTool::new(
             project.clone(),
             thread.downgrade(),
+            action_log,
             language_registry,
         ));
 
@@ -4657,9 +4727,11 @@ mod tests {
         let (sender, input) = ToolInput::<StreamingEditFileToolInput>::test();
         let (event_stream, _receiver) = ToolCallEventStream::test();
 
+        let action_log = thread.read_with(cx, |thread, _| thread.action_log().clone());
         let tool = Arc::new(StreamingEditFileTool::new(
             project.clone(),
             thread.downgrade(),
+            action_log,
             language_registry,
         ));
 
@@ -4748,6 +4820,7 @@ mod tests {
         let tool = Arc::new(StreamingEditFileTool::new(
             project.clone(),
             thread.downgrade(),
+            action_log.clone(),
             language_registry,
         ));
         let (event_stream, _rx) = ToolCallEventStream::test();
@@ -4822,6 +4895,7 @@ mod tests {
         let tool = Arc::new(StreamingEditFileTool::new(
             project.clone(),
             thread.downgrade(),
+            action_log.clone(),
             language_registry,
         ));
         let (event_stream, _rx) = ToolCallEventStream::test();
