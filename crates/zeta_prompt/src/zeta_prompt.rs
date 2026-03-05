@@ -2690,14 +2690,14 @@ pub mod v0304_variable_edit {
         let new_lines: Vec<&str> = new_text.lines().collect();
 
         // Find first differing line.
-        let first_diff = old_lines
+        let first_changed_row = old_lines
             .iter()
             .zip(new_lines.iter())
             .position(|(a, b)| a != b)
             .unwrap_or_else(|| old_lines.len().min(new_lines.len()));
 
         // Find last differing line (from the end).
-        let max_suffix = old_lines.len().min(new_lines.len()) - first_diff;
+        let max_suffix = old_lines.len().min(new_lines.len()) - first_changed_row;
         let common_suffix = old_lines
             .iter()
             .rev()
@@ -2709,13 +2709,13 @@ pub mod v0304_variable_edit {
         let old_end = old_lines.len() - common_suffix;
         let new_end = new_lines.len() - common_suffix;
 
-        if first_diff == old_end && first_diff == new_end {
+        if first_changed_row == old_end && first_changed_row == new_end {
             return Ok(String::new());
         }
 
         // Build the replacement text from new_lines[first_diff..new_end].
         let mut merged_new_text = String::new();
-        for line in &new_lines[first_diff..new_end] {
+        for line in &new_lines[first_changed_row..new_end] {
             merged_new_text.push_str(line);
             merged_new_text.push('\n');
         }
@@ -2728,7 +2728,7 @@ pub mod v0304_variable_edit {
             let absolute_pos = hunk_start + hunk_offset;
 
             // Byte offset where first_diff starts in new_text.
-            let merged_start: usize = new_lines[..first_diff]
+            let merged_start: usize = new_lines[..first_changed_row]
                 .iter()
                 .map(|line| line.len() + 1)
                 .sum();
@@ -2743,11 +2743,40 @@ pub mod v0304_variable_edit {
 
         // Build output with 2 lines of context above and below.
         let context_lines_count = 2;
-        let prefix_start = first_diff.saturating_sub(context_lines_count);
-        let suffix_end = (old_end + context_lines_count).min(old_lines.len());
+        let mut prefix_start = first_changed_row.saturating_sub(context_lines_count);
+        let mut suffix_end = (old_end + context_lines_count).min(old_lines.len());
+
+        fn count_matches(line_range: Range<usize>, lines: &[&str]) -> usize {
+            let pattern = &lines[line_range];
+            let pattern_len = pattern.len();
+
+            let mut count = 0;
+            for offset in 0..=lines.len() - pattern_len {
+                if &lines[offset..offset + pattern_len] == pattern {
+                    count += 1;
+                }
+            }
+            count
+        }
+
+        // Expand prefix and suffix until they are unique
+        while prefix_start > 0 {
+            if count_matches(prefix_start..first_changed_row, &old_lines) > 1 {
+                prefix_start -= 1;
+            } else {
+                break;
+            }
+        }
+        while suffix_end < old_lines.len() {
+            if count_matches(old_end..suffix_end, &old_lines) > 1 {
+                suffix_end += 1;
+            } else {
+                break;
+            }
+        }
 
         let mut output = String::new();
-        for line in &old_lines[prefix_start..first_diff] {
+        for line in &old_lines[prefix_start..first_changed_row] {
             output.push_str(line);
             output.push('\n');
         }
@@ -3297,6 +3326,136 @@ pub mod v0304_variable_edit {
                         TH<|user_cursor|>REE
                         four
                         five
+                    "},
+                },
+                Case {
+                    name: "expands_context_when_two_lines_not_unique_before_and_after",
+                    old: indoc! {"
+                        one
+                        a
+                        b
+                        c
+                        d
+                        two
+                        a
+                        b
+                        c
+                        d
+                        three
+                        a
+                        b
+                        c
+                        d
+                        four
+                    "},
+                    patch: indoc! {"
+                        @@ -4,5 +4,5 @@
+                         two
+                         a
+                         b
+                        -c
+                        +C
+                         d
+                         three
+                    "},
+                    cursor_offset: None,
+                    expected_variable_edit: indoc! {"
+                        two
+                        a
+                        b
+                        <|fim_middle|>
+                        C
+                        <|fim_suffix|>
+                        d
+                        three
+                    "},
+                    expected_after_apply: indoc! {"
+                        one
+                        a
+                        b
+                        c
+                        d
+                        two
+                        a
+                        b
+                        C
+                        d
+                        three
+                        a
+                        b
+                        c
+                        d
+                        four
+                    "},
+                },
+                Case {
+                    name: "expands_context_when_two_lines_not_unique_before_and_after",
+                    old: indoc! {"
+                        {
+                            {
+                                one();
+                            }
+                        }
+                        {
+                            {
+                                two();
+                            }
+                        }
+                        {
+                            {
+                                three();
+                            }
+                        }
+                        {
+                            {
+                                four();
+                            }
+                        }
+                    "},
+                    patch: indoc! {"
+                        @@ -4,5 +4,5 @@
+                             {
+                        -        two();
+                        +        TWO();
+                             }
+                    "},
+                    cursor_offset: None,
+                    expected_variable_edit: indoc! {"
+                                one();
+                            }
+                        }
+                        {
+                            {
+                        <|fim_middle|>
+                                TWO();
+                        <|fim_suffix|>
+                            }
+                        }
+                        {
+                            {
+                                three();
+                    "},
+                    expected_after_apply: indoc! {"
+                        {
+                            {
+                                one();
+                            }
+                        }
+                        {
+                            {
+                                TWO();
+                            }
+                        }
+                        {
+                            {
+                                three();
+                            }
+                        }
+                        {
+                            {
+                                four();
+                            }
+                        }
                     "},
                 },
             ];
