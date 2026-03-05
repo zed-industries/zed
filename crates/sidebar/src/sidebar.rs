@@ -466,18 +466,6 @@ impl Sidebar {
                             *is_live = true;
                             *is_background = info.is_background;
                         }
-                    } else {
-                        threads.push(ListEntry::Thread {
-                            session_info: info.into(),
-                            icon: info.icon,
-                            icon_from_external_svg: info.icon_from_external_svg.clone(),
-                            status: info.status,
-                            diff_stats: None,
-                            workspace_index: index,
-                            is_live: true,
-                            is_background: info.is_background,
-                            highlight_positions: Vec::new(),
-                        });
                     }
                 }
 
