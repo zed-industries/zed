@@ -264,6 +264,7 @@ pub struct ProjectSearchView {
     excluded_files_editor: Entity<Editor>,
     filters_enabled: bool,
     replace_enabled: bool,
+    pending_replace_all: bool,
     included_opened_only: bool,
     regex_language: Option<Arc<Language>>,
     _subscriptions: Vec<Subscription>,
@@ -735,6 +736,9 @@ impl ProjectSearchView {
     }
 
     fn replace_next(&mut self, _: &ReplaceNext, window: &mut Window, cx: &mut Context<Self>) {
+        if self.entity.read(cx).pending_search.is_some() {
+            return;
+        }
         if let Some(last_search_query_text) = &self.entity.read(cx).last_search_query_text
             && self.query_editor.read(cx).text(cx) != *last_search_query_text
         {
@@ -762,17 +766,28 @@ impl ProjectSearchView {
             self.select_match(Direction::Next, window, cx)
         }
     }
+    
     fn replace_all(&mut self, _: &ReplaceAll, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(last_search_query_text) = &self.entity.read(cx).last_search_query_text
-            && self.query_editor.read(cx).text(cx) != *last_search_query_text
-        {
-            // search query has changed, restart search and bail
+        if self.entity.read(cx).pending_search.is_some() {
+            self.pending_replace_all = true;
+            return;
+        }
+        let query_text = self.query_editor.read(cx).text(cx);
+        let query_is_stale = self.entity.read(cx).last_search_query_text.as_deref()
+            != Some(query_text.as_str());
+        if query_is_stale {
+            self.pending_replace_all = true;
             self.search(cx);
+            if self.entity.read(cx).pending_search.is_none() {
+                self.pending_replace_all = false;
+            }
             return;
         }
         if self.active_match_index.is_none() {
+            self.pending_replace_all = false;
             return;
         }
+        self.pending_replace_all = false;
         let Some(query) = self.entity.read(cx).active_query.as_ref() else {
             return;
         };
@@ -981,6 +996,7 @@ impl ProjectSearchView {
             excluded_files_editor,
             filters_enabled,
             replace_enabled: false,
+            pending_replace_all: false,
             included_opened_only: false,
             regex_language: None,
             _subscriptions: subscriptions,
@@ -1521,6 +1537,10 @@ impl ProjectSearchView {
 
         cx.emit(ViewEvent::UpdateTab);
         cx.notify();
+
+        if self.pending_replace_all && self.entity.read(cx).pending_search.is_none() {
+            self.replace_all(&ReplaceAll, window, cx);
+        }
     }
 
     fn update_match_index(&mut self, cx: &mut Context<Self>) {
@@ -2248,14 +2268,13 @@ impl Render for ProjectSearchBar {
                 .child(render_text_input(&search.replacement_editor, None, cx));
 
             let focus_handle = search.replacement_editor.read(cx).focus_handle(cx);
-
             let replace_actions = h_flex()
                 .min_w_64()
                 .gap_1()
                 .child(render_action_button(
                     "project-search-replace-button",
                     IconName::ReplaceNext,
-                    Default::default(),
+                    is_search_underway.then_some(ActionButtonState::Disabled),
                     "Replace Next Match",
                     &ReplaceNext,
                     focus_handle.clone(),
