@@ -4,6 +4,7 @@ use std::env;
 use std::path::{Path, PathBuf};
 use std::sync::{LazyLock, OnceLock};
 
+use util::paths::SanitizedPath;
 pub use util::paths::home_dir;
 use util::rel_path::RelPath;
 
@@ -71,8 +72,10 @@ pub fn set_custom_data_dir(dir: &str) -> &'static PathBuf {
     CUSTOM_DATA_DIR.get_or_init(|| {
         let path = PathBuf::from(dir);
         std::fs::create_dir_all(&path).expect("failed to create custom data directory");
-        path.canonicalize()
-            .expect("failed to canonicalize custom data directory's path to an absolute path")
+        let canonicalized = path
+            .canonicalize()
+            .expect("failed to canonicalize custom data directory's path to an absolute path");
+        SanitizedPath::new(&canonicalized).as_path().to_path_buf()
     })
 }
 
