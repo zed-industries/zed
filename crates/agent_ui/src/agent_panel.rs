@@ -67,7 +67,6 @@ use language_model::{ConfigurationError, LanguageModelRegistry};
 use project::project_settings::ProjectSettings;
 use project::{Project, ProjectPath, Worktree};
 use prompt_store::{PromptBuilder, PromptStore, UserPromptId};
-use rand::Rng as _;
 use rules_library::{RulesLibrary, open_rules_library};
 use search::{BufferSearchBar, buffer_search};
 use settings::{Settings, update_settings_file};
@@ -2042,21 +2041,6 @@ impl AgentPanel {
         }
     }
 
-    fn generate_agent_branch_name() -> String {
-        let mut rng = rand::rng();
-        let id: String = (0..8)
-            .map(|_| {
-                let idx: u8 = rng.random_range(0..36);
-                if idx < 10 {
-                    (b'0' + idx) as char
-                } else {
-                    (b'a' + idx - 10) as char
-                }
-            })
-            .collect();
-        format!("agent-{id}")
-    }
-
     /// Partitions the project's visible worktrees into git-backed repositories
     /// and plain (non-git) paths. Git repos will have worktrees created for
     /// them; non-git paths are carried over to the new workspace as-is.
@@ -2256,8 +2240,6 @@ impl AgentPanel {
         self.worktree_creation_status = Some(WorktreeCreationStatus::Creating);
         cx.notify();
 
-        let branch_name = Self::generate_agent_branch_name();
-
         let (git_repos, non_git_paths) = self.classify_worktrees(cx);
 
         if git_repos.is_empty() {
@@ -2269,27 +2251,17 @@ impl AgentPanel {
             return;
         }
 
+        // Kick off branch listing as early as possible so it can run
+        // concurrently with the remaining synchronous setup work.
+        let branch_receivers: Vec<_> = git_repos
+            .iter()
+            .map(|repo| repo.update(cx, |repo, _cx| repo.branches()))
+            .collect();
+
         let worktree_directory_setting = ProjectSettings::get_global(cx)
             .git
             .worktree_directory
             .clone();
-
-        let (creation_infos, path_remapping) = match Self::start_worktree_creations(
-            &git_repos,
-            &branch_name,
-            &worktree_directory_setting,
-            cx,
-        ) {
-            Ok(result) => result,
-            Err(err) => {
-                self.set_worktree_creation_error(
-                    format!("Failed to validate worktree directory: {err}").into(),
-                    window,
-                    cx,
-                );
-                return;
-            }
-        };
 
         let (dock_structure, open_file_paths) = self
             .workspace
@@ -2307,6 +2279,63 @@ impl AgentPanel {
             .downcast::<workspace::MultiWorkspace>();
 
         let task = cx.spawn_in(window, async move |this, cx| {
+            // Await the branch listings we kicked off earlier.
+            let mut existing_branches = Vec::new();
+            for result in futures::future::join_all(branch_receivers).await {
+                match result {
+                    Ok(Ok(branches)) => {
+                        for branch in branches {
+                            existing_branches.push(branch.name().to_string());
+                        }
+                    }
+                    Ok(Err(err)) => {
+                        Err::<(), _>(err).log_err();
+                    }
+                    Err(_) => {}
+                }
+            }
+
+            let existing_branch_refs: Vec<&str> =
+                existing_branches.iter().map(|s| s.as_str()).collect();
+            let mut rng = rand::rng();
+            let branch_name =
+                match crate::branch_names::generate_branch_name(&existing_branch_refs, &mut rng) {
+                    Some(name) => name,
+                    None => {
+                        this.update_in(cx, |this, window, cx| {
+                            this.set_worktree_creation_error(
+                                "Failed to generate a branch name: all typewriter names are taken"
+                                    .into(),
+                                window,
+                                cx,
+                            );
+                        })?;
+                        return anyhow::Ok(());
+                    }
+                };
+
+            let (creation_infos, path_remapping) = match this.update_in(cx, |_this, _window, cx| {
+                Self::start_worktree_creations(
+                    &git_repos,
+                    &branch_name,
+                    &worktree_directory_setting,
+                    cx,
+                )
+            }) {
+                Ok(Ok(result)) => result,
+                Ok(Err(err)) | Err(err) => {
+                    this.update_in(cx, |this, window, cx| {
+                        this.set_worktree_creation_error(
+                            format!("Failed to validate worktree directory: {err}").into(),
+                            window,
+                            cx,
+                        );
+                    })
+                    .log_err();
+                    return anyhow::Ok(());
+                }
+            };
+
             let created_paths = match Self::await_and_rollback_on_failure(creation_infos, cx).await
             {
                 Ok(paths) => paths,

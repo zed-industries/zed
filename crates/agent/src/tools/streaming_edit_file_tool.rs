@@ -435,7 +435,7 @@ pub struct EditSession {
 }
 
 struct EditPipeline {
-    edits: Vec<EditPipelineEntry>,
+    current_edit: Option<EditPipelineEntry>,
     content_written: bool,
 }
 
@@ -449,26 +449,20 @@ enum EditPipelineEntry {
         reindenter: Reindenter,
         original_snapshot: text::BufferSnapshot,
     },
-    Done,
 }
 
 impl EditPipeline {
     fn new() -> Self {
         Self {
-            edits: Vec::new(),
+            current_edit: None,
             content_written: false,
         }
     }
 
-    fn ensure_resolving_old_text(
-        &mut self,
-        edit_index: usize,
-        buffer: &Entity<Buffer>,
-        cx: &mut AsyncApp,
-    ) {
-        while self.edits.len() <= edit_index {
+    fn ensure_resolving_old_text(&mut self, buffer: &Entity<Buffer>, cx: &mut AsyncApp) {
+        if self.current_edit.is_none() {
             let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.text_snapshot());
-            self.edits.push(EditPipelineEntry::ResolvingOldText {
+            self.current_edit = Some(EditPipelineEntry::ResolvingOldText {
                 matcher: StreamingFuzzyMatcher::new(snapshot),
             });
         }
@@ -573,6 +567,17 @@ impl EditSession {
                 })?;
                 let events = self.parser.finalize_edits(&edits);
                 self.process_events(&events, tool, event_stream, cx)?;
+
+                if log::log_enabled!(log::Level::Debug) {
+                    log::debug!("Got edits:");
+                    for edit in &edits {
+                        log::debug!(
+                            "  old_text: '{}', new_text: '{}'",
+                            edit.old_text.replace('\n', "\\n"),
+                            edit.new_text.replace('\n', "\\n")
+                        );
+                    }
+                }
             }
         }
 
@@ -703,15 +708,13 @@ impl EditSession {
                 }
 
                 ToolEditEvent::OldTextChunk {
-                    edit_index,
-                    chunk,
-                    done: false,
+                    chunk, done: false, ..
                 } => {
-                    self.pipeline
-                        .ensure_resolving_old_text(*edit_index, &self.buffer, cx);
+                    log::debug!("old_text_chunk: done=false, chunk='{}'", chunk);
+                    self.pipeline.ensure_resolving_old_text(&self.buffer, cx);
 
-                    if let EditPipelineEntry::ResolvingOldText { matcher } =
-                        &mut self.pipeline.edits[*edit_index]
+                    if let Some(EditPipelineEntry::ResolvingOldText { matcher }) =
+                        &mut self.pipeline.current_edit
                         && !chunk.is_empty()
                     {
                         if let Some(match_range) = matcher.push(chunk, None) {
@@ -734,11 +737,12 @@ impl EditSession {
                     chunk,
                     done: true,
                 } => {
-                    self.pipeline
-                        .ensure_resolving_old_text(*edit_index, &self.buffer, cx);
+                    log::debug!("old_text_chunk: done=true, chunk='{}'", chunk);
 
-                    let EditPipelineEntry::ResolvingOldText { matcher } =
-                        &mut self.pipeline.edits[*edit_index]
+                    self.pipeline.ensure_resolving_old_text(&self.buffer, cx);
+
+                    let Some(EditPipelineEntry::ResolvingOldText { matcher }) =
+                        &mut self.pipeline.current_edit
                     else {
                         continue;
                     };
@@ -763,13 +767,7 @@ impl EditSession {
                         ]),
                     );
 
-                    let EditPipelineEntry::ResolvingOldText { matcher } =
-                        &self.pipeline.edits[*edit_index]
-                    else {
-                        continue;
-                    };
-                    let buffer_indent =
-                        snapshot.line_indent_for_row(snapshot.offset_to_point(range.start).row);
+                    let buffer_indent = snapshot.line_indent_for_row(line);
                     let query_indent = text::LineIndent::from_iter(
                         matcher
                             .query_lines()
@@ -783,15 +781,23 @@ impl EditSession {
                     let old_text_in_buffer =
                         snapshot.text_for_range(range.clone()).collect::<String>();
 
+                    log::debug!(
+                        "edit[{}] old_text matched at {}..{}: {:?}",
+                        edit_index,
+                        range.start,
+                        range.end,
+                        old_text_in_buffer,
+                    );
+
                     let text_snapshot = self
                         .buffer
                         .read_with(cx, |buffer, _cx| buffer.text_snapshot());
-                    self.pipeline.edits[*edit_index] = EditPipelineEntry::StreamingNewText {
+                    self.pipeline.current_edit = Some(EditPipelineEntry::StreamingNewText {
                         streaming_diff: StreamingDiff::new(old_text_in_buffer),
                         edit_cursor: range.start,
                         reindenter: Reindenter::new(indent_delta),
                         original_snapshot: text_snapshot,
-                    };
+                    });
 
                     cx.update(|cx| {
                         let position = self.buffer.read(cx).anchor_before(range.end);
@@ -800,20 +806,17 @@ impl EditSession {
                 }
 
                 ToolEditEvent::NewTextChunk {
-                    edit_index,
-                    chunk,
-                    done: false,
+                    chunk, done: false, ..
                 } => {
-                    if *edit_index >= self.pipeline.edits.len() {
-                        continue;
-                    }
-                    let EditPipelineEntry::StreamingNewText {
+                    log::debug!("new_text_chunk: done=false, chunk='{}'", chunk);
+
+                    let Some(EditPipelineEntry::StreamingNewText {
                         streaming_diff,
                         edit_cursor,
                         reindenter,
                         original_snapshot,
                         ..
-                    } = &mut self.pipeline.edits[*edit_index]
+                    }) = &mut self.pipeline.current_edit
                     else {
                         continue;
                     };
@@ -840,23 +843,16 @@ impl EditSession {
                 }
 
                 ToolEditEvent::NewTextChunk {
-                    edit_index,
-                    chunk,
-                    done: true,
+                    chunk, done: true, ..
                 } => {
-                    if *edit_index >= self.pipeline.edits.len() {
-                        continue;
-                    }
+                    log::debug!("new_text_chunk: done=true, chunk='{}'", chunk);
 
-                    let EditPipelineEntry::StreamingNewText {
+                    let Some(EditPipelineEntry::StreamingNewText {
                         mut streaming_diff,
                         mut edit_cursor,
                         mut reindenter,
                         original_snapshot,
-                    } = std::mem::replace(
-                        &mut self.pipeline.edits[*edit_index],
-                        EditPipelineEntry::Done,
-                    )
+                    }) = self.pipeline.current_edit.take()
                     else {
                         continue;
                     };
@@ -864,6 +860,8 @@ impl EditSession {
                     // Flush any remaining reindent buffer + final chunk.
                     let mut final_text = reindenter.push(chunk);
                     final_text.push_str(&reindenter.finish());
+
+                    log::debug!("new_text_chunk: done=true, final_text='{}'", final_text);
 
                     if !final_text.is_empty() {
                         let char_ops = streaming_diff.push_new(&final_text);
