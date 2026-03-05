@@ -1310,15 +1310,22 @@ impl LocalLspStore {
         clangd_ext::register_notifications(lsp_store, language_server, adapter);
     }
 
-    fn shutdown_language_servers_on_quit(&mut self) -> impl Future<Output = ()> + use<> {
+    pub(crate) fn shutdown_language_servers_on_quit(&mut self) -> impl Future<Output = ()> + use<> {
         let shutdown_futures = self
             .language_servers
             .drain()
             .map(|(_, server_state)| Self::shutdown_server(server_state))
             .collect::<Vec<_>>();
 
+        let supplementary_shutdown_futures = self
+            .supplementary_language_servers
+            .drain()
+            .filter_map(|(_, (_, server))| server.shutdown())
+            .collect::<Vec<_>>();
+
         async move {
             join_all(shutdown_futures).await;
+            join_all(supplementary_shutdown_futures).await;
         }
     }
 
@@ -10858,12 +10865,20 @@ impl LspStore {
                 .map(|state| state.id)
                 .collect();
             local.lsp_tree.remove_nodes(&language_servers_to_stop);
+
+            let supplementary_shutdown_futures: Vec<_> = local
+                .supplementary_language_servers
+                .drain()
+                .filter_map(|(_, (_, server))| server.shutdown())
+                .collect();
+
             let tasks = language_servers_to_stop
                 .into_iter()
                 .map(|server| self.stop_local_language_server(server, cx))
                 .collect::<Vec<_>>();
             cx.background_spawn(async move {
                 futures::future::join_all(tasks).await;
+                futures::future::join_all(supplementary_shutdown_futures).await;
             })
         }
     }

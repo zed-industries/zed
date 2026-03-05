@@ -560,6 +560,13 @@ impl ContextServerStore {
         result
     }
 
+    pub fn stop_all_servers(&mut self, cx: &mut Context<Self>) {
+        let server_ids: Vec<_> = self.servers.keys().cloned().collect();
+        for id in server_ids {
+            self.stop_server(&id, cx).log_err();
+        }
+    }
+
     fn run_server(
         &mut self,
         server: Arc<ContextServer>,

@@ -433,7 +433,7 @@ impl Copilot {
         this
     }
 
-    fn shutdown_language_server(
+    pub fn shutdown_language_server(
         &mut self,
         _cx: &mut Context<Self>,
     ) -> impl Future<Output = ()> + use<> {

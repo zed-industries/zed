@@ -33,10 +33,10 @@ use git_ui::commit_view::CommitViewToolbar;
 use git_ui::git_panel::GitPanel;
 use git_ui::project_diff::{BranchDiffToolbar, ProjectDiffToolbar};
 use gpui::{
-    Action, App, AppContext as _, AsyncWindowContext, Context, DismissEvent, Element, Entity,
-    Focusable, KeyBinding, ParentElement, PathPromptOptions, PromptLevel, ReadGlobal, SharedString,
-    Task, TitlebarOptions, UpdateGlobal, WeakEntity, Window, WindowHandle, WindowKind,
-    WindowOptions, actions, image_cache, point, px, retain_all,
+    Action, AnyWeakEntity, App, AppContext as _, AsyncWindowContext, Context, DismissEvent,
+    Element, Entity, Focusable, KeyBinding, ParentElement, PathPromptOptions, PromptLevel,
+    ReadGlobal, SharedString, Task, TitlebarOptions, UpdateGlobal, WeakEntity, Window,
+    WindowHandle, WindowKind, WindowOptions, actions, image_cache, point, px, retain_all,
 };
 use image_viewer::ImageInfo;
 use language::Capability;
@@ -372,6 +372,21 @@ pub fn initialize_workspace(
     .detach();
 
     cx.observe_new(|multi_workspace: &mut MultiWorkspace, window, cx| {
+        let multi_workspace_handle = cx.weak_entity();
+        cx.on_window_closed(move |cx| {
+            let multi_workspace_handle = multi_workspace_handle.clone();
+
+            cx.spawn(async move |cx| {
+                cx.background_executor()
+                    .timer(Duration::from_millis(501))
+                    .await;
+
+                multi_workspace_handle.assert_released();
+            })
+            .detach();
+        })
+        .detach();
+
         let Some(window) = window else {
             return;
         };
