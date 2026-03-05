@@ -17,8 +17,8 @@ use std::mem;
 use theme::{ActiveTheme, ThemeSettings};
 use ui::utils::TRAFFIC_LIGHT_PADDING;
 use ui::{
-    AgentThreadStatus, IconButtonShape, KeyBinding, ListItem, PopoverMenu, Tab, ThreadItem,
-    Tooltip, WithScrollbar, prelude::*,
+    AgentThreadStatus, HighlightedLabel, IconButtonShape, KeyBinding, ListItem, PopoverMenu, Tab,
+    ThreadItem, Tooltip, WithScrollbar, prelude::*,
 };
 use util::path_list::PathList;
 use workspace::{
@@ -70,6 +70,7 @@ enum ListEntry {
     ProjectHeader {
         path_list: PathList,
         label: SharedString,
+        highlight_positions: Vec<usize>,
     },
     Thread {
         session_info: acp_thread::AgentSessionInfo,
@@ -517,19 +518,24 @@ impl Sidebar {
                     }
                 }
 
-                if matched_threads.is_empty() {
+                let workspace_highlight_positions =
+                    fuzzy_match_positions(&query, &label).unwrap_or_default();
+
+                if matched_threads.is_empty() && workspace_highlight_positions.is_empty() {
                     continue;
                 }
 
                 entries.push(ListEntry::ProjectHeader {
                     path_list: path_list.clone(),
                     label,
+                    highlight_positions: workspace_highlight_positions,
                 });
                 entries.extend(matched_threads);
             } else {
                 entries.push(ListEntry::ProjectHeader {
                     path_list: path_list.clone(),
                     label,
+                    highlight_positions: Vec::new(),
                 });
 
                 if is_collapsed {
@@ -627,9 +633,18 @@ impl Sidebar {
             ix > 0 && matches!(entry, ListEntry::ProjectHeader { .. });
 
         let rendered = match entry {
-            ListEntry::ProjectHeader { path_list, label } => {
-                self.render_project_header(ix, path_list, label, is_selected, cx)
-            }
+            ListEntry::ProjectHeader {
+                path_list,
+                label,
+                highlight_positions,
+            } => self.render_project_header(
+                ix,
+                path_list,
+                label,
+                highlight_positions,
+                is_selected,
+                cx,
+            ),
             ListEntry::Thread {
                 session_info,
                 icon,
@@ -675,6 +690,7 @@ impl Sidebar {
         ix: usize,
         path_list: &PathList,
         label: &SharedString,
+        highlight_positions: &[usize],
         is_selected: bool,
         cx: &mut Context<Self>,
     ) -> AnyElement {
@@ -701,11 +717,17 @@ impl Sidebar {
                     .px_1()
                     .py_1p5()
                     .gap_0p5()
-                    .child(
+                    .child(if highlight_positions.is_empty() {
                         Label::new(label.clone())
                             .size(LabelSize::Small)
-                            .color(Color::Muted),
-                    )
+                            .color(Color::Muted)
+                            .into_any_element()
+                    } else {
+                        HighlightedLabel::new(label.clone(), highlight_positions.to_vec())
+                            .size(LabelSize::Small)
+                            .color(Color::Muted)
+                            .into_any_element()
+                    })
                     .child(
                         div().visible_on_hover(group).child(
                             Icon::new(disclosure_icon)
@@ -1453,7 +1475,7 @@ mod tests {
                     };
                     match entry {
                         ListEntry::ProjectHeader {
-                            label, path_list, ..
+                            label, path_list, highlight_positions: _, ..
                         } => {
                             let icon = if sidebar.collapsed_groups.contains(path_list) {
                                 ">"
@@ -1722,6 +1744,7 @@ mod tests {
                 ListEntry::ProjectHeader {
                     path_list: expanded_path.clone(),
                     label: "expanded-project".into(),
+                    highlight_positions: Vec::new(),
                 },
                 // Thread with default (Completed) status, not active
                 ListEntry::Thread {
@@ -1822,6 +1845,7 @@ mod tests {
                 ListEntry::ProjectHeader {
                     path_list: collapsed_path.clone(),
                     label: "collapsed-project".into(),
+                    highlight_positions: Vec::new(),
                 },
             ];
             // Select the Running thread (index 2)
@@ -2603,6 +2627,123 @@ mod tests {
         assert_eq!(
             visible_entries_as_strings(&sidebar, cx),
             vec!["v [Empty Workspace]", "  Fix typo in README  <== selected",]
+        );
+
+        // "project-a" matches the first workspace name — the header appears alone
+        // without any child threads (none of them match "project-a").
+        type_in_search(&sidebar, "project-a", cx);
+        assert_eq!(
+            visible_entries_as_strings(&sidebar, cx),
+            vec!["v [project-a]  <== selected"]
+        );
+    }
+
+    #[gpui::test]
+    async fn test_search_matches_workspace_name(cx: &mut TestAppContext) {
+        let project_a = init_test_project("/alpha-project", cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project_a, window, cx));
+        let sidebar = setup_sidebar(&multi_workspace, cx);
+
+        let path_list_a = PathList::new(&[std::path::PathBuf::from("/alpha-project")]);
+        let thread_store = cx.update(|_window, cx| ThreadStore::global(cx));
+
+        for (id, title, hour) in [
+            ("a1", "Fix bug in sidebar", 2),
+            ("a2", "Add tests for editor", 1),
+        ] {
+            let save_task = thread_store.update(cx, |store, cx| {
+                store.save_thread(
+                    acp::SessionId::new(Arc::from(id)),
+                    make_test_thread(
+                        title,
+                        chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, hour, 0, 0).unwrap(),
+                    ),
+                    path_list_a.clone(),
+                    cx,
+                )
+            });
+            save_task.await.unwrap();
+        }
+
+        // Add a second workspace.
+        multi_workspace.update_in(cx, |mw, window, cx| {
+            mw.create_workspace(window, cx);
+        });
+        cx.run_until_parked();
+
+        let path_list_b = PathList::new::<std::path::PathBuf>(&[]);
+
+        for (id, title, hour) in [
+            ("b1", "Refactor sidebar layout", 3),
+            ("b2", "Fix typo in README", 1),
+        ] {
+            let save_task = thread_store.update(cx, |store, cx| {
+                store.save_thread(
+                    acp::SessionId::new(Arc::from(id)),
+                    make_test_thread(
+                        title,
+                        chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, hour, 0, 0).unwrap(),
+                    ),
+                    path_list_b.clone(),
+                    cx,
+                )
+            });
+            save_task.await.unwrap();
+        }
+        cx.run_until_parked();
+
+        // "alpha" matches the workspace name "alpha-project" but no thread titles.
+        // The workspace header should appear with no child threads.
+        type_in_search(&sidebar, "alpha", cx);
+        assert_eq!(
+            visible_entries_as_strings(&sidebar, cx),
+            vec!["v [alpha-project]  <== selected"]
+        );
+
+        // "sidebar" matches thread titles in both workspaces but not workspace names.
+        // Both headers appear with their matching threads.
+        type_in_search(&sidebar, "sidebar", cx);
+        assert_eq!(
+            visible_entries_as_strings(&sidebar, cx),
+            vec![
+                "v [alpha-project]",
+                "  Fix bug in sidebar  <== selected",
+                "v [Empty Workspace]",
+                "  Refactor sidebar layout",
+            ]
+        );
+
+        // "alpha sidebar" matches the workspace name "alpha-project" (fuzzy: a-l-p-h-a-s-i-d-e-b-a-r
+        // doesn't match) — but does not match either workspace name or any thread.
+        // Actually let's test something simpler: a query that matches both a workspace
+        // name AND some threads in that workspace. Matching threads should still appear.
+        type_in_search(&sidebar, "fix", cx);
+        assert_eq!(
+            visible_entries_as_strings(&sidebar, cx),
+            vec![
+                "v [alpha-project]",
+                "  Fix bug in sidebar  <== selected",
+                "v [Empty Workspace]",
+                "  Fix typo in README",
+            ]
+        );
+
+        // A query that matches a workspace name AND a thread in that same workspace.
+        // Both the header (highlighted) and the matching thread should appear.
+        type_in_search(&sidebar, "alpha", cx);
+        assert_eq!(
+            visible_entries_as_strings(&sidebar, cx),
+            vec!["v [alpha-project]  <== selected"]
+        );
+
+        // Now search for something that matches only a workspace name when there
+        // are also threads with matching titles — the non-matching workspace's
+        // threads should still appear if their titles match.
+        type_in_search(&sidebar, "alp", cx);
+        assert_eq!(
+            visible_entries_as_strings(&sidebar, cx),
+            vec!["v [alpha-project]  <== selected"]
         );
     }
 
