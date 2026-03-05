@@ -444,7 +444,7 @@ impl PickerDelegate for ProfilePickerDelegate {
     }
 
     fn can_select(
-        &mut self,
+        &self,
         ix: usize,
         _window: &mut Window,
         _cx: &mut Context<Picker<Self>>,

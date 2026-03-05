@@ -114,7 +114,7 @@ pub trait PickerDelegate: Sized + 'static {
         None
     }
     fn can_select(
-        &mut self,
+        &self,
         _ix: usize,
         _window: &mut Window,
         _cx: &mut Context<Picker<Self>>,
@@ -750,7 +750,7 @@ impl<D: PickerDelegate> Picker<D> {
     }
 
     fn render_element(
-        &mut self,
+        &self,
         window: &mut Window,
         cx: &mut Context<Self>,
         ix: usize,
@@ -897,7 +897,7 @@ mod tests {
         }
 
         fn can_select(
-            &mut self,
+            &self,
             ix: usize,
             _window: &mut Window,
             _cx: &mut Context<Picker<Self>>,
@@ -943,11 +943,6 @@ mod tests {
                     .child(ui::Label::new(format!("Item {ix}"))),
             )
         }
-    }
-
-    #[ctor::ctor]
-    fn init_logger() {
-        env_logger::init();
     }
 
     fn init_test(cx: &mut TestAppContext) {
