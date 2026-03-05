@@ -1,6 +1,6 @@
 #![allow(missing_docs)]
 
-use std::{collections::BTreeMap, sync::Arc};
+use std::{borrow::Borrow, collections::BTreeMap, sync::Arc};
 
 use gpui::{HighlightStyle, Hsla};
 use smallvec::SmallVec;
@@ -8,7 +8,47 @@ use smallvec::SmallVec;
 #[derive(Debug, PartialEq, Eq, Clone, Default)]
 pub struct SyntaxTheme {
     pub highlights: Vec<(String, HighlightStyle)>,
-    capture_name_map: BTreeMap<SmallVec<[Arc<str>; 2]>, usize>,
+    capture_name_map: BTreeMap<SmallVec<[CaptureName<'static>; 2]>, usize>,
+}
+
+#[derive(Clone, Debug, Ord, Eq)]
+enum CaptureName<'a> {
+    Borrowed(&'a str),
+    Owned(Arc<str>),
+}
+
+impl<'other> PartialEq<CaptureName<'other>> for CaptureName<'_> {
+    fn eq(&self, other: &CaptureName<'other>) -> bool {
+        let lhs = self.as_ref();
+        let rhs = other.as_ref();
+        lhs == rhs
+    }
+}
+
+impl<'other> PartialOrd<CaptureName<'other>> for CaptureName<'_> {
+    fn partial_cmp(&self, other: &CaptureName<'other>) -> Option<std::cmp::Ordering> {
+        let lhs = self.as_ref();
+        let rhs = other.as_ref();
+        lhs.partial_cmp(rhs)
+    }
+}
+
+impl Borrow<str> for CaptureName<'_> {
+    fn borrow(&self) -> &str {
+        match self {
+            CaptureName::Borrowed(str) => str,
+            CaptureName::Owned(str) => &str,
+        }
+    }
+}
+
+impl AsRef<str> for CaptureName<'_> {
+    fn as_ref(&self) -> &str {
+        match self {
+            CaptureName::Borrowed(str) => str,
+            CaptureName::Owned(str) => &str,
+        }
+    }
 }
 
 impl SyntaxTheme {
@@ -21,11 +61,18 @@ impl SyntaxTheme {
 
     fn create_capture_name_map(
         highlights: &[(String, HighlightStyle)],
-    ) -> BTreeMap<SmallVec<[Arc<str>; 2]>, usize> {
+    ) -> BTreeMap<SmallVec<[CaptureName<'static>; 2]>, usize> {
         highlights
             .iter()
             .enumerate()
-            .map(|(i, (key, _))| (key.split('.').map(Arc::from).collect(), i))
+            .map(|(i, (key, _))| {
+                (
+                    key.split('.')
+                        .map(|component| CaptureName::Owned(Arc::from(component)))
+                        .collect(),
+                    i,
+                )
+            })
             .collect()
     }
 
@@ -71,20 +118,27 @@ impl SyntaxTheme {
         self.get(name).color.unwrap_or_default()
     }
 
-    pub fn highlight_id(&self, name: &str) -> Option<u32> {
+    pub fn highlight_id<'a>(&self, name: &'a str) -> Option<u32> {
         let capture_name = name
             .split('.')
-            .map(Arc::from)
-            .collect::<SmallVec<[Arc<str>; 2]>>();
+            .map(CaptureName::Borrowed)
+            .collect::<SmallVec<[CaptureName<'a>; 2]>>();
         self.capture_name_map
-            .range::<[Arc<str>], _>((
+            .range::<[CaptureName<'a>], _>((
                 std::ops::Bound::Unbounded,
                 std::ops::Bound::Included(capture_name.as_slice()),
             ))
-            .rfind(|(prefix, _)| capture_name.starts_with(prefix.as_slice()))
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rfind(|(prefix, _)| {
+                for (lhs, rhs) in capture_name.iter().zip(prefix.into_iter()) {
+                    if lhs != rhs {
+                        return false;
+                    }
+                }
+                true
+            })
             .map(|(_, index)| *index as u32)
-        // let ix = self.highlights.iter().position(|entry| entry.0 == name)?;
-        // Some(ix as u32)
     }
 
     /// Returns a new [`Arc<SyntaxTheme>`] with the given syntax styles merged in.
