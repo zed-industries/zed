@@ -1243,10 +1243,10 @@ impl Render for Sidebar {
                     )
                     .child(self.render_filter_input(cx))
                     .when(has_query, |this| {
-                        this.pr_2p5().child(
+                        this.pr_1().child(
                             IconButton::new("clear_filter", IconName::Close)
                                 .shape(IconButtonShape::Square)
-                                .tooltip(Tooltip::text("Clear Filter"))
+                                .tooltip(Tooltip::text("Clear Search"))
                                 .on_click(cx.listener(|this, _, window, cx| {
                                     this.reset_filter_editor_text(window, cx);
                                     this.update_entries(window, cx);
