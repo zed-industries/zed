@@ -423,9 +423,21 @@ impl MultiBuffer {
         }
 
         // remove any further trailing excerpts
-        let before = cursor.position.1;
+        let mut before = cursor.position.1;
         cursor.seek_forward(&path_key, Bias::Right);
         let after = cursor.position.1;
+        // if we removed the previous last excerpt, remove the trailing newline from the new last excerpt
+        if cursor.item().is_none() && to_insert.peek().is_none() {
+            new_excerpts.update_last(
+                |excerpt| {
+                    if excerpt.has_trailing_newline {
+                        before -= 1;
+                        excerpt.has_trailing_newline = false;
+                    }
+                },
+                (),
+            );
+        }
         patch.push(Edit {
             old: before..after,
             new: new_excerpts.summary().len()..new_excerpts.summary().len(),
@@ -459,6 +471,7 @@ impl MultiBuffer {
         let changed_trailing_excerpt = suffix.is_empty();
         new_excerpts.append(suffix, ());
         drop(cursor);
+
         snapshot.excerpts = new_excerpts;
         snapshot.buffers.insert(
             buffer_id,

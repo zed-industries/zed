@@ -2607,7 +2607,6 @@ impl MultiBuffer {
         }
 
         paths_to_edit.sort_unstable_by_key(|(path, _, _)| path.clone());
-        dbg!(&paths_to_edit);
 
         let mut edits = Vec::new();
         let mut new_excerpts = SumTree::default();
@@ -6903,7 +6902,7 @@ impl Excerpt {
             path_key,
             path_key_index,
             buffer_id: buffer_snapshot.remote_id(),
-            max_buffer_row: dbg!(range.context.end.to_point(&buffer_snapshot).row),
+            max_buffer_row: range.context.end.to_point(&buffer_snapshot).row,
             text_summary: buffer_snapshot.text_summary_for_range::<TextSummary, _>(
                 range.context.to_offset(&buffer_snapshot),
             ),

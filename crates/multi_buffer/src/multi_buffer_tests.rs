@@ -2815,6 +2815,87 @@ async fn test_random_set_ranges(cx: &mut TestAppContext, mut rng: StdRng) {
     }
 }
 
+#[gpui::test]
+async fn test_remove_last_excerpt(cx: &mut TestAppContext) {
+    let buffer = cx.new(|cx| {
+        Buffer::local(
+            indoc! {"
+    aaa
+    bbb
+    ccc
+    ddd
+    eee
+    fff
+    ggg
+    hhh
+    "},
+            cx,
+        )
+    });
+    let buffer_snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot());
+
+    let multibuffer = cx.new(|cx| {
+        let mut multibuffer = MultiBuffer::new(Capability::ReadWrite);
+        multibuffer.set_excerpt_ranges_for_path(
+            PathKey::sorted(0),
+            buffer.clone(),
+            &buffer_snapshot,
+            vec![
+                ExcerptRange::new(Point::zero()..Point::new(3, 0)),
+                ExcerptRange::new(Point::new(5, 0)..Point::new(7, 0)),
+            ],
+            cx,
+        );
+        multibuffer
+    });
+
+    multibuffer.read_with(cx, |multibuffer, cx| {
+        let snapshot = multibuffer.snapshot(cx);
+
+        let actual_boundary_rows = snapshot
+            .excerpt_boundaries_in_range(MultiBufferOffset(0)..)
+            .map(|b| b.row)
+            .collect::<HashSet<_>>();
+        let actual_row_infos = snapshot.row_infos(MultiBufferRow(0)).collect::<Vec<_>>();
+        let text = snapshot.text();
+        eprintln!(
+            "{}",
+            format_diff(&text, &actual_row_infos, &actual_boundary_rows, Some(false))
+        );
+    });
+
+    multibuffer.update(cx, |multibuffer, cx| {
+        multibuffer.set_excerpt_ranges_for_path(
+            PathKey::sorted(0),
+            buffer,
+            &buffer_snapshot,
+            vec![ExcerptRange::new(Point::zero()..Point::new(3, 0))],
+            cx,
+        );
+    });
+
+    multibuffer.read_with(cx, |multibuffer, cx| {
+        let snapshot = multibuffer.snapshot(cx);
+        let actual_text = snapshot.text();
+        let actual_boundary_rows = snapshot
+            .excerpt_boundaries_in_range(MultiBufferOffset(0)..)
+            .map(|b| b.row)
+            .collect::<HashSet<_>>();
+        let actual_row_infos = snapshot.row_infos(MultiBufferRow(0)).collect::<Vec<_>>();
+        let text = snapshot.text();
+
+        eprintln!(
+            "{}",
+            format_diff(
+                &actual_text,
+                &actual_row_infos,
+                &actual_boundary_rows,
+                Some(false)
+            )
+        );
+    });
+}
+
 #[gpui::test(iterations = 100)]
 async fn test_random_multibuffer(cx: &mut TestAppContext, mut rng: StdRng) {
     let operations = env::var("OPERATIONS")
@@ -3160,17 +3241,6 @@ fn check_multibuffer(
     );
 
     log::info!("Multibuffer content:\n{}", actual_diff);
-    dbg!(
-        snapshot
-            .excerpts()
-            .map(|(buffer_snapshot, excerpt)| {
-                (
-                    buffer_snapshot.remote_id(),
-                    excerpt.range.to_point(&buffer_snapshot),
-                )
-            })
-            .collect::<Vec<_>>()
-    );
 
     assert_eq!(
         actual_row_infos.len(),
@@ -3193,27 +3263,6 @@ fn check_multibuffer(
             start_row
         );
     }
-    // dbg!(&expected_row_infos);
-
-    // dbg!(
-    //     snapshot
-    //         .excerpts()
-    //         .map(|(buffer_snapshot, excerpt)| {
-    //             (
-    //                 buffer_snapshot.remote_id(),
-    //                 excerpt.range.to_point(&buffer_snapshot),
-    //             )
-    //         })
-    //         .collect::<Vec<_>>()
-    // );
-    // dbg!(&expected_row_infos);
-    // dbg!(
-    //     reference
-    //         .excerpts
-    //         .iter()
-    //         .map(|excerpt| { excerpt.range.to_point(&excerpt.buffer.read(cx).snapshot()) })
-    //         .collect::<Vec<_>>()
-    // );
 
     assert_eq!(
         snapshot.widest_line_number(),
@@ -3235,16 +3284,6 @@ fn check_multibuffer(
             .unwrap()
             + 1
     );
-    // let reference_ranges = reference
-    //     .excerpts
-    //     .iter()
-    //     .map(|excerpt| {
-    //         (
-    //             excerpt.info(cx),
-    //             excerpt.range.to_offset(&excerpt.buffer.read(cx).snapshot()),
-    //         )
-    //     })
-    //     .collect::<Vec<_>>();
     for i in 0..snapshot.len().0 {
         // todo!() this seems not useful
         let excerpt = snapshot
