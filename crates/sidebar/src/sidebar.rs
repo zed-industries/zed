@@ -70,6 +70,7 @@ enum ListEntry {
     ProjectHeader {
         path_list: PathList,
         label: SharedString,
+        workspace_index: usize,
         highlight_positions: Vec<usize>,
     },
     Thread {
@@ -539,6 +540,7 @@ impl Sidebar {
                 entries.push(ListEntry::ProjectHeader {
                     path_list: path_list.clone(),
                     label,
+                    workspace_index: index,
                     highlight_positions: workspace_highlight_positions,
                 });
                 entries.extend(matched_threads);
@@ -546,6 +548,7 @@ impl Sidebar {
                 entries.push(ListEntry::ProjectHeader {
                     path_list: path_list.clone(),
                     label,
+                    workspace_index: index,
                     highlight_positions: Vec::new(),
                 });
 
@@ -652,11 +655,13 @@ impl Sidebar {
             ListEntry::ProjectHeader {
                 path_list,
                 label,
+                workspace_index,
                 highlight_positions,
             } => self.render_project_header(
                 ix,
                 path_list,
                 label,
+                *workspace_index,
                 highlight_positions,
                 is_selected,
                 cx,
@@ -706,6 +711,7 @@ impl Sidebar {
         ix: usize,
         path_list: &PathList,
         label: &SharedString,
+        workspace_index: usize,
         highlight_positions: &[usize],
         is_selected: bool,
         cx: &mut Context<Self>,
@@ -736,6 +742,25 @@ impl Sidebar {
                     .px_1()
                     .py_1p5()
                     .gap_0p5()
+                    .child(
+                        IconButton::new(
+                            SharedString::from(format!("project-header-chevron-{}", ix)),
+                            disclosure_icon,
+                        )
+                        .icon_size(IconSize::Small)
+                        .icon_color(Color::Muted)
+                        .shape(IconButtonShape::Square)
+                        .tooltip(Tooltip::text(if is_collapsed {
+                            "Expand"
+                        } else {
+                            "Collapse"
+                        }))
+                        .on_click(cx.listener(
+                            move |this, _, window, cx| {
+                                this.toggle_collapse(&path_list_for_toggle, window, cx);
+                            },
+                        )),
+                    )
                     .child(if highlight_positions.is_empty() {
                         Label::new(label.clone())
                             .size(LabelSize::Small)
@@ -746,14 +771,7 @@ impl Sidebar {
                             .size(LabelSize::Small)
                             .color(Color::Muted)
                             .into_any_element()
-                    })
-                    .child(
-                        div().visible_on_hover(group).child(
-                            Icon::new(disclosure_icon)
-                                .size(IconSize::Small)
-                                .color(Color::Muted),
-                        ),
-                    ),
+                    }),
             )
             .end_hover_slot(
                 h_flex()
@@ -787,9 +805,24 @@ impl Sidebar {
             )
             .on_click(cx.listener(move |this, _, window, cx| {
                 this.selection = None;
-                this.toggle_collapse(&path_list_for_toggle, window, cx);
+                this.activate_workspace(workspace_index, window, cx);
             }))
             .into_any_element()
+    }
+
+    fn activate_workspace(
+        &mut self,
+        workspace_index: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(multi_workspace) = self.multi_workspace.upgrade() else {
+            return;
+        };
+
+        multi_workspace.update(cx, |multi_workspace, cx| {
+            multi_workspace.activate_index(workspace_index, window, cx);
+        });
     }
 
     fn remove_workspace(
@@ -915,9 +948,11 @@ impl Sidebar {
         };
 
         match entry {
-            ListEntry::ProjectHeader { path_list, .. } => {
-                let path_list = path_list.clone();
-                self.toggle_collapse(&path_list, window, cx);
+            ListEntry::ProjectHeader {
+                workspace_index, ..
+            } => {
+                let workspace_index = *workspace_index;
+                self.activate_workspace(workspace_index, window, cx);
             }
             ListEntry::Thread {
                 session_info,
@@ -1797,6 +1832,7 @@ mod tests {
                 ListEntry::ProjectHeader {
                     path_list: expanded_path.clone(),
                     label: "expanded-project".into(),
+                    workspace_index: 0,
                     highlight_positions: Vec::new(),
                 },
                 // Thread with default (Completed) status, not active
@@ -1898,6 +1934,7 @@ mod tests {
                 ListEntry::ProjectHeader {
                     path_list: collapsed_path.clone(),
                     label: "collapsed-project".into(),
+                    workspace_index: 1,
                     highlight_positions: Vec::new(),
                 },
             ];
@@ -2044,11 +2081,16 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_keyboard_confirm_on_project_header_toggles_collapse(cx: &mut TestAppContext) {
+    async fn test_keyboard_confirm_on_project_header_activates_workspace(cx: &mut TestAppContext) {
         let project = init_test_project("/my-project", cx).await;
         let (multi_workspace, cx) =
             cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
         let sidebar = setup_sidebar(&multi_workspace, cx);
+
+        multi_workspace.update_in(cx, |mw, window, cx| {
+            mw.create_workspace(window, cx);
+        });
+        cx.run_until_parked();
 
         let path_list = PathList::new(&[std::path::PathBuf::from("/my-project")]);
         save_n_test_threads(1, &path_list, cx).await;
@@ -2057,29 +2099,35 @@ mod tests {
 
         assert_eq!(
             visible_entries_as_strings(&sidebar, cx),
-            vec!["v [my-project]", "  Thread 1"]
+            vec![
+                "v [my-project]",
+                "  Thread 1",
+                "v [Empty Workspace]",
+                "  [+ New Thread]",
+            ]
+        );
+
+        // Switch to workspace 1 so we can verify confirm switches back.
+        multi_workspace.update_in(cx, |mw, window, cx| {
+            mw.activate_index(1, window, cx);
+        });
+        cx.run_until_parked();
+        assert_eq!(
+            multi_workspace.read_with(cx, |mw, _| mw.active_workspace_index()),
+            1
         );
 
         // Focus the sidebar — focus_in selects the header (index 0)
         open_and_focus_sidebar(&sidebar, &multi_workspace, cx);
         assert_eq!(sidebar.read_with(cx, |s, _| s.selection), Some(0));
 
-        // Press confirm to collapse
+        // Press confirm on project header (workspace 0) to activate it.
         cx.dispatch_action(Confirm);
         cx.run_until_parked();
 
         assert_eq!(
-            visible_entries_as_strings(&sidebar, cx),
-            vec!["> [my-project]  <== selected"]
-        );
-
-        // Confirm again to expand
-        cx.dispatch_action(Confirm);
-        cx.run_until_parked();
-
-        assert_eq!(
-            visible_entries_as_strings(&sidebar, cx),
-            vec!["v [my-project]  <== selected", "  Thread 1",]
+            multi_workspace.read_with(cx, |mw, _| mw.active_workspace_index()),
+            0
         );
     }
 
@@ -2859,10 +2907,10 @@ mod tests {
         cx.run_until_parked();
 
         // User focuses the sidebar and collapses the group using keyboard:
-        // select the header, then press Confirm to toggle collapse.
+        // select the header, then press CollapseSelectedEntry to collapse.
         open_and_focus_sidebar(&sidebar, &multi_workspace, cx);
         assert_eq!(sidebar.read_with(cx, |s, _| s.selection), Some(0));
-        cx.dispatch_action(Confirm);
+        cx.dispatch_action(CollapseSelectedEntry);
         cx.run_until_parked();
 
         assert_eq!(
