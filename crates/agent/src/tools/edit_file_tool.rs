@@ -3,7 +3,7 @@ use super::save_file_tool::SaveFileTool;
 use super::tool_permissions::authorize_file_edit;
 use crate::{
     AgentTool, Templates, Thread, ToolCallEventStream, ToolInput,
-    edit_agent::{EditAgent, EditAgentOutput, EditAgentOutputEvent, EditFormat},
+    edit_agent::{EditAgent, EditAgentOutputEvent, EditFormat},
 };
 use acp_thread::Diff;
 use agent_client_protocol::{self as acp, ToolCallLocation, ToolCallUpdateFields};
@@ -104,8 +104,6 @@ pub enum EditFileToolOutput {
         old_text: Arc<String>,
         #[serde(default)]
         diff: String,
-        #[serde(alias = "raw_output")]
-        edit_agent_output: EditAgentOutput,
     },
     Error {
         error: String,
@@ -253,7 +251,7 @@ impl AgentTool for EditFileTool {
                     error: "thread was dropped".to_string(),
                 })?;
 
-            let (project_path, abs_path, allow_thinking, authorize) =
+            let (project_path, abs_path, allow_thinking, update_agent_location, authorize) =
                 cx.update(|cx| {
                     let project_path = resolve_path(&input, project.clone(), cx).map_err(|err| {
                         EditFileToolOutput::Error {
@@ -271,8 +269,11 @@ impl AgentTool for EditFileTool {
                         .thread
                         .read_with(cx, |thread, _cx| thread.thinking_enabled())
                         .unwrap_or(true);
+
+                    let update_agent_location = self.thread.read_with(cx, |thread, _cx| !thread.is_subagent()).unwrap_or_default();
+
                     let authorize = self.authorize(&input, &event_stream, cx);
-                    Ok::<_, EditFileToolOutput>((project_path, abs_path, allow_thinking, authorize))
+                    Ok::<_, EditFileToolOutput>((project_path, abs_path, allow_thinking, update_agent_location, authorize))
                 })?;
 
             let result: anyhow::Result<EditFileToolOutput> = async {
@@ -293,6 +294,7 @@ impl AgentTool for EditFileTool {
                     self.templates.clone(),
                     edit_format,
                     allow_thinking,
+                    update_agent_location,
                 );
 
                 let buffer = project
@@ -432,7 +434,7 @@ impl AgentTool for EditFileTool {
                     }
                 }
 
-                let edit_agent_output = output.await?;
+                output.await?;
 
                 let format_on_save_enabled = buffer.read_with(cx, |buffer, cx| {
                     let settings = language_settings::language_settings(
@@ -524,7 +526,6 @@ impl AgentTool for EditFileTool {
                     new_text,
                     old_text,
                     diff: unified_diff,
-                    edit_agent_output,
                 })
             }.await;
             result

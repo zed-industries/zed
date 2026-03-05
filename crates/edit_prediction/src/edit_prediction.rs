@@ -137,10 +137,13 @@ pub struct EditPredictionStore {
     user_store: Entity<UserStore>,
     llm_token: LlmApiToken,
     _llm_token_subscription: Subscription,
+    _fetch_experiments_task: Task<()>,
     projects: HashMap<EntityId, ProjectState>,
     update_required: bool,
     edit_prediction_model: EditPredictionModel,
     zeta2_raw_config: Option<Zeta2RawConfig>,
+    preferred_experiment: Option<String>,
+    available_experiments: Vec<String>,
     pub sweep_ai: SweepAi,
     pub mercury: Mercury,
     data_collection_choice: DataCollectionChoice,
@@ -154,8 +157,7 @@ pub struct EditPredictionStore {
 
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub enum EditPredictionModel {
-    Zeta1,
-    Zeta2,
+    Zeta,
     Fim { format: EditPredictionPromptFormat },
     Sweep,
     Mercury,
@@ -173,6 +175,8 @@ pub struct EditPredictionModelInput {
     trigger: PredictEditsRequestTrigger,
     diagnostic_search_range: Range<Point>,
     debug_tx: Option<mpsc::UnboundedSender<DebugEvent>>,
+    can_collect_data: bool,
+    is_open_source: bool,
     pub user_actions: Vec<UserActionRecord>,
 }
 
@@ -697,11 +701,23 @@ impl EditPredictionStore {
         })
         .detach();
 
+        let mut current_user = user_store.read(cx).watch_current_user();
+        let fetch_experiments_task = cx.spawn(async move |this, cx| {
+            while current_user.borrow().is_none() {
+                current_user.next().await;
+            }
+            this.update(cx, |this, cx| {
+                this.refresh_available_experiments(cx);
+            })
+            .log_err();
+        });
+
         let this = Self {
             projects: HashMap::default(),
             client,
             user_store,
             llm_token,
+            _fetch_experiments_task: fetch_experiments_task,
             _llm_token_subscription: cx.subscribe(
                 &refresh_llm_token_listener,
                 |this, _listener, _event, cx| {
@@ -715,8 +731,10 @@ impl EditPredictionStore {
                 },
             ),
             update_required: false,
-            edit_prediction_model: EditPredictionModel::Zeta2,
+            edit_prediction_model: EditPredictionModel::Zeta,
             zeta2_raw_config: Self::zeta2_raw_config_from_env(),
+            preferred_experiment: None,
+            available_experiments: Vec::new(),
             sweep_ai: SweepAi::new(cx),
             mercury: Mercury::new(cx),
 
@@ -751,6 +769,60 @@ impl EditPredictionStore {
         self.zeta2_raw_config.as_ref()
     }
 
+    pub fn preferred_experiment(&self) -> Option<&str> {
+        self.preferred_experiment.as_deref()
+    }
+
+    pub fn set_preferred_experiment(&mut self, experiment: Option<String>) {
+        self.preferred_experiment = experiment;
+    }
+
+    pub fn available_experiments(&self) -> &[String] {
+        &self.available_experiments
+    }
+
+    pub fn refresh_available_experiments(&mut self, cx: &mut Context<Self>) {
+        let client = self.client.clone();
+        let llm_token = self.llm_token.clone();
+        let app_version = AppVersion::global(cx);
+        cx.spawn(async move |this, cx| {
+            let experiments = cx
+                .background_spawn(async move {
+                    let http_client = client.http_client();
+                    let token = llm_token.acquire(&client).await?;
+                    let url = http_client.build_zed_llm_url("/edit_prediction_experiments", &[])?;
+                    let request = http_client::Request::builder()
+                        .method(Method::GET)
+                        .uri(url.as_ref())
+                        .header("Authorization", format!("Bearer {}", token))
+                        .header(ZED_VERSION_HEADER_NAME, app_version.to_string())
+                        .body(Default::default())?;
+                    let mut response = http_client.send(request).await?;
+                    if response.status().is_success() {
+                        let mut body = Vec::new();
+                        response.body_mut().read_to_end(&mut body).await?;
+                        let experiments: Vec<String> = serde_json::from_slice(&body)?;
+                        Ok(experiments)
+                    } else {
+                        let mut body = String::new();
+                        response.body_mut().read_to_string(&mut body).await?;
+                        anyhow::bail!(
+                            "Failed to fetch experiments: {:?}\nBody: {}",
+                            response.status(),
+                            body
+                        );
+                    }
+                })
+                .await?;
+            this.update(cx, |this, cx| {
+                this.available_experiments = experiments;
+                cx.notify();
+            })?;
+            anyhow::Ok(())
+        })
+        .detach_and_log_err(cx);
+    }
+
     pub fn icons(&self, cx: &App) -> edit_prediction_types::EditPredictionIconSet {
         use ui::IconName;
         match self.edit_prediction_model {
@@ -764,7 +836,7 @@ impl EditPredictionStore {
             EditPredictionModel::Mercury => {
                 edit_prediction_types::EditPredictionIconSet::new(IconName::Inception)
             }
-            EditPredictionModel::Zeta1 | EditPredictionModel::Zeta2 => {
+            EditPredictionModel::Zeta => {
                 edit_prediction_types::EditPredictionIconSet::new(IconName::ZedPredict)
                     .with_disabled(IconName::ZedPredictDisabled)
                     .with_up(IconName::ZedPredictUp)
@@ -893,10 +965,7 @@ impl EditPredictionStore {
     }
 
     pub fn usage(&self, cx: &App) -> Option<EditPredictionUsage> {
-        if matches!(
-            self.edit_prediction_model,
-            EditPredictionModel::Zeta2 | EditPredictionModel::Zeta1
-        ) {
+        if matches!(self.edit_prediction_model, EditPredictionModel::Zeta) {
             self.user_store.read(cx).edit_prediction_usage()
         } else {
             None
@@ -1345,7 +1414,7 @@ impl EditPredictionStore {
                     cx,
                 );
             }
-            EditPredictionModel::Zeta1 | EditPredictionModel::Zeta2 => {
+            EditPredictionModel::Zeta => {
                 let is_cloud = !matches!(
                     all_language_settings(None, cx).edit_predictions.provider,
                     EditPredictionProvider::Ollama | EditPredictionProvider::OpenAiCompatibleApi
@@ -1606,7 +1675,7 @@ impl EditPredictionStore {
         cx: &App,
     ) {
         match self.edit_prediction_model {
-            EditPredictionModel::Zeta1 | EditPredictionModel::Zeta2 => {
+            EditPredictionModel::Zeta => {
                 let is_cloud = !matches!(
                     all_language_settings(None, cx).edit_predictions.provider,
                     EditPredictionProvider::Ollama | EditPredictionProvider::OpenAiCompatibleApi
@@ -1836,7 +1905,6 @@ fn is_ep_store_provider(provider: EditPredictionProvider) -> bool {
         | EditPredictionProvider::Experimental(_) => true,
         EditPredictionProvider::None
         | EditPredictionProvider::Copilot
-        | EditPredictionProvider::Supermaven
         | EditPredictionProvider::Codestral => false,
     }
 }
@@ -1877,7 +1945,6 @@ impl EditPredictionStore {
                 EditPredictionProvider::OpenAiCompatibleApi => (false, 2),
                 EditPredictionProvider::None
                 | EditPredictionProvider::Copilot
-                | EditPredictionProvider::Supermaven
                 | EditPredictionProvider::Codestral => {
                     log::error!("queue_prediction_refresh called with non-store provider");
                     return;
@@ -2060,7 +2127,7 @@ impl EditPredictionStore {
         let stored_events = project_state.events(cx);
         let has_events = !stored_events.is_empty();
         let events: Vec<Arc<zeta_prompt::Event>> =
-            stored_events.into_iter().map(|e| e.event).collect();
+            stored_events.iter().map(|e| e.event.clone()).collect();
         let debug_tx = project_state.debug_tx.clone();
 
         let snapshot = active_buffer.read(cx).snapshot();
@@ -2094,9 +2161,20 @@ impl EditPredictionStore {
 
         let related_files = self.context_for_project(&project, cx);
 
+        let is_open_source = snapshot
+            .file()
+            .map_or(false, |file| self.is_file_open_source(&project, file, cx))
+            && events.iter().all(|event| event.in_open_source_repo())
+            && related_files.iter().all(|file| file.in_open_source_repo);
+
+        let can_collect_data = !cfg!(test)
+            && is_open_source
+            && self.is_data_collection_enabled(cx)
+            && matches!(self.edit_prediction_model, EditPredictionModel::Zeta);
+
         let inputs = EditPredictionModelInput {
             project: project.clone(),
-            buffer: active_buffer,
+            buffer: active_buffer.clone(),
             snapshot: snapshot,
             position,
             events,
@@ -2106,21 +2184,25 @@ impl EditPredictionStore {
             diagnostic_search_range: diagnostic_search_range,
             debug_tx,
             user_actions,
+            can_collect_data,
+            is_open_source,
         };
 
+        if can_collect_data && rand::random_ratio(1, 1000) {
+            if let Some(task) = capture_example(
+                project.clone(),
+                active_buffer,
+                position,
+                stored_events,
+                false,
+                cx,
+            ) {
+                task.detach();
+            }
+        }
+
         let task = match self.edit_prediction_model {
-            EditPredictionModel::Zeta1 => zeta::request_prediction_with_zeta(
-                self,
-                inputs,
-                Some(zeta_prompt::EditPredictionModelKind::Zeta1),
-                cx,
-            ),
-            EditPredictionModel::Zeta2 => zeta::request_prediction_with_zeta(
-                self,
-                inputs,
-                Some(zeta_prompt::EditPredictionModelKind::Zeta2),
-                cx,
-            ),
+            EditPredictionModel::Zeta => zeta::request_prediction_with_zeta(self, inputs, cx),
             EditPredictionModel::Fim { format } => fim::request_prediction(inputs, format, cx),
             EditPredictionModel::Sweep => self.sweep_ai.request_prediction_with_sweep(inputs, cx),
             EditPredictionModel::Mercury => self.mercury.request_prediction(inputs, cx),

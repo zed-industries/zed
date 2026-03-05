@@ -16,7 +16,7 @@ use release_channel::AppVersion;
 use serde::Serialize;
 use std::{mem, ops::Range, path::Path, sync::Arc, time::Instant};
 
-use zeta_prompt::ZetaPromptInput;
+use zeta_prompt::{ExcerptRanges, ZetaPromptInput};
 
 const MERCURY_API_URL: &str = "https://api.inceptionlabs.ai/v1/edit/completions";
 const MAX_REWRITE_TOKENS: usize = 150;
@@ -83,6 +83,12 @@ impl Mercury {
 
             let editable_offset_range = editable_range.to_offset(&snapshot);
 
+            let editable_range_in_excerpt = (editable_offset_range.start
+                - context_offset_range.start)
+                ..(editable_offset_range.end - context_offset_range.start);
+            let context_range_in_excerpt =
+                0..(context_offset_range.end - context_offset_range.start);
+
             let inputs = zeta_prompt::ZetaPromptInput {
                 events,
                 related_files,
@@ -93,12 +99,17 @@ impl Mercury {
                     .text_for_range(context_range)
                     .collect::<String>()
                     .into(),
-                editable_range_in_excerpt: (editable_offset_range.start
-                    - context_offset_range.start)
-                    ..(editable_offset_range.end - context_offset_range.start),
+                experiment: None,
                 excerpt_start_row: Some(context_start_row),
-                excerpt_ranges: None,
-                preferred_model: None,
+                excerpt_ranges: ExcerptRanges {
+                    editable_150: editable_range_in_excerpt.clone(),
+                    editable_180: editable_range_in_excerpt.clone(),
+                    editable_350: editable_range_in_excerpt.clone(),
+                    editable_150_context_350: context_range_in_excerpt.clone(),
+                    editable_180_context_350: context_range_in_excerpt.clone(),
+                    editable_350_context_150: context_range_in_excerpt.clone(),
+                    ..Default::default()
+                },
                 in_open_source_repo: false,
                 can_collect_data: false,
             };
@@ -273,19 +284,18 @@ fn build_prompt(inputs: &ZetaPromptInput) -> String {
             prompt.push_str(inputs.cursor_path.as_os_str().to_string_lossy().as_ref());
             prompt.push('\n');
 
-            prompt.push_str(&inputs.cursor_excerpt[0..inputs.editable_range_in_excerpt.start]);
+            let editable_range = &inputs.excerpt_ranges.editable_350;
+            prompt.push_str(&inputs.cursor_excerpt[0..editable_range.start]);
             push_delimited(prompt, CODE_TO_EDIT_START..CODE_TO_EDIT_END, |prompt| {
                 prompt.push_str(
-                    &inputs.cursor_excerpt
-                        [inputs.editable_range_in_excerpt.start..inputs.cursor_offset_in_excerpt],
+                    &inputs.cursor_excerpt[editable_range.start..inputs.cursor_offset_in_excerpt],
                 );
                 prompt.push_str(CURSOR_TAG);
                 prompt.push_str(
-                    &inputs.cursor_excerpt
-                        [inputs.cursor_offset_in_excerpt..inputs.editable_range_in_excerpt.end],
+                    &inputs.cursor_excerpt[inputs.cursor_offset_in_excerpt..editable_range.end],
                 );
             });
-            prompt.push_str(&inputs.cursor_excerpt[inputs.editable_range_in_excerpt.end..]);
+            prompt.push_str(&inputs.cursor_excerpt[editable_range.end..]);
         },
     );
 

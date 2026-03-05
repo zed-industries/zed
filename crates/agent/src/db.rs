@@ -76,6 +76,8 @@ pub struct DbThread {
     pub thinking_enabled: bool,
     #[serde(default)]
     pub thinking_effort: Option<String>,
+    #[serde(default)]
+    pub draft_prompt: Option<Vec<acp::ContentBlock>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -117,6 +119,7 @@ impl SharedThread {
             speed: None,
             thinking_enabled: false,
             thinking_effort: None,
+            draft_prompt: None,
         }
     }
 
@@ -294,6 +297,7 @@ impl DbThread {
             speed: None,
             thinking_enabled: false,
             thinking_effort: None,
+            draft_prompt: None,
         })
     }
 }
@@ -644,6 +648,7 @@ mod tests {
             speed: None,
             thinking_enabled: false,
             thinking_effort: None,
+            draft_prompt: None,
         }
     }
 
@@ -724,6 +729,22 @@ mod tests {
         assert!(
             db_thread.subagent_context.is_none(),
             "Legacy threads without subagent_context should default to None"
+        );
+    }
+
+    #[test]
+    fn test_draft_prompt_defaults_to_none() {
+        let json = r#"{
+            "title": "Old Thread",
+            "messages": [],
+            "updated_at": "2024-01-01T00:00:00Z"
+        }"#;
+
+        let db_thread: DbThread = serde_json::from_str(json).expect("Failed to deserialize");
+
+        assert!(
+            db_thread.draft_prompt.is_none(),
+            "Legacy threads without draft_prompt field should default to None"
         );
     }
 

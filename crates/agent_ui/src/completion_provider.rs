@@ -617,6 +617,7 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
                                     let crease = crate::mention_set::crease_for_mention(
                                         mention_uri.name().into(),
                                         mention_uri.icon_path(cx),
+                                        None,
                                         range,
                                         editor.downgrade(),
                                     );

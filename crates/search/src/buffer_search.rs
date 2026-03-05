@@ -117,18 +117,17 @@ impl Render for BufferSearchBar {
                                 .toggle_state(!is_split)
                                 .tooltip(Tooltip::element(move |_, cx| {
                                     v_flex()
-                                        .gap_1()
-                                        .child(Label::new("Unified"))
+                                        .child("Unified")
                                         .child(
                                             h_flex()
                                                 .gap_0p5()
-                                                .text_sm()
+                                                .text_ui_sm(cx)
                                                 .text_color(Color::Muted.color(cx))
                                                 .children(render_modifiers(
                                                     &gpui::Modifiers::secondary_key(),
                                                     PlatformStyle::platform(),
                                                     None,
-                                                    Some(TextSize::Default.rems(cx).into()),
+                                                    Some(TextSize::Small.rems(cx).into()),
                                                     false,
                                                 ))
                                                 .child("click to set as default"),
@@ -168,18 +167,17 @@ impl Render for BufferSearchBar {
                                 .toggle_state(is_split)
                                 .tooltip(Tooltip::element(move |_, cx| {
                                     v_flex()
-                                        .gap_1()
-                                        .child(Label::new("Split"))
+                                        .child("Split")
                                         .child(
                                             h_flex()
                                                 .gap_0p5()
-                                                .text_sm()
+                                                .text_ui_sm(cx)
                                                 .text_color(Color::Muted.color(cx))
                                                 .children(render_modifiers(
                                                     &gpui::Modifiers::secondary_key(),
                                                     PlatformStyle::platform(),
                                                     None,
-                                                    Some(TextSize::Default.rems(cx).into()),
+                                                    Some(TextSize::Small.rems(cx).into()),
                                                     false,
                                                 ))
                                                 .child("click to set as default"),
