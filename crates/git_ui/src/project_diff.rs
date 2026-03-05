@@ -1793,6 +1793,7 @@ impl RenderOnce for ProjectDiffEmptyState {
                             self.focus_handle,
                             "push".into(),
                             ahead_count as u32,
+                            false,
                         )))
                     } else if branch_not_on_remote {
                         this.child(
@@ -1804,7 +1805,7 @@ impl RenderOnce for ProjectDiffEmptyState {
                                 ),
                         )
                         .child(
-                            div().child(render_publish_button(self.focus_handle, "publish".into())),
+                            div().child(render_publish_button(self.focus_handle, "publish".into(), false)),
                         )
                     } else {
                         this.child(Label::new("Remote status unknown").color(Color::Muted))
