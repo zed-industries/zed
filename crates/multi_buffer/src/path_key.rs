@@ -409,7 +409,7 @@ impl MultiBuffer {
                         next_excerpt.clone(),
                         to_insert.peek().is_some()
                             || cursor
-                                .item()
+                                .next_item()
                                 .is_some_and(|item| item.path_key_index != path_key_index),
                     ),
                     (),
@@ -431,7 +431,11 @@ impl MultiBuffer {
             new_excerpts.update_last(
                 |excerpt| {
                     if excerpt.has_trailing_newline {
-                        before -= 1;
+                        before.0.0 = before
+                            .0
+                            .0
+                            .checked_sub(1)
+                            .expect("should have preceding excerpt");
                         excerpt.has_trailing_newline = false;
                     }
                 },
@@ -539,7 +543,7 @@ impl MultiBuffer {
             .cursor::<Dimensions<PathKey, ExcerptOffset>>(());
         let mut new_excerpts = SumTree::new(());
         new_excerpts.append(cursor.slice(&path, Bias::Left), ());
-        let edit_start = cursor.position.1;
+        let mut edit_start = cursor.position.1;
         let mut buffer_id = None;
         if let Some(excerpt) = cursor.item()
             && excerpt.path_key == path
@@ -552,11 +556,6 @@ impl MultiBuffer {
         let changed_trailing_excerpt = suffix.is_empty();
         new_excerpts.append(suffix, ());
 
-        let edit = Edit {
-            old: edit_start..edit_end,
-            new: edit_start..edit_start,
-        };
-
         if let Some(buffer_id) = buffer_id {
             snapshot.buffers.remove(&buffer_id);
             self.buffers.remove(&buffer_id);
@@ -567,8 +566,25 @@ impl MultiBuffer {
         drop(cursor);
         if changed_trailing_excerpt {
             snapshot.trailing_excerpt_update_count += 1;
-            new_excerpts.update_last(|excerpt| excerpt.has_trailing_newline = false, ())
+            new_excerpts.update_last(
+                |excerpt| {
+                    if excerpt.has_trailing_newline {
+                        excerpt.has_trailing_newline = false;
+                        edit_start.0.0 = edit_start
+                            .0
+                            .0
+                            .checked_sub(1)
+                            .expect("should have at least one excerpt");
+                    }
+                },
+                (),
+            )
         }
+
+        let edit = Edit {
+            old: edit_start..edit_end,
+            new: edit_start..edit_start,
+        };
         snapshot.excerpts = new_excerpts;
 
         let edits =
