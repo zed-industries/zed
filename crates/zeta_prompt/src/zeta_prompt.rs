@@ -2502,7 +2502,8 @@ pub mod v0304_variable_edit {
     //! three<|user_cursor|>
     //! four
     //! five
-    //!
+    //! <|fim_prefix|>
+    //
     //! Expected output (model generates):
     //!
     //! two
@@ -2518,6 +2519,7 @@ pub mod v0304_variable_edit {
 
     pub fn special_tokens() -> &'static [&'static str] {
         &[
+            "<|fim_prefix|>",
             "<|fim_suffix|>",
             "<|fim_middle|>",
             "<|file_sep|>",
@@ -2540,6 +2542,7 @@ pub mod v0304_variable_edit {
         if !prompt.ends_with('\n') {
             prompt.push('\n');
         }
+        prompt.push_str("<|fim_prefix|>\n")
     }
 
     /// Apply a variable-edit model output to the original context text.
@@ -3034,7 +3037,7 @@ pub mod v0304_variable_edit {
             write_cursor_excerpt_section(&mut prompt, path, context, cursor_offset);
             assert_eq!(
                 prompt,
-                "<|file_sep|>test.rs\nfn main() {\n    h<|user_cursor|>ello();\n}\n"
+                "<|file_sep|>test.rs\nfn main() {\n    h<|user_cursor|>ello();\n}\n<|fim_prefix|>\n"
             );
         }
 
