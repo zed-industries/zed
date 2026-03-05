@@ -246,7 +246,7 @@ pub struct ThreadView {
     pub queued_message_editor_subscriptions: Vec<Subscription>,
     pub last_synced_queue_length: usize,
     pub turn_fields: TurnFields,
-    pub rules_token_counts: RulesTokenCounts,
+    rules_token_counts: RulesTokenCounts,
     pub discarded_partial_edits: HashSet<agent_client_protocol::ToolCallId>,
     pub is_loading_contents: bool,
     pub new_server_version_available: Option<SharedString>,
@@ -3103,14 +3103,16 @@ impl ThreadView {
             let result: anyhow::Result<(Option<u64>, Option<u64>)> = async {
                 let user_tokens = if needs_user {
                     let request = Self::build_rules_token_request(user_rules_text);
-                    Some(cx.update(|cx| model.count_tokens(request, cx))?.await?)
+                    let token_task = cx.update(|cx| model.count_tokens(request, cx)).await?;
+                    Some(token_task)
                 } else {
                     None
                 };
 
                 let project_tokens = if needs_project {
                     let request = Self::build_rules_token_request(project_rules_text);
-                    Some(cx.update(|cx| model.count_tokens(request, cx))?.await?)
+                    let token_task = cx.update(|cx| model.count_tokens(request, cx)).await?;
+                    Some(token_task)
                 } else {
                     None
                 };
@@ -3139,7 +3141,10 @@ impl ThreadView {
     fn render_token_usage(&mut self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
         let (usage, is_generating) = {
             let thread = self.thread.read(cx);
-            (thread.token_usage()?, thread.status() != ThreadStatus::Idle)
+            (
+                thread.token_usage()?.clone(),
+                thread.status() != ThreadStatus::Idle,
+            )
         };
         let show_split = self.supports_split_token_display(cx);
 
