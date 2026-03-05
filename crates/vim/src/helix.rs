@@ -1353,37 +1353,6 @@ mod test {
             Mode::HelixNormal,
         );
 
-        // Linewise selections should not over-advance when the following line is empty.
-        cx.set_state(
-            indoc! {"
-            line one
-            line ˇtwo
-
-            line four
-            line five"},
-            Mode::HelixNormal,
-        );
-        cx.simulate_keystrokes("x");
-        cx.assert_state(
-            indoc! {"
-            line one
-            «line two
-            ˇ»
-            line four
-            line five"},
-            Mode::HelixNormal,
-        );
-        cx.simulate_keystrokes("x");
-        cx.assert_state(
-            indoc! {"
-            line one
-            «line two
-
-            ˇ»line four
-            line five"},
-            Mode::HelixNormal,
-        );
-
         // Pressing x in empty line, select next line (because helix considers cursor a selection)
         cx.set_state(
             indoc! {"
@@ -1909,14 +1878,20 @@ mod test {
     }
 
     #[gpui::test]
-    async fn test_helix_select_line_keeps_cursor_at_line_end(cx: &mut gpui::TestAppContext) {
+    async fn test_helix_select_lines_does_not_over_advance_when_next_line_is_empty(
+        cx: &mut gpui::TestAppContext,
+    ) {
         let mut cx = VimTestContext::new(cx, true).await;
         cx.enable_helix();
-        cx.set_state(
+        cx.set_state("line one\nline twoˇ\n\nline four\nline five", Mode::HelixNormal);
+        cx.simulate_keystrokes("x");
+        cx.assert_state(
             indoc! {"
             line one
-            line twoˇ
-            line three"},
+            «line two
+            ˇ»
+            line four
+            line five"},
             Mode::HelixNormal,
         );
         cx.simulate_keystrokes("x");
@@ -1924,7 +1899,9 @@ mod test {
             indoc! {"
             line one
             «line two
-            ˇ»line three"},
+
+            ˇ»line four
+            line five"},
             Mode::HelixNormal,
         );
     }
