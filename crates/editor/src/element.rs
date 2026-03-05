@@ -3590,15 +3590,40 @@ impl EditorElement {
         }
         let mut diff_hunk_signs: HashMap<MultiBufferRow, DiffHunkSignLayout> = HashMap::default();
         let scroll_top = scroll_position.y * ScrollPixelOffset::from(line_height);
+
+        let is_light = cx.theme().appearance().is_light();
+        let gutter_bg_color = cx.theme().colors().editor_gutter_background;
+
         for (ix, row_info) in buffer_rows.iter().enumerate() {
             let Some(diff_status) = row_info.diff_status else {
                 continue;
             };
 
             let (diff_sign, color) = match diff_status.kind {
-                DiffHunkStatusKind::Added => ("+", cx.theme().colors().version_control_added),
-                DiffHunkStatusKind::Modified => ("~", cx.theme().colors().version_control_modified),
-                DiffHunkStatusKind::Deleted => ("-", cx.theme().colors().version_control_deleted),
+                DiffHunkStatusKind::Added => (
+                    "+",
+                    compute_diff_hunk_sign_color(
+                        is_light,
+                        gutter_bg_color,
+                        cx.theme().colors().version_control_added,
+                    ),
+                ),
+                DiffHunkStatusKind::Modified => (
+                    "~",
+                    compute_diff_hunk_sign_color(
+                        is_light,
+                        gutter_bg_color,
+                        cx.theme().colors().version_control_modified,
+                    ),
+                ),
+                DiffHunkStatusKind::Deleted => (
+                    "-",
+                    compute_diff_hunk_sign_color(
+                        is_light,
+                        gutter_bg_color,
+                        cx.theme().colors().version_control_deleted,
+                    ),
+                ),
             };
             let shaped_line = self.shape_line_number(SharedString::from(diff_sign), color, window);
             let line_origin = gutter_hitbox.map(|gutter_hitbox| {
@@ -12536,6 +12561,17 @@ fn compute_auto_height_layout(
     };
 
     Some(size(width, final_height))
+}
+
+fn compute_diff_hunk_sign_color(
+    is_light: bool,
+    gutter_bg_color: Hsla,
+    diff_hunk_color: Hsla,
+) -> Hsla {
+    let diff_hunk_status_bg_opacity = if is_light { 0.16 } else { 0.12 };
+    let diff_hunk_bg_color = diff_hunk_color.opacity(diff_hunk_status_bg_opacity);
+    let diff_hunk_sign_bg_color = gutter_bg_color.blend(diff_hunk_bg_color);
+    ensure_minimum_contrast(diff_hunk_color, diff_hunk_sign_bg_color, 70.0)
 }
 
 #[cfg(test)]
