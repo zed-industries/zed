@@ -337,7 +337,7 @@ impl Render for BufferSearchBar {
         };
 
         let query_column = input_style
-            .child(div().flex_1().min_w(px(0.)).child(render_text_input(
+            .child(div().flex_1().min_w_0().py_1().child(render_text_input(
                 &self.query_editor,
                 color_override,
                 cx,
@@ -486,6 +486,7 @@ impl Render for BufferSearchBar {
             let replace_column = input_base_styles(replacement_border).child(
                 div()
                     .flex_1()
+                    .py_1()
                     .child(render_text_input(&self.replacement_editor, None, cx)),
             );
             let focus_handle = self.replacement_editor.read(cx).focus_handle(cx);

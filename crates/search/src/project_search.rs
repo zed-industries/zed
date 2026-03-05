@@ -2086,7 +2086,7 @@ impl Render for ProjectSearchBar {
             .on_action(
                 cx.listener(|this, action, window, cx| this.next_history_query(action, window, cx)),
             )
-            .child(div().flex_1().child(render_text_input(
+            .child(div().flex_1().py_1().child(render_text_input(
                 &search.query_editor,
                 color_override,
                 cx,
@@ -2249,9 +2249,11 @@ impl Render for ProjectSearchBar {
 
         let replace_line = search.replace_enabled.then(|| {
             let replace_column = input_base_styles(InputPanel::Replacement).child(
-                div()
-                    .flex_1()
-                    .child(render_text_input(&search.replacement_editor, None, cx)),
+                div().flex_1().py_1().child(render_text_input(
+                    &search.replacement_editor,
+                    None,
+                    cx,
+                )),
             );
 
             let focus_handle = search.replacement_editor.read(cx).focus_handle(cx);
