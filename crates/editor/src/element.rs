@@ -4157,6 +4157,7 @@ impl EditorElement {
 
         div()
             .id(block_id)
+            .cursor(CursorStyle::Arrow)
             .w_full()
             .h((block_height as f32) * line_height)
             .flex()
@@ -11123,12 +11124,6 @@ impl Element for EditorElement {
                     self.paint_mouse_listeners(layout, window, cx);
                     self.paint_background(layout, window, cx);
 
-                    if !layout.spacer_blocks.is_empty() {
-                        window.with_element_namespace("blocks", |window| {
-                            self.paint_spacer_blocks(layout, window, cx);
-                        });
-                    }
-
                     self.paint_indent_guides(layout, window, cx);
 
                     if layout.gutter_hitbox.size.width > Pixels::ZERO {
@@ -11137,6 +11132,12 @@ impl Element for EditorElement {
                     }
 
                     self.paint_text(layout, window, cx);
+
+                    if !layout.spacer_blocks.is_empty() {
+                        window.with_element_namespace("blocks", |window| {
+                            self.paint_spacer_blocks(layout, window, cx);
+                        });
+                    }
 
                     if layout.gutter_hitbox.size.width > Pixels::ZERO {
                         self.paint_gutter_highlights(layout, window, cx);
