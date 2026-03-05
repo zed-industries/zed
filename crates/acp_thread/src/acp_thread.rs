@@ -1272,6 +1272,10 @@ impl AcpThread {
         }
     }
 
+    pub fn supports_rewind(&self, cx: &App) -> bool {
+        self.connection.truncate(&self.session_id, cx).is_some()
+    }
+
     pub fn had_error(&self) -> bool {
         self.had_error
     }
@@ -1918,11 +1922,7 @@ impl AcpThread {
         let request = acp::PromptRequest::new(self.session_id.clone(), message.clone());
         let git_store = self.project.read(cx).git_store().clone();
 
-        let message_id = if self.connection.truncate(&self.session_id, cx).is_some() {
-            Some(UserMessageId::new())
-        } else {
-            None
-        };
+        let message_id = Some(UserMessageId::new());
 
         self.run_turn(cx, async move |this, cx| {
             this.update(cx, |this, cx| {
@@ -2133,15 +2133,22 @@ impl AcpThread {
             .checkpoint
             .as_ref()
             .map(|c| c.git_checkpoint.clone());
+        let supports_rewind = self.supports_rewind(cx);
 
         // Cancel any in-progress generation before restoring
         let cancel_task = self.cancel(cx);
-        let rewind = self.rewind(id.clone(), cx);
+        let rewind = if supports_rewind {
+            Some(self.rewind(id.clone(), cx))
+        } else {
+            None
+        };
         let git_store = self.project.read(cx).git_store().clone();
 
         cx.spawn(async move |_, cx| {
             cancel_task.await;
-            rewind.await?;
+            if let Some(rewind) = rewind {
+                rewind.await?;
+            }
             if let Some(checkpoint) = checkpoint {
                 git_store
                     .update(cx, |git, cx| git.restore_checkpoint(checkpoint, cx))
@@ -3647,6 +3654,119 @@ mod tests {
         assert_eq!(fs.files(), vec![Path::new(path!("/test/file-0"))]);
     }
 
+    #[gpui::test(iterations = 10)]
+    async fn test_restore_checkpoint_without_truncate(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/test"),
+            json!({
+                ".git": {}
+            }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [path!("/test").as_ref()], cx).await;
+
+        let next_filename = Arc::new(AtomicUsize::new(0));
+        let connection = Rc::new(
+            FakeAgentConnection::new()
+                .without_truncate()
+                .on_user_message({
+                    let fs = fs.clone();
+                    let next_filename = next_filename.clone();
+                    move |request, thread, mut cx| {
+                        let fs = fs.clone();
+                        let next_filename = next_filename.clone();
+                        async move {
+                            let filename =
+                                format!("/test/file-{}", next_filename.fetch_add(1, SeqCst));
+                            fs.write(Path::new(&filename), b"").await?;
+
+                            let acp::ContentBlock::Text(content) = &request.prompt[0] else {
+                                panic!("expected text content block");
+                            };
+
+                            thread.update(&mut cx, |thread, cx| {
+                                thread
+                                    .handle_session_update(
+                                        acp::SessionUpdate::AgentMessageChunk(
+                                            acp::ContentChunk::new(
+                                                content.text.to_uppercase().into(),
+                                            ),
+                                        ),
+                                        cx,
+                                    )
+                                    .unwrap();
+                            })?;
+
+                            Ok(acp::PromptResponse::new(acp::StopReason::EndTurn))
+                        }
+                        .boxed_local()
+                    }
+                }),
+        );
+
+        let thread = cx
+            .update(|cx| connection.new_session(project, Path::new(path!("/test")), cx))
+            .await
+            .unwrap();
+
+        cx.update(|cx| thread.update(cx, |thread, cx| thread.send(vec!["first".into()], cx)))
+            .await
+            .unwrap();
+        cx.update(|cx| thread.update(cx, |thread, cx| thread.send(vec!["second".into()], cx)))
+            .await
+            .unwrap();
+
+        let second_message_id = thread.read_with(cx, |thread, _cx| {
+            let AgentThreadEntry::UserMessage(first) = &thread.entries[0] else {
+                panic!("expected first entry to be a user message")
+            };
+            let AgentThreadEntry::UserMessage(second) = &thread.entries[2] else {
+                panic!("expected third entry to be a user message")
+            };
+            assert!(first.id.is_some());
+            second
+                .id
+                .clone()
+                .expect("checkpointed ACP messages should have an id")
+        });
+
+        thread
+            .update(cx, |thread, cx| {
+                thread.restore_checkpoint(second_message_id, cx)
+            })
+            .await
+            .unwrap();
+
+        thread.read_with(cx, |thread, cx| {
+            assert_eq!(thread.entries().len(), 4);
+            assert_eq!(
+                thread.to_markdown(cx),
+                indoc! {"
+                    ## User (checkpoint)
+
+                    first
+
+                    ## Assistant
+
+                    FIRST
+
+                    ## User (checkpoint)
+
+                    second
+
+                    ## Assistant
+
+                    SECOND
+
+                "}
+            );
+        });
+
+        assert_eq!(fs.files(), vec![Path::new(path!("/test/file-0"))]);
+    }
+
     #[gpui::test]
     async fn test_tool_result_refusal(cx: &mut TestAppContext) {
         use std::sync::atomic::AtomicUsize;
@@ -3916,6 +4036,7 @@ mod tests {
     struct FakeAgentConnection {
         auth_methods: Vec<acp::AuthMethod>,
         sessions: Arc<parking_lot::Mutex<HashMap<acp::SessionId, WeakEntity<AcpThread>>>>,
+        supports_truncate: bool,
         on_user_message: Option<
             Rc<
                 dyn Fn(
@@ -3934,6 +4055,7 @@ mod tests {
                 auth_methods: Vec::new(),
                 on_user_message: None,
                 sessions: Arc::default(),
+                supports_truncate: true,
             }
         }
 
@@ -3953,6 +4075,11 @@ mod tests {
             + 'static,
         ) -> Self {
             self.on_user_message.replace(Rc::new(handler));
+            self
+        }
+
+        fn without_truncate(mut self) -> Self {
+            self.supports_truncate = false;
             self
         }
     }
@@ -4033,9 +4160,11 @@ mod tests {
             session_id: &acp::SessionId,
             _cx: &App,
         ) -> Option<Rc<dyn AgentSessionTruncate>> {
-            Some(Rc::new(FakeAgentSessionEditor {
-                _session_id: session_id.clone(),
-            }))
+            self.supports_truncate.then(|| {
+                Rc::new(FakeAgentSessionEditor {
+                    _session_id: session_id.clone(),
+                }) as Rc<dyn AgentSessionTruncate>
+            })
         }
 
         fn into_any(self: Rc<Self>) -> Rc<dyn Any> {

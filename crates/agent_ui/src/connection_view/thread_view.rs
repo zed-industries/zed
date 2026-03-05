@@ -650,6 +650,7 @@ impl ThreadView {
                 if let Some(AgentThreadEntry::UserMessage(user_message)) =
                     self.thread.read(cx).entries().get(event.entry_index)
                     && user_message.id.is_some()
+                    && self.thread.read(cx).supports_rewind(cx)
                 {
                     self.editing_message = Some(event.entry_index);
                     cx.notify();
@@ -659,6 +660,7 @@ impl ThreadView {
                 if let Some(AgentThreadEntry::UserMessage(user_message)) =
                     self.thread.read(cx).entries().get(event.entry_index)
                     && user_message.id.is_some()
+                    && self.thread.read(cx).supports_rewind(cx)
                 {
                     if editor.read(cx).text(cx).as_str() == user_message.content.to_markdown(cx) {
                         self.editing_message = None;
@@ -3723,6 +3725,8 @@ impl ThreadView {
                     .checkpoint
                     .as_ref()
                     .is_some_and(|checkpoint| checkpoint.show);
+                let message_can_be_edited =
+                    message.id.is_some() && self.thread.read(cx).supports_rewind(cx);
 
                 let agent_name = self.agent_name.clone();
                 let is_subagent = self.is_subagent();
@@ -3798,7 +3802,7 @@ impl ThreadView {
                                         if editing && !editor_focus {
                                             return this.border_dashed()
                                         }
-                                        if message.id.is_some() {
+                                        if message_can_be_edited {
                                             return this.shadow_md().hover(|s| {
                                                 s.border_color(focus_border.opacity(0.8))
                                             });
@@ -3834,7 +3838,7 @@ impl ThreadView {
                                             }),
                                         ),
                                     )
-                                } else if message.id.is_some() {
+                                } else if message_can_be_edited {
                                     this.child(
                                         base_container
                                             .child(
