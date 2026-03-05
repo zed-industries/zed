@@ -2052,16 +2052,22 @@ impl GitGraph {
 
     fn render_canvas_resize_handle(
         &self,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
+        let hovered = window.use_state(cx, |_window, _cx| false);
+        let bg = if *hovered.read(cx) {
+            cx.theme().colors().border_focused
+        } else {
+            cx.theme().colors().border_variant
+        };
         div()
             .id("canvas-split-resize-container")
             .relative()
             .h_full()
             .flex_shrink_0()
             .w(px(1.))
-            .bg(cx.theme().colors().border_variant)
+            .bg(bg)
             .child(
                 div()
                     .id("canvas-split-resize-handle")
@@ -2071,6 +2077,7 @@ impl GitGraph {
                     .h_full()
                     .cursor_col_resize()
                     .block_mouse_except_scroll()
+                    .on_hover(move |&was_hovered, _, cx| hovered.write(cx, was_hovered))
                     .on_click(cx.listener(|this, event: &ClickEvent, _window, cx| {
                         if event.click_count() >= 2 {
                             this.canvas_split_state.update(cx, |state, _| {
