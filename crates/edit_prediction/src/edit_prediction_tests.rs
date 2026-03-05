@@ -1487,6 +1487,52 @@ async fn test_jump_and_edit_throttles_are_independent(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_same_frame_duplicate_requests_deduplicated(cx: &mut TestAppContext) {
+    let (ep_store, mut requests) = init_test_with_fake_client(cx);
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/root",
+        json!({
+            "foo.md":  "Hello!\nHow\nBye\n"
+        }),
+    )
+    .await;
+    let project = Project::test(fs, vec![path!("/root").as_ref()], cx).await;
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            let path = project.find_project_path(path!("root/foo.md"), cx).unwrap();
+            project.open_buffer(path, cx)
+        })
+        .await
+        .unwrap();
+    let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot());
+    let position = snapshot.anchor_before(language::Point::new(1, 3));
+
+    // Enqueue two refresh calls in the same synchronous frame (no yielding).
+    // Both `cx.spawn` tasks are created before either executes, so they both
+    // capture the same `proceed_count_at_enqueue`. Only the first task should
+    // pass the deduplication gate; the second should be skipped.
+    ep_store.update(cx, |ep_store, cx| {
+        ep_store.refresh_prediction_from_buffer(project.clone(), buffer.clone(), position, cx);
+        ep_store.refresh_prediction_from_buffer(project.clone(), buffer.clone(), position, cx);
+    });
+
+    // Let both spawned tasks run to completion (including any throttle waits).
+    cx.run_until_parked();
+
+    // Exactly one prediction request should have been sent.
+    let (request, respond_tx) = requests.predict.next().await.unwrap();
+    respond_tx
+        .send(model_response(&request, SIMPLE_DIFF))
+        .unwrap();
+    cx.run_until_parked();
+
+    // No second request should be pending.
+    assert_no_predict_request_ready(&mut requests.predict);
+}
+
+#[gpui::test]
 async fn test_rejections_flushing(cx: &mut TestAppContext) {
     let (ep_store, mut requests) = init_test_with_fake_client(cx);
 
