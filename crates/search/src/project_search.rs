@@ -48,11 +48,9 @@ use util::{ResultExt as _, paths::PathMatcher, rel_path::RelPath};
 use workspace::{
     DeploySearch, ItemNavHistory, NewSearch, ToolbarItemEvent, ToolbarItemLocation,
     ToolbarItemView, Workspace, WorkspaceId,
+    collapsible::CollapsibleItemHandle,
     item::{Item, ItemEvent, ItemHandle, SaveOptions},
-    searchable::{
-        Direction, FoldableItemHandle, SearchEvent, SearchToken, SearchableItem,
-        SearchableItemHandle,
-    },
+    searchable::{Direction, SearchEvent, SearchToken, SearchableItem, SearchableItemHandle},
 };
 
 actions!(
@@ -549,7 +547,7 @@ impl Item for ProjectSearchView {
         Some(Box::new(self.results_editor.clone()))
     }
 
-    fn as_foldable(&self, _: &Entity<Self>, _: &App) -> Option<Box<dyn FoldableItemHandle>> {
+    fn as_collapsible(&self, _: &Entity<Self>, _: &App) -> Option<Box<dyn CollapsibleItemHandle>> {
         Some(Box::new(self.results_editor.clone()))
     }
 

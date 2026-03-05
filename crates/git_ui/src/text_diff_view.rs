@@ -23,6 +23,7 @@ use util::paths::PathExt;
 
 use workspace::{
     Item, ItemHandle as _, ItemNavHistory, Workspace,
+    collapsible::CollapsibleItemHandle,
     item::{ItemEvent, SaveOptions, TabContentParams},
     searchable::SearchableItemHandle,
 };
@@ -341,6 +342,10 @@ impl Item for TextDiffView {
     }
 
     fn as_searchable(&self, _: &Entity<Self>, _: &App) -> Option<Box<dyn SearchableItemHandle>> {
+        Some(Box::new(self.diff_editor.clone()))
+    }
+
+    fn as_collapsible(&self, _: &Entity<Self>, _: &App) -> Option<Box<dyn CollapsibleItemHandle>> {
         Some(Box::new(self.diff_editor.clone()))
     }
 

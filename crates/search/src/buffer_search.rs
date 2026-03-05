@@ -14,7 +14,7 @@ use any_vec::AnyVec;
 use collections::HashMap;
 use editor::{
     Editor, EditorSettings, MultiBufferOffset, SplittableEditor, ToggleSplitDiff,
-    actions::{Backtab, FoldAll, Tab, ToggleFoldAll, UnfoldAll},
+    actions::{Backtab, Tab, ToggleFoldAll},
 };
 use futures::channel::oneshot;
 use gpui::{
@@ -40,10 +40,11 @@ use ui::{
 use util::{ResultExt, paths::PathMatcher};
 use workspace::{
     ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace,
+    collapsible::CollapsibleItemHandle,
     item::{ItemBufferKind, ItemHandle},
     searchable::{
-        Direction, FilteredSearchRange, FoldableItemHandle, SearchEvent, SearchToken,
-        SearchableItemHandle, WeakSearchableItemHandle,
+        Direction, FilteredSearchRange, SearchEvent, SearchToken, SearchableItemHandle,
+        WeakSearchableItemHandle,
     },
 };
 
@@ -70,7 +71,7 @@ pub struct BufferSearchBar {
     replacement_editor: Entity<Editor>,
     replacement_editor_focused: bool,
     active_searchable_item: Option<Box<dyn SearchableItemHandle>>,
-    active_foldable_item: Option<Box<dyn FoldableItemHandle>>,
+    active_collapsible_item: Option<Box<dyn CollapsibleItemHandle>>,
     active_match_index: Option<usize>,
     #[cfg(target_os = "macos")]
     active_searchable_item_subscriptions: Option<[Subscription; 2]>,
@@ -221,9 +222,9 @@ impl Render for BufferSearchBar {
             let query_editor_focus = self.query_editor.focus_handle(cx);
 
             let is_collapsed = self
-                .active_foldable_item
+                .active_collapsible_item
                 .as_ref()
-                .is_some_and(|active_foldable_item| active_foldable_item.has_any_folded(cx));
+                .is_some_and(|item| item.has_any_collapsed(cx));
 
             let (icon, tooltip_label) = if is_collapsed {
                 (IconName::ChevronUpDown, "Expand All Files")
@@ -243,7 +244,7 @@ impl Render for BufferSearchBar {
                         )
                     })
                     .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
-                        this.toggle_fold_all(&ToggleFoldAll, window, cx);
+                        this.toggle_fold_all(&editor::actions::ToggleFoldAll, window, cx);
                     }))
             };
 
@@ -631,7 +632,7 @@ impl ToolbarItemView for BufferSearchBar {
         cx.notify();
         self.active_searchable_item_subscriptions.take();
         self.active_searchable_item.take();
-        self.active_foldable_item.take();
+        self.active_collapsible_item.take();
         self.splittable_editor = None;
         self._splittable_editor_subscription = None;
 
@@ -646,8 +647,10 @@ impl ToolbarItemView for BufferSearchBar {
             self.splittable_editor = Some(splittable_editor.downgrade());
         }
 
-        if let Some(foldable_item_handle) = item.and_then(|item| item.to_foldable_item_handle(cx)) {
-            self.active_foldable_item = Some(foldable_item_handle);
+        if let Some(collapsible_item_handle) =
+            item.and_then(|item| item.to_collapsible_item_handle(cx))
+        {
+            self.active_collapsible_item = Some(collapsible_item_handle);
         }
 
         if let Some(searchable_item_handle) =
@@ -884,7 +887,7 @@ impl BufferSearchBar {
             replacement_editor,
             replacement_editor_focused: false,
             active_searchable_item: None,
-            active_foldable_item: None,
+            active_collapsible_item: None,
             active_searchable_item_subscriptions: None,
             #[cfg(target_os = "macos")]
             pending_external_query: None,
@@ -1050,6 +1053,12 @@ impl BufferSearchBar {
     // We provide an expand/collapse button if we are in a multibuffer
     // and not doing a project search.
     fn needs_expand_collapse_option(&self, cx: &App) -> bool {
+        // Prevent the expand/collapse button from showing up when there is no
+        // active foldable item.
+        if self.active_collapsible_item.is_none() {
+            return false;
+        }
+
         if let Some(item) = &self.active_searchable_item {
             let buffer_kind = item.buffer_kind(cx);
 
@@ -1066,16 +1075,21 @@ impl BufferSearchBar {
         }
     }
 
-    fn toggle_fold_all(&mut self, _: &ToggleFoldAll, window: &mut Window, cx: &mut Context<Self>) {
-        self.toggle_fold_all_in_item(window, cx);
+    fn toggle_fold_all(
+        &mut self,
+        _: &editor::actions::ToggleFoldAll,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.toggle_collapse_all_in_item(window, cx);
     }
 
-    fn toggle_fold_all_in_item(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(item) = &mut self.active_foldable_item {
-            if item.has_any_folded(cx) {
-                item.unfold_all(window, cx);
+    fn toggle_collapse_all_in_item(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(item) = &mut self.active_collapsible_item {
+            if item.has_any_collapsed(cx) {
+                item.expand_all(window, cx);
             } else {
-                item.fold_all(window, cx);
+                item.collapse_all(window, cx);
             }
         }
     }
@@ -3390,7 +3404,7 @@ mod tests {
         });
 
         editor.update_in(cx, |editor, window, cx| {
-            editor.fold_all(&FoldAll, window, cx);
+            editor.fold_all(&editor::actions::FoldAll, window, cx);
         });
         cx.run_until_parked();
 
@@ -3398,7 +3412,7 @@ mod tests {
         assert!(is_collapsed);
 
         editor.update_in(cx, |editor, window, cx| {
-            editor.unfold_all(&UnfoldAll, window, cx);
+            editor.unfold_all(&editor::actions::UnfoldAll, window, cx);
         });
         cx.run_until_parked();
 
@@ -3417,7 +3431,7 @@ mod tests {
 
         // Fold all buffers via fold_all
         editor.update_in(cx, |editor, window, cx| {
-            editor.fold_all(&FoldAll, window, cx);
+            editor.fold_all(&editor::actions::FoldAll, window, cx);
         });
         cx.run_until_parked();
 

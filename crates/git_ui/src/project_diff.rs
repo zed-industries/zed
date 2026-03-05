@@ -45,9 +45,10 @@ use util::{ResultExt as _, rel_path::RelPath};
 use workspace::{
     CloseActiveItem, ItemNavHistory, SerializableItem, ToolbarItemEvent, ToolbarItemLocation,
     ToolbarItemView, Workspace,
+    collapsible::CollapsibleItemHandle,
     item::{Item, ItemEvent, ItemHandle, SaveOptions, TabContentParams},
     notifications::NotifyTaskExt,
-    searchable::{FoldableItemHandle, SearchableItemHandle},
+    searchable::SearchableItemHandle,
 };
 use zed_actions::agent::ReviewBranchDiff;
 use ztracing::instrument;
@@ -1004,7 +1005,11 @@ impl Item for ProjectDiff {
         Some(Box::new(self.editor.clone()))
     }
 
-    fn as_foldable(&self, _: &Entity<Self>, _cx: &App) -> Option<Box<dyn FoldableItemHandle>> {
+    fn as_collapsible(
+        &self,
+        _: &Entity<Self>,
+        _cx: &App,
+    ) -> Option<Box<dyn CollapsibleItemHandle>> {
         Some(Box::new(self.editor.clone()))
     }
 

@@ -43,10 +43,11 @@ use ui::{IconDecorationKind, prelude::*};
 use util::{ResultExt, TryFutureExt, paths::PathExt};
 use workspace::{
     CollaboratorId, ItemId, ItemNavHistory, ToolbarItemLocation, ViewId, Workspace, WorkspaceId,
+    collapsible::CollapsibleItem,
     invalid_item_view::InvalidItemView,
     item::{FollowableItem, Item, ItemBufferKind, ItemEvent, ProjectItem, SaveOptions},
     searchable::{
-        Direction, FilteredSearchRange, FoldableItem, SearchEvent, SearchToken, SearchableItem,
+        Direction, FilteredSearchRange, SearchEvent, SearchToken, SearchableItem,
         SearchableItemHandle,
     },
 };
@@ -1909,16 +1910,16 @@ impl SearchableItem for Editor {
     }
 }
 
-impl FoldableItem for Editor {
-    fn has_any_folded(&self, cx: &Context<Self>) -> bool {
+impl CollapsibleItem for Editor {
+    fn has_any_collapsed(&self, cx: &App) -> bool {
         self.has_any_buffer_folded(cx)
     }
 
-    fn fold_all(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    fn collapse_all(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.fold_all(&Default::default(), window, cx);
     }
 
-    fn unfold_all(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    fn expand_all(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.unfold_all(&Default::default(), window, cx);
     }
 }

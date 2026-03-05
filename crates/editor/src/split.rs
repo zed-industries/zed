@@ -29,11 +29,9 @@ use crate::{
 };
 use workspace::{
     ActivatePaneLeft, ActivatePaneRight, Item, ToolbarItemLocation, Workspace,
+    collapsible::{CollapsibleItem, CollapsibleItemHandle},
     item::{BreadcrumbText, ItemBufferKind, ItemEvent, SaveOptions, TabContentParams},
-    searchable::{
-        FoldableItem, FoldableItemHandle, SearchEvent, SearchToken, SearchableItem,
-        SearchableItemHandle,
-    },
+    searchable::{SearchEvent, SearchToken, SearchableItem, SearchableItemHandle},
 };
 
 use crate::{
@@ -389,22 +387,6 @@ struct LhsEditor {
 }
 
 impl SplittableEditor {
-    pub fn has_any_buffer_folded(&self, cx: &App) -> bool {
-        self.rhs_editor().read(cx).has_any_buffer_folded(cx)
-    }
-
-    pub fn unfold_all(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.rhs_editor.update(cx, |editor, cx| {
-            editor.unfold_all(&Default::default(), window, cx)
-        })
-    }
-
-    pub fn fold_all(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.rhs_editor.update(cx, |editor, cx| {
-            editor.fold_all(&Default::default(), window, cx)
-        })
-    }
-
     pub fn rhs_editor(&self) -> &Entity<Editor> {
         &self.rhs_editor
     }
@@ -1865,7 +1847,11 @@ impl Item for SplittableEditor {
         Some(Box::new(handle.clone()))
     }
 
-    fn as_foldable(&self, handle: &Entity<Self>, _: &App) -> Option<Box<dyn FoldableItemHandle>> {
+    fn as_collapsible(
+        &self,
+        handle: &Entity<Self>,
+        _: &App,
+    ) -> Option<Box<dyn CollapsibleItemHandle>> {
         Some(Box::new(handle.clone()))
     }
 
@@ -2037,19 +2023,21 @@ impl SearchableItem for SplittableEditor {
     }
 }
 
-// TODO!: Do we want forwarding methods in `SplittableEditor` or do we simply
-// want to actually call `rhs_editor.update` and call those same methods there?
-impl FoldableItem for SplittableEditor {
-    fn has_any_folded(&self, cx: &Context<Self>) -> bool {
-        self.has_any_buffer_folded(cx)
+impl CollapsibleItem for SplittableEditor {
+    fn has_any_collapsed(&self, cx: &App) -> bool {
+        self.rhs_editor().read(cx).has_any_buffer_folded(cx)
     }
 
-    fn fold_all(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.fold_all(window, cx);
+    fn collapse_all(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.rhs_editor().update(cx, |editor, cx| {
+            editor.fold_all(&Default::default(), window, cx)
+        })
     }
 
-    fn unfold_all(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.unfold_all(window, cx);
+    fn expand_all(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.rhs_editor().update(cx, |editor, cx| {
+            editor.unfold_all(&Default::default(), window, cx)
+        })
     }
 }
 
