@@ -2473,8 +2473,8 @@ impl Project {
                 .ok();
 
             lsp_store
-                .read_with(cx, |this, _| {
-                    this.did_rename_entry(worktree_id, &old_abs_path, &new_abs_path, is_dir);
+                .read_with(cx, |this, cx| {
+                    this.did_rename_entry(worktree_id, &old_abs_path, &new_abs_path, is_dir, cx);
                 })
                 .ok();
             Ok(entry)
