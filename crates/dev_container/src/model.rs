@@ -588,7 +588,7 @@ pub(crate) fn read_devcontainer_configuration(
 ///         2. Run the built thing you just made
 /// 6. If docker-compose config
 ///     1. TODO - this is the next thing
-pub(crate) async fn spawn_dev_container_v2(
+pub(crate) async fn spawn_dev_container(
     http_client: Arc<dyn HttpClient>,
     config: DevContainerConfig,
     local_project_path: Arc<&Path>,
@@ -604,6 +604,7 @@ pub(crate) async fn spawn_dev_container_v2(
     let devcontainer = deserialize_devcontainer_json(&devcontainer_contents)?;
     // 2. ensure that object is valid
     devcontainer.validate_structure()?;
+
     log::info!("Devcontainer is valid. Proceeding");
     // 3. check for disallowed features (?)
     devcontainer.validate_features()?;
@@ -650,11 +651,42 @@ pub(crate) async fn spawn_dev_container_v2(
         let devcontainer_dir = config_path
             .parent()
             .expect("TODO, this should actually combine the dockerfile property with the parent");
-        if &devcontainer.build_type() == &DevContainerBuildType::DockerCompose {
+
+        let build_resources =
+            build_dev_container_resources(&devcontainer, http_client, devcontainer_dir, &labels)
+                .await?;
+
+        run_dev_container(build_resources, &devcontainer, &local_project_path, &labels).await
+    }
+}
+
+enum DevContainerBuildResources {
+    DockerComposeFiles(Vec<String>),
+    Docker(DockerInspect),
+}
+
+async fn build_dev_container_resources(
+    dev_container: &DevContainer,
+    http_client: Arc<dyn HttpClient>,
+    devcontainer_dir: &Path,
+    labels: &Vec<(&str, String)>,
+) -> Result<DevContainerBuildResources, DevContainerErrorV2> {
+    match dev_container.build_type() {
+        DevContainerBuildType::Image | DevContainerBuildType::Dockerfile => {
+            let built_docker_image = build_docker_image(
+                http_client,
+                dev_container,
+                devcontainer_dir.display().to_string(),
+            )
+            .await?;
+
+            Ok(DevContainerBuildResources::Docker(built_docker_image))
+        }
+        DevContainerBuildType::DockerCompose => {
             log::info!("Using docker compose. Building extended compose files");
             let docker_compose_files = build_and_extend_compose_files(
                 http_client,
-                &devcontainer,
+                dev_container,
                 devcontainer_dir,
                 &labels,
             )
@@ -664,60 +696,46 @@ pub(crate) async fn spawn_dev_container_v2(
                 "Created {} docker_compose files",
                 &docker_compose_files.len()
             );
-
-            let running_container = run_docker_compose(docker_compose_files, &labels).await?;
-
-            dbg!(&running_container);
-
-            let remote_user = get_remote_user_from_config(&running_container, &devcontainer)?;
-            let remote_workspace_folder = get_remote_dir_from_config(
-                &running_container,
-                (&local_project_path.display()).to_string(),
-            )?;
-
-            Ok(DevContainerUp {
-                _outcome: "todo".to_string(),
-                container_id: running_container.id,
-                remote_user,
-                remote_workspace_folder,
-            })
-        } else {
-            let built_docker_image = build_docker_image(
-                http_client,
-                &devcontainer,
-                devcontainer_dir.display().to_string(),
-            )
-            .await?;
-
-            dbg!(&built_docker_image);
-            let running_container =
-                run_docker_image(&built_docker_image, &labels, &local_project_path).await?;
-
-            let remote_user = get_remote_user_from_config(&running_container, &devcontainer)?;
-            let remote_workspace_folder = get_remote_dir_from_config(
-                &running_container,
-                (&local_project_path.display()).to_string(),
-            )?;
-
-            Ok(DevContainerUp {
-                _outcome: "todo".to_string(),
-                container_id: running_container.id,
-                remote_user,
-                remote_workspace_folder,
-            })
+            return Ok(DevContainerBuildResources::DockerComposeFiles(
+                docker_compose_files,
+            ));
+        }
+        DevContainerBuildType::None => {
+            return Err(DevContainerErrorV2::UnmappedError);
         }
     }
-    /*
-     * For the docker-compose case:
-     * - Checks for existing container the same way
-     * - If not found, things work a little differently (but also somewhat symmetric to what we do now):
-     * -- Identify the main run service in the docker-compose file
-     * -- If image and no features: just create a runtime override and get after it
-     * -- If image and features: build the extended dockerfile with the features resources, run with image + build context (this one probably needs a bit more examination)
-     * -- If dockerfile and no features: build the dockerfile extended and create a build override
-     * -- If dockerfile and features: same
-     * - So, basically, identify the main run service, and apply the same transformations we're applying today, but wrapped in a dockercompose/yaml syntax
-     */
+}
+
+async fn run_dev_container(
+    build_resources: DevContainerBuildResources,
+    dev_container: &DevContainer,
+    local_project_path: &Arc<&Path>,
+    labels: &Vec<(&str, String)>,
+) -> Result<DevContainerUp, DevContainerErrorV2> {
+    let running_container = match build_resources {
+        DevContainerBuildResources::DockerComposeFiles(docker_compose_files) => {
+            dbg!(&docker_compose_files);
+            run_docker_compose(docker_compose_files, &labels).await?
+        }
+        DevContainerBuildResources::Docker(built_docker_image) => {
+            dbg!(&built_docker_image);
+            run_docker_image(&built_docker_image, &labels, &local_project_path).await?
+        }
+    };
+
+    dbg!(&running_container);
+    let remote_user = get_remote_user_from_config(&running_container, dev_container)?;
+    let remote_workspace_folder = get_remote_dir_from_config(
+        &running_container,
+        (&local_project_path.display()).to_string(),
+    )?;
+
+    Ok(DevContainerUp {
+        _outcome: "todo".to_string(),
+        container_id: running_container.id,
+        remote_user,
+        remote_workspace_folder,
+    })
 }
 
 async fn run_docker_compose(
