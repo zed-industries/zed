@@ -11,7 +11,10 @@ use serde::{Deserialize, Serialize};
 use ui::{prelude::*, Button, ButtonStyle, IconName, Label, Tooltip};
 use util::ResultExt as _;
 
-use database_core::{CellValue, ForeignKeyInfo, QueryResult};
+use database_core::{
+    CellValue, DatabaseType, FilterCondition, FilterOp, FilteredQuery, ForeignKeyInfo, QueryResult,
+    build_filtered_query,
+};
 
 use crate::connection_manager::ConnectionManager;
 use std::collections::HashSet;
@@ -164,16 +167,14 @@ impl DataEditHistory {
     }
 
     pub fn undo(&mut self) -> Option<EditOperation> {
-        self.undo_stack.pop().map(|op| {
+        self.undo_stack.pop().inspect(|op| {
             self.redo_stack.push(op.clone());
-            op
         })
     }
 
     pub fn redo(&mut self) -> Option<EditOperation> {
-        self.redo_stack.pop().map(|op| {
+        self.redo_stack.pop().inspect(|op| {
             self.undo_stack.push(op.clone());
-            op
         })
     }
 
@@ -206,48 +207,15 @@ pub enum PendingRowState {
     Delete,
 }
 
-#[derive(Debug, Clone)]
-pub struct FilterClause {
-    pub column: String,
-    pub operator: FilterOperator,
-    pub value: Option<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum FilterOperator {
-    Equals,
-    NotEquals,
-    IsNull,
-    IsNotNull,
-    Contains,
-    GreaterThan,
-    LessThan,
-}
-
-impl FilterClause {
-    pub fn to_sql(&self, db_type: &database_core::DatabaseType) -> String {
-        let quoted = database_core::quote_identifier(&self.column, db_type);
-        match self.operator {
-            FilterOperator::Equals => format!("{} = '{}'", quoted, self.value.as_deref().unwrap_or("")),
-            FilterOperator::NotEquals => format!("{} != '{}'", quoted, self.value.as_deref().unwrap_or("")),
-            FilterOperator::IsNull => format!("{} IS NULL", quoted),
-            FilterOperator::IsNotNull => format!("{} IS NOT NULL", quoted),
-            FilterOperator::Contains => format!("{} LIKE '%{}%'", quoted, self.value.as_deref().unwrap_or("")),
-            FilterOperator::GreaterThan => format!("{} > '{}'", quoted, self.value.as_deref().unwrap_or("")),
-            FilterOperator::LessThan => format!("{} < '{}'", quoted, self.value.as_deref().unwrap_or("")),
-        }
-    }
-
-    pub fn display_text(&self) -> String {
-        match self.operator {
-            FilterOperator::Equals => format!("{} = {}", self.column, self.value.as_deref().unwrap_or("")),
-            FilterOperator::NotEquals => format!("{} != {}", self.column, self.value.as_deref().unwrap_or("")),
-            FilterOperator::IsNull => format!("{} IS NULL", self.column),
-            FilterOperator::IsNotNull => format!("{} IS NOT NULL", self.column),
-            FilterOperator::Contains => format!("{} LIKE %{}%", self.column, self.value.as_deref().unwrap_or("")),
-            FilterOperator::GreaterThan => format!("{} > {}", self.column, self.value.as_deref().unwrap_or("")),
-            FilterOperator::LessThan => format!("{} < {}", self.column, self.value.as_deref().unwrap_or("")),
-        }
+pub fn filter_condition_display(condition: &FilterCondition) -> String {
+    match condition.op {
+        FilterOp::Equals => format!("{} = {}", condition.column, condition.value.as_deref().unwrap_or("")),
+        FilterOp::NotEquals => format!("{} != {}", condition.column, condition.value.as_deref().unwrap_or("")),
+        FilterOp::IsNull => format!("{} IS NULL", condition.column),
+        FilterOp::IsNotNull => format!("{} IS NOT NULL", condition.column),
+        FilterOp::Like => format!("{} LIKE %{}%", condition.column, condition.value.as_deref().unwrap_or("")),
+        FilterOp::GreaterThan => format!("{} > {}", condition.column, condition.value.as_deref().unwrap_or("")),
+        FilterOp::LessThan => format!("{} < {}", condition.column, condition.value.as_deref().unwrap_or("")),
     }
 }
 
@@ -307,7 +275,7 @@ pub struct ResultGrid {
 
     foreign_keys: Vec<ForeignKeyInfo>,
     fk_column_indices: HashSet<usize>,
-    active_filters: Vec<FilterClause>,
+    active_filters: Vec<FilterCondition>,
 
     show_where_filter: bool,
     where_clause: String,
@@ -489,11 +457,11 @@ impl ResultGrid {
     }
 
     #[allow(dead_code)]
-    pub fn active_filters(&self) -> &[FilterClause] {
+    pub fn active_filters(&self) -> &[FilterCondition] {
         &self.active_filters
     }
 
-    pub fn add_filter(&mut self, filter: FilterClause, cx: &mut Context<Self>) {
+    pub fn add_filter(&mut self, filter: FilterCondition, cx: &mut Context<Self>) {
         self.active_filters.push(filter);
         cx.notify();
     }
@@ -511,12 +479,11 @@ impl ResultGrid {
         cx.notify();
     }
 
-    pub fn build_filter_where_clause(&self, db_type: &database_core::DatabaseType) -> Option<String> {
+    pub fn build_filtered_query(&self, table: &str, db_type: &DatabaseType) -> Option<FilteredQuery> {
         if self.active_filters.is_empty() {
             return None;
         }
-        let clauses: Vec<String> = self.active_filters.iter().map(|f| f.to_sql(db_type)).collect();
-        Some(clauses.join(" AND "))
+        Some(build_filtered_query(table, db_type, &self.active_filters, None, 0, 0))
     }
 
     pub fn where_clause(&self) -> &str {
@@ -651,7 +618,7 @@ impl ResultGrid {
 
     fn apply_where_clause(&mut self, cx: &mut Context<Self>) {
         if let Some(editor) = &self.where_editor {
-            let text = editor.read(cx).text(cx).to_string();
+            let text = editor.read(cx).text(cx);
             self.where_clause = text.clone();
             cx.emit(ResultGridEvent::WhereClauseChanged(text));
         }
@@ -844,7 +811,7 @@ impl ResultGrid {
         if total == 0 {
             return 1;
         }
-        (total + self.rows_per_page - 1) / self.rows_per_page
+        total.div_ceil(self.rows_per_page)
     }
 
     // --- CRUD operations ---
@@ -1107,7 +1074,7 @@ impl ResultGrid {
             return;
         };
 
-        let new_text = editor.read(cx).text(cx).to_string();
+        let new_text = editor.read(cx).text(cx);
 
         let edits_to_apply: Vec<(usize, usize, CellValue, CellValue)> = {
             let Some(result) = &self.result else {
@@ -2519,46 +2486,49 @@ mod tests {
     }
 
     #[test]
-    fn test_filter_clause_to_sql_equals() {
-        let filter = FilterClause {
+    fn test_filter_condition_to_sql_equals() {
+        let condition = FilterCondition {
             column: "name".to_string(),
-            operator: FilterOperator::Equals,
+            op: FilterOp::Equals,
             value: Some("test".to_string()),
         };
-        let sql = filter.to_sql(&database_core::DatabaseType::Sqlite);
-        assert!(sql.contains("\"name\" = 'test'"));
+        let query = build_filtered_query("t", &DatabaseType::Sqlite, &[condition], None, 10, 0);
+        assert!(query.sql.contains("\"name\" = ?"));
+        assert_eq!(query.parameters, vec!["test"]);
     }
 
     #[test]
-    fn test_filter_clause_to_sql_is_null() {
-        let filter = FilterClause {
+    fn test_filter_condition_to_sql_is_null() {
+        let condition = FilterCondition {
             column: "email".to_string(),
-            operator: FilterOperator::IsNull,
+            op: FilterOp::IsNull,
             value: None,
         };
-        let sql = filter.to_sql(&database_core::DatabaseType::Sqlite);
-        assert!(sql.contains("\"email\" IS NULL"));
+        let query = build_filtered_query("t", &DatabaseType::Sqlite, &[condition], None, 10, 0);
+        assert!(query.sql.contains("\"email\" IS NULL"));
+        assert!(query.parameters.is_empty());
     }
 
     #[test]
-    fn test_filter_clause_to_sql_contains() {
-        let filter = FilterClause {
+    fn test_filter_condition_to_sql_like() {
+        let condition = FilterCondition {
             column: "bio".to_string(),
-            operator: FilterOperator::Contains,
+            op: FilterOp::Like,
             value: Some("hello".to_string()),
         };
-        let sql = filter.to_sql(&database_core::DatabaseType::Sqlite);
-        assert!(sql.contains("LIKE '%hello%'"));
+        let query = build_filtered_query("t", &DatabaseType::Sqlite, &[condition], None, 10, 0);
+        assert!(query.sql.contains("LIKE ?"));
+        assert_eq!(query.parameters, vec!["%hello%"]);
     }
 
     #[test]
-    fn test_filter_display_text() {
-        let filter = FilterClause {
+    fn test_filter_condition_display() {
+        let condition = FilterCondition {
             column: "age".to_string(),
-            operator: FilterOperator::GreaterThan,
+            op: FilterOp::GreaterThan,
             value: Some("18".to_string()),
         };
-        assert_eq!(filter.display_text(), "age > 18");
+        assert_eq!(filter_condition_display(&condition), "age > 18");
     }
 
     #[test]
@@ -2790,5 +2760,117 @@ mod tests {
             _ => vec![(3, 4)],
         };
         assert_eq!(result, vec![(3, 4)]);
+    }
+
+    #[test]
+    fn test_pending_edit_tracking() {
+        let mut edits: Vec<PendingEdit> = Vec::new();
+        edits.push(PendingEdit {
+            row: 0,
+            col: 1,
+            original_value: CellValue::Text("old".to_string()),
+            new_value: CellValue::Text("new".to_string()),
+        });
+        edits.push(PendingEdit {
+            row: 2,
+            col: 0,
+            original_value: CellValue::Integer(10),
+            new_value: CellValue::Integer(20),
+        });
+
+        assert_eq!(edits.len(), 2);
+        assert_eq!(edits[0].row, 0);
+        assert_eq!(edits[0].col, 1);
+        assert!(matches!(edits[0].new_value, CellValue::Text(ref s) if s == "new"));
+        assert_eq!(edits[1].row, 2);
+        assert!(matches!(edits[1].new_value, CellValue::Integer(20)));
+
+        edits.retain(|e| e.row != 0);
+        assert_eq!(edits.len(), 1);
+        assert_eq!(edits[0].row, 2);
+    }
+
+    fn build_delete_sql(table: &str, columns: &[String], row: &[CellValue]) -> String {
+        let where_clauses: Vec<String> = columns
+            .iter()
+            .enumerate()
+            .filter_map(|(col_idx, col_name)| {
+                let value = row.get(col_idx)?;
+                if matches!(value, CellValue::Null) {
+                    Some(format!("\"{}\" IS NULL", col_name.replace('"', "\"\"")))
+                } else {
+                    Some(format!(
+                        "\"{}\" = {}",
+                        col_name.replace('"', "\"\""),
+                        value.to_sql_value()
+                    ))
+                }
+            })
+            .collect();
+        if where_clauses.is_empty() {
+            return String::new();
+        }
+        format!(
+            "DELETE FROM \"{}\" WHERE {} LIMIT 1",
+            table.replace('"', "\"\""),
+            where_clauses.join(" AND ")
+        )
+    }
+
+    #[test]
+    fn test_generate_dml_delete_basic() {
+        let columns = vec!["id".to_string(), "name".to_string()];
+        let row = vec![CellValue::Integer(5), CellValue::Text("Alice".to_string())];
+        let sql = build_delete_sql("users", &columns, &row);
+        assert!(sql.contains("DELETE FROM \"users\""));
+        assert!(sql.contains("\"id\" = 5"));
+        assert!(sql.contains("\"name\" = 'Alice'"));
+        assert!(sql.contains("LIMIT 1"));
+    }
+
+    #[test]
+    fn test_generate_dml_delete_with_null_column() {
+        let columns = vec!["id".to_string(), "email".to_string()];
+        let row = vec![CellValue::Integer(3), CellValue::Null];
+        let sql = build_delete_sql("contacts", &columns, &row);
+        assert!(sql.contains("DELETE FROM \"contacts\""));
+        assert!(sql.contains("\"id\" = 3"));
+        assert!(sql.contains("\"email\" IS NULL"));
+    }
+
+    #[test]
+    fn test_sort_direction_toggle_cycle() {
+        // Simulates toggle_sort_column logic without GPUI context:
+        // first click → Ascending, second → Descending, third → removed
+        let col_index = 2usize;
+        let mut sort_columns: Vec<(usize, SortDirection)> = Vec::new();
+
+        // First click: add Ascending
+        sort_columns = vec![(col_index, SortDirection::Ascending)];
+        assert_eq!(sort_columns.len(), 1);
+        assert!(matches!(sort_columns[0].1, SortDirection::Ascending));
+
+        // Second click: flip to Descending
+        if let Some(pos) = sort_columns.iter().position(|(idx, _)| *idx == col_index) {
+            match sort_columns[pos].1 {
+                SortDirection::Ascending => sort_columns[pos].1 = SortDirection::Descending,
+                SortDirection::Descending => {
+                    sort_columns.remove(pos);
+                }
+            }
+        }
+        assert_eq!(sort_columns.len(), 1);
+        assert!(matches!(sort_columns[0].1, SortDirection::Descending));
+
+        // Third click: remove from sort
+        if let Some(pos) = sort_columns.iter().position(|(idx, _)| *idx == col_index) {
+            match sort_columns[pos].1 {
+                SortDirection::Ascending => sort_columns[pos].1 = SortDirection::Descending,
+                SortDirection::Descending => {
+                    sort_columns.remove(pos);
+                }
+            }
+        }
+        assert!(sort_columns.is_empty(), "column should be removed after third toggle");
     }
 }

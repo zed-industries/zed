@@ -262,7 +262,7 @@ impl DatabasePanel {
             let _filter_subscription =
                 cx.subscribe(&schema_filter_editor, |this: &mut Self, _editor, event, cx| {
                     if matches!(event, EditorEvent::BufferEdited { .. }) {
-                        this.schema_filter = this.schema_filter_editor.read(cx).text(cx).to_string();
+                        this.schema_filter = this.schema_filter_editor.read(cx).text(cx);
                         this.rebuild_flattened_nodes(cx);
                         cx.notify();
                     }
@@ -2019,7 +2019,6 @@ impl DatabasePanel {
                     .tooltip(Tooltip::text("Add Connection")),
             )
             .menu({
-                let handle = handle.clone();
                 move |window, cx| {
                     let handle = handle.clone();
                     let menu = ContextMenu::build(window, cx, move |menu, _window, _cx| {
@@ -2044,7 +2043,6 @@ impl DatabasePanel {
                             }
                         })
                         .entry("Connect to MySQL...", None, {
-                            let handle = handle.clone();
                             move |_window, cx| {
                                 if let Some(panel) = handle.upgrade() {
                                     panel.update(cx, |this, cx| {

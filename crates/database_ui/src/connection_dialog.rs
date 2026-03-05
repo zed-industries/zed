@@ -295,7 +295,7 @@ impl ConnectionDialog {
                     if key_path.is_empty() {
                         return Err("SSH key path is required".to_string());
                     }
-                    let passphrase_text = self.ssh_passphrase_field.read(cx).text(cx).to_string();
+                    let passphrase_text = self.ssh_passphrase_field.read(cx).text(cx);
                     SshAuthMethod::PrivateKey {
                         key_path: PathBuf::from(key_path),
                         passphrase: if passphrase_text.is_empty() {
@@ -397,7 +397,7 @@ impl ConnectionDialog {
                 } else {
                     user
                 };
-                let password = self.password_field.read(cx).text(cx).to_string();
+                let password = self.password_field.read(cx).text(cx);
                 let name = if name.is_empty() {
                     format!("{} @ {}", database, host)
                 } else {
@@ -440,7 +440,7 @@ impl ConnectionDialog {
                 } else {
                     user
                 };
-                let password = self.password_field.read(cx).text(cx).to_string();
+                let password = self.password_field.read(cx).text(cx);
                 let name = if name.is_empty() {
                     format!("{} @ {}", database, host)
                 } else {

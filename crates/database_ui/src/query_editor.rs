@@ -413,7 +413,7 @@ impl QueryEditorTab {
             Some("query_results.csv"),
         );
 
-        let query_task = self.connection_manager.read(cx).execute_query(sql.clone(), 100_000, 0, cx);
+        let query_task = self.connection_manager.read(cx).execute_query(sql, 100_000, 0, cx);
 
         self.execution_state = ExecutionState::Executing;
         cx.notify();
