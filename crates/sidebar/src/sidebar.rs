@@ -25,6 +25,7 @@ use workspace::{
     FocusWorkspaceSidebar, MultiWorkspace, Sidebar as WorkspaceSidebar, SidebarEvent,
     ToggleWorkspaceSidebar, Workspace,
 };
+use zed_actions::editor::{MoveDown, MoveUp};
 
 actions!(
     workspace_sidebar,
@@ -610,7 +611,8 @@ impl Sidebar {
         let Some(entry) = self.contents.entries.get(ix) else {
             return div().into_any_element();
         };
-        let is_focused = self.focus_handle.is_focused(window);
+        let is_focused = self.focus_handle.is_focused(window)
+            || self.filter_editor.focus_handle(cx).is_focused(window);
         let is_selected = is_focused && self.selection == Some(ix);
 
         let is_group_header_after_first =
@@ -731,10 +733,7 @@ impl Sidebar {
         self.update_entries(window, cx);
     }
 
-    fn focus_in(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.filter_editor.focus_handle(cx).is_focused(window) {
-            return;
-        }
+    fn focus_in(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
         if self.selection.is_none() && !self.contents.entries.is_empty() {
             self.selection = Some(0);
             cx.notify();
@@ -745,7 +744,7 @@ impl Sidebar {
         if self.reset_filter_editor_text(window, cx) {
             self.update_entries(window, cx);
         } else {
-            cx.focus_self(window);
+            self.focus_handle.focus(window, cx);
         }
     }
 
@@ -762,6 +761,14 @@ impl Sidebar {
 
     fn filter_query(&self, cx: &App) -> String {
         self.filter_editor.read(cx).text(cx)
+    }
+
+    fn editor_move_down(&mut self, _: &MoveDown, window: &mut Window, cx: &mut Context<Self>) {
+        self.select_next(&SelectNext, window, cx);
+    }
+
+    fn editor_move_up(&mut self, _: &MoveUp, window: &mut Window, cx: &mut Context<Self>) {
+        self.select_previous(&SelectPrevious, window, cx);
     }
 
     fn select_next(&mut self, _: &SelectNext, _window: &mut Window, cx: &mut Context<Self>) {
@@ -1094,8 +1101,8 @@ impl WorkspaceSidebar for Sidebar {
 }
 
 impl Focusable for Sidebar {
-    fn focus_handle(&self, _cx: &App) -> FocusHandle {
-        self.focus_handle.clone()
+    fn focus_handle(&self, cx: &App) -> FocusHandle {
+        self.filter_editor.focus_handle(cx)
     }
 }
 
@@ -1103,7 +1110,8 @@ impl Render for Sidebar {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let titlebar_height = ui::utils::platform_title_bar_height(window);
         let ui_font = theme::setup_ui_font(window, cx);
-        let is_focused = self.focus_handle.is_focused(window);
+        let is_focused = self.focus_handle.is_focused(window)
+            || self.filter_editor.focus_handle(cx).is_focused(window);
         let has_query = !self.filter_query(cx).is_empty();
 
         let focus_tooltip_label = if is_focused {
@@ -1118,6 +1126,8 @@ impl Render for Sidebar {
             .track_focus(&self.focus_handle)
             .on_action(cx.listener(Self::select_next))
             .on_action(cx.listener(Self::select_previous))
+            .on_action(cx.listener(Self::editor_move_down))
+            .on_action(cx.listener(Self::editor_move_up))
             .on_action(cx.listener(Self::select_first))
             .on_action(cx.listener(Self::select_last))
             .on_action(cx.listener(Self::confirm))
