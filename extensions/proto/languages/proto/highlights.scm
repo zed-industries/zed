@@ -52,11 +52,11 @@
   "}"
   "<"
   ">"
-]  @punctuation.bracket
+] @punctuation.bracket
 
 [
- ";"
- ","
+  ";"
+  ","
 ] @punctuation.delimiter
 
 "=" @operator

@@ -49,10 +49,7 @@ use workspace::{
     DeploySearch, ItemNavHistory, NewSearch, ToolbarItemEvent, ToolbarItemLocation,
     ToolbarItemView, Workspace, WorkspaceId,
     item::{Item, ItemEvent, ItemHandle, SaveOptions},
-    searchable::{
-        CollapseDirection, Direction, SearchEvent, SearchToken, SearchableItem,
-        SearchableItemHandle,
-    },
+    searchable::{Direction, SearchEvent, SearchToken, SearchableItem, SearchableItemHandle},
 };
 
 actions!(
@@ -269,7 +266,6 @@ pub struct ProjectSearchView {
     replace_enabled: bool,
     included_opened_only: bool,
     regex_language: Option<Arc<Language>>,
-    results_collapsed: bool,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -682,7 +678,7 @@ impl Item for ProjectSearchView {
             .update(cx, |editor, cx| editor.navigate(data, window, cx))
     }
 
-    fn to_item_events(event: &Self::Event, mut f: impl FnMut(ItemEvent)) {
+    fn to_item_events(event: &Self::Event, f: &mut dyn FnMut(ItemEvent)) {
         match event {
             ViewEvent::UpdateTab => {
                 f(ItemEvent::UpdateBreadcrumbs);
@@ -814,8 +810,9 @@ impl ProjectSearchView {
     }
 
     fn update_results_visibility(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let has_any_folded = self.results_editor.read(cx).has_any_buffer_folded(cx);
         self.results_editor.update(cx, |editor, cx| {
-            if self.results_collapsed {
+            if has_any_folded {
                 editor.unfold_all(&UnfoldAll, window, cx);
             } else {
                 editor.fold_all(&FoldAll, window, cx);
@@ -910,18 +907,7 @@ impl ProjectSearchView {
         );
         subscriptions.push(cx.subscribe(
             &results_editor,
-            |this, _editor, event: &SearchEvent, cx| {
-                match event {
-                    SearchEvent::ResultsCollapsedChanged(collapsed_direction) => {
-                        match collapsed_direction {
-                            CollapseDirection::Collapsed => this.results_collapsed = true,
-                            CollapseDirection::Expanded => this.results_collapsed = false,
-                        }
-                    }
-                    _ => (),
-                };
-                cx.notify();
-            },
+            |_this, _editor, _event: &SearchEvent, cx| cx.notify(),
         ));
 
         let included_files_editor = cx.new(|cx| {
@@ -997,7 +983,6 @@ impl ProjectSearchView {
             replace_enabled: false,
             included_opened_only: false,
             regex_language: None,
-            results_collapsed: false,
             _subscriptions: subscriptions,
         };
 
@@ -2224,7 +2209,7 @@ impl Render for ProjectSearchBar {
             ))
             .child(matches_column);
 
-        let is_collapsed = search.results_collapsed;
+        let is_collapsed = search.results_editor.read(cx).has_any_buffer_folded(cx);
 
         let (icon, tooltip_label) = if is_collapsed {
             (IconName::ChevronUpDown, "Expand All Search Results")
@@ -2804,9 +2789,15 @@ pub mod tests {
                 })
             })
             .expect("Should fold fine");
+        cx.run_until_parked();
 
         let results_collapsed = search_view
-            .read_with(cx, |search_view, _| search_view.results_collapsed)
+            .read_with(cx, |search_view, cx| {
+                search_view
+                    .results_editor
+                    .read(cx)
+                    .has_any_buffer_folded(cx)
+            })
             .expect("got results_collapsed");
 
         assert!(results_collapsed);
@@ -2817,12 +2808,157 @@ pub mod tests {
                 })
             })
             .expect("Should unfold fine");
+        cx.run_until_parked();
 
         let results_collapsed = search_view
-            .read_with(cx, |search_view, _| search_view.results_collapsed)
+            .read_with(cx, |search_view, cx| {
+                search_view
+                    .results_editor
+                    .read(cx)
+                    .has_any_buffer_folded(cx)
+            })
             .expect("got results_collapsed");
 
         assert!(!results_collapsed);
+    }
+
+    #[perf]
+    #[gpui::test]
+    async fn test_collapse_state_syncs_after_manual_buffer_fold(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/dir"),
+            json!({
+                "one.rs": "const ONE: usize = 1;",
+                "two.rs": "const TWO: usize = one::ONE + one::ONE;",
+                "three.rs": "const THREE: usize = one::ONE + two::TWO;",
+            }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+        let window =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = window
+            .read_with(cx, |mw, _| mw.workspace().clone())
+            .unwrap();
+        let search = cx.new(|cx| ProjectSearch::new(project.clone(), cx));
+        let search_view = cx.add_window(|window, cx| {
+            ProjectSearchView::new(workspace.downgrade(), search.clone(), window, cx, None)
+        });
+
+        // Search for "ONE" which appears in all 3 files
+        perform_search(search_view, "ONE", cx);
+
+        // Verify initial state: no folds
+        let has_any_folded = search_view
+            .read_with(cx, |search_view, cx| {
+                search_view
+                    .results_editor
+                    .read(cx)
+                    .has_any_buffer_folded(cx)
+            })
+            .expect("should read state");
+        assert!(!has_any_folded, "No buffers should be folded initially");
+
+        // Fold all via fold_all
+        search_view
+            .update(cx, |search_view, window, cx| {
+                search_view.results_editor.update(cx, |editor, cx| {
+                    editor.fold_all(&FoldAll, window, cx);
+                })
+            })
+            .expect("Should fold fine");
+        cx.run_until_parked();
+
+        let has_any_folded = search_view
+            .read_with(cx, |search_view, cx| {
+                search_view
+                    .results_editor
+                    .read(cx)
+                    .has_any_buffer_folded(cx)
+            })
+            .expect("should read state");
+        assert!(
+            has_any_folded,
+            "All buffers should be folded after fold_all"
+        );
+
+        // Manually unfold one buffer (simulating a chevron click)
+        let first_buffer_id = search_view
+            .read_with(cx, |search_view, cx| {
+                search_view
+                    .results_editor
+                    .read(cx)
+                    .buffer()
+                    .read(cx)
+                    .excerpt_buffer_ids()[0]
+            })
+            .expect("should read buffer ids");
+
+        search_view
+            .update(cx, |search_view, _window, cx| {
+                search_view.results_editor.update(cx, |editor, cx| {
+                    editor.unfold_buffer(first_buffer_id, cx);
+                })
+            })
+            .expect("Should unfold one buffer");
+
+        let has_any_folded = search_view
+            .read_with(cx, |search_view, cx| {
+                search_view
+                    .results_editor
+                    .read(cx)
+                    .has_any_buffer_folded(cx)
+            })
+            .expect("should read state");
+        assert!(
+            has_any_folded,
+            "Should still report folds when only one buffer is unfolded"
+        );
+
+        // Unfold all via unfold_all
+        search_view
+            .update(cx, |search_view, window, cx| {
+                search_view.results_editor.update(cx, |editor, cx| {
+                    editor.unfold_all(&UnfoldAll, window, cx);
+                })
+            })
+            .expect("Should unfold fine");
+        cx.run_until_parked();
+
+        let has_any_folded = search_view
+            .read_with(cx, |search_view, cx| {
+                search_view
+                    .results_editor
+                    .read(cx)
+                    .has_any_buffer_folded(cx)
+            })
+            .expect("should read state");
+        assert!(!has_any_folded, "No folds should remain after unfold_all");
+
+        // Manually fold one buffer back (simulating a chevron click)
+        search_view
+            .update(cx, |search_view, _window, cx| {
+                search_view.results_editor.update(cx, |editor, cx| {
+                    editor.fold_buffer(first_buffer_id, cx);
+                })
+            })
+            .expect("Should fold one buffer");
+
+        let has_any_folded = search_view
+            .read_with(cx, |search_view, cx| {
+                search_view
+                    .results_editor
+                    .read(cx)
+                    .has_any_buffer_folded(cx)
+            })
+            .expect("should read state");
+        assert!(
+            has_any_folded,
+            "Should report folds after manually folding one buffer"
+        );
     }
 
     #[perf]

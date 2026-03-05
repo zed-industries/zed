@@ -151,6 +151,7 @@
       "cmd-\"": "editor::ExpandAllDiffHunks",
       "cmd-alt-g b": "git::Blame",
       "cmd-alt-g m": "git::OpenModifiedFiles",
+      "cmd-alt-g r": "git::ReviewDiff",
       "cmd-i": "editor::ShowSignatureHelp",
       "f9": "editor::ToggleBreakpoint",
       "shift-f9": "editor::EditLogBreakpoint",
@@ -241,6 +242,7 @@
     "context": "AgentDiff",
     "use_key_equivalents": true,
     "bindings": {
+      "cmd-y": "agent::Keep",
       "cmd-alt-y": "agent::Keep",
       "cmd-alt-z": "agent::Reject",
       "shift-alt-y": "agent::KeepAll",
@@ -251,6 +253,7 @@
     "context": "Editor && editor_agent_diff",
     "use_key_equivalents": true,
     "bindings": {
+      "cmd-y": "agent::Keep",
       "cmd-alt-y": "agent::Keep",
       "cmd-alt-z": "agent::Reject",
       "shift-alt-y": "agent::KeepAll",
@@ -361,6 +364,7 @@
       "shift-ctrl-d": "git::Diff",
       "shift-alt-y": "agent::KeepAll",
       "shift-alt-z": "agent::RejectAll",
+      "shift-alt-u": "agent::UndoLastReject",
       "cmd-enter": "agent::ChatWithFollow",
       "cmd-shift-enter": "agent::SendImmediately",
       "cmd-shift-alt-enter": "agent::SendNextQueuedMessage",
@@ -375,6 +379,7 @@
       "cmd-alt-k": "agent::ToggleThinkingMode",
       "cmd-alt-'": "agent::ToggleThinkingEffortMenu",
       "ctrl-'": "agent::CycleThinkingEffort",
+      "cmd-alt-.": "agent::ToggleFastMode",
     },
   },
   {
@@ -443,6 +448,13 @@
     "bindings": {
       "up": "search::PreviousHistoryQuery",
       "down": "search::NextHistoryQuery",
+    },
+  },
+  {
+    "context": "BufferSearchBar || ProjectSearchBar",
+    "use_key_equivalents": true,
+    "bindings": {
+      "ctrl-enter": "editor::Newline",
     },
   },
   {
@@ -1405,6 +1417,7 @@
     "bindings": {
       "ctrl-shift-space": "git::WorktreeFromDefaultOnWindow",
       "ctrl-space": "git::WorktreeFromDefault",
+      "cmd-shift-backspace": "git::DeleteWorktree",
     },
   },
   {

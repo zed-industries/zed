@@ -15,6 +15,7 @@ use ui::Checkbox;
 use ui::CopyButton;
 
 use std::borrow::Cow;
+use std::collections::BTreeMap;
 use std::iter;
 use std::mem;
 use std::ops::Range;
@@ -112,6 +113,7 @@ impl MarkdownStyle {
         let theme_settings = ThemeSettings::get_global(cx);
         let colors = cx.theme().colors();
 
+        let buffer_font_weight = theme_settings.buffer_font.weight;
         let (buffer_font_size, ui_font_size) = match font {
             MarkdownFont::Agent => (
                 theme_settings.agent_buffer_font_size(cx),
@@ -196,6 +198,7 @@ impl MarkdownStyle {
                     font_fallbacks: theme_settings.buffer_font.fallbacks.clone(),
                     font_features: Some(theme_settings.buffer_font.features.clone()),
                     font_size: Some(buffer_font_size.into()),
+                    font_weight: Some(buffer_font_weight),
                     ..Default::default()
                 },
                 ..Default::default()
@@ -205,6 +208,7 @@ impl MarkdownStyle {
                 font_fallbacks: theme_settings.buffer_font.fallbacks.clone(),
                 font_features: Some(theme_settings.buffer_font.features.clone()),
                 font_size: Some(buffer_font_size.into()),
+                font_weight: Some(buffer_font_weight),
                 background_color: Some(colors.editor_foreground.opacity(0.08)),
                 ..Default::default()
             },
@@ -243,7 +247,7 @@ pub struct Markdown {
     fallback_code_block_language: Option<LanguageName>,
     options: Options,
     copied_code_blocks: HashSet<ElementId>,
-    code_block_scroll_handles: HashMap<usize, ScrollHandle>,
+    code_block_scroll_handles: BTreeMap<usize, ScrollHandle>,
     context_menu_selected_text: Option<String>,
 }
 
@@ -313,7 +317,7 @@ impl Markdown {
                 parse_links_only: false,
             },
             copied_code_blocks: HashSet::default(),
-            code_block_scroll_handles: HashMap::default(),
+            code_block_scroll_handles: BTreeMap::default(),
             context_menu_selected_text: None,
         };
         this.parse(cx);
@@ -338,7 +342,7 @@ impl Markdown {
                 parse_links_only: true,
             },
             copied_code_blocks: HashSet::default(),
-            code_block_scroll_handles: HashMap::default(),
+            code_block_scroll_handles: BTreeMap::default(),
             context_menu_selected_text: None,
         };
         this.parse(cx);
@@ -359,6 +363,32 @@ impl Markdown {
 
     fn clear_code_block_scroll_handles(&mut self) {
         self.code_block_scroll_handles.clear();
+    }
+
+    fn autoscroll_code_block(&self, source_index: usize, cursor_position: Point<Pixels>) {
+        let Some((_, scroll_handle)) = self
+            .code_block_scroll_handles
+            .range(..=source_index)
+            .next_back()
+        else {
+            return;
+        };
+
+        let bounds = scroll_handle.bounds();
+        if cursor_position.y < bounds.top() || cursor_position.y > bounds.bottom() {
+            return;
+        }
+
+        let horizontal_delta = if cursor_position.x < bounds.left() {
+            bounds.left() - cursor_position.x
+        } else if cursor_position.x > bounds.right() {
+            bounds.right() - cursor_position.x
+        } else {
+            return;
+        };
+
+        let offset = scroll_handle.offset();
+        scroll_handle.set_offset(point(offset.x + horizontal_delta, offset.y));
     }
 
     pub fn is_parsing(&self) -> bool {
@@ -899,6 +929,7 @@ impl MarkdownElement {
                         Ok(ix) | Err(ix) => ix,
                     };
                     markdown.selection.set_head(source_index, &rendered_text);
+                    markdown.autoscroll_code_block(source_index, event.position);
                     markdown.autoscroll_request = Some(source_index);
                     cx.notify();
                 } else {

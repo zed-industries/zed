@@ -7,8 +7,6 @@ use std::{
     time::Duration,
 };
 
-pub use util::*;
-
 /// A helper trait for building complex objects with imperative conditionals in a fluent style.
 pub trait FluentBuilder {
     /// Imperatively modify self with the given closure.

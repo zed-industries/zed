@@ -1,15 +1,14 @@
 use super::*;
-use crate::{compute_diff_between_snapshots, udiff::apply_diff_to_string, zeta1::MAX_EVENT_TOKENS};
+use crate::{compute_diff_between_snapshots, udiff::apply_diff_to_string};
 use client::{UserStore, test::FakeServer};
-use clock::{FakeSystemClock, ReplicaId};
+use clock::FakeSystemClock;
 use cloud_api_types::{CreateLlmTokenResponse, LlmToken};
 use cloud_llm_client::{
-    EditPredictionRejectReason, EditPredictionRejection, PredictEditsBody, PredictEditsResponse,
-    RejectEditPredictionsBody,
+    EditPredictionRejectReason, EditPredictionRejection, RejectEditPredictionsBody,
     predict_edits_v3::{PredictEditsV3Request, PredictEditsV3Response},
 };
 use futures::{
-    AsyncReadExt, StreamExt,
+    AsyncReadExt, FutureExt, StreamExt,
     channel::{mpsc, oneshot},
 };
 use gpui::App;
@@ -18,7 +17,7 @@ use gpui::{
     http_client::{FakeHttpClient, Response},
 };
 use indoc::indoc;
-use language::{Buffer, Point};
+use language::{Anchor, Buffer, CursorShape, Operation, Point, Selection, SelectionGoal};
 use lsp::LanguageServerId;
 use parking_lot::Mutex;
 use pretty_assertions::{assert_eq, assert_matches};
@@ -26,11 +25,14 @@ use project::{FakeFs, Project};
 use serde_json::json;
 use settings::SettingsStore;
 use std::{path::Path, sync::Arc, time::Duration};
-use util::{path, rel_path::rel_path};
+use util::path;
 use uuid::Uuid;
 use zeta_prompt::ZetaPromptInput;
 
-use crate::{BufferEditPrediction, EditPredictionId, EditPredictionStore, REJECT_REQUEST_DEBOUNCE};
+use crate::{
+    BufferEditPrediction, EDIT_PREDICTION_SETTLED_QUIESCENCE, EditPredictionId,
+    EditPredictionStore, REJECT_REQUEST_DEBOUNCE,
+};
 
 #[gpui::test]
 async fn test_current_state(cx: &mut TestAppContext) {
@@ -356,26 +358,9 @@ async fn test_edit_history_getter_pause_splits_last_event(cx: &mut TestAppContex
         buffer.edit(vec![(19..19, "!")], None, cx);
     });
 
-    // Without time-based splitting, there is one event.
-    let events = ep_store.update(cx, |ep_store, cx| {
-        ep_store.edit_history_for_project(&project, cx)
-    });
-    assert_eq!(events.len(), 1);
-    let zeta_prompt::Event::BufferChange { diff, .. } = events[0].event.as_ref();
-    assert_eq!(
-        diff.as_str(),
-        indoc! {"
-            @@ -1,3 +1,3 @@
-             Hello!
-            -
-            +How are you?!
-             Bye
-        "}
-    );
-
     // With time-based splitting, there are two distinct events.
     let events = ep_store.update(cx, |ep_store, cx| {
-        ep_store.edit_history_for_project_with_pause_split_last_event(&project, cx)
+        ep_store.edit_history_for_project(&project, cx)
     });
     assert_eq!(events.len(), 2);
     let zeta_prompt::Event::BufferChange { diff, .. } = events[0].event.as_ref();
@@ -404,7 +389,7 @@ async fn test_edit_history_getter_pause_splits_last_event(cx: &mut TestAppContex
 }
 
 #[gpui::test]
-async fn test_event_grouping_line_span_coalescing(cx: &mut TestAppContext) {
+async fn test_predicted_edits_are_separated_in_edit_history(cx: &mut TestAppContext) {
     let (ep_store, _requests) = init_test_with_fake_client(cx);
     let fs = FakeFs::new(cx.executor());
 
@@ -593,6 +578,278 @@ fn render_events(events: &[StoredEvent]) -> String {
         .join("\n---\n")
 }
 
+fn render_events_with_predicted(events: &[StoredEvent]) -> Vec<String> {
+    events
+        .iter()
+        .map(|e| {
+            let zeta_prompt::Event::BufferChange {
+                diff, predicted, ..
+            } = e.event.as_ref();
+            let prefix = if *predicted { "predicted" } else { "manual" };
+            format!("{}\n{}", prefix, diff)
+        })
+        .collect()
+}
+
+#[gpui::test]
+async fn test_predicted_flag_coalescing(cx: &mut TestAppContext) {
+    let (ep_store, _requests) = init_test_with_fake_client(cx);
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/root",
+        json!({
+            "foo.rs": "line 0\nline 1\nline 2\nline 3\nline 4\nline 5\nline 6\nline 7\nline 8\nline 9\nline 10\nline 11\nline 12\nline 13\nline 14\n"
+        }),
+    )
+    .await;
+    let project = Project::test(fs, vec![path!("/root").as_ref()], cx).await;
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            let path = project.find_project_path(path!("root/foo.rs"), cx).unwrap();
+            project.open_buffer(path, cx)
+        })
+        .await
+        .unwrap();
+
+    ep_store.update(cx, |ep_store, cx| {
+        ep_store.register_buffer(&buffer, &project, cx);
+    });
+
+    // Case 1: Manual edits have `predicted` set to false.
+    buffer.update(cx, |buffer, cx| {
+        buffer.edit(vec![(0..6, "LINE ZERO")], None, cx);
+    });
+
+    let events = ep_store.update(cx, |ep_store, cx| {
+        ep_store.edit_history_for_project(&project, cx)
+    });
+
+    assert_eq!(
+        render_events_with_predicted(&events),
+        vec![indoc! {"
+            manual
+            @@ -1,4 +1,4 @@
+            -line 0
+            +LINE ZERO
+             line 1
+             line 2
+             line 3
+        "}]
+    );
+
+    // Case 2: Multiple successive manual edits near each other are merged into one
+    // event with `predicted` set to false.
+    buffer.update(cx, |buffer, cx| {
+        let offset = Point::new(1, 0).to_offset(buffer);
+        let end = Point::new(1, 6).to_offset(buffer);
+        buffer.edit(vec![(offset..end, "LINE ONE")], None, cx);
+    });
+
+    let events = ep_store.update(cx, |ep_store, cx| {
+        ep_store.edit_history_for_project(&project, cx)
+    });
+    assert_eq!(
+        render_events_with_predicted(&events),
+        vec![indoc! {"
+            manual
+            @@ -1,5 +1,5 @@
+            -line 0
+            -line 1
+            +LINE ZERO
+            +LINE ONE
+             line 2
+             line 3
+             line 4
+        "}]
+    );
+
+    // Case 3: Accepted predictions have `predicted` set to true.
+    // Case 5: A manual edit that follows a predicted edit is not merged with the
+    // predicted edit, even if it is nearby.
+    ep_store.update(cx, |ep_store, cx| {
+        buffer.update(cx, |buffer, cx| {
+            let offset = Point::new(2, 0).to_offset(buffer);
+            let end = Point::new(2, 6).to_offset(buffer);
+            buffer.edit(vec![(offset..end, "LINE TWO")], None, cx);
+        });
+        ep_store.report_changes_for_buffer(&buffer, &project, true, cx);
+    });
+
+    let events = ep_store.update(cx, |ep_store, cx| {
+        ep_store.edit_history_for_project(&project, cx)
+    });
+    assert_eq!(
+        render_events_with_predicted(&events),
+        vec![
+            indoc! {"
+                manual
+                @@ -1,5 +1,5 @@
+                -line 0
+                -line 1
+                +LINE ZERO
+                +LINE ONE
+                 line 2
+                 line 3
+                 line 4
+            "},
+            indoc! {"
+                predicted
+                @@ -1,6 +1,6 @@
+                 LINE ZERO
+                 LINE ONE
+                -line 2
+                +LINE TWO
+                 line 3
+                 line 4
+                 line 5
+            "}
+        ]
+    );
+
+    // Case 4: Multiple successive accepted predictions near each other are merged
+    // into one event with `predicted` set to true.
+    ep_store.update(cx, |ep_store, cx| {
+        buffer.update(cx, |buffer, cx| {
+            let offset = Point::new(3, 0).to_offset(buffer);
+            let end = Point::new(3, 6).to_offset(buffer);
+            buffer.edit(vec![(offset..end, "LINE THREE")], None, cx);
+        });
+        ep_store.report_changes_for_buffer(&buffer, &project, true, cx);
+    });
+
+    let events = ep_store.update(cx, |ep_store, cx| {
+        ep_store.edit_history_for_project(&project, cx)
+    });
+    assert_eq!(
+        render_events_with_predicted(&events),
+        vec![
+            indoc! {"
+                manual
+                @@ -1,5 +1,5 @@
+                -line 0
+                -line 1
+                +LINE ZERO
+                +LINE ONE
+                 line 2
+                 line 3
+                 line 4
+            "},
+            indoc! {"
+                predicted
+                @@ -1,7 +1,7 @@
+                 LINE ZERO
+                 LINE ONE
+                -line 2
+                -line 3
+                +LINE TWO
+                +LINE THREE
+                 line 4
+                 line 5
+                 line 6
+            "}
+        ]
+    );
+
+    // Case 5 (continued): A manual edit that follows a predicted edit is not merged
+    // with the predicted edit, even if it is nearby.
+    buffer.update(cx, |buffer, cx| {
+        let offset = Point::new(4, 0).to_offset(buffer);
+        let end = Point::new(4, 6).to_offset(buffer);
+        buffer.edit(vec![(offset..end, "LINE FOUR")], None, cx);
+    });
+
+    let events = ep_store.update(cx, |ep_store, cx| {
+        ep_store.edit_history_for_project(&project, cx)
+    });
+    assert_eq!(
+        render_events_with_predicted(&events),
+        vec![
+            indoc! {"
+                manual
+                @@ -1,5 +1,5 @@
+                -line 0
+                -line 1
+                +LINE ZERO
+                +LINE ONE
+                 line 2
+                 line 3
+                 line 4
+            "},
+            indoc! {"
+                predicted
+                @@ -1,7 +1,7 @@
+                 LINE ZERO
+                 LINE ONE
+                -line 2
+                -line 3
+                +LINE TWO
+                +LINE THREE
+                 line 4
+                 line 5
+                 line 6
+            "},
+            indoc! {"
+                manual
+                @@ -2,7 +2,7 @@
+                 LINE ONE
+                 LINE TWO
+                 LINE THREE
+                -line 4
+                +LINE FOUR
+                 line 5
+                 line 6
+                 line 7
+            "}
+        ]
+    );
+
+    // Case 6: If we then perform a manual edit at a *different* location (more than
+    // 8 lines away), then the edits at the prior location can be merged with each
+    // other, even if some are predicted and some are not. `predicted` means all
+    // constituent edits were predicted.
+    buffer.update(cx, |buffer, cx| {
+        let offset = Point::new(14, 0).to_offset(buffer);
+        let end = Point::new(14, 7).to_offset(buffer);
+        buffer.edit(vec![(offset..end, "LINE FOURTEEN")], None, cx);
+    });
+
+    let events = ep_store.update(cx, |ep_store, cx| {
+        ep_store.edit_history_for_project(&project, cx)
+    });
+    assert_eq!(
+        render_events_with_predicted(&events),
+        vec![
+            indoc! {"
+                manual
+                @@ -1,8 +1,8 @@
+                -line 0
+                -line 1
+                -line 2
+                -line 3
+                -line 4
+                +LINE ZERO
+                +LINE ONE
+                +LINE TWO
+                +LINE THREE
+                +LINE FOUR
+                 line 5
+                 line 6
+                 line 7
+            "},
+            indoc! {"
+                manual
+                @@ -12,4 +12,4 @@
+                 line 11
+                 line 12
+                 line 13
+                -line 14
+                +LINE FOURTEEN
+            "}
+        ]
+    );
+}
+
 #[gpui::test]
 async fn test_empty_prediction(cx: &mut TestAppContext) {
     let (ep_store, mut requests) = init_test_with_fake_client(cx);
@@ -643,7 +900,8 @@ async fn test_empty_prediction(cx: &mut TestAppContext) {
         &[EditPredictionRejection {
             request_id: id,
             reason: EditPredictionRejectReason::Empty,
-            was_shown: false
+            was_shown: false,
+            model_version: None,
         }]
     );
 }
@@ -703,7 +961,8 @@ async fn test_interpolated_empty(cx: &mut TestAppContext) {
         &[EditPredictionRejection {
             request_id: id,
             reason: EditPredictionRejectReason::InterpolatedEmpty,
-            was_shown: false
+            was_shown: false,
+            model_version: None,
         }]
     );
 }
@@ -795,7 +1054,8 @@ async fn test_replace_current(cx: &mut TestAppContext) {
         &[EditPredictionRejection {
             request_id: first_id,
             reason: EditPredictionRejectReason::Replaced,
-            was_shown: false
+            was_shown: false,
+            model_version: None,
         }]
     );
 }
@@ -889,7 +1149,8 @@ async fn test_current_preferred(cx: &mut TestAppContext) {
         &[EditPredictionRejection {
             request_id: second_id,
             reason: EditPredictionRejectReason::CurrentPreferred,
-            was_shown: false
+            was_shown: false,
+            model_version: None,
         }]
     );
 }
@@ -980,7 +1241,8 @@ async fn test_cancel_earlier_pending_requests(cx: &mut TestAppContext) {
         &[EditPredictionRejection {
             request_id: first_id,
             reason: EditPredictionRejectReason::Canceled,
-            was_shown: false
+            was_shown: false,
+            model_version: None,
         }]
     );
 }
@@ -1110,15 +1372,118 @@ async fn test_cancel_second_on_third_request(cx: &mut TestAppContext) {
             EditPredictionRejection {
                 request_id: cancelled_id,
                 reason: EditPredictionRejectReason::Canceled,
-                was_shown: false
+                was_shown: false,
+                model_version: None,
             },
             EditPredictionRejection {
                 request_id: first_id,
                 reason: EditPredictionRejectReason::Replaced,
-                was_shown: false
+                was_shown: false,
+                model_version: None,
             }
         ]
     );
+}
+
+#[gpui::test]
+async fn test_jump_and_edit_throttles_are_independent(cx: &mut TestAppContext) {
+    let (ep_store, mut requests) = init_test_with_fake_client(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/root",
+        json!({
+            "foo.md":  "Hello!\nHow\nBye\n",
+            "bar.md": "Hola!\nComo\nAdios\n"
+        }),
+    )
+    .await;
+    let project = Project::test(fs, vec![path!("/root").as_ref()], cx).await;
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            let path = project.find_project_path(path!("root/foo.md"), cx).unwrap();
+            project.set_active_path(Some(path.clone()), cx);
+            project.open_buffer(path, cx)
+        })
+        .await
+        .unwrap();
+    let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot());
+    let position = snapshot.anchor_before(language::Point::new(1, 3));
+
+    ep_store.update(cx, |ep_store, cx| {
+        ep_store.register_project(&project, cx);
+        ep_store.register_buffer(&buffer, &project, cx);
+    });
+
+    // First edit request - no prior edit, so not throttled.
+    ep_store.update(cx, |ep_store, cx| {
+        ep_store.refresh_prediction_from_buffer(project.clone(), buffer.clone(), position, cx);
+    });
+    let (_edit_request, edit_response_tx) = requests.predict.next().await.unwrap();
+    edit_response_tx.send(empty_response()).unwrap();
+    cx.run_until_parked();
+
+    let diagnostic = lsp::Diagnostic {
+        range: lsp::Range::new(lsp::Position::new(1, 1), lsp::Position::new(1, 5)),
+        severity: Some(lsp::DiagnosticSeverity::ERROR),
+        message: "Sentence is incomplete".to_string(),
+        ..Default::default()
+    };
+
+    // First jump request triggered by diagnostic event on buffer - no prior jump, so not throttled (independent from edit).
+    project.update(cx, |project, cx| {
+        project.lsp_store().update(cx, |lsp_store, cx| {
+            lsp_store
+                .update_diagnostics(
+                    LanguageServerId(0),
+                    lsp::PublishDiagnosticsParams {
+                        uri: lsp::Uri::from_file_path(path!("/root/bar.md")).unwrap(),
+                        diagnostics: vec![diagnostic],
+                        version: None,
+                    },
+                    None,
+                    language::DiagnosticSourceKind::Pushed,
+                    &[],
+                    cx,
+                )
+                .unwrap();
+        });
+    });
+    let (_jump_request, jump_response_tx) = requests.predict.next().await.unwrap();
+    jump_response_tx.send(empty_response()).unwrap();
+    cx.run_until_parked();
+
+    // Second edit request - should be throttled by the first edit.
+    ep_store.update(cx, |ep_store, cx| {
+        ep_store.refresh_prediction_from_buffer(project.clone(), buffer.clone(), position, cx);
+    });
+    assert_no_predict_request_ready(&mut requests.predict);
+
+    // Second jump request - should be throttled by the first jump.
+    ep_store.update(cx, |ep_store, cx| {
+        ep_store.refresh_prediction_from_diagnostics(
+            project.clone(),
+            DiagnosticSearchScope::Global,
+            cx,
+        );
+    });
+    assert_no_predict_request_ready(&mut requests.predict);
+
+    // Wait for both throttles to expire.
+    cx.background_executor
+        .advance_clock(EditPredictionStore::THROTTLE_TIMEOUT);
+    cx.background_executor.run_until_parked();
+    cx.run_until_parked();
+
+    // Both requests should now go through.
+    let (_request_1, response_tx_1) = requests.predict.next().await.unwrap();
+    response_tx_1.send(empty_response()).unwrap();
+    cx.run_until_parked();
+
+    let (_request_2, response_tx_2) = requests.predict.next().await.unwrap();
+    response_tx_2.send(empty_response()).unwrap();
+    cx.run_until_parked();
 }
 
 #[gpui::test]
@@ -1130,12 +1495,14 @@ async fn test_rejections_flushing(cx: &mut TestAppContext) {
             EditPredictionId("test-1".into()),
             EditPredictionRejectReason::Discarded,
             false,
+            None,
             cx,
         );
         ep_store.reject_prediction(
             EditPredictionId("test-2".into()),
             EditPredictionRejectReason::Canceled,
             true,
+            None,
             cx,
         );
     });
@@ -1153,7 +1520,8 @@ async fn test_rejections_flushing(cx: &mut TestAppContext) {
         EditPredictionRejection {
             request_id: "test-1".to_string(),
             reason: EditPredictionRejectReason::Discarded,
-            was_shown: false
+            was_shown: false,
+            model_version: None,
         }
     );
     assert_eq!(
@@ -1161,7 +1529,8 @@ async fn test_rejections_flushing(cx: &mut TestAppContext) {
         EditPredictionRejection {
             request_id: "test-2".to_string(),
             reason: EditPredictionRejectReason::Canceled,
-            was_shown: true
+            was_shown: true,
+            model_version: None,
         }
     );
 
@@ -1172,6 +1541,7 @@ async fn test_rejections_flushing(cx: &mut TestAppContext) {
                 EditPredictionId(format!("batch-{}", i).into()),
                 EditPredictionRejectReason::Discarded,
                 false,
+                None,
                 cx,
             );
         }
@@ -1203,6 +1573,7 @@ async fn test_rejections_flushing(cx: &mut TestAppContext) {
             EditPredictionId("retry-1".into()),
             EditPredictionRejectReason::Discarded,
             false,
+            None,
             cx,
         );
     });
@@ -1222,6 +1593,7 @@ async fn test_rejections_flushing(cx: &mut TestAppContext) {
             EditPredictionId("retry-2".into()),
             EditPredictionRejectReason::Discarded,
             false,
+            None,
             cx,
         );
     });
@@ -1332,18 +1704,41 @@ async fn test_rejections_flushing(cx: &mut TestAppContext) {
 
 // Generate a model response that would apply the given diff to the active file.
 fn model_response(request: &PredictEditsV3Request, diff_to_apply: &str) -> PredictEditsV3Response {
-    let excerpt =
-        request.input.cursor_excerpt[request.input.editable_range_in_excerpt.clone()].to_string();
+    let editable_range =
+        zeta_prompt::excerpt_range_for_format(Default::default(), &request.input.excerpt_ranges).1;
+    let excerpt = request.input.cursor_excerpt[editable_range.clone()].to_string();
     let new_excerpt = apply_diff_to_string(diff_to_apply, &excerpt).unwrap();
 
     PredictEditsV3Response {
         request_id: Uuid::new_v4().to_string(),
+        editable_range,
         output: new_excerpt,
+        model_version: None,
+    }
+}
+
+fn empty_response() -> PredictEditsV3Response {
+    PredictEditsV3Response {
+        request_id: Uuid::new_v4().to_string(),
+        editable_range: 0..0,
+        output: String::new(),
+        model_version: None,
     }
 }
 
 fn prompt_from_request(request: &PredictEditsV3Request) -> String {
     zeta_prompt::format_zeta_prompt(&request.input, zeta_prompt::ZetaFormat::default())
+}
+
+fn assert_no_predict_request_ready(
+    requests: &mut mpsc::UnboundedReceiver<(
+        PredictEditsV3Request,
+        oneshot::Sender<PredictEditsV3Response>,
+    )>,
+) {
+    if requests.next().now_or_never().flatten().is_some() {
+        panic!("Unexpected prediction request while throttled.");
+    }
 }
 
 struct RequestChannels {
@@ -1424,8 +1819,6 @@ fn init_test_with_fake_client(
     })
 }
 
-const BSD_0_TXT: &str = include_str!("../license_examples/0bsd.txt");
-
 #[gpui::test]
 async fn test_edit_prediction_basic_interpolation(cx: &mut TestAppContext) {
     let buffer = cx.new(|cx| Buffer::local("Lorem ipsum dolor", cx));
@@ -1449,12 +1842,17 @@ async fn test_edit_prediction_basic_interpolation(cx: &mut TestAppContext) {
             related_files: Default::default(),
             cursor_path: Path::new("").into(),
             cursor_excerpt: "".into(),
-            editable_range_in_excerpt: 0..0,
             cursor_offset_in_excerpt: 0,
             excerpt_start_row: None,
+            excerpt_ranges: Default::default(),
+            experiment: None,
+            in_open_source_repo: false,
+            can_collect_data: false,
+            repo_url: None,
         },
         buffer_snapshotted_at: Instant::now(),
         response_received_at: Instant::now(),
+        model_version: None,
     };
 
     cx.update(|cx| {
@@ -1555,13 +1953,10 @@ async fn test_clean_up_diff(cx: &mut TestAppContext) {
                     }
                 "},
             indoc! {"
-                    <|editable_region_start|>
                     fn main() {
                         let word_1 = \"lorem\";
                         let range = word_1.len()..word_1.len();
                     }
-
-                    <|editable_region_end|>
                 "},
             cx,
         )
@@ -1582,12 +1977,9 @@ async fn test_clean_up_diff(cx: &mut TestAppContext) {
                     }
                 "},
             indoc! {"
-                    <|editable_region_start|>
                     fn main() {
                         let story = \"the quick brown fox jumps over the lazy dog\";
                     }
-
-                    <|editable_region_end|>
                 "},
             cx,
         )
@@ -1605,18 +1997,11 @@ async fn test_edit_prediction_end_of_buffer(cx: &mut TestAppContext) {
     init_test(cx);
 
     let buffer_content = "lorem\n";
-    let completion_response = indoc! {"
-            ```animals.js
-            <|start_of_file|>
-            <|editable_region_start|>
-            lorem
-            ipsum
-            <|editable_region_end|>
-            ```"};
+    let completion_response = "lorem\nipsum\n";
 
     assert_eq!(
         apply_edit_prediction(buffer_content, completion_response, cx).await,
-        "lorem\nipsum"
+        "lorem\nipsum\n"
     );
 }
 
@@ -1656,13 +2041,16 @@ async fn test_edit_prediction_no_spurious_trailing_newline(cx: &mut TestAppConte
         ep_store.refresh_prediction_from_buffer(project.clone(), buffer.clone(), position, cx);
     });
 
-    let (_request, respond_tx) = requests.predict.next().await.unwrap();
+    let (request, respond_tx) = requests.predict.next().await.unwrap();
 
     // Model returns output WITH a trailing newline, even though the buffer doesn't have one.
     // Zeta2 should normalize both sides before diffing, so no spurious newline is inserted.
+    let excerpt_length = request.input.cursor_excerpt.len();
     let response = PredictEditsV3Response {
         request_id: Uuid::new_v4().to_string(),
         output: "hello world\n".to_string(),
+        editable_range: 0..excerpt_length,
+        model_version: None,
     };
     respond_tx.send(response).unwrap();
 
@@ -1685,298 +2073,6 @@ async fn test_edit_prediction_no_spurious_trailing_newline(cx: &mut TestAppConte
     });
 }
 
-#[gpui::test]
-async fn test_can_collect_data(cx: &mut TestAppContext) {
-    init_test(cx);
-
-    let fs = project::FakeFs::new(cx.executor());
-    fs.insert_tree(path!("/project"), json!({ "LICENSE": BSD_0_TXT }))
-        .await;
-
-    let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
-    let buffer = project
-        .update(cx, |project, cx| {
-            project.open_local_buffer(path!("/project/src/main.rs"), cx)
-        })
-        .await
-        .unwrap();
-
-    let (ep_store, captured_request, _) = make_test_ep_store(&project, cx).await;
-    ep_store.update(cx, |ep_store, _cx| {
-        ep_store.data_collection_choice = DataCollectionChoice::Enabled
-    });
-
-    run_edit_prediction(&buffer, &project, &ep_store, cx).await;
-    assert_eq!(
-        captured_request.lock().clone().unwrap().can_collect_data,
-        true
-    );
-
-    ep_store.update(cx, |ep_store, _cx| {
-        ep_store.data_collection_choice = DataCollectionChoice::Disabled
-    });
-
-    run_edit_prediction(&buffer, &project, &ep_store, cx).await;
-    assert_eq!(
-        captured_request.lock().clone().unwrap().can_collect_data,
-        false
-    );
-}
-
-#[gpui::test]
-async fn test_no_data_collection_for_remote_file(cx: &mut TestAppContext) {
-    init_test(cx);
-
-    let fs = project::FakeFs::new(cx.executor());
-    let project = Project::test(fs.clone(), [], cx).await;
-
-    let buffer = cx.new(|_cx| {
-        Buffer::remote(
-            language::BufferId::new(1).unwrap(),
-            ReplicaId::new(1),
-            language::Capability::ReadWrite,
-            "fn main() {\n    println!(\"Hello\");\n}",
-        )
-    });
-
-    let (ep_store, captured_request, _) = make_test_ep_store(&project, cx).await;
-    ep_store.update(cx, |ep_store, _cx| {
-        ep_store.data_collection_choice = DataCollectionChoice::Enabled
-    });
-
-    run_edit_prediction(&buffer, &project, &ep_store, cx).await;
-    assert_eq!(
-        captured_request.lock().clone().unwrap().can_collect_data,
-        false
-    );
-}
-
-#[gpui::test]
-async fn test_no_data_collection_for_private_file(cx: &mut TestAppContext) {
-    init_test(cx);
-
-    let fs = project::FakeFs::new(cx.executor());
-    fs.insert_tree(
-        path!("/project"),
-        json!({
-            "LICENSE": BSD_0_TXT,
-            ".env": "SECRET_KEY=secret"
-        }),
-    )
-    .await;
-
-    let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
-    let buffer = project
-        .update(cx, |project, cx| {
-            project.open_local_buffer("/project/.env", cx)
-        })
-        .await
-        .unwrap();
-
-    let (ep_store, captured_request, _) = make_test_ep_store(&project, cx).await;
-    ep_store.update(cx, |ep_store, _cx| {
-        ep_store.data_collection_choice = DataCollectionChoice::Enabled
-    });
-
-    run_edit_prediction(&buffer, &project, &ep_store, cx).await;
-    assert_eq!(
-        captured_request.lock().clone().unwrap().can_collect_data,
-        false
-    );
-}
-
-#[gpui::test]
-async fn test_no_data_collection_for_untitled_buffer(cx: &mut TestAppContext) {
-    init_test(cx);
-
-    let fs = project::FakeFs::new(cx.executor());
-    let project = Project::test(fs.clone(), [], cx).await;
-    let buffer = cx.new(|cx| Buffer::local("", cx));
-
-    let (ep_store, captured_request, _) = make_test_ep_store(&project, cx).await;
-    ep_store.update(cx, |ep_store, _cx| {
-        ep_store.data_collection_choice = DataCollectionChoice::Enabled
-    });
-
-    run_edit_prediction(&buffer, &project, &ep_store, cx).await;
-    assert_eq!(
-        captured_request.lock().clone().unwrap().can_collect_data,
-        false
-    );
-}
-
-#[gpui::test]
-async fn test_no_data_collection_when_closed_source(cx: &mut TestAppContext) {
-    init_test(cx);
-
-    let fs = project::FakeFs::new(cx.executor());
-    fs.insert_tree(path!("/project"), json!({ "main.rs": "fn main() {}" }))
-        .await;
-
-    let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
-    let buffer = project
-        .update(cx, |project, cx| {
-            project.open_local_buffer("/project/main.rs", cx)
-        })
-        .await
-        .unwrap();
-
-    let (ep_store, captured_request, _) = make_test_ep_store(&project, cx).await;
-    ep_store.update(cx, |ep_store, _cx| {
-        ep_store.data_collection_choice = DataCollectionChoice::Enabled
-    });
-
-    run_edit_prediction(&buffer, &project, &ep_store, cx).await;
-    assert_eq!(
-        captured_request.lock().clone().unwrap().can_collect_data,
-        false
-    );
-}
-
-#[gpui::test]
-async fn test_data_collection_status_changes_on_move(cx: &mut TestAppContext) {
-    init_test(cx);
-
-    let fs = project::FakeFs::new(cx.executor());
-    fs.insert_tree(
-        path!("/open_source_worktree"),
-        json!({ "LICENSE": BSD_0_TXT, "main.rs": "" }),
-    )
-    .await;
-    fs.insert_tree(path!("/closed_source_worktree"), json!({ "main.rs": "" }))
-        .await;
-
-    let project = Project::test(
-        fs.clone(),
-        [
-            path!("/open_source_worktree").as_ref(),
-            path!("/closed_source_worktree").as_ref(),
-        ],
-        cx,
-    )
-    .await;
-    let buffer = project
-        .update(cx, |project, cx| {
-            project.open_local_buffer(path!("/open_source_worktree/main.rs"), cx)
-        })
-        .await
-        .unwrap();
-
-    let (ep_store, captured_request, _) = make_test_ep_store(&project, cx).await;
-    ep_store.update(cx, |ep_store, _cx| {
-        ep_store.data_collection_choice = DataCollectionChoice::Enabled
-    });
-
-    run_edit_prediction(&buffer, &project, &ep_store, cx).await;
-    assert_eq!(
-        captured_request.lock().clone().unwrap().can_collect_data,
-        true
-    );
-
-    let closed_source_file = project
-        .update(cx, |project, cx| {
-            let worktree2 = project
-                .worktree_for_root_name("closed_source_worktree", cx)
-                .unwrap();
-            worktree2.update(cx, |worktree2, cx| {
-                worktree2.load_file(rel_path("main.rs"), cx)
-            })
-        })
-        .await
-        .unwrap()
-        .file;
-
-    buffer.update(cx, |buffer, cx| {
-        buffer.file_updated(closed_source_file, cx);
-    });
-
-    run_edit_prediction(&buffer, &project, &ep_store, cx).await;
-    assert_eq!(
-        captured_request.lock().clone().unwrap().can_collect_data,
-        false
-    );
-}
-
-#[gpui::test]
-async fn test_no_data_collection_for_events_in_uncollectable_buffers(cx: &mut TestAppContext) {
-    init_test(cx);
-
-    let fs = project::FakeFs::new(cx.executor());
-    fs.insert_tree(
-        path!("/worktree1"),
-        json!({ "LICENSE": BSD_0_TXT, "main.rs": "", "other.rs": "" }),
-    )
-    .await;
-    fs.insert_tree(path!("/worktree2"), json!({ "private.rs": "" }))
-        .await;
-
-    let project = Project::test(
-        fs.clone(),
-        [path!("/worktree1").as_ref(), path!("/worktree2").as_ref()],
-        cx,
-    )
-    .await;
-    let buffer = project
-        .update(cx, |project, cx| {
-            project.open_local_buffer(path!("/worktree1/main.rs"), cx)
-        })
-        .await
-        .unwrap();
-    let private_buffer = project
-        .update(cx, |project, cx| {
-            project.open_local_buffer(path!("/worktree2/file.rs"), cx)
-        })
-        .await
-        .unwrap();
-
-    let (ep_store, captured_request, _) = make_test_ep_store(&project, cx).await;
-    ep_store.update(cx, |ep_store, _cx| {
-        ep_store.data_collection_choice = DataCollectionChoice::Enabled
-    });
-
-    run_edit_prediction(&buffer, &project, &ep_store, cx).await;
-    assert_eq!(
-        captured_request.lock().clone().unwrap().can_collect_data,
-        true
-    );
-
-    // this has a side effect of registering the buffer to watch for edits
-    run_edit_prediction(&private_buffer, &project, &ep_store, cx).await;
-    assert_eq!(
-        captured_request.lock().clone().unwrap().can_collect_data,
-        false
-    );
-
-    private_buffer.update(cx, |private_buffer, cx| {
-        private_buffer.edit([(0..0, "An edit for the history!")], None, cx);
-    });
-
-    run_edit_prediction(&buffer, &project, &ep_store, cx).await;
-    assert_eq!(
-        captured_request.lock().clone().unwrap().can_collect_data,
-        false
-    );
-
-    // make an edit that uses too many bytes, causing private_buffer edit to not be able to be
-    // included
-    buffer.update(cx, |buffer, cx| {
-        buffer.edit(
-            [(
-                0..0,
-                " ".repeat(MAX_EVENT_TOKENS * cursor_excerpt::BYTES_PER_TOKEN_GUESS),
-            )],
-            None,
-            cx,
-        );
-    });
-
-    run_edit_prediction(&buffer, &project, &ep_store, cx).await;
-    assert_eq!(
-        captured_request.lock().clone().unwrap().can_collect_data,
-        true
-    );
-}
-
 fn init_test(cx: &mut TestAppContext) {
     cx.update(|cx| {
         let settings_store = SettingsStore::test(cx);
@@ -1992,7 +2088,7 @@ async fn apply_edit_prediction(
     let fs = project::FakeFs::new(cx.executor());
     let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
     let buffer = cx.new(|cx| Buffer::local(buffer_content, cx));
-    let (ep_store, _, response) = make_test_ep_store(&project, cx).await;
+    let (ep_store, response) = make_test_ep_store(&project, cx).await;
     *response.lock() = completion_response.to_string();
     let edit_prediction = run_edit_prediction(&buffer, &project, &ep_store, cx).await;
     buffer.update(cx, |buffer, cx| {
@@ -2021,32 +2117,20 @@ async fn run_edit_prediction(
 async fn make_test_ep_store(
     project: &Entity<Project>,
     cx: &mut TestAppContext,
-) -> (
-    Entity<EditPredictionStore>,
-    Arc<Mutex<Option<PredictEditsBody>>>,
-    Arc<Mutex<String>>,
-) {
-    let default_response = indoc! {"
-            ```main.rs
-            <|start_of_file|>
-            <|editable_region_start|>
-            hello world
-            <|editable_region_end|>
-            ```"
-    };
-    let captured_request: Arc<Mutex<Option<PredictEditsBody>>> = Arc::new(Mutex::new(None));
-    let completion_response: Arc<Mutex<String>> =
-        Arc::new(Mutex::new(default_response.to_string()));
+) -> (Entity<EditPredictionStore>, Arc<Mutex<String>>) {
+    let default_response = "hello world\n".to_string();
+    let completion_response: Arc<Mutex<String>> = Arc::new(Mutex::new(default_response));
     let http_client = FakeHttpClient::create({
-        let captured_request = captured_request.clone();
         let completion_response = completion_response.clone();
         let mut next_request_id = 0;
         move |req| {
-            let captured_request = captured_request.clone();
             let completion_response = completion_response.clone();
+            let method = req.method().clone();
+            let uri = req.uri().path().to_string();
+            let mut body = req.into_body();
             async move {
-                match (req.method(), req.uri().path()) {
-                    (&Method::POST, "/client/llm_tokens") => Ok(http_client::Response::builder()
+                match (method, uri.as_str()) {
+                    (Method::POST, "/client/llm_tokens") => Ok(http_client::Response::builder()
                         .status(200)
                         .body(
                             serde_json::to_string(&CreateLlmTokenResponse {
@@ -2056,32 +2140,22 @@ async fn make_test_ep_store(
                             .into(),
                         )
                         .unwrap()),
-                    (&Method::POST, "/predict_edits/v2") => {
-                        let mut request_body = String::new();
-                        req.into_body().read_to_string(&mut request_body).await?;
-                        *captured_request.lock() =
-                            Some(serde_json::from_str(&request_body).unwrap());
-                        next_request_id += 1;
-                        Ok(http_client::Response::builder()
-                            .status(200)
-                            .body(
-                                serde_json::to_string(&PredictEditsResponse {
-                                    request_id: format!("request-{next_request_id}"),
-                                    output_excerpt: completion_response.lock().clone(),
-                                })
-                                .unwrap()
-                                .into(),
-                            )
-                            .unwrap())
-                    }
-                    (&Method::POST, "/predict_edits/v3") => {
+                    (Method::POST, "/predict_edits/v3") => {
+                        let mut buf = Vec::new();
+                        body.read_to_end(&mut buf).await.ok();
+                        let decompressed = zstd::decode_all(&buf[..]).unwrap();
+                        let req: PredictEditsV3Request =
+                            serde_json::from_slice(&decompressed).unwrap();
+
                         next_request_id += 1;
                         Ok(http_client::Response::builder()
                             .status(200)
                             .body(
                                 serde_json::to_string(&PredictEditsV3Response {
                                     request_id: format!("request-{next_request_id}"),
-                                    output: "hello world".to_string(),
+                                    editable_range: 0..req.input.cursor_excerpt.len(),
+                                    output: completion_response.lock().clone(),
+                                    model_version: None,
                                 })
                                 .unwrap()
                                 .into(),
@@ -2090,7 +2164,7 @@ async fn make_test_ep_store(
                     }
                     _ => Ok(http_client::Response::builder()
                         .status(404)
-                        .body("Not Found".into())
+                        .body("Not Found".to_string().into())
                         .unwrap()),
                 }
             }
@@ -2105,7 +2179,7 @@ async fn make_test_ep_store(
 
     let ep_store = cx.new(|cx| {
         let mut ep_store = EditPredictionStore::new(client, project.read(cx).user_store(), cx);
-        ep_store.set_edit_prediction_model(EditPredictionModel::Zeta1);
+        ep_store.set_edit_prediction_model(EditPredictionModel::Zeta);
 
         let worktrees = project.read(cx).worktrees(cx).collect::<Vec<_>>();
         for worktree in worktrees {
@@ -2120,7 +2194,7 @@ async fn make_test_ep_store(
         ep_store
     });
 
-    (ep_store, captured_request, completion_response)
+    (ep_store, completion_response)
 }
 
 fn to_completion_edits(
@@ -2204,7 +2278,7 @@ async fn test_unauthenticated_without_custom_url_blocks_prediction_impl(cx: &mut
     cx.background_executor.run_until_parked();
 
     let completion_task = ep_store.update(cx, |ep_store, cx| {
-        ep_store.set_edit_prediction_model(EditPredictionModel::Zeta1);
+        ep_store.set_edit_prediction_model(EditPredictionModel::Zeta);
         ep_store.request_prediction(&project, &buffer, cursor, Default::default(), cx)
     });
 
@@ -2261,7 +2335,7 @@ fn test_compute_diff_between_snapshots(cx: &mut TestAppContext) {
 
     let new_snapshot = buffer.read_with(cx, |buffer, _| buffer.text_snapshot());
 
-    let diff = compute_diff_between_snapshots(&old_snapshot, &new_snapshot).unwrap();
+    let (diff, _) = compute_diff_between_snapshots(&old_snapshot, &new_snapshot).unwrap();
 
     assert_eq!(
         diff,
@@ -2281,6 +2355,393 @@ fn test_compute_diff_between_snapshots(cx: &mut TestAppContext) {
              fourteen
             "}
     );
+}
+
+#[gpui::test]
+async fn test_diagnostic_jump_excludes_collaborator_regions(cx: &mut TestAppContext) {
+    fn set_collaborator_cursor(buffer: &Entity<Buffer>, row: u32, cx: &mut TestAppContext) {
+        let collab_replica = clock::ReplicaId::new(10);
+        let anchor = buffer.read_with(cx, |buffer, _| {
+            buffer.snapshot().anchor_before(Point::new(row, 0))
+        });
+        let selections: Arc<[Selection<Anchor>]> = Arc::new([Selection {
+            id: 1,
+            start: anchor,
+            end: anchor,
+            reversed: false,
+            goal: SelectionGoal::None,
+        }]);
+        buffer.update(cx, |buffer, cx| {
+            buffer.apply_ops(
+                [Operation::UpdateSelections {
+                    selections,
+                    lamport_timestamp: clock::Lamport {
+                        replica_id: collab_replica,
+                        value: 1,
+                    },
+                    line_mode: false,
+                    cursor_shape: CursorShape::Bar,
+                }],
+                cx,
+            );
+        });
+    }
+
+    fn publish_diagnostics(
+        uri_path: &'static str,
+        rows: &[u32],
+        project: &Entity<Project>,
+        cx: &mut TestAppContext,
+    ) {
+        let diagnostics: Vec<_> = rows
+            .iter()
+            .map(|&row| lsp::Diagnostic {
+                range: lsp::Range::new(lsp::Position::new(row, 0), lsp::Position::new(row, 5)),
+                severity: Some(lsp::DiagnosticSeverity::ERROR),
+                message: format!("error at row {row}"),
+                ..Default::default()
+            })
+            .collect();
+        project.update(cx, |project, cx| {
+            project.lsp_store().update(cx, |lsp_store, cx| {
+                lsp_store
+                    .update_diagnostics(
+                        LanguageServerId(0),
+                        lsp::PublishDiagnosticsParams {
+                            uri: lsp::Uri::from_file_path(uri_path).expect("invalid uri"),
+                            diagnostics,
+                            version: None,
+                        },
+                        None,
+                        language::DiagnosticSourceKind::Pushed,
+                        &[],
+                        cx,
+                    )
+                    .expect("failed to update diagnostics");
+            });
+        });
+    }
+
+    init_test(cx);
+
+    let mut lines = String::new();
+    for i in 0..60 {
+        lines.push_str(&format!("line {i}\n"));
+    }
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/root",
+        json!({
+            "active.txt": lines,
+            "collab_file.txt": "error here\nsecond line\n",
+            "free_file.txt": "another error\nsecond line\n",
+        }),
+    )
+    .await;
+    let project = Project::test(fs, vec![path!("/root").as_ref()], cx).await;
+
+    let active_buffer = project
+        .update(cx, |project, cx| {
+            let path = project
+                .find_project_path(path!("/root/active.txt"), cx)
+                .expect("active.txt not found");
+            project.set_active_path(Some(path.clone()), cx);
+            project.open_buffer(path, cx)
+        })
+        .await
+        .expect("failed to open active buffer");
+
+    set_collaborator_cursor(&active_buffer, 5, cx);
+
+    publish_diagnostics(path!("/root/active.txt"), &[3, 25, 50], &project, cx);
+
+    cx.run_until_parked();
+
+    let cursor_point = Point::new(25, 0);
+    let empty_search_range: Range<Point> = Default::default();
+
+    let snapshot = active_buffer.read_with(cx, |buffer, _| buffer.snapshot());
+    let result = EditPredictionStore::next_diagnostic_location(
+        active_buffer.clone(),
+        &snapshot,
+        empty_search_range.clone(),
+        cursor_point,
+        &project,
+        &mut cx.to_async(),
+    )
+    .await
+    .expect("next_diagnostic_location failed");
+
+    let (result_buffer, result_anchor) = result.expect("expected a diagnostic location");
+    assert_eq!(result_buffer.entity_id(), active_buffer.entity_id());
+    let result_row = result_buffer.read_with(cx, |buffer, _| {
+        result_anchor.to_point(&buffer.snapshot()).row
+    });
+    assert_ne!(
+        result_row, 3,
+        "row 3 is near collaborator (row 5) but far from local cursor (row 25), should be excluded"
+    );
+    assert!(
+        result_row == 25 || result_row == 50,
+        "expected row 25 or 50, got {result_row}"
+    );
+
+    let snapshot_near = active_buffer.read_with(cx, |buffer, _| buffer.snapshot());
+    let near_cursor_point = Point::new(4, 0);
+    let result_near = EditPredictionStore::next_diagnostic_location(
+        active_buffer.clone(),
+        &snapshot_near,
+        empty_search_range.clone(),
+        near_cursor_point,
+        &project,
+        &mut cx.to_async(),
+    )
+    .await
+    .expect("next_diagnostic_location failed");
+
+    let (_, near_anchor) = result_near.expect("expected a diagnostic location when both are near");
+    let near_row =
+        active_buffer.read_with(cx, |buffer, _| near_anchor.to_point(&buffer.snapshot()).row);
+    assert_eq!(
+        near_row, 3,
+        "row 3 should be included when local cursor (row 4) is also near the collaborator"
+    );
+
+    let snapshot_far = active_buffer.read_with(cx, |buffer, _| buffer.snapshot());
+    let far_cursor_point = Point::new(50, 0);
+    let result_far = EditPredictionStore::next_diagnostic_location(
+        active_buffer.clone(),
+        &snapshot_far,
+        empty_search_range.clone(),
+        far_cursor_point,
+        &project,
+        &mut cx.to_async(),
+    )
+    .await
+    .expect("next_diagnostic_location failed");
+
+    let (_, far_anchor) = result_far.expect("expected a diagnostic location");
+    let far_row =
+        active_buffer.read_with(cx, |buffer, _| far_anchor.to_point(&buffer.snapshot()).row);
+    assert_eq!(
+        far_row, 50,
+        "row 50 is near local cursor (row 50) and far from collaborator, should be picked"
+    );
+
+    publish_diagnostics(path!("/root/collab_file.txt"), &[0], &project, cx);
+    publish_diagnostics(path!("/root/free_file.txt"), &[0], &project, cx);
+    cx.run_until_parked();
+
+    let collab_buffer = project
+        .update(cx, |project, cx| {
+            let path = project
+                .find_project_path(path!("/root/collab_file.txt"), cx)
+                .expect("collab_file.txt not found");
+            project.open_buffer(path, cx)
+        })
+        .await
+        .expect("failed to open collab buffer");
+
+    set_collaborator_cursor(&collab_buffer, 0, cx);
+    cx.run_until_parked();
+
+    let no_same_file_search_range = Point::new(0, 0)..Point::new(59, 0);
+    let snapshot_cross = active_buffer.read_with(cx, |buffer, _| buffer.snapshot());
+    let result_cross = EditPredictionStore::next_diagnostic_location(
+        active_buffer.clone(),
+        &snapshot_cross,
+        no_same_file_search_range,
+        Point::new(0, 0),
+        &project,
+        &mut cx.to_async(),
+    )
+    .await
+    .expect("cross-file next_diagnostic_location failed");
+
+    let (cross_buffer, _) = result_cross.expect("expected a cross-file diagnostic location");
+    let cross_path = cross_buffer.read_with(cx, |buffer, cx| {
+        buffer
+            .file()
+            .expect("buffer should have a file")
+            .full_path(cx)
+    });
+    assert_eq!(
+        cross_path,
+        Path::new(path!("root/free_file.txt")),
+        "should skip collab_file.txt (has collaborator) and pick free_file.txt"
+    );
+}
+
+#[gpui::test]
+async fn test_edit_prediction_settled(cx: &mut TestAppContext) {
+    let (ep_store, _requests) = init_test_with_fake_client(cx);
+    let fs = FakeFs::new(cx.executor());
+
+    // Buffer with two clearly separated regions:
+    //   Region A = lines 0-9   (offsets 0..50)
+    //   Region B = lines 20-29 (offsets 105..155)
+    // A big gap in between so edits in one region never overlap the other.
+    let mut content = String::new();
+    for i in 0..30 {
+        content.push_str(&format!("line {i:02}\n"));
+    }
+
+    fs.insert_tree(
+        "/root",
+        json!({
+            "foo.md": content.clone()
+        }),
+    )
+    .await;
+    let project = Project::test(fs, vec![path!("/root").as_ref()], cx).await;
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            let path = project.find_project_path(path!("root/foo.md"), cx).unwrap();
+            project.open_buffer(path, cx)
+        })
+        .await
+        .unwrap();
+
+    let settled_events: Arc<Mutex<Vec<(EditPredictionId, String)>>> =
+        Arc::new(Mutex::new(Vec::new()));
+
+    ep_store.update(cx, |ep_store, cx| {
+        ep_store.register_buffer(&buffer, &project, cx);
+
+        let settled_events = settled_events.clone();
+        ep_store.settled_event_callback = Some(Box::new(move |id, text| {
+            settled_events.lock().push((id, text));
+        }));
+    });
+
+    // --- Phase 1: edit in region A and enqueue prediction A ---
+
+    buffer.update(cx, |buffer, cx| {
+        // Edit at the start of line 0.
+        buffer.edit(vec![(0..0, "ADDED ")], None, cx);
+    });
+    cx.run_until_parked();
+
+    let snapshot_a = buffer.read_with(cx, |buffer, _cx| buffer.snapshot());
+
+    // Region A: first 10 lines of the buffer.
+    let editable_region_a = 0..snapshot_a.point_to_offset(Point::new(10, 0));
+    ep_store.update(cx, |ep_store, cx| {
+        ep_store.enqueue_settled_prediction(
+            EditPredictionId("prediction-a".into()),
+            &project,
+            &buffer,
+            &snapshot_a,
+            editable_region_a,
+            cx,
+        );
+    });
+
+    // --- Phase 2: repeatedly edit in region A to keep it unsettled ---
+
+    // Let the worker process the channel message before we start advancing.
+    cx.run_until_parked();
+
+    let mut region_a_edit_offset = 5;
+    for _ in 0..3 {
+        // Edit inside region A (not at the boundary) so `last_edit_at` is
+        // updated before the worker's next wake.
+        buffer.update(cx, |buffer, cx| {
+            buffer.edit(
+                vec![(region_a_edit_offset..region_a_edit_offset, "x")],
+                None,
+                cx,
+            );
+        });
+        region_a_edit_offset += 1;
+        cx.run_until_parked();
+
+        cx.executor()
+            .advance_clock(EDIT_PREDICTION_SETTLED_QUIESCENCE / 2);
+        cx.run_until_parked();
+        assert!(
+            settled_events.lock().is_empty(),
+            "no settled events should fire while region A is still being edited"
+        );
+    }
+
+    // Still nothing settled.
+    assert!(settled_events.lock().is_empty());
+
+    // --- Phase 3: edit in distinct region B, enqueue prediction B ---
+    // Advance a small amount so B's quiescence window starts later than A's,
+    // but not so much that A settles (A's last edit was at the start of
+    // iteration 3, and it needs a full Q to settle).
+    cx.executor()
+        .advance_clock(EDIT_PREDICTION_SETTLED_QUIESCENCE / 4);
+    cx.run_until_parked();
+    assert!(settled_events.lock().is_empty());
+
+    let snapshot_b = buffer.read_with(cx, |buffer, _cx| buffer.snapshot());
+    let line_20_offset = snapshot_b.point_to_offset(Point::new(20, 0));
+
+    buffer.update(cx, |buffer, cx| {
+        buffer.edit(vec![(line_20_offset..line_20_offset, "NEW ")], None, cx);
+    });
+    cx.run_until_parked();
+
+    let snapshot_b2 = buffer.read_with(cx, |buffer, _cx| buffer.snapshot());
+    let editable_region_b = line_20_offset..snapshot_b2.point_to_offset(Point::new(25, 0));
+    ep_store.update(cx, |ep_store, cx| {
+        ep_store.enqueue_settled_prediction(
+            EditPredictionId("prediction-b".into()),
+            &project,
+            &buffer,
+            &snapshot_b2,
+            editable_region_b,
+            cx,
+        );
+    });
+
+    cx.run_until_parked();
+    assert!(
+        settled_events.lock().is_empty(),
+        "neither prediction should have settled yet"
+    );
+
+    // --- Phase 4: let enough time pass for region A to settle ---
+    // A's last edit was at T_a (during the last loop iteration). The worker is
+    // sleeping until T_a + Q. We advance just enough to reach that wake time
+    // (Q/4 since we already advanced Q/4 in phase 3 on top of the loop's
+    // 3*Q/2). At that point A has been quiet for Q and settles, but B was
+    // enqueued only Q/4 ago and stays pending.
+    cx.executor()
+        .advance_clock(EDIT_PREDICTION_SETTLED_QUIESCENCE / 4);
+    cx.run_until_parked();
+
+    {
+        let events = settled_events.lock().clone();
+        assert_eq!(
+            events.len(),
+            1,
+            "only prediction A should have settled, got: {events:?}"
+        );
+        assert_eq!(events[0].0, EditPredictionId("prediction-a".into()));
+    }
+
+    // --- Phase 5: let more time pass for region B to settle ---
+    // B's last edit was Q/4 before A settled. The worker rescheduled to
+    // B's last_edit_at + Q, which is 3Q/4 from now.
+    cx.executor()
+        .advance_clock(EDIT_PREDICTION_SETTLED_QUIESCENCE * 3 / 4);
+    cx.run_until_parked();
+
+    {
+        let events = settled_events.lock().clone();
+        assert_eq!(
+            events.len(),
+            2,
+            "both predictions should have settled, got: {events:?}"
+        );
+        assert_eq!(events[1].0, EditPredictionId("prediction-b".into()));
+    }
 }
 
 #[ctor::ctor]

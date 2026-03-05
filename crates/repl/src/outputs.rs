@@ -36,7 +36,8 @@
 use editor::{Editor, MultiBuffer};
 use gpui::{AnyElement, ClipboardItem, Entity, EventEmitter, Render, WeakEntity};
 use language::Buffer;
-use runtimelib::{ExecutionState, JupyterMessageContent, MimeBundle, MimeType};
+use menu;
+use runtimelib::{ExecutionState, JupyterMessage, JupyterMessageContent, MimeBundle, MimeType};
 use ui::{CommonAnimationExt, CopyButton, IconButton, Tooltip, prelude::*};
 
 mod image;
@@ -51,6 +52,8 @@ use table::TableView;
 mod json;
 use json::JsonView;
 
+mod html;
+
 pub mod plain;
 use plain::TerminalOutput;
 
@@ -64,7 +67,8 @@ use settings::Settings;
 /// When deciding what to render from a collection of mediatypes, we need to rank them in order of importance
 fn rank_mime_type(mimetype: &MimeType) -> usize {
     match mimetype {
-        MimeType::DataTable(_) => 6,
+        MimeType::DataTable(_) => 7,
+        MimeType::Html(_) => 6,
         MimeType::Json(_) => 5,
         MimeType::Png(_) => 4,
         MimeType::Jpeg(_) => 3,
@@ -249,18 +253,8 @@ impl Output {
         )
     }
 
-    pub fn render(
-        &self,
-        workspace: WeakEntity<Workspace>,
-        window: &mut Window,
-        cx: &mut Context<ExecutionView>,
-    ) -> impl IntoElement + use<> {
-        let max_width = plain::max_width_for_columns(
-            ReplSettings::get_global(cx).output_max_width_columns,
-            window,
-            cx,
-        );
-        let content = match self {
+    pub fn content(&self, window: &mut Window, cx: &mut App) -> Option<AnyElement> {
+        match self {
             Self::Plain { content, .. } => Some(content.clone().into_any_element()),
             Self::Markdown { content, .. } => Some(content.clone().into_any_element()),
             Self::Stream { content, .. } => Some(content.clone().into_any_element()),
@@ -270,21 +264,36 @@ impl Output {
             Self::Json { content, .. } => Some(content.clone().into_any_element()),
             Self::ErrorOutput(error_view) => error_view.render(window, cx),
             Self::ClearOutputWaitMarker => None,
-        };
+        }
+    }
 
-        let needs_horizontal_scroll = matches!(self, Self::Table { .. } | Self::Image { .. });
+    pub fn render(
+        &self,
+        workspace: WeakEntity<Workspace>,
+        window: &mut Window,
+        cx: &mut Context<ExecutionView>,
+    ) -> impl IntoElement + use<> {
+        let max_width =
+            plain::max_width_for_columns(ReplSettings::get_global(cx).max_columns, window, cx);
+        let content = self.content(window, cx);
+
+        let needs_horizontal_scroll = matches!(self, Self::Table { .. });
 
         h_flex()
             .id("output-content")
             .w_full()
-            .when_some(max_width, |this, max_w| this.max_w(max_w))
-            .overflow_x_scroll()
+            .when_else(
+                needs_horizontal_scroll,
+                |this| this.overflow_x_scroll(),
+                |this| this.overflow_x_hidden(),
+            )
             .items_start()
             .child(
                 div()
                     .when(!needs_horizontal_scroll, |el| {
                         el.flex_1().w_full().overflow_x_hidden()
                     })
+                    .when_some(max_width, |el, max_width| el.max_w(max_width))
                     .children(content),
             )
             .children(match self {
@@ -418,6 +427,19 @@ impl Output {
                 content: cx.new(|cx| TableView::new(data, window, cx)),
                 display_id,
             },
+            Some(MimeType::Html(html_content)) => match html::html_to_markdown(html_content) {
+                Ok(markdown_text) => {
+                    let content = cx.new(|cx| MarkdownView::from(markdown_text, cx));
+                    Output::Markdown {
+                        content,
+                        display_id,
+                    }
+                }
+                Err(_) => Output::Plain {
+                    content: cx.new(|cx| TerminalOutput::from(html_content, window, cx)),
+                    display_id,
+                },
+            },
             // Any other media types are not supported
             _ => Output::Message("Unsupported media type".to_string()),
         }
@@ -441,6 +463,18 @@ pub enum ExecutionStatus {
 pub struct ExecutionViewFinishedEmpty;
 pub struct ExecutionViewFinishedSmall(pub String);
 
+pub struct InputReplyEvent {
+    pub value: String,
+    pub parent_message: JupyterMessage,
+}
+
+struct PendingInput {
+    prompt: String,
+    password: bool,
+    editor: Entity<Editor>,
+    parent_message: JupyterMessage,
+}
+
 /// An ExecutionView shows the outputs of an execution.
 /// It can hold zero or more outputs, which the user
 /// sees as "the output" for a single execution.
@@ -449,10 +483,12 @@ pub struct ExecutionView {
     workspace: WeakEntity<Workspace>,
     pub outputs: Vec<Output>,
     pub status: ExecutionStatus,
+    pending_input: Option<PendingInput>,
 }
 
 impl EventEmitter<ExecutionViewFinishedEmpty> for ExecutionView {}
 impl EventEmitter<ExecutionViewFinishedSmall> for ExecutionView {}
+impl EventEmitter<InputReplyEvent> for ExecutionView {}
 
 impl ExecutionView {
     pub fn new(
@@ -464,6 +500,56 @@ impl ExecutionView {
             workspace,
             outputs: Default::default(),
             status,
+            pending_input: None,
+        }
+    }
+
+    fn submit_input(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(pending_input) = self.pending_input.take() {
+            let value = pending_input.editor.read(cx).text(cx);
+
+            let display_text = if pending_input.password {
+                format!("{}{}", pending_input.prompt, "*".repeat(value.len()))
+            } else {
+                format!("{}{}", pending_input.prompt, value)
+            };
+            self.outputs.push(Output::Message(display_text));
+
+            cx.emit(InputReplyEvent {
+                value,
+                parent_message: pending_input.parent_message,
+            });
+            cx.notify();
+        }
+    }
+
+    /// Handle an InputRequest message, storing the full message for replying
+    pub fn handle_input_request(
+        &mut self,
+        message: &JupyterMessage,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let JupyterMessageContent::InputRequest(input_request) = &message.content {
+            let prompt = input_request.prompt.clone();
+            let password = input_request.password;
+
+            let editor = cx.new(|cx| {
+                let mut editor = Editor::single_line(window, cx);
+                editor.set_placeholder_text("Type here and press Enter", window, cx);
+                if password {
+                    editor.set_masked(true, cx);
+                }
+                editor
+            });
+
+            self.pending_input = Some(PendingInput {
+                prompt,
+                password,
+                editor,
+                parent_message: message.clone(),
+            });
+            cx.notify();
         }
     }
 
@@ -525,6 +611,10 @@ impl ExecutionView {
                 // Create a marker to clear the output after we get in a new output
                 Output::ClearOutputWaitMarker
             }
+            JupyterMessageContent::InputRequest(_) => {
+                // InputRequest is handled by handle_input_request which needs the full message
+                return;
+            }
             JupyterMessageContent::Status(status) => {
                 match status.execution_state {
                     ExecutionState::Busy => {
@@ -532,6 +622,7 @@ impl ExecutionView {
                     }
                     ExecutionState::Idle => {
                         self.status = ExecutionStatus::Finished;
+                        self.pending_input = None;
                         if self.outputs.is_empty() {
                             cx.emit(ExecutionViewFinishedEmpty);
                         } else if ReplSettings::get_global(cx).inline_output {
@@ -698,7 +789,35 @@ impl Render for ExecutionView {
                 .into_any_element(),
         };
 
-        if self.outputs.is_empty() {
+        let pending_input_element = self.pending_input.as_ref().map(|pending_input| {
+            let prompt_label = if pending_input.prompt.is_empty() {
+                "Input:".to_string()
+            } else {
+                pending_input.prompt.clone()
+            };
+
+            div()
+                .on_action(cx.listener(|this, _: &menu::Confirm, window, cx| {
+                    this.submit_input(window, cx);
+                }))
+                .w_full()
+                .child(
+                    v_flex()
+                        .gap_1()
+                        .child(Label::new(prompt_label).color(Color::Muted))
+                        .child(
+                            div()
+                                .px_2()
+                                .py_1()
+                                .border_1()
+                                .border_color(cx.theme().colors().border)
+                                .rounded_md()
+                                .child(pending_input.editor.clone()),
+                        ),
+                )
+        });
+
+        if self.outputs.is_empty() && pending_input_element.is_none() {
             return v_flex()
                 .min_h(window.line_height())
                 .justify_center()
@@ -713,6 +832,7 @@ impl Render for ExecutionView {
                     .iter()
                     .map(|output| output.render(self.workspace.clone(), window, cx)),
             )
+            .children(pending_input_element)
             .children(match self.status {
                 ExecutionStatus::Executing => vec![status],
                 ExecutionStatus::Queued => vec![status],
@@ -727,8 +847,8 @@ mod tests {
     use super::*;
     use gpui::TestAppContext;
     use runtimelib::{
-        ClearOutput, ErrorOutput, ExecutionState, JupyterMessageContent, MimeType, Status, Stdio,
-        StreamContent,
+        ClearOutput, ErrorOutput, ExecutionState, InputRequest, JupyterMessage,
+        JupyterMessageContent, MimeType, Status, Stdio, StreamContent,
     };
     use settings::SettingsStore;
     use std::path::Path;
@@ -737,20 +857,23 @@ mod tests {
     #[test]
     fn test_rank_mime_type_ordering() {
         let data_table = MimeType::DataTable(Box::default());
+        let html = MimeType::Html(String::new());
         let json = MimeType::Json(serde_json::json!({}));
         let png = MimeType::Png(String::new());
         let jpeg = MimeType::Jpeg(String::new());
         let markdown = MimeType::Markdown(String::new());
         let plain = MimeType::Plain(String::new());
 
-        assert_eq!(rank_mime_type(&data_table), 6);
+        assert_eq!(rank_mime_type(&data_table), 7);
+        assert_eq!(rank_mime_type(&html), 6);
         assert_eq!(rank_mime_type(&json), 5);
         assert_eq!(rank_mime_type(&png), 4);
         assert_eq!(rank_mime_type(&jpeg), 3);
         assert_eq!(rank_mime_type(&markdown), 2);
         assert_eq!(rank_mime_type(&plain), 1);
 
-        assert!(rank_mime_type(&data_table) > rank_mime_type(&json));
+        assert!(rank_mime_type(&data_table) > rank_mime_type(&html));
+        assert!(rank_mime_type(&html) > rank_mime_type(&json));
         assert!(rank_mime_type(&json) > rank_mime_type(&png));
         assert!(rank_mime_type(&png) > rank_mime_type(&jpeg));
         assert!(rank_mime_type(&jpeg) > rank_mime_type(&markdown));
@@ -759,11 +882,9 @@ mod tests {
 
     #[test]
     fn test_rank_mime_type_unsupported_returns_zero() {
-        let html = MimeType::Html(String::new());
         let svg = MimeType::Svg(String::new());
         let latex = MimeType::Latex(String::new());
 
-        assert_eq!(rank_mime_type(&html), 0);
         assert_eq!(rank_mime_type(&svg), 0);
         assert_eq!(rank_mime_type(&latex), 0);
     }
@@ -1026,5 +1147,144 @@ mod tests {
             emitted.load(std::sync::atomic::Ordering::SeqCst),
             "should emit ExecutionViewFinishedEmpty when idle with no outputs"
         );
+    }
+
+    #[gpui::test]
+    async fn test_handle_input_request_creates_pending_input(cx: &mut TestAppContext) {
+        let (mut cx, workspace) = init_test(cx).await;
+        let execution_view = create_execution_view(&mut cx, workspace);
+
+        cx.update(|window, cx| {
+            execution_view.update(cx, |view, cx| {
+                assert!(view.pending_input.is_none());
+
+                let message = JupyterMessage::new(
+                    InputRequest {
+                        prompt: "Enter name: ".to_string(),
+                        password: false,
+                    },
+                    None,
+                );
+                view.handle_input_request(&message, window, cx);
+            });
+        });
+
+        cx.update(|_, cx| {
+            let view = execution_view.read(cx);
+            assert!(view.pending_input.is_some());
+            let pending = view.pending_input.as_ref().unwrap();
+            assert_eq!(pending.prompt, "Enter name: ");
+            assert!(!pending.password);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_handle_input_request_with_password(cx: &mut TestAppContext) {
+        let (mut cx, workspace) = init_test(cx).await;
+        let execution_view = create_execution_view(&mut cx, workspace);
+
+        cx.update(|window, cx| {
+            execution_view.update(cx, |view, cx| {
+                let message = JupyterMessage::new(
+                    InputRequest {
+                        prompt: "Password: ".to_string(),
+                        password: true,
+                    },
+                    None,
+                );
+                view.handle_input_request(&message, window, cx);
+            });
+        });
+
+        cx.update(|_, cx| {
+            let view = execution_view.read(cx);
+            assert!(view.pending_input.is_some());
+            let pending = view.pending_input.as_ref().unwrap();
+            assert_eq!(pending.prompt, "Password: ");
+            assert!(pending.password);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_submit_input_emits_reply_event(cx: &mut TestAppContext) {
+        let (mut cx, workspace) = init_test(cx).await;
+        let execution_view = create_execution_view(&mut cx, workspace);
+
+        let received_value = Arc::new(std::sync::Mutex::new(None::<String>));
+        let received_clone = received_value.clone();
+
+        cx.update(|_, cx| {
+            cx.subscribe(&execution_view, move |_, event: &InputReplyEvent, _cx| {
+                *received_clone.lock().unwrap() = Some(event.value.clone());
+            })
+            .detach();
+        });
+
+        cx.update(|window, cx| {
+            execution_view.update(cx, |view, cx| {
+                let message = JupyterMessage::new(
+                    InputRequest {
+                        prompt: "Name: ".to_string(),
+                        password: false,
+                    },
+                    None,
+                );
+                view.handle_input_request(&message, window, cx);
+
+                // Type into the editor
+                if let Some(ref pending) = view.pending_input {
+                    pending.editor.update(cx, |editor, cx| {
+                        editor.set_text("test_user", window, cx);
+                    });
+                }
+
+                view.submit_input(window, cx);
+            });
+        });
+
+        let value = received_value.lock().unwrap().clone();
+        assert_eq!(value, Some("test_user".to_string()));
+
+        cx.update(|_, cx| {
+            let view = execution_view.read(cx);
+            assert!(
+                view.pending_input.is_none(),
+                "pending_input should be cleared after submit"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_status_idle_clears_pending_input(cx: &mut TestAppContext) {
+        let (mut cx, workspace) = init_test(cx).await;
+        let execution_view = create_execution_view(&mut cx, workspace);
+
+        cx.update(|window, cx| {
+            execution_view.update(cx, |view, cx| {
+                let message = JupyterMessage::new(
+                    InputRequest {
+                        prompt: "Input: ".to_string(),
+                        password: false,
+                    },
+                    None,
+                );
+                view.handle_input_request(&message, window, cx);
+                assert!(view.pending_input.is_some());
+
+                // Simulate kernel going idle (e.g., execution interrupted)
+                let idle = JupyterMessageContent::Status(Status {
+                    execution_state: ExecutionState::Idle,
+                });
+                view.push_message(&idle, window, cx);
+            });
+        });
+
+        cx.update(|_, cx| {
+            let view = execution_view.read(cx);
+            assert!(
+                view.pending_input.is_none(),
+                "pending_input should be cleared when kernel goes idle"
+            );
+        });
     }
 }

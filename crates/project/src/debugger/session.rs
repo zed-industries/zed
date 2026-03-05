@@ -51,7 +51,6 @@ use std::collections::{BTreeMap, VecDeque};
 use std::net::Ipv4Addr;
 use std::ops::RangeInclusive;
 use std::path::PathBuf;
-use std::process::Stdio;
 use std::time::Duration;
 use std::u64;
 use std::{
@@ -64,7 +63,8 @@ use std::{
 use task::SharedTaskContext;
 use text::{PointUtf16, ToPointUtf16};
 use url::Url;
-use util::command::new_smol_command;
+use util::command::Stdio;
+use util::command::new_command;
 use util::{ResultExt, debug_panic, maybe};
 use worktree::Worktree;
 
@@ -2645,9 +2645,39 @@ impl Session {
         self.fetch(
             command,
             move |this, variables, cx| {
-                let Some(variables) = variables.log_err() else {
+                let Some(mut variables) = variables.log_err() else {
                     return;
                 };
+
+                if this.adapter.0.as_ref() == "Debugpy" {
+                    for variable in variables.iter_mut() {
+                        if variable.type_ == Some("str".into()) {
+                            // reverse Python repr() escaping
+                            let mut unescaped = String::with_capacity(variable.value.len());
+                            let mut chars = variable.value.chars();
+                            while let Some(c) = chars.next() {
+                                if c != '\\' {
+                                    unescaped.push(c);
+                                } else {
+                                    match chars.next() {
+                                        Some('\\') => unescaped.push('\\'),
+                                        Some('n') => unescaped.push('\n'),
+                                        Some('t') => unescaped.push('\t'),
+                                        Some('r') => unescaped.push('\r'),
+                                        Some('\'') => unescaped.push('\''),
+                                        Some('"') => unescaped.push('"'),
+                                        Some(c) => {
+                                            unescaped.push('\\');
+                                            unescaped.push(c);
+                                        }
+                                        None => {}
+                                    }
+                                }
+                            }
+                            variable.value = unescaped;
+                        }
+                    }
+                }
 
                 this.active_snapshot
                     .variables
@@ -2883,7 +2913,7 @@ impl Session {
 
                 let child = remote_client.update(cx, |client, _| {
                     let command = client.build_forward_ports_command(port_forwards)?;
-                    let child = new_smol_command(command.program)
+                    let child = new_command(command.program)
                         .args(command.args)
                         .envs(command.env)
                         .spawn()
@@ -3067,7 +3097,7 @@ struct KillCompanionBrowserParams {
 async fn spawn_companion(
     node_runtime: NodeRuntime,
     cx: &mut AsyncApp,
-) -> Result<(u16, smol::process::Child)> {
+) -> Result<(u16, util::command::Child)> {
     let binary_path = node_runtime
         .binary_path()
         .await
@@ -3089,7 +3119,7 @@ async fn spawn_companion(
         .to_string_lossy()
         .to_string();
 
-    let child = new_smol_command(binary_path)
+    let child = new_command(binary_path)
         .arg(path)
         .args([
             format!("--listen=127.0.0.1:{port}"),
