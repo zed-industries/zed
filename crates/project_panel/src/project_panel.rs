@@ -3176,13 +3176,11 @@ impl ProjectPanel {
                     }
                 }
 
-                if !operations.is_empty() {
-                    project_panel
-                        .update(cx, |this, _| {
-                            this.undo_manager.record(operations);
-                        })
-                        .ok();
-                }
+                project_panel
+                    .update(cx, |this, _| {
+                        this.undo_manager.record(operations);
+                    })
+                    .ok();
 
                 // update selection
                 if let Some(entry) = last_succeed {
@@ -4520,13 +4518,11 @@ impl ProjectPanel {
                             }
                         }
                     }
-                    if !operations.is_empty() {
-                        project_panel
-                            .update(cx, |this, _| {
-                                this.undo_manager.record(operations);
-                            })
-                            .ok();
-                    }
+                    project_panel
+                        .update(cx, |this, _| {
+                            this.undo_manager.record(operations);
+                        })
+                        .ok();
                 })
                 .detach();
             } else {
@@ -4552,13 +4548,11 @@ impl ProjectPanel {
                         return;
                     }
 
-                    if !operations.is_empty() {
-                        project_panel
-                            .update(cx, |this, _| {
-                                this.undo_manager.record(operations);
-                            })
-                            .ok();
-                    }
+                    project_panel
+                        .update(cx, |this, _| {
+                            this.undo_manager.record(operations);
+                        })
+                        .ok();
 
                     // For folded selections, we need to refresh the leaf paths (with suffixes)
                     // because they may not be indexed yet after the parent directory was moved.

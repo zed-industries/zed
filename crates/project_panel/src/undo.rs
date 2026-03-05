@@ -18,14 +18,12 @@ pub enum ProjectPanelOperation {
 }
 
 impl ProjectPanelOperation {
-    pub fn batch(operations: impl IntoIterator<Item = Self>) -> Self {
+    pub fn batch(operations: impl IntoIterator<Item = Self>) -> Option<Self> {
         let mut operations: Vec<_> = operations.into_iter().collect();
-        if operations.len() == 1
-            && let Some(operation) = operations.pop()
-        {
-            operation
-        } else {
-            Self::Batch(operations)
+        match operations.len() {
+            0 => None,
+            1 => operations.pop(),
+            _ => Some(Self::Batch(operations)),
         }
     }
 }
@@ -50,8 +48,9 @@ impl UndoManager {
     }
 
     pub fn record(&mut self, operations: impl IntoIterator<Item = ProjectPanelOperation>) {
-        self.stack
-            .push_back(ProjectPanelOperation::batch(operations));
+        if let Some(operation) = ProjectPanelOperation::batch(operations) {
+            self.stack.push_back(operation);
+        }
     }
 
     fn revert_operation(&self, operation: ProjectPanelOperation, cx: &mut App) -> Task<Result<()>> {
