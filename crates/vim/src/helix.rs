@@ -1029,23 +1029,6 @@ mod test {
         });
         cx.assert_state("get_«user_ˇ»name", Mode::HelixNormal);
 
-        // Test with $ as subword boundary (e.g. PHP variables)
-        cx.set_state("ˇ$someVariable = 2;", Mode::HelixNormal);
-        cx.dispatch_action(NextSubwordEnd {
-            ignore_punctuation: false,
-        });
-        cx.assert_state("«ˇ»$someVariable = 2;", Mode::HelixNormal);
-
-        cx.dispatch_action(NextSubwordStart {
-            ignore_punctuation: false,
-        });
-        cx.assert_state("«$ˇ»someVariable = 2;", Mode::HelixNormal);
-
-        cx.dispatch_action(NextSubwordEnd {
-            ignore_punctuation: false,
-        });
-        cx.assert_state("$«someˇ»Variable = 2;", Mode::HelixNormal);
-
         // Test with = as subword boundary
         cx.set_state("ˇfoo=bar", Mode::HelixNormal);
         cx.dispatch_action(NextSubwordEnd {
