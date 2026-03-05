@@ -367,8 +367,19 @@ impl Sidebar {
 
     fn rebuild_contents(&mut self, cx: &App) {
         let mw = self.multi_workspace.read(cx);
-        let workspaces = mw.workspaces().to_vec();
-        let active_workspace_index = mw.active_workspace_index();
+        let workspaces: Vec<_> = mw
+            .workspaces()
+            .into_iter()
+            .filter(|workspace| workspace.read(cx).visible_worktrees(cx).next().is_some())
+            .collect();
+        let active_workspace = mw.workspaces().get(mw.active_workspace_index()).cloned();
+        let active_workspace_index = active_workspace
+            .and_then(|active| {
+                workspaces
+                    .iter()
+                    .position(|w| w.entity_id() == active.entity_id())
+            })
+            .unwrap_or(0);
 
         let thread_store = ThreadStore::try_global(cx);
         let query = self.filter_editor.read(cx).text(cx);
@@ -1390,7 +1401,7 @@ mod tests {
             thinking_enabled: false,
             thinking_effort: None,
             draft_prompt: None,
-            ui_scroll_position: None
+            ui_scroll_position: None,
         }
     }
 
@@ -1477,7 +1488,10 @@ mod tests {
                     };
                     match entry {
                         ListEntry::ProjectHeader {
-                            label, path_list, highlight_positions: _, ..
+                            label,
+                            path_list,
+                            highlight_positions: _,
+                            ..
                         } => {
                             let icon = if sidebar.collapsed_groups.contains(path_list) {
                                 ">"
