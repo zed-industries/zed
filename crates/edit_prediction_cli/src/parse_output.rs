@@ -6,10 +6,7 @@ use crate::{
 };
 use anyhow::{Context as _, Result};
 use edit_prediction::example_spec::encode_cursor_in_patch;
-use zeta_prompt::{
-    CURSOR_MARKER, ZetaFormat, output_end_marker_for_format, output_with_context_for_format,
-    resolve_cursor_region,
-};
+use zeta_prompt::{CURSOR_MARKER, ZetaFormat, output_end_marker_for_format, resolve_cursor_region};
 
 pub fn run_parse_output(example: &mut Example) -> Result<()> {
     example
@@ -67,9 +64,6 @@ fn parse_zeta2_output(
     let old_text = context[editable_range].to_string();
 
     let mut new_text = actual_output.to_string();
-    if let Some(transformed) = output_with_context_for_format(format, &old_text, &new_text)? {
-        new_text = transformed;
-    }
     let cursor_offset = if let Some(offset) = new_text.find(CURSOR_MARKER) {
         new_text.replace_range(offset..offset + CURSOR_MARKER.len(), "");
         Some(offset)

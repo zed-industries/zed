@@ -430,41 +430,39 @@ pub fn encode_patch_as_output_for_format(
     }
 }
 
-pub fn output_with_context_for_format(
-    format: ZetaFormat,
-    old_editable_region: &str,
+/// Parse model output for the given zeta format
+pub fn parse_zeta2_model_output(
     output: &str,
-) -> Result<Option<String>> {
+    format: ZetaFormat,
+    prompt_inputs: &ZetaPromptInput,
+) -> Result<(Range<usize>, String)> {
+    let output = match output_end_marker_for_format(format) {
+        Some(marker) => output.strip_suffix(marker).unwrap_or(output),
+        None => output,
+    };
+
+    let (context, editable_range, _) = resolve_cursor_region(prompt_inputs, format);
+    let old_editable_region = &context[editable_range];
+
     match format {
         ZetaFormat::v0226Hashline => {
             if hashline::output_has_edit_commands(output) {
-                Ok(Some(hashline::apply_edit_commands(
-                    old_editable_region,
-                    output,
-                )))
+                Ok(hashline::apply_edit_commands(old_editable_region, output))
             } else {
-                Ok(None)
+                Ok(output.to_string())
             }
         }
         ZetaFormat::V0304VariableEdit => {
-            v0304_variable_edit::apply_variable_edit(old_editable_region, output).map(Some)
+            v0304_variable_edit::apply_variable_edit(old_editable_region, output)
         }
         ZetaFormat::V0304SeedNoEdits => {
             if output.starts_with(seed_coder::NO_EDITS) {
-                Ok(Some(old_editable_region.to_owned()))
+                Ok(old_editable_region.to_string())
             } else {
-                Ok(None)
+                Ok(output.to_string())
             }
         }
-        _ => Ok(None),
-    }
-}
-
-/// Post-processes model output for the given zeta format by stripping format-specific suffixes.
-pub fn clean_zeta2_model_output(output: &str, format: ZetaFormat) -> &str {
-    match output_end_marker_for_format(format) {
-        Some(marker) => output.strip_suffix(marker).unwrap_or(output),
-        None => output,
+        _ => Ok(output.to_string()),
     }
 }
 
@@ -3871,21 +3869,6 @@ mod tests {
                 co<|user_cursor|>de
                 =======
                 <[fim-middle]>"#}
-        );
-    }
-
-    #[test]
-    fn test_seed_coder_clean_output() {
-        let output_with_marker = "new code\n>>>>>>> UPDATED\n";
-        let output_without_marker = "new code\n";
-
-        assert_eq!(
-            clean_zeta2_model_output(output_with_marker, ZetaFormat::V0211SeedCoder),
-            "new code\n"
-        );
-        assert_eq!(
-            clean_zeta2_model_output(output_without_marker, ZetaFormat::V0211SeedCoder),
-            "new code\n"
         );
     }
 
