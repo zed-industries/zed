@@ -28,7 +28,7 @@ use workspace::{
 use zed_actions::editor::{MoveDown, MoveUp};
 
 actions!(
-    workspace_sidebar,
+    agents_sidebar,
     [
         /// Collapses the selected entry in the workspace sidebar.
         CollapseSelectedEntry,
