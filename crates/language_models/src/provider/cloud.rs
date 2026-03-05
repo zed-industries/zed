@@ -43,7 +43,6 @@ use std::task::Poll;
 use std::time::Duration;
 use thiserror::Error;
 use ui::{TintColor, prelude::*};
-use util::{ResultExt as _, maybe};
 
 use crate::provider::anthropic::{
     AnthropicEventMapper, count_anthropic_tokens_with_tiktoken, into_anthropic,
@@ -97,7 +96,7 @@ pub struct State {
     default_model: Option<Arc<cloud_llm_client::LanguageModel>>,
     default_fast_model: Option<Arc<cloud_llm_client::LanguageModel>>,
     recommended_models: Vec<Arc<cloud_llm_client::LanguageModel>>,
-    _fetch_models_task: Task<()>,
+    _user_store_subscription: Subscription,
     _settings_subscription: Subscription,
     _llm_token_subscription: Subscription,
 }
@@ -110,44 +109,41 @@ impl State {
         cx: &mut Context<Self>,
     ) -> Self {
         let refresh_llm_token_listener = RefreshLlmTokenListener::global(cx);
-        let mut current_user = user_store.read(cx).watch_current_user();
         Self {
             client: client.clone(),
             llm_api_token: LlmApiToken::default(),
-            user_store,
+            user_store: user_store.clone(),
             status,
             models: Vec::new(),
             default_model: None,
             default_fast_model: None,
             recommended_models: Vec::new(),
-            _fetch_models_task: cx.spawn(async move |this, cx| {
-                maybe!(async move {
-                    let (client, llm_api_token, organization_id) =
-                        this.read_with(cx, |this, cx| {
-                            (
-                                client.clone(),
-                                this.llm_api_token.clone(),
-                                this.user_store
-                                    .read(cx)
-                                    .current_organization()
-                                    .map(|o| o.id.clone()),
-                            )
-                        })?;
+            _user_store_subscription: cx.subscribe(
+                &user_store,
+                move |this, _user_store, event, cx| match event {
+                    client::user::Event::PrivateUserInfoUpdated => {
+                        let status = *client.status().borrow();
+                        if status.is_signed_out() {
+                            return;
+                        }
 
-                    while current_user.borrow().is_none() {
-                        current_user.next().await;
+                        let client = this.client.clone();
+                        let llm_api_token = this.llm_api_token.clone();
+                        let organization_id = this
+                            .user_store
+                            .read(cx)
+                            .current_organization()
+                            .map(|organization| organization.id.clone());
+                        cx.spawn(async move |this, cx| {
+                            let response =
+                                Self::fetch_models(client, llm_api_token, organization_id).await?;
+                            this.update(cx, |this, cx| this.update_models(response, cx))
+                        })
+                        .detach_and_log_err(cx);
                     }
-
-                    let response =
-                        Self::fetch_models(client.clone(), llm_api_token.clone(), organization_id)
-                            .await?;
-                    this.update(cx, |this, cx| this.update_models(response, cx))?;
-                    anyhow::Ok(())
-                })
-                .await
-                .context("failed to fetch Zed models")
-                .log_err();
-            }),
+                    _ => {}
+                },
+            ),
             _settings_subscription: cx.observe_global::<SettingsStore>(|_, cx| {
                 cx.notify();
             }),
