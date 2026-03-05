@@ -44,6 +44,7 @@ use util::{ResultExt, TryFutureExt, paths::PathExt};
 use workspace::{
     CollaboratorId, ItemId, ItemNavHistory, ToolbarItemLocation, ViewId, Workspace, WorkspaceId,
     collapsible::CollapsibleItem,
+    collapsible::CollapsibleItemHandle,
     invalid_item_view::InvalidItemView,
     item::{FollowableItem, Item, ItemBufferKind, ItemEvent, ProjectItem, SaveOptions},
     searchable::{
@@ -966,6 +967,14 @@ impl Item for Editor {
         handle: &Entity<Self>,
         _: &App,
     ) -> Option<Box<dyn SearchableItemHandle>> {
+        Some(Box::new(handle.clone()))
+    }
+
+    fn as_collapsible(
+        &self,
+        handle: &Entity<Self>,
+        _: &App,
+    ) -> Option<Box<dyn CollapsibleItemHandle>> {
         Some(Box::new(handle.clone()))
     }
 
