@@ -49,7 +49,10 @@ use workspace::{
     DeploySearch, ItemNavHistory, NewSearch, ToolbarItemEvent, ToolbarItemLocation,
     ToolbarItemView, Workspace, WorkspaceId,
     item::{Item, ItemEvent, ItemHandle, SaveOptions},
-    searchable::{Direction, SearchEvent, SearchToken, SearchableItem, SearchableItemHandle},
+    searchable::{
+        Direction, FoldableItemHandle, SearchEvent, SearchToken, SearchableItem,
+        SearchableItemHandle,
+    },
 };
 
 actions!(
@@ -543,6 +546,10 @@ impl Item for ProjectSearchView {
         }
     }
     fn as_searchable(&self, _: &Entity<Self>, _: &App) -> Option<Box<dyn SearchableItemHandle>> {
+        Some(Box::new(self.results_editor.clone()))
+    }
+
+    fn as_foldable(&self, _: &Entity<Self>, _: &App) -> Option<Box<dyn FoldableItemHandle>> {
         Some(Box::new(self.results_editor.clone()))
     }
 

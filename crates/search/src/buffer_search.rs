@@ -42,8 +42,8 @@ use workspace::{
     ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace,
     item::{ItemBufferKind, ItemHandle},
     searchable::{
-        Direction, FilteredSearchRange, SearchEvent, SearchToken, SearchableItemHandle,
-        WeakSearchableItemHandle,
+        Direction, FilteredSearchRange, FoldableItemHandle, SearchEvent, SearchToken,
+        SearchableItemHandle, WeakSearchableItemHandle,
     },
 };
 
@@ -70,6 +70,7 @@ pub struct BufferSearchBar {
     replacement_editor: Entity<Editor>,
     replacement_editor_focused: bool,
     active_searchable_item: Option<Box<dyn SearchableItemHandle>>,
+    active_foldable_item: Option<Box<dyn FoldableItemHandle>>,
     active_match_index: Option<usize>,
     #[cfg(target_os = "macos")]
     active_searchable_item_subscriptions: Option<[Subscription; 2]>,
@@ -219,23 +220,10 @@ impl Render for BufferSearchBar {
         let collapse_expand_button = if self.needs_expand_collapse_option(cx) {
             let query_editor_focus = self.query_editor.focus_handle(cx);
 
-            let mut is_collapsed = self
-                .active_searchable_item
+            let is_collapsed = self
+                .active_foldable_item
                 .as_ref()
-                .and_then(|item| item.act_as_type(TypeId::of::<Editor>(), cx))
-                .and_then(|item| item.downcast::<Editor>().ok())
-                .map(|editor: Entity<Editor>| editor.read(cx).has_any_buffer_folded(cx))
-                .unwrap_or_default();
-            is_collapsed = is_collapsed
-                || self
-                    .active_searchable_item
-                    .as_ref()
-                    .and_then(|item| item.act_as_type(TypeId::of::<SplittableEditor>(), cx))
-                    .and_then(|item| item.downcast::<SplittableEditor>().ok())
-                    .map(|editor: Entity<SplittableEditor>| {
-                        editor.read(cx).has_any_buffer_folded(cx)
-                    })
-                    .unwrap_or_default();
+                .is_some_and(|active_foldable_item| active_foldable_item.has_any_folded(cx));
 
             let (icon, tooltip_label) = if is_collapsed {
                 (IconName::ChevronUpDown, "Expand All Files")
@@ -643,6 +631,7 @@ impl ToolbarItemView for BufferSearchBar {
         cx.notify();
         self.active_searchable_item_subscriptions.take();
         self.active_searchable_item.take();
+        self.active_foldable_item.take();
         self.splittable_editor = None;
         self._splittable_editor_subscription = None;
 
@@ -655,6 +644,10 @@ impl ToolbarItemView for BufferSearchBar {
             self._splittable_editor_subscription =
                 Some(cx.observe(&splittable_editor, |_, _, cx| cx.notify()));
             self.splittable_editor = Some(splittable_editor.downgrade());
+        }
+
+        if let Some(foldable_item_handle) = item.and_then(|item| item.to_foldable_item_handle(cx)) {
+            self.active_foldable_item = Some(foldable_item_handle);
         }
 
         if let Some(searchable_item_handle) =
@@ -731,6 +724,7 @@ impl ToolbarItemView for BufferSearchBar {
                 }
             }
         }
+
         ToolbarItemLocation::Hidden
     }
 }
@@ -890,6 +884,7 @@ impl BufferSearchBar {
             replacement_editor,
             replacement_editor_focused: false,
             active_searchable_item: None,
+            active_foldable_item: None,
             active_searchable_item_subscriptions: None,
             #[cfg(target_os = "macos")]
             pending_external_query: None,
@@ -1075,30 +1070,12 @@ impl BufferSearchBar {
         self.toggle_fold_all_in_item(window, cx);
     }
 
-    fn toggle_fold_all_in_item(&self, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(item) = &self.active_searchable_item {
-            if let Some(item) = item.act_as_type(TypeId::of::<Editor>(), cx) {
-                let editor = item.downcast::<Editor>().expect("Is an editor");
-                editor.update(cx, |editor, cx| {
-                    let is_collapsed = editor.has_any_buffer_folded(cx);
-                    if is_collapsed {
-                        editor.unfold_all(&UnfoldAll, window, cx);
-                    } else {
-                        editor.fold_all(&FoldAll, window, cx);
-                    }
-                })
-            } else if let Some(item) = item.act_as_type(TypeId::of::<SplittableEditor>(), cx) {
-                let editor = item
-                    .downcast::<SplittableEditor>()
-                    .expect("Is a splittable editor");
-                editor.update(cx, |editor, cx| {
-                    let is_collapsed = editor.has_any_buffer_folded(cx);
-                    if is_collapsed {
-                        editor.unfold_all(window, cx);
-                    } else {
-                        editor.fold_all(window, cx);
-                    }
-                })
+    fn toggle_fold_all_in_item(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(item) = &mut self.active_foldable_item {
+            if item.has_any_folded(cx) {
+                item.unfold_all(window, cx);
+            } else {
+                item.fold_all(window, cx);
             }
         }
     }

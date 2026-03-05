@@ -46,7 +46,7 @@ use workspace::{
     invalid_item_view::InvalidItemView,
     item::{FollowableItem, Item, ItemBufferKind, ItemEvent, ProjectItem, SaveOptions},
     searchable::{
-        Direction, FilteredSearchRange, SearchEvent, SearchToken, SearchableItem,
+        Direction, FilteredSearchRange, FoldableItem, SearchEvent, SearchToken, SearchableItem,
         SearchableItemHandle,
     },
 };
@@ -1906,6 +1906,20 @@ impl SearchableItem for Editor {
         _cx: &mut Context<Self>,
     ) {
         self.select_next_is_case_sensitive = case_sensitive;
+    }
+}
+
+impl FoldableItem for Editor {
+    fn has_any_folded(&self, cx: &Context<Self>) -> bool {
+        self.has_any_buffer_folded(cx)
+    }
+
+    fn fold_all(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.fold_all(&Default::default(), window, cx);
+    }
+
+    fn unfold_all(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.unfold_all(&Default::default(), window, cx);
     }
 }
 

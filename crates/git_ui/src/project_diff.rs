@@ -47,7 +47,7 @@ use workspace::{
     ToolbarItemView, Workspace,
     item::{Item, ItemEvent, ItemHandle, SaveOptions, TabContentParams},
     notifications::NotifyTaskExt,
-    searchable::SearchableItemHandle,
+    searchable::{FoldableItemHandle, SearchableItemHandle},
 };
 use zed_actions::agent::ReviewBranchDiff;
 use ztracing::instrument;
@@ -1001,6 +1001,10 @@ impl Item for ProjectDiff {
     }
 
     fn as_searchable(&self, _: &Entity<Self>, _cx: &App) -> Option<Box<dyn SearchableItemHandle>> {
+        Some(Box::new(self.editor.clone()))
+    }
+
+    fn as_foldable(&self, _: &Entity<Self>, _cx: &App) -> Option<Box<dyn FoldableItemHandle>> {
         Some(Box::new(self.editor.clone()))
     }
 

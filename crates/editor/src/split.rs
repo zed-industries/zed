@@ -30,7 +30,10 @@ use crate::{
 use workspace::{
     ActivatePaneLeft, ActivatePaneRight, Item, ToolbarItemLocation, Workspace,
     item::{BreadcrumbText, ItemBufferKind, ItemEvent, SaveOptions, TabContentParams},
-    searchable::{SearchEvent, SearchToken, SearchableItem, SearchableItemHandle},
+    searchable::{
+        FoldableItem, FoldableItemHandle, SearchEvent, SearchToken, SearchableItem,
+        SearchableItemHandle,
+    },
 };
 
 use crate::{
@@ -1862,6 +1865,10 @@ impl Item for SplittableEditor {
         Some(Box::new(handle.clone()))
     }
 
+    fn as_foldable(&self, handle: &Entity<Self>, _: &App) -> Option<Box<dyn FoldableItemHandle>> {
+        Some(Box::new(handle.clone()))
+    }
+
     fn breadcrumb_location(&self, cx: &App) -> ToolbarItemLocation {
         self.rhs_editor.read(cx).breadcrumb_location(cx)
     }
@@ -2027,6 +2034,22 @@ impl SearchableItem for SplittableEditor {
         self.editor_for_token(token)?.update(cx, |editor, cx| {
             editor.active_match_index(direction, matches, token, window, cx)
         })
+    }
+}
+
+// TODO!: Do we want forwarding methods in `SplittableEditor` or do we simply
+// want to actually call `rhs_editor.update` and call those same methods there?
+impl FoldableItem for SplittableEditor {
+    fn has_any_folded(&self, cx: &Context<Self>) -> bool {
+        self.has_any_buffer_folded(cx)
+    }
+
+    fn fold_all(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.fold_all(window, cx);
+    }
+
+    fn unfold_all(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.unfold_all(window, cx);
     }
 }
 

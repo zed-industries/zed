@@ -494,6 +494,45 @@ impl<T: SearchableItem> SearchableItemHandle for Entity<T> {
     }
 }
 
+// TODO!: Do we want the default implementations?
+pub trait FoldableItem: Item {
+    /// Whether the foldable item has any folded content.
+    fn has_any_folded(&self, _cx: &Context<Self>) -> bool {
+        false
+    }
+
+    /// Fold all content.
+    fn fold_all(&mut self, window: &mut Window, cx: &mut Context<Self>);
+
+    /// Unfold all content.
+    fn unfold_all(&mut self, window: &mut Window, cx: &mut Context<Self>);
+}
+
+pub trait FoldableItemHandle: ItemHandle {
+    /// Whether the foldable item has any folded content.
+    fn has_any_folded(&self, cx: &mut App) -> bool;
+
+    /// Fold all content.
+    fn fold_all(&mut self, window: &mut Window, cx: &mut App);
+
+    /// Unfold all content.
+    fn unfold_all(&mut self, window: &mut Window, cx: &mut App);
+}
+
+impl<T: FoldableItem> FoldableItemHandle for Entity<T> {
+    fn has_any_folded(&self, cx: &mut App) -> bool {
+        self.update(cx, |this, cx| this.has_any_folded(cx))
+    }
+
+    fn fold_all(&mut self, window: &mut Window, cx: &mut App) {
+        self.update(cx, |this, cx| this.fold_all(window, cx));
+    }
+
+    fn unfold_all(&mut self, window: &mut Window, cx: &mut App) {
+        self.update(cx, |this, cx| this.unfold_all(window, cx));
+    }
+}
+
 impl From<Box<dyn SearchableItemHandle>> for AnyView {
     fn from(this: Box<dyn SearchableItemHandle>) -> Self {
         this.to_any_view()
