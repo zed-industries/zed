@@ -337,13 +337,11 @@ impl Render for BufferSearchBar {
         };
 
         let query_column = input_style
-            .child(
-                div()
-                    .flex_1()
-                    .min_w(px(0.))
-                    .overflow_hidden()
-                    .child(render_text_input(&self.query_editor, color_override, cx)),
-            )
+            .child(div().flex_1().min_w(px(0.)).child(render_text_input(
+                &self.query_editor,
+                color_override,
+                cx,
+            )))
             .child(
                 h_flex()
                     .flex_none()
@@ -484,39 +482,41 @@ impl Render for BufferSearchBar {
             .child(query_column)
             .child(mode_column);
 
-        let replace_line =
-            should_show_replace_input.then(|| {
-                let replace_column = input_base_styles(replacement_border)
-                    .child(render_text_input(&self.replacement_editor, None, cx));
-                let focus_handle = self.replacement_editor.read(cx).focus_handle(cx);
+        let replace_line = should_show_replace_input.then(|| {
+            let replace_column = input_base_styles(replacement_border).child(
+                div()
+                    .flex_1()
+                    .child(render_text_input(&self.replacement_editor, None, cx)),
+            );
+            let focus_handle = self.replacement_editor.read(cx).focus_handle(cx);
 
-                let replace_actions = h_flex()
-                    .min_w_64()
-                    .gap_1()
-                    .child(render_action_button(
-                        "buffer-search-replace-button",
-                        IconName::ReplaceNext,
-                        Default::default(),
-                        "Replace Next Match",
-                        &ReplaceNext,
-                        focus_handle.clone(),
-                    ))
-                    .child(render_action_button(
-                        "buffer-search-replace-button",
-                        IconName::ReplaceAll,
-                        Default::default(),
-                        "Replace All Matches",
-                        &ReplaceAll,
-                        focus_handle,
-                    ));
+            let replace_actions = h_flex()
+                .min_w_64()
+                .gap_1()
+                .child(render_action_button(
+                    "buffer-search-replace-button",
+                    IconName::ReplaceNext,
+                    Default::default(),
+                    "Replace Next Match",
+                    &ReplaceNext,
+                    focus_handle.clone(),
+                ))
+                .child(render_action_button(
+                    "buffer-search-replace-button",
+                    IconName::ReplaceAll,
+                    Default::default(),
+                    "Replace All Matches",
+                    &ReplaceAll,
+                    focus_handle,
+                ));
 
-                h_flex()
-                    .w_full()
-                    .gap_2()
-                    .when(has_collapse_button, |this| this.child(alignment_element()))
-                    .child(replace_column)
-                    .child(replace_actions)
-            });
+            h_flex()
+                .w_full()
+                .gap_2()
+                .when(has_collapse_button, |this| this.child(alignment_element()))
+                .child(replace_column)
+                .child(replace_actions)
+        });
 
         let mut key_context = KeyContext::new_with_defaults();
         key_context.add("BufferSearchBar");
@@ -831,13 +831,13 @@ impl BufferSearchBar {
         cx: &mut Context<Self>,
     ) -> Self {
         let query_editor = cx.new(|cx| {
-            let mut editor = Editor::single_line(window, cx);
+            let mut editor = Editor::auto_height(1, 4, window, cx);
             editor.set_use_autoclose(false);
             editor
         });
         cx.subscribe_in(&query_editor, window, Self::on_query_editor_event)
             .detach();
-        let replacement_editor = cx.new(|cx| Editor::single_line(window, cx));
+        let replacement_editor = cx.new(|cx| Editor::auto_height(1, 4, window, cx));
         cx.subscribe(&replacement_editor, Self::on_replacement_editor_event)
             .detach();
 
