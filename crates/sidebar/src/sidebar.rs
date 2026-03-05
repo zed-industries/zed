@@ -1,5 +1,5 @@
 use acp_thread::ThreadStatus;
-use agent::ThreadStore;
+use agent::{Thread, ThreadStore};
 use agent_client_protocol as acp;
 use agent_ui::{AgentPanel, AgentPanelEvent, NewThread};
 use chrono::Utc;
@@ -27,6 +27,25 @@ use workspace::{
 };
 use zed_actions::editor::{MoveDown, MoveUp};
 
+/*
+ * 1. Selection states are all messy
+ *  - Semantic Selection Target ("selecting a project") or ("selecting a thread") (so that we can maintain coherence across changes)
+ *  - But we also want to easily convert that target, to an index (up/down needs indexing behavior)
+ *  - We need to go through these interactions, and make sure that the selection and timing behavior works.
+ *  - Solution:
+ *      - 2 indicators, one for "selection" and one for "active"
+ *      - Active (dark grey):
+ *          - Thread that is showing in the current agent panel
+ *          - If no thread in the agent panel (OR focused on a new thread?), focus the header
+ *          - When does this change?
+ *              - When the active thread changes
+ *              - When you change workspaces in the multi workspace
+ *      - Selected (blue border):
+ *          - When active changes, selected changes
+ *          - When keyboard navigating, selected changes
+ *          - (Also only shows on focus)
+ *      - Hovered (light grey): Mouse over
+ */
 actions!(
     agents_sidebar,
     [
@@ -171,6 +190,24 @@ fn workspace_index_for_path_list(
         })
 }
 
+#[derive(PartialEq)]
+enum ActiveItem {
+    Thread(acp::SessionId),
+    Workspace(Entity<Workspace>),
+}
+
+impl ActiveItem {
+    fn from_multi_workspace(multi_workspace: &Entity<MultiWorkspace>, cx: &mut App) -> Self {
+        let Some(agent_panel) = multi_workspace.read(cx).panel::<AgentPanel>(cx) else {
+            return ActiveItem::Workspace(multi_workspace.read(cx).workspace().clone());
+        };
+        match agent_panel.read(cx).active_agent_thread(cx) {
+            Some(thread) => ActiveItem::Thread(thread.read(cx).session_id().clone()),
+            None => ActiveItem::Workspace(multi_workspace.read(cx).workspace().clone()),
+        }
+    }
+}
+
 pub struct Sidebar {
     multi_workspace: WeakEntity<MultiWorkspace>,
     width: Pixels,
@@ -178,7 +215,13 @@ pub struct Sidebar {
     filter_editor: Entity<Editor>,
     list_state: ListState,
     contents: SidebarContents,
+    /// The index of the list item that currently has the keyboard focus
+    ///
+    /// Note: This is NOT the same as the active item.
     selection: Option<usize>,
+    /// Stores either the active thread or if there is no active thread, the
+    /// focused workspace.
+    active_item: ActiveItem,
     collapsed_groups: HashSet<PathList>,
     expanded_groups: HashSet<PathList>,
     _subscriptions: Vec<Subscription>,
@@ -247,6 +290,7 @@ impl Sidebar {
             list_state: ListState::new(0, gpui::ListAlignment::Top, px(1000.)),
             contents: SidebarContents::default(),
             selection: None,
+            active_item: ActiveItem::from_multi_workspace(&multi_workspace, cx),
             collapsed_groups: HashSet::new(),
             expanded_groups: HashSet::new(),
             _subscriptions: vec![observe_subscription, filter_subscription],
@@ -619,10 +663,10 @@ impl Sidebar {
 
             this.list_state.reset(this.contents.entries.len());
 
-            if let Some(selection) = this.selection {
-                if selection >= this.contents.entries.len() {
-                    this.selection = this.contents.entries.len().checked_sub(1);
-                }
+            let new_active = ActiveItem::from_multi_workspace(&multi_workspace, cx);
+            if new_active != this.active_item {
+                // TODO: update self.selected with the index of the new active item
+                this.active_item = new_active;
             }
 
             if had_notifications != this.has_notifications(cx) {
