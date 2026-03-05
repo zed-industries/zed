@@ -123,6 +123,7 @@ pub struct WgpuRenderer {
     max_texture_size: u32,
     last_error: Arc<Mutex<Option<String>>>,
     failed_frame_count: u32,
+    device_lost: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl WgpuRenderer {
@@ -195,6 +196,18 @@ impl WgpuRenderer {
         context: &WgpuContext,
         surface: wgpu::Surface<'static>,
         config: WgpuSurfaceConfig,
+    ) -> anyhow::Result<Self> {
+        Self::new_with_surface_and_atlas(context, surface, config, None)
+    }
+
+    /// Creates a renderer, optionally reusing an existing atlas.
+    /// If `existing_atlas` is provided, `handle_device_lost` will be called on it
+    /// to update it for the new device/queue.
+    fn new_with_surface_and_atlas(
+        context: &WgpuContext,
+        surface: wgpu::Surface<'static>,
+        config: WgpuSurfaceConfig,
+        existing_atlas: Option<Arc<WgpuAtlas>>,
     ) -> anyhow::Result<Self> {
         let surface_caps = surface.get_capabilities(&context.adapter);
         let preferred_formats = [
@@ -289,7 +302,14 @@ impl WgpuRenderer {
             dual_source_blending,
         );
 
-        let atlas = Arc::new(WgpuAtlas::new(Arc::clone(&device), Arc::clone(&queue)));
+        // Use existing atlas if provided (for device recovery), otherwise create a new one
+        let atlas = if let Some(existing) = existing_atlas {
+            // Update the existing atlas with the new device/queue
+            existing.handle_device_lost(Arc::clone(&device), Arc::clone(&queue));
+            existing
+        } else {
+            Arc::new(WgpuAtlas::new(Arc::clone(&device), Arc::clone(&queue)))
+        };
         let atlas_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("atlas_sampler"),
             mag_filter: wgpu::FilterMode::Linear,
@@ -407,6 +427,7 @@ impl WgpuRenderer {
             max_texture_size,
             last_error,
             failed_frame_count: 0,
+            device_lost: context.device_lost_flag(),
         })
     }
 
@@ -1511,6 +1532,285 @@ impl WgpuRenderer {
 
     pub fn destroy(&mut self) {
         // wgpu resources are automatically cleaned up when dropped
+    }
+
+    /// Returns true if the GPU device was lost and recovery is needed.
+    pub fn device_lost(&self) -> bool {
+        self.device_lost.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    /// Prepares the renderer for device recovery by releasing GPU resources.
+    ///
+    /// This must be called BEFORE creating a new wgpu context to ensure clean state.
+    /// After calling this, the renderer's GPU resources are cleared but the device/queue
+    /// Arc references still exist. The caller should then drop the WgpuContext and call
+    /// `handle_device_lost` with a new context.
+    pub fn prepare_for_device_recovery(&mut self) {
+        log::info!("Preparing renderer for device recovery, releasing GPU resources...");
+
+        // Note: We do NOT poll the device here. The device is lost, and polling
+        // a lost device causes a validation error/panic in wgpu. Any pending GPU
+        // work is already invalidated when the device is lost.
+
+        // Clear intermediate textures (they hold references to old device resources)
+        self.path_intermediate_texture = None;
+        self.path_intermediate_view = None;
+        self.path_msaa_texture = None;
+        self.path_msaa_view = None;
+
+        // Reset error tracking
+        *self.last_error.lock().unwrap() = None;
+        self.failed_frame_count = 0;
+
+        log::info!("Renderer GPU resources released");
+    }
+
+    /// Handles device lost by recreating all GPU resources with a new context.
+    /// Call this after detecting device loss (e.g., after suspend/resume on Linux).
+    ///
+    /// The `surface` parameter must be a new surface created with the same instance
+    /// that was used to create the context. The old surface is invalid after device
+    /// loss because it's associated with the old instance/adapter.
+    pub fn handle_device_lost(
+        &mut self,
+        context: &WgpuContext,
+        surface: wgpu::Surface<'static>,
+    ) -> anyhow::Result<()> {
+        log::info!("Recreating wgpu renderer after device lost");
+
+        // Replace the surface - the old surface was bound to the old instance and is now invalid
+        self.surface = surface;
+
+        // Update device and queue references
+        self.device = Arc::clone(&context.device);
+        self.queue = Arc::clone(&context.queue);
+        self.dual_source_blending = context.supports_dual_source_blending();
+        self.adapter_info = context.adapter.get_info();
+        self.max_texture_size = self.device.limits().max_texture_dimension_2d;
+
+        // Reconfigure surface with new device
+        self.surface.configure(&self.device, &self.surface_config);
+
+        // Recreate bind group layouts
+        self.bind_group_layouts = Self::create_bind_group_layouts(&self.device);
+
+        // Recreate pipelines
+        self.pipelines = Self::create_pipelines(
+            &self.device,
+            &self.bind_group_layouts,
+            self.surface_config.format,
+            self.surface_config.alpha_mode,
+            self.rendering_params.path_sample_count,
+            self.dual_source_blending,
+        );
+
+        // Recreate atlas sampler
+        self.atlas_sampler = self.device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("atlas_sampler"),
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            ..Default::default()
+        });
+
+        // Recreate globals buffer
+        let uniform_alignment = self.device.limits().min_uniform_buffer_offset_alignment as u64;
+        let globals_size = std::mem::size_of::<GlobalParams>() as u64;
+        let gamma_size = std::mem::size_of::<GammaParams>() as u64;
+        self.path_globals_offset = globals_size.next_multiple_of(uniform_alignment);
+        self.gamma_offset =
+            (self.path_globals_offset + globals_size).next_multiple_of(uniform_alignment);
+
+        self.globals_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("globals_buffer"),
+            size: self.gamma_offset + gamma_size,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        // Recreate globals bind groups
+        self.globals_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("globals_bind_group"),
+            layout: &self.bind_group_layouts.globals,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer: &self.globals_buffer,
+                        offset: 0,
+                        size: Some(NonZeroU64::new(globals_size).unwrap()),
+                    }),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer: &self.globals_buffer,
+                        offset: self.gamma_offset,
+                        size: Some(NonZeroU64::new(gamma_size).unwrap()),
+                    }),
+                },
+            ],
+        });
+
+        self.path_globals_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("path_globals_bind_group"),
+            layout: &self.bind_group_layouts.globals,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer: &self.globals_buffer,
+                        offset: self.path_globals_offset,
+                        size: Some(NonZeroU64::new(globals_size).unwrap()),
+                    }),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer: &self.globals_buffer,
+                        offset: self.gamma_offset,
+                        size: Some(NonZeroU64::new(gamma_size).unwrap()),
+                    }),
+                },
+            ],
+        });
+
+        // Recreate instance buffer
+        self.max_buffer_size = self.device.limits().max_buffer_size;
+        self.storage_buffer_alignment =
+            self.device.limits().min_storage_buffer_offset_alignment as u64;
+        self.instance_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("instance_buffer"),
+            size: self.instance_buffer_capacity,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        // Handle atlas device lost
+        self.atlas
+            .handle_device_lost(Arc::clone(&self.device), Arc::clone(&self.queue));
+
+        // Set up error handler for new device
+        let last_error_clone = Arc::clone(&self.last_error);
+        self.device.on_uncaptured_error(Arc::new(move |error| {
+            let mut guard = last_error_clone.lock().unwrap();
+            *guard = Some(error.to_string());
+        }));
+
+        // Update device_lost flag to point to the new context's flag
+        self.device_lost = context.device_lost_flag();
+
+        log::info!("wgpu renderer successfully recreated");
+        Ok(())
+    }
+}
+
+/// Result of device lost recovery attempt.
+#[cfg(not(target_family = "wasm"))]
+pub enum DeviceRecoveryResult {
+    /// No recovery needed, device is healthy. Contains the original renderer.
+    NotNeeded(WgpuRenderer),
+    /// Recovery succeeded. Contains the new renderer.
+    Recovered(WgpuRenderer),
+    /// Recovery failed with an error. The old renderer has been dropped.
+    Failed(anyhow::Error),
+}
+
+/// Checks for device lost and handles recovery if needed.
+///
+/// If recovery is needed, this function:
+/// 1. Drops the old renderer entirely (releasing all GPU resources)
+/// 2. Creates a new context and renderer
+/// 3. Returns the new renderer in `RecoveredRenderer`
+///
+/// The caller must replace their renderer with the new one.
+#[cfg(not(target_family = "wasm"))]
+pub fn recover_from_device_lost<F>(
+    renderer: WgpuRenderer,
+    gpu_context: &mut Option<WgpuContext>,
+    create_surface: F,
+) -> DeviceRecoveryResult
+where
+    F: FnOnce(&wgpu::Instance) -> anyhow::Result<wgpu::Surface<'static>>,
+{
+    if !renderer.device_lost() {
+        // No recovery needed - return the renderer unchanged
+        return DeviceRecoveryResult::NotNeeded(renderer);
+    }
+
+    log::warn!("GPU device lost detected, recreating context...");
+
+    // Save info we need to recreate the renderer
+    let previous_adapter_info = renderer.adapter_info.clone();
+    let surface_config_width = renderer.surface_config.width;
+    let surface_config_height = renderer.surface_config.height;
+    let transparent = renderer.surface_config.alpha_mode != wgpu::CompositeAlphaMode::Opaque;
+
+    // IMPORTANT: Preserve the atlas! The UI layer has cached AtlasTextureId references
+    // that point into this atlas. If we create a new atlas, those references become invalid.
+    // We'll call handle_device_lost on the atlas after creating the new context.
+    let atlas = renderer.atlas.clone();
+
+    // Step 1: Drop the old context first
+    log::info!("Dropping old GPU context...");
+    *gpu_context = None;
+
+    // Step 2: Drop the old renderer - this releases Arc<Device> and Arc<Queue> references
+    // and all GPU resources (buffers, textures, pipelines, etc.) EXCEPT the atlas which we kept.
+    log::info!("Dropping old renderer to release GPU resources...");
+    drop(renderer);
+
+    // Step 3: Wait for the system to stabilize after device loss.
+    // This gives the GPU driver time to clean up after we dropped everything.
+    log::info!("Waiting for GPU driver to stabilize...");
+    std::thread::sleep(std::time::Duration::from_millis(500));
+
+    // Step 4: Create new instance.
+    log::info!("Creating new wgpu instance...");
+    let instance = WgpuContext::instance();
+
+    // Step 5: Create new surface.
+    log::info!("Creating new surface...");
+    let surface = match create_surface(&instance) {
+        Ok(s) => s,
+        Err(e) => {
+            let err = anyhow::anyhow!("Failed to create surface for device recovery: {e}");
+            log::error!("{err}");
+            return DeviceRecoveryResult::Failed(err);
+        }
+    };
+
+    // Step 6: Create new context using the recovery path.
+    log::info!("Creating new GPU context for recovery...");
+    let context = match WgpuContext::new_for_recovery(instance, &surface, &previous_adapter_info) {
+        Ok(ctx) => ctx,
+        Err(e) => {
+            let err = anyhow::anyhow!("Failed to recreate GPU context: {e}");
+            log::error!("{err}");
+            return DeviceRecoveryResult::Failed(err);
+        }
+    };
+
+    // Step 7: Create new renderer, reusing the atlas to preserve cached texture IDs
+    log::info!("Creating new renderer with preserved atlas...");
+    let config = WgpuSurfaceConfig {
+        size: gpui::Size {
+            width: gpui::DevicePixels(surface_config_width as i32),
+            height: gpui::DevicePixels(surface_config_height as i32),
+        },
+        transparent,
+    };
+
+    match WgpuRenderer::new_with_surface_and_atlas(&context, surface, config, Some(atlas)) {
+        Ok(new_renderer) => {
+            *gpu_context = Some(context);
+            log::info!("GPU recovery complete - new renderer created with preserved atlas");
+            DeviceRecoveryResult::Recovered(new_renderer)
+        }
+        Err(e) => {
+            let err = anyhow::anyhow!("Failed to create new renderer during recovery: {e}");
+            log::error!("{err}");
+            DeviceRecoveryResult::Failed(err)
+        }
     }
 }
 

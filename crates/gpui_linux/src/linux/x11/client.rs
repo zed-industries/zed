@@ -295,7 +295,7 @@ impl X11ClientStatePtr {
 }
 
 #[derive(Clone)]
-pub(crate) struct X11Client(Rc<RefCell<X11ClientState>>);
+pub(crate) struct X11Client(pub(crate) Rc<RefCell<X11ClientState>>);
 
 impl X11Client {
     pub(crate) fn new() -> anyhow::Result<Self> {
