@@ -1800,12 +1800,7 @@ impl EditPredictionStore {
         };
 
         // Prefer predictions from buffer
-        let has_pending_predictions = project_state.current_prediction.is_some()
-            || project_state
-                .pending_predictions
-                .iter()
-                .any(|p| !project_state.cancelled_predictions.contains(&p.id));
-        if has_pending_predictions {
+        if project_state.current_prediction.is_some() {
             log::debug!(
                 "edit_prediction: diagnostic refresh skipped, current prediction already exists"
             );
