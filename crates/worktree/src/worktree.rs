@@ -6111,13 +6111,24 @@ fn analyze_byte_content(bytes: &[u8]) -> ByteContent {
         return ByteContent::Unknown;
     }
 
-    if total_null_count >= limit / 16 {
-        if even_null_count > odd_null_count * 4 {
+    let has_significant_nulls = total_null_count >= limit / 16;
+    let nulls_skew_to_even = even_null_count > odd_null_count * 4;
+    let nulls_skew_to_odd = odd_null_count > even_null_count * 4;
+
+    if has_significant_nulls {
+        let sample = &bytes[..limit];
+
+        // UTF-16BE ASCII: [0x00, char] — nulls at even positions (high byte first)
+        // UTF-16LE ASCII: [char, 0x00] — nulls at odd positions (low byte first)
+
+        if nulls_skew_to_even && is_plausible_utf16_text(sample, false) {
             return ByteContent::Utf16Be;
         }
-        if odd_null_count > even_null_count * 4 {
+
+        if nulls_skew_to_odd && is_plausible_utf16_text(sample, true) {
             return ByteContent::Utf16Le;
         }
+
         return ByteContent::Binary;
     }
 
@@ -6147,6 +6158,58 @@ fn is_known_binary_header(bytes: &[u8]) -> bool {
         || bytes.starts_with(b"\xFF\xFA") // MP3 frame sync (MPEG1 Layer3)
         || bytes.starts_with(b"\xFF\xF3") // MP3 frame sync (MPEG2 Layer3)
         || bytes.starts_with(b"\xFF\xF2") // MP3 frame sync (MPEG2 Layer3)
+}
+
+// Null byte skew alone is not enough to identify UTF-16 -- binary formats with
+// small 16-bit values (like PCM audio) produce the same pattern. Decode the
+// bytes as UTF-16 and reject if too many code units land in control character
+// ranges or form unpaired surrogates, which real text almost never contains.
+fn is_plausible_utf16_text(bytes: &[u8], little_endian: bool) -> bool {
+    let mut suspicious_count = 0usize;
+    let mut total = 0usize;
+
+    let mut i = 0;
+    while i + 1 < bytes.len() {
+        let code_unit = read_u16(bytes, i, little_endian);
+        total += 1;
+
+        match code_unit {
+            0x0009 | 0x000A | 0x000C | 0x000D => {}
+            // C0/C1 control characters and non-characters
+            0x0000..=0x001F | 0x007F..=0x009F | 0xFFFE | 0xFFFF => suspicious_count += 1,
+            0xD800..=0xDBFF => {
+                let next_offset = i + 2;
+                let has_low_surrogate = next_offset + 1 < bytes.len()
+                    && (0xDC00..=0xDFFF).contains(&read_u16(bytes, next_offset, little_endian));
+                if has_low_surrogate {
+                    total += 1;
+                    i += 2;
+                } else {
+                    suspicious_count += 1;
+                }
+            }
+            // Lone low surrogate without a preceding high surrogate
+            0xDC00..=0xDFFF => suspicious_count += 1,
+            _ => {}
+        }
+
+        i += 2;
+    }
+
+    if total == 0 {
+        return false;
+    }
+
+    // Real UTF-16 text has near-zero control characters; binary data with
+    // small 16-bit values typically exceeds 5%. 2% provides a safe margin.
+    suspicious_count * 100 < total * 2
+}
+
+fn read_u16(bytes: &[u8], offset: usize, little_endian: bool) -> u16 {
+    if little_endian {
+        return u16::from_le_bytes([bytes[offset], bytes[offset + 1]]);
+    }
+    u16::from_be_bytes([bytes[offset], bytes[offset + 1]])
 }
 
 #[cfg(test)]
@@ -6210,42 +6273,63 @@ mod tests {
     }
 
     #[test]
-    fn test_le16_binary_misdetected_as_utf16le() {
-        // Build a fake binary file with no known magic header,
-        // but filled with little-endian 16-bit values where the
-        // high byte is often 0x00.
+    fn test_le16_binary_not_misdetected_as_utf16le() {
         let mut bytes = b"FAKE".to_vec();
         while bytes.len() < FILE_ANALYSIS_BYTES {
             let sample = (bytes.len() & 0xFF) as u8;
             bytes.push(sample);
-            bytes.push(0x00); // null at odd position
+            bytes.push(0x00);
         }
         bytes.truncate(FILE_ANALYSIS_BYTES);
 
         let result = analyze_byte_content(&bytes);
         assert_eq!(
             result,
-            ByteContent::Utf16Le,
-            "LE 16-bit binary without a known header is misdetected as UTF-16LE"
+            ByteContent::Binary,
+            "LE 16-bit binary with control characters should be detected as Binary"
         );
     }
 
     #[test]
-    fn test_be16_binary_misdetected_as_utf16be() {
+    fn test_be16_binary_not_misdetected_as_utf16be() {
         let mut bytes = b"FAKE".to_vec();
         while bytes.len() < FILE_ANALYSIS_BYTES {
-            bytes.push(0x00); //  null at even position
+            bytes.push(0x00);
             let sample = (bytes.len() & 0xFF) as u8;
-            bytes.push(sample); // low byte: non-zero
+            bytes.push(sample);
         }
         bytes.truncate(FILE_ANALYSIS_BYTES);
 
         let result = analyze_byte_content(&bytes);
         assert_eq!(
             result,
-            ByteContent::Utf16Be,
-            "BE 16-bit binary without a known header is misdetected as UTF-16BE"
+            ByteContent::Binary,
+            "BE 16-bit binary with control characters should be detected as Binary"
         );
+    }
+
+    #[test]
+    fn test_utf16le_text_detected_as_utf16le() {
+        let text = "Hello, world! This is a UTF-16 test string. ";
+        let mut bytes = Vec::new();
+        while bytes.len() < FILE_ANALYSIS_BYTES {
+            bytes.extend(text.encode_utf16().flat_map(|u| u.to_le_bytes()));
+        }
+        bytes.truncate(FILE_ANALYSIS_BYTES);
+
+        assert_eq!(analyze_byte_content(&bytes), ByteContent::Utf16Le);
+    }
+
+    #[test]
+    fn test_utf16be_text_detected_as_utf16be() {
+        let text = "Hello, world! This is a UTF-16 test string. ";
+        let mut bytes = Vec::new();
+        while bytes.len() < FILE_ANALYSIS_BYTES {
+            bytes.extend(text.encode_utf16().flat_map(|u| u.to_be_bytes()));
+        }
+        bytes.truncate(FILE_ANALYSIS_BYTES);
+
+        assert_eq!(analyze_byte_content(&bytes), ByteContent::Utf16Be);
     }
 
     #[test]
