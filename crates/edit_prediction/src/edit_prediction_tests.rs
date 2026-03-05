@@ -1804,9 +1804,8 @@ fn init_test_with_fake_client(
         let client = client::Client::new(Arc::new(FakeSystemClock::new()), http_client, cx);
         client.cloud_client().set_credentials(1, "test".into());
 
-        language_model::init(client.clone(), cx);
-
         let user_store = cx.new(|cx| UserStore::new(client.clone(), cx));
+        language_model::init(client.clone(), user_store.clone(), cx);
         let ep_store = EditPredictionStore::global(&client, &user_store, cx);
 
         (
@@ -2171,8 +2170,9 @@ async fn make_test_ep_store(
     });
 
     let client = cx.update(|cx| Client::new(Arc::new(FakeSystemClock::new()), http_client, cx));
+    let user_store = cx.update(|cx| cx.new(|cx| client::UserStore::new(client.clone(), cx)));
     cx.update(|cx| {
-        RefreshLlmTokenListener::register(client.clone(), cx);
+        RefreshLlmTokenListener::register(client.clone(), user_store.clone(), cx);
     });
     let _server = FakeServer::for_client(42, &client, cx).await;
 
@@ -2254,8 +2254,9 @@ async fn test_unauthenticated_without_custom_url_blocks_prediction_impl(cx: &mut
 
     let client =
         cx.update(|cx| client::Client::new(Arc::new(FakeSystemClock::new()), http_client, cx));
+    let user_store = cx.update(|cx| cx.new(|cx| client::UserStore::new(client.clone(), cx)));
     cx.update(|cx| {
-        language_model::RefreshLlmTokenListener::register(client.clone(), cx);
+        language_model::RefreshLlmTokenListener::register(client.clone(), user_store.clone(), cx);
     });
 
     let ep_store = cx.new(|cx| EditPredictionStore::new(client, project.read(cx).user_store(), cx));
