@@ -11,7 +11,7 @@ pub struct HighlightId(pub u32);
 const DEFAULT_SYNTAX_HIGHLIGHT_ID: HighlightId = HighlightId(u32::MAX);
 
 impl HighlightMap {
-    pub(crate) fn new(capture_names: &[&str], theme: &SyntaxTheme) -> Self {
+    pub fn new(capture_names: &[&str], theme: &SyntaxTheme) -> Self {
         // For each capture name in the highlight query, find the longest
         // key in the theme's syntax styles that matches all of the
         // dot-separated components of the capture name.
