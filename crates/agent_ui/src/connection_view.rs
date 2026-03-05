@@ -161,6 +161,14 @@ pub(crate) struct Conversation {
 }
 
 impl Conversation {
+    pub fn thread(
+        &self,
+        session_id: &acp::SessionId,
+        _cx: &App,
+    ) -> Option<&Entity<AcpThread>> {
+        self.threads.get(session_id)
+    }
+
     pub fn register_thread(&mut self, thread: Entity<AcpThread>, cx: &mut Context<Self>) {
         let session_id = thread.read(cx).session_id().clone();
         let subscription = cx.subscribe(&thread, move |this, _thread, event, _cx| match event {
@@ -248,6 +256,50 @@ impl Conversation {
             tool_id.clone(),
             options,
         ))
+    }
+
+    pub fn all_pending_tool_calls<'a>(
+        &'a self,
+        session_id: &acp::SessionId,
+        cx: &'a App,
+    ) -> Vec<(acp::SessionId, acp::ToolCallId, &'a PermissionOptions)> {
+        let thread = self.threads.get(session_id);
+        let is_subagent = thread
+            .map(|t| t.read(cx).parent_session_id().is_some())
+            .unwrap_or(false);
+
+        let iter: Box<dyn Iterator<Item = (&acp::SessionId, &Vec<acp::ToolCallId>)>> =
+            if is_subagent {
+                if let Some(tool_calls) = self.permission_requests.get(session_id) {
+                    Box::new(std::iter::once((session_id, tool_calls)))
+                } else {
+                    return Vec::new();
+                }
+            } else {
+                Box::new(self.permission_requests.iter())
+            };
+
+        let mut result = Vec::new();
+        for (sid, tool_call_ids) in iter {
+            let Some(thread) = self.threads.get(sid) else {
+                continue;
+            };
+            for tool_id in tool_call_ids {
+                let Some((_, tool_call)) = thread.read(cx).tool_call(tool_id) else {
+                    continue;
+                };
+                let ToolCallStatus::WaitingForConfirmation { options, .. } = &tool_call.status
+                else {
+                    continue;
+                };
+                result.push((
+                    thread.read(cx).session_id().clone(),
+                    tool_id.clone(),
+                    options,
+                ));
+            }
+        }
+        result
     }
 
     pub fn authorize_pending_tool_call(
