@@ -1,7 +1,7 @@
 use anyhow::Result;
 use arrayvec::ArrayVec;
 use client::{Client, EditPredictionUsage, UserStore};
-use cloud_api_types::SubmitEditPredictionFeedbackBody;
+use cloud_api_types::{OrganizationId, SubmitEditPredictionFeedbackBody};
 use cloud_llm_client::predict_edits_v3::{
     PredictEditsV3Request, PredictEditsV3Response, RawCompletionRequest, RawCompletionResponse,
 };
@@ -69,6 +69,7 @@ pub mod sweep_ai;
 pub mod udiff;
 
 mod capture_example;
+pub mod open_ai_compatible;
 mod zed_edit_prediction_delegate;
 pub mod zeta;
 
@@ -107,12 +108,7 @@ const EDIT_PREDICTION_SETTLED_EVENT: &str = "Edit Prediction Settled";
 const EDIT_PREDICTION_SETTLED_TTL: Duration = Duration::from_secs(60 * 5);
 const EDIT_PREDICTION_SETTLED_QUIESCENCE: Duration = Duration::from_secs(10);
 
-pub struct Zeta2FeatureFlag;
 pub struct EditPredictionJumpsFeatureFlag;
-
-impl FeatureFlag for Zeta2FeatureFlag {
-    const NAME: &'static str = "zeta2";
-}
 
 impl FeatureFlag for EditPredictionJumpsFeatureFlag {
     const NAME: &'static str = "edit_prediction_jumps";
@@ -129,6 +125,7 @@ impl Global for EditPredictionStoreGlobal {}
 #[derive(Clone)]
 pub struct Zeta2RawConfig {
     pub model_id: Option<String>,
+    pub environment: Option<String>,
     pub format: ZetaFormat,
 }
 
@@ -137,14 +134,17 @@ pub struct EditPredictionStore {
     user_store: Entity<UserStore>,
     llm_token: LlmApiToken,
     _llm_token_subscription: Subscription,
+    _fetch_experiments_task: Task<()>,
     projects: HashMap<EntityId, ProjectState>,
     update_required: bool,
     edit_prediction_model: EditPredictionModel,
     zeta2_raw_config: Option<Zeta2RawConfig>,
+    preferred_experiment: Option<String>,
+    available_experiments: Vec<String>,
     pub sweep_ai: SweepAi,
     pub mercury: Mercury,
     data_collection_choice: DataCollectionChoice,
-    reject_predictions_tx: mpsc::UnboundedSender<EditPredictionRejection>,
+    reject_predictions_tx: mpsc::UnboundedSender<EditPredictionRejectionPayload>,
     settled_predictions_tx: mpsc::UnboundedSender<Instant>,
     shown_predictions: VecDeque<EditPrediction>,
     rated_predictions: HashSet<EditPredictionId>,
@@ -152,10 +152,14 @@ pub struct EditPredictionStore {
     settled_event_callback: Option<Box<dyn Fn(EditPredictionId, String)>>,
 }
 
+pub(crate) struct EditPredictionRejectionPayload {
+    rejection: EditPredictionRejection,
+    organization_id: Option<OrganizationId>,
+}
+
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub enum EditPredictionModel {
-    Zeta1,
-    Zeta2,
+    Zeta,
     Fim { format: EditPredictionPromptFormat },
     Sweep,
     Mercury,
@@ -173,6 +177,8 @@ pub struct EditPredictionModelInput {
     trigger: PredictEditsRequestTrigger,
     diagnostic_search_range: Range<Point>,
     debug_tx: Option<mpsc::UnboundedSender<DebugEvent>>,
+    can_collect_data: bool,
+    is_open_source: bool,
     pub user_actions: Vec<UserActionRecord>,
 }
 
@@ -697,26 +703,45 @@ impl EditPredictionStore {
         })
         .detach();
 
+        let mut current_user = user_store.read(cx).watch_current_user();
+        let fetch_experiments_task = cx.spawn(async move |this, cx| {
+            while current_user.borrow().is_none() {
+                current_user.next().await;
+            }
+            this.update(cx, |this, cx| {
+                this.refresh_available_experiments(cx);
+            })
+            .log_err();
+        });
+
         let this = Self {
             projects: HashMap::default(),
             client,
             user_store,
             llm_token,
+            _fetch_experiments_task: fetch_experiments_task,
             _llm_token_subscription: cx.subscribe(
                 &refresh_llm_token_listener,
                 |this, _listener, _event, cx| {
                     let client = this.client.clone();
                     let llm_token = this.llm_token.clone();
+                    let organization_id = this
+                        .user_store
+                        .read(cx)
+                        .current_organization()
+                        .map(|organization| organization.id.clone());
                     cx.spawn(async move |_this, _cx| {
-                        llm_token.refresh(&client).await?;
+                        llm_token.refresh(&client, organization_id).await?;
                         anyhow::Ok(())
                     })
                     .detach_and_log_err(cx);
                 },
             ),
             update_required: false,
-            edit_prediction_model: EditPredictionModel::Zeta2,
+            edit_prediction_model: EditPredictionModel::Zeta,
             zeta2_raw_config: Self::zeta2_raw_config_from_env(),
+            preferred_experiment: None,
+            available_experiments: Vec::new(),
             sweep_ai: SweepAi::new(cx),
             mercury: Mercury::new(cx),
 
@@ -736,7 +761,12 @@ impl EditPredictionStore {
         let version_str = env::var("ZED_ZETA_FORMAT").ok()?;
         let format = ZetaFormat::parse(&version_str).ok()?;
         let model_id = env::var("ZED_ZETA_MODEL").ok();
-        Some(Zeta2RawConfig { model_id, format })
+        let environment = env::var("ZED_ZETA_ENVIRONMENT").ok();
+        Some(Zeta2RawConfig {
+            model_id,
+            environment,
+            format,
+        })
     }
 
     pub fn set_edit_prediction_model(&mut self, model: EditPredictionModel) {
@@ -749,6 +779,66 @@ impl EditPredictionStore {
 
     pub fn zeta2_raw_config(&self) -> Option<&Zeta2RawConfig> {
         self.zeta2_raw_config.as_ref()
+    }
+
+    pub fn preferred_experiment(&self) -> Option<&str> {
+        self.preferred_experiment.as_deref()
+    }
+
+    pub fn set_preferred_experiment(&mut self, experiment: Option<String>) {
+        self.preferred_experiment = experiment;
+    }
+
+    pub fn available_experiments(&self) -> &[String] {
+        &self.available_experiments
+    }
+
+    pub fn refresh_available_experiments(&mut self, cx: &mut Context<Self>) {
+        let client = self.client.clone();
+        let llm_token = self.llm_token.clone();
+        let app_version = AppVersion::global(cx);
+        let organization_id = self
+            .user_store
+            .read(cx)
+            .current_organization()
+            .map(|organization| organization.id.clone());
+
+        cx.spawn(async move |this, cx| {
+            let experiments = cx
+                .background_spawn(async move {
+                    let http_client = client.http_client();
+                    let token = llm_token.acquire(&client, organization_id).await?;
+                    let url = http_client.build_zed_llm_url("/edit_prediction_experiments", &[])?;
+                    let request = http_client::Request::builder()
+                        .method(Method::GET)
+                        .uri(url.as_ref())
+                        .header("Authorization", format!("Bearer {}", token))
+                        .header(ZED_VERSION_HEADER_NAME, app_version.to_string())
+                        .body(Default::default())?;
+                    let mut response = http_client.send(request).await?;
+                    if response.status().is_success() {
+                        let mut body = Vec::new();
+                        response.body_mut().read_to_end(&mut body).await?;
+                        let experiments: Vec<String> = serde_json::from_slice(&body)?;
+                        Ok(experiments)
+                    } else {
+                        let mut body = String::new();
+                        response.body_mut().read_to_string(&mut body).await?;
+                        anyhow::bail!(
+                            "Failed to fetch experiments: {:?}\nBody: {}",
+                            response.status(),
+                            body
+                        );
+                    }
+                })
+                .await?;
+            this.update(cx, |this, cx| {
+                this.available_experiments = experiments;
+                cx.notify();
+            })?;
+            anyhow::Ok(())
+        })
+        .detach_and_log_err(cx);
     }
 
     pub fn icons(&self, cx: &App) -> edit_prediction_types::EditPredictionIconSet {
@@ -764,7 +854,7 @@ impl EditPredictionStore {
             EditPredictionModel::Mercury => {
                 edit_prediction_types::EditPredictionIconSet::new(IconName::Inception)
             }
-            EditPredictionModel::Zeta1 | EditPredictionModel::Zeta2 => {
+            EditPredictionModel::Zeta => {
                 edit_prediction_types::EditPredictionIconSet::new(IconName::ZedPredict)
                     .with_disabled(IconName::ZedPredictDisabled)
                     .with_up(IconName::ZedPredictUp)
@@ -893,10 +983,7 @@ impl EditPredictionStore {
     }
 
     pub fn usage(&self, cx: &App) -> Option<EditPredictionUsage> {
-        if matches!(
-            self.edit_prediction_model,
-            EditPredictionModel::Zeta2 | EditPredictionModel::Zeta1
-        ) {
+        if matches!(self.edit_prediction_model, EditPredictionModel::Zeta) {
             self.user_store.read(cx).edit_prediction_usage()
         } else {
             None
@@ -1345,7 +1432,7 @@ impl EditPredictionStore {
                     cx,
                 );
             }
-            EditPredictionModel::Zeta1 | EditPredictionModel::Zeta2 => {
+            EditPredictionModel::Zeta => {
                 let is_cloud = !matches!(
                     all_language_settings(None, cx).edit_predictions.provider,
                     EditPredictionProvider::Ollama | EditPredictionProvider::OpenAiCompatibleApi
@@ -1359,7 +1446,7 @@ impl EditPredictionStore {
     }
 
     async fn handle_rejected_predictions(
-        rx: UnboundedReceiver<EditPredictionRejection>,
+        rx: UnboundedReceiver<EditPredictionRejectionPayload>,
         client: Arc<Client>,
         llm_token: LlmApiToken,
         app_version: Version,
@@ -1368,7 +1455,11 @@ impl EditPredictionStore {
         let mut rx = std::pin::pin!(rx.peekable());
         let mut batched = Vec::new();
 
-        while let Some(rejection) = rx.next().await {
+        while let Some(EditPredictionRejectionPayload {
+            rejection,
+            organization_id,
+        }) = rx.next().await
+        {
             batched.push(rejection);
 
             if batched.len() < MAX_EDIT_PREDICTION_REJECTIONS_PER_REQUEST / 2 {
@@ -1406,6 +1497,7 @@ impl EditPredictionStore {
                 },
                 client.clone(),
                 llm_token.clone(),
+                organization_id,
                 app_version.clone(),
                 true,
             )
@@ -1606,18 +1698,28 @@ impl EditPredictionStore {
         cx: &App,
     ) {
         match self.edit_prediction_model {
-            EditPredictionModel::Zeta1 | EditPredictionModel::Zeta2 => {
+            EditPredictionModel::Zeta => {
                 let is_cloud = !matches!(
                     all_language_settings(None, cx).edit_predictions.provider,
                     EditPredictionProvider::Ollama | EditPredictionProvider::OpenAiCompatibleApi
                 );
+
                 if is_cloud {
+                    let organization_id = self
+                        .user_store
+                        .read(cx)
+                        .current_organization()
+                        .map(|organization| organization.id.clone());
+
                     self.reject_predictions_tx
-                        .unbounded_send(EditPredictionRejection {
-                            request_id: prediction_id.to_string(),
-                            reason,
-                            was_shown,
-                            model_version,
+                        .unbounded_send(EditPredictionRejectionPayload {
+                            rejection: EditPredictionRejection {
+                                request_id: prediction_id.to_string(),
+                                reason,
+                                was_shown,
+                                model_version,
+                            },
+                            organization_id,
                         })
                         .log_err();
                 }
@@ -1836,7 +1938,6 @@ fn is_ep_store_provider(provider: EditPredictionProvider) -> bool {
         | EditPredictionProvider::Experimental(_) => true,
         EditPredictionProvider::None
         | EditPredictionProvider::Copilot
-        | EditPredictionProvider::Supermaven
         | EditPredictionProvider::Codestral => false,
     }
 }
@@ -1877,7 +1978,6 @@ impl EditPredictionStore {
                 EditPredictionProvider::OpenAiCompatibleApi => (false, 2),
                 EditPredictionProvider::None
                 | EditPredictionProvider::Copilot
-                | EditPredictionProvider::Supermaven
                 | EditPredictionProvider::Codestral => {
                     log::error!("queue_prediction_refresh called with non-store provider");
                     return;
@@ -2041,7 +2141,7 @@ impl EditPredictionStore {
             active_buffer.clone(),
             position,
             trigger,
-            cx.has_flag::<Zeta2FeatureFlag>(),
+            cx.has_flag::<EditPredictionJumpsFeatureFlag>(),
             cx,
         )
     }
@@ -2060,7 +2160,7 @@ impl EditPredictionStore {
         let stored_events = project_state.events(cx);
         let has_events = !stored_events.is_empty();
         let events: Vec<Arc<zeta_prompt::Event>> =
-            stored_events.into_iter().map(|e| e.event).collect();
+            stored_events.iter().map(|e| e.event.clone()).collect();
         let debug_tx = project_state.debug_tx.clone();
 
         let snapshot = active_buffer.read(cx).snapshot();
@@ -2094,9 +2194,20 @@ impl EditPredictionStore {
 
         let related_files = self.context_for_project(&project, cx);
 
+        let is_open_source = snapshot
+            .file()
+            .map_or(false, |file| self.is_file_open_source(&project, file, cx))
+            && events.iter().all(|event| event.in_open_source_repo())
+            && related_files.iter().all(|file| file.in_open_source_repo);
+
+        let can_collect_data = !cfg!(test)
+            && is_open_source
+            && self.is_data_collection_enabled(cx)
+            && matches!(self.edit_prediction_model, EditPredictionModel::Zeta);
+
         let inputs = EditPredictionModelInput {
             project: project.clone(),
-            buffer: active_buffer,
+            buffer: active_buffer.clone(),
             snapshot: snapshot,
             position,
             events,
@@ -2106,21 +2217,25 @@ impl EditPredictionStore {
             diagnostic_search_range: diagnostic_search_range,
             debug_tx,
             user_actions,
+            can_collect_data,
+            is_open_source,
         };
 
+        if can_collect_data && rand::random_ratio(1, 1000) {
+            if let Some(task) = capture_example(
+                project.clone(),
+                active_buffer,
+                position,
+                stored_events,
+                false,
+                cx,
+            ) {
+                task.detach();
+            }
+        }
+
         let task = match self.edit_prediction_model {
-            EditPredictionModel::Zeta1 => zeta::request_prediction_with_zeta(
-                self,
-                inputs,
-                Some(zeta_prompt::EditPredictionModelKind::Zeta1),
-                cx,
-            ),
-            EditPredictionModel::Zeta2 => zeta::request_prediction_with_zeta(
-                self,
-                inputs,
-                Some(zeta_prompt::EditPredictionModelKind::Zeta2),
-                cx,
-            ),
+            EditPredictionModel::Zeta => zeta::request_prediction_with_zeta(self, inputs, cx),
             EditPredictionModel::Fim { format } => fim::request_prediction(inputs, format, cx),
             EditPredictionModel::Sweep => self.sweep_ai.request_prediction_with_sweep(inputs, cx),
             EditPredictionModel::Mercury => self.mercury.request_prediction(inputs, cx),
@@ -2259,6 +2374,7 @@ impl EditPredictionStore {
         client: Arc<Client>,
         custom_url: Option<Arc<Url>>,
         llm_token: LlmApiToken,
+        organization_id: Option<OrganizationId>,
         app_version: Version,
     ) -> Result<(RawCompletionResponse, Option<EditPredictionUsage>)> {
         let url = if let Some(custom_url) = custom_url {
@@ -2278,6 +2394,7 @@ impl EditPredictionStore {
             },
             client,
             llm_token,
+            organization_id,
             app_version,
             true,
         )
@@ -2288,6 +2405,7 @@ impl EditPredictionStore {
         input: ZetaPromptInput,
         client: Arc<Client>,
         llm_token: LlmApiToken,
+        organization_id: Option<OrganizationId>,
         app_version: Version,
         trigger: PredictEditsRequestTrigger,
     ) -> Result<(PredictEditsV3Response, Option<EditPredictionUsage>)> {
@@ -2310,6 +2428,7 @@ impl EditPredictionStore {
             },
             client,
             llm_token,
+            organization_id,
             app_version,
             true,
         )
@@ -2363,6 +2482,7 @@ impl EditPredictionStore {
         build: impl Fn(http_client::http::request::Builder) -> Result<http_client::Request<AsyncBody>>,
         client: Arc<Client>,
         llm_token: LlmApiToken,
+        organization_id: Option<OrganizationId>,
         app_version: Version,
         require_auth: bool,
     ) -> Result<(Res, Option<EditPredictionUsage>)>
@@ -2372,9 +2492,12 @@ impl EditPredictionStore {
         let http_client = client.http_client();
 
         let mut token = if require_auth {
-            Some(llm_token.acquire(&client).await?)
+            Some(llm_token.acquire(&client, organization_id.clone()).await?)
         } else {
-            llm_token.acquire(&client).await.ok()
+            llm_token
+                .acquire(&client, organization_id.clone())
+                .await
+                .ok()
         };
         let mut did_retry = false;
 
@@ -2416,7 +2539,7 @@ impl EditPredictionStore {
                 return Ok((serde_json::from_slice(&body)?, usage));
             } else if !did_retry && token.is_some() && response.needs_llm_token_refresh() {
                 did_retry = true;
-                token = Some(llm_token.refresh(&client).await?);
+                token = Some(llm_token.refresh(&client, organization_id.clone()).await?);
             } else {
                 let mut body = String::new();
                 response.body_mut().read_to_string(&mut body).await?;

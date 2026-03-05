@@ -84,6 +84,7 @@ pub struct EditAgent {
     templates: Arc<Templates>,
     edit_format: EditFormat,
     thinking_allowed: bool,
+    update_agent_location: bool,
 }
 
 impl EditAgent {
@@ -94,6 +95,7 @@ impl EditAgent {
         templates: Arc<Templates>,
         edit_format: EditFormat,
         allow_thinking: bool,
+        update_agent_location: bool,
     ) -> Self {
         EditAgent {
             model,
@@ -102,6 +104,7 @@ impl EditAgent {
             templates,
             edit_format,
             thinking_allowed: allow_thinking,
+            update_agent_location,
         }
     }
 
@@ -170,15 +173,17 @@ impl EditAgent {
     ) -> Result<()> {
         let buffer_id = cx.update(|cx| {
             let buffer_id = buffer.read(cx).remote_id();
-            self.project.update(cx, |project, cx| {
-                project.set_agent_location(
-                    Some(AgentLocation {
-                        buffer: buffer.downgrade(),
-                        position: language::Anchor::min_for_buffer(buffer_id),
-                    }),
-                    cx,
-                )
-            });
+            if self.update_agent_location {
+                self.project.update(cx, |project, cx| {
+                    project.set_agent_location(
+                        Some(AgentLocation {
+                            buffer: buffer.downgrade(),
+                            position: language::Anchor::min_for_buffer(buffer_id),
+                        }),
+                        cx,
+                    )
+                });
+            }
             buffer_id
         });
 
@@ -190,15 +195,17 @@ impl EditAgent {
                 .ok()
         };
         let set_agent_location = |cx: &mut _| {
-            self.project.update(cx, |project, cx| {
-                project.set_agent_location(
-                    Some(AgentLocation {
-                        buffer: buffer.downgrade(),
-                        position: language::Anchor::max_for_buffer(buffer_id),
-                    }),
-                    cx,
-                )
-            })
+            if self.update_agent_location {
+                self.project.update(cx, |project, cx| {
+                    project.set_agent_location(
+                        Some(AgentLocation {
+                            buffer: buffer.downgrade(),
+                            position: language::Anchor::max_for_buffer(buffer_id),
+                        }),
+                        cx,
+                    )
+                })
+            }
         };
         let mut first_chunk = true;
         while let Some(event) = parse_rx.next().await {
@@ -302,15 +309,17 @@ impl EditAgent {
                 if let Some(old_range) = old_range {
                     let old_range = snapshot.anchor_before(old_range.start)
                         ..snapshot.anchor_before(old_range.end);
-                    self.project.update(cx, |project, cx| {
-                        project.set_agent_location(
-                            Some(AgentLocation {
-                                buffer: buffer.downgrade(),
-                                position: old_range.end,
-                            }),
-                            cx,
-                        );
-                    });
+                    if self.update_agent_location {
+                        self.project.update(cx, |project, cx| {
+                            project.set_agent_location(
+                                Some(AgentLocation {
+                                    buffer: buffer.downgrade(),
+                                    position: old_range.end,
+                                }),
+                                cx,
+                            );
+                        });
+                    }
                     output_events
                         .unbounded_send(EditAgentOutputEvent::ResolvingEditRange(old_range))
                         .ok();
@@ -383,15 +392,17 @@ impl EditAgent {
                     });
                     self.action_log
                         .update(cx, |log, cx| log.buffer_edited(buffer.clone(), cx));
-                    self.project.update(cx, |project, cx| {
-                        project.set_agent_location(
-                            Some(AgentLocation {
-                                buffer: buffer.downgrade(),
-                                position: max_edit_end,
-                            }),
-                            cx,
-                        );
-                    });
+                    if self.update_agent_location {
+                        self.project.update(cx, |project, cx| {
+                            project.set_agent_location(
+                                Some(AgentLocation {
+                                    buffer: buffer.downgrade(),
+                                    position: max_edit_end,
+                                }),
+                                cx,
+                            );
+                        });
+                    }
                     (min_edit_start, max_edit_end)
                 });
                 output_events
@@ -1390,6 +1401,7 @@ mod tests {
             Templates::new(),
             EditFormat::XmlTags,
             thinking_allowed,
+            true,
         )
     }
 

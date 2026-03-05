@@ -119,8 +119,9 @@ jobs:
       with:
         token: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
     - name: deploy_collab::deploy::sign_into_kubernetes
-      run: |
-        doctl kubernetes cluster kubeconfig save --expiry-seconds 600 ${{ secrets.CLUSTER_NAME }}
+      run: doctl kubernetes cluster kubeconfig save --expiry-seconds 600 "$CLUSTER_NAME"
+      env:
+        CLUSTER_NAME: ${{ secrets.CLUSTER_NAME }}
     - name: deploy_collab::deploy::start_rollout
       run: |
         set -eu
@@ -140,7 +141,7 @@ jobs:
         echo "Deploying collab:$GITHUB_SHA to $ZED_KUBE_NAMESPACE"
 
         source script/lib/deploy-helpers.sh
-        export_vars_for_environment $ZED_KUBE_NAMESPACE
+        export_vars_for_environment "$ZED_KUBE_NAMESPACE"
 
         ZED_DO_CERTIFICATE_ID="$(doctl compute certificate list --format ID --no-header)"
         export ZED_DO_CERTIFICATE_ID
@@ -150,14 +151,14 @@ jobs:
         export ZED_LOAD_BALANCER_SIZE_UNIT=$ZED_COLLAB_LOAD_BALANCER_SIZE_UNIT
         export DATABASE_MAX_CONNECTIONS=850
         envsubst < crates/collab/k8s/collab.template.yml | kubectl apply -f -
-        kubectl -n "$ZED_KUBE_NAMESPACE" rollout status deployment/$ZED_SERVICE_NAME --watch
+        kubectl -n "$ZED_KUBE_NAMESPACE" rollout status "deployment/$ZED_SERVICE_NAME" --watch
         echo "deployed ${ZED_SERVICE_NAME} to ${ZED_KUBE_NAMESPACE}"
 
         export ZED_SERVICE_NAME=api
         export ZED_LOAD_BALANCER_SIZE_UNIT=$ZED_API_LOAD_BALANCER_SIZE_UNIT
         export DATABASE_MAX_CONNECTIONS=60
         envsubst < crates/collab/k8s/collab.template.yml | kubectl apply -f -
-        kubectl -n "$ZED_KUBE_NAMESPACE" rollout status deployment/$ZED_SERVICE_NAME --watch
+        kubectl -n "$ZED_KUBE_NAMESPACE" rollout status "deployment/$ZED_SERVICE_NAME" --watch
         echo "deployed ${ZED_SERVICE_NAME} to ${ZED_KUBE_NAMESPACE}"
 defaults:
   run:

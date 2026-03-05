@@ -18,7 +18,6 @@ test-support = []
 anyhow.workspace = true
 async-recursion.workspace = true
 collections.workspace = true
-crashes.workspace = true
 editor.workspace = true
 fs.workspace = true
 gpui.workspace = true

@@ -1943,6 +1943,11 @@ impl Project {
     }
 
     #[cfg(feature = "test-support")]
+    pub fn client_subscriptions(&self) -> &Vec<client::Subscription> {
+        &self.client_subscriptions
+    }
+
+    #[cfg(feature = "test-support")]
     pub async fn example(
         root_paths: impl IntoIterator<Item = &Path>,
         cx: &mut AsyncApp,
@@ -2741,6 +2746,7 @@ impl Project {
         } = &mut self.client_state
         {
             *sharing_has_stopped = true;
+            self.client_subscriptions.clear();
             self.collaborators.clear();
             self.worktree_store.update(cx, |store, cx| {
                 store.disconnected_from_host(cx);

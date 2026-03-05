@@ -88,7 +88,7 @@ With that done, choose one of the three authentication methods:
 While it's possible to configure through the Agent Panel settings UI by entering your AWS access key and secret directly, we recommend using named profiles instead for better security practices.
 To do this:
 
-1. Create an IAM User that you can assume in the [IAM Console](https://us-east-1.console.aws.amazon.com/iam/home?region=us-east-1#/users).
+1. Create an IAM User in the [IAM Console](https://us-east-1.console.aws.amazon.com/iam/home?region=us-east-1#/users).
 2. Create security credentials for that User, save them and keep them secure.
 3. Open the Agent Configuration with (`agent: open settings`) and go to the Amazon Bedrock section
 4. Copy the credentials from Step 2 into the respective **Access Key ID**, **Secret Access Key**, and **Region** fields.
@@ -152,8 +152,6 @@ For the most up-to-date supported regions and models, refer to the [Supported Mo
 
 #### Extended Context Window {#bedrock-extended-context}
 
-> **Preview:** This feature is available in Zed Preview. It will be included in the next Stable release.
-
 Anthropic models on Bedrock support a 1M token extended context window through the `anthropic_beta` API parameter. To enable this feature, set `"allow_extended_context": true` in your Bedrock configuration:
 
 ```json [settings]
@@ -172,8 +170,6 @@ Anthropic models on Bedrock support a 1M token extended context window through t
 Zed enables extended context for supported models (Claude Sonnet 4.5 and Claude Opus 4.6). Extended context usage may increase API costs—refer to AWS Bedrock pricing for details.
 
 #### Image Support {#bedrock-image-support}
-
-> **Preview:** This feature is available in Zed Preview. It will be included in the next Stable release.
 
 Bedrock models that support vision (Claude 3 and later, Amazon Nova Pro and Lite, Meta Llama 3.2 Vision models, Mistral Pixtral) can receive images in conversations and tool results.
 
@@ -629,8 +625,6 @@ OpenRouter provides access to multiple AI models through a single API. It suppor
 The OpenRouter API key will be saved in your keychain.
 
 Zed will also use the `OPENROUTER_API_KEY` environment variable if it's defined.
-
-> **Changed in Preview (v0.225).** See [release notes](/releases#0.225).
 
 When using OpenRouter as your assistant provider, you must explicitly select a model in your settings. OpenRouter no longer provides a default model selection.
 

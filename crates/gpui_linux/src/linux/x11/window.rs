@@ -9,7 +9,7 @@ use gpui::{
     Tiling, WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControlArea,
     WindowDecorations, WindowKind, WindowParams, px,
 };
-use gpui_wgpu::{WgpuContext, WgpuRenderer, WgpuSurfaceConfig};
+use gpui_wgpu::{CompositorGpuHint, WgpuContext, WgpuRenderer, WgpuSurfaceConfig};
 
 use collections::FxHashSet;
 use raw_window_handle as rwh;
@@ -319,12 +319,28 @@ impl rwh::HasDisplayHandle for RawWindow {
 
 impl rwh::HasWindowHandle for X11Window {
     fn window_handle(&self) -> Result<rwh::WindowHandle<'_>, rwh::HandleError> {
-        unimplemented!()
+        let Some(non_zero) = NonZeroU32::new(self.0.x_window) else {
+            return Err(rwh::HandleError::Unavailable);
+        };
+        let handle = rwh::XcbWindowHandle::new(non_zero);
+        Ok(unsafe { rwh::WindowHandle::borrow_raw(handle.into()) })
     }
 }
+
 impl rwh::HasDisplayHandle for X11Window {
     fn display_handle(&self) -> Result<rwh::DisplayHandle<'_>, rwh::HandleError> {
-        unimplemented!()
+        let connection =
+            as_raw_xcb_connection::AsRawXcbConnection::as_raw_xcb_connection(&*self.0.xcb)
+                as *mut _;
+        let Some(non_zero) = NonNull::new(connection) else {
+            return Err(rwh::HandleError::Unavailable);
+        };
+        let screen_id = {
+            let state = self.0.state.borrow();
+            u32::from(state.display.id()) as i32
+        };
+        let handle = rwh::XcbDisplayHandle::new(Some(non_zero), screen_id);
+        Ok(unsafe { rwh::DisplayHandle::borrow_raw(handle.into()) })
     }
 }
 
@@ -392,6 +408,7 @@ impl X11WindowState {
         client: X11ClientStatePtr,
         executor: ForegroundExecutor,
         gpu_context: &mut Option<WgpuContext>,
+        compositor_gpu: Option<CompositorGpuHint>,
         params: WindowParams,
         xcb: &Rc<XCBConnection>,
         client_side_decorations_supported: bool,
@@ -679,7 +696,7 @@ impl X11WindowState {
                     // too
                     transparent: false,
                 };
-                WgpuRenderer::new(gpu_context, &raw_window, config)?
+                WgpuRenderer::new(gpu_context, &raw_window, config, compositor_gpu)?
             };
 
             // Set max window size hints based on the GPU's maximum texture dimension.
@@ -803,6 +820,7 @@ impl X11Window {
         client: X11ClientStatePtr,
         executor: ForegroundExecutor,
         gpu_context: &mut Option<WgpuContext>,
+        compositor_gpu: Option<CompositorGpuHint>,
         params: WindowParams,
         xcb: &Rc<XCBConnection>,
         client_side_decorations_supported: bool,
@@ -819,6 +837,7 @@ impl X11Window {
                 client,
                 executor,
                 gpu_context,
+                compositor_gpu,
                 params,
                 xcb,
                 client_side_decorations_supported,
