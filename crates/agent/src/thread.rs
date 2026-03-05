@@ -1846,12 +1846,28 @@ impl Thread {
                 Ok(events) => (events.fuse(), None),
                 Err(err) => (stream::empty().boxed().fuse(), Some(err)),
             };
-            let mut tool_results = FuturesUnordered::new();
+            let mut tool_results: FuturesUnordered<Task<LanguageModelToolResult>> =
+                FuturesUnordered::new();
+            let mut early_tool_results: Vec<LanguageModelToolResult> = Vec::new();
             let mut cancelled = false;
             loop {
-                // Race between getting the first event and cancellation
+                // Race between getting the first event, tool completion, and cancellation.
+                // Including tool_results here ensures that tool errors cause us to
+                // break out of the stream loop immediately rather than waiting for
+                // the LLM stream to finish. Completed results are stashed in
+                // `early_tool_results` and processed in the post-loop along with
+                // any remaining results, preserving the flow that returns them
+                // to the LLM.
                 let first_event = futures::select! {
                     event = events.next().fuse() => event,
+                    tool_result = futures::StreamExt::select_next_some(&mut tool_results) => {
+                        let is_error = tool_result.is_error;
+                        early_tool_results.push(tool_result);
+                        if is_error {
+                            break;
+                        }
+                        continue;
+                    }
                     _ = cancellation_rx.changed().fuse() => {
                         if *cancellation_rx.borrow() {
                             cancelled = true;
@@ -1931,26 +1947,16 @@ impl Thread {
                 }
             })?;
 
-            let end_turn = tool_results.is_empty();
-            while let Some(tool_result) = tool_results.next().await {
-                log::debug!("Tool finished {:?}", tool_result);
+            let end_turn = tool_results.is_empty() && early_tool_results.is_empty();
 
-                event_stream.update_tool_call_fields(
-                    &tool_result.tool_use_id,
-                    acp::ToolCallUpdateFields::new()
-                        .status(if tool_result.is_error {
-                            acp::ToolCallStatus::Failed
-                        } else {
-                            acp::ToolCallStatus::Completed
-                        })
-                        .raw_output(tool_result.output.clone()),
-                    None,
-                );
-                this.update(cx, |this, _cx| {
-                    this.pending_message()
-                        .tool_results
-                        .insert(tool_result.tool_use_id.clone(), tool_result);
-                })?;
+            // Process tool results that completed while the stream was still
+            // running (stashed earlier to avoid being consumed from the
+            // FuturesUnordered before the end_turn check).
+            for tool_result in early_tool_results {
+                Self::process_tool_result(this, event_stream, cx, tool_result)?;
+            }
+            while let Some(tool_result) = tool_results.next().await {
+                Self::process_tool_result(this, event_stream, cx, tool_result)?;
             }
 
             this.update(cx, |this, cx| {
@@ -2002,6 +2008,33 @@ impl Thread {
                 attempt = 0;
             }
         }
+    }
+
+    fn process_tool_result(
+        this: &WeakEntity<Thread>,
+        event_stream: &ThreadEventStream,
+        cx: &mut AsyncApp,
+        tool_result: LanguageModelToolResult,
+    ) -> Result<(), anyhow::Error> {
+        log::debug!("Tool finished {:?}", tool_result);
+
+        event_stream.update_tool_call_fields(
+            &tool_result.tool_use_id,
+            acp::ToolCallUpdateFields::new()
+                .status(if tool_result.is_error {
+                    acp::ToolCallStatus::Failed
+                } else {
+                    acp::ToolCallStatus::Completed
+                })
+                .raw_output(tool_result.output.clone()),
+            None,
+        );
+        this.update(cx, |this, _cx| {
+            this.pending_message()
+                .tool_results
+                .insert(tool_result.tool_use_id.clone(), tool_result);
+        })?;
+        Ok(())
     }
 
     fn handle_completion_error(
