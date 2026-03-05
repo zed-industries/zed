@@ -6210,6 +6210,45 @@ mod tests {
     }
 
     #[test]
+    fn test_le16_binary_misdetected_as_utf16le() {
+        // Build a fake binary file with no known magic header,
+        // but filled with little-endian 16-bit values where the
+        // high byte is often 0x00.
+        let mut bytes = b"FAKE".to_vec();
+        while bytes.len() < FILE_ANALYSIS_BYTES {
+            let sample = (bytes.len() & 0xFF) as u8;
+            bytes.push(sample);
+            bytes.push(0x00); // null at odd position
+        }
+        bytes.truncate(FILE_ANALYSIS_BYTES);
+
+        let result = analyze_byte_content(&bytes);
+        assert_eq!(
+            result,
+            ByteContent::Utf16Le,
+            "LE 16-bit binary without a known header is misdetected as UTF-16LE"
+        );
+    }
+
+    #[test]
+    fn test_be16_binary_misdetected_as_utf16be() {
+        let mut bytes = b"FAKE".to_vec();
+        while bytes.len() < FILE_ANALYSIS_BYTES {
+            bytes.push(0x00); //  null at even position
+            let sample = (bytes.len() & 0xFF) as u8;
+            bytes.push(sample); // low byte: non-zero
+        }
+        bytes.truncate(FILE_ANALYSIS_BYTES);
+
+        let result = analyze_byte_content(&bytes);
+        assert_eq!(
+            result,
+            ByteContent::Utf16Be,
+            "BE 16-bit binary without a known header is misdetected as UTF-16BE"
+        );
+    }
+
+    #[test]
     fn test_known_binary_headers() {
         let cases: &[(&[u8], &str)] = &[
             (b"RIFF\x00\x00\x00\x00WAVE", "WAV"),
