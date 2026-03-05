@@ -386,6 +386,22 @@ struct LhsEditor {
 }
 
 impl SplittableEditor {
+    pub fn has_any_buffer_folded(&self, cx: &App) -> bool {
+        self.rhs_editor().read(cx).has_any_buffer_folded(cx)
+    }
+
+    pub fn unfold_all(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.rhs_editor.update(cx, |editor, cx| {
+            editor.unfold_all(&Default::default(), window, cx)
+        })
+    }
+
+    pub fn fold_all(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.rhs_editor.update(cx, |editor, cx| {
+            editor.fold_all(&Default::default(), window, cx)
+        })
+    }
+
     pub fn rhs_editor(&self) -> &Entity<Editor> {
         &self.rhs_editor
     }

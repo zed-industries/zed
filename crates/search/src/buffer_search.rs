@@ -1076,6 +1076,18 @@ impl BufferSearchBar {
                         editor.fold_all(&FoldAll, window, cx);
                     }
                 })
+            } else if let Some(item) = item.act_as_type(TypeId::of::<SplittableEditor>(), cx) {
+                let editor = item
+                    .downcast::<SplittableEditor>()
+                    .expect("Is a splittable editor");
+                editor.update(cx, |editor, cx| {
+                    let is_collapsed = editor.has_any_buffer_folded(cx);
+                    if is_collapsed {
+                        editor.unfold_all(window, cx);
+                    } else {
+                        editor.fold_all(window, cx);
+                    }
+                })
             }
         }
     }
