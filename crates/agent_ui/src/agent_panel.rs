@@ -22,7 +22,7 @@ use project::{
 use serde::{Deserialize, Serialize};
 use settings::{LanguageModelProviderSetting, LanguageModelSelection};
 
-use feature_flags::{AgentGitWorktreesFeatureFlag, AgentV2FeatureFlag, FeatureFlagAppExt as _};
+use feature_flags::{AgentV2FeatureFlag, FeatureFlagAppExt as _};
 use zed_actions::agent::{OpenClaudeAgentOnboardingModal, ReauthenticateAgent, ReviewBranchDiff};
 
 use crate::ManageProfiles;
@@ -696,7 +696,7 @@ impl AgentPanel {
                         }
                         if let Some(start_thread_in) = serialized_panel.start_thread_in {
                             let is_worktree_flag_enabled =
-                                cx.has_flag::<AgentGitWorktreesFeatureFlag>();
+                                cx.has_flag::<AgentV2FeatureFlag>();
                             let is_valid = match &start_thread_in {
                                 StartThreadIn::LocalProject => true,
                                 StartThreadIn::NewWorktree => {
@@ -1861,9 +1861,7 @@ impl AgentPanel {
     }
 
     fn set_start_thread_in(&mut self, action: &StartThreadIn, cx: &mut Context<Self>) {
-        if matches!(action, StartThreadIn::NewWorktree)
-            && !cx.has_flag::<AgentGitWorktreesFeatureFlag>()
-        {
+        if matches!(action, StartThreadIn::NewWorktree) && !cx.has_flag::<AgentV2FeatureFlag>() {
             return;
         }
 
@@ -3467,9 +3465,7 @@ impl AgentPanel {
                     .pl(DynamicSpacing::Base04.rems(cx))
                     .pr(DynamicSpacing::Base06.rems(cx))
                     .when(
-                        has_v2_flag
-                            && cx.has_flag::<AgentGitWorktreesFeatureFlag>()
-                            && !self.active_thread_has_messages(cx),
+                        has_v2_flag && !self.active_thread_has_messages(cx),
                         |this| this.child(self.render_start_thread_in_selector(cx)),
                     )
                     .child(new_thread_menu)
@@ -4606,10 +4602,7 @@ mod tests {
     async fn test_thread_target_serialization_round_trip(cx: &mut TestAppContext) {
         init_test(cx);
         cx.update(|cx| {
-            cx.update_flags(
-                true,
-                vec!["agent-v2".to_string(), "agent-git-worktrees".to_string()],
-            );
+            cx.update_flags(true, vec!["agent-v2".to_string()]);
             agent::ThreadStore::init_global(cx);
             language_model::LanguageModelRegistry::test(cx);
         });
@@ -4697,15 +4690,12 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_thread_target_deserialization_falls_back_when_worktree_flag_disabled(
+    async fn test_thread_target_deserialization_falls_back_when_v2_flag_disabled(
         cx: &mut TestAppContext,
     ) {
         init_test(cx);
         cx.update(|cx| {
-            cx.update_flags(
-                true,
-                vec!["agent-v2".to_string(), "agent-git-worktrees".to_string()],
-            );
+            cx.update_flags(true, vec!["agent-v2".to_string()]);
             agent::ThreadStore::init_global(cx);
             language_model::LanguageModelRegistry::test(cx);
         });
@@ -4768,9 +4758,9 @@ mod tests {
         // Let serialization complete.
         cx.run_until_parked();
 
-        // Disable worktree flag and reload panel from serialized data.
+        // Disable v2 flag and reload panel from serialized data.
         cx.update(|_, cx| {
-            cx.update_flags(true, vec!["agent-v2".to_string()]);
+            cx.update_flags(true, vec![]);
         });
 
         let prompt_builder = Arc::new(prompt_store::PromptBuilder::new(None).unwrap());
@@ -4785,7 +4775,7 @@ mod tests {
             assert_eq!(
                 *panel.start_thread_in(),
                 StartThreadIn::LocalProject,
-                "thread target should fall back to LocalProject when worktree flag is disabled"
+                "thread target should fall back to LocalProject when v2 flag is disabled"
             );
         });
     }

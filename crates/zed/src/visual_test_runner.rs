@@ -3101,7 +3101,7 @@ fn run_start_thread_in_selector_visual_tests(
     cx.update(|cx| {
         cx.update_flags(
             true,
-            vec!["agent-v2".to_string(), "agent-git-worktrees".to_string()],
+            vec!["agent-v2".to_string()],
         );
     });
 
