@@ -75,6 +75,10 @@ pub fn set_custom_data_dir(dir: &str) -> &'static PathBuf {
         let canonicalized = path
             .canonicalize()
             .expect("failed to canonicalize custom data directory's path to an absolute path");
+        // On Windows, `canonicalize` produces extended-length paths prefixed
+        // with `\\?\`. Strip that prefix so downstream consumers (e.g.
+        // Node.js language servers) that receive derived paths as arguments
+        // don't choke on the verbatim syntax.
         SanitizedPath::new(&canonicalized).as_path().to_path_buf()
     })
 }
