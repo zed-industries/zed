@@ -5966,18 +5966,11 @@ impl ThreadView {
                 .border_t_1()
                 .border_color(self.tool_card_border_color(cx))
                 .child(
-                    h_flex()
-                        .px_2()
-                        .py_1()
-                        .justify_between()
-                        .child(
-                            Label::new(format!(
-                                "Pending Permissions ({})",
-                                total_count
-                            ))
+                    h_flex().px_2().py_1().justify_between().child(
+                        Label::new(format!("Pending Permissions ({})", total_count))
                             .size(LabelSize::Small)
                             .color(Color::Muted),
-                        ),
+                    ),
                 )
                 .children(pending.into_iter().enumerate().map(
                     |(index, (session_id, tool_call_id, tool_call, options))| {
@@ -5987,17 +5980,11 @@ impl ThreadView {
                             .border_t_1()
                             .border_color(self.tool_card_border_color(cx))
                             .child(
-                                h_flex()
-                                    .px_2()
-                                    .pt_1()
-                                    .overflow_hidden()
-                                    .child(
-                                        Label::new(
-                                            tool_call.label.read(cx).source().to_string(),
-                                        )
+                                h_flex().px_2().pt_1().overflow_hidden().child(
+                                    Label::new(tool_call.label.read(cx).source().to_string())
                                         .size(LabelSize::Small)
                                         .color(Color::Muted),
-                                    ),
+                                ),
                             )
                             .child(self.render_permission_buttons(
                                 session_id,

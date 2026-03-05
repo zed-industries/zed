@@ -254,7 +254,12 @@ impl Conversation {
         &'a self,
         session_id: &acp::SessionId,
         cx: &'a App,
-    ) -> Vec<(acp::SessionId, acp::ToolCallId, &'a ToolCall, &'a PermissionOptions)> {
+    ) -> Vec<(
+        acp::SessionId,
+        acp::ToolCallId,
+        &'a ToolCall,
+        &'a PermissionOptions,
+    )> {
         let thread = self.threads.get(session_id);
         let is_subagent = thread
             .map(|t| t.read(cx).parent_session_id().is_some())
