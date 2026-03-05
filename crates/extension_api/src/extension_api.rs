@@ -102,8 +102,7 @@ pub trait Extension: Send + Sync {
 
     /// Returns the JSON schema for the initialization options.
     ///
-    /// The schema must conform to the JSON Schema speification and will be used to
-    /// provide autocomplete in settings files.
+    /// The schema must conform to the JSON Schema speification.
     fn language_server_initialization_options_schema(
         &mut self,
         _language_server_id: &LanguageServerId,
@@ -114,8 +113,7 @@ pub trait Extension: Send + Sync {
 
     /// Returns the JSON schema for the workspace configuration.
     ///
-    /// The schema must conform to the JSON Schema specification and will be used to
-    /// provide autocomplete in settings files.
+    /// The schema must conform to the JSON Schema specification.
     fn language_server_workspace_configuration_schema(
         &mut self,
         _language_server_id: &LanguageServerId,
