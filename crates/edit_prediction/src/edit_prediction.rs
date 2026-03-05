@@ -795,6 +795,15 @@ impl EditPredictionStore {
         &self.available_experiments
     }
 
+    pub fn active_experiment(&self) -> Option<&str> {
+        self.preferred_experiment.as_deref().or_else(|| {
+            self.shown_predictions
+                .iter()
+                .find_map(|p| p.model_version.as_ref())
+                .and_then(|model_version| model_version.strip_prefix("zeta2:"))
+        })
+    }
+
     pub fn refresh_available_experiments(&mut self, cx: &mut Context<Self>) {
         let client = self.client.clone();
         let llm_token = self.llm_token.clone();
