@@ -2316,7 +2316,7 @@ impl ReferenceMultibuffer {
             let mut buffer = None;
             let mut buffer_snapshot = None;
             let mut path = None;
-            let new_ranges = self
+            let mut new_ranges = self
                 .excerpts
                 .iter()
                 .filter(|excerpt| excerpt.path_key_index == path_key_index)
@@ -2338,6 +2338,8 @@ impl ReferenceMultibuffer {
                     ExcerptRange::new(range)
                 })
                 .collect::<Vec<_>>();
+
+            new_ranges.sort_by(|l, r| l.context.start.cmp(&r.context.start));
 
             self.set_excerpts(
                 path.unwrap(),

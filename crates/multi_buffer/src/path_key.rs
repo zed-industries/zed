@@ -264,7 +264,15 @@ impl MultiBuffer {
                 cursor.next();
             }
 
-            self.set_excerpt_ranges_for_path(path.clone(), buffer, buffer_snapshot, ranges, cx);
+            ranges.sort_by(|l, r| l.context.start.cmp(&r.context.start));
+
+            self.set_excerpt_ranges_for_path(
+                path.clone(),
+                buffer,
+                buffer_snapshot,
+                dbg!(ranges),
+                cx,
+            );
         }
     }
 
