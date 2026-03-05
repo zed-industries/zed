@@ -123,15 +123,20 @@ impl SyntaxTheme {
             .split('.')
             .map(CaptureName::Borrowed)
             .collect::<SmallVec<[CaptureName<'a>; 2]>>();
+        // SAFETY: We're extending the slice lifetime to 'static solely for the
+        // range key comparison. The reference doesn't escape this call and the
+        // data is valid for 'a which outlives it.
+        let capture_name_static: SmallVec<[CaptureName<'static>; 2]> =
+            unsafe { std::mem::transmute(capture_name) };
         self.capture_name_map
-            .range::<[CaptureName<'a>], _>((
+            .range::<[CaptureName<'static>], _>((
                 std::ops::Bound::Unbounded,
-                std::ops::Bound::Included(capture_name.as_slice()),
+                std::ops::Bound::Included(capture_name_static.as_slice()),
             ))
             .collect::<Vec<_>>()
             .into_iter()
             .rfind(|(prefix, _)| {
-                for (lhs, rhs) in capture_name.iter().zip(prefix.into_iter()) {
+                for (lhs, rhs) in capture_name_static.iter().zip(prefix.into_iter()) {
                     if lhs != rhs {
                         return false;
                     }
