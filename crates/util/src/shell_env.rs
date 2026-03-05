@@ -141,6 +141,14 @@ async fn capture_windows(
         std::env::current_exe().context("Failed to determine current zed executable path.")?;
 
     let shell_kind = ShellKind::new(shell_path, true);
+    let directory_string = directory.display().to_string();
+    let zed_path_string = zed_path.display().to_string();
+    let quote_for_shell = |value: &str| {
+        shell_kind
+            .try_quote(value)
+            .map(|quoted| quoted.into_owned())
+            .unwrap_or_else(|| value.to_owned())
+    };
     let mut cmd = crate::command::new_command(shell_path);
     cmd.args(args);
     let cmd = match shell_kind {
