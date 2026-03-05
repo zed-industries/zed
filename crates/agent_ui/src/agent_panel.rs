@@ -4759,8 +4759,10 @@ mod tests {
         cx.run_until_parked();
 
         // Disable v2 flag and reload panel from serialized data.
+        // Note: is_staff must be false because AgentV2FeatureFlag has
+        // enabled_for_staff() -> true, so staff would still have it enabled.
         cx.update(|_, cx| {
-            cx.update_flags(true, vec![]);
+            cx.update_flags(false, vec![]);
         });
 
         let prompt_builder = Arc::new(prompt_store::PromptBuilder::new(None).unwrap());
