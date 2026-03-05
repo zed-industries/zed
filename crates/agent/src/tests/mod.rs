@@ -3683,7 +3683,7 @@ async fn test_streaming_tool_completes_when_llm_stream_ends_without_final_input(
                 content: vec![language_model::MessageContent::ToolResult(
                     LanguageModelToolResult {
                         tool_use_id: tool_use.id.clone(),
-                        tool_name: tool_use.name.clone(),
+                        tool_name: tool_use.name,
                         is_error: true,
                         content: "Failed to receive tool input: tool input was not fully received"
                             .into(),
