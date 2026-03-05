@@ -1989,31 +1989,49 @@ impl EditPredictionStore {
         let project_state = self.get_or_init_project(&project, cx);
         let pending_prediction_id = project_state.next_pending_prediction_id;
         project_state.next_pending_prediction_id += 1;
-        let last_request = *select_throttle(project_state, request_trigger);
+        let throttle_at_enqueue = *select_throttle(project_state, request_trigger);
 
         let task = cx.spawn(async move |this, cx| {
-            if let Some(timeout) = last_request.and_then(|(last_entity, last_timestamp)| {
-                if throttle_entity != last_entity {
-                    return None;
-                }
-                (last_timestamp + throttle_timeout).checked_duration_since(Instant::now())
-            }) {
+            let throttle_wait = this
+                .update(cx, |this, cx| {
+                    let project_state = this.get_or_init_project(&project, cx);
+                    let throttle = *select_throttle(project_state, request_trigger);
+
+                    throttle.and_then(|(last_entity, last_timestamp)| {
+                        if throttle_entity != last_entity {
+                            return None;
+                        }
+                        (last_timestamp + throttle_timeout).checked_duration_since(Instant::now())
+                    })
+                })
+                .ok()
+                .flatten();
+
+            if let Some(timeout) = throttle_wait {
                 cx.background_executor().timer(timeout).await;
             }
 
             // If this task was cancelled before the throttle timeout expired,
-            // do not perform a request.
+            // do not perform a request. Also skip if another task already
+            // proceeded since we were enqueued (duplicate).
             let mut is_cancelled = true;
             this.update(cx, |this, cx| {
                 let project_state = this.get_or_init_project(&project, cx);
                 let was_cancelled = project_state
                     .cancelled_predictions
                     .remove(&pending_prediction_id);
-                if !was_cancelled {
-                    let new_refresh = (throttle_entity, Instant::now());
-                    *select_throttle(project_state, request_trigger) = Some(new_refresh);
-                    is_cancelled = false;
+                if was_cancelled {
+                    return;
                 }
+
+                // Another request has been already sent since this was enqueued
+                if *select_throttle(project_state, request_trigger) != throttle_at_enqueue {
+                    return;
+                }
+
+                let new_refresh = (throttle_entity, Instant::now());
+                *select_throttle(project_state, request_trigger) = Some(new_refresh);
+                is_cancelled = false;
             })
             .ok();
             if is_cancelled {
