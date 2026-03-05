@@ -89,6 +89,7 @@ pub enum ZetaFormat {
     V0211Prefill,
     V0211SeedCoder,
     v0226Hashline,
+    V0304VariableEdit,
 }
 
 impl std::fmt::Display for ZetaFormat {
@@ -215,6 +216,7 @@ pub fn special_tokens_for_format(format: ZetaFormat) -> &'static [&'static str] 
         ZetaFormat::V0211Prefill => v0211_prefill::special_tokens(),
         ZetaFormat::V0211SeedCoder => seed_coder::special_tokens(),
         ZetaFormat::v0226Hashline => hashline::special_tokens(),
+        ZetaFormat::V0304VariableEdit => v0304_variable_edit::special_tokens(),
     }
 }
 
@@ -239,6 +241,13 @@ pub fn excerpt_ranges_for_format(
             ranges.editable_350.clone(),
             ranges.editable_350_context_150.clone(),
         ),
+        ZetaFormat::V0304VariableEdit => {
+            let context = ranges
+                .context_8192
+                .clone()
+                .unwrap_or_else(|| ranges.editable_350_context_150.clone());
+            (context.clone(), context)
+        }
     }
 }
 
@@ -297,6 +306,9 @@ pub fn write_cursor_excerpt_section_for_format(
             editable_range,
             cursor_offset,
         ),
+        ZetaFormat::V0304VariableEdit => {
+            v0304_variable_edit::write_cursor_excerpt_section(prompt, path, context, cursor_offset)
+        }
     }
 }
 
@@ -370,7 +382,8 @@ pub fn get_prefill_for_format(
         | ZetaFormat::V0120GitMergeMarkers
         | ZetaFormat::V0131GitMergeMarkersPrefix
         | ZetaFormat::V0211SeedCoder
-        | ZetaFormat::v0226Hashline => String::new(),
+        | ZetaFormat::v0226Hashline
+        | ZetaFormat::V0304VariableEdit => String::new(),
     }
 }
 
@@ -383,30 +396,8 @@ pub fn output_end_marker_for_format(format: ZetaFormat) -> Option<&'static str> 
         ZetaFormat::V0112MiddleAtEnd
         | ZetaFormat::V0113Ordered
         | ZetaFormat::V0114180EditableRegion
-        | ZetaFormat::v0226Hashline => None,
-    }
-}
-
-pub fn current_region_markers_for_format(format: ZetaFormat) -> (&'static str, &'static str) {
-    match format {
-        ZetaFormat::V0112MiddleAtEnd => ("<|fim_middle|>current\n", "<|fim_middle|>updated"),
-        ZetaFormat::V0113Ordered
-        | ZetaFormat::V0114180EditableRegion
-        | ZetaFormat::v0226Hashline => ("<|fim_middle|>current\n", "<|fim_suffix|>"),
-        ZetaFormat::V0120GitMergeMarkers
-        | ZetaFormat::V0131GitMergeMarkersPrefix
-        | ZetaFormat::V0211Prefill => (
-            v0120_git_merge_markers::START_MARKER,
-            v0120_git_merge_markers::SEPARATOR,
-        ),
-        ZetaFormat::V0211SeedCoder => (seed_coder::START_MARKER, seed_coder::SEPARATOR),
-    }
-}
-
-pub fn clean_extracted_region_for_format(format: ZetaFormat, region: &str) -> String {
-    match format {
-        ZetaFormat::v0226Hashline => hashline::strip_hashline_prefixes(region),
-        _ => region.to_string(),
+        | ZetaFormat::v0226Hashline
+        | ZetaFormat::V0304VariableEdit => None,
     }
 }
 
@@ -420,6 +411,12 @@ pub fn encode_patch_as_output_for_format(
         ZetaFormat::v0226Hashline => {
             hashline::patch_to_edit_commands(old_editable_region, patch, cursor_offset).map(Some)
         }
+        ZetaFormat::V0304VariableEdit => v0304_variable_edit::patch_to_variable_edit_output(
+            old_editable_region,
+            patch,
+            cursor_offset,
+        )
+        .map(Some),
         _ => Ok(None),
     }
 }
@@ -439,6 +436,9 @@ pub fn output_with_context_for_format(
             } else {
                 Ok(None)
             }
+        }
+        ZetaFormat::V0304VariableEdit => {
+            v0304_variable_edit::apply_variable_edit(old_editable_region, output).map(Some)
         }
         _ => Ok(None),
     }
@@ -2484,6 +2484,445 @@ pub mod seed_coder {
         }
         section.push_str(SEPARATOR);
         section
+    }
+}
+
+pub mod v0304_variable_edit {
+    //! A prompt format with no fixed editable region. The entire context is shown
+    //! to the model, and it chooses which text to replace by outputting surrounding
+    //! context lines with `<|fim_middle|>` and `<|fim_suffix|>` delimiting the new
+    //! text.
+    //!
+    //! Example prompt:
+    //!
+    //! <|file_sep|>path/to/file.py
+    //! zero
+    //! one
+    //! two
+    //! three<|user_cursor|>
+    //! four
+    //! five
+    //!
+    //! Expected output (model generates):
+    //!
+    //! two
+    //! <|fim_middle|>
+    //! THREE
+    //! <|fim_suffix|>
+    //! four
+    //!
+    //! The output means: find "two\n...\nfour" in the context, and replace
+    //! everything between "two\n" and "four" with "THREE\n".
+
+    use super::*;
+
+    pub fn special_tokens() -> &'static [&'static str] {
+        &[
+            "<|fim_suffix|>",
+            "<|fim_middle|>",
+            "<|file_sep|>",
+            CURSOR_MARKER,
+        ]
+    }
+
+    pub fn write_cursor_excerpt_section(
+        prompt: &mut String,
+        path: &Path,
+        context: &str,
+        cursor_offset: usize,
+    ) {
+        let path_str = path.to_string_lossy();
+        write!(prompt, "<|file_sep|>{}\n", path_str).ok();
+
+        prompt.push_str(&context[..cursor_offset]);
+        prompt.push_str(CURSOR_MARKER);
+        prompt.push_str(&context[cursor_offset..]);
+        if !prompt.ends_with('\n') {
+            prompt.push('\n');
+        }
+    }
+
+    /// Apply a variable-edit model output to the original context text.
+    ///
+    /// The model output has the form:
+    ///
+    /// - prefix context lines
+    /// - `<|fim_middle|>`
+    /// - new text
+    /// - `<|fim_suffix|>`
+    /// - suffix context lines
+    ///
+    /// We locate the prefix/suffix context lines in the original text and replace
+    /// everything between them with the new text.
+    pub fn apply_variable_edit(context: &str, model_output: &str) -> Result<String> {
+        let (prefix_context, rest) = model_output
+            .split_once("<|fim_middle|>\n")
+            .or_else(|| model_output.split_once("<|fim_middle|>"))
+            .ok_or_else(|| anyhow::anyhow!("missing <|fim_middle|> in model output"))?;
+
+        let (new_text, suffix_context) = rest
+            .split_once("\n<|fim_suffix|>\n")
+            .or_else(|| rest.split_once("<|fim_suffix|>\n"))
+            .or_else(|| rest.split_once("<|fim_suffix|>"))
+            .unwrap_or((rest, ""));
+
+        let prefix_lines: Vec<&str> = if prefix_context.is_empty() {
+            Vec::new()
+        } else {
+            prefix_context.lines().collect()
+        };
+        let suffix_lines: Vec<&str> = if suffix_context.is_empty() {
+            Vec::new()
+        } else {
+            suffix_context.lines().collect()
+        };
+
+        let context_lines: Vec<&str> = context.lines().collect();
+
+        let replace_start_line = if prefix_lines.is_empty() {
+            0
+        } else {
+            find_context_match(&context_lines, &prefix_lines, 0)
+                .map(|i| i + prefix_lines.len())
+                .ok_or_else(|| {
+                    anyhow::anyhow!("could not locate prefix context lines in original text")
+                })?
+        };
+
+        let replace_end_line = if suffix_lines.is_empty() {
+            context_lines.len()
+        } else {
+            find_context_match(&context_lines, &suffix_lines, replace_start_line).ok_or_else(
+                || anyhow::anyhow!("could not locate suffix context lines in original text"),
+            )?
+        };
+
+        let mut result = String::new();
+        for line in &context_lines[..replace_start_line] {
+            result.push_str(line);
+            result.push('\n');
+        }
+        if !new_text.is_empty() {
+            result.push_str(new_text);
+            if !new_text.ends_with('\n') {
+                result.push('\n');
+            }
+        }
+        for line in &context_lines[replace_end_line..] {
+            result.push_str(line);
+            result.push('\n');
+        }
+
+        if !context.ends_with('\n') && result.ends_with('\n') {
+            result.pop();
+        }
+
+        Ok(result)
+    }
+
+    /// Find the first position in `haystack` (starting from `from`) where
+    /// `needle` lines appear consecutively.
+    fn find_context_match(haystack: &[&str], needle: &[&str], from: usize) -> Option<usize> {
+        if needle.is_empty() {
+            return Some(from);
+        }
+        if needle.len() > haystack.len().saturating_sub(from) {
+            return None;
+        }
+        for i in from..=haystack.len() - needle.len() {
+            if haystack[i..i + needle.len()] == *needle {
+                return Some(i);
+            }
+        }
+        None
+    }
+
+    /// Convert a unified diff patch into the variable-edit output format.
+    ///
+    /// Parses `patch` as a unified diff against `old_text` and produces model
+    /// output with context lines surrounding `<|fim_middle|>` / `<|fim_suffix|>`
+    /// delimiters.
+    pub fn patch_to_variable_edit_output(
+        old_text: &str,
+        patch: &str,
+        cursor_offset: Option<usize>,
+    ) -> Result<String> {
+        let old_lines: Vec<&str> = old_text.lines().collect();
+
+        // Parse the unified diff to find changed line ranges.
+        let mut hunks: Vec<(usize, usize, Vec<String>)> = Vec::new();
+
+        let mut old_line_idx: usize = 0;
+        let mut in_hunk = false;
+        let mut hunk_start: usize = 0;
+        let mut hunk_end: usize = 0;
+        let mut new_lines_buf: Vec<String> = Vec::new();
+
+        for line in patch.lines() {
+            if line.starts_with("@@") {
+                if in_hunk && (hunk_start != hunk_end || !new_lines_buf.is_empty()) {
+                    hunks.push((hunk_start, hunk_end, std::mem::take(&mut new_lines_buf)));
+                }
+                // Parse @@ -start,count +start,count @@
+                if let Some(old_range) = line
+                    .strip_prefix("@@ -")
+                    .and_then(|s| s.split_once(' '))
+                    .map(|(r, _)| r)
+                {
+                    let start: usize = old_range
+                        .split(',')
+                        .next()
+                        .and_then(|s| s.parse().ok())
+                        .unwrap_or(1);
+                    old_line_idx = start.saturating_sub(1);
+                }
+                in_hunk = true;
+                hunk_start = old_line_idx;
+                hunk_end = old_line_idx;
+                new_lines_buf.clear();
+            } else if in_hunk {
+                if let Some(added) = line.strip_prefix('+') {
+                    new_lines_buf.push(added.to_string());
+                } else if let Some(_removed) = line.strip_prefix('-') {
+                    hunk_end = old_line_idx + 1;
+                    old_line_idx += 1;
+                } else if line.starts_with(' ') || line.is_empty() {
+                    if hunk_start != hunk_end || !new_lines_buf.is_empty() {
+                        hunks.push((hunk_start, hunk_end, std::mem::take(&mut new_lines_buf)));
+                    }
+                    old_line_idx += 1;
+                    hunk_start = old_line_idx;
+                    hunk_end = old_line_idx;
+                }
+            }
+        }
+        if in_hunk && (hunk_start != hunk_end || !new_lines_buf.is_empty()) {
+            hunks.push((hunk_start, hunk_end, new_lines_buf));
+        }
+
+        if hunks.is_empty() {
+            return Ok(String::new());
+        }
+
+        // Merge hunks into a single contiguous replacement range.
+        let first_changed_line = hunks.first().map(|(s, _, _)| *s).unwrap_or(0);
+        let last_changed_line = hunks.last().map(|(_, e, _)| *e).unwrap_or(0);
+
+        // Build the new text for the merged range.
+        let mut merged_new_text = String::new();
+        let mut current_old_line = first_changed_line;
+        for (hunk_start, hunk_end, new_lines) in &hunks {
+            // Copy unchanged lines between hunks.
+            for line in &old_lines[current_old_line..*hunk_start] {
+                merged_new_text.push_str(line);
+                merged_new_text.push('\n');
+            }
+            for new_line in new_lines {
+                merged_new_text.push_str(new_line);
+                merged_new_text.push('\n');
+            }
+            current_old_line = *hunk_end;
+        }
+
+        // Insert cursor marker if requested.
+        if let Some(offset) = cursor_offset {
+            if offset <= merged_new_text.len() {
+                merged_new_text.insert_str(offset, CURSOR_MARKER);
+            }
+        }
+
+        // Trim trailing newline from new text for cleaner output.
+        if merged_new_text.ends_with('\n') {
+            merged_new_text.pop();
+        }
+
+        // Build output with context lines.
+        let context_lines_count = 2;
+        let prefix_start = first_changed_line.saturating_sub(context_lines_count);
+        let suffix_end = (last_changed_line + context_lines_count).min(old_lines.len());
+
+        let mut output = String::new();
+        for line in &old_lines[prefix_start..first_changed_line] {
+            output.push_str(line);
+            output.push('\n');
+        }
+        output.push_str("<|fim_middle|>\n");
+        output.push_str(&merged_new_text);
+        output.push_str("\n<|fim_suffix|>\n");
+        for line in &old_lines[last_changed_line..suffix_end] {
+            output.push_str(line);
+            output.push('\n');
+        }
+
+        Ok(output)
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn test_apply_variable_edit() {
+            // Simple single-line replacement
+            assert_eq!(
+                apply_variable_edit(
+                    "zero\none\ntwo\nthree\nfour\nfive",
+                    "two\n<|fim_middle|>\nTHREE\n<|fim_suffix|>\nfour",
+                )
+                .unwrap(),
+                "zero\none\ntwo\nTHREE\nfour\nfive"
+            );
+
+            // Multi-line replacement
+            assert_eq!(
+                apply_variable_edit(
+                    "a\nb\nc\nd\ne",
+                    "a\n<|fim_middle|>\nB\nC\nD\n<|fim_suffix|>\ne",
+                )
+                .unwrap(),
+                "a\nB\nC\nD\ne"
+            );
+
+            // Insertion between existing lines
+            assert_eq!(
+                apply_variable_edit("a\nb\nc", "a\n<|fim_middle|>\nX\n<|fim_suffix|>\nb",).unwrap(),
+                "a\nX\nb\nc"
+            );
+
+            // Deletion
+            assert_eq!(
+                apply_variable_edit("a\nb\nc\nd", "a\n<|fim_middle|>\n<|fim_suffix|>\nc",).unwrap(),
+                "a\nc\nd"
+            );
+
+            // Replacement at the start (no prefix context)
+            assert_eq!(
+                apply_variable_edit("a\nb\nc", "<|fim_middle|>\nX\n<|fim_suffix|>\nb",).unwrap(),
+                "X\nb\nc"
+            );
+
+            // Replacement at the end (no suffix context)
+            assert_eq!(
+                apply_variable_edit("a\nb\nc", "b\n<|fim_middle|>\nZ\n<|fim_suffix|>",).unwrap(),
+                "a\nb\nZ"
+            );
+
+            // Context with trailing newline is preserved
+            assert_eq!(
+                apply_variable_edit("a\nb\nc\n", "a\n<|fim_middle|>\nB\n<|fim_suffix|>\nc",)
+                    .unwrap(),
+                "a\nB\nc\n"
+            );
+
+            // Cursor marker passes through untouched
+            assert_eq!(
+                apply_variable_edit(
+                    "a\nb\nc",
+                    "a\n<|fim_middle|>\nB<|user_cursor|>B\n<|fim_suffix|>\nc",
+                )
+                .unwrap(),
+                "a\nB<|user_cursor|>B\nc"
+            );
+
+            // Multiple prefix context lines
+            assert_eq!(
+                apply_variable_edit(
+                    "a\nb\nc\nd\ne",
+                    "b\nc\n<|fim_middle|>\nD\n<|fim_suffix|>\ne",
+                )
+                .unwrap(),
+                "a\nb\nc\nD\ne"
+            );
+        }
+
+        #[test]
+        fn test_patch_to_variable_edit_roundtrip() {
+            // Simple replacement — enough lines for 2 context lines above and below
+            let old = "zero\none\ntwo\nthree\nfour\nfive\n";
+            let output = patch_to_variable_edit_output(
+                old,
+                "@@ -3,3 +3,3 @@\n two\n-three\n+THREE\n four\n",
+                None,
+            )
+            .unwrap();
+            assert_eq!(
+                output,
+                "one\ntwo\n<|fim_middle|>\nTHREE\n<|fim_suffix|>\nfour\nfive\n"
+            );
+            assert_eq!(
+                apply_variable_edit(old, &output).unwrap(),
+                "zero\none\ntwo\nTHREE\nfour\nfive\n"
+            );
+
+            // Insertion
+            let old = "a\nb\nc\nd\ne\n";
+            let output =
+                patch_to_variable_edit_output(old, "@@ -2,0 +3,1 @@\n b\n+X\n c\n", None).unwrap();
+            assert_eq!(output, "a\nb\n<|fim_middle|>\nX\n<|fim_suffix|>\nc\nd\n");
+            assert_eq!(
+                apply_variable_edit(old, &output).unwrap(),
+                "a\nb\nX\nc\nd\ne\n"
+            );
+
+            // Deletion
+            let old = "a\nb\nc\nd\ne\n";
+            let output =
+                patch_to_variable_edit_output(old, "@@ -2,3 +2,2 @@\n b\n-c\n d\n", None).unwrap();
+            assert_eq!(output, "a\nb\n<|fim_middle|>\n\n<|fim_suffix|>\nd\ne\n");
+            assert_eq!(apply_variable_edit(old, &output).unwrap(), "a\nb\nd\ne\n");
+
+            // Edit near the start — fewer than 2 lines available above
+            let old = "first\nsecond\nthird\nfourth\n";
+            let output =
+                patch_to_variable_edit_output(old, "@@ -1,1 +1,1 @@\n-first\n+FIRST\n", None)
+                    .unwrap();
+            assert_eq!(
+                output,
+                "<|fim_middle|>\nFIRST\n<|fim_suffix|>\nsecond\nthird\n"
+            );
+            assert_eq!(
+                apply_variable_edit(old, &output).unwrap(),
+                "FIRST\nsecond\nthird\nfourth\n"
+            );
+
+            // Edit near the end — fewer than 2 lines available below
+            let old = "first\nsecond\nthird\nfourth\n";
+            let output =
+                patch_to_variable_edit_output(old, "@@ -4,1 +4,1 @@\n-fourth\n+FOURTH\n", None)
+                    .unwrap();
+            assert_eq!(
+                output,
+                "second\nthird\n<|fim_middle|>\nFOURTH\n<|fim_suffix|>\n"
+            );
+            assert_eq!(
+                apply_variable_edit(old, &output).unwrap(),
+                "first\nsecond\nthird\nFOURTH\n"
+            );
+        }
+
+        #[test]
+        fn test_write_cursor_excerpt_section() {
+            let path = Path::new("test.rs");
+            let context = "fn main() {\n    hello();\n}\n";
+            let cursor_offset = 17;
+            let mut prompt = String::new();
+            write_cursor_excerpt_section(&mut prompt, path, context, cursor_offset);
+            assert_eq!(
+                prompt,
+                "<|file_sep|>test.rs\nfn main() {\n    h<|user_cursor|>ello();\n}\n"
+            );
+        }
+
+        #[test]
+        fn test_find_context_match() {
+            let haystack = vec!["a", "b", "c", "d", "e"];
+            assert_eq!(find_context_match(&haystack, &["b", "c"], 0), Some(1));
+            assert_eq!(find_context_match(&haystack, &["b", "c"], 2), None);
+            assert_eq!(find_context_match(&haystack, &["a"], 0), Some(0));
+            assert_eq!(find_context_match(&haystack, &["e"], 0), Some(4));
+            assert_eq!(find_context_match(&haystack, &[], 3), Some(3));
+            assert_eq!(find_context_match(&haystack, &["x"], 0), None);
+        }
     }
 }
 
