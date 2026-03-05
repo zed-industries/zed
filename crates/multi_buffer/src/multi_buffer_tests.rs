@@ -2304,45 +2304,47 @@ impl ReferenceMultibuffer {
             return;
         }
 
-        let mut new_ranges = self
-            .excerpts
-            .iter()
-            .map(|excerpt| {
-                (
-                    excerpt.clone(),
-                    excerpt.range.to_point(&excerpt.buffer.read(cx).snapshot()),
-                )
-            })
-            .collect::<Vec<_>>();
-
-        for (excerpt, point_range) in &mut new_ranges {
-            if excerpts.contains(&excerpt.info(cx)) {
-                let snapshot = excerpt.buffer.read(cx).snapshot();
-                point_range.start = Point::new(point_range.start.row.saturating_sub(line_count), 0);
-                point_range.end = snapshot
-                    .clip_point(Point::new(point_range.end.row + line_count, 0), Bias::Left);
-                point_range.end.column = snapshot.line_len(point_range.end.row);
-            }
+        let mut excerpts_by_path: HashMap<PathKeyIndex, Vec<ExcerptInfo>> = HashMap::default();
+        for excerpt in excerpts {
+            excerpts_by_path
+                .entry(excerpt.path_key_index)
+                .or_default()
+                .push(excerpt.clone())
         }
 
-        for ((path_key, path_key_index, buffer), chunk) in
-            &new_ranges.iter().chunk_by(|(excerpt, _)| {
-                (
-                    excerpt.path_key.clone(),
-                    excerpt.path_key_index,
-                    excerpt.buffer.clone(),
-                )
-            })
-        {
-            let buffer_snapshot = buffer.read(cx).snapshot();
+        for (path_key_index, excerpts_to_expand) in excerpts_by_path {
+            let mut buffer = None;
+            let mut buffer_snapshot = None;
+            let mut path = None;
+            let new_ranges = self
+                .excerpts
+                .iter()
+                .filter(|excerpt| excerpt.path_key_index == path_key_index)
+                .map(|excerpt| {
+                    let snapshot = excerpt.buffer.read(cx).snapshot();
+                    let mut range = excerpt.range.to_point(&snapshot);
+                    if excerpts_to_expand
+                        .iter()
+                        .any(|info| excerpt.range.contains_anchor(info.range.start, &snapshot))
+                    {
+                        range.start = Point::new(range.start.row.saturating_sub(line_count), 0);
+                        range.end = snapshot
+                            .clip_point(Point::new(range.end.row + line_count, 0), Bias::Left);
+                        range.end.column = snapshot.line_len(range.end.row);
+                    }
+                    buffer = Some(excerpt.buffer.clone());
+                    buffer_snapshot = Some(snapshot);
+                    path = Some(excerpt.path_key.clone());
+                    ExcerptRange::new(range)
+                })
+                .collect::<Vec<_>>();
+
             self.set_excerpts(
-                path_key,
+                path.unwrap(),
                 path_key_index,
-                buffer,
-                &buffer_snapshot,
-                chunk
-                    .map(|(_, range)| ExcerptRange::new(range.clone()))
-                    .collect::<Vec<_>>(),
+                buffer.unwrap(),
+                &buffer_snapshot.unwrap(),
+                new_ranges,
             );
         }
     }
