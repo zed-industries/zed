@@ -773,6 +773,13 @@ fn main() {
                     },
                 );
 
+                cx.set_rendering_mode(match WorkspaceSettings::get_global(cx).rendering_mode {
+                    settings::RenderingMode::PlatformDefault => {
+                        gpui::RenderingMode::PlatformDefault
+                    }
+                    settings::RenderingMode::Immediate => gpui::RenderingMode::Immediate,
+                });
+
                 let new_host = &client::ClientSettings::get_global(cx).server_url;
                 if &http.base_url() != new_host {
                     http.set_base_url(new_host);

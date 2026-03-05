@@ -8,8 +8,8 @@ use cocoa::{
 };
 use gpui::{
     AtlasTextureId, Background, Bounds, ContentMask, DevicePixels, MonochromeSprite, PaintSurface,
-    Path, Point, PolychromeSprite, PrimitiveBatch, Quad, ScaledPixels, Scene, Shadow, Size,
-    Surface, Underline, point, size,
+    Path, Point, PolychromeSprite, PrimitiveBatch, Quad, RenderingMode, ScaledPixels, Scene,
+    Shadow, Size, Surface, Underline, point, size,
 };
 #[cfg(any(test, feature = "test-support"))]
 use image::RgbaImage;
@@ -28,6 +28,14 @@ use objc::{self, msg_send, sel, sel_impl};
 use parking_lot::Mutex;
 
 use std::{cell::Cell, ffi::c_void, mem, ptr, sync::Arc};
+
+thread_local! {
+    static RENDERING_MODE: Cell<RenderingMode> = const { Cell::new(RenderingMode::PlatformDefault) };
+}
+
+pub fn set_rendering_mode(mode: RenderingMode) {
+    RENDERING_MODE.with(|m| m.set(mode));
+}
 
 // Exported to metal
 pub(crate) type PointF = gpui::Point<f32>;
@@ -169,7 +177,11 @@ impl MetalRenderer {
         // Support direct-to-display rendering if the window is not transparent
         // https://developer.apple.com/documentation/metal/managing-your-game-window-for-metal-in-macos
         layer.set_opaque(!transparent);
-        layer.set_maximum_drawable_count(3);
+        let drawable_count = RENDERING_MODE.with(|m| m.get());
+        layer.set_maximum_drawable_count(match drawable_count {
+            RenderingMode::PlatformDefault => 3,
+            RenderingMode::Immediate => 1,
+        });
         // Allow texture reading for visual tests (captures screenshots without ScreenCaptureKit)
         #[cfg(any(test, feature = "test-support"))]
         layer.set_framebuffer_only(false);
