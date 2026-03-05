@@ -157,6 +157,25 @@ pub fn validate_worktree_directory(
     Ok(resolved)
 }
 
+/// Resolves the worktree directory for a repository, handling the optional
+/// `git.worktree_directory` setting with bare-clone auto-detection.
+///
+/// - `Some(setting)` → validates and resolves relative to `original_repo`.
+/// - `None` + bare clone (`original_repo != work_directory`) → uses
+///   `work_directory` directly (worktrees are siblings).
+/// - `None` + normal repo → falls back to `DEFAULT_WORKTREE_DIRECTORY`.
+pub fn resolve_worktree_directory_for_repo(
+    original_repo: &Path,
+    work_directory: &Path,
+    setting: Option<&str>,
+) -> Result<PathBuf> {
+    match setting {
+        Some(s) => validate_worktree_directory(original_repo, s),
+        None if original_repo != work_directory => Ok(work_directory.to_path_buf()),
+        None => validate_worktree_directory(original_repo, DEFAULT_WORKTREE_DIRECTORY),
+    }
+}
+
 /// Returns the full absolute path for a specific branch's worktree
 /// given the resolved worktree directory.
 pub fn worktree_path_for_branch(
@@ -4360,6 +4379,8 @@ mod tests {
             PathBuf::from("/code/my-project/my-worktrees/branch")
         );
     }
+
+
 
     impl RealGitRepository {
         /// Force a Git garbage collection on the repository.

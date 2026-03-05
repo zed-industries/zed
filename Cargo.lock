@@ -15789,6 +15789,7 @@ dependencies = [
  "picker",
  "project",
  "recent_projects",
+ "serde_json",
  "settings",
  "theme",
  "ui",

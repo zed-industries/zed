@@ -9,6 +9,7 @@ use gpui::{
     Subscription, Task, Window, px,
 };
 use picker::{Picker, PickerDelegate};
+use project::git_store::{GitStoreEvent, RepositoryEvent};
 use project::Event as ProjectEvent;
 use recent_projects::{RecentProjectEntry, get_recent_projects};
 use std::fmt::Display;
@@ -47,12 +48,16 @@ struct WorkspaceThreadEntry {
     index: usize,
     worktree_label: SharedString,
     full_path: SharedString,
+    repo_root: Option<Arc<Path>>,
+    is_prime: bool,
     thread_info: Option<AgentThreadInfo>,
 }
 
 impl WorkspaceThreadEntry {
     fn new(index: usize, workspace: &Entity<Workspace>, cx: &App) -> Self {
         let workspace_ref = workspace.read(cx);
+        let project = workspace_ref.project().read(cx);
+        let git_store = project.git_store().read(cx);
 
         let worktrees: Vec<_> = workspace_ref
             .worktrees(cx)
@@ -60,34 +65,81 @@ impl WorkspaceThreadEntry {
             .map(|worktree| worktree.read(cx).abs_path())
             .collect();
 
-        let worktree_names: Vec<String> = worktrees
-            .iter()
-            .filter_map(|path| {
-                path.file_name()
-                    .map(|name| name.to_string_lossy().to_string())
-            })
-            .collect();
-
-        let worktree_label: SharedString = if worktree_names.is_empty() {
-            format!("Workspace {}", index + 1).into()
-        } else {
-            worktree_names.join(", ").into()
+        let best_repo = Self::best_matching_repo(&worktrees, git_store, cx);
+        let repo_root = best_repo.as_ref().map(|s| s.original_repo_abs_path.clone());
+        let is_prime = match (&repo_root, worktrees.first()) {
+            (Some(root), Some(worktree_path)) => root.as_ref() == worktree_path.as_ref(),
+            _ => true,
         };
-
-        let full_path: SharedString = worktrees
-            .iter()
-            .map(|path| path.to_string_lossy().to_string())
-            .collect::<Vec<_>>()
-            .join("\n")
-            .into();
-
-        let thread_info = Self::thread_info(workspace, cx);
 
         Self {
             index,
-            worktree_label,
-            full_path,
-            thread_info,
+            worktree_label: Self::compute_label(index, &worktrees, best_repo.as_ref()),
+            full_path: worktrees
+                .iter()
+                .map(|path| path.to_string_lossy().to_string())
+                .collect::<Vec<_>>()
+                .join("\n")
+                .into(),
+            repo_root,
+            is_prime,
+            thread_info: Self::thread_info(workspace, cx),
+        }
+    }
+
+    fn best_matching_repo(
+        worktrees: &[Arc<Path>],
+        git_store: &project::git_store::GitStore,
+        cx: &App,
+    ) -> Option<project::git_store::RepositorySnapshot> {
+        worktrees.first().and_then(|path| {
+            git_store
+                .repositories()
+                .values()
+                .filter_map(|repo| {
+                    let repo = repo.read(cx);
+                    let repo_path = &*repo.work_directory_abs_path;
+                    if path.as_ref() == repo_path || path.starts_with(repo_path) {
+                        Some((repo_path.as_os_str().len(), repo.snapshot()))
+                    } else {
+                        None
+                    }
+                })
+                .max_by_key(|(len, _)| *len)
+                .map(|(_, snapshot)| snapshot)
+        })
+    }
+
+    fn compute_label(
+        index: usize,
+        worktrees: &[Arc<Path>],
+        best_repo: Option<&project::git_store::RepositorySnapshot>,
+    ) -> SharedString {
+        let names: Vec<String> = worktrees
+            .iter()
+            .filter_map(|path| {
+                let dir_name = path.file_name()?.to_string_lossy();
+                if let Some(snapshot) = best_repo {
+                    let repo_name = snapshot
+                        .original_repo_abs_path
+                        .file_name()
+                        .map(|n| n.to_string_lossy());
+                    let branch = snapshot.branch.as_ref().map(|b| b.name().to_string());
+                    match (repo_name, branch) {
+                        (Some(repo), Some(branch)) => Some(format!("{repo} / {branch}")),
+                        (Some(repo), None) => Some(repo.to_string()),
+                        _ => Some(dir_name.to_string()),
+                    }
+                } else {
+                    Some(dir_name.to_string())
+                }
+            })
+            .collect();
+
+        if names.is_empty() {
+            format!("Workspace {}", index + 1).into()
+        } else {
+            names.join(", ").into()
         }
     }
 
@@ -259,7 +311,16 @@ impl WorkspacePickerDelegate {
         if !workspace_threads.is_empty() {
             self.entries
                 .push(SidebarEntry::Separator("Active Workspaces".into()));
-            for thread in workspace_threads {
+
+            // Sort by common_dir so related worktrees are adjacent, prime first.
+            let mut sorted = workspace_threads;
+            sorted.sort_by(|a, b| {
+                a.repo_root.cmp(&b.repo_root)
+                    .then(b.is_prime.cmp(&a.is_prime))
+                    .then(a.worktree_label.cmp(&b.worktree_label))
+            });
+
+            for thread in sorted {
                 self.entries.push(SidebarEntry::WorkspaceThread(thread));
             }
         }
@@ -435,13 +496,14 @@ impl PickerDelegate for WorkspacePickerDelegate {
                 })
                 .collect();
 
-            let separator_offset = if self.workspace_thread_count > 0 {
-                1
-            } else {
-                0
-            };
-            self.selected_index = (self.active_workspace_index + separator_offset)
-                .min(self.matches.len().saturating_sub(1));
+            self.selected_index = self
+                .matches
+                .iter()
+                .position(|m| match &m.entry {
+                    SidebarEntry::WorkspaceThread(t) => t.index == self.active_workspace_index,
+                    _ => false,
+                })
+                .unwrap_or(0);
             return Task::ready(());
         }
 
@@ -609,8 +671,7 @@ impl PickerDelegate for WorkspacePickerDelegate {
                     AgentThreadStatus::Running | AgentThreadStatus::WaitingForConfirmation
                 );
 
-                Some(
-                    ThreadItem::new(
+                let thread_item = ThreadItem::new(
                         ("workspace-item", thread_entry.index),
                         thread_subtitle.unwrap_or("New Thread".into()),
                     )
@@ -646,9 +707,9 @@ impl PickerDelegate for WorkspacePickerDelegate {
                         this.tooltip(move |_, cx| {
                             Tooltip::with_meta(worktree_label.clone(), None, full_path.clone(), cx)
                         })
-                    })
-                    .into_any_element(),
-                )
+                    });
+
+                Some(thread_item.into_any_element())
             }
             SidebarEntry::RecentProject(project_entry) => {
                 let name = project_entry.name.clone();
@@ -774,31 +835,48 @@ impl Sidebar {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Vec<Subscription> {
-        let projects: Vec<_> = self
+        let workspaces: Vec<_> = self
             .multi_workspace
             .read(cx)
             .workspaces()
-            .iter()
-            .map(|w| w.read(cx).project().clone())
-            .collect();
+            .to_vec();
 
-        projects
-            .iter()
-            .map(|project| {
-                cx.subscribe_in(
-                    project,
-                    window,
-                    |this, _project, event, window, cx| match event {
-                        ProjectEvent::WorktreeAdded(_)
-                        | ProjectEvent::WorktreeRemoved(_)
-                        | ProjectEvent::WorktreeOrderChanged => {
-                            this.update_entries(window, cx);
-                        }
-                        _ => {}
-                    },
-                )
-            })
-            .collect()
+        let mut subscriptions = Vec::new();
+        for workspace in &workspaces {
+            let project = workspace.read(cx).project().clone();
+
+            subscriptions.push(cx.subscribe_in(
+                &project,
+                window,
+                |this, _project, event, window, cx| match event {
+                    ProjectEvent::WorktreeAdded(_)
+                    | ProjectEvent::WorktreeRemoved(_)
+                    | ProjectEvent::WorktreeOrderChanged => {
+                        this.update_entries(window, cx);
+                    }
+                    _ => {}
+                },
+            ));
+
+            let git_store = project.read(cx).git_store().clone();
+            subscriptions.push(cx.subscribe_in(
+                &git_store,
+                window,
+                |this, _, event, window, cx| match event {
+                    GitStoreEvent::RepositoryAdded
+                    | GitStoreEvent::RepositoryRemoved(_)
+                    | GitStoreEvent::RepositoryUpdated(
+                        _,
+                        RepositoryEvent::BranchChanged,
+                        _,
+                    ) => {
+                        this.update_entries(window, cx);
+                    }
+                    _ => {}
+                },
+            ));
+        }
+        subscriptions
     }
 
     fn build_workspace_thread_entries(
@@ -939,6 +1017,19 @@ impl Sidebar {
                 let query = picker.query(cx);
                 picker.update_matches(query, window, cx);
             });
+
+            // Push sidebar sort order to MultiWorkspace for next/previous cycling.
+            let display_order: Vec<usize> = this.picker.read(cx).delegate.entries
+                .iter()
+                .filter_map(|entry| match entry {
+                    SidebarEntry::WorkspaceThread(t) => Some(t.index),
+                    _ => None,
+                })
+                .collect();
+            multi_workspace.update(cx, |mw, _| {
+                mw.set_display_order(display_order);
+            });
+
             let has_notifications = !this.picker.read(cx).delegate.notified_workspaces.is_empty();
             if had_notifications != has_notifications {
                 multi_workspace.update(cx, |_, cx| cx.notify());
@@ -1269,5 +1360,386 @@ mod tests {
             !has_notifications(&sidebar, cx),
             "notification should be cleared when workspace becomes active"
         );
+    }
+
+    #[gpui::test]
+    async fn test_worktree_label_shows_repo_name_and_branch(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/project",
+            serde_json::json!({
+                ".git": {},
+                "src": { "main.rs": "" }
+            }),
+        )
+        .await;
+        fs.set_branch_name(Path::new("/project/.git"), Some("feature-branch"));
+        cx.update(|cx| <dyn Fs>::set_global(fs.clone(), cx));
+
+        let project = project::Project::test(fs, [Path::new("/project")], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        cx.run_until_parked();
+
+        let label = multi_workspace.read_with(cx, |mw, cx| {
+            let workspace = mw.workspace();
+            WorkspaceThreadEntry::new(0, workspace, cx).worktree_label
+        });
+        assert_eq!(label.as_ref(), "project / feature-branch");
+    }
+
+    #[gpui::test]
+    async fn test_worktree_label_for_git_worktree(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/myrepo",
+            serde_json::json!({
+                ".git": {
+                    "worktrees": {
+                        "feature-x": {
+                            "commondir": "../..\n",
+                            "HEAD": "",
+                            "config": ""
+                        }
+                    }
+                },
+                "sub": {
+                    "feature-x": {
+                        ".git": "gitdir: ../../.git/worktrees/feature-x\n",
+                        "src": { "main.rs": "" }
+                    }
+                }
+            }),
+        )
+        .await;
+        fs.set_branch_name(
+            Path::new("/myrepo/.git/worktrees/feature-x"),
+            Some("feature-x"),
+        );
+        cx.update(|cx| <dyn Fs>::set_global(fs.clone(), cx));
+
+        let project = project::Project::test(
+            fs,
+            [Path::new("/myrepo/sub/feature-x")],
+            cx,
+        )
+        .await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        cx.run_until_parked();
+
+        let label = multi_workspace.read_with(cx, |mw, cx| {
+            let workspace = mw.workspace();
+            WorkspaceThreadEntry::new(0, workspace, cx).worktree_label
+        });
+        assert_eq!(label.as_ref(), "myrepo / feature-x");
+    }
+
+    #[gpui::test]
+    async fn test_worktree_label_without_git(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/plain-dir",
+            serde_json::json!({
+                "src": { "main.rs": "" }
+            }),
+        )
+        .await;
+        cx.update(|cx| <dyn Fs>::set_global(fs.clone(), cx));
+
+        let project = project::Project::test(fs, [Path::new("/plain-dir")], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        cx.run_until_parked();
+
+        let label = multi_workspace.read_with(cx, |mw, cx| {
+            let workspace = mw.workspace();
+            WorkspaceThreadEntry::new(0, workspace, cx).worktree_label
+        });
+        assert_eq!(label.as_ref(), "plain-dir");
+    }
+
+    #[gpui::test]
+    async fn test_display_order_follows_sidebar_sort(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+
+        // Four repos: alpha, bravo (two worktrees sharing common_dir), charlie.
+        // Opened in order: bravo/main(0), alpha(1), bravo/feature(2), charlie(3)
+        // Sidebar sort by common_dir: alpha(1), bravo/main(0), bravo/feature(2), charlie(3)
+        fs.insert_tree(
+            "/bravo-main",
+            serde_json::json!({ ".git": {}, "src": {} }),
+        )
+        .await;
+        fs.set_branch_name(Path::new("/bravo-main/.git"), Some("main"));
+
+        fs.insert_tree(
+            "/alpha",
+            serde_json::json!({ ".git": {}, "src": {} }),
+        )
+        .await;
+        fs.set_branch_name(Path::new("/alpha/.git"), Some("main"));
+
+        fs.insert_tree(
+            "/bravo-feature",
+            serde_json::json!({
+                ".git": "gitdir: /bravo-main/.git/worktrees/feature\n",
+                "src": {}
+            }),
+        )
+        .await;
+        fs.insert_tree(
+            "/bravo-main/.git/worktrees/feature",
+            serde_json::json!({
+                "commondir": "../..\n",
+                "HEAD": "",
+                "config": ""
+            }),
+        )
+        .await;
+        fs.set_branch_name(
+            Path::new("/bravo-main/.git/worktrees/feature"),
+            Some("feature"),
+        );
+
+        fs.insert_tree(
+            "/charlie",
+            serde_json::json!({ ".git": {}, "src": {} }),
+        )
+        .await;
+        fs.set_branch_name(Path::new("/charlie/.git"), Some("main"));
+
+        cx.update(|cx| <dyn Fs>::set_global(fs.clone(), cx));
+
+        // Workspace 0: bravo/main
+        let project0 =
+            project::Project::test(fs.clone(), [Path::new("/bravo-main")], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project0, window, cx));
+
+        let sidebar = multi_workspace.update_in(cx, |_mw, window, cx| {
+            let mw_handle = cx.entity();
+            cx.new(|cx| Sidebar::new(mw_handle, window, cx))
+        });
+        multi_workspace.update_in(cx, |mw, window, cx| {
+            mw.register_sidebar(sidebar.clone(), window, cx);
+        });
+
+        // Workspace 1: alpha
+        let project1 = project::Project::test(fs.clone(), [Path::new("/alpha")], cx).await;
+        multi_workspace.update_in(cx, |mw, window, cx| {
+            mw.test_add_workspace(project1, window, cx);
+        });
+
+        // Workspace 2: bravo/feature
+        let project2 =
+            project::Project::test(fs.clone(), [Path::new("/bravo-feature")], cx).await;
+        multi_workspace.update_in(cx, |mw, window, cx| {
+            mw.test_add_workspace(project2, window, cx);
+        });
+
+        // Workspace 3: charlie
+        let project3 =
+            project::Project::test(fs.clone(), [Path::new("/charlie")], cx).await;
+        multi_workspace.update_in(cx, |mw, window, cx| {
+            mw.test_add_workspace(project3, window, cx);
+        });
+
+        cx.run_until_parked();
+
+        // Trigger sidebar update
+        sidebar.update_in(cx, |s, window, cx| {
+            s.update_entries(window, cx);
+        });
+        cx.run_until_parked();
+
+        // Verify display_order matches sidebar sort (by common_dir, prime first)
+        let display_order = multi_workspace.read_with(cx, |mw, _cx| {
+            mw.display_order().to_vec()
+        });
+
+        // alpha(1) sorts before bravo(0,2) before charlie(3)
+        // Within bravo group: main(0) is prime, feature(2) is not
+        assert_eq!(
+            display_order,
+            vec![1, 0, 2, 3],
+            "display_order should be sorted: alpha, bravo/main, bravo/feature, charlie"
+        );
+
+        // Verify cycling from workspace 0 (bravo/main)
+        multi_workspace.update_in(cx, |mw, window, cx| {
+            mw.activate_index(0, window, cx);
+        });
+        cx.run_until_parked();
+
+        // Next from bravo/main(0) should go to bravo/feature(2)
+        multi_workspace.update_in(cx, |mw, window, cx| {
+            mw.activate_next_workspace(window, cx);
+        });
+        let active = multi_workspace.read_with(cx, |mw, _| mw.active_workspace_index());
+        assert_eq!(active, 2, "next from bravo/main should be bravo/feature");
+
+        // Next from bravo/feature(2) should go to charlie(3)
+        multi_workspace.update_in(cx, |mw, window, cx| {
+            mw.activate_next_workspace(window, cx);
+        });
+        let active = multi_workspace.read_with(cx, |mw, _| mw.active_workspace_index());
+        assert_eq!(active, 3, "next from bravo/feature should be charlie");
+
+        // Previous from charlie(3) should go back to bravo/feature(2)
+        multi_workspace.update_in(cx, |mw, window, cx| {
+            mw.activate_previous_workspace(window, cx);
+        });
+        let active = multi_workspace.read_with(cx, |mw, _| mw.active_workspace_index());
+        assert_eq!(active, 2, "previous from charlie should be bravo/feature");
+
+        // Wrap around: previous from alpha(1) should go to charlie(3)
+        multi_workspace.update_in(cx, |mw, window, cx| {
+            mw.activate_index(1, window, cx);
+        });
+        multi_workspace.update_in(cx, |mw, window, cx| {
+            mw.activate_previous_workspace(window, cx);
+        });
+        let active = multi_workspace.read_with(cx, |mw, _| mw.active_workspace_index());
+        assert_eq!(active, 3, "previous from alpha should wrap to charlie");
+    }
+
+    #[gpui::test]
+    async fn test_display_order_adjusted_after_workspace_removal(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+
+        // Same four-workspace setup as test_display_order_follows_sidebar_sort:
+        // Opened in order: bravo/main(0), alpha(1), bravo/feature(2), charlie(3)
+        // Sidebar sort (display_order): [1, 0, 2, 3]
+        //   i.e. alpha(1), bravo/main(0), bravo/feature(2), charlie(3)
+        fs.insert_tree(
+            "/bravo-main",
+            serde_json::json!({ ".git": {}, "src": {} }),
+        )
+        .await;
+        fs.set_branch_name(Path::new("/bravo-main/.git"), Some("main"));
+
+        fs.insert_tree(
+            "/alpha",
+            serde_json::json!({ ".git": {}, "src": {} }),
+        )
+        .await;
+        fs.set_branch_name(Path::new("/alpha/.git"), Some("main"));
+
+        fs.insert_tree(
+            "/bravo-feature",
+            serde_json::json!({
+                ".git": "gitdir: /bravo-main/.git/worktrees/feature\n",
+                "src": {}
+            }),
+        )
+        .await;
+        fs.insert_tree(
+            "/bravo-main/.git/worktrees/feature",
+            serde_json::json!({
+                "commondir": "../..\n",
+                "HEAD": "",
+                "config": ""
+            }),
+        )
+        .await;
+        fs.set_branch_name(
+            Path::new("/bravo-main/.git/worktrees/feature"),
+            Some("feature"),
+        );
+
+        fs.insert_tree(
+            "/charlie",
+            serde_json::json!({ ".git": {}, "src": {} }),
+        )
+        .await;
+        fs.set_branch_name(Path::new("/charlie/.git"), Some("main"));
+
+        cx.update(|cx| <dyn Fs>::set_global(fs.clone(), cx));
+
+        let project0 =
+            project::Project::test(fs.clone(), [Path::new("/bravo-main")], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project0, window, cx));
+
+        let sidebar = multi_workspace.update_in(cx, |_mw, window, cx| {
+            let mw_handle = cx.entity();
+            cx.new(|cx| Sidebar::new(mw_handle, window, cx))
+        });
+        multi_workspace.update_in(cx, |mw, window, cx| {
+            mw.register_sidebar(sidebar.clone(), window, cx);
+        });
+
+        let project1 = project::Project::test(fs.clone(), [Path::new("/alpha")], cx).await;
+        multi_workspace.update_in(cx, |mw, window, cx| {
+            mw.test_add_workspace(project1, window, cx);
+        });
+
+        let project2 =
+            project::Project::test(fs.clone(), [Path::new("/bravo-feature")], cx).await;
+        multi_workspace.update_in(cx, |mw, window, cx| {
+            mw.test_add_workspace(project2, window, cx);
+        });
+
+        let project3 =
+            project::Project::test(fs.clone(), [Path::new("/charlie")], cx).await;
+        multi_workspace.update_in(cx, |mw, window, cx| {
+            mw.test_add_workspace(project3, window, cx);
+        });
+
+        cx.run_until_parked();
+        sidebar.update_in(cx, |s, window, cx| {
+            s.update_entries(window, cx);
+        });
+        cx.run_until_parked();
+
+        // Precondition: display_order = [1, 0, 2, 3]
+        let display_order = multi_workspace.read_with(cx, |mw, _| mw.display_order().to_vec());
+        assert_eq!(display_order, vec![1, 0, 2, 3]);
+
+        // Remove workspace 0 (bravo/main), which sits in the middle of the
+        // display order. After removal the workspace list becomes:
+        //   0: alpha (was 1), 1: bravo/feature (was 2), 2: charlie (was 3)
+        // display_order should drop the removed index and shift the rest:
+        //   [1, 0, 2, 3] → retain(!= 0) → [1, 2, 3] → decrement(> 0) → [0, 1, 2]
+        multi_workspace.update_in(cx, |mw, window, cx| {
+            mw.remove_workspace(0, window, cx);
+        });
+        cx.run_until_parked();
+
+        let display_order = multi_workspace.read_with(cx, |mw, _| mw.display_order().to_vec());
+        assert_eq!(
+            display_order,
+            vec![0, 1, 2],
+            "display_order should be adjusted after removing workspace 0"
+        );
+
+        // Cycling should follow the adjusted order: alpha(0) → bravo/feature(1) → charlie(2)
+        multi_workspace.update_in(cx, |mw, window, cx| {
+            mw.activate_index(0, window, cx);
+        });
+        multi_workspace.update_in(cx, |mw, window, cx| {
+            mw.activate_next_workspace(window, cx);
+        });
+        let active = multi_workspace.read_with(cx, |mw, _| mw.active_workspace_index());
+        assert_eq!(active, 1, "next from alpha(0) should be bravo/feature(1)");
+
+        multi_workspace.update_in(cx, |mw, window, cx| {
+            mw.activate_next_workspace(window, cx);
+        });
+        let active = multi_workspace.read_with(cx, |mw, _| mw.active_workspace_index());
+        assert_eq!(active, 2, "next from bravo/feature(1) should be charlie(2)");
+
+        // Wrap around: next from charlie(2) should go to alpha(0)
+        multi_workspace.update_in(cx, |mw, window, cx| {
+            mw.activate_next_workspace(window, cx);
+        });
+        let active = multi_workspace.read_with(cx, |mw, _| mw.active_workspace_index());
+        assert_eq!(active, 0, "next from charlie(2) should wrap to alpha(0)");
     }
 }

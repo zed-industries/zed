@@ -1504,13 +1504,17 @@
     // When the resolved directory is inside the project root, no
     // extra component is added (it's already project-scoped).
     //
+    // When unset, auto-detects: bare clone layouts place worktrees
+    // as siblings in the repository's parent directory; normal repos
+    // use "../worktrees".
+    //
     // Examples:
-    //   "../worktrees" — ~/code/worktrees/<project>/ (default)
+    //   "../worktrees" — ~/code/worktrees/<project>/ (default for normal repos)
     //   ".git/zed-worktrees" — <project>/.git/zed-worktrees/
     //   "my-worktrees" — <project>/my-worktrees/
     //
     // Trailing slashes are ignored.
-    "worktree_directory": "../worktrees",
+    // "worktree_directory": "../worktrees",
   },
   // The list of custom Git hosting providers.
   "git_hosting_providers": [

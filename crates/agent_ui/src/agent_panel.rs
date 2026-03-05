@@ -56,7 +56,7 @@ use editor::{Anchor, AnchorRangeExt as _, Editor, EditorEvent, MultiBuffer};
 use extension::ExtensionEvents;
 use extension_host::ExtensionStore;
 use fs::Fs;
-use git::repository::validate_worktree_directory;
+
 use gpui::{
     Action, Animation, AnimationExt, AnyElement, App, AsyncWindowContext, ClipboardItem, Corner,
     DismissEvent, Entity, EventEmitter, ExternalPaths, FocusHandle, Focusable, KeyContext, Pixels,
@@ -2118,7 +2118,7 @@ impl AgentPanel {
     fn start_worktree_creations(
         git_repos: &[Entity<project::git_store::Repository>],
         branch_name: &str,
-        worktree_directory_setting: &str,
+        worktree_directory_setting: Option<&str>,
         cx: &mut Context<Self>,
     ) -> Result<(
         Vec<(
@@ -2134,8 +2134,12 @@ impl AgentPanel {
         for repo in git_repos {
             let (work_dir, new_path, receiver) = repo.update(cx, |repo, _cx| {
                 let original_repo = repo.original_repo_abs_path.clone();
-                let directory =
-                    validate_worktree_directory(&original_repo, worktree_directory_setting)?;
+                let work_dir = repo.work_directory_abs_path.clone();
+                let directory = git::repository::resolve_worktree_directory_for_repo(
+                    &original_repo,
+                    &work_dir,
+                    worktree_directory_setting.as_deref(),
+                )?;
                 let new_path = directory.join(branch_name);
                 let receiver = repo.create_worktree(branch_name.to_string(), directory, None);
                 let work_dir = repo.work_directory_abs_path.clone();
@@ -2277,7 +2281,7 @@ impl AgentPanel {
         let (creation_infos, path_remapping) = match Self::start_worktree_creations(
             &git_repos,
             &branch_name,
-            &worktree_directory_setting,
+            worktree_directory_setting.as_deref(),
             cx,
         ) {
             Ok(result) => result,
