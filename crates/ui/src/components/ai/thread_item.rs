@@ -18,6 +18,7 @@ pub enum AgentThreadStatus {
 pub struct ThreadItem {
     id: ElementId,
     icon: IconName,
+    custom_icon_from_external_svg: Option<SharedString>,
     title: SharedString,
     timestamp: SharedString,
     notified: bool,
@@ -40,6 +41,7 @@ impl ThreadItem {
         Self {
             id: id.into(),
             icon: IconName::ZedAgent,
+            custom_icon_from_external_svg: None,
             title: title.into(),
             timestamp: "".into(),
             notified: false,
@@ -65,6 +67,11 @@ impl ThreadItem {
 
     pub fn icon(mut self, icon: IconName) -> Self {
         self.icon = icon;
+        self
+    }
+
+    pub fn custom_icon_from_external_svg(mut self, svg: impl Into<SharedString>) -> Self {
+        self.custom_icon_from_external_svg = Some(svg.into());
         self
     }
 
@@ -148,9 +155,15 @@ impl RenderOnce for ThreadItem {
         // };
 
         let icon_container = || h_flex().size_4().justify_center();
-        let agent_icon = Icon::new(self.icon)
-            .color(Color::Muted)
-            .size(IconSize::Small);
+        let agent_icon = if let Some(custom_svg) = self.custom_icon_from_external_svg {
+            Icon::from_external_svg(custom_svg)
+                .color(Color::Muted)
+                .size(IconSize::Small)
+        } else {
+            Icon::new(self.icon)
+                .color(Color::Muted)
+                .size(IconSize::Small)
+        };
 
         let decoration = |icon: IconDecorationKind, color: Hsla| {
             IconDecoration::new(icon, cx.theme().colors().surface_background, cx)

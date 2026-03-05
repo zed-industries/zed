@@ -48,6 +48,7 @@ struct ActiveThreadInfo {
     title: SharedString,
     status: AgentThreadStatus,
     icon: IconName,
+    icon_from_external_svg: Option<SharedString>,
     is_background: bool,
 }
 
@@ -73,6 +74,7 @@ enum ListEntry {
     Thread {
         session_info: acp_thread::AgentSessionInfo,
         icon: IconName,
+        icon_from_external_svg: Option<SharedString>,
         status: AgentThreadStatus,
         diff_stats: Option<(usize, usize)>,
         workspace_index: usize,
@@ -334,6 +336,7 @@ impl Sidebar {
                 let thread = thread_view_ref.thread.read(cx);
 
                 let icon = thread_view_ref.agent_icon;
+                let icon_from_external_svg = thread_view_ref.agent_icon_from_external_svg.clone();
                 let title = thread.title();
                 let session_id = thread.session_id().clone();
                 let is_background = agent_panel_ref.is_background_thread(&session_id);
@@ -354,6 +357,7 @@ impl Sidebar {
                     title,
                     status,
                     icon,
+                    icon_from_external_svg,
                     is_background,
                 }
             })
@@ -401,6 +405,7 @@ impl Sidebar {
                         threads.push(ListEntry::Thread {
                             session_info: meta.into(),
                             icon: IconName::ZedAgent,
+                            icon_from_external_svg: None,
                             status: AgentThreadStatus::default(),
                             diff_stats: None,
                             workspace_index: index,
@@ -423,6 +428,7 @@ impl Sidebar {
                             session_info,
                             status,
                             icon,
+                            icon_from_external_svg,
                             workspace_index: _,
                             is_live,
                             is_background,
@@ -432,6 +438,7 @@ impl Sidebar {
                             session_info.title = Some(info.title.clone());
                             *status = info.status;
                             *icon = info.icon;
+                            *icon_from_external_svg = info.icon_from_external_svg.clone();
                             *is_live = true;
                             *is_background = info.is_background;
                         }
@@ -439,6 +446,7 @@ impl Sidebar {
                         threads.push(ListEntry::Thread {
                             session_info: info.into(),
                             icon: info.icon,
+                            icon_from_external_svg: info.icon_from_external_svg.clone(),
                             status: info.status,
                             diff_stats: None,
                             workspace_index: index,
@@ -625,6 +633,7 @@ impl Sidebar {
             ListEntry::Thread {
                 session_info,
                 icon,
+                icon_from_external_svg,
                 status,
                 workspace_index,
                 highlight_positions,
@@ -633,6 +642,7 @@ impl Sidebar {
                 ix,
                 session_info,
                 *icon,
+                icon_from_external_svg.clone(),
                 *status,
                 *workspace_index,
                 highlight_positions,
@@ -932,6 +942,7 @@ impl Sidebar {
         ix: usize,
         session_info: &acp_thread::AgentSessionInfo,
         icon: IconName,
+        icon_from_external_svg: Option<SharedString>,
         status: AgentThreadStatus,
         workspace_index: usize,
         highlight_positions: &[usize],
@@ -947,9 +958,11 @@ impl Sidebar {
         let session_info = session_info.clone();
 
         let id = SharedString::from(format!("thread-entry-{}", ix));
-
         ThreadItem::new(id, title)
             .icon(icon)
+            .when_some(icon_from_external_svg, |this, svg| {
+                this.custom_icon_from_external_svg(svg)
+            })
             .highlight_positions(highlight_positions.to_vec())
             .status(status)
             .notified(has_notification)
@@ -1011,7 +1024,7 @@ impl Sidebar {
                             .color(Color::Muted),
                     )
                     .child(Label::new("View More"))
-                    .child(Label::new(count).color(Color::Muted)),
+                    .child(Label::new(count).color(Color::Muted).size(LabelSize::Small)),
             )
             .on_click(cx.listener(move |this, _, window, cx| {
                 this.selection = None;
@@ -1679,6 +1692,7 @@ mod tests {
                         meta: None,
                     },
                     icon: IconName::ZedAgent,
+                    icon_from_external_svg: None,
                     status: AgentThreadStatus::Completed,
                     diff_stats: None,
                     workspace_index: 0,
@@ -1696,6 +1710,7 @@ mod tests {
                         meta: None,
                     },
                     icon: IconName::ZedAgent,
+                    icon_from_external_svg: None,
                     status: AgentThreadStatus::Running,
                     diff_stats: None,
                     workspace_index: 0,
@@ -1713,6 +1728,7 @@ mod tests {
                         meta: None,
                     },
                     icon: IconName::ZedAgent,
+                    icon_from_external_svg: None,
                     status: AgentThreadStatus::Error,
                     diff_stats: None,
                     workspace_index: 1,
@@ -1730,6 +1746,7 @@ mod tests {
                         meta: None,
                     },
                     icon: IconName::ZedAgent,
+                    icon_from_external_svg: None,
                     status: AgentThreadStatus::WaitingForConfirmation,
                     diff_stats: None,
                     workspace_index: 0,
@@ -1747,6 +1764,7 @@ mod tests {
                         meta: None,
                     },
                     icon: IconName::ZedAgent,
+                    icon_from_external_svg: None,
                     status: AgentThreadStatus::Completed,
                     diff_stats: None,
                     workspace_index: 1,
