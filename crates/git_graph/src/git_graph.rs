@@ -73,7 +73,10 @@ impl CopiedState {
     }
 }
 
-struct DraggedSplitHandle;
+enum DraggedSplitHandle {
+    CommitDetailPanel,
+    CanvasColumn,
+}
 
 #[derive(Clone)]
 struct ChangedFileEntry {
@@ -197,78 +200,61 @@ impl ChangedFileEntry {
     }
 }
 
-struct CanvasDraggedSplitHandle;
-
-struct CanvasSplitState {
-    width: Option<Pixels>,
-}
-
-impl CanvasSplitState {
-    pub fn new() -> Self {
-        Self { width: None }
-    }
-
-    pub fn width(&self) -> Option<Pixels> {
-        self.width
-    }
-
-    pub fn on_drag_move(
-        &mut self,
-        drag_event: &DragMoveEvent<CanvasDraggedSplitHandle>,
-        _window: &mut Window,
-        _cx: &mut Context<Self>,
-    ) {
-        let drag_position = drag_event.event.position;
-        let bounds = drag_event.bounds;
-        self.width = Some(drag_position.x - bounds.left());
-    }
-
-    fn on_double_click(&mut self) {
-        self.width = None
-    }
-}
-
 pub struct SplitState {
-    left_ratio: f32,
-    visible_left_ratio: f32,
+    commit_detail_panel_ratio: f32,
+    canvas_column_width: Option<Pixels>,
 }
 
 impl SplitState {
     pub fn new() -> Self {
         Self {
-            left_ratio: 1.0,
-            visible_left_ratio: 1.0,
+            commit_detail_panel_ratio: 0.0,
+            canvas_column_width: None,
         }
     }
 
-    pub fn right_ratio(&self) -> f32 {
-        1.0 - self.visible_left_ratio
+    pub fn canvas_column_width(&self) -> Option<Pixels> {
+        self.canvas_column_width
+    }
+
+    pub fn commit_detail_panel_ratio(&self) -> f32 {
+        self.commit_detail_panel_ratio
     }
 
     fn on_drag_move(
         &mut self,
         drag_event: &DragMoveEvent<DraggedSplitHandle>,
         _window: &mut Window,
-        _cx: &mut Context<Self>,
+        cx: &mut Context<Self>,
     ) {
         let drag_position = drag_event.event.position;
         let bounds = drag_event.bounds;
-        let bounds_width = bounds.right() - bounds.left();
+        let handle = drag_event.drag(cx);
+        match handle {
+            DraggedSplitHandle::CommitDetailPanel => {
+                let bounds_width = bounds.right() - bounds.left();
 
-        let min_ratio = 0.1;
-        let max_ratio = 0.9;
+                let min_ratio = 0.1;
+                let max_ratio = 0.9;
 
-        let new_ratio = (drag_position.x - bounds.left()) / bounds_width;
-        self.visible_left_ratio = new_ratio.clamp(min_ratio, max_ratio);
+                let new_ratio = (drag_position.x - bounds.left()) / bounds_width;
+                self.commit_detail_panel_ratio = 1.0 - new_ratio.clamp(min_ratio, max_ratio);
+            }
+            DraggedSplitHandle::CanvasColumn => {
+                self.canvas_column_width = Some(drag_position.x - bounds.left());
+            }
+        }
     }
 
-    fn commit_ratio(&mut self) {
-        self.left_ratio = self.visible_left_ratio;
-    }
-
-    fn on_double_click(&mut self) {
-        self.left_ratio = 1.0;
-        self.visible_left_ratio = 1.0;
+    fn on_double_click(&mut self, handle: DraggedSplitHandle) {
+        match handle {
+            DraggedSplitHandle::CommitDetailPanel => {
+                self.commit_detail_panel_ratio = 0.0;
+            }
+            DraggedSplitHandle::CanvasColumn => {
+                self.canvas_column_width = None;
+            }
+        }
     }
 }
 
@@ -883,8 +869,7 @@ pub struct GitGraph {
     selected_commit_diff: Option<CommitDiff>,
     selected_commit_diff_stats: Option<(usize, usize)>,
     _commit_diff_task: Option<Task<()>>,
-    commit_details_split_state: Entity<SplitState>,
-    canvas_split_state: Entity<CanvasSplitState>,
+    split_state: Entity<SplitState>,
     selected_repo_id: Option<RepositoryId>,
     changed_files_scroll_handle: UniformListScrollHandle,
     pending_select_sha: Option<Oid>,
@@ -982,8 +967,7 @@ impl GitGraph {
             selected_commit_diff_stats: None,
             log_source,
             log_order,
-            commit_details_split_state: cx.new(|_cx| SplitState::new()),
-            canvas_split_state: cx.new(|_cx| CanvasSplitState::new()),
+            split_state: cx.new(|_cx| SplitState::new()),
             selected_repo_id: active_repository,
             changed_files_scroll_handle: UniformListScrollHandle::new(),
             pending_select_sha: None,
@@ -1445,7 +1429,7 @@ impl GitGraph {
             .h_full()
             .bg(cx.theme().colors().surface_background)
             .flex_basis(DefiniteLength::Fraction(
-                self.commit_details_split_state.read(cx).right_ratio(),
+                self.split_state.read(cx).commit_detail_panel_ratio(),
             ))
             .child(
                 v_flex()
@@ -2080,13 +2064,13 @@ impl GitGraph {
                     .on_hover(move |&was_hovered, _, cx| hovered.write(cx, was_hovered))
                     .on_click(cx.listener(|this, event: &ClickEvent, _window, cx| {
                         if event.click_count() >= 2 {
-                            this.canvas_split_state.update(cx, |state, _| {
-                                state.on_double_click();
+                            this.split_state.update(cx, |state, _| {
+                                state.on_double_click(DraggedSplitHandle::CanvasColumn);
                             });
                         }
                         cx.stop_propagation();
                     }))
-                    .on_drag(CanvasDraggedSplitHandle, |_, _, _, cx| {
+                    .on_drag(DraggedSplitHandle::CanvasColumn, |_, _, _, cx| {
                         cx.new(|_| gpui::Empty)
                     }),
             )
@@ -2116,13 +2100,15 @@ impl GitGraph {
                     .block_mouse_except_scroll()
                     .on_click(cx.listener(|this, event: &ClickEvent, _window, cx| {
                         if event.click_count() >= 2 {
-                            this.commit_details_split_state.update(cx, |state, _| {
-                                state.on_double_click();
+                            this.split_state.update(cx, |state, _| {
+                                state.on_double_click(DraggedSplitHandle::CommitDetailPanel);
                             });
                         }
                         cx.stop_propagation();
                     }))
-                    .on_drag(DraggedSplitHandle, |_, _, _, cx| cx.new(|_| gpui::Empty)),
+                    .on_drag(DraggedSplitHandle::CommitDetailPanel, |_, _, _, cx| {
+                        cx.new(|_| gpui::Empty)
+                    }),
             )
             .into_any_element()
     }
@@ -2190,9 +2176,9 @@ impl Render for GitGraph {
                 .child(
                     div()
                         .flex_basis(DefiniteLength::Absolute(
-                            self.canvas_split_state
+                            self.split_state
                                 .read(cx)
-                                .width()
+                                .canvas_column_width()
                                 .unwrap_or(self.graph_content_width())
                                 .into(),
                         ))
@@ -2325,17 +2311,7 @@ impl Render for GitGraph {
                     )
                 })
                 .on_drag_move::<DraggedSplitHandle>(cx.listener(|this, event, window, cx| {
-                    this.commit_details_split_state.update(cx, |state, cx| {
-                        state.on_drag_move(event, window, cx);
-                    });
-                }))
-                .on_drop::<DraggedSplitHandle>(cx.listener(|this, _event, _window, cx| {
-                    this.commit_details_split_state.update(cx, |state, _cx| {
-                        state.commit_ratio();
-                    });
-                }))
-                .on_drag_move::<CanvasDraggedSplitHandle>(cx.listener(|this, event, window, cx| {
-                    this.canvas_split_state.update(cx, |state, cx| {
+                    this.split_state.update(cx, |state, cx| {
                         state.on_drag_move(event, window, cx);
                     });
                 }))
