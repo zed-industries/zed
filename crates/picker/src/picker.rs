@@ -992,11 +992,7 @@ mod tests {
         init_test(cx);
 
         let (picker, cx) = cx.add_window_view(|window, cx| {
-            Picker::uniform_list(
-                TestDelegate::new(vec![true, false, true]),
-                window,
-                cx,
-            )
+            Picker::uniform_list(TestDelegate::new(vec![true, false, true]), window, cx)
         });
 
         picker.update(cx, |picker, _cx| {
