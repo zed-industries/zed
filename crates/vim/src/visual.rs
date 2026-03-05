@@ -1562,6 +1562,41 @@ mod test {
     }
 
     #[gpui::test]
+    async fn test_visual_block_insert_after_ctrl_d_scroll(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        cx.set_scroll_height(10).await;
+        cx.set_shared_state(indoc! {
+            "ˇalpha 01
+            alpha 02
+            alpha 03
+            alpha 04
+            alpha 05
+            alpha 06
+            alpha 07
+            alpha 08
+            alpha 09
+            alpha 10
+            alpha 11
+            alpha 12
+            alpha 13
+            alpha 14
+            alpha 15
+            alpha 16
+            alpha 17
+            alpha 18
+            "
+        })
+        .await;
+
+        cx.simulate_shared_keystrokes("ctrl-v 5 j ctrl-d").await;
+        cx.shared_state().await.assert_matches();
+
+        cx.simulate_shared_keystrokes("shift-i x escape").await;
+        cx.shared_state().await.assert_matches();
+    }
+
+    #[gpui::test]
     async fn test_visual_block_wrapping_selection(cx: &mut gpui::TestAppContext) {
         let mut cx = NeovimBackedTestContext::new(cx).await;
 
