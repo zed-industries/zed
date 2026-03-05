@@ -18,7 +18,7 @@ use util::ResultExt;
 
 use crate::{
     notebook::{CODE_BLOCK_INSET, GUTTER_WIDTH},
-    outputs::{Output, WidgetStore, plain, plain::TerminalOutput, user_error::ErrorView},
+    outputs::{Output, plain, plain::TerminalOutput, user_error::ErrorView},
     repl_settings::ReplSettings,
 };
 
