@@ -127,6 +127,7 @@ where
 /// The style of an image element.
 pub struct ImageStyle {
     grayscale: bool,
+    nearest_neighbor: bool,
     object_fit: ObjectFit,
     loading: Option<Box<dyn Fn() -> AnyElement>>,
     fallback: Option<Box<dyn Fn() -> AnyElement>>,
@@ -136,6 +137,7 @@ impl Default for ImageStyle {
     fn default() -> Self {
         Self {
             grayscale: false,
+            nearest_neighbor: false,
             object_fit: ObjectFit::Contain,
             loading: None,
             fallback: None,
@@ -151,6 +153,12 @@ pub trait StyledImage: Sized {
     /// Set the image to be displayed in grayscale.
     fn grayscale(mut self, grayscale: bool) -> Self {
         self.image_style().grayscale = grayscale;
+        self
+    }
+
+    /// Set the image to use nearest-neighbor interpolation
+    fn nearest_neighbor(mut self, nearest_neighbor: bool) -> Self {
+        self.image_style().nearest_neighbor = nearest_neighbor;
         self
     }
 
@@ -481,6 +489,7 @@ impl Element for Img {
                             data,
                             layout_state.frame_index,
                             self.style.grayscale,
+                            self.style.nearest_neighbor,
                         )
                         .log_err();
                 } else if let Some(replacement) = &mut layout_state.replacement {

@@ -144,7 +144,7 @@ impl Scene {
         self.subpixel_sprites
             .sort_by_key(|sprite| (sprite.order, sprite.tile.tile_id));
         self.polychrome_sprites
-            .sort_by_key(|sprite| (sprite.order, sprite.tile.tile_id));
+            .sort_by_key(|sprite| (sprite.order, sprite.nearest_neighbor, sprite.tile.tile_id));
         self.surfaces.sort_by_key(|surface| surface.order);
     }
 
@@ -413,7 +413,9 @@ impl<'a> Iterator for BatchIterator<'a> {
                 })
             }
             PrimitiveKind::PolychromeSprite => {
-                let texture_id = self.polychrome_sprites_iter.peek().unwrap().tile.texture_id;
+                let first = self.polychrome_sprites_iter.peek().unwrap();
+                let texture_id = first.tile.texture_id;
+                let nearest_neighbor = first.nearest_neighbor;
                 let sprites_start = self.polychrome_sprites_start;
                 let mut sprites_end = sprites_start + 1;
                 self.polychrome_sprites_iter.next();
@@ -422,6 +424,7 @@ impl<'a> Iterator for BatchIterator<'a> {
                     .next_if(|sprite| {
                         (sprite.order, batch_kind) < max_order_and_kind
                             && sprite.tile.texture_id == texture_id
+                            && sprite.nearest_neighbor == nearest_neighbor
                     })
                     .is_some()
                 {
@@ -430,6 +433,7 @@ impl<'a> Iterator for BatchIterator<'a> {
                 self.polychrome_sprites_start = sprites_end;
                 Some(PrimitiveBatch::PolychromeSprites {
                     texture_id,
+                    nearest_neighbor,
                     range: sprites_start..sprites_end,
                 })
             }
@@ -476,6 +480,7 @@ pub enum PrimitiveBatch {
     },
     PolychromeSprites {
         texture_id: AtlasTextureId,
+        nearest_neighbor: bool,
         range: Range<usize>,
     },
     Surfaces(Range<usize>),
@@ -697,6 +702,7 @@ pub struct PolychromeSprite {
     pub order: DrawOrder,
     pub pad: u32, // align to 8 bytes
     pub grayscale: bool,
+    pub nearest_neighbor: bool,
     pub opacity: f32,
     pub bounds: Bounds<ScaledPixels>,
     pub content_mask: ContentMask<ScaledPixels>,

@@ -391,8 +391,13 @@ impl Element for ImageContentElement {
                             .border_color(border_color),
                     )
                     .child({
+                        let nearest = matches!(
+                            ImageViewerSettings::get_global(cx).image_smoothing,
+                            ImageSmoothing::Nearest,
+                        );
                         img(image)
                             .id(("image-viewer-image", self.image_view.entity_id()))
+                            .nearest_neighbor(nearest)
                             .size_full()
                     }),
             )
