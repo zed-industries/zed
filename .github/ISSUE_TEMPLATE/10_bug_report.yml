@@ -100,7 +100,7 @@ body:
       label: (for AI issues) Model provider details
       placeholder: |
         - Provider: (Anthropic via ZedPro, Anthropic via API key, Copilot Chat, Mistral, OpenAI, etc.)
-        - Model Name: (Claude Sonnet 4.5, Gemini 3 Pro, GPT-5)
+        - Model Name: (Claude Sonnet 4.5, Gemini 3.1 Pro, GPT-5)
         - Mode: (Agent Panel, Inline Assistant, Terminal Assistant or Text Threads)
         - Other details (ACPs, MCPs, other settings, etc.):
     validations:

@@ -12,7 +12,8 @@ use similar::DiffableStr;
 use std::ops::Range;
 use std::sync::Arc;
 use zeta_prompt::{
-    ZetaFormat, excerpt_range_for_format, format_zeta_prompt, resolve_cursor_region,
+    ZetaFormat, encode_patch_as_output_for_format, excerpt_range_for_format, format_zeta_prompt,
+    output_end_marker_for_format, resolve_cursor_region,
 };
 
 pub async fn run_format_prompt(
@@ -36,12 +37,8 @@ pub async fn run_format_prompt(
             step_progress.set_substatus("formatting teacher prompt");
 
             let zeta_format = ZetaFormat::default();
-            let excerpt_ranges = prompt_inputs
-                .excerpt_ranges
-                .as_ref()
-                .context("prompt_inputs must have excerpt_ranges")?;
             let (editable_range, context_range) =
-                excerpt_range_for_format(zeta_format, excerpt_ranges);
+                excerpt_range_for_format(zeta_format, &prompt_inputs.excerpt_ranges);
 
             let prompt = TeacherPrompt::format_prompt(example, editable_range, context_range);
             example.prompt = Some(ExamplePrompt {
@@ -57,18 +54,22 @@ pub async fn run_format_prompt(
 
             let prompt = format_zeta_prompt(prompt_inputs, zeta_format);
             let prefill = zeta_prompt::get_prefill(prompt_inputs, zeta_format);
-            let (expected_patch, expected_cursor_offset) = example
+            let expected_output = example
                 .spec
                 .expected_patches_with_cursor_positions()
                 .into_iter()
                 .next()
-                .context("expected patches is empty")?;
-            let expected_output = zeta2_output_for_patch(
-                prompt_inputs,
-                &expected_patch,
-                expected_cursor_offset,
-                zeta_format,
-            )?;
+                .and_then(|(expected_patch, expected_cursor_offset)| {
+                    zeta2_output_for_patch(
+                        prompt_inputs,
+                        &expected_patch,
+                        expected_cursor_offset,
+                        zeta_format,
+                    )
+                    .ok()
+                })
+                .unwrap_or_default();
+
             let rejected_output = example.spec.rejected_patch.as_ref().and_then(|patch| {
                 zeta2_output_for_patch(prompt_inputs, patch, None, zeta_format).ok()
             });
@@ -101,6 +102,12 @@ pub fn zeta2_output_for_patch(
         old_editable_region.push('\n');
     }
 
+    if let Some(encoded_output) =
+        encode_patch_as_output_for_format(version, &old_editable_region, patch, cursor_offset)?
+    {
+        return Ok(encoded_output);
+    }
+
     let (mut result, first_hunk_offset) =
         udiff::apply_diff_to_string_with_hunk_offset(patch, &old_editable_region).with_context(
             || {
@@ -120,16 +127,11 @@ pub fn zeta2_output_for_patch(
         result.insert_str(offset, zeta_prompt::CURSOR_MARKER);
     }
 
-    match version {
-        ZetaFormat::V0120GitMergeMarkers
-        | ZetaFormat::V0131GitMergeMarkersPrefix
-        | ZetaFormat::V0211SeedCoder => {
-            if !result.ends_with('\n') {
-                result.push('\n');
-            }
-            result.push_str(zeta_prompt::v0120_git_merge_markers::END_MARKER);
+    if let Some(end_marker) = output_end_marker_for_format(version) {
+        if !result.ends_with('\n') {
+            result.push('\n');
         }
-        _ => (),
+        result.push_str(end_marker);
     }
 
     Ok(result)

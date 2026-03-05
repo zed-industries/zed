@@ -14,6 +14,7 @@ mod tools;
 
 use context_server::ContextServerId;
 pub use db::*;
+use itertools::Itertools;
 pub use native_agent_server::NativeAgentServer;
 pub use pattern_extraction::*;
 pub use shell_command_parser::extract_commands;
@@ -350,11 +351,14 @@ impl NativeAgent {
         let session_id = thread.id().clone();
         let parent_session_id = thread.parent_thread_id();
         let title = thread.title();
+        let draft_prompt = thread.draft_prompt().map(Vec::from);
+        let scroll_position = thread.ui_scroll_position();
+        let token_usage = thread.latest_token_usage();
         let project = thread.project.clone();
         let action_log = thread.action_log.clone();
         let prompt_capabilities_rx = thread.prompt_capabilities_rx.clone();
         let acp_thread = cx.new(|cx| {
-            acp_thread::AcpThread::new(
+            let mut acp_thread = acp_thread::AcpThread::new(
                 parent_session_id,
                 title,
                 connection,
@@ -363,7 +367,11 @@ impl NativeAgent {
                 session_id.clone(),
                 prompt_capabilities_rx,
                 cx,
-            )
+            );
+            acp_thread.set_draft_prompt(draft_prompt);
+            acp_thread.set_ui_scroll_position(scroll_position);
+            acp_thread.update_token_usage(token_usage, cx);
+            acp_thread
         });
 
         let registry = LanguageModelRegistry::read_global(cx);
@@ -843,9 +851,7 @@ impl NativeAgent {
             return;
         }
 
-        let database_future = ThreadsDatabase::connect(cx);
-        let (id, db_thread) =
-            thread.update(cx, |thread, cx| (thread.id().clone(), thread.to_db(cx)));
+        let id = thread.read(cx).id().clone();
         let Some(session) = self.sessions.get_mut(&id) else {
             return;
         };
@@ -859,6 +865,12 @@ impl NativeAgent {
                 .collect::<Vec<_>>(),
         );
 
+        let draft_prompt = session.acp_thread.read(cx).draft_prompt().map(Vec::from);
+        let database_future = ThreadsDatabase::connect(cx);
+        let db_thread = thread.update(cx, |thread, cx| {
+            thread.set_draft_prompt(draft_prompt);
+            thread.to_db(cx)
+        });
         let thread_store = self.thread_store.clone();
         session.pending_save = cx.spawn(async move |_, cx| {
             let Some(database) = database_future.await.map_err(|err| anyhow!(err)).log_err() else {
@@ -1747,6 +1759,10 @@ impl SubagentHandle for NativeSubagentHandle {
         self.session_id.clone()
     }
 
+    fn num_entries(&self, cx: &App) -> usize {
+        self.acp_thread.read(cx).entries().len()
+    }
+
     fn send(&self, message: String, cx: &AsyncApp) -> Task<Result<String>> {
         let thread = self.subagent_thread.clone();
         let acp_thread = self.acp_thread.clone();
@@ -1819,10 +1835,24 @@ impl SubagentHandle for NativeSubagentHandle {
                 SubagentPromptResult::Completed => thread.read_with(cx, |thread, _cx| {
                     thread
                         .last_message()
-                        .map(|m| m.to_markdown())
+                        .and_then(|message| {
+                            let content = message.as_agent_message()?
+                                .content
+                                .iter()
+                                .filter_map(|c| match c {
+                                    AgentMessageContent::Text(text) => Some(text.as_str()),
+                                    _ => None,
+                                })
+                                .join("\n\n");
+                            if content.is_empty() {
+                                None
+                            } else {
+                                Some( content)
+                            }
+                        })
                         .context("No response from subagent")
                 }),
-                SubagentPromptResult::Cancelled => Err(anyhow!("User cancelled")),
+                SubagentPromptResult::Cancelled => Err(anyhow!("User canceled")),
                 SubagentPromptResult::Error(message) => Err(anyhow!("{message}")),
                 SubagentPromptResult::ContextWindowWarning => {
                     thread.update(cx, |thread, cx| thread.cancel(cx)).await;
@@ -1891,7 +1921,9 @@ mod internal_tests {
     use gpui::TestAppContext;
     use indoc::formatdoc;
     use language_model::fake_provider::{FakeLanguageModel, FakeLanguageModelProvider};
-    use language_model::{LanguageModelProviderId, LanguageModelProviderName};
+    use language_model::{
+        LanguageModelCompletionEvent, LanguageModelProviderId, LanguageModelProviderName,
+    };
     use serde_json::json;
     use settings::SettingsStore;
     use util::{path, rel_path::rel_path};
@@ -2523,6 +2555,13 @@ mod internal_tests {
         cx.run_until_parked();
 
         model.send_last_completion_stream_text_chunk("Lorem.");
+        model.send_last_completion_stream_event(LanguageModelCompletionEvent::UsageUpdate(
+            language_model::TokenUsage {
+                input_tokens: 150,
+                output_tokens: 75,
+                ..Default::default()
+            },
+        ));
         model.end_last_completion_stream();
         cx.run_until_parked();
         summary_model
@@ -2550,6 +2589,24 @@ mod internal_tests {
             )
         });
 
+        cx.run_until_parked();
+
+        // Set a draft prompt with rich content blocks before saving.
+        let draft_blocks = vec![
+            acp::ContentBlock::Text(acp::TextContent::new("Check out ")),
+            acp::ContentBlock::ResourceLink(acp::ResourceLink::new("b.md", uri.to_string())),
+            acp::ContentBlock::Text(acp::TextContent::new(" please")),
+        ];
+        acp_thread.update(cx, |thread, _cx| {
+            thread.set_draft_prompt(Some(draft_blocks.clone()));
+        });
+        thread.update(cx, |thread, _cx| {
+            thread.set_ui_scroll_position(Some(gpui::ListOffset {
+                item_ix: 5,
+                offset_in_item: gpui::px(12.5),
+            }));
+        });
+        thread.update(cx, |_thread, cx| cx.notify());
         cx.run_until_parked();
 
         // Close the session so it can be reloaded from disk.
@@ -2588,6 +2645,29 @@ mod internal_tests {
 
                 "}
             )
+        });
+
+        // Ensure the draft prompt with rich content blocks survived the round-trip.
+        acp_thread.read_with(cx, |thread, _| {
+            assert_eq!(thread.draft_prompt(), Some(draft_blocks.as_slice()));
+        });
+
+        // Ensure token usage survived the round-trip.
+        acp_thread.read_with(cx, |thread, _| {
+            let usage = thread
+                .token_usage()
+                .expect("token usage should be restored after reload");
+            assert_eq!(usage.input_tokens, 150);
+            assert_eq!(usage.output_tokens, 75);
+        });
+
+        // Ensure scroll position survived the round-trip.
+        acp_thread.read_with(cx, |thread, _| {
+            let scroll = thread
+                .ui_scroll_position()
+                .expect("scroll position should be restored after reload");
+            assert_eq!(scroll.item_ix, 5);
+            assert_eq!(scroll.offset_in_item, gpui::px(12.5));
         });
     }
 

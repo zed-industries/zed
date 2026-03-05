@@ -1468,7 +1468,8 @@ impl Pane {
     fn update_active_tab(&mut self, index: usize) {
         if !self.is_tab_pinned(index) {
             self.suppress_scroll = false;
-            self.tab_bar_scroll_handle.scroll_to_item(index);
+            self.tab_bar_scroll_handle
+                .scroll_to_item(index - self.pinned_tab_count);
         }
     }
 
@@ -3449,7 +3450,7 @@ impl Pane {
                 cx,
             )
             .children(pinned_tabs.len().ne(&0).then(|| {
-                let max_scroll = self.tab_bar_scroll_handle.max_offset().width;
+                let max_scroll = self.tab_bar_scroll_handle.max_offset().x;
                 // We need to check both because offset returns delta values even when the scroll handle is not scrollable
                 let is_scrolled = self.tab_bar_scroll_handle.offset().x < px(0.);
                 // Avoid flickering when max_offset is very small (< 2px).
@@ -7932,6 +7933,71 @@ mod tests {
         assert!(
             !tab_bounds.intersects(&new_tab_button_bounds),
             "Tab should not overlap with the new tab button, if this is failing check if there's been a redesign!"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_pinned_tabs_scroll_to_item_uses_correct_index(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        cx.simulate_resize(size(px(400.), px(300.)));
+
+        for label in ["A", "B", "C"] {
+            add_labeled_item(&pane, label, false, cx);
+        }
+
+        pane.update_in(cx, |pane, window, cx| {
+            pane.pin_tab_at(0, window, cx);
+            pane.pin_tab_at(1, window, cx);
+            pane.pin_tab_at(2, window, cx);
+        });
+
+        for label in ["D", "E", "F", "G", "H", "I", "J", "K"] {
+            add_labeled_item(&pane, label, false, cx);
+        }
+
+        assert_item_labels(
+            &pane,
+            ["A!", "B!", "C!", "D", "E", "F", "G", "H", "I", "J", "K*"],
+            cx,
+        );
+
+        cx.run_until_parked();
+
+        // Verify overflow exists (precondition for scroll test)
+        let scroll_handle =
+            pane.update_in(cx, |pane, _window, _cx| pane.tab_bar_scroll_handle.clone());
+        assert!(
+            scroll_handle.max_offset().x > px(0.),
+            "Test requires tab overflow to verify scrolling. Increase tab count or reduce window width."
+        );
+
+        // Activate a different tab first, then activate K
+        // This ensures we're not just re-activating an already-active tab
+        pane.update_in(cx, |pane, window, cx| {
+            pane.activate_item(3, true, true, window, cx);
+        });
+        cx.run_until_parked();
+
+        pane.update_in(cx, |pane, window, cx| {
+            pane.activate_item(10, true, true, window, cx);
+        });
+        cx.run_until_parked();
+
+        let scroll_handle =
+            pane.update_in(cx, |pane, _window, _cx| pane.tab_bar_scroll_handle.clone());
+        let k_tab_bounds = cx.debug_bounds("TAB-10").unwrap();
+        let scroll_bounds = scroll_handle.bounds();
+
+        assert!(
+            k_tab_bounds.left() >= scroll_bounds.left(),
+            "Active tab K should be scrolled into view"
         );
     }
 

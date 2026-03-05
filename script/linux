@@ -27,13 +27,15 @@ if [[ -n $apt ]]; then
     g++
     libasound2-dev
     libfontconfig-dev
+    libgit2-dev
+    libglib2.0-dev
+    libssl-dev
+    libva-dev
+    libvulkan1
     libwayland-dev
     libx11-xcb-dev
     libxkbcommon-x11-dev
-    libssl-dev
     libzstd-dev
-    libvulkan1
-    libgit2-dev
     make
     cmake
     clang
@@ -55,11 +57,21 @@ if [[ -n $apt ]]; then
   elif (grep -qP 'PRETTY_NAME="((Debian|Raspbian).+12|Linux Mint 21|.+22\.04)' /etc/os-release); then
     deps+=( mold libstdc++-12-dev )
   elif (grep -qP 'PRETTY_NAME="((Debian|Raspbian).+11|Linux Mint 20|.+20\.04)' /etc/os-release); then
-    deps+=( libstdc++-10-dev )
+    # Ubuntu 20.04 ships clang-10 and libstdc++-10 which lack adequate C++20
+    # support for building webrtc-sys (requires -std=c++20, lambdas in
+    # unevaluated contexts from clang 17+, and working std::ranges in the
+    # stdlib). clang-18 is available in focal-security/universe as an official
+    # backport, and libstdc++-11-dev from the ubuntu-toolchain-r PPA provides
+    # headers with working pointer_traits/contiguous_range.
+    # Note: the prebuilt libwebrtc.a is compiled with libstdc++, so we must
+    # use libstdc++ (not libc++) to avoid ABI mismatches at link time.
+    $maysudo add-apt-repository -y ppa:ubuntu-toolchain-r/test
+    deps+=( clang-18 libstdc++-11-dev )
   fi
 
   $maysudo "$apt" update
   $maysudo "$apt" install -y "${deps[@]}"
+
   finalize
   exit 0
 fi
@@ -78,6 +90,8 @@ if [[ -n $dnf ]] || [[ -n $yum ]]; then
     cmake
     alsa-lib-devel
     fontconfig-devel
+    glib2-devel
+    libva-devel
     wayland-devel
     libxcb-devel
     libxkbcommon-x11-devel
@@ -141,7 +155,9 @@ if [[ -n $zyp ]]; then
     cmake
     fontconfig-devel
     gcc
+    libva-devel
     gcc-c++
+    glib2-devel
     git
     gzip
     jq
@@ -175,6 +191,8 @@ if [[ -n $pacman ]]; then
     cmake
     alsa-lib
     fontconfig
+    glib2
+    libva
     wayland
     libgit2
     libxcb
@@ -205,6 +223,8 @@ if [[ -n $xbps ]]; then
     gcc
     alsa-lib-devel
     fontconfig-devel
+    glib-devel
+    libva-devel
     libxcb-devel
     libxkbcommon-devel
     libzstd-devel
@@ -226,11 +246,13 @@ if [[ -n $emerge ]]; then
   deps=(
     app-arch/zstd
     app-misc/jq
+    dev-libs/glib
     dev-libs/openssl
     dev-libs/wayland
     dev-util/cmake
     media-libs/alsa-lib
     media-libs/fontconfig
+    media-libs/libva
     media-libs/vulkan-loader
     x11-libs/libxcb
     x11-libs/libxkbcommon
