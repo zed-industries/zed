@@ -6805,6 +6805,7 @@ impl ThreadView {
                     .border_t_1()
                     .when(is_failed, |this| this.border_dashed())
                     .border_color(self.tool_card_border_color(cx))
+                    .cursor_pointer()
                     .hover(|s| s.bg(cx.theme().colors().element_hover))
                     .child(
                         Icon::new(IconName::Maximize)
@@ -6863,34 +6864,6 @@ impl ThreadView {
             .into_any_element()
     }
 
-    /// This will return `true` if there were no other tool calls during the same turn as the given tool call (no concurrent tool calls).
-    fn should_show_subagent_fullscreen(&self, tool_call: &ToolCall, cx: &App) -> bool {
-        let parent_thread = self.thread.read(cx);
-
-        let Some(tool_call_index) = parent_thread
-            .entries()
-            .iter()
-            .position(|e| matches!(e, AgentThreadEntry::ToolCall(tc) if tc.id == tool_call.id))
-        else {
-            return false;
-        };
-
-        if let Some(AgentThreadEntry::ToolCall(_)) =
-            parent_thread.entries().get(tool_call_index + 1)
-        {
-            return false;
-        }
-
-        if let Some(AgentThreadEntry::ToolCall(_)) = parent_thread
-            .entries()
-            .get(tool_call_index.saturating_sub(1))
-        {
-            return false;
-        }
-
-        true
-    }
-
     fn render_subagent_expanded_content(
         &self,
         thread_view: &Entity<ThreadView>,
@@ -6900,8 +6873,6 @@ impl ThreadView {
         cx: &Context<Self>,
     ) -> impl IntoElement {
         const MAX_PREVIEW_ENTRIES: usize = 8;
-
-        let should_show_subagent_fullscreen = self.should_show_subagent_fullscreen(tool_call, cx);
 
         let subagent_view = thread_view.read(cx);
         let session_id = subagent_view.thread.read(cx).session_id().clone();
@@ -6936,12 +6907,10 @@ impl ThreadView {
         } else {
             0..total_entries
         };
-        if !should_show_subagent_fullscreen {
-            entry_range.start = entry_range
-                .end
-                .saturating_sub(MAX_PREVIEW_ENTRIES)
-                .max(entry_range.start);
-        };
+        entry_range.start = entry_range
+            .end
+            .saturating_sub(MAX_PREVIEW_ENTRIES)
+            .max(entry_range.start);
         let start_ix = entry_range.start;
 
         let scroll_handle = self
@@ -6979,9 +6948,8 @@ impl ThreadView {
                     .track_scroll(&scroll_handle)
                     .children(rendered_entries),
             )
-            .when(!should_show_subagent_fullscreen, |this| {
-                this.h_56().child(overlay)
-            })
+            .h_56()
+            .child(overlay)
             .into_any_element()
     }
 
