@@ -1026,9 +1026,38 @@ impl DiagnosticPopover {
                                 ),
                             ),
                     )
-                    .child(div().absolute().top_1().right_1().child({
-                        let message = self.local_diagnostic.diagnostic.message.clone();
+                    .child(div().absolute().top_1().right_1().flex().gap_1().child({
+                        let message = self.local_diagnostic.diagnostic.rendered
+                            .clone()
+                            .unwrap_or_else(|| self.local_diagnostic.diagnostic.message.clone());
                         CopyButton::new("copy-diagnostic", message).tooltip_label("Copy Diagnostic")
+                    }).when_some(self.local_diagnostic.diagnostic.rendered.clone(), |this, rendered| {
+                        this.child(
+                            IconButton::new("open-full-diagnostic", IconName::FileDoc)
+                                .icon_size(IconSize::Small)
+                                .tooltip(ui::Tooltip::text("Open Full Diagnostic"))
+                                .on_click(move |_, window, cx| {
+                                    let rendered = rendered.clone();
+                                    if let Some(workspace) = window.root::<Workspace>().flatten() {
+                                        workspace.update(cx, |workspace, cx| {
+                                            let project = workspace.project().clone();
+                                            let buffer = project.update(cx, |project, cx| {
+                                                project.create_local_buffer(&rendered, None, true, cx)
+                                            });
+                                            let editor = cx.new(|cx| {
+                                                Editor::for_buffer(buffer, Some(project), window, cx)
+                                            });
+                                            workspace.add_item_to_active_pane(
+                                                Box::new(editor),
+                                                None,
+                                                true,
+                                                window,
+                                                cx,
+                                            );
+                                        });
+                                    }
+                                }),
+                        )
                     }))
                     .custom_scrollbars(
                         Scrollbars::for_settings::<EditorSettings>()

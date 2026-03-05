@@ -290,6 +290,9 @@ pub struct Diagnostic {
     pub source_kind: DiagnosticSourceKind,
     /// Data from language server that produced this diagnostic. Passed back to the LS when we request code actions for this diagnostic.
     pub data: Option<Value>,
+    /// The full verbose rendered output from the compiler (e.g. rust-analyzer's `rendered` field),
+    /// including ASCII art spans and suggestions.
+    pub rendered: Option<String>,
     /// Whether to underline the corresponding text range in the editor.
     pub underline: bool,
 }
@@ -5723,6 +5726,7 @@ impl Default for Diagnostic {
             is_unnecessary: false,
             underline: true,
             data: None,
+            rendered: None,
             registration_id: None,
         }
     }
