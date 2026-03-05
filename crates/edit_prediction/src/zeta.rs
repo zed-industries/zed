@@ -1,17 +1,19 @@
-use crate::cursor_excerpt::compute_excerpt_ranges;
-use crate::prediction::EditPredictionResult;
 use crate::{
     CurrentEditPrediction, DebugEvent, EditPredictionFinishedDebugEvent, EditPredictionId,
-    EditPredictionModelInput, EditPredictionStartedDebugEvent, EditPredictionStore,
-    ZedUpdateRequiredError,
+    EditPredictionModelInput, EditPredictionStartedDebugEvent, EditPredictionStore, StoredEvent,
+    ZedUpdateRequiredError, cursor_excerpt::compute_excerpt_ranges,
+    prediction::EditPredictionResult,
 };
 use anyhow::Result;
-use cloud_llm_client::predict_edits_v3::RawCompletionRequest;
-use cloud_llm_client::{AcceptEditPredictionBody, EditPredictionRejectReason};
+use cloud_llm_client::{
+    AcceptEditPredictionBody, EditPredictionRejectReason, predict_edits_v3::RawCompletionRequest,
+};
 use edit_prediction_types::PredictedCursorPosition;
 use gpui::{App, AppContext as _, Entity, Task, WeakEntity, prelude::*};
-use language::language_settings::all_language_settings;
-use language::{Buffer, BufferSnapshot, ToOffset as _, ToPoint, text_diff};
+use language::{
+    Buffer, BufferSnapshot, ToOffset as _, ToPoint, language_settings::all_language_settings,
+    text_diff,
+};
 use release_channel::AppVersion;
 use settings::EditPredictionPromptFormat;
 use text::{Anchor, Bias};
@@ -45,6 +47,7 @@ pub fn request_prediction_with_zeta(
         is_open_source,
         ..
     }: EditPredictionModelInput,
+    capture_data: Option<Vec<StoredEvent>>,
     cx: &mut Context<EditPredictionStore>,
 ) -> Task<Result<Option<EditPredictionResult>>> {
     let settings = &all_language_settings(None, cx).edit_predictions;
@@ -367,17 +370,44 @@ pub fn request_prediction_with_zeta(
         };
 
         if can_collect_data {
-            this.update(cx, |this, cx| {
-                this.enqueue_settled_prediction(
-                    id.clone(),
-                    &project,
-                    &edited_buffer,
-                    &edited_buffer_snapshot,
-                    editable_range_in_buffer,
-                    cx,
-                );
+            let weak_this = this.clone();
+            let id = id.clone();
+            let edited_buffer = edited_buffer.clone();
+            let edited_buffer_snapshot = edited_buffer_snapshot.clone();
+            let example_task = capture_data.and_then(|stored_events| {
+                cx.update(|cx| {
+                    crate::capture_example(
+                        project.clone(),
+                        edited_buffer.clone(),
+                        position,
+                        stored_events,
+                        false,
+                        cx,
+                    )
+                })
+            });
+            cx.spawn(async move |cx| {
+                let example_spec = if let Some(task) = example_task {
+                    task.await.ok()
+                } else {
+                    None
+                };
+
+                weak_this
+                    .update(cx, |this, cx| {
+                        this.enqueue_settled_prediction(
+                            id.clone(),
+                            &project,
+                            &edited_buffer,
+                            &edited_buffer_snapshot,
+                            editable_range_in_buffer,
+                            example_spec,
+                            cx,
+                        );
+                    })
+                    .ok();
             })
-            .ok();
+            .detach();
         }
 
         Ok(Some(

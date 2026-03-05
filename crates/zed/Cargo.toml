@@ -48,7 +48,6 @@ visual-tests = [
     "language_model/test-support",
     "fs/test-support",
     "recent_projects/test-support",
-    "sidebar/test-support",
     "title_bar/test-support",
 ]
 

@@ -956,6 +956,18 @@ impl ConnectionView {
             .unwrap_or_else(|| agent_name.clone());
 
         let agent_icon = self.agent.logo();
+        let agent_icon_from_external_svg = self
+            .agent_server_store
+            .read(cx)
+            .agent_icon(&ExternalAgentServerName(self.agent.name()))
+            .or_else(|| {
+                project::AgentRegistryStore::try_global(cx).and_then(|store| {
+                    store
+                        .read(cx)
+                        .agent(self.agent.name().as_ref())
+                        .and_then(|a| a.icon_path().cloned())
+                })
+            });
 
         let weak = cx.weak_entity();
         cx.new(|cx| {
@@ -965,6 +977,7 @@ impl ConnectionView {
                 conversation,
                 weak,
                 agent_icon,
+                agent_icon_from_external_svg,
                 agent_name,
                 agent_display_name,
                 self.workspace.clone(),
@@ -1360,6 +1373,7 @@ impl ConnectionView {
                         }
                     });
                 }
+                cx.notify();
             }
             AcpThreadEvent::PromptCapabilitiesUpdated => {
                 if let Some(active) = self.thread_view(&thread_id) {

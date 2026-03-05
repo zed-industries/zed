@@ -206,6 +206,7 @@ pub struct ThreadView {
     pub(crate) conversation: Entity<super::Conversation>,
     pub server_view: WeakEntity<ConnectionView>,
     pub agent_icon: IconName,
+    pub agent_icon_from_external_svg: Option<SharedString>,
     pub agent_name: SharedString,
     pub focus_handle: FocusHandle,
     pub workspace: WeakEntity<Workspace>,
@@ -293,6 +294,7 @@ impl ThreadView {
         conversation: Entity<super::Conversation>,
         server_view: WeakEntity<ConnectionView>,
         agent_icon: IconName,
+        agent_icon_from_external_svg: Option<SharedString>,
         agent_name: SharedString,
         agent_display_name: SharedString,
         workspace: WeakEntity<Workspace>,
@@ -424,6 +426,7 @@ impl ThreadView {
             conversation,
             server_view,
             agent_icon,
+            agent_icon_from_external_svg,
             agent_name,
             workspace,
             entry_view_state,
@@ -934,6 +937,7 @@ impl ThreadView {
         let session_id = self.thread.read(cx).session_id().clone();
         let parent_session_id = self.thread.read(cx).parent_session_id().cloned();
         let agent_telemetry_id = self.thread.read(cx).connection().telemetry_id();
+        let is_first_message = self.thread.read(cx).entries().is_empty();
         let thread = self.thread.downgrade();
 
         self.is_loading_contents = true;
@@ -974,6 +978,25 @@ impl ThreadView {
                     .ok();
                 }
             });
+            if is_first_message {
+                let text: String = contents
+                    .iter()
+                    .filter_map(|block| match block {
+                        acp::ContentBlock::Text(text_content) => Some(text_content.text.as_str()),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                let text = text.lines().next().unwrap_or("").trim();
+                if !text.is_empty() {
+                    let title: SharedString = util::truncate_and_trailoff(text, 20).into();
+                    thread
+                        .update(cx, |thread, cx| thread.set_title(title, cx))?
+                        .await
+                        .log_err();
+                }
+            }
+
             let turn_start_time = Instant::now();
             let send = thread.update(cx, |thread, cx| {
                 thread.action_log().update(cx, |action_log, cx| {
@@ -6733,6 +6756,9 @@ impl ThreadView {
                                                 this.expanded_tool_calls
                                                     .insert(tool_call_id.clone());
                                             }
+                                            let expanded =
+                                                this.expanded_tool_calls.contains(&tool_call_id);
+                                            telemetry::event!("Subagent Toggled", expanded);
                                             cx.notify();
                                         }
                                     }))
@@ -6751,6 +6777,7 @@ impl ThreadView {
                                     |this, thread| {
                                         this.on_click(cx.listener(
                                             move |_this, _event, _window, cx| {
+                                                telemetry::event!("Subagent Stopped");
                                                 thread.update(cx, |thread, cx| {
                                                     thread.cancel(cx).detach();
                                                 });
@@ -6778,6 +6805,7 @@ impl ThreadView {
                     .border_t_1()
                     .when(is_failed, |this| this.border_dashed())
                     .border_color(self.tool_card_border_color(cx))
+                    .cursor_pointer()
                     .hover(|s| s.bg(cx.theme().colors().element_hover))
                     .child(
                         Icon::new(IconName::Maximize)
@@ -6786,6 +6814,7 @@ impl ThreadView {
                     )
                     .tooltip(Tooltip::text("Make Subagent Full Screen"))
                     .on_click(cx.listener(move |this, _event, window, cx| {
+                        telemetry::event!("Subagent Maximized");
                         this.server_view
                             .update(cx, |this, cx| {
                                 this.navigate_to_session(session_id.clone(), window, cx);
@@ -6835,34 +6864,6 @@ impl ThreadView {
             .into_any_element()
     }
 
-    /// This will return `true` if there were no other tool calls during the same turn as the given tool call (no concurrent tool calls).
-    fn should_show_subagent_fullscreen(&self, tool_call: &ToolCall, cx: &App) -> bool {
-        let parent_thread = self.thread.read(cx);
-
-        let Some(tool_call_index) = parent_thread
-            .entries()
-            .iter()
-            .position(|e| matches!(e, AgentThreadEntry::ToolCall(tc) if tc.id == tool_call.id))
-        else {
-            return false;
-        };
-
-        if let Some(AgentThreadEntry::ToolCall(_)) =
-            parent_thread.entries().get(tool_call_index + 1)
-        {
-            return false;
-        }
-
-        if let Some(AgentThreadEntry::ToolCall(_)) = parent_thread
-            .entries()
-            .get(tool_call_index.saturating_sub(1))
-        {
-            return false;
-        }
-
-        true
-    }
-
     fn render_subagent_expanded_content(
         &self,
         thread_view: &Entity<ThreadView>,
@@ -6872,8 +6873,6 @@ impl ThreadView {
         cx: &Context<Self>,
     ) -> impl IntoElement {
         const MAX_PREVIEW_ENTRIES: usize = 8;
-
-        let should_show_subagent_fullscreen = self.should_show_subagent_fullscreen(tool_call, cx);
 
         let subagent_view = thread_view.read(cx);
         let session_id = subagent_view.thread.read(cx).session_id().clone();
@@ -6908,12 +6907,10 @@ impl ThreadView {
         } else {
             0..total_entries
         };
-        if !should_show_subagent_fullscreen {
-            entry_range.start = entry_range
-                .end
-                .saturating_sub(MAX_PREVIEW_ENTRIES)
-                .max(entry_range.start);
-        };
+        entry_range.start = entry_range
+            .end
+            .saturating_sub(MAX_PREVIEW_ENTRIES)
+            .max(entry_range.start);
         let start_ix = entry_range.start;
 
         let scroll_handle = self
@@ -6951,9 +6948,8 @@ impl ThreadView {
                     .track_scroll(&scroll_handle)
                     .children(rendered_entries),
             )
-            .when(!should_show_subagent_fullscreen, |this| {
-                this.h_56().child(overlay)
-            })
+            .h_56()
+            .child(overlay)
             .into_any_element()
     }
 
