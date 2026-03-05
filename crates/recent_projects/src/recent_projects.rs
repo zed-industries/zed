@@ -1267,7 +1267,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                             .on_click(move |_, window, cx| {
                                 window.dispatch_action(open_action.boxed_clone(), cx)
                             })
-                    })`
+                    })
                     .child(
                         Button::new("open_remote_folder", "Open Remote Project")
                             .key_binding(KeyBinding::for_action(
