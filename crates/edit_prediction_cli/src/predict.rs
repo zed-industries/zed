@@ -390,7 +390,7 @@ async fn predict_anthropic(
             .await?
         else {
             // Request stashed for batched processing
-            return Ok(());
+            continue;
         };
 
         let actual_output = response
@@ -464,7 +464,7 @@ async fn predict_openai(
             .await?
         else {
             // Request stashed for batched processing
-            return Ok(());
+            continue;
         };
 
         let actual_output = response
