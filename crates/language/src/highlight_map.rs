@@ -1,5 +1,9 @@
 use gpui::HighlightStyle;
-use std::sync::Arc;
+use smallvec::SmallVec;
+use std::{
+    collections::{BTreeMap, btree_map::Range},
+    sync::Arc,
+};
 use theme::SyntaxTheme;
 
 #[derive(Clone, Debug)]
@@ -15,28 +19,28 @@ impl HighlightMap {
         // For each capture name in the highlight query, find the longest
         // key in the theme's syntax styles that matches all of the
         // dot-separated components of the capture name.
+        let highlights: BTreeMap<_, _> = theme
+            .highlights
+            .iter()
+            .enumerate()
+            .map(|(i, (key, _))| (key.split('.').collect::<SmallVec<[&str; 2]>>(), i))
+            .collect();
         HighlightMap(
             capture_names
                 .iter()
                 .map(|capture_name| {
-                    theme
-                        .highlights
-                        .iter()
-                        .enumerate()
-                        .filter_map(|(i, (key, _))| {
-                            let mut len = 0;
-                            let capture_parts = capture_name.split('.');
-                            for key_part in key.split('.') {
-                                if capture_parts.clone().any(|part| part == key_part) {
-                                    len += 1;
-                                } else {
-                                    return None;
-                                }
-                            }
-                            Some((i, len))
-                        })
-                        .max_by_key(|(_, len)| *len)
-                        .map_or(DEFAULT_SYNTAX_HIGHLIGHT_ID, |(i, _)| HighlightId(i as u32))
+                    let capture_name = capture_name.split('.').collect::<SmallVec<[&str; 2]>>();
+                    let index = highlights
+                        .range::<SmallVec<[&str; 2]>, _>((
+                            std::ops::Bound::Unbounded,
+                            std::ops::Bound::Included(&capture_name),
+                        ))
+                        .rfind(|(prefix, _)| capture_name.starts_with(prefix))
+                        .map(|(_, index)| *index);
+                    index.map_or(DEFAULT_SYNTAX_HIGHLIGHT_ID, |index| {
+                        HighlightId(index as u32)
+                    })
+
                 })
                 .collect(),
         )
