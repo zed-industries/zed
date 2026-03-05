@@ -185,7 +185,7 @@ impl extension::Extension for WasmExtension {
         .await?
     }
 
-    async fn language_server_settings_schema(
+    async fn language_server_workspace_configuration_schema(
         &self,
         language_server_id: LanguageServerName,
         worktree: Arc<dyn WorktreeDelegate>,
@@ -194,7 +194,11 @@ impl extension::Extension for WasmExtension {
             async move {
                 let resource = store.data_mut().table().push(worktree)?;
                 let schema = extension
-                    .call_language_server_settings_schema(store, &language_server_id, resource)
+                    .call_language_server_workspace_configuration_schema(
+                        store,
+                        &language_server_id,
+                        resource,
+                    )
                     .await?
                     .map_err(|err| store.data().extension_error(err))?;
                 anyhow::Ok(schema)

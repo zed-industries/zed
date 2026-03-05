@@ -377,7 +377,10 @@ impl LspAdapter for ExtensionLspAdapter {
         let delegate = Arc::new(WorktreeDelegateAdapter(delegate.clone())) as _;
         let json_schema: Option<String> = self
             .extension
-            .language_server_settings_schema(self.language_server_id.clone(), delegate)
+            .language_server_workspace_configuration_schema(
+                self.language_server_id.clone(),
+                delegate,
+            )
             .await
             .ok()
             .flatten();

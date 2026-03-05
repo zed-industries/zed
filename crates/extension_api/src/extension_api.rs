@@ -102,8 +102,8 @@ pub trait Extension: Send + Sync {
 
     /// Returns the JSON schema for the initialization options.
     ///
-    /// The schema should conform to JSON Schema and will be used to provide
-    /// autocomplete in settings files.
+    /// The schema must conform to the JSON Schema speification and will be used to
+    /// provide autocomplete in settings files.
     fn language_server_initialization_options_schema(
         &mut self,
         _language_server_id: &LanguageServerId,
@@ -112,11 +112,11 @@ pub trait Extension: Send + Sync {
         Ok(None)
     }
 
-    /// Returns the JSON schema for the settings (workspace configuration).
+    /// Returns the JSON schema for the workspace configuration.
     ///
-    /// The schema should conform to JSON Schema and will be used to provide
-    /// autocomplete in settings files.
-    fn language_server_settings_schema(
+    /// The schema must conform to the JSON Schema specification and will be used to
+    /// provide autocomplete in settings files.
+    fn language_server_workspace_configuration_schema(
         &mut self,
         _language_server_id: &LanguageServerId,
         _worktree: &Worktree,
@@ -404,13 +404,13 @@ impl wit::Guest for Component {
             .and_then(|value| serde_json::to_string(&value).ok()))
     }
 
-    fn language_server_settings_schema(
+    fn language_server_workspace_configuration_schema(
         language_server_id: String,
         worktree: &Worktree,
     ) -> Result<Option<String>, String> {
         let language_server_id = LanguageServerId(language_server_id);
         Ok(extension()
-            .language_server_settings_schema(&language_server_id, worktree)?
+            .language_server_workspace_configuration_schema(&language_server_id, worktree)?
             .and_then(|value| serde_json::to_string(&value).ok()))
     }
 

@@ -492,7 +492,7 @@ impl Extension {
         }
     }
 
-    pub async fn call_language_server_settings_schema(
+    pub async fn call_language_server_workspace_configuration_schema(
         &self,
         store: &mut Store<WasmState>,
         language_server_id: &LanguageServerName,
@@ -500,8 +500,12 @@ impl Extension {
     ) -> Result<Result<Option<String>, String>> {
         match self {
             Extension::V0_8_0(ext) => {
-                ext.call_language_server_settings_schema(store, &language_server_id.0, resource)
-                    .await
+                ext.call_language_server_workspace_configuration_schema(
+                    store,
+                    &language_server_id.0,
+                    resource,
+                )
+                .await
             }
             Extension::V0_6_0(_)
             | Extension::V0_5_0(_)
