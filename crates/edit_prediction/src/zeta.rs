@@ -64,8 +64,25 @@ pub fn request_prediction_with_zeta(
         .map(|file| -> Arc<Path> { file.full_path(cx).into() })
         .unwrap_or_else(|| Arc::from(Path::new("untitled")));
 
+    let repo_url = if can_collect_data {
+        let buffer_id = buffer.read(cx).remote_id();
+        project
+            .read(cx)
+            .git_store()
+            .read(cx)
+            .repository_and_path_for_buffer_id(buffer_id, cx)
+            .and_then(|(repo, _)| repo.read(cx).default_remote_url())
+    } else {
+        None
+    };
+
     let client = store.client.clone();
     let llm_token = store.llm_token.clone();
+    let organization_id = store
+        .user_store
+        .read(cx)
+        .current_organization()
+        .map(|organization| organization.id.clone());
     let app_version = AppVersion::global(cx);
 
     let request_task = cx.background_spawn({
@@ -86,6 +103,7 @@ pub fn request_prediction_with_zeta(
                 preferred_experiment,
                 is_open_source,
                 can_collect_data,
+                repo_url,
             );
 
             if prompt_input_contains_special_tokens(&prompt_input, zeta_version) {
@@ -181,13 +199,17 @@ pub fn request_prediction_with_zeta(
                     let prompt = format_zeta_prompt(&prompt_input, config.format);
                     let prefill = get_prefill(&prompt_input, config.format);
                     let prompt = format!("{prompt}{prefill}");
+                    let environment = config
+                        .environment
+                        .clone()
+                        .or_else(|| Some(config.format.to_string().to_lowercase()));
                     let request = RawCompletionRequest {
                         model: config.model_id.clone().unwrap_or_default(),
                         prompt,
                         temperature: None,
                         stop: vec![],
                         max_tokens: Some(2048),
-                        environment: Some(config.format.to_string().to_lowercase()),
+                        environment,
                     };
 
                     editable_range_in_excerpt = zeta_prompt::excerpt_range_for_format(
@@ -201,6 +223,7 @@ pub fn request_prediction_with_zeta(
                         client,
                         None,
                         llm_token,
+                        organization_id,
                         app_version,
                     )
                     .await?;
@@ -219,6 +242,7 @@ pub fn request_prediction_with_zeta(
                         prompt_input.clone(),
                         client,
                         llm_token,
+                        organization_id,
                         app_version,
                         trigger,
                     )
@@ -380,6 +404,7 @@ pub fn zeta2_prompt_input(
     preferred_experiment: Option<String>,
     is_open_source: bool,
     can_collect_data: bool,
+    repo_url: Option<String>,
 ) -> (Range<usize>, zeta_prompt::ZetaPromptInput) {
     let cursor_point = cursor_offset.to_point(snapshot);
 
@@ -411,6 +436,7 @@ pub fn zeta2_prompt_input(
         experiment: preferred_experiment,
         in_open_source_repo: is_open_source,
         can_collect_data,
+        repo_url,
     };
     (full_context_offset_range, prompt_input)
 }
@@ -430,6 +456,11 @@ pub(crate) fn edit_prediction_accepted(
     let require_auth = custom_accept_url.is_none();
     let client = store.client.clone();
     let llm_token = store.llm_token.clone();
+    let organization_id = store
+        .user_store
+        .read(cx)
+        .current_organization()
+        .map(|organization| organization.id.clone());
     let app_version = AppVersion::global(cx);
 
     cx.background_spawn(async move {
@@ -454,6 +485,7 @@ pub(crate) fn edit_prediction_accepted(
             },
             client,
             llm_token,
+            organization_id,
             app_version,
             require_auth,
         )

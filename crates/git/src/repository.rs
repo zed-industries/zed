@@ -924,8 +924,8 @@ pub trait GitRepository: Send + Sync {
 
     fn diff_stat(
         &self,
-        diff: DiffType,
-    ) -> BoxFuture<'_, Result<HashMap<RepoPath, crate::status::DiffStat>>>;
+        path_prefixes: &[RepoPath],
+    ) -> BoxFuture<'_, Result<crate::status::GitDiffStat>>;
 
     /// Creates a checkpoint for the repository.
     fn checkpoint(&self) -> BoxFuture<'static, Result<GitRepositoryCheckpoint>>;
@@ -1997,42 +1997,30 @@ impl GitRepository for RealGitRepository {
 
     fn diff_stat(
         &self,
-        diff: DiffType,
-    ) -> BoxFuture<'_, Result<HashMap<RepoPath, crate::status::DiffStat>>> {
+        path_prefixes: &[RepoPath],
+    ) -> BoxFuture<'_, Result<crate::status::GitDiffStat>> {
+        let path_prefixes = path_prefixes.to_vec();
         let git_binary = self.git_binary();
+
         self.executor
             .spawn(async move {
-                let git = git_binary?;
-                let output = match diff {
-                    DiffType::HeadToIndex => {
-                        git.build_command(["diff", "--numstat", "--staged"])
-                            .output()
-                            .await?
-                    }
-                    DiffType::HeadToWorktree => {
-                        git.build_command(["diff", "--numstat"]).output().await?
-                    }
-                    DiffType::MergeBase { base_ref } => {
-                        git.build_command([
-                            "diff",
-                            "--numstat",
-                            "--merge-base",
-                            base_ref.as_ref(),
-                            "HEAD",
-                        ])
-                        .output()
-                        .await?
-                    }
-                };
-
-                anyhow::ensure!(
-                    output.status.success(),
-                    "Failed to run git diff --numstat:\n{}",
-                    String::from_utf8_lossy(&output.stderr)
-                );
-                Ok(crate::status::parse_numstat(&String::from_utf8_lossy(
-                    &output.stdout,
-                )))
+                let git_binary = git_binary?;
+                let mut args: Vec<String> = vec![
+                    "diff".into(),
+                    "--numstat".into(),
+                    "--no-renames".into(),
+                    "HEAD".into(),
+                ];
+                if !path_prefixes.is_empty() {
+                    args.push("--".into());
+                    args.extend(
+                        path_prefixes
+                            .iter()
+                            .map(|p| p.as_std_path().to_string_lossy().into_owned()),
+                    );
+                }
+                let output = git_binary.run(&args).await?;
+                Ok(crate::status::parse_numstat(&output))
             })
             .boxed()
     }
@@ -2685,20 +2673,16 @@ impl GitRepository for RealGitRepository {
 
         // Note: Do not spawn these commands on the background thread, as this causes some git hooks to hang.
         async move {
-            let git = git_binary?;
+            let git_binary = git_binary?;
 
-            if !git.is_trusted {
-                bail!("Can't run git commit hooks in restrictive workspace");
-            }
-
-            let working_directory = git.working_directory.clone();
+            let working_directory = git_binary.working_directory.clone();
             if !help_output
                 .await
                 .lines()
                 .any(|line| line.trim().starts_with("hook "))
             {
                 let hook_abs_path = repository.lock().path().join("hooks").join(hook.as_str());
-                if hook_abs_path.is_file() {
+                if hook_abs_path.is_file() && git_binary.is_trusted {
                     #[allow(clippy::disallowed_methods)]
                     let output = new_command(&hook_abs_path)
                         .envs(env.iter())
@@ -2719,9 +2703,12 @@ impl GitRepository for RealGitRepository {
                 return Ok(());
             }
 
-            let git = git.envs(HashMap::clone(&env));
-            git.run(&["hook", "run", "--ignore-missing", hook.as_str()])
-                .await?;
+            if git_binary.is_trusted {
+                let git_binary = git_binary.envs(HashMap::clone(&env));
+                git_binary
+                    .run(&["hook", "run", "--ignore-missing", hook.as_str()])
+                    .await?;
+            }
             Ok(())
         }
         .boxed()
@@ -2942,11 +2929,6 @@ fn git_status_args(path_prefixes: &[RepoPath]) -> Vec<OsString> {
         OsString::from("--no-renames"),
         OsString::from("-z"),
     ];
-    args.extend(
-        path_prefixes
-            .iter()
-            .map(|path_prefix| path_prefix.as_std_path().into()),
-    );
     args.extend(path_prefixes.iter().map(|path_prefix| {
         if path_prefix.is_empty() {
             Path::new(".").into()
@@ -3133,8 +3115,14 @@ impl GitBinary {
         let mut command = new_command(&self.git_binary_path);
         command.current_dir(&self.working_directory);
         command.args(["-c", "core.fsmonitor=false"]);
+        command.arg("--no-pager");
+
         if !self.is_trusted {
             command.args(["-c", "core.hooksPath=/dev/null"]);
+            command.args(["-c", "core.sshCommand=ssh"]);
+            command.args(["-c", "credential.helper="]);
+            command.args(["-c", "protocol.ext.allow=never"]);
+            command.args(["-c", "diff.external="]);
         }
         command.args(args);
         if let Some(index_file_path) = self.index_file_path.as_ref() {

@@ -2,12 +2,14 @@ use crash_handler::{CrashEventResult, CrashHandler};
 use futures::future::BoxFuture;
 use log::info;
 use minidumper::{Client, LoopAction, MinidumpBinary};
+use parking_lot::Mutex;
 use release_channel::{RELEASE_CHANNEL, ReleaseChannel};
 use serde::{Deserialize, Serialize};
 use std::mem;
 
 #[cfg(not(target_os = "windows"))]
 use smol::process::Command;
+use system_specs::GpuSpecs;
 
 #[cfg(target_os = "macos")]
 use std::sync::atomic::AtomicU32;
@@ -27,11 +29,13 @@ use std::{
 };
 
 // set once the crash handler has initialized and the client has connected to it
-pub static CRASH_HANDLER: OnceLock<Arc<Client>> = OnceLock::new();
+static CRASH_HANDLER: OnceLock<Arc<Client>> = OnceLock::new();
 // set when the first minidump request is made to avoid generating duplicate crash reports
 pub static REQUESTED_MINIDUMP: AtomicBool = AtomicBool::new(false);
 const CRASH_HANDLER_PING_TIMEOUT: Duration = Duration::from_secs(60);
 const CRASH_HANDLER_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+
+static PENDING_CRASH_SERVER_MESSAGES: Mutex<Vec<CrashServerMessage>> = Mutex::new(Vec::new());
 
 #[cfg(target_os = "macos")]
 static PANIC_THREAD_ID: AtomicU32 = AtomicU32::new(0);
@@ -118,6 +122,7 @@ async fn connect_and_keepalive(crash_init: InitCrashHandler, handler: CrashHandl
     spawn_crash_handler_windows(&exe, &socket_name);
 
     info!("spawning crash handler process");
+    send_crash_server_message(CrashServerMessage::Init(crash_init));
 
     let mut elapsed = Duration::ZERO;
     let retry_frequency = Duration::from_millis(100);
@@ -134,10 +139,6 @@ async fn connect_and_keepalive(crash_init: InitCrashHandler, handler: CrashHandl
         smol::Timer::after(retry_frequency).await;
     }
     let client = maybe_client.unwrap();
-    client
-        .send_message(1, serde_json::to_vec(&crash_init).unwrap())
-        .unwrap();
-
     let client = Arc::new(client);
 
     #[cfg(target_os = "linux")]
@@ -146,6 +147,10 @@ async fn connect_and_keepalive(crash_init: InitCrashHandler, handler: CrashHandl
     // Publishing the client to the OnceLock makes it visible to the signal
     // handler callback installed earlier.
     CRASH_HANDLER.set(client.clone()).ok();
+    let messages: Vec<_> = mem::take(PENDING_CRASH_SERVER_MESSAGES.lock().as_mut());
+    for message in messages.into_iter() {
+        send_crash_server_message(message);
+    }
     // mem::forget so that the drop is not called
     mem::forget(handler);
     info!("crash handler registered");
@@ -177,9 +182,10 @@ unsafe fn suspend_all_other_threads() {
 }
 
 pub struct CrashServer {
-    initialization_params: OnceLock<InitCrashHandler>,
-    panic_info: OnceLock<CrashPanic>,
-    active_gpu: OnceLock<system_specs::GpuSpecs>,
+    initialization_params: Mutex<Option<InitCrashHandler>>,
+    panic_info: Mutex<Option<CrashPanic>>,
+    active_gpu: Mutex<Option<system_specs::GpuSpecs>>,
+    user_info: Mutex<Option<UserInfo>>,
     has_connection: Arc<AtomicBool>,
 }
 
@@ -190,6 +196,7 @@ pub struct CrashInfo {
     pub minidump_error: Option<String>,
     pub gpus: Vec<system_specs::GpuInfo>,
     pub active_gpu: Option<system_specs::GpuSpecs>,
+    pub user_info: Option<UserInfo>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -207,15 +214,55 @@ pub struct CrashPanic {
     pub span: String,
 }
 
+#[derive(Deserialize, Serialize, Debug, Clone)]
+pub struct UserInfo {
+    pub metrics_id: Option<String>,
+    pub is_staff: Option<bool>,
+}
+
+fn send_crash_server_message(message: CrashServerMessage) {
+    let Some(crash_server) = CRASH_HANDLER.get() else {
+        PENDING_CRASH_SERVER_MESSAGES.lock().push(message);
+        return;
+    };
+    let data = match serde_json::to_vec(&message) {
+        Ok(data) => data,
+        Err(err) => {
+            log::warn!("Failed to serialize crash server message: {:?}", err);
+            return;
+        }
+    };
+
+    if let Err(err) = crash_server.send_message(0, data) {
+        log::warn!("Failed to send data to crash server {:?}", err);
+    }
+}
+
+pub fn set_gpu_info(specs: GpuSpecs) {
+    send_crash_server_message(CrashServerMessage::GPUInfo(specs));
+}
+
+pub fn set_user_info(info: UserInfo) {
+    send_crash_server_message(CrashServerMessage::UserInfo(info));
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+enum CrashServerMessage {
+    Init(InitCrashHandler),
+    Panic(CrashPanic),
+    GPUInfo(GpuSpecs),
+    UserInfo(UserInfo),
+}
+
 impl minidumper::ServerHandler for CrashServer {
     fn create_minidump_file(&self) -> Result<(File, PathBuf), io::Error> {
-        let err_message = "Missing initialization data";
         let dump_path = paths::logs_dir()
             .join(
                 &self
                     .initialization_params
-                    .get()
-                    .expect(err_message)
+                    .lock()
+                    .as_ref()
+                    .expect("Missing initialization data")
                     .session_id,
             )
             .with_extension("dmp");
@@ -255,13 +302,14 @@ impl minidumper::ServerHandler for CrashServer {
         let crash_info = CrashInfo {
             init: self
                 .initialization_params
-                .get()
-                .expect("not initialized")
-                .clone(),
-            panic: self.panic_info.get().cloned(),
+                .lock()
+                .clone()
+                .expect("not initialized"),
+            panic: self.panic_info.lock().clone(),
             minidump_error,
-            active_gpu: self.active_gpu.get().cloned(),
+            active_gpu: self.active_gpu.lock().clone(),
             gpus,
+            user_info: self.user_info.lock().clone(),
         };
 
         let crash_data_path = paths::logs_dir()
@@ -273,30 +321,21 @@ impl minidumper::ServerHandler for CrashServer {
         LoopAction::Exit
     }
 
-    fn on_message(&self, kind: u32, buffer: Vec<u8>) {
-        match kind {
-            1 => {
-                let init_data =
-                    serde_json::from_slice::<InitCrashHandler>(&buffer).expect("invalid init data");
-                self.initialization_params
-                    .set(init_data)
-                    .expect("already initialized");
+    fn on_message(&self, _: u32, buffer: Vec<u8>) {
+        let message: CrashServerMessage =
+            serde_json::from_slice(&buffer).expect("invalid init data");
+        match message {
+            CrashServerMessage::Init(init_data) => {
+                self.initialization_params.lock().replace(init_data);
             }
-            2 => {
-                let panic_data =
-                    serde_json::from_slice::<CrashPanic>(&buffer).expect("invalid panic data");
-                self.panic_info.set(panic_data).expect("already panicked");
+            CrashServerMessage::Panic(crash_panic) => {
+                self.panic_info.lock().replace(crash_panic);
             }
-            3 => {
-                let gpu_specs: system_specs::GpuSpecs =
-                    bincode::deserialize(&buffer).expect("gpu specs");
-                // we ignore the case where it was already set because this message is sent
-                // on each new window. in theory all zed windows should be using the same
-                // GPU so this is fine.
-                self.active_gpu.set(gpu_specs).ok();
+            CrashServerMessage::GPUInfo(gpu_specs) => {
+                self.active_gpu.lock().replace(gpu_specs);
             }
-            _ => {
-                panic!("invalid message kind");
+            CrashServerMessage::UserInfo(user_info) => {
+                self.user_info.lock().replace(user_info);
             }
         }
     }
@@ -326,36 +365,32 @@ pub fn panic_hook(info: &PanicHookInfo) {
     // if it's still not there just write panic info and no minidump
     let retry_frequency = Duration::from_millis(100);
     for _ in 0..5 {
-        if let Some(client) = CRASH_HANDLER.get() {
-            let location = info
-                .location()
-                .map_or_else(|| "<unknown>".to_owned(), |location| location.to_string());
-            log::error!("thread '{thread_name}' panicked at {location}:\n{message}...");
-            client
-                .send_message(
-                    2,
-                    serde_json::to_vec(&CrashPanic { message, span }).unwrap(),
-                )
-                .ok();
-            log::error!("triggering a crash to generate a minidump...");
-
-            #[cfg(target_os = "macos")]
-            PANIC_THREAD_ID.store(
-                unsafe { mach2::mach_init::mach_thread_self() },
-                Ordering::SeqCst,
-            );
-
-            cfg_if::cfg_if! {
-                if #[cfg(target_os = "windows")] {
-                    // https://learn.microsoft.com/en-us/windows/win32/debug/system-error-codes--0-499-
-                    CrashHandler.simulate_exception(Some(234)); // (MORE_DATA_AVAILABLE)
-                    break;
-                } else {
-                    std::process::abort();
-                }
-            }
+        if CRASH_HANDLER.get().is_some() {
+            break;
         }
         thread::sleep(retry_frequency);
+    }
+    let location = info
+        .location()
+        .map_or_else(|| "<unknown>".to_owned(), |location| location.to_string());
+    log::error!("thread '{thread_name}' panicked at {location}:\n{message}...");
+
+    send_crash_server_message(CrashServerMessage::Panic(CrashPanic { message, span }));
+    log::error!("triggering a crash to generate a minidump...");
+
+    #[cfg(target_os = "macos")]
+    PANIC_THREAD_ID.store(
+        unsafe { mach2::mach_init::mach_thread_self() },
+        Ordering::SeqCst,
+    );
+
+    cfg_if::cfg_if! {
+        if #[cfg(target_os = "windows")] {
+            // https://learn.microsoft.com/en-us/windows/win32/debug/system-error-codes--0-499-
+            CrashHandler.simulate_exception(Some(234)); // (MORE_DATA_AVAILABLE)
+        } else {
+            std::process::abort();
+        }
     }
 }
 
@@ -436,10 +471,11 @@ pub fn crash_server(socket: &Path) {
     server
         .run(
             Box::new(CrashServer {
-                initialization_params: OnceLock::new(),
-                panic_info: OnceLock::new(),
+                initialization_params: Mutex::default(),
+                panic_info: Mutex::default(),
+                user_info: Mutex::default(),
                 has_connection,
-                active_gpu: OnceLock::new(),
+                active_gpu: Mutex::default(),
             }),
             &shutdown,
             Some(CRASH_HANDLER_PING_TIMEOUT),

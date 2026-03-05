@@ -315,6 +315,8 @@ CREATE TABLE public.project_repository_statuses (
     status_kind integer NOT NULL,
     first_status integer,
     second_status integer,
+    lines_added integer,
+    lines_deleted integer,
     scan_id bigint NOT NULL,
     is_deleted boolean NOT NULL
 );
