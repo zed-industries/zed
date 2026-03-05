@@ -154,6 +154,7 @@ impl MessageEditor {
                             Box::new(editor::actions::Copy),
                         )
                         .action("Paste", Box::new(editor::actions::Paste))
+                        .action("Paste as Plain Text", Box::new(PasteRaw))
                 }))
             });
 
