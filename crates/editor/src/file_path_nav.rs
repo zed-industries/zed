@@ -25,12 +25,12 @@ struct FilePathComponent {
 }
 
 #[derive(Clone)]
-struct InlineMenuRow {
-    name: SharedString,
-    path: Arc<RelPath>,
-    depth: usize,
-    is_directory: bool,
-    is_expanded: bool,
+pub(crate) struct InlineMenuRow {
+    pub(crate) name: SharedString,
+    pub(crate) path: Arc<RelPath>,
+    pub(crate) depth: usize,
+    pub(crate) is_directory: bool,
+    pub(crate) is_expanded: bool,
     icon_path: Option<SharedString>,
 }
 
@@ -130,7 +130,7 @@ pub(crate) fn open_breadcrumb_file(
     }
 }
 
-fn collect_visible_rows(
+pub(crate) fn collect_visible_rows(
     snapshot: &Worktree,
     directory_path: &RelPath,
     depth: usize,
