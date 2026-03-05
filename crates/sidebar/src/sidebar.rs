@@ -443,29 +443,29 @@ impl Sidebar {
                 let live_infos = Self::all_thread_infos_for_workspace(workspace, cx);
 
                 for info in &live_infos {
-                    let existing = threads.iter_mut().find(|t| {
+                    let Some(existing) = threads.iter_mut().find(|t| {
                         matches!(t, ListEntry::Thread { session_info, .. } if session_info.session_id == info.session_id)
-                    });
+                    }) else {
+                        continue;
+                    };
 
-                    if let Some(existing) = existing {
-                        if let ListEntry::Thread {
-                            session_info,
-                            status,
-                            icon,
-                            icon_from_external_svg,
-                            workspace_index: _,
-                            is_live,
-                            is_background,
-                            ..
-                        } = existing
-                        {
-                            session_info.title = Some(info.title.clone());
-                            *status = info.status;
-                            *icon = info.icon;
-                            *icon_from_external_svg = info.icon_from_external_svg.clone();
-                            *is_live = true;
-                            *is_background = info.is_background;
-                        }
+                    if let ListEntry::Thread {
+                        session_info,
+                        status,
+                        icon,
+                        icon_from_external_svg,
+                        workspace_index: _,
+                        is_live,
+                        is_background,
+                        ..
+                    } = existing
+                    {
+                        session_info.title = Some(info.title.clone());
+                        *status = info.status;
+                        *icon = info.icon;
+                        *icon_from_external_svg = info.icon_from_external_svg.clone();
+                        *is_live = true;
+                        *is_background = info.is_background;
                     }
                 }
 
@@ -1474,6 +1474,27 @@ mod tests {
         cx.run_until_parked();
     }
 
+    async fn save_thread_to_store(
+        session_id: &acp::SessionId,
+        path_list: &PathList,
+        cx: &mut gpui::VisualTestContext,
+    ) {
+        let thread_store = cx.update(|_window, cx| ThreadStore::global(cx));
+        let save_task = thread_store.update(cx, |store, cx| {
+            store.save_thread(
+                session_id.clone(),
+                make_test_thread(
+                    "Test",
+                    chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, 0).unwrap(),
+                ),
+                path_list.clone(),
+                cx,
+            )
+        });
+        save_task.await.unwrap();
+        cx.run_until_parked();
+    }
+
     fn open_and_focus_sidebar(
         sidebar: &Entity<Sidebar>,
         multi_workspace: &Entity<MultiWorkspace>,
@@ -2283,12 +2304,15 @@ mod tests {
             cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
         let (sidebar, panel) = setup_sidebar_with_agent_panel(&multi_workspace, &project, cx);
 
+        let path_list = PathList::new(&[std::path::PathBuf::from("/my-project")]);
+
         // Open thread A and keep it generating.
         let connection_a = StubAgentConnection::new();
         open_thread_with_connection(&panel, connection_a.clone(), cx);
         send_message(&panel, cx);
 
         let session_id_a = active_session_id(&panel, cx);
+        save_thread_to_store(&session_id_a, &path_list, cx).await;
 
         cx.update(|_, cx| {
             connection_a.send_update(
@@ -2307,13 +2331,16 @@ mod tests {
         open_thread_with_connection(&panel, connection_b, cx);
         send_message(&panel, cx);
 
+        let session_id_b = active_session_id(&panel, cx);
+        save_thread_to_store(&session_id_b, &path_list, cx).await;
+
         cx.run_until_parked();
 
         let mut entries = visible_entries_as_strings(&sidebar, cx);
         entries[1..].sort();
         assert_eq!(
             entries,
-            vec!["v [my-project]", "  Test *", "  Test * (running)",]
+            vec!["v [my-project]", "  Hello *", "  Hello * (running)",]
         );
     }
 
@@ -2324,12 +2351,16 @@ mod tests {
             .add_window_view(|window, cx| MultiWorkspace::test_new(project_a.clone(), window, cx));
         let (sidebar, panel_a) = setup_sidebar_with_agent_panel(&multi_workspace, &project_a, cx);
 
+        let path_list_a = PathList::new(&[std::path::PathBuf::from("/project-a")]);
+
         // Open thread on workspace A and keep it generating.
         let connection_a = StubAgentConnection::new();
         open_thread_with_connection(&panel_a, connection_a.clone(), cx);
         send_message(&panel_a, cx);
 
         let session_id_a = active_session_id(&panel_a, cx);
+        save_thread_to_store(&session_id_a, &path_list_a, cx).await;
+
         cx.update(|_, cx| {
             connection_a.send_update(
                 session_id_a.clone(),
@@ -2352,7 +2383,7 @@ mod tests {
             visible_entries_as_strings(&sidebar, cx),
             vec![
                 "v [project-a]",
-                "  Test * (running)",
+                "  Hello * (running)",
                 "v [Empty Workspace]",
                 "  [+ New Thread]",
             ]
@@ -2367,7 +2398,7 @@ mod tests {
             visible_entries_as_strings(&sidebar, cx),
             vec![
                 "v [project-a]",
-                "  Test * (!)",
+                "  Hello * (!)",
                 "v [Empty Workspace]",
                 "  [+ New Thread]",
             ]
@@ -3062,17 +3093,22 @@ mod tests {
             cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
         let (sidebar, panel) = setup_sidebar_with_agent_panel(&multi_workspace, &project, cx);
 
+        let path_list = PathList::new(&[std::path::PathBuf::from("/my-project")]);
+
         let connection = StubAgentConnection::new();
         connection.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
             acp::ContentChunk::new("Hi there!".into()),
         )]);
         open_thread_with_connection(&panel, connection, cx);
         send_message(&panel, cx);
+
+        let session_id = active_session_id(&panel, cx);
+        save_thread_to_store(&session_id, &path_list, cx).await;
         cx.run_until_parked();
 
         assert_eq!(
             visible_entries_as_strings(&sidebar, cx),
-            vec!["v [my-project]", "  Test *"]
+            vec!["v [my-project]", "  Hello *"]
         );
 
         // Simulate the agent generating a title. The notification chain is:
