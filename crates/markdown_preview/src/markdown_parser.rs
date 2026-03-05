@@ -7,24 +7,13 @@ use collections::FxHashMap;
 use gpui::{DefiniteLength, FontWeight, px, relative};
 use html5ever::{ParseOpts, local_name, parse_document, tendril::TendrilSink};
 use language::LanguageRegistry;
+use markdown::parser::PARSE_OPTIONS;
 use markup5ever_rcdom::RcDom;
-use pulldown_cmark::{Alignment, Event, Options, Parser, Tag, TagEnd};
+use pulldown_cmark::{Alignment, Event, Parser, Tag, TagEnd};
 use std::{
     cell::RefCell, collections::HashMap, mem, ops::Range, path::PathBuf, rc::Rc, sync::Arc, vec,
 };
 use ui::SharedString;
-
-const PARSE_OPTIONS: Options = Options::ENABLE_TABLES
-    .union(Options::ENABLE_FOOTNOTES)
-    .union(Options::ENABLE_STRIKETHROUGH)
-    .union(Options::ENABLE_TASKLISTS)
-    .union(Options::ENABLE_SMART_PUNCTUATION)
-    .union(Options::ENABLE_HEADING_ATTRIBUTES)
-    .union(Options::ENABLE_PLUSES_DELIMITED_METADATA_BLOCKS)
-    .union(Options::ENABLE_OLD_FOOTNOTES)
-    .union(Options::ENABLE_GFM)
-    .union(Options::ENABLE_SUPERSCRIPT)
-    .union(Options::ENABLE_SUBSCRIPT);
 
 pub async fn parse_markdown(
     markdown_input: &str,
@@ -3082,24 +3071,6 @@ More text
                 ),
                 p("More text", 21..31)
             ]
-        );
-    }
-
-    const UNWANTED_OPTIONS: Options = Options::ENABLE_YAML_STYLE_METADATA_BLOCKS
-        .union(Options::ENABLE_MATH)
-        .union(Options::ENABLE_DEFINITION_LIST)
-        .union(Options::ENABLE_WIKILINKS);
-
-    #[test]
-    fn all_options_considered() {
-        assert_eq!(PARSE_OPTIONS.union(UNWANTED_OPTIONS), Options::all());
-    }
-
-    #[test]
-    fn wanted_and_unwanted_options_disjoint() {
-        assert_eq!(
-            PARSE_OPTIONS.intersection(UNWANTED_OPTIONS),
-            Options::empty()
         );
     }
 
