@@ -2650,8 +2650,8 @@ async fn test_edit_prediction_settled(cx: &mut TestAppContext) {
         .await
         .unwrap();
 
-    let settled_events: Arc<Mutex<Vec<(EditPredictionId, String)>>> =
-        Arc::new(Mutex::new(Vec::new()));
+    type SettledEventRecord = (EditPredictionId, String);
+    let settled_events: Arc<Mutex<Vec<SettledEventRecord>>> = Arc::new(Mutex::new(Vec::new()));
 
     ep_store.update(cx, |ep_store, cx| {
         ep_store.register_buffer(&buffer, &project, cx);
@@ -2674,13 +2674,15 @@ async fn test_edit_prediction_settled(cx: &mut TestAppContext) {
 
     // Region A: first 10 lines of the buffer.
     let editable_region_a = 0..snapshot_a.point_to_offset(Point::new(10, 0));
+
     ep_store.update(cx, |ep_store, cx| {
         ep_store.enqueue_settled_prediction(
             EditPredictionId("prediction-a".into()),
             &project,
             &buffer,
             &snapshot_a,
-            editable_region_a,
+            editable_region_a.clone(),
+            None,
             cx,
         );
     });
@@ -2735,13 +2737,15 @@ async fn test_edit_prediction_settled(cx: &mut TestAppContext) {
 
     let snapshot_b2 = buffer.read_with(cx, |buffer, _cx| buffer.snapshot());
     let editable_region_b = line_20_offset..snapshot_b2.point_to_offset(Point::new(25, 0));
+
     ep_store.update(cx, |ep_store, cx| {
         ep_store.enqueue_settled_prediction(
             EditPredictionId("prediction-b".into()),
             &project,
             &buffer,
             &snapshot_b2,
-            editable_region_b,
+            editable_region_b.clone(),
+            None,
             cx,
         );
     });
@@ -2767,7 +2771,7 @@ async fn test_edit_prediction_settled(cx: &mut TestAppContext) {
         assert_eq!(
             events.len(),
             1,
-            "only prediction A should have settled, got: {events:?}"
+            "prediction and capture_sample for A should have settled, got: {events:?}"
         );
         assert_eq!(events[0].0, EditPredictionId("prediction-a".into()));
     }
@@ -2784,7 +2788,7 @@ async fn test_edit_prediction_settled(cx: &mut TestAppContext) {
         assert_eq!(
             events.len(),
             2,
-            "both predictions should have settled, got: {events:?}"
+            "both prediction and capture_sample settled events should be emitted for each request, got: {events:?}"
         );
         assert_eq!(events[1].0, EditPredictionId("prediction-b".into()));
     }

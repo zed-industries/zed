@@ -76,6 +76,7 @@ pub mod zeta;
 #[cfg(test)]
 mod edit_prediction_tests;
 
+use crate::example_spec::ExampleSpec;
 use crate::license_detection::LicenseDetectionWatcher;
 use crate::mercury::Mercury;
 use crate::onboarding_modal::ZedPredictModal;
@@ -498,6 +499,7 @@ impl std::ops::Deref for BufferEditPrediction<'_> {
 struct PendingSettledPrediction {
     request_id: EditPredictionId,
     editable_anchor_range: Range<Anchor>,
+    example: Option<ExampleSpec>,
     enqueued_at: Instant,
     last_edit_at: Instant,
 }
@@ -1572,6 +1574,7 @@ impl EditPredictionStore {
                                         EDIT_PREDICTION_SETTLED_EVENT,
                                         request_id = pending_prediction.request_id.0.clone(),
                                         settled_editable_region,
+                                        example = pending_prediction.example.take(),
                                     );
 
                                     return false;
@@ -1600,22 +1603,25 @@ impl EditPredictionStore {
         edited_buffer: &Entity<Buffer>,
         edited_buffer_snapshot: &BufferSnapshot,
         editable_offset_range: Range<usize>,
+        example: Option<ExampleSpec>,
         cx: &mut Context<Self>,
     ) {
-        let project_state = self.get_or_init_project(project, cx);
+        let this = &mut *self;
+        let project_state = this.get_or_init_project(project, cx);
         if let Some(buffer) = project_state
             .registered_buffers
             .get_mut(&edited_buffer.entity_id())
         {
             let now = cx.background_executor().now();
             buffer.pending_predictions.push(PendingSettledPrediction {
-                request_id,
+                request_id: request_id,
                 editable_anchor_range: edited_buffer_snapshot
                     .anchor_range_around(editable_offset_range),
+                example,
                 enqueued_at: now,
                 last_edit_at: now,
             });
-            self.settled_predictions_tx.unbounded_send(now).ok();
+            this.settled_predictions_tx.unbounded_send(now).ok();
         }
     }
 
@@ -2226,14 +2232,16 @@ impl EditPredictionStore {
             && self.is_data_collection_enabled(cx)
             && matches!(self.edit_prediction_model, EditPredictionModel::Zeta);
 
+        let recent_paths = project_state.recent_paths.clone();
+
         let inputs = EditPredictionModelInput {
             project: project.clone(),
-            buffer: active_buffer.clone(),
-            snapshot: snapshot,
+            buffer: active_buffer,
+            snapshot,
             position,
             events,
             related_files,
-            recent_paths: project_state.recent_paths.clone(),
+            recent_paths,
             trigger,
             diagnostic_search_range: diagnostic_search_range,
             debug_tx,
@@ -2242,21 +2250,12 @@ impl EditPredictionStore {
             is_open_source,
         };
 
-        if can_collect_data && rand::random_ratio(1, 1000) {
-            if let Some(task) = capture_example(
-                project.clone(),
-                active_buffer,
-                position,
-                stored_events,
-                false,
-                cx,
-            ) {
-                task.detach();
-            }
-        }
+        let capture_data = (can_collect_data && rand::random_ratio(1, 1000)).then(|| stored_events);
 
         let task = match self.edit_prediction_model {
-            EditPredictionModel::Zeta => zeta::request_prediction_with_zeta(self, inputs, cx),
+            EditPredictionModel::Zeta => {
+                zeta::request_prediction_with_zeta(self, inputs, capture_data, cx)
+            }
             EditPredictionModel::Fim { format } => fim::request_prediction(inputs, format, cx),
             EditPredictionModel::Sweep => self.sweep_ai.request_prediction_with_sweep(inputs, cx),
             EditPredictionModel::Mercury => self.mercury.request_prediction(inputs, cx),
