@@ -6,7 +6,7 @@ use fs::Fs;
 use fuzzy::StringMatchCandidate;
 use gpui::{
     App, Context, Entity, EventEmitter, FocusHandle, Focusable, Pixels, Render, SharedString,
-    Subscription, Task, Window, px,
+    Subscription, Task, WeakEntity, Window, px,
 };
 use picker::{Picker, PickerDelegate};
 use project::Event as ProjectEvent;
@@ -143,7 +143,7 @@ struct SidebarMatch {
 }
 
 struct WorkspacePickerDelegate {
-    multi_workspace: Entity<MultiWorkspace>,
+    multi_workspace: WeakEntity<MultiWorkspace>,
     entries: Vec<SidebarEntry>,
     active_workspace_index: usize,
     workspace_thread_count: usize,
@@ -159,7 +159,7 @@ struct WorkspacePickerDelegate {
 }
 
 impl WorkspacePickerDelegate {
-    fn new(multi_workspace: Entity<MultiWorkspace>) -> Self {
+    fn new(multi_workspace: WeakEntity<MultiWorkspace>) -> Self {
         Self {
             multi_workspace,
             entries: Vec::new(),
@@ -240,15 +240,17 @@ impl WorkspacePickerDelegate {
 
     fn open_workspace_path_sets(&self, cx: &App) -> Vec<Vec<Arc<Path>>> {
         self.multi_workspace
-            .read(cx)
-            .workspaces()
-            .iter()
-            .map(|workspace| {
-                let mut paths = workspace.read(cx).root_paths(cx);
-                paths.sort();
-                paths
+            .read_with(cx, |mw, cx| {
+                mw.workspaces()
+                    .iter()
+                    .map(|workspace| {
+                        let mut paths = workspace.read(cx).root_paths(cx);
+                        paths.sort();
+                        paths
+                    })
+                    .collect()
             })
-            .collect()
+            .unwrap_or_default()
     }
 
     fn rebuild_entries(&mut self, workspace_threads: Vec<WorkspaceThreadEntry>, cx: &App) {
@@ -580,7 +582,10 @@ impl PickerDelegate for WorkspacePickerDelegate {
                 let thread_info = thread_entry.thread_info.clone();
                 let workspace_index = thread_entry.index;
                 let multi_workspace = self.multi_workspace.clone();
-                let workspace_count = self.multi_workspace.read(cx).workspaces().len();
+                let workspace_count = self
+                    .multi_workspace
+                    .update(cx, |mw, __| mw.workspaces().len())
+                    .ok()?;
                 let is_hovered = self.hovered_thread_item == Some(workspace_index);
 
                 let remove_btn = IconButton::new(
@@ -694,7 +699,7 @@ impl PickerDelegate for WorkspacePickerDelegate {
 }
 
 pub struct Sidebar {
-    multi_workspace: Entity<MultiWorkspace>,
+    multi_workspace: WeakEntity<MultiWorkspace>,
     width: Pixels,
     picker: Entity<Picker<WorkspacePickerDelegate>>,
     _subscription: Subscription,
@@ -716,7 +721,7 @@ impl Sidebar {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let delegate = WorkspacePickerDelegate::new(multi_workspace.clone());
+        let delegate = WorkspacePickerDelegate::new(multi_workspace.downgrade());
         let picker = cx.new(|cx| {
             Picker::list(delegate, window, cx)
                 .max_height(None)
@@ -752,7 +757,7 @@ impl Sidebar {
         };
 
         let mut this = Self {
-            multi_workspace,
+            multi_workspace: multi_workspace.downgrade(),
             width: DEFAULT_WIDTH,
             picker,
             _subscription: subscription,
@@ -776,11 +781,13 @@ impl Sidebar {
     ) -> Vec<Subscription> {
         let projects: Vec<_> = self
             .multi_workspace
-            .read(cx)
-            .workspaces()
-            .iter()
-            .map(|w| w.read(cx).project().clone())
-            .collect();
+            .update(cx, |mw, cx| {
+                mw.workspaces()
+                    .iter()
+                    .map(|w| w.read(cx).project().clone())
+                    .collect()
+            })
+            .unwrap_or_default();
 
         projects
             .iter()
@@ -874,7 +881,10 @@ impl Sidebar {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Vec<Subscription> {
-        let workspaces: Vec<_> = self.multi_workspace.read(cx).workspaces().to_vec();
+        let workspaces: Vec<_> = self
+            .multi_workspace
+            .update(cx, |mw, _cx| mw.workspaces().to_vec())
+            .unwrap_or_default();
 
         workspaces
             .iter()
@@ -903,7 +913,10 @@ impl Sidebar {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Vec<Subscription> {
-        let workspaces: Vec<_> = self.multi_workspace.read(cx).workspaces().to_vec();
+        let workspaces: Vec<_> = self
+            .multi_workspace
+            .read_with(cx, |mw, _| mw.workspaces().to_vec())
+            .unwrap_or_default();
 
         workspaces
             .iter()
@@ -922,16 +935,22 @@ impl Sidebar {
     fn update_entries(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let multi_workspace = self.multi_workspace.clone();
         cx.defer_in(window, move |this, window, cx| {
-            if !this.multi_workspace.read(cx).multi_workspace_enabled(cx) {
+            if !this
+                .multi_workspace
+                .read_with(cx, |mw, _cx| mw.multi_workspace_enabled(cx))
+                .unwrap_or(false)
+            {
                 return;
             }
 
             this._project_subscriptions = this.subscribe_to_projects(window, cx);
             this._agent_panel_subscriptions = this.subscribe_to_agent_panels(window, cx);
             this._thread_subscriptions = this.subscribe_to_threads(window, cx);
-            let (entries, active_index) = multi_workspace.read_with(cx, |multi_workspace, cx| {
-                this.build_workspace_thread_entries(multi_workspace, cx)
-            });
+            let (entries, active_index) = multi_workspace
+                .read_with(cx, |multi_workspace, cx| {
+                    this.build_workspace_thread_entries(multi_workspace, cx)
+                })
+                .unwrap_or_default();
 
             let had_notifications = !this.picker.read(cx).delegate.notified_workspaces.is_empty();
             this.picker.update(cx, |picker, cx| {
