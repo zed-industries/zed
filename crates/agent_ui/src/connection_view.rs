@@ -161,14 +161,6 @@ pub(crate) struct Conversation {
 }
 
 impl Conversation {
-    pub fn thread(
-        &self,
-        session_id: &acp::SessionId,
-        _cx: &App,
-    ) -> Option<&Entity<AcpThread>> {
-        self.threads.get(session_id)
-    }
-
     pub fn register_thread(&mut self, thread: Entity<AcpThread>, cx: &mut Context<Self>) {
         let session_id = thread.read(cx).session_id().clone();
         let subscription = cx.subscribe(&thread, move |this, _thread, event, _cx| match event {
@@ -262,7 +254,7 @@ impl Conversation {
         &'a self,
         session_id: &acp::SessionId,
         cx: &'a App,
-    ) -> Vec<(acp::SessionId, acp::ToolCallId, &'a PermissionOptions)> {
+    ) -> Vec<(acp::SessionId, acp::ToolCallId, &'a ToolCall, &'a PermissionOptions)> {
         let thread = self.threads.get(session_id);
         let is_subagent = thread
             .map(|t| t.read(cx).parent_session_id().is_some())
@@ -295,6 +287,7 @@ impl Conversation {
                 result.push((
                     thread.read(cx).session_id().clone(),
                     tool_id.clone(),
+                    tool_call,
                     options,
                 ));
             }
