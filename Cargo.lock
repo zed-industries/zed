@@ -10203,6 +10203,7 @@ dependencies = [
  "language",
  "linkify",
  "log",
+ "markdown",
  "markup5ever_rcdom",
  "mermaid-rs-renderer",
  "pretty_assertions",
