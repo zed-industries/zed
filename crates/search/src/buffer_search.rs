@@ -219,13 +219,24 @@ impl Render for BufferSearchBar {
         let collapse_expand_button = if self.needs_expand_collapse_option(cx) {
             let query_editor_focus = self.query_editor.focus_handle(cx);
 
-            let is_collapsed = self
+            let mut is_collapsed = self
                 .active_searchable_item
                 .as_ref()
                 .and_then(|item| item.act_as_type(TypeId::of::<Editor>(), cx))
                 .and_then(|item| item.downcast::<Editor>().ok())
                 .map(|editor: Entity<Editor>| editor.read(cx).has_any_buffer_folded(cx))
                 .unwrap_or_default();
+            is_collapsed = is_collapsed
+                || self
+                    .active_searchable_item
+                    .as_ref()
+                    .and_then(|item| item.act_as_type(TypeId::of::<SplittableEditor>(), cx))
+                    .and_then(|item| item.downcast::<SplittableEditor>().ok())
+                    .map(|editor: Entity<SplittableEditor>| {
+                        editor.read(cx).has_any_buffer_folded(cx)
+                    })
+                    .unwrap_or_default();
+
             let (icon, tooltip_label) = if is_collapsed {
                 (IconName::ChevronUpDown, "Expand All Files")
             } else {
