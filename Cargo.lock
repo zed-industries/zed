@@ -12583,14 +12583,12 @@ name = "picker"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "ctor",
  "editor",
- "env_logger 0.11.8",
  "gpui",
  "menu",
  "schemars",
  "serde",
- "serde_json",
+ "settings",
  "theme",
  "ui",
  "ui_input",

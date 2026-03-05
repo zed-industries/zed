@@ -386,12 +386,7 @@ impl PickerDelegate for WorkspacePickerDelegate {
         self.selected_index = ix;
     }
 
-    fn can_select(
-        &mut self,
-        ix: usize,
-        _window: &mut Window,
-        _cx: &mut Context<Picker<Self>>,
-    ) -> bool {
+    fn can_select(&self, ix: usize, _window: &mut Window, _cx: &mut Context<Picker<Self>>) -> bool {
         match self.matches.get(ix) {
             Some(SidebarMatch {
                 entry: SidebarEntry::Separator(_),
