@@ -154,6 +154,7 @@ impl MessageEditor {
                             Box::new(editor::actions::Copy),
                         )
                         .action("Paste", Box::new(editor::actions::Paste))
+                        .action("Paste as Plain Text", Box::new(PasteRaw))
                 }))
             });
 
@@ -416,7 +417,27 @@ impl MessageEditor {
         let text = self.editor.read(cx).text(cx);
         let available_commands = self.available_commands.borrow().clone();
         let agent_name = self.agent_name.clone();
+        let build_task = self.build_content_blocks(full_mention_content, cx);
 
+        cx.spawn(async move |_, _cx| {
+            Self::validate_slash_commands(&text, &available_commands, &agent_name)?;
+            build_task.await
+        })
+    }
+
+    pub fn draft_contents(&self, cx: &mut Context<Self>) -> Task<Result<Vec<acp::ContentBlock>>> {
+        let build_task = self.build_content_blocks(false, cx);
+        cx.spawn(async move |_, _cx| {
+            let (blocks, _tracked_buffers) = build_task.await?;
+            Ok(blocks)
+        })
+    }
+
+    fn build_content_blocks(
+        &self,
+        full_mention_content: bool,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<(Vec<acp::ContentBlock>, Vec<Entity<Buffer>>)>> {
         let contents = self
             .mention_set
             .update(cx, |store, cx| store.contents(full_mention_content, cx));
@@ -424,18 +445,16 @@ impl MessageEditor {
         let supports_embedded_context = self.prompt_capabilities.borrow().embedded_context;
 
         cx.spawn(async move |_, cx| {
-            Self::validate_slash_commands(&text, &available_commands, &agent_name)?;
-
             let contents = contents.await?;
             let mut all_tracked_buffers = Vec::new();
 
             let result = editor.update(cx, |editor, cx| {
+                let text = editor.text(cx);
                 let (mut ix, _) = text
                     .char_indices()
                     .find(|(_, c)| !c.is_whitespace())
                     .unwrap_or((0, '\0'));
                 let mut chunks: Vec<acp::ContentBlock> = Vec::new();
-                let text = editor.text(cx);
                 editor.display_map.update(cx, |map, cx| {
                     let snapshot = map.snapshot(cx);
                     for (crease_id, crease) in snapshot.crease_snapshot.creases() {
@@ -704,6 +723,8 @@ impl MessageEditor {
                         crease_text.into(),
                         mention_uri.icon_path(cx),
                         mention_uri.tooltip_text(),
+                        Some(mention_uri.clone()),
+                        Some(self.workspace.clone()),
                         None,
                         self.editor.clone(),
                         window,
@@ -815,6 +836,8 @@ impl MessageEditor {
                             mention_uri.name().into(),
                             mention_uri.icon_path(cx),
                             mention_uri.tooltip_text(),
+                            Some(mention_uri.clone()),
+                            Some(self.workspace.clone()),
                             None,
                             self.editor.clone(),
                             window,
@@ -996,6 +1019,8 @@ impl MessageEditor {
             mention_uri.name().into(),
             mention_uri.icon_path(cx),
             mention_uri.tooltip_text(),
+            Some(mention_uri.clone()),
+            Some(self.workspace.clone()),
             None,
             self.editor.clone(),
             window,
@@ -1352,6 +1377,8 @@ impl MessageEditor {
                 mention_uri.name().into(),
                 mention_uri.icon_path(cx),
                 mention_uri.tooltip_text(),
+                Some(mention_uri.clone()),
+                Some(self.workspace.clone()),
                 None,
                 self.editor.clone(),
                 window,

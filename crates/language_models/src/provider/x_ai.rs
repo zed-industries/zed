@@ -257,6 +257,10 @@ impl LanguageModel for XAiLanguageModel {
         self.model.supports_images()
     }
 
+    fn supports_streaming_tools(&self) -> bool {
+        true
+    }
+
     fn supports_tool_choice(&self, choice: LanguageModelToolChoice) -> bool {
         match choice {
             LanguageModelToolChoice::Auto
@@ -265,8 +269,7 @@ impl LanguageModel for XAiLanguageModel {
         }
     }
     fn tool_input_format(&self) -> LanguageModelToolSchemaFormat {
-        let model_id = self.model.id().trim().to_lowercase();
-        if model_id.eq(x_ai::Model::Grok4.id()) || model_id.eq(x_ai::Model::GrokCodeFast1.id()) {
+        if self.model.requires_json_schema_subset() {
             LanguageModelToolSchemaFormat::JsonSchemaSubset
         } else {
             LanguageModelToolSchemaFormat::JsonSchema

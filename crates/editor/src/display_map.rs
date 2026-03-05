@@ -789,6 +789,9 @@ impl DisplayMap {
                 .collect(),
             cx,
         );
+        for buffer_id in &other.block_snapshot.buffers_with_disabled_headers {
+            self.disable_header_for_buffer(*buffer_id, cx);
+        }
     }
 
     /// Creates folds for the given creases.
@@ -1916,6 +1919,9 @@ impl DisplaySnapshot {
                             color
                         }
                     }),
+                    underline: chunk_highlight
+                        .underline
+                        .filter(|_| editor_style.show_underlines),
                     ..chunk_highlight
                 }
             });

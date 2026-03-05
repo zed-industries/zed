@@ -145,6 +145,8 @@ mod tests {
             speed: None,
             thinking_enabled: false,
             thinking_effort: None,
+            draft_prompt: None,
+            ui_scroll_position: None,
         }
     }
 

@@ -11,7 +11,7 @@ use log::warn;
 #[cfg(not(target_family = "wasm"))]
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use std::num::NonZeroU64;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
@@ -98,7 +98,6 @@ pub struct WgpuRenderer {
     queue: Arc<wgpu::Queue>,
     surface: wgpu::Surface<'static>,
     surface_config: wgpu::SurfaceConfiguration,
-    surface_configured: bool,
     pipelines: WgpuPipelines,
     bind_group_layouts: WgpuBindGroupLayouts,
     atlas: Arc<WgpuAtlas>,
@@ -122,6 +121,8 @@ pub struct WgpuRenderer {
     transparent_alpha_mode: wgpu::CompositeAlphaMode,
     opaque_alpha_mode: wgpu::CompositeAlphaMode,
     max_texture_size: u32,
+    last_error: Arc<Mutex<Option<String>>>,
+    failed_frame_count: u32,
 }
 
 impl WgpuRenderer {
@@ -367,12 +368,18 @@ impl WgpuRenderer {
 
         let adapter_info = context.adapter.get_info();
 
+        let last_error: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+        let last_error_clone = Arc::clone(&last_error);
+        device.on_uncaptured_error(Arc::new(move |error| {
+            let mut guard = last_error_clone.lock().unwrap();
+            *guard = Some(error.to_string());
+        }));
+
         Ok(Self {
             device,
             queue,
             surface,
             surface_config,
-            surface_configured: true,
             pipelines,
             bind_group_layouts,
             atlas,
@@ -398,6 +405,8 @@ impl WgpuRenderer {
             transparent_alpha_mode,
             opaque_alpha_mode,
             max_texture_size,
+            last_error,
+            failed_frame_count: 0,
         })
     }
 
@@ -864,9 +873,7 @@ impl WgpuRenderer {
 
             self.surface_config.width = clamped_width.max(1);
             self.surface_config.height = clamped_height.max(1);
-            if self.surface_configured {
-                self.surface.configure(&self.device, &self.surface_config);
-            }
+            self.surface.configure(&self.device, &self.surface_config);
 
             // Invalidate intermediate textures - they will be lazily recreated
             // in draw() after we confirm the surface is healthy. This avoids
@@ -917,9 +924,7 @@ impl WgpuRenderer {
 
         if new_alpha_mode != self.surface_config.alpha_mode {
             self.surface_config.alpha_mode = new_alpha_mode;
-            if self.surface_configured {
-                self.surface.configure(&self.device, &self.surface_config);
-            }
+            self.surface.configure(&self.device, &self.surface_config);
             self.pipelines = Self::create_pipelines(
                 &self.device,
                 &self.bind_group_layouts,
@@ -961,12 +966,26 @@ impl WgpuRenderer {
     }
 
     pub fn draw(&mut self, scene: &Scene) {
+        let last_error = self.last_error.lock().unwrap().take();
+        if let Some(error) = last_error {
+            self.failed_frame_count += 1;
+            log::error!(
+                "GPU error during frame (failure {} of 20): {error}",
+                self.failed_frame_count
+            );
+            if self.failed_frame_count > 20 {
+                panic!("Too many consecutive GPU errors. Last error: {error}");
+            }
+        } else {
+            self.failed_frame_count = 0;
+        }
+
         self.atlas.before_frame();
 
         let frame = match self.surface.get_current_texture() {
             Ok(frame) => frame,
             Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {
-                self.surface_configured = false;
+                self.surface.configure(&self.device, &self.surface_config);
                 return;
             }
             Err(e) => {
