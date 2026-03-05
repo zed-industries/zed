@@ -517,7 +517,8 @@ impl Model {
     pub fn supports_thinking(&self) -> bool {
         matches!(
             self,
-            Self::ClaudeSonnet4
+            Self::ClaudeHaiku4_5
+                | Self::ClaudeSonnet4
                 | Self::ClaudeSonnet4_5
                 | Self::ClaudeOpus4_1
                 | Self::ClaudeOpus4_5
@@ -924,7 +925,7 @@ mod tests {
 
     #[test]
     fn test_thinking_modes() {
-        assert!(!Model::ClaudeHaiku4_5.supports_thinking());
+        assert!(Model::ClaudeHaiku4_5.supports_thinking());
         assert!(Model::ClaudeSonnet4.supports_thinking());
         assert!(Model::ClaudeSonnet4_5.supports_thinking());
         assert!(Model::ClaudeOpus4_6.supports_thinking());
@@ -945,7 +946,12 @@ mod tests {
                 effort: BedrockAdaptiveThinkingEffort::High
             }
         );
-        assert_eq!(Model::ClaudeHaiku4_5.thinking_mode(), BedrockModelMode::Default);
+        assert_eq!(
+            Model::ClaudeHaiku4_5.thinking_mode(),
+            BedrockModelMode::Thinking {
+                budget_tokens: Some(4096)
+            }
+        );
     }
 
     #[test]
