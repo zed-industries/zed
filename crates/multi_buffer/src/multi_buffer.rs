@@ -2419,13 +2419,19 @@ impl MultiBuffer {
             for diff_hunk in snapshot.diff_hunks_in_range(range) {
                 if diff_hunk
                     .multi_buffer_range()
-                    .end
+                    .start
                     .cmp(&excerpt_end, &snapshot)
                     .is_gt()
                 {
+                    dbg!("NOT EXPANDING", diff_hunk.multi_buffer_range(), excerpt_end);
+                    dbg!(
+                        diff_hunk.multi_buffer_range().end.to_point(&snapshot),
+                        excerpt_end.to_point(&snapshot)
+                    );
                     continue;
                 }
                 if last_hunk_row.is_some_and(|row| row >= diff_hunk.row_range.start) {
+                    dbg!("OTHER CONTINUE");
                     continue;
                 }
                 let range = diff_hunk.multi_buffer_range();

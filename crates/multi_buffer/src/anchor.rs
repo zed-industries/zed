@@ -12,7 +12,7 @@ use std::{
 use sum_tree::Bias;
 
 /// A multibuffer anchor derived from an anchor into a specific excerpted buffer.
-#[derive(Clone, Copy, Eq, PartialEq, Hash)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 pub struct ExcerptAnchor {
     pub(crate) text_anchor: text::Anchor,
     pub(crate) path: PathKeyIndex,
@@ -28,15 +28,6 @@ pub enum Anchor {
     Min,
     Excerpt(ExcerptAnchor),
     Max,
-}
-
-impl std::fmt::Debug for ExcerptAnchor {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Anchor")
-            .field("text_anchor", &self.text_anchor)
-            .field("diff_base_anchor", &self.diff_base_anchor)
-            .finish()
-    }
 }
 
 // todo!() should this take a lifetime?
