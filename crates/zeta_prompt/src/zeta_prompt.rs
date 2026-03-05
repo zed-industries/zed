@@ -89,6 +89,7 @@ pub enum ZetaFormat {
     V0211Prefill,
     V0211SeedCoder,
     v0226Hashline,
+    V0304SeedNoEdits,
 }
 
 impl std::fmt::Display for ZetaFormat {
@@ -215,6 +216,7 @@ pub fn special_tokens_for_format(format: ZetaFormat) -> &'static [&'static str] 
         ZetaFormat::V0211Prefill => v0211_prefill::special_tokens(),
         ZetaFormat::V0211SeedCoder => seed_coder::special_tokens(),
         ZetaFormat::v0226Hashline => hashline::special_tokens(),
+        ZetaFormat::V0304SeedNoEdits => seed_coder::special_tokens(),
     }
 }
 
@@ -235,7 +237,8 @@ pub fn excerpt_ranges_for_format(
         | ZetaFormat::V0131GitMergeMarkersPrefix
         | ZetaFormat::V0211Prefill
         | ZetaFormat::V0211SeedCoder
-        | ZetaFormat::v0226Hashline => (
+        | ZetaFormat::v0226Hashline
+        | ZetaFormat::V0304SeedNoEdits => (
             ranges.editable_350.clone(),
             ranges.editable_350_context_150.clone(),
         ),
@@ -283,13 +286,15 @@ pub fn write_cursor_excerpt_section_for_format(
                 cursor_offset,
             )
         }
-        ZetaFormat::V0211SeedCoder => seed_coder::write_cursor_excerpt_section(
-            prompt,
-            path,
-            context,
-            editable_range,
-            cursor_offset,
-        ),
+        ZetaFormat::V0211SeedCoder | ZetaFormat::V0304SeedNoEdits => {
+            seed_coder::write_cursor_excerpt_section(
+                prompt,
+                path,
+                context,
+                editable_range,
+                cursor_offset,
+            )
+        }
         ZetaFormat::v0226Hashline => hashline::write_cursor_excerpt_section(
             prompt,
             path,
@@ -309,15 +314,17 @@ pub fn format_prompt_with_budget_for_format(
     let path = &*input.cursor_path;
 
     match format {
-        ZetaFormat::V0211SeedCoder => seed_coder::format_prompt_with_budget(
-            path,
-            context,
-            &editable_range,
-            cursor_offset,
-            &input.events,
-            &input.related_files,
-            max_tokens,
-        ),
+        ZetaFormat::V0211SeedCoder | ZetaFormat::V0304SeedNoEdits => {
+            seed_coder::format_prompt_with_budget(
+                path,
+                context,
+                &editable_range,
+                cursor_offset,
+                &input.events,
+                &input.related_files,
+                max_tokens,
+            )
+        }
         _ => {
             let mut cursor_section = String::new();
             write_cursor_excerpt_section_for_format(
@@ -370,7 +377,8 @@ pub fn get_prefill_for_format(
         | ZetaFormat::V0120GitMergeMarkers
         | ZetaFormat::V0131GitMergeMarkersPrefix
         | ZetaFormat::V0211SeedCoder
-        | ZetaFormat::v0226Hashline => String::new(),
+        | ZetaFormat::v0226Hashline
+        | ZetaFormat::V0304SeedNoEdits => String::new(),
     }
 }
 
@@ -379,7 +387,7 @@ pub fn output_end_marker_for_format(format: ZetaFormat) -> Option<&'static str> 
         ZetaFormat::V0120GitMergeMarkers => Some(v0120_git_merge_markers::END_MARKER),
         ZetaFormat::V0131GitMergeMarkersPrefix => Some(v0131_git_merge_markers_prefix::END_MARKER),
         ZetaFormat::V0211Prefill => Some(v0131_git_merge_markers_prefix::END_MARKER),
-        ZetaFormat::V0211SeedCoder => Some(seed_coder::END_MARKER),
+        ZetaFormat::V0211SeedCoder | ZetaFormat::V0304SeedNoEdits => Some(seed_coder::END_MARKER),
         ZetaFormat::V0112MiddleAtEnd
         | ZetaFormat::V0113Ordered
         | ZetaFormat::V0114180EditableRegion
@@ -399,7 +407,9 @@ pub fn current_region_markers_for_format(format: ZetaFormat) -> (&'static str, &
             v0120_git_merge_markers::START_MARKER,
             v0120_git_merge_markers::SEPARATOR,
         ),
-        ZetaFormat::V0211SeedCoder => (seed_coder::START_MARKER, seed_coder::SEPARATOR),
+        ZetaFormat::V0211SeedCoder | ZetaFormat::V0304SeedNoEdits => {
+            (seed_coder::START_MARKER, seed_coder::SEPARATOR)
+        }
     }
 }
 
@@ -420,6 +430,7 @@ pub fn encode_patch_as_output_for_format(
         ZetaFormat::v0226Hashline => {
             hashline::patch_to_edit_commands(old_editable_region, patch, cursor_offset).map(Some)
         }
+        ZetaFormat::V0304SeedNoEdits => Ok(seed_coder::no_edits(patch)),
         _ => Ok(None),
     }
 }
@@ -436,6 +447,13 @@ pub fn output_with_context_for_format(
                     old_editable_region,
                     output,
                 )))
+            } else {
+                Ok(None)
+            }
+        }
+        ZetaFormat::V0304SeedNoEdits => {
+            if output.starts_with(seed_coder::NO_EDITS) {
+                Ok(Some(old_editable_region.to_owned()))
             } else {
                 Ok(None)
             }
@@ -2381,6 +2399,8 @@ pub mod seed_coder {
     pub const SEPARATOR: &str = "=======\n";
     pub const END_MARKER: &str = ">>>>>>> UPDATED\n";
 
+    pub const NO_EDITS: &str = "NO_EDITS\n";
+
     pub fn special_tokens() -> &'static [&'static str] {
         &[
             FIM_SUFFIX,
@@ -2484,6 +2504,17 @@ pub mod seed_coder {
         }
         section.push_str(SEPARATOR);
         section
+    }
+
+    /// Format patch as containing no changes if it's empty; otherwise return None.
+    pub(crate) fn no_edits(patch: &str) -> Option<String> {
+        // Count lines in the patch
+        let empty_patch = patch.lines().count() <= 3;
+        if empty_patch {
+            Some(format!("{NO_EDITS}{END_MARKER}"))
+        } else {
+            None
+        }
     }
 }
 
