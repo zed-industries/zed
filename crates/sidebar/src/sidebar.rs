@@ -6,8 +6,8 @@ use chrono::Utc;
 use editor::{Editor, EditorElement, EditorStyle};
 use gpui::{
     AnyElement, App, Context, Entity, EventEmitter, FocusHandle, Focusable, FontStyle, ListState,
-    Pixels, Render, SharedString, Subscription, TextStyle, Window, actions, list, prelude::*, px,
-    relative, rems,
+    Pixels, Render, SharedString, Subscription, TextStyle, WeakEntity, Window, actions, list,
+    prelude::*, px, relative, rems,
 };
 use menu::{Cancel, Confirm, SelectFirst, SelectLast, SelectNext, SelectPrevious};
 use project::Event as ProjectEvent;
@@ -171,7 +171,7 @@ fn workspace_index_for_path_list(
 }
 
 pub struct Sidebar {
-    multi_workspace: Entity<MultiWorkspace>,
+    multi_workspace: WeakEntity<MultiWorkspace>,
     width: Pixels,
     focus_handle: FocusHandle,
     filter_editor: Entity<Editor>,
@@ -195,7 +195,8 @@ impl Sidebar {
         cx: &mut Context<Self>,
     ) -> Self {
         let focus_handle = cx.focus_handle();
-        cx.on_focus(&focus_handle, window, Self::focus_in).detach();
+        cx.on_focus_in(&focus_handle, window, Self::focus_in)
+            .detach();
 
         let filter_editor = cx.new(|cx| {
             let mut editor = Editor::single_line(window, cx);
@@ -224,14 +225,21 @@ impl Sidebar {
                         .contents
                         .entries
                         .iter()
-                        .position(|entry| matches!(entry, ListEntry::Thread { .. }));
+                        .position(|entry| matches!(entry, ListEntry::Thread { .. }))
+                        .or_else(|| {
+                            if this.contents.entries.is_empty() {
+                                None
+                            } else {
+                                Some(0)
+                            }
+                        });
                 }
                 cx.notify();
             }
         });
 
         let mut this = Self {
-            multi_workspace,
+            multi_workspace: multi_workspace.downgrade(),
             width: DEFAULT_WIDTH,
             focus_handle,
             filter_editor,
@@ -254,8 +262,10 @@ impl Sidebar {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Vec<Subscription> {
-        let projects: Vec<_> = self
-            .multi_workspace
+        let Some(multi_workspace) = self.multi_workspace.upgrade() else {
+            return Vec::new();
+        };
+        let projects: Vec<_> = multi_workspace
             .read(cx)
             .workspaces()
             .iter()
@@ -286,7 +296,10 @@ impl Sidebar {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Vec<Subscription> {
-        let workspaces: Vec<_> = self.multi_workspace.read(cx).workspaces().to_vec();
+        let Some(multi_workspace) = self.multi_workspace.upgrade() else {
+            return Vec::new();
+        };
+        let workspaces: Vec<_> = multi_workspace.read(cx).workspaces().to_vec();
 
         workspaces
             .iter()
@@ -366,12 +379,11 @@ impl Sidebar {
     }
 
     fn rebuild_contents(&mut self, cx: &App) {
-        let mw = self.multi_workspace.read(cx);
-        let workspaces: Vec<_> = mw
-            .workspaces()
-            .into_iter()
-            .filter(|workspace| workspace.read(cx).visible_worktrees(cx).next().is_some())
-            .collect();
+        let Some(multi_workspace) = self.multi_workspace.upgrade() else {
+            return;
+        };
+        let mw = multi_workspace.read(cx);
+        let workspaces = mw.workspaces().to_vec();
         let active_workspace = mw.workspaces().get(mw.active_workspace_index()).cloned();
         let active_workspace_index = active_workspace
             .and_then(|active| {
@@ -599,7 +611,10 @@ impl Sidebar {
     fn update_entries(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let multi_workspace = self.multi_workspace.clone();
         cx.defer_in(window, move |this, window, cx| {
-            if !this.multi_workspace.read(cx).multi_workspace_enabled(cx) {
+            let Some(multi_workspace) = multi_workspace.upgrade() else {
+                return;
+            };
+            if !multi_workspace.read(cx).multi_workspace_enabled(cx) {
                 return;
             }
 
@@ -620,7 +635,9 @@ impl Sidebar {
             }
 
             if had_notifications != this.has_notifications(cx) {
-                multi_workspace.update(cx, |_, cx| cx.notify());
+                multi_workspace.update(cx, |_, cx| {
+                    cx.notify();
+                });
             }
 
             cx.notify();
@@ -718,7 +735,10 @@ impl Sidebar {
         let path_list_for_new_thread = path_list.clone();
         let path_list_for_remove = path_list.clone();
         let path_list_for_toggle = path_list.clone();
-        let workspace_count = self.multi_workspace.read(cx).workspaces().len();
+        let workspace_count = self
+            .multi_workspace
+            .upgrade()
+            .map_or(0, |mw| mw.read(cx).workspaces().len());
 
         ListItem::new(id)
             .group_name(&group)
@@ -790,7 +810,9 @@ impl Sidebar {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let multi_workspace = self.multi_workspace.clone();
+        let Some(multi_workspace) = self.multi_workspace.upgrade() else {
+            return;
+        };
         let workspaces = multi_workspace.read(cx).workspaces().to_vec();
 
         let Some(workspace_index) = workspace_index_for_path_list(&workspaces, path_list, cx)
@@ -937,7 +959,9 @@ impl Sidebar {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let multi_workspace = self.multi_workspace.clone();
+        let Some(multi_workspace) = self.multi_workspace.upgrade() else {
+            return;
+        };
 
         multi_workspace.update(cx, |multi_workspace, cx| {
             multi_workspace.activate_index(workspace_index, window, cx);
@@ -1114,7 +1138,9 @@ impl Sidebar {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let multi_workspace = self.multi_workspace.clone();
+        let Some(multi_workspace) = self.multi_workspace.upgrade() else {
+            return;
+        };
         let workspaces = multi_workspace.read(cx).workspaces().to_vec();
 
         let workspace_index = workspace_index_for_path_list(&workspaces, path_list, cx);
@@ -1283,16 +1309,21 @@ impl Render for Sidebar {
                             }))
                     })
                     .child({
-                        let workspace = self.multi_workspace.read(cx).workspace().downgrade();
-                        let focus_handle = workspace
+                        let workspace = self
+                            .multi_workspace
                             .upgrade()
+                            .map(|mw| mw.read(cx).workspace().downgrade());
+                        let focus_handle = workspace
+                            .as_ref()
+                            .and_then(|w| w.upgrade())
                             .map(|w| w.read(cx).focus_handle(cx))
                             .unwrap_or_else(|| cx.focus_handle());
 
                         PopoverMenu::new("sidebar-recent-projects-menu")
                             .menu(move |window, cx| {
+                                let workspace = workspace.clone()?;
                                 Some(recent_projects::RecentProjects::popover(
-                                    workspace.clone(),
+                                    workspace,
                                     false,
                                     focus_handle.clone(),
                                     window,
@@ -1604,7 +1635,6 @@ mod tests {
                 "v [my-project]",
                 "  Fix crash in project panel",
                 "  Add inline diff view",
-                "  [+ New Thread]",
             ]
         );
     }
@@ -1639,7 +1669,7 @@ mod tests {
 
         assert_eq!(
             visible_entries_as_strings(&sidebar, cx),
-            vec!["v [project-a]", "  Thread A1", "  [+ New Thread]"]
+            vec!["v [project-a]", "  Thread A1"]
         );
 
         // Add a second workspace
@@ -1653,7 +1683,6 @@ mod tests {
             vec![
                 "v [project-a]",
                 "  Thread A1",
-                "  [+ New Thread]",
                 "v [Empty Workspace]",
                 "  [+ New Thread]"
             ]
@@ -1667,7 +1696,7 @@ mod tests {
 
         assert_eq!(
             visible_entries_as_strings(&sidebar, cx),
-            vec!["v [project-a]", "  Thread A1", "  [+ New Thread]"]
+            vec!["v [project-a]", "  Thread A1"]
         );
     }
 
@@ -1694,7 +1723,6 @@ mod tests {
                 "  Thread 9",
                 "  Thread 8",
                 "  + View More (7)",
-                "  [+ New Thread]",
             ]
         );
     }
@@ -1714,7 +1742,7 @@ mod tests {
 
         assert_eq!(
             visible_entries_as_strings(&sidebar, cx),
-            vec!["v [my-project]", "  Thread 1", "  [+ New Thread]"]
+            vec!["v [my-project]", "  Thread 1"]
         );
 
         // Collapse
@@ -1736,7 +1764,7 @@ mod tests {
 
         assert_eq!(
             visible_entries_as_strings(&sidebar, cx),
-            vec!["v [my-project]", "  Thread 1", "  [+ New Thread]"]
+            vec!["v [my-project]", "  Thread 1"]
         );
     }
 
@@ -1921,7 +1949,7 @@ mod tests {
         multi_workspace.update_in(cx, |_, _window, cx| cx.notify());
         cx.run_until_parked();
 
-        // Entries: [header, thread3, thread2, thread1, new_thread]
+        // Entries: [header, thread3, thread2, thread1]
         // Focusing the sidebar triggers focus_in, which selects the first entry
         open_and_focus_sidebar(&sidebar, &multi_workspace, cx);
         assert_eq!(sidebar.read_with(cx, |s, _| s.selection), Some(0));
@@ -1936,16 +1964,11 @@ mod tests {
         cx.dispatch_action(SelectNext);
         assert_eq!(sidebar.read_with(cx, |s, _| s.selection), Some(3));
 
-        cx.dispatch_action(SelectNext);
-        assert_eq!(sidebar.read_with(cx, |s, _| s.selection), Some(4));
-
         // At the end, selection stays on the last entry
         cx.dispatch_action(SelectNext);
-        assert_eq!(sidebar.read_with(cx, |s, _| s.selection), Some(4));
+        assert_eq!(sidebar.read_with(cx, |s, _| s.selection), Some(3));
 
         // Move back up
-        cx.dispatch_action(SelectPrevious);
-        assert_eq!(sidebar.read_with(cx, |s, _| s.selection), Some(3));
 
         cx.dispatch_action(SelectPrevious);
         assert_eq!(sidebar.read_with(cx, |s, _| s.selection), Some(2));
@@ -1977,7 +2000,7 @@ mod tests {
 
         // SelectLast jumps to the end
         cx.dispatch_action(SelectLast);
-        assert_eq!(sidebar.read_with(cx, |s, _| s.selection), Some(4));
+        assert_eq!(sidebar.read_with(cx, |s, _| s.selection), Some(3));
 
         // SelectFirst jumps to the beginning
         cx.dispatch_action(SelectFirst);
@@ -2025,7 +2048,7 @@ mod tests {
 
         assert_eq!(
             visible_entries_as_strings(&sidebar, cx),
-            vec!["v [my-project]", "  Thread 1", "  [+ New Thread]"]
+            vec!["v [my-project]", "  Thread 1"]
         );
 
         // Focus the sidebar — focus_in selects the header (index 0)
@@ -2047,11 +2070,7 @@ mod tests {
 
         assert_eq!(
             visible_entries_as_strings(&sidebar, cx),
-            vec![
-                "v [my-project]  <== selected",
-                "  Thread 1",
-                "  [+ New Thread]"
-            ]
+            vec!["v [my-project]  <== selected", "  Thread 1",]
         );
     }
 
@@ -2067,9 +2086,9 @@ mod tests {
         multi_workspace.update_in(cx, |_, _window, cx| cx.notify());
         cx.run_until_parked();
 
-        // Should show header + 5 threads + "View More (3)" + "New Thread"
+        // Should show header + 5 threads + "View More (3)"
         let entries = visible_entries_as_strings(&sidebar, cx);
-        assert_eq!(entries.len(), 8);
+        assert_eq!(entries.len(), 7);
         assert!(entries.iter().any(|e| e.contains("View More (3)")));
 
         // Focus sidebar (selects index 0), then navigate down to the "View More" entry (index 6)
@@ -2085,7 +2104,7 @@ mod tests {
 
         // All 8 threads should now be visible, no "View More"
         let entries = visible_entries_as_strings(&sidebar, cx);
-        assert_eq!(entries.len(), 10); // header + 8 threads + new thread
+        assert_eq!(entries.len(), 9); // header + 8 threads
         assert!(!entries.iter().any(|e| e.contains("View More")));
     }
 
@@ -2103,7 +2122,7 @@ mod tests {
 
         assert_eq!(
             visible_entries_as_strings(&sidebar, cx),
-            vec!["v [my-project]", "  Thread 1", "  [+ New Thread]"]
+            vec!["v [my-project]", "  Thread 1"]
         );
 
         // Focus sidebar — focus_in selects the header (index 0). Press left to collapse.
@@ -2124,11 +2143,7 @@ mod tests {
 
         assert_eq!(
             visible_entries_as_strings(&sidebar, cx),
-            vec![
-                "v [my-project]  <== selected",
-                "  Thread 1",
-                "  [+ New Thread]"
-            ]
+            vec!["v [my-project]  <== selected", "  Thread 1",]
         );
 
         // Press right again on already-expanded header moves selection down
@@ -2155,11 +2170,7 @@ mod tests {
 
         assert_eq!(
             visible_entries_as_strings(&sidebar, cx),
-            vec![
-                "v [my-project]",
-                "  Thread 1  <== selected",
-                "  [+ New Thread]"
-            ]
+            vec!["v [my-project]", "  Thread 1  <== selected",]
         );
 
         // Pressing left on a child collapses the parent group and selects it
@@ -2314,12 +2325,7 @@ mod tests {
         entries[1..].sort();
         assert_eq!(
             entries,
-            vec![
-                "v [my-project]",
-                "  Test *",
-                "  Test * (running)",
-                "  [+ New Thread]",
-            ]
+            vec!["v [my-project]", "  Test *", "  Test * (running)",]
         );
     }
 
@@ -2359,7 +2365,6 @@ mod tests {
             vec![
                 "v [project-a]",
                 "  Test * (running)",
-                "  [+ New Thread]",
                 "v [Empty Workspace]",
                 "  [+ New Thread]",
             ]
@@ -2375,7 +2380,6 @@ mod tests {
             vec![
                 "v [project-a]",
                 "  Test * (!)",
-                "  [+ New Thread]",
                 "v [Empty Workspace]",
                 "  [+ New Thread]",
             ]
@@ -2429,7 +2433,6 @@ mod tests {
                 "  Fix crash in project panel",
                 "  Add inline diff view",
                 "  Refactor settings module",
-                "  [+ New Thread]",
             ]
         );
 
@@ -2527,12 +2530,7 @@ mod tests {
         // Confirm the full list is showing.
         assert_eq!(
             visible_entries_as_strings(&sidebar, cx),
-            vec![
-                "v [my-project]",
-                "  Alpha thread",
-                "  Beta thread",
-                "  [+ New Thread]",
-            ]
+            vec!["v [my-project]", "  Alpha thread", "  Beta thread",]
         );
 
         // User types a search query to filter down.
@@ -2552,7 +2550,6 @@ mod tests {
                 "v [my-project]",
                 "  Alpha thread  <== selected",
                 "  Beta thread",
-                "  [+ New Thread]",
             ]
         );
     }
@@ -2618,11 +2615,9 @@ mod tests {
                 "v [project-a]",
                 "  Fix bug in sidebar",
                 "  Add tests for editor",
-                "  [+ New Thread]",
                 "v [Empty Workspace]",
                 "  Refactor sidebar layout",
                 "  Fix typo in README",
-                "  [+ New Thread]",
             ]
         );
 
@@ -2967,7 +2962,6 @@ mod tests {
             vec![
                 "v [my-project]",
                 "  Historical Thread",
-                "  [+ New Thread]",
                 "v [Empty Workspace]",
                 "  [+ New Thread]",
             ]
@@ -3039,12 +3033,7 @@ mod tests {
 
         assert_eq!(
             visible_entries_as_strings(&sidebar, cx),
-            vec![
-                "v [my-project]",
-                "  Thread A",
-                "  Thread B",
-                "  [+ New Thread]"
-            ]
+            vec!["v [my-project]", "  Thread A", "  Thread B",]
         );
 
         // Keyboard confirm preserves selection.
@@ -3095,7 +3084,7 @@ mod tests {
 
         assert_eq!(
             visible_entries_as_strings(&sidebar, cx),
-            vec!["v [my-project]", "  Test *", "  [+ New Thread]"]
+            vec!["v [my-project]", "  Test *"]
         );
 
         // Simulate the agent generating a title. The notification chain is:
@@ -3117,11 +3106,7 @@ mod tests {
 
         assert_eq!(
             visible_entries_as_strings(&sidebar, cx),
-            vec![
-                "v [my-project]",
-                "  Friendly Greeting with AI *",
-                "  [+ New Thread]"
-            ]
+            vec!["v [my-project]", "  Friendly Greeting with AI *"]
         );
     }
 }

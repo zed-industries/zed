@@ -40,6 +40,7 @@ agent_ui = { workspace = true, features = ["test-support"] }
 assistant_text_thread = { workspace = true, features = ["test-support"] }
 editor.workspace = true
 language_model = { workspace = true, features = ["test-support"] }
+recent_projects = { workspace = true, features = ["test-support"] }
 serde_json.workspace = true
 feature_flags.workspace = true
 fs = { workspace = true, features = ["test-support"] }
