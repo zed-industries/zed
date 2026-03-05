@@ -3383,6 +3383,46 @@ async fn test_newline_below(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn test_newline_respects_read_only(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let editor = cx.add_window(|window, cx| {
+        let buffer = MultiBuffer::build_simple("aaaa\nbbbb\n", cx);
+        build_editor(buffer, window, cx)
+    });
+
+    _ = editor.update(cx, |editor, window, cx| {
+        editor.set_read_only(true);
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_display_ranges([
+                DisplayPoint::new(DisplayRow(0), 2)..DisplayPoint::new(DisplayRow(0), 2)
+            ])
+        });
+
+        editor.newline(&Newline, window, cx);
+        assert_eq!(
+            editor.text(cx),
+            "aaaa\nbbbb\n",
+            "newline should not modify a read-only editor"
+        );
+
+        editor.newline_above(&NewlineAbove, window, cx);
+        assert_eq!(
+            editor.text(cx),
+            "aaaa\nbbbb\n",
+            "newline_above should not modify a read-only editor"
+        );
+
+        editor.newline_below(&NewlineBelow, window, cx);
+        assert_eq!(
+            editor.text(cx),
+            "aaaa\nbbbb\n",
+            "newline_below should not modify a read-only editor"
+        );
+    });
+}
+
+#[gpui::test]
 fn test_newline_below_multibuffer(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
