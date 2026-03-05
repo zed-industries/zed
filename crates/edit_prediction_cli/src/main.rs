@@ -358,6 +358,7 @@ enum PredictionProvider {
     Mercury,
     Zeta1,
     Zeta2(ZetaFormat),
+    Baseten(ZetaFormat),
     Teacher(TeacherBackend),
     TeacherNonBatching(TeacherBackend),
     Repair,
@@ -376,6 +377,7 @@ impl std::fmt::Display for PredictionProvider {
             PredictionProvider::Mercury => write!(f, "mercury"),
             PredictionProvider::Zeta1 => write!(f, "zeta1"),
             PredictionProvider::Zeta2(format) => write!(f, "zeta2:{format}"),
+            PredictionProvider::Baseten(format) => write!(f, "baseten:{format}"),
             PredictionProvider::Teacher(backend) => write!(f, "teacher:{backend}"),
             PredictionProvider::TeacherNonBatching(backend) => {
                 write!(f, "teacher-non-batching:{backend}")
@@ -415,6 +417,13 @@ impl std::str::FromStr for PredictionProvider {
                 Ok(PredictionProvider::TeacherNonBatching(backend))
             }
             "repair" => Ok(PredictionProvider::Repair),
+            "baseten" => {
+                let format = arg
+                    .map(ZetaFormat::parse)
+                    .transpose()?
+                    .unwrap_or(ZetaFormat::default());
+                Ok(PredictionProvider::Baseten(format))
+            }
             _ => {
                 anyhow::bail!(
                     "unknown provider `{provider}`. Valid options: sweep, mercury, zeta1, zeta2, zeta2:<version>, teacher, teacher:<backend>, teacher-non-batching, repair\n\

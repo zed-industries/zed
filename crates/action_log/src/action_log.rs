@@ -1,14 +1,20 @@
 use anyhow::{Context as _, Result};
 use buffer_diff::BufferDiff;
 use clock;
-use collections::BTreeMap;
+use collections::{BTreeMap, HashMap};
+use fs::MTime;
 use futures::{FutureExt, StreamExt, channel::mpsc};
 use gpui::{
     App, AppContext, AsyncApp, Context, Entity, SharedString, Subscription, Task, WeakEntity,
 };
 use language::{Anchor, Buffer, BufferEvent, Point, ToOffset, ToPoint};
 use project::{Project, ProjectItem, lsp_store::OpenLspBufferHandle};
-use std::{cmp, ops::Range, sync::Arc};
+use std::{
+    cmp,
+    ops::Range,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 use text::{Edit, Patch, Rope};
 use util::{RangeExt, ResultExt as _};
 
@@ -54,6 +60,8 @@ pub struct ActionLog {
     linked_action_log: Option<Entity<ActionLog>>,
     /// Stores undo information for the most recent reject operation
     last_reject_undo: Option<LastRejectUndo>,
+    /// Tracks the last time files were read by the agent, to detect external modifications
+    file_read_times: HashMap<PathBuf, MTime>,
 }
 
 impl ActionLog {
@@ -64,6 +72,7 @@ impl ActionLog {
             project,
             linked_action_log: None,
             last_reject_undo: None,
+            file_read_times: HashMap::default(),
         }
     }
 
@@ -74,6 +83,32 @@ impl ActionLog {
 
     pub fn project(&self) -> &Entity<Project> {
         &self.project
+    }
+
+    pub fn file_read_time(&self, path: &Path) -> Option<MTime> {
+        self.file_read_times.get(path).copied()
+    }
+
+    fn update_file_read_time(&mut self, buffer: &Entity<Buffer>, cx: &App) {
+        let buffer = buffer.read(cx);
+        if let Some(file) = buffer.file() {
+            if let Some(local_file) = file.as_local() {
+                if let Some(mtime) = file.disk_state().mtime() {
+                    let abs_path = local_file.abs_path(cx);
+                    self.file_read_times.insert(abs_path, mtime);
+                }
+            }
+        }
+    }
+
+    fn remove_file_read_time(&mut self, buffer: &Entity<Buffer>, cx: &App) {
+        let buffer = buffer.read(cx);
+        if let Some(file) = buffer.file() {
+            if let Some(local_file) = file.as_local() {
+                let abs_path = local_file.abs_path(cx);
+                self.file_read_times.remove(&abs_path);
+            }
+        }
     }
 
     fn track_buffer_internal(
@@ -506,24 +541,69 @@ impl ActionLog {
 
     /// Track a buffer as read by agent, so we can notify the model about user edits.
     pub fn buffer_read(&mut self, buffer: Entity<Buffer>, cx: &mut Context<Self>) {
-        if let Some(linked_action_log) = &mut self.linked_action_log {
-            linked_action_log.update(cx, |log, cx| log.buffer_read(buffer.clone(), cx));
+        self.buffer_read_impl(buffer, true, cx);
+    }
+
+    fn buffer_read_impl(
+        &mut self,
+        buffer: Entity<Buffer>,
+        record_file_read_time: bool,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(linked_action_log) = &self.linked_action_log {
+            // We don't want to share read times since the other agent hasn't read it necessarily
+            linked_action_log.update(cx, |log, cx| {
+                log.buffer_read_impl(buffer.clone(), false, cx);
+            });
+        }
+        if record_file_read_time {
+            self.update_file_read_time(&buffer, cx);
         }
         self.track_buffer_internal(buffer, false, cx);
     }
 
     /// Mark a buffer as created by agent, so we can refresh it in the context
     pub fn buffer_created(&mut self, buffer: Entity<Buffer>, cx: &mut Context<Self>) {
-        if let Some(linked_action_log) = &mut self.linked_action_log {
-            linked_action_log.update(cx, |log, cx| log.buffer_created(buffer.clone(), cx));
+        self.buffer_created_impl(buffer, true, cx);
+    }
+
+    fn buffer_created_impl(
+        &mut self,
+        buffer: Entity<Buffer>,
+        record_file_read_time: bool,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(linked_action_log) = &self.linked_action_log {
+            // We don't want to share read times since the other agent hasn't read it necessarily
+            linked_action_log.update(cx, |log, cx| {
+                log.buffer_created_impl(buffer.clone(), false, cx);
+            });
+        }
+        if record_file_read_time {
+            self.update_file_read_time(&buffer, cx);
         }
         self.track_buffer_internal(buffer, true, cx);
     }
 
     /// Mark a buffer as edited by agent, so we can refresh it in the context
     pub fn buffer_edited(&mut self, buffer: Entity<Buffer>, cx: &mut Context<Self>) {
-        if let Some(linked_action_log) = &mut self.linked_action_log {
-            linked_action_log.update(cx, |log, cx| log.buffer_edited(buffer.clone(), cx));
+        self.buffer_edited_impl(buffer, true, cx);
+    }
+
+    fn buffer_edited_impl(
+        &mut self,
+        buffer: Entity<Buffer>,
+        record_file_read_time: bool,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(linked_action_log) = &self.linked_action_log {
+            // We don't want to share read times since the other agent hasn't read it necessarily
+            linked_action_log.update(cx, |log, cx| {
+                log.buffer_edited_impl(buffer.clone(), false, cx);
+            });
+        }
+        if record_file_read_time {
+            self.update_file_read_time(&buffer, cx);
         }
         let new_version = buffer.read(cx).version();
         let tracked_buffer = self.track_buffer_internal(buffer, false, cx);
@@ -536,6 +616,8 @@ impl ActionLog {
     }
 
     pub fn will_delete_buffer(&mut self, buffer: Entity<Buffer>, cx: &mut Context<Self>) {
+        // Ok to propagate file read time removal to linked action log
+        self.remove_file_read_time(&buffer, cx);
         let has_linked_action_log = self.linked_action_log.is_some();
         let tracked_buffer = self.track_buffer_internal(buffer.clone(), false, cx);
         match tracked_buffer.status {
@@ -2973,6 +3055,196 @@ mod tests {
         assert!(
             parent_changed.contains(&buffer_a) && parent_changed.contains(&buffer_b),
             "parent should contain both buffer_a and buffer_b"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_file_read_time_recorded_on_buffer_read(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/dir"), json!({"file": "hello world"}))
+            .await;
+        let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+        let action_log = cx.new(|_| ActionLog::new(project.clone()));
+
+        let file_path = project
+            .read_with(cx, |project, cx| project.find_project_path("dir/file", cx))
+            .unwrap();
+        let buffer = project
+            .update(cx, |project, cx| project.open_buffer(file_path, cx))
+            .await
+            .unwrap();
+
+        let abs_path = PathBuf::from(path!("/dir/file"));
+        assert!(
+            action_log.read_with(cx, |log, _| log.file_read_time(&abs_path).is_none()),
+            "file_read_time should be None before buffer_read"
+        );
+
+        cx.update(|cx| {
+            action_log.update(cx, |log, cx| log.buffer_read(buffer.clone(), cx));
+        });
+
+        assert!(
+            action_log.read_with(cx, |log, _| log.file_read_time(&abs_path).is_some()),
+            "file_read_time should be recorded after buffer_read"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_file_read_time_recorded_on_buffer_edited(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/dir"), json!({"file": "hello world"}))
+            .await;
+        let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+        let action_log = cx.new(|_| ActionLog::new(project.clone()));
+
+        let file_path = project
+            .read_with(cx, |project, cx| project.find_project_path("dir/file", cx))
+            .unwrap();
+        let buffer = project
+            .update(cx, |project, cx| project.open_buffer(file_path, cx))
+            .await
+            .unwrap();
+
+        let abs_path = PathBuf::from(path!("/dir/file"));
+        assert!(
+            action_log.read_with(cx, |log, _| log.file_read_time(&abs_path).is_none()),
+            "file_read_time should be None before buffer_edited"
+        );
+
+        cx.update(|cx| {
+            action_log.update(cx, |log, cx| log.buffer_edited(buffer.clone(), cx));
+        });
+
+        assert!(
+            action_log.read_with(cx, |log, _| log.file_read_time(&abs_path).is_some()),
+            "file_read_time should be recorded after buffer_edited"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_file_read_time_recorded_on_buffer_created(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/dir"), json!({"file": "existing content"}))
+            .await;
+        let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+        let action_log = cx.new(|_| ActionLog::new(project.clone()));
+
+        let file_path = project
+            .read_with(cx, |project, cx| project.find_project_path("dir/file", cx))
+            .unwrap();
+        let buffer = project
+            .update(cx, |project, cx| project.open_buffer(file_path, cx))
+            .await
+            .unwrap();
+
+        let abs_path = PathBuf::from(path!("/dir/file"));
+        assert!(
+            action_log.read_with(cx, |log, _| log.file_read_time(&abs_path).is_none()),
+            "file_read_time should be None before buffer_created"
+        );
+
+        cx.update(|cx| {
+            action_log.update(cx, |log, cx| log.buffer_created(buffer.clone(), cx));
+        });
+
+        assert!(
+            action_log.read_with(cx, |log, _| log.file_read_time(&abs_path).is_some()),
+            "file_read_time should be recorded after buffer_created"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_file_read_time_removed_on_delete(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/dir"), json!({"file": "hello world"}))
+            .await;
+        let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+        let action_log = cx.new(|_| ActionLog::new(project.clone()));
+
+        let file_path = project
+            .read_with(cx, |project, cx| project.find_project_path("dir/file", cx))
+            .unwrap();
+        let buffer = project
+            .update(cx, |project, cx| project.open_buffer(file_path, cx))
+            .await
+            .unwrap();
+
+        let abs_path = PathBuf::from(path!("/dir/file"));
+
+        cx.update(|cx| {
+            action_log.update(cx, |log, cx| log.buffer_read(buffer.clone(), cx));
+        });
+        assert!(
+            action_log.read_with(cx, |log, _| log.file_read_time(&abs_path).is_some()),
+            "file_read_time should exist after buffer_read"
+        );
+
+        cx.update(|cx| {
+            action_log.update(cx, |log, cx| log.will_delete_buffer(buffer.clone(), cx));
+        });
+        assert!(
+            action_log.read_with(cx, |log, _| log.file_read_time(&abs_path).is_none()),
+            "file_read_time should be removed after will_delete_buffer"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_file_read_time_not_forwarded_to_linked_action_log(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/dir"), json!({"file": "hello world"}))
+            .await;
+        let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+        let parent_log = cx.new(|_| ActionLog::new(project.clone()));
+        let child_log =
+            cx.new(|_| ActionLog::new(project.clone()).with_linked_action_log(parent_log.clone()));
+
+        let file_path = project
+            .read_with(cx, |project, cx| project.find_project_path("dir/file", cx))
+            .unwrap();
+        let buffer = project
+            .update(cx, |project, cx| project.open_buffer(file_path, cx))
+            .await
+            .unwrap();
+
+        let abs_path = PathBuf::from(path!("/dir/file"));
+
+        cx.update(|cx| {
+            child_log.update(cx, |log, cx| log.buffer_read(buffer.clone(), cx));
+        });
+        assert!(
+            child_log.read_with(cx, |log, _| log.file_read_time(&abs_path).is_some()),
+            "child should record file_read_time on buffer_read"
+        );
+        assert!(
+            parent_log.read_with(cx, |log, _| log.file_read_time(&abs_path).is_none()),
+            "parent should NOT get file_read_time from child's buffer_read"
+        );
+
+        cx.update(|cx| {
+            child_log.update(cx, |log, cx| log.buffer_edited(buffer.clone(), cx));
+        });
+        assert!(
+            parent_log.read_with(cx, |log, _| log.file_read_time(&abs_path).is_none()),
+            "parent should NOT get file_read_time from child's buffer_edited"
+        );
+
+        cx.update(|cx| {
+            child_log.update(cx, |log, cx| log.buffer_created(buffer.clone(), cx));
+        });
+        assert!(
+            parent_log.read_with(cx, |log, _| log.file_read_time(&abs_path).is_none()),
+            "parent should NOT get file_read_time from child's buffer_created"
         );
     }
 

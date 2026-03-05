@@ -3,7 +3,7 @@ use anthropic::AnthropicModelMode;
 use anyhow::{Context as _, Result, anyhow};
 use chrono::{DateTime, Utc};
 use client::{Client, UserStore, zed_urls};
-use cloud_api_types::Plan;
+use cloud_api_types::{OrganizationId, Plan};
 use cloud_llm_client::{
     CLIENT_SUPPORTS_STATUS_MESSAGES_HEADER_NAME, CLIENT_SUPPORTS_STATUS_STREAM_ENDED_HEADER_NAME,
     CLIENT_SUPPORTS_X_AI_HEADER_NAME, CompletionBody, CompletionEvent, CompletionRequestStatus,
@@ -122,15 +122,25 @@ impl State {
             recommended_models: Vec::new(),
             _fetch_models_task: cx.spawn(async move |this, cx| {
                 maybe!(async move {
-                    let (client, llm_api_token) = this
-                        .read_with(cx, |this, _cx| (client.clone(), this.llm_api_token.clone()))?;
+                    let (client, llm_api_token, organization_id) =
+                        this.read_with(cx, |this, cx| {
+                            (
+                                client.clone(),
+                                this.llm_api_token.clone(),
+                                this.user_store
+                                    .read(cx)
+                                    .current_organization()
+                                    .map(|o| o.id.clone()),
+                            )
+                        })?;
 
                     while current_user.borrow().is_none() {
                         current_user.next().await;
                     }
 
                     let response =
-                        Self::fetch_models(client.clone(), llm_api_token.clone()).await?;
+                        Self::fetch_models(client.clone(), llm_api_token.clone(), organization_id)
+                            .await?;
                     this.update(cx, |this, cx| this.update_models(response, cx))?;
                     anyhow::Ok(())
                 })
@@ -146,9 +156,17 @@ impl State {
                 move |this, _listener, _event, cx| {
                     let client = this.client.clone();
                     let llm_api_token = this.llm_api_token.clone();
+                    let organization_id = this
+                        .user_store
+                        .read(cx)
+                        .current_organization()
+                        .map(|o| o.id.clone());
                     cx.spawn(async move |this, cx| {
-                        llm_api_token.refresh(&client).await?;
-                        let response = Self::fetch_models(client, llm_api_token).await?;
+                        llm_api_token
+                            .refresh(&client, organization_id.clone())
+                            .await?;
+                        let response =
+                            Self::fetch_models(client, llm_api_token, organization_id).await?;
                         this.update(cx, |this, cx| {
                             this.update_models(response, cx);
                         })
@@ -209,9 +227,10 @@ impl State {
     async fn fetch_models(
         client: Arc<Client>,
         llm_api_token: LlmApiToken,
+        organization_id: Option<OrganizationId>,
     ) -> Result<ListModelsResponse> {
         let http_client = &client.http_client();
-        let token = llm_api_token.acquire(&client).await?;
+        let token = llm_api_token.acquire(&client, organization_id).await?;
 
         let request = http_client::Request::builder()
             .method(Method::GET)
@@ -273,11 +292,13 @@ impl CloudLanguageModelProvider {
         &self,
         model: Arc<cloud_llm_client::LanguageModel>,
         llm_api_token: LlmApiToken,
+        user_store: Entity<UserStore>,
     ) -> Arc<dyn LanguageModel> {
         Arc::new(CloudLanguageModel {
             id: LanguageModelId(SharedString::from(model.id.0.clone())),
             model,
             llm_api_token,
+            user_store,
             client: self.client.clone(),
             request_limiter: RateLimiter::new(4),
         })
@@ -306,36 +327,46 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
     }
 
     fn default_model(&self, cx: &App) -> Option<Arc<dyn LanguageModel>> {
-        let default_model = self.state.read(cx).default_model.clone()?;
-        let llm_api_token = self.state.read(cx).llm_api_token.clone();
-        Some(self.create_language_model(default_model, llm_api_token))
+        let state = self.state.read(cx);
+        let default_model = state.default_model.clone()?;
+        let llm_api_token = state.llm_api_token.clone();
+        let user_store = state.user_store.clone();
+        Some(self.create_language_model(default_model, llm_api_token, user_store))
     }
 
     fn default_fast_model(&self, cx: &App) -> Option<Arc<dyn LanguageModel>> {
-        let default_fast_model = self.state.read(cx).default_fast_model.clone()?;
-        let llm_api_token = self.state.read(cx).llm_api_token.clone();
-        Some(self.create_language_model(default_fast_model, llm_api_token))
+        let state = self.state.read(cx);
+        let default_fast_model = state.default_fast_model.clone()?;
+        let llm_api_token = state.llm_api_token.clone();
+        let user_store = state.user_store.clone();
+        Some(self.create_language_model(default_fast_model, llm_api_token, user_store))
     }
 
     fn recommended_models(&self, cx: &App) -> Vec<Arc<dyn LanguageModel>> {
-        let llm_api_token = self.state.read(cx).llm_api_token.clone();
-        self.state
-            .read(cx)
+        let state = self.state.read(cx);
+        let llm_api_token = state.llm_api_token.clone();
+        let user_store = state.user_store.clone();
+        state
             .recommended_models
             .iter()
             .cloned()
-            .map(|model| self.create_language_model(model, llm_api_token.clone()))
+            .map(|model| {
+                self.create_language_model(model, llm_api_token.clone(), user_store.clone())
+            })
             .collect()
     }
 
     fn provided_models(&self, cx: &App) -> Vec<Arc<dyn LanguageModel>> {
-        let llm_api_token = self.state.read(cx).llm_api_token.clone();
-        self.state
-            .read(cx)
+        let state = self.state.read(cx);
+        let llm_api_token = state.llm_api_token.clone();
+        let user_store = state.user_store.clone();
+        state
             .models
             .iter()
             .cloned()
-            .map(|model| self.create_language_model(model, llm_api_token.clone()))
+            .map(|model| {
+                self.create_language_model(model, llm_api_token.clone(), user_store.clone())
+            })
             .collect()
     }
 
@@ -367,6 +398,7 @@ pub struct CloudLanguageModel {
     id: LanguageModelId,
     model: Arc<cloud_llm_client::LanguageModel>,
     llm_api_token: LlmApiToken,
+    user_store: Entity<UserStore>,
     client: Arc<Client>,
     request_limiter: RateLimiter,
 }
@@ -380,12 +412,15 @@ impl CloudLanguageModel {
     async fn perform_llm_completion(
         client: Arc<Client>,
         llm_api_token: LlmApiToken,
+        organization_id: Option<OrganizationId>,
         app_version: Option<Version>,
         body: CompletionBody,
     ) -> Result<PerformLlmCompletionResponse> {
         let http_client = &client.http_client();
 
-        let mut token = llm_api_token.acquire(&client).await?;
+        let mut token = llm_api_token
+            .acquire(&client, organization_id.clone())
+            .await?;
         let mut refreshed_token = false;
 
         loop {
@@ -416,7 +451,9 @@ impl CloudLanguageModel {
             }
 
             if !refreshed_token && response.needs_llm_token_refresh() {
-                token = llm_api_token.refresh(&client).await?;
+                token = llm_api_token
+                    .refresh(&client, organization_id.clone())
+                    .await?;
                 refreshed_token = true;
                 continue;
             }
@@ -670,12 +707,17 @@ impl LanguageModel for CloudLanguageModel {
             cloud_llm_client::LanguageModelProvider::Google => {
                 let client = self.client.clone();
                 let llm_api_token = self.llm_api_token.clone();
+                let organization_id = self
+                    .user_store
+                    .read(cx)
+                    .current_organization()
+                    .map(|o| o.id.clone());
                 let model_id = self.model.id.to_string();
                 let generate_content_request =
                     into_google(request, model_id.clone(), GoogleModelMode::Default);
                 async move {
                     let http_client = &client.http_client();
-                    let token = llm_api_token.acquire(&client).await?;
+                    let token = llm_api_token.acquire(&client, organization_id).await?;
 
                     let request_body = CountTokensBody {
                         provider: cloud_llm_client::LanguageModelProvider::Google,
@@ -736,6 +778,13 @@ impl LanguageModel for CloudLanguageModel {
         let prompt_id = request.prompt_id.clone();
         let intent = request.intent;
         let app_version = Some(cx.update(|cx| AppVersion::global(cx)));
+        let user_store = self.user_store.clone();
+        let organization_id = cx.update(|cx| {
+            user_store
+                .read(cx)
+                .current_organization()
+                .map(|o| o.id.clone())
+        });
         let thinking_allowed = request.thinking_allowed;
         let enable_thinking = thinking_allowed && self.model.supports_thinking;
         let provider_name = provider_name(&self.model.provider);
@@ -767,6 +816,7 @@ impl LanguageModel for CloudLanguageModel {
 
                 let client = self.client.clone();
                 let llm_api_token = self.llm_api_token.clone();
+                let organization_id = organization_id.clone();
                 let future = self.request_limiter.stream(async move {
                     let PerformLlmCompletionResponse {
                         response,
@@ -774,6 +824,7 @@ impl LanguageModel for CloudLanguageModel {
                     } = Self::perform_llm_completion(
                         client.clone(),
                         llm_api_token,
+                        organization_id,
                         app_version,
                         CompletionBody {
                             thread_id,
@@ -803,6 +854,7 @@ impl LanguageModel for CloudLanguageModel {
             cloud_llm_client::LanguageModelProvider::OpenAi => {
                 let client = self.client.clone();
                 let llm_api_token = self.llm_api_token.clone();
+                let organization_id = organization_id.clone();
                 let effort = request
                     .thinking_effort
                     .as_ref()
@@ -828,6 +880,7 @@ impl LanguageModel for CloudLanguageModel {
                     } = Self::perform_llm_completion(
                         client.clone(),
                         llm_api_token,
+                        organization_id,
                         app_version,
                         CompletionBody {
                             thread_id,
@@ -861,6 +914,7 @@ impl LanguageModel for CloudLanguageModel {
                     None,
                 );
                 let llm_api_token = self.llm_api_token.clone();
+                let organization_id = organization_id.clone();
                 let future = self.request_limiter.stream(async move {
                     let PerformLlmCompletionResponse {
                         response,
@@ -868,6 +922,7 @@ impl LanguageModel for CloudLanguageModel {
                     } = Self::perform_llm_completion(
                         client.clone(),
                         llm_api_token,
+                        organization_id,
                         app_version,
                         CompletionBody {
                             thread_id,
@@ -902,6 +957,7 @@ impl LanguageModel for CloudLanguageModel {
                     } = Self::perform_llm_completion(
                         client.clone(),
                         llm_api_token,
+                        organization_id,
                         app_version,
                         CompletionBody {
                             thread_id,

@@ -69,6 +69,6 @@ impl FeatureFlag for StreamingEditFileToolFeatureFlag {
     const NAME: &'static str = "streaming-edit-file-tool";
 
     fn enabled_for_staff() -> bool {
-        false
+        true
     }
 }

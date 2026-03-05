@@ -1,7 +1,7 @@
 use anyhow::Result;
 use arrayvec::ArrayVec;
 use client::{Client, EditPredictionUsage, UserStore};
-use cloud_api_types::SubmitEditPredictionFeedbackBody;
+use cloud_api_types::{OrganizationId, SubmitEditPredictionFeedbackBody};
 use cloud_llm_client::predict_edits_v3::{
     PredictEditsV3Request, PredictEditsV3Response, RawCompletionRequest, RawCompletionResponse,
 };
@@ -69,6 +69,7 @@ pub mod sweep_ai;
 pub mod udiff;
 
 mod capture_example;
+pub mod open_ai_compatible;
 mod zed_edit_prediction_delegate;
 pub mod zeta;
 
@@ -107,12 +108,7 @@ const EDIT_PREDICTION_SETTLED_EVENT: &str = "Edit Prediction Settled";
 const EDIT_PREDICTION_SETTLED_TTL: Duration = Duration::from_secs(60 * 5);
 const EDIT_PREDICTION_SETTLED_QUIESCENCE: Duration = Duration::from_secs(10);
 
-pub struct Zeta2FeatureFlag;
 pub struct EditPredictionJumpsFeatureFlag;
-
-impl FeatureFlag for Zeta2FeatureFlag {
-    const NAME: &'static str = "zeta2";
-}
 
 impl FeatureFlag for EditPredictionJumpsFeatureFlag {
     const NAME: &'static str = "edit_prediction_jumps";
@@ -129,6 +125,7 @@ impl Global for EditPredictionStoreGlobal {}
 #[derive(Clone)]
 pub struct Zeta2RawConfig {
     pub model_id: Option<String>,
+    pub environment: Option<String>,
     pub format: ZetaFormat,
 }
 
@@ -147,12 +144,17 @@ pub struct EditPredictionStore {
     pub sweep_ai: SweepAi,
     pub mercury: Mercury,
     data_collection_choice: DataCollectionChoice,
-    reject_predictions_tx: mpsc::UnboundedSender<EditPredictionRejection>,
+    reject_predictions_tx: mpsc::UnboundedSender<EditPredictionRejectionPayload>,
     settled_predictions_tx: mpsc::UnboundedSender<Instant>,
     shown_predictions: VecDeque<EditPrediction>,
     rated_predictions: HashSet<EditPredictionId>,
     #[cfg(test)]
     settled_event_callback: Option<Box<dyn Fn(EditPredictionId, String)>>,
+}
+
+pub(crate) struct EditPredictionRejectionPayload {
+    rejection: EditPredictionRejection,
+    organization_id: Option<OrganizationId>,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -723,8 +725,13 @@ impl EditPredictionStore {
                 |this, _listener, _event, cx| {
                     let client = this.client.clone();
                     let llm_token = this.llm_token.clone();
+                    let organization_id = this
+                        .user_store
+                        .read(cx)
+                        .current_organization()
+                        .map(|organization| organization.id.clone());
                     cx.spawn(async move |_this, _cx| {
-                        llm_token.refresh(&client).await?;
+                        llm_token.refresh(&client, organization_id).await?;
                         anyhow::Ok(())
                     })
                     .detach_and_log_err(cx);
@@ -754,7 +761,12 @@ impl EditPredictionStore {
         let version_str = env::var("ZED_ZETA_FORMAT").ok()?;
         let format = ZetaFormat::parse(&version_str).ok()?;
         let model_id = env::var("ZED_ZETA_MODEL").ok();
-        Some(Zeta2RawConfig { model_id, format })
+        let environment = env::var("ZED_ZETA_ENVIRONMENT").ok();
+        Some(Zeta2RawConfig {
+            model_id,
+            environment,
+            format,
+        })
     }
 
     pub fn set_edit_prediction_model(&mut self, model: EditPredictionModel) {
@@ -785,11 +797,17 @@ impl EditPredictionStore {
         let client = self.client.clone();
         let llm_token = self.llm_token.clone();
         let app_version = AppVersion::global(cx);
+        let organization_id = self
+            .user_store
+            .read(cx)
+            .current_organization()
+            .map(|organization| organization.id.clone());
+
         cx.spawn(async move |this, cx| {
             let experiments = cx
                 .background_spawn(async move {
                     let http_client = client.http_client();
-                    let token = llm_token.acquire(&client).await?;
+                    let token = llm_token.acquire(&client, organization_id).await?;
                     let url = http_client.build_zed_llm_url("/edit_prediction_experiments", &[])?;
                     let request = http_client::Request::builder()
                         .method(Method::GET)
@@ -1428,7 +1446,7 @@ impl EditPredictionStore {
     }
 
     async fn handle_rejected_predictions(
-        rx: UnboundedReceiver<EditPredictionRejection>,
+        rx: UnboundedReceiver<EditPredictionRejectionPayload>,
         client: Arc<Client>,
         llm_token: LlmApiToken,
         app_version: Version,
@@ -1437,7 +1455,11 @@ impl EditPredictionStore {
         let mut rx = std::pin::pin!(rx.peekable());
         let mut batched = Vec::new();
 
-        while let Some(rejection) = rx.next().await {
+        while let Some(EditPredictionRejectionPayload {
+            rejection,
+            organization_id,
+        }) = rx.next().await
+        {
             batched.push(rejection);
 
             if batched.len() < MAX_EDIT_PREDICTION_REJECTIONS_PER_REQUEST / 2 {
@@ -1475,6 +1497,7 @@ impl EditPredictionStore {
                 },
                 client.clone(),
                 llm_token.clone(),
+                organization_id,
                 app_version.clone(),
                 true,
             )
@@ -1680,13 +1703,23 @@ impl EditPredictionStore {
                     all_language_settings(None, cx).edit_predictions.provider,
                     EditPredictionProvider::Ollama | EditPredictionProvider::OpenAiCompatibleApi
                 );
+
                 if is_cloud {
+                    let organization_id = self
+                        .user_store
+                        .read(cx)
+                        .current_organization()
+                        .map(|organization| organization.id.clone());
+
                     self.reject_predictions_tx
-                        .unbounded_send(EditPredictionRejection {
-                            request_id: prediction_id.to_string(),
-                            reason,
-                            was_shown,
-                            model_version,
+                        .unbounded_send(EditPredictionRejectionPayload {
+                            rejection: EditPredictionRejection {
+                                request_id: prediction_id.to_string(),
+                                reason,
+                                was_shown,
+                                model_version,
+                            },
+                            organization_id,
                         })
                         .log_err();
                 }
@@ -1956,31 +1989,49 @@ impl EditPredictionStore {
         let project_state = self.get_or_init_project(&project, cx);
         let pending_prediction_id = project_state.next_pending_prediction_id;
         project_state.next_pending_prediction_id += 1;
-        let last_request = *select_throttle(project_state, request_trigger);
+        let throttle_at_enqueue = *select_throttle(project_state, request_trigger);
 
         let task = cx.spawn(async move |this, cx| {
-            if let Some(timeout) = last_request.and_then(|(last_entity, last_timestamp)| {
-                if throttle_entity != last_entity {
-                    return None;
-                }
-                (last_timestamp + throttle_timeout).checked_duration_since(Instant::now())
-            }) {
+            let throttle_wait = this
+                .update(cx, |this, cx| {
+                    let project_state = this.get_or_init_project(&project, cx);
+                    let throttle = *select_throttle(project_state, request_trigger);
+
+                    throttle.and_then(|(last_entity, last_timestamp)| {
+                        if throttle_entity != last_entity {
+                            return None;
+                        }
+                        (last_timestamp + throttle_timeout).checked_duration_since(Instant::now())
+                    })
+                })
+                .ok()
+                .flatten();
+
+            if let Some(timeout) = throttle_wait {
                 cx.background_executor().timer(timeout).await;
             }
 
             // If this task was cancelled before the throttle timeout expired,
-            // do not perform a request.
+            // do not perform a request. Also skip if another task already
+            // proceeded since we were enqueued (duplicate).
             let mut is_cancelled = true;
             this.update(cx, |this, cx| {
                 let project_state = this.get_or_init_project(&project, cx);
                 let was_cancelled = project_state
                     .cancelled_predictions
                     .remove(&pending_prediction_id);
-                if !was_cancelled {
-                    let new_refresh = (throttle_entity, Instant::now());
-                    *select_throttle(project_state, request_trigger) = Some(new_refresh);
-                    is_cancelled = false;
+                if was_cancelled {
+                    return;
                 }
+
+                // Another request has been already sent since this was enqueued
+                if *select_throttle(project_state, request_trigger) != throttle_at_enqueue {
+                    return;
+                }
+
+                let new_refresh = (throttle_entity, Instant::now());
+                *select_throttle(project_state, request_trigger) = Some(new_refresh);
+                is_cancelled = false;
             })
             .ok();
             if is_cancelled {
@@ -2108,7 +2159,7 @@ impl EditPredictionStore {
             active_buffer.clone(),
             position,
             trigger,
-            cx.has_flag::<Zeta2FeatureFlag>(),
+            cx.has_flag::<EditPredictionJumpsFeatureFlag>(),
             cx,
         )
     }
@@ -2341,6 +2392,7 @@ impl EditPredictionStore {
         client: Arc<Client>,
         custom_url: Option<Arc<Url>>,
         llm_token: LlmApiToken,
+        organization_id: Option<OrganizationId>,
         app_version: Version,
     ) -> Result<(RawCompletionResponse, Option<EditPredictionUsage>)> {
         let url = if let Some(custom_url) = custom_url {
@@ -2360,6 +2412,7 @@ impl EditPredictionStore {
             },
             client,
             llm_token,
+            organization_id,
             app_version,
             true,
         )
@@ -2370,6 +2423,7 @@ impl EditPredictionStore {
         input: ZetaPromptInput,
         client: Arc<Client>,
         llm_token: LlmApiToken,
+        organization_id: Option<OrganizationId>,
         app_version: Version,
         trigger: PredictEditsRequestTrigger,
     ) -> Result<(PredictEditsV3Response, Option<EditPredictionUsage>)> {
@@ -2392,6 +2446,7 @@ impl EditPredictionStore {
             },
             client,
             llm_token,
+            organization_id,
             app_version,
             true,
         )
@@ -2445,6 +2500,7 @@ impl EditPredictionStore {
         build: impl Fn(http_client::http::request::Builder) -> Result<http_client::Request<AsyncBody>>,
         client: Arc<Client>,
         llm_token: LlmApiToken,
+        organization_id: Option<OrganizationId>,
         app_version: Version,
         require_auth: bool,
     ) -> Result<(Res, Option<EditPredictionUsage>)>
@@ -2454,9 +2510,12 @@ impl EditPredictionStore {
         let http_client = client.http_client();
 
         let mut token = if require_auth {
-            Some(llm_token.acquire(&client).await?)
+            Some(llm_token.acquire(&client, organization_id.clone()).await?)
         } else {
-            llm_token.acquire(&client).await.ok()
+            llm_token
+                .acquire(&client, organization_id.clone())
+                .await
+                .ok()
         };
         let mut did_retry = false;
 
@@ -2498,7 +2557,7 @@ impl EditPredictionStore {
                 return Ok((serde_json::from_slice(&body)?, usage));
             } else if !did_retry && token.is_some() && response.needs_llm_token_refresh() {
                 did_retry = true;
-                token = Some(llm_token.refresh(&client).await?);
+                token = Some(llm_token.refresh(&client, organization_id.clone()).await?);
             } else {
                 let mut body = String::new();
                 response.body_mut().read_to_string(&mut body).await?;

@@ -925,10 +925,10 @@ impl<T: Item> ItemHandle for Entity<T> {
                 },
             ));
 
-            cx.on_blur(
+            cx.on_focus_out(
                 &self.read(cx).focus_handle(cx),
                 window,
-                move |workspace, window, cx| {
+                move |workspace, _event, window, cx| {
                     if let Some(item) = weak_item.upgrade()
                         && item.workspace_settings(cx).autosave == AutosaveSetting::OnFocusChange
                     {
@@ -1371,7 +1371,8 @@ pub mod test {
     };
     use gpui::{
         AnyElement, App, AppContext as _, Context, Entity, EntityId, EventEmitter, Focusable,
-        InteractiveElement, IntoElement, Render, SharedString, Task, WeakEntity, Window,
+        InteractiveElement, IntoElement, ParentElement, Render, SharedString, Task, WeakEntity,
+        Window,
     };
     use project::{Project, ProjectEntryId, ProjectPath, WorktreeId};
     use std::{any::Any, cell::Cell, sync::Arc};
@@ -1400,6 +1401,7 @@ pub mod test {
         pub tab_detail: Cell<Option<usize>>,
         serialize: Option<Box<dyn Fn() -> Option<Task<anyhow::Result<()>>>>>,
         focus_handle: gpui::FocusHandle,
+        pub child_focus_handles: Vec<gpui::FocusHandle>,
     }
 
     impl project::ProjectItem for TestProjectItem {
@@ -1482,6 +1484,7 @@ pub mod test {
                 workspace_id: Default::default(),
                 focus_handle: cx.focus_handle(),
                 serialize: None,
+                child_focus_handles: Vec::new(),
             }
         }
 
@@ -1529,6 +1532,11 @@ pub mod test {
             self
         }
 
+        pub fn with_child_focus_handles(mut self, count: usize, cx: &mut Context<Self>) -> Self {
+            self.child_focus_handles = (0..count).map(|_| cx.focus_handle()).collect();
+            self
+        }
+
         pub fn set_state(&mut self, state: String, cx: &mut Context<Self>) {
             self.push_to_nav_history(cx);
             self.state = state;
@@ -1543,7 +1551,12 @@ pub mod test {
 
     impl Render for TestItem {
         fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-            gpui::div().track_focus(&self.focus_handle(cx))
+            let parent = gpui::div().track_focus(&self.focus_handle(cx));
+            self.child_focus_handles
+                .iter()
+                .fold(parent, |parent, child_handle| {
+                    parent.child(gpui::div().track_focus(child_handle))
+                })
         }
     }
 
@@ -1641,23 +1654,30 @@ pub mod test {
         where
             Self: Sized,
         {
-            Task::ready(Some(cx.new(|cx| Self {
-                state: self.state.clone(),
-                label: self.label.clone(),
-                save_count: self.save_count,
-                save_as_count: self.save_as_count,
-                reload_count: self.reload_count,
-                is_dirty: self.is_dirty,
-                buffer_kind: self.buffer_kind,
-                has_conflict: self.has_conflict,
-                has_deleted_file: self.has_deleted_file,
-                project_items: self.project_items.clone(),
-                nav_history: None,
-                tab_descriptions: None,
-                tab_detail: Default::default(),
-                workspace_id: self.workspace_id,
-                focus_handle: cx.focus_handle(),
-                serialize: None,
+            Task::ready(Some(cx.new(|cx| {
+                Self {
+                    state: self.state.clone(),
+                    label: self.label.clone(),
+                    save_count: self.save_count,
+                    save_as_count: self.save_as_count,
+                    reload_count: self.reload_count,
+                    is_dirty: self.is_dirty,
+                    buffer_kind: self.buffer_kind,
+                    has_conflict: self.has_conflict,
+                    has_deleted_file: self.has_deleted_file,
+                    project_items: self.project_items.clone(),
+                    nav_history: None,
+                    tab_descriptions: None,
+                    tab_detail: Default::default(),
+                    workspace_id: self.workspace_id,
+                    focus_handle: cx.focus_handle(),
+                    serialize: None,
+                    child_focus_handles: self
+                        .child_focus_handles
+                        .iter()
+                        .map(|_| cx.focus_handle())
+                        .collect(),
+                }
             })))
         }
 

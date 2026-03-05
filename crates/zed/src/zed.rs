@@ -422,16 +422,7 @@ pub fn initialize_workspace(
         if let Some(specs) = window.gpu_specs() {
             log::info!("Using GPU: {:?}", specs);
             show_software_emulation_warning_if_needed(specs.clone(), window, cx);
-            if let Some((crash_server, message)) = crashes::CRASH_HANDLER
-                .get()
-                .zip(bincode::serialize(&specs).ok())
-                && let Err(err) = crash_server.send_message(3, message)
-            {
-                log::warn!(
-                    "Failed to store active gpu info for crash reporting: {}",
-                    err
-                );
-            }
+            crashes::set_gpu_info(specs);
         }
 
         let edit_prediction_menu_handle = PopoverMenuHandle::default();
@@ -5021,7 +5012,7 @@ mod tests {
             language_models::init(app_state.user_store.clone(), app_state.client.clone(), cx);
             web_search::init(cx);
             git_graph::init(cx);
-            web_search_providers::init(app_state.client.clone(), cx);
+            web_search_providers::init(app_state.client.clone(), app_state.user_store.clone(), cx);
             let prompt_builder = PromptBuilder::load(app_state.fs.clone(), false, cx);
             project::AgentRegistryStore::init_global(
                 cx,
