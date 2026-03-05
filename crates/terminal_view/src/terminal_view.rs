@@ -2416,7 +2416,7 @@ mod tests {
                     terminal_view_index,
                     &terminal,
                     &external_paths,
-                    &expected_drop_text(&[first_path.clone()]),
+                    &expected_drop_text(std::slice::from_ref(&first_path)),
                     window,
                     cx,
                 );
@@ -2434,7 +2434,7 @@ mod tests {
                     terminal_view_index,
                     &terminal,
                     &dragged_tab,
-                    &expected_drop_text(&[second_path.clone()]),
+                    &expected_drop_text(std::slice::from_ref(&second_path)),
                     window,
                     cx,
                 );
