@@ -13,6 +13,7 @@ use editor::{
 use gpui::actions;
 use gpui::{Context, Window};
 use language::{CharClassifier, CharKind, Point};
+use multi_buffer::MultiBufferRow;
 use search::{BufferSearchBar, SearchOptions};
 use settings::Settings;
 use text::{Bias, SelectionGoal};
@@ -695,7 +696,6 @@ impl Vim {
             editor.hide_mouse_cursor(HideMouseCursorOrigin::MovementAction, cx);
             let display_map = editor.display_map.update(cx, |map, cx| map.snapshot(cx));
             let mut selections = editor.selections.all::<Point>(&display_map);
-            let max_point = display_map.buffer_snapshot().max_point();
             let buffer_snapshot = &display_map.buffer_snapshot();
 
             for selection in &mut selections {
@@ -706,20 +706,30 @@ impl Vim {
                 // Check if cursor is on empty line by checking first character
                 let line_start_offset = buffer_snapshot.point_to_offset(Point::new(start_row, 0));
                 let first_char = buffer_snapshot.chars_at(line_start_offset).next();
-                let extra_line = if first_char == Some('\n') && selection.is_empty() {
-                    1
-                } else {
-                    0
-                };
 
-                let end_row = current_end_row + count as u32 + extra_line;
+                let row_end_column = buffer_snapshot.line_len(MultiBufferRow(selection.end.row));
+
+                // When we select an empty line, we should advance the row.
+                let is_empty_line_cursor = selection.is_empty() && first_char == Some('\n');
+
+                // When we select on an existing linewise selection, we should keep extending.
+                let is_linewise_selection = !selection.is_empty()
+                    && selection.start.column == 0
+                    && selection.end.column == row_end_column;
+
+                let should_advance_row = is_empty_line_cursor || is_linewise_selection;
+
+                let mut end_row = current_end_row + count as u32;
+                if should_advance_row {
+                    end_row += 1;
+                }
 
                 selection.start = Point::new(start_row, 0);
-                selection.end = if end_row > max_point.row {
-                    max_point
-                } else {
-                    Point::new(end_row, 0)
-                };
+                let last_selected_row = end_row.saturating_sub(1);
+                selection.end = Point::new(
+                    last_selected_row,
+                    buffer_snapshot.line_len(MultiBufferRow(last_selected_row)),
+                );
                 selection.reversed = false;
             }
 
