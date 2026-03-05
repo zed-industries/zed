@@ -2417,11 +2417,15 @@ impl MultiBuffer {
         let mut last_hunk_row = None;
         for (range, excerpt_end) in ranges {
             for diff_hunk in snapshot.diff_hunks_in_range(range) {
-                if diff_hunk
-                    .multi_buffer_range()
-                    .start
-                    .cmp(&excerpt_end, &snapshot)
-                    .is_gt()
+                dbg!(diff_hunk.multi_buffer_range().start.to_point(&snapshot));
+                dbg!(excerpt_end.to_point(&snapshot));
+                if dbg!(
+                    diff_hunk
+                        .multi_buffer_range()
+                        .start
+                        .cmp(&excerpt_end, &snapshot)
+                )
+                .is_gt()
                 {
                     dbg!("NOT EXPANDING", diff_hunk.multi_buffer_range(), excerpt_end);
                     dbg!(

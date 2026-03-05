@@ -2414,7 +2414,10 @@ impl ReferenceMultibuffer {
             .hunks_intersecting_range(range, &buffer)
         {
             let hunk_range = hunk.buffer_range.to_offset(&buffer);
-            if hunk_range.start < excerpt_range.start || hunk_range.start > excerpt_range.end {
+            if dbg!(hunk_range.start) < dbg!(excerpt_range.start)
+                || dbg!(hunk_range.start) > dbg!(excerpt_range.end)
+            {
+                dbg!("NOT IN RANGE");
                 continue;
             }
             if let Err(ix) = expanded_diff_hunks
