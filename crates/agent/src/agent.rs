@@ -1490,16 +1490,6 @@ impl NativeAgentSessionList {
         }
     }
 
-    fn to_session_info(entry: DbThreadMetadata) -> AgentSessionInfo {
-        AgentSessionInfo {
-            session_id: entry.id,
-            cwd: None,
-            title: Some(entry.title),
-            updated_at: Some(entry.updated_at),
-            meta: None,
-        }
-    }
-
     pub fn thread_store(&self) -> &Entity<ThreadStore> {
         &self.thread_store
     }
@@ -1515,7 +1505,7 @@ impl AgentSessionList for NativeAgentSessionList {
             .thread_store
             .read(cx)
             .entries()
-            .map(Self::to_session_info)
+            .map(|entry| AgentSessionInfo::from(&entry))
             .collect();
         Task::ready(Ok(AgentSessionListResponse::new(sessions)))
     }

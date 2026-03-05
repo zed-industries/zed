@@ -1253,17 +1253,16 @@ impl PickerDelegate for RecentProjectsDelegate {
                     .gap_1()
                     .border_t_1()
                     .border_color(cx.theme().colors().border_variant)
-                    .child(
+                    .child({
+                        let open_action = workspace::Open {
+                            create_new_window: self.create_new_window,
+                        };
                         Button::new("open_local_folder", "Open Local Project")
-                            .key_binding(KeyBinding::for_action_in(
-                                &workspace::Open,
-                                &focus_handle,
-                                cx,
-                            ))
-                            .on_click(|_, window, cx| {
-                                window.dispatch_action(workspace::Open.boxed_clone(), cx)
-                            }),
-                    )
+                            .key_binding(KeyBinding::for_action_in(&open_action, &focus_handle, cx))
+                            .on_click(move |_, window, cx| {
+                                window.dispatch_action(open_action.boxed_clone(), cx)
+                            })
+                    })
                     .child(
                         Button::new("open_remote_folder", "Open Remote Project")
                             .key_binding(KeyBinding::for_action(
@@ -1354,6 +1353,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                         )
                         .menu({
                             let focus_handle = focus_handle.clone();
+                            let create_new_window = self.create_new_window;
 
                             move |window, cx| {
                                 Some(ContextMenu::build(window, cx, {
@@ -1362,7 +1362,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                                         menu.context(focus_handle)
                                             .action(
                                                 "Open Local Project",
-                                                workspace::Open.boxed_clone(),
+                                                workspace::Open { create_new_window }.boxed_clone(),
                                             )
                                             .action(
                                                 "Open Remote Project",

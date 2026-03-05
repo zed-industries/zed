@@ -785,7 +785,7 @@ fn register_actions(
                 }
             }
         })
-        .register_action(|workspace, _: &workspace::Open, window, cx| {
+        .register_action(|workspace, action: &workspace::Open, window, cx| {
             telemetry::event!("Project Opened");
             workspace::prompt_for_open_path_and_open(
                 workspace,
@@ -796,6 +796,7 @@ fn register_actions(
                     multiple: true,
                     prompt: None,
                 },
+                action.create_new_window,
                 window,
                 cx,
             );
@@ -811,6 +812,7 @@ fn register_actions(
                     multiple: true,
                     prompt: None,
                 },
+                true,
                 window,
                 cx,
             );
@@ -4783,6 +4785,7 @@ mod tests {
                 "action",
                 "activity_indicator",
                 "agent",
+                "agents_sidebar",
                 "app_menu",
                 "assistant",
                 "assistant2",

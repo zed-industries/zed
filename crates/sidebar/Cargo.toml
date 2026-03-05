@@ -13,30 +13,38 @@ path = "src/sidebar.rs"
 
 [features]
 default = []
-test-support = []
 
 [dependencies]
 acp_thread.workspace = true
+agent.workspace = true
+agent-client-protocol.workspace = true
 agent_ui.workspace = true
 chrono.workspace = true
+editor.workspace = true
 fs.workspace = true
-fuzzy.workspace = true
 gpui.workspace = true
-picker.workspace = true
+menu.workspace = true
 project.workspace = true
 recent_projects.workspace = true
+settings.workspace = true
 theme.workspace = true
 ui.workspace = true
-ui_input.workspace = true
 util.workspace = true
 workspace.workspace = true
+zed_actions.workspace = true
 
 [dev-dependencies]
+acp_thread = { workspace = true, features = ["test-support"] }
+agent = { workspace = true, features = ["test-support"] }
+agent_ui = { workspace = true, features = ["test-support"] }
+assistant_text_thread = { workspace = true, features = ["test-support"] }
 editor.workspace = true
+language_model = { workspace = true, features = ["test-support"] }
+recent_projects = { workspace = true, features = ["test-support"] }
+serde_json.workspace = true
 feature_flags.workspace = true
 fs = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
 project = { workspace = true, features = ["test-support"] }
-recent_projects = { workspace = true, features = ["test-support"] }
 settings = { workspace = true, features = ["test-support"] }
 workspace = { workspace = true, features = ["test-support"] }

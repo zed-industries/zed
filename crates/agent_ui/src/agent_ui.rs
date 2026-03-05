@@ -25,6 +25,8 @@ mod slash_command;
 mod slash_command_picker;
 mod terminal_codegen;
 mod terminal_inline_assistant;
+#[cfg(any(test, feature = "test-support"))]
+pub mod test_support;
 mod text_thread_editor;
 mod text_thread_history;
 mod thread_history;

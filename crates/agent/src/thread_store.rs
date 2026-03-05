@@ -22,6 +22,10 @@ impl ThreadStore {
         cx.global::<GlobalThreadStore>().0.clone()
     }
 
+    pub fn try_global(cx: &App) -> Option<Entity<Self>> {
+        cx.try_global::<GlobalThreadStore>().map(|g| g.0.clone())
+    }
+
     pub fn new(cx: &mut Context<Self>) -> Self {
         let this = Self {
             threads: Vec::new(),
