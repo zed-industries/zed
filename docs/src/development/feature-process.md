@@ -42,6 +42,7 @@ Walk through this list before you start building. Not everything will apply:
 - **Accessibility.** Is it keyboard-navigable? Are focus states clear?
 - **Platform differences.** Does behavior differ on macOS, Linux, or Windows?
 - **Performance.** How does it behave with large files or big projects? Are interactions instant?
+- **Security.** How does this feature interact with Workspace Trust? Does it open new attack surfaces in Zed?
 
 If your feature touches the **editor** specifically: the editor has a lot of coexisting features — gutter elements, inline blocks, multiple cursors, folding, edit predictions, code intelligence popovers, the minimap. Test your changes with different combinations of them active. Features that work in a normal buffer might need to be disabled in a multi-buffer.
 
