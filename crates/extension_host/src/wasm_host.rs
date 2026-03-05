@@ -170,15 +170,13 @@ impl extension::Extension for WasmExtension {
         self.call(|extension, store| {
             async move {
                 let resource = store.data_mut().table().push(worktree)?;
-                let schema = extension
+                extension
                     .call_language_server_initialization_options_schema(
                         store,
                         &language_server_id,
                         resource,
                     )
-                    .await?
-                    .map_err(|err| store.data().extension_error(err))?;
-                anyhow::Ok(schema)
+                    .await
             }
             .boxed()
         })
@@ -193,15 +191,13 @@ impl extension::Extension for WasmExtension {
         self.call(|extension, store| {
             async move {
                 let resource = store.data_mut().table().push(worktree)?;
-                let schema = extension
+                extension
                     .call_language_server_workspace_configuration_schema(
                         store,
                         &language_server_id,
                         resource,
                     )
-                    .await?
-                    .map_err(|err| store.data().extension_error(err))?;
-                anyhow::Ok(schema)
+                    .await
             }
             .boxed()
         })

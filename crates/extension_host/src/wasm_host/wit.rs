@@ -470,7 +470,7 @@ impl Extension {
         store: &mut Store<WasmState>,
         language_server_id: &LanguageServerName,
         resource: Resource<Arc<dyn WorktreeDelegate>>,
-    ) -> Result<Result<Option<String>, String>> {
+    ) -> Result<Option<String>> {
         match self {
             Extension::V0_8_0(ext) => {
                 ext.call_language_server_initialization_options_schema(
@@ -488,7 +488,7 @@ impl Extension {
             | Extension::V0_1_0(_)
             | Extension::V0_0_6(_)
             | Extension::V0_0_4(_)
-            | Extension::V0_0_1(_) => Ok(Ok(None)),
+            | Extension::V0_0_1(_) => Ok(None),
         }
     }
 
@@ -497,7 +497,7 @@ impl Extension {
         store: &mut Store<WasmState>,
         language_server_id: &LanguageServerName,
         resource: Resource<Arc<dyn WorktreeDelegate>>,
-    ) -> Result<Result<Option<String>, String>> {
+    ) -> Result<Option<String>> {
         match self {
             Extension::V0_8_0(ext) => {
                 ext.call_language_server_workspace_configuration_schema(
@@ -515,7 +515,7 @@ impl Extension {
             | Extension::V0_1_0(_)
             | Extension::V0_0_6(_)
             | Extension::V0_0_4(_)
-            | Extension::V0_0_1(_) => Ok(Ok(None)),
+            | Extension::V0_0_1(_) => Ok(None),
         }
     }
 

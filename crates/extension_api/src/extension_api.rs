@@ -108,8 +108,8 @@ pub trait Extension: Send + Sync {
         &mut self,
         _language_server_id: &LanguageServerId,
         _worktree: &Worktree,
-    ) -> Result<Option<serde_json::Value>> {
-        Ok(None)
+    ) -> Option<serde_json::Value> {
+        None
     }
 
     /// Returns the JSON schema for the workspace configuration.
@@ -120,8 +120,8 @@ pub trait Extension: Send + Sync {
         &mut self,
         _language_server_id: &LanguageServerId,
         _worktree: &Worktree,
-    ) -> Result<Option<serde_json::Value>> {
-        Ok(None)
+    ) -> Option<serde_json::Value> {
+        None
     }
 
     /// Returns the initialization options to pass to the other language server.
@@ -397,21 +397,21 @@ impl wit::Guest for Component {
     fn language_server_initialization_options_schema(
         language_server_id: String,
         worktree: &Worktree,
-    ) -> Result<Option<String>, String> {
+    ) -> Option<String> {
         let language_server_id = LanguageServerId(language_server_id);
-        Ok(extension()
-            .language_server_initialization_options_schema(&language_server_id, worktree)?
-            .and_then(|value| serde_json::to_string(&value).ok()))
+        extension()
+            .language_server_initialization_options_schema(&language_server_id, worktree)
+            .and_then(|value| serde_json::to_string(&value).ok())
     }
 
     fn language_server_workspace_configuration_schema(
         language_server_id: String,
         worktree: &Worktree,
-    ) -> Result<Option<String>, String> {
+    ) -> Option<String> {
         let language_server_id = LanguageServerId(language_server_id);
-        Ok(extension()
-            .language_server_workspace_configuration_schema(&language_server_id, worktree)?
-            .and_then(|value| serde_json::to_string(&value).ok()))
+        extension()
+            .language_server_workspace_configuration_schema(&language_server_id, worktree)
+            .and_then(|value| serde_json::to_string(&value).ok())
     }
 
     fn language_server_additional_initialization_options(
