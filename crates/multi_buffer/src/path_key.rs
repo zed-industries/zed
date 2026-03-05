@@ -12,7 +12,7 @@ use ztracing::instrument;
 use crate::{
     Anchor, BufferState, BufferStateSnapshot, DiffChangeKind, Event, Excerpt, ExcerptOffset,
     ExcerptRange, ExcerptSummary, ExpandExcerptDirection, MultiBuffer, MultiBufferDimension,
-    PathKeyIndex, ToOffset, build_excerpt_ranges,
+    MultiBufferOffset, PathKeyIndex, ToOffset, build_excerpt_ranges,
 };
 
 #[derive(PartialEq, Eq, Ord, PartialOrd, Clone, Hash, Debug)]
@@ -323,6 +323,7 @@ impl MultiBuffer {
         to_insert: &Vec<ExcerptRange<text::Anchor>>,
         cx: &mut Context<Self>,
     ) -> (bool, PathKeyIndex) {
+        dbg!(&path_key, &to_insert);
         let path_key_index = self.get_or_create_path_key_index(&path_key);
         if let Some(old_path_key) = self
             .snapshot(cx)
@@ -378,6 +379,19 @@ impl MultiBuffer {
                 break;
             };
             if &excerpt.range == *next_excerpt {
+                let before = new_excerpts.summary().len();
+                new_excerpts.update_last(
+                    |prev_excerpt| {
+                        if !prev_excerpt.has_trailing_newline {
+                            prev_excerpt.has_trailing_newline = true;
+                            patch.push(Edit {
+                                old: cursor.position.1..cursor.position.1,
+                                new: before..before + MultiBufferOffset(1),
+                            });
+                        }
+                    },
+                    (),
+                );
                 new_excerpts.push(excerpt.clone(), ());
                 to_insert.next();
                 cursor.next();
@@ -404,17 +418,20 @@ impl MultiBuffer {
                 let next_excerpt = to_insert.next().unwrap();
                 added_new_excerpt = true;
                 let before = new_excerpts.summary().len();
-                new_excerpts.update_last(|excerpt| excerpt.has_trailing_newline = true, ());
+                new_excerpts.update_last(
+                    |prev_excerpt| {
+                        dbg!("NORMAL INSERT");
+                        prev_excerpt.has_trailing_newline = true;
+                    },
+                    (),
+                );
                 new_excerpts.push(
                     Excerpt::new(
                         path_key.clone(),
                         path_key_index,
                         &buffer_snapshot,
                         next_excerpt.clone(),
-                        to_insert.peek().is_some()
-                            || cursor
-                                .next_item()
-                                .is_some_and(|item| item.path_key_index != path_key_index),
+                        false,
                     ),
                     (),
                 );
@@ -454,17 +471,20 @@ impl MultiBuffer {
         while let Some(next_excerpt) = to_insert.next() {
             added_new_excerpt = true;
             let before = new_excerpts.summary().len();
-            new_excerpts.update_last(|excerpt| excerpt.has_trailing_newline = true, ());
+            new_excerpts.update_last(
+                |prev_excerpt| {
+                    dbg!("TRAILING INSERT");
+                    prev_excerpt.has_trailing_newline = true;
+                },
+                (),
+            );
             new_excerpts.push(
                 Excerpt::new(
                     path_key.clone(),
                     path_key_index,
                     &buffer_snapshot,
                     next_excerpt.clone(),
-                    to_insert.peek().is_some()
-                        || cursor
-                            .item()
-                            .is_some_and(|item| item.path_key_index != path_key_index),
+                    false,
                 ),
                 (),
             );
@@ -475,8 +495,26 @@ impl MultiBuffer {
             });
         }
 
+        let suffix_start = cursor.position.1;
         let suffix = cursor.suffix();
         let changed_trailing_excerpt = suffix.is_empty();
+        if !suffix.is_empty() {
+            let before = new_excerpts.summary().len();
+            new_excerpts.update_last(
+                |prev_excerpt| {
+                    if !prev_excerpt.has_trailing_newline {
+                        dbg!("BEFORE SUFFIX");
+                        prev_excerpt.has_trailing_newline = true;
+                        patch.push(dbg!(Edit {
+                            old: suffix_start..suffix_start,
+                            new: before..before + MultiBufferOffset(1),
+                        }));
+                    }
+                },
+                (),
+            );
+        }
+        dbg!(&patch);
         new_excerpts.append(suffix, ());
         drop(cursor);
 
@@ -568,6 +606,7 @@ impl MultiBuffer {
             })
         }
         drop(cursor);
+        dbg!("REMOVING");
         if changed_trailing_excerpt {
             snapshot.trailing_excerpt_update_count += 1;
             new_excerpts.update_last(

@@ -6507,33 +6507,47 @@ impl MultiBufferSnapshot {
                 let prev = &excerpts[ix - 1];
 
                 if excerpt.path_key < prev.path_key {
-                    panic!("excerpt path_keys are out-of-order: {:?}", excerpts);
+                    panic!("excerpt path_keys are out-of-order: {:#?}", excerpts);
                 } else if excerpt.path_key == prev.path_key {
                     if excerpt
                         .start_anchor()
                         .cmp(&prev.end_anchor(), &self)
                         .is_le()
                     {
-                        panic!("excerpt anchors are out-of-order: {:?}", excerpts);
+                        panic!("excerpt anchors are out-of-order: {:#?}", excerpts);
                     }
                     if excerpt
                         .start_anchor()
                         .cmp(&excerpt.end_anchor(), &self)
                         .is_ge()
                     {
-                        panic!("excerpt with backward range: {:?}", excerpts);
+                        panic!("excerpt with backward range: {:#?}", excerpts);
                     }
                 }
             }
+
+            if ix < excerpts.len() - 1 {
+                assert!(
+                    excerpt.has_trailing_newline,
+                    "non-trailing excerpt has no trailing newline: {:#?}",
+                    excerpts
+                );
+            } else {
+                assert!(
+                    !excerpt.has_trailing_newline,
+                    "trailing excerpt has trailing newline: {:#?}",
+                    excerpts
+                );
+            }
             assert!(
                 all_buffer_path_keys.contains(&excerpt.path_key),
-                "excerpt path key not found in active path keys: {:?}",
+                "excerpt path key not found in active path keys: {:#?}",
                 excerpt.path_key
             );
             assert_eq!(
                 self.path_keys_by_index.get(&excerpt.path_key_index),
                 Some(&excerpt.path_key),
-                "excerpt path key index does not match path key: {:?}",
+                "excerpt path key index does not match path key: {:#?}",
                 excerpt.path_key,
             );
         }
