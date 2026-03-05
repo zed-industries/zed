@@ -3,6 +3,57 @@ use agent_settings::AgentSettings;
 use gpui::{App, SharedString, Task};
 use std::future;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Duration;
+
+/// A streaming tool that echoes its input, used to test streaming tool
+/// lifecycle (e.g. partial delivery and cleanup when the LLM stream ends
+/// before `is_input_complete`).
+#[derive(JsonSchema, Serialize, Deserialize)]
+pub struct StreamingEchoToolInput {
+    /// The text to echo.
+    pub text: String,
+}
+
+pub struct StreamingEchoTool;
+
+impl AgentTool for StreamingEchoTool {
+    type Input = StreamingEchoToolInput;
+    type Output = String;
+
+    const NAME: &'static str = "streaming_echo";
+
+    fn supports_input_streaming() -> bool {
+        true
+    }
+
+    fn kind() -> acp::ToolKind {
+        acp::ToolKind::Other
+    }
+
+    fn initial_title(
+        &self,
+        _input: Result<Self::Input, serde_json::Value>,
+        _cx: &mut App,
+    ) -> SharedString {
+        "Streaming Echo".into()
+    }
+
+    fn run(
+        self: Arc<Self>,
+        mut input: ToolInput<Self::Input>,
+        _event_stream: ToolCallEventStream,
+        cx: &mut App,
+    ) -> Task<Result<String, String>> {
+        cx.spawn(async move |_cx| {
+            while input.recv_partial().await.is_some() {}
+            let input = input
+                .recv()
+                .await
+                .map_err(|e| format!("Failed to receive tool input: {e}"))?;
+            Ok(input.text)
+        })
+    }
+}
 
 /// A tool that echoes its input
 #[derive(JsonSchema, Serialize, Deserialize)]
@@ -33,11 +84,17 @@ impl AgentTool for EchoTool {
 
     fn run(
         self: Arc<Self>,
-        input: Self::Input,
+        input: ToolInput<Self::Input>,
         _event_stream: ToolCallEventStream,
-        _cx: &mut App,
+        cx: &mut App,
     ) -> Task<Result<String, String>> {
-        Task::ready(Ok(input.text))
+        cx.spawn(async move |_cx| {
+            let input = input
+                .recv()
+                .await
+                .map_err(|e| format!("Failed to receive tool input: {e}"))?;
+            Ok(input.text)
+        })
     }
 }
 
@@ -74,7 +131,7 @@ impl AgentTool for DelayTool {
 
     fn run(
         self: Arc<Self>,
-        input: Self::Input,
+        input: ToolInput<Self::Input>,
         _event_stream: ToolCallEventStream,
         cx: &mut App,
     ) -> Task<Result<String, String>>
@@ -83,6 +140,10 @@ impl AgentTool for DelayTool {
     {
         let executor = cx.background_executor().clone();
         cx.foreground_executor().spawn(async move {
+            let input = input
+                .recv()
+                .await
+                .map_err(|e| format!("Failed to receive tool input: {e}"))?;
             executor.timer(Duration::from_millis(input.ms)).await;
             Ok("Ding".to_string())
         })
@@ -114,28 +175,38 @@ impl AgentTool for ToolRequiringPermission {
 
     fn run(
         self: Arc<Self>,
-        _input: Self::Input,
+        input: ToolInput<Self::Input>,
         event_stream: ToolCallEventStream,
         cx: &mut App,
     ) -> Task<Result<String, String>> {
-        let settings = AgentSettings::get_global(cx);
-        let decision = decide_permission_from_settings(Self::NAME, &[String::new()], settings);
+        cx.spawn(async move |cx| {
+            let _input = input
+                .recv()
+                .await
+                .map_err(|e| format!("Failed to receive tool input: {e}"))?;
 
-        let authorize = match decision {
-            ToolPermissionDecision::Allow => None,
-            ToolPermissionDecision::Deny(reason) => {
-                return Task::ready(Err(reason));
-            }
-            ToolPermissionDecision::Confirm => {
-                let context = crate::ToolPermissionContext::new(
-                    "tool_requiring_permission",
-                    vec![String::new()],
-                );
-                Some(event_stream.authorize("Authorize?", context, cx))
-            }
-        };
+            let decision = cx.update(|cx| {
+                decide_permission_from_settings(
+                    Self::NAME,
+                    &[String::new()],
+                    AgentSettings::get_global(cx),
+                )
+            });
 
-        cx.foreground_executor().spawn(async move {
+            let authorize = match decision {
+                ToolPermissionDecision::Allow => None,
+                ToolPermissionDecision::Deny(reason) => {
+                    return Err(reason);
+                }
+                ToolPermissionDecision::Confirm => Some(cx.update(|cx| {
+                    let context = crate::ToolPermissionContext::new(
+                        "tool_requiring_permission",
+                        vec![String::new()],
+                    );
+                    event_stream.authorize("Authorize?", context, cx)
+                })),
+            };
+
             if let Some(authorize) = authorize {
                 authorize.await.map_err(|e| e.to_string())?;
             }
@@ -169,11 +240,15 @@ impl AgentTool for InfiniteTool {
 
     fn run(
         self: Arc<Self>,
-        _input: Self::Input,
+        input: ToolInput<Self::Input>,
         _event_stream: ToolCallEventStream,
         cx: &mut App,
     ) -> Task<Result<String, String>> {
         cx.foreground_executor().spawn(async move {
+            let _input = input
+                .recv()
+                .await
+                .map_err(|e| format!("Failed to receive tool input: {e}"))?;
             future::pending::<()>().await;
             unreachable!()
         })
@@ -221,11 +296,15 @@ impl AgentTool for CancellationAwareTool {
 
     fn run(
         self: Arc<Self>,
-        _input: Self::Input,
+        input: ToolInput<Self::Input>,
         event_stream: ToolCallEventStream,
         cx: &mut App,
     ) -> Task<Result<String, String>> {
         cx.foreground_executor().spawn(async move {
+            let _input = input
+                .recv()
+                .await
+                .map_err(|e| format!("Failed to receive tool input: {e}"))?;
             // Wait for cancellation - this tool does nothing but wait to be cancelled
             event_stream.cancelled_by_user().await;
             self.was_cancelled.store(true, Ordering::SeqCst);
@@ -276,10 +355,16 @@ impl AgentTool for WordListTool {
 
     fn run(
         self: Arc<Self>,
-        _input: Self::Input,
+        input: ToolInput<Self::Input>,
         _event_stream: ToolCallEventStream,
-        _cx: &mut App,
+        cx: &mut App,
     ) -> Task<Result<String, String>> {
-        Task::ready(Ok("ok".to_string()))
+        cx.spawn(async move |_cx| {
+            let _input = input
+                .recv()
+                .await
+                .map_err(|e| format!("Failed to receive tool input: {e}"))?;
+            Ok("ok".to_string())
+        })
     }
 }

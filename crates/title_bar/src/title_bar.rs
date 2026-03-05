@@ -31,7 +31,9 @@ use gpui::{
     StatefulInteractiveElement, Styled, Subscription, WeakEntity, Window, actions, div,
 };
 use onboarding_banner::OnboardingBanner;
-use project::{Project, git_store::GitStoreEvent, trusted_worktrees::TrustedWorktrees};
+use project::{
+    DisableAiSettings, Project, git_store::GitStoreEvent, trusted_worktrees::TrustedWorktrees,
+};
 use remote::RemoteConnectionOptions;
 use settings::Settings;
 use settings::WorktreeId;
@@ -686,7 +688,7 @@ impl TitleBar {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
-        if !cx.has_flag::<AgentV2FeatureFlag>() {
+        if !cx.has_flag::<AgentV2FeatureFlag>() || DisableAiSettings::get_global(cx).disable_ai {
             return None;
         }
 

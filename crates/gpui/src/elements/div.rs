@@ -26,6 +26,7 @@ use crate::{
     size,
 };
 use collections::HashMap;
+use gpui_util::ResultExt;
 use refineable::Refineable;
 use smallvec::SmallVec;
 use stacksafe::{StackSafe, stacksafe};
@@ -40,7 +41,6 @@ use std::{
     sync::Arc,
     time::Duration,
 };
-use util::ResultExt;
 
 use super::ImageCacheProvider;
 
@@ -1886,18 +1886,18 @@ impl Interactivity {
             // high for the maximum scroll, we round the scroll max to 2 decimal
             // places here.
             let padded_content_size = self.content_size + padding_size;
-            let scroll_max = (padded_content_size - bounds.size)
+            let scroll_max = Point::from(padded_content_size - bounds.size)
                 .map(round_to_two_decimals)
                 .max(&Default::default());
             // Clamp scroll offset in case scroll max is smaller now (e.g., if children
             // were removed or the bounds became larger).
             let mut scroll_offset = scroll_offset.borrow_mut();
 
-            scroll_offset.x = scroll_offset.x.clamp(-scroll_max.width, px(0.));
+            scroll_offset.x = scroll_offset.x.clamp(-scroll_max.x, px(0.));
             if scroll_to_bottom {
-                scroll_offset.y = -scroll_max.height;
+                scroll_offset.y = -scroll_max.y;
             } else {
-                scroll_offset.y = scroll_offset.y.clamp(-scroll_max.height, px(0.));
+                scroll_offset.y = scroll_offset.y.clamp(-scroll_max.y, px(0.));
             }
 
             if let Some(mut scroll_handle_state) = tracked_scroll_handle {
@@ -3285,7 +3285,7 @@ impl ScrollAnchor {
 struct ScrollHandleState {
     offset: Rc<RefCell<Point<Pixels>>>,
     bounds: Bounds<Pixels>,
-    max_offset: Size<Pixels>,
+    max_offset: Point<Pixels>,
     child_bounds: Vec<Bounds<Pixels>>,
     scroll_to_bottom: bool,
     overflow: Point<Overflow>,
@@ -3329,7 +3329,7 @@ impl ScrollHandle {
     }
 
     /// Get the maximum scroll offset.
-    pub fn max_offset(&self) -> Size<Pixels> {
+    pub fn max_offset(&self) -> Point<Pixels> {
         self.0.borrow().max_offset
     }
 

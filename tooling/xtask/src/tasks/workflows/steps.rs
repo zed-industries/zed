@@ -3,6 +3,11 @@ use serde_json::Value;
 
 use crate::tasks::workflows::{runners::Platform, vars, vars::StepOutput};
 
+pub(crate) fn use_clang(job: Job) -> Job {
+    job.add_env(Env::new("CC", "clang"))
+        .add_env(Env::new("CXX", "clang++"))
+}
+
 const SCCACHE_R2_BUCKET: &str = "sccache-zed";
 
 const BASH_SHELL: &str = "bash -euxo pipefail {0}";
@@ -498,9 +503,8 @@ pub mod named {
 }
 
 pub fn git_checkout(ref_name: &dyn std::fmt::Display) -> Step<Run> {
-    named::bash(&format!(
-        "git fetch origin {ref_name} && git checkout {ref_name}"
-    ))
+    named::bash(r#"git fetch origin "$REF_NAME" && git checkout "$REF_NAME""#)
+        .add_env(("REF_NAME", ref_name.to_string()))
 }
 
 pub fn authenticate_as_zippy() -> (Step<Use>, StepOutput) {

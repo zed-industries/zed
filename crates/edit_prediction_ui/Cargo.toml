@@ -40,7 +40,6 @@ paths.workspace = true
 project.workspace = true
 regex.workspace = true
 settings.workspace = true
-supermaven.workspace = true
 telemetry.workspace = true
 text.workspace = true
 theme.workspace = true

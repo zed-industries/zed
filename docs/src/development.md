@@ -86,6 +86,30 @@ For benchmarking unit tests, annotate them with the `#[perf]` attribute from the
 perf-test -p $CRATE` to benchmark them. See the rustdoc documentation on `crates/util_macros` and `tooling/perf` for
 in-depth examples and explanations.
 
+## ETW Profiling on Windows
+
+Zed supports performance profiling with Event Tracing for Windows (ETW) to capture detailed performance data, including CPU, GPU, memory, disk, and file I/O activity. Data is saved to an `.etl` file, which can be opened in standard profiling tools for analysis.
+
+ETW recordings may contain personally identifiable or security-sensitive information, such as paths to files and registry keys accessed, as well as process names. Please keep this in mind when sharing traces with others.
+
+### Recording a trace
+
+Open the command palette and run one of the following:
+
+- `zed: record etw trace`: records CPU, GPU, memory, and I/O activity
+- `zed: record etw trace with heap tracing`: includes heap allocation data for the Zed process
+
+Zed will prompt you to choose a save location for the `.etl` file, then request administrator permission. Once granted, recording will begin.
+
+### Saving or canceling
+
+While a trace is recording, open the command palette and run one of the following:
+
+- `zed: save etw trace`: stops recording and saves the trace to disk
+- `zed: cancel etw trace`: stops recording without saving
+
+Recordings automatically save after 60 seconds if not stopped manually.
+
 ## Contributor links
 
 - [CONTRIBUTING.md](https://github.com/zed-industries/zed/blob/main/CONTRIBUTING.md)

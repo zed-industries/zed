@@ -18,7 +18,7 @@ use editor::{
 };
 use futures::channel::oneshot;
 use gpui::{
-    Action, App, ClickEvent, Context, Entity, EventEmitter, Focusable, InteractiveElement as _,
+    App, ClickEvent, Context, Entity, EventEmitter, Focusable, InteractiveElement as _,
     IntoElement, KeyContext, ParentElement as _, Render, ScrollHandle, Styled, Subscription, Task,
     WeakEntity, Window, div,
 };
@@ -117,18 +117,17 @@ impl Render for BufferSearchBar {
                                 .toggle_state(!is_split)
                                 .tooltip(Tooltip::element(move |_, cx| {
                                     v_flex()
-                                        .gap_1()
-                                        .child(Label::new("Unified"))
+                                        .child("Unified")
                                         .child(
                                             h_flex()
                                                 .gap_0p5()
-                                                .text_sm()
+                                                .text_ui_sm(cx)
                                                 .text_color(Color::Muted.color(cx))
                                                 .children(render_modifiers(
                                                     &gpui::Modifiers::secondary_key(),
                                                     PlatformStyle::platform(),
                                                     None,
-                                                    Some(TextSize::Default.rems(cx).into()),
+                                                    Some(TextSize::Small.rems(cx).into()),
                                                     false,
                                                 ))
                                                 .child("click to set as default"),
@@ -168,18 +167,17 @@ impl Render for BufferSearchBar {
                                 .toggle_state(is_split)
                                 .tooltip(Tooltip::element(move |_, cx| {
                                     v_flex()
-                                        .gap_1()
-                                        .child(Label::new("Split"))
+                                        .child("Split")
                                         .child(
                                             h_flex()
                                                 .gap_0p5()
-                                                .text_sm()
+                                                .text_ui_sm(cx)
                                                 .text_color(Color::Muted.color(cx))
                                                 .children(render_modifiers(
                                                     &gpui::Modifiers::secondary_key(),
                                                     PlatformStyle::platform(),
                                                     None,
-                                                    Some(TextSize::Default.rems(cx).into()),
+                                                    Some(TextSize::Small.rems(cx).into()),
                                                     false,
                                                 ))
                                                 .child("click to set as default"),
@@ -245,9 +243,9 @@ impl Render for BufferSearchBar {
                             cx,
                         )
                     })
-                    .on_click(|_event, window, cx| {
-                        window.dispatch_action(ToggleFoldAll.boxed_clone(), cx)
-                    })
+                    .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
+                        this.toggle_fold_all(&ToggleFoldAll, window, cx);
+                    }))
             };
 
             if self.dismissed {
@@ -1876,7 +1874,7 @@ mod tests {
 
     use super::*;
     use editor::{
-        DisplayPoint, Editor, ExcerptRange, MultiBuffer, SearchSettings, SelectionEffects,
+        DisplayPoint, Editor, MultiBuffer, PathKey, SearchSettings, SelectionEffects,
         display_map::DisplayRow, test::editor_test_context::EditorTestContext,
     };
     use gpui::{Hsla, TestAppContext, UpdateGlobal, VisualTestContext};
@@ -1934,14 +1932,18 @@ mod tests {
             let mut buffer = MultiBuffer::new(language::Capability::ReadWrite);
 
             //[ExcerptRange::new(Point::new(0, 0)..Point::new(2, 0))]
-            buffer.push_excerpts(
+            buffer.set_excerpts_for_path(
+                PathKey::sorted(0),
                 buffer1,
-                [ExcerptRange::new(Point::new(0, 0)..Point::new(3, 0))],
+                [Point::new(0, 0)..Point::new(3, 0)],
+                0,
                 cx,
             );
-            buffer.push_excerpts(
+            buffer.set_excerpts_for_path(
+                PathKey::sorted(1),
                 buffer2,
-                [ExcerptRange::new(Point::new(0, 0)..Point::new(1, 0))],
+                [Point::new(0, 0)..Point::new(1, 0)],
+                0,
                 cx,
             );
 

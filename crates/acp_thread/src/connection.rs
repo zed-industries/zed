@@ -496,6 +496,7 @@ mod test_support {
     //! - `create_test_png_base64` for generating test images
 
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     use action_log::ActionLog;
     use collections::HashMap;
@@ -621,7 +622,9 @@ mod test_support {
             _cwd: &Path,
             cx: &mut gpui::App,
         ) -> Task<gpui::Result<Entity<AcpThread>>> {
-            let session_id = acp::SessionId::new(self.sessions.lock().len().to_string());
+            static NEXT_SESSION_ID: AtomicUsize = AtomicUsize::new(0);
+            let session_id =
+                acp::SessionId::new(NEXT_SESSION_ID.fetch_add(1, Ordering::SeqCst).to_string());
             let action_log = cx.new(|_| ActionLog::new(project.clone()));
             let thread = cx.new(|cx| {
                 AcpThread::new(

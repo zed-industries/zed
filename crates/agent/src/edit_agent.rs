@@ -2,6 +2,7 @@ mod create_file_parser;
 mod edit_parser;
 #[cfg(test)]
 mod evals;
+pub mod reindent;
 pub mod streaming_fuzzy_matcher;
 
 use crate::{Template, Templates};
@@ -24,9 +25,10 @@ use language_model::{
     LanguageModelToolChoice, MessageContent, Role,
 };
 use project::{AgentLocation, Project};
+use reindent::{IndentDelta, Reindenter};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use std::{cmp, iter, mem, ops::Range, pin::Pin, sync::Arc, task::Poll};
+use std::{mem, ops::Range, pin::Pin, sync::Arc, task::Poll};
 use streaming_diff::{CharOperation, StreamingDiff};
 use streaming_fuzzy_matcher::StreamingFuzzyMatcher;
 
@@ -82,6 +84,7 @@ pub struct EditAgent {
     templates: Arc<Templates>,
     edit_format: EditFormat,
     thinking_allowed: bool,
+    update_agent_location: bool,
 }
 
 impl EditAgent {
@@ -92,6 +95,7 @@ impl EditAgent {
         templates: Arc<Templates>,
         edit_format: EditFormat,
         allow_thinking: bool,
+        update_agent_location: bool,
     ) -> Self {
         EditAgent {
             model,
@@ -100,6 +104,7 @@ impl EditAgent {
             templates,
             edit_format,
             thinking_allowed: allow_thinking,
+            update_agent_location,
         }
     }
 
@@ -166,54 +171,71 @@ impl EditAgent {
         output_events_tx: mpsc::UnboundedSender<EditAgentOutputEvent>,
         cx: &mut AsyncApp,
     ) -> Result<()> {
-        cx.update(|cx| {
-            buffer.update(cx, |buffer, cx| buffer.set_text("", cx));
-            self.action_log.update(cx, |log, cx| {
-                log.buffer_edited(buffer.clone(), cx);
-            });
-            self.project.update(cx, |project, cx| {
-                project.set_agent_location(
-                    Some(AgentLocation {
-                        buffer: buffer.downgrade(),
-                        position: language::Anchor::max_for_buffer(buffer.read(cx).remote_id()),
-                    }),
-                    cx,
-                )
-            });
-            output_events_tx
-                .unbounded_send(EditAgentOutputEvent::Edited(
-                    Anchor::min_max_range_for_buffer(buffer.read(cx).remote_id()),
-                ))
-                .ok();
+        let buffer_id = cx.update(|cx| {
+            let buffer_id = buffer.read(cx).remote_id();
+            if self.update_agent_location {
+                self.project.update(cx, |project, cx| {
+                    project.set_agent_location(
+                        Some(AgentLocation {
+                            buffer: buffer.downgrade(),
+                            position: language::Anchor::min_for_buffer(buffer_id),
+                        }),
+                        cx,
+                    )
+                });
+            }
+            buffer_id
         });
 
+        let send_edit_event = || {
+            output_events_tx
+                .unbounded_send(EditAgentOutputEvent::Edited(
+                    Anchor::min_max_range_for_buffer(buffer_id),
+                ))
+                .ok()
+        };
+        let set_agent_location = |cx: &mut _| {
+            if self.update_agent_location {
+                self.project.update(cx, |project, cx| {
+                    project.set_agent_location(
+                        Some(AgentLocation {
+                            buffer: buffer.downgrade(),
+                            position: language::Anchor::max_for_buffer(buffer_id),
+                        }),
+                        cx,
+                    )
+                })
+            }
+        };
+        let mut first_chunk = true;
         while let Some(event) = parse_rx.next().await {
             match event? {
                 CreateFileParserEvent::NewTextChunk { chunk } => {
-                    let buffer_id = cx.update(|cx| {
-                        buffer.update(cx, |buffer, cx| buffer.append(chunk, cx));
+                    cx.update(|cx| {
+                        buffer.update(cx, |buffer, cx| {
+                            if mem::take(&mut first_chunk) {
+                                buffer.set_text(chunk, cx)
+                            } else {
+                                buffer.append(chunk, cx)
+                            }
+                        });
                         self.action_log
                             .update(cx, |log, cx| log.buffer_edited(buffer.clone(), cx));
-                        self.project.update(cx, |project, cx| {
-                            project.set_agent_location(
-                                Some(AgentLocation {
-                                    buffer: buffer.downgrade(),
-                                    position: language::Anchor::max_for_buffer(
-                                        buffer.read(cx).remote_id(),
-                                    ),
-                                }),
-                                cx,
-                            )
-                        });
-                        buffer.read(cx).remote_id()
+                        set_agent_location(cx);
                     });
-                    output_events_tx
-                        .unbounded_send(EditAgentOutputEvent::Edited(
-                            Anchor::min_max_range_for_buffer(buffer_id),
-                        ))
-                        .ok();
+                    send_edit_event();
                 }
             }
+        }
+
+        if first_chunk {
+            cx.update(|cx| {
+                buffer.update(cx, |buffer, cx| buffer.set_text("", cx));
+                self.action_log
+                    .update(cx, |log, cx| log.buffer_edited(buffer.clone(), cx));
+                set_agent_location(cx);
+            });
+            send_edit_event();
         }
 
         Ok(())
@@ -287,15 +309,17 @@ impl EditAgent {
                 if let Some(old_range) = old_range {
                     let old_range = snapshot.anchor_before(old_range.start)
                         ..snapshot.anchor_before(old_range.end);
-                    self.project.update(cx, |project, cx| {
-                        project.set_agent_location(
-                            Some(AgentLocation {
-                                buffer: buffer.downgrade(),
-                                position: old_range.end,
-                            }),
-                            cx,
-                        );
-                    });
+                    if self.update_agent_location {
+                        self.project.update(cx, |project, cx| {
+                            project.set_agent_location(
+                                Some(AgentLocation {
+                                    buffer: buffer.downgrade(),
+                                    position: old_range.end,
+                                }),
+                                cx,
+                            );
+                        });
+                    }
                     output_events
                         .unbounded_send(EditAgentOutputEvent::ResolvingEditRange(old_range))
                         .ok();
@@ -368,15 +392,17 @@ impl EditAgent {
                     });
                     self.action_log
                         .update(cx, |log, cx| log.buffer_edited(buffer.clone(), cx));
-                    self.project.update(cx, |project, cx| {
-                        project.set_agent_location(
-                            Some(AgentLocation {
-                                buffer: buffer.downgrade(),
-                                position: max_edit_end,
-                            }),
-                            cx,
-                        );
-                    });
+                    if self.update_agent_location {
+                        self.project.update(cx, |project, cx| {
+                            project.set_agent_location(
+                                Some(AgentLocation {
+                                    buffer: buffer.downgrade(),
+                                    position: max_edit_end,
+                                }),
+                                cx,
+                            );
+                        });
+                    }
                     (min_edit_start, max_edit_end)
                 });
                 output_events
@@ -540,15 +566,8 @@ impl EditAgent {
         let compute_edits = cx.background_spawn(async move {
             let buffer_start_indent = snapshot
                 .line_indent_for_row(snapshot.offset_to_point(resolved_old_text.range.start).row);
-            let indent_delta = if buffer_start_indent.tabs > 0 {
-                IndentDelta::Tabs(
-                    buffer_start_indent.tabs as isize - resolved_old_text.indent.tabs as isize,
-                )
-            } else {
-                IndentDelta::Spaces(
-                    buffer_start_indent.spaces as isize - resolved_old_text.indent.spaces as isize,
-                )
-            };
+            let indent_delta =
+                reindent::compute_indent_delta(buffer_start_indent, resolved_old_text.indent);
 
             let old_text = snapshot
                 .text_for_range(resolved_old_text.range.clone())
@@ -595,8 +614,7 @@ impl EditAgent {
         delta: IndentDelta,
         mut stream: impl Unpin + Stream<Item = Result<EditParserEvent>>,
     ) -> impl Stream<Item = Result<String>> {
-        let mut buffer = String::new();
-        let mut in_leading_whitespace = true;
+        let mut reindenter = Reindenter::new(delta);
         let mut done = false;
         futures::stream::poll_fn(move |cx| {
             while !done {
@@ -609,55 +627,10 @@ impl EditAgent {
                     _ => return Poll::Ready(None),
                 };
 
-                buffer.push_str(&chunk);
-
-                let mut indented_new_text = String::new();
-                let mut start_ix = 0;
-                let mut newlines = buffer.match_indices('\n').peekable();
-                loop {
-                    let (line_end, is_pending_line) = match newlines.next() {
-                        Some((ix, _)) => (ix, false),
-                        None => (buffer.len(), true),
-                    };
-                    let line = &buffer[start_ix..line_end];
-
-                    if in_leading_whitespace {
-                        if let Some(non_whitespace_ix) = line.find(|c| delta.character() != c) {
-                            // We found a non-whitespace character, adjust
-                            // indentation based on the delta.
-                            let new_indent_len =
-                                cmp::max(0, non_whitespace_ix as isize + delta.len()) as usize;
-                            indented_new_text
-                                .extend(iter::repeat(delta.character()).take(new_indent_len));
-                            indented_new_text.push_str(&line[non_whitespace_ix..]);
-                            in_leading_whitespace = false;
-                        } else if is_pending_line {
-                            // We're still in leading whitespace and this line is incomplete.
-                            // Stop processing until we receive more input.
-                            break;
-                        } else {
-                            // This line is entirely whitespace. Push it without indentation.
-                            indented_new_text.push_str(line);
-                        }
-                    } else {
-                        indented_new_text.push_str(line);
-                    }
-
-                    if is_pending_line {
-                        start_ix = line_end;
-                        break;
-                    } else {
-                        in_leading_whitespace = true;
-                        indented_new_text.push('\n');
-                        start_ix = line_end + 1;
-                    }
-                }
-                buffer.replace_range(..start_ix, "");
-
+                let mut indented_new_text = reindenter.push(&chunk);
                 // This was the last chunk, push all the buffered content as-is.
                 if is_last_chunk {
-                    indented_new_text.push_str(&buffer);
-                    buffer.clear();
+                    indented_new_text.push_str(&reindenter.finish());
                     done = true;
                 }
 
@@ -736,6 +709,7 @@ impl EditAgent {
             temperature: None,
             thinking_allowed: self.thinking_allowed,
             thinking_effort: None,
+            speed: None,
         };
 
         Ok(self.model.stream_completion_text(request, cx).await?.stream)
@@ -745,28 +719,6 @@ impl EditAgent {
 struct ResolvedOldText {
     range: Range<usize>,
     indent: LineIndent,
-}
-
-#[derive(Copy, Clone, Debug)]
-enum IndentDelta {
-    Spaces(isize),
-    Tabs(isize),
-}
-
-impl IndentDelta {
-    fn character(&self) -> char {
-        match self {
-            IndentDelta::Spaces(_) => ' ',
-            IndentDelta::Tabs(_) => '\t',
-        }
-    }
-
-    fn len(&self) -> isize {
-        match self {
-            IndentDelta::Spaces(n) => *n,
-            IndentDelta::Tabs(n) => *n,
-        }
-    }
 }
 
 #[cfg(test)]
@@ -1194,19 +1146,16 @@ mod tests {
         );
 
         cx.run_until_parked();
-        assert_matches!(
-            drain_events(&mut events).as_slice(),
-            [EditAgentOutputEvent::Edited(_)]
-        );
+        assert_eq!(drain_events(&mut events).as_slice(), []);
         assert_eq!(
             buffer.read_with(cx, |buffer, _| buffer.snapshot().text()),
-            ""
+            "abc\ndef\nghi"
         );
         assert_eq!(
             project.read_with(cx, |project, _| project.agent_location()),
             Some(AgentLocation {
                 buffer: buffer.downgrade(),
-                position: language::Anchor::max_for_buffer(
+                position: language::Anchor::min_for_buffer(
                     cx.update(|cx| buffer.read(cx).remote_id())
                 ),
             })
@@ -1287,6 +1236,32 @@ mod tests {
                     cx.update(|cx| buffer.read(cx).remote_id())
                 ),
             })
+        );
+    }
+
+    #[gpui::test]
+    async fn test_overwrite_no_content(cx: &mut TestAppContext) {
+        let agent = init_test(cx).await;
+        let buffer = cx.new(|cx| Buffer::local("abc\ndef\nghi", cx));
+        let (chunks_tx, chunks_rx) = mpsc::unbounded::<&str>();
+        let (apply, mut events) = agent.overwrite_with_chunks(
+            buffer.clone(),
+            chunks_rx.map(|chunk| Ok(chunk.to_string())),
+            &mut cx.to_async(),
+        );
+
+        drop(chunks_tx);
+        cx.run_until_parked();
+
+        let result = apply.await;
+        assert!(result.is_ok(),);
+        assert_matches!(
+            drain_events(&mut events).as_slice(),
+            [EditAgentOutputEvent::Edited { .. }]
+        );
+        assert_eq!(
+            buffer.read_with(cx, |buffer, _| buffer.snapshot().text()),
+            ""
         );
     }
 
@@ -1426,6 +1401,7 @@ mod tests {
             Templates::new(),
             EditFormat::XmlTags,
             thinking_allowed,
+            true,
         )
     }
 

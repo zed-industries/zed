@@ -4843,6 +4843,64 @@ async fn test_autoreveal_and_gitignored_files(cx: &mut gpui::TestAppContext) {
         ],
         "When a gitignored entry is explicitly revealed, it should be shown in the project tree"
     );
+
+    panel.update(cx, |panel, cx| {
+        panel.project.update(cx, |_, cx| {
+            cx.emit(project::Event::ActiveEntryChanged(Some(dir_2_file)))
+        })
+    });
+    cx.run_until_parked();
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..20, cx),
+        &[
+            "v project_root",
+            "    > .git",
+            "    v dir_1",
+            "        v gitignored_dir",
+            "              file_a.py",
+            "              file_b.py",
+            "              file_c.py",
+            "          file_1.py",
+            "          file_2.py",
+            "          file_3.py",
+            "    v dir_2",
+            "          file_1.py  <== selected  <== marked",
+            "          file_2.py",
+            "          file_3.py",
+            "      .gitignore",
+        ],
+        "After switching to dir_2_file, it should be selected and marked"
+    );
+
+    panel.update(cx, |panel, cx| {
+        panel.project.update(cx, |_, cx| {
+            cx.emit(project::Event::ActiveEntryChanged(Some(
+                gitignored_dir_file,
+            )))
+        })
+    });
+    cx.run_until_parked();
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..20, cx),
+        &[
+            "v project_root",
+            "    > .git",
+            "    v dir_1",
+            "        v gitignored_dir",
+            "              file_a.py  <== selected  <== marked",
+            "              file_b.py",
+            "              file_c.py",
+            "          file_1.py",
+            "          file_2.py",
+            "          file_3.py",
+            "    v dir_2",
+            "          file_1.py",
+            "          file_2.py",
+            "          file_3.py",
+            "      .gitignore",
+        ],
+        "When a gitignored entry is already visible, auto reveal should mark it as selected"
+    );
 }
 
 #[gpui::test]

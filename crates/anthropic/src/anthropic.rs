@@ -906,11 +906,17 @@ pub struct ImageSource {
     pub data: String,
 }
 
+fn is_false(value: &bool) -> bool {
+    !value
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Tool {
     pub name: String,
     pub description: String,
     pub input_schema: serde_json::Value,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub eager_input_streaming: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -971,11 +977,21 @@ pub struct Request {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub stop_sequences: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub speed: Option<Speed>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub temperature: Option<f32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub top_k: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub top_p: Option<f32>,
+}
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Speed {
+    #[default]
+    Standard,
+    Fast,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
