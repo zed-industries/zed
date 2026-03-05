@@ -2641,120 +2641,208 @@ pub mod v0304_variable_edit {
     ///
     /// Parses `patch` as a unified diff against `old_text` and produces model
     /// output with context lines surrounding `<|fim_middle|>` / `<|fim_suffix|>`
-    /// delimiters.
+    /// delimiters. The diff is resolved by content matching rather than line
+    /// numbers.
     pub fn patch_to_variable_edit_output(
         old_text: &str,
         patch: &str,
         cursor_offset: Option<usize>,
     ) -> Result<String> {
-        let old_lines: Vec<&str> = old_text.lines().collect();
-
-        // Parse the unified diff to find changed line ranges.
-        let mut hunks: Vec<(usize, usize, Vec<String>)> = Vec::new();
-
-        let mut old_line_idx: usize = 0;
-        let mut in_hunk = false;
-        let mut hunk_start: usize = 0;
-        let mut hunk_end: usize = 0;
-        let mut new_lines_buf: Vec<String> = Vec::new();
-
-        for line in patch.lines() {
-            if line.starts_with("@@") {
-                if in_hunk && (hunk_start != hunk_end || !new_lines_buf.is_empty()) {
-                    hunks.push((hunk_start, hunk_end, std::mem::take(&mut new_lines_buf)));
-                }
-                // Parse @@ -start,count +start,count @@
-                if let Some(old_range) = line
-                    .strip_prefix("@@ -")
-                    .and_then(|s| s.split_once(' '))
-                    .map(|(r, _)| r)
-                {
-                    let start: usize = old_range
-                        .split(',')
-                        .next()
-                        .and_then(|s| s.parse().ok())
-                        .unwrap_or(1);
-                    old_line_idx = start.saturating_sub(1);
-                }
-                in_hunk = true;
-                hunk_start = old_line_idx;
-                hunk_end = old_line_idx;
-                new_lines_buf.clear();
-            } else if in_hunk {
-                if let Some(added) = line.strip_prefix('+') {
-                    new_lines_buf.push(added.to_string());
-                } else if let Some(_removed) = line.strip_prefix('-') {
-                    hunk_end = old_line_idx + 1;
-                    old_line_idx += 1;
-                } else if line.starts_with(' ') || line.is_empty() {
-                    if hunk_start != hunk_end || !new_lines_buf.is_empty() {
-                        hunks.push((hunk_start, hunk_end, std::mem::take(&mut new_lines_buf)));
-                    }
-                    old_line_idx += 1;
-                    hunk_start = old_line_idx;
-                    hunk_end = old_line_idx;
-                }
-            }
-        }
-        if in_hunk && (hunk_start != hunk_end || !new_lines_buf.is_empty()) {
-            hunks.push((hunk_start, hunk_end, new_lines_buf));
-        }
-
+        // Parse the unified diff into hunks. Each hunk has an `old_context`
+        // string (context + deleted lines interleaved in order) and a list of
+        // edits expressed as byte ranges within that context plus replacement
+        // text.
+        let hunks = parse_hunks(patch);
         if hunks.is_empty() {
             return Ok(String::new());
         }
 
-        // Merge hunks into a single contiguous replacement range.
-        let first_changed_line = hunks.first().map(|(s, _, _)| *s).unwrap_or(0);
-        let last_changed_line = hunks.last().map(|(_, e, _)| *e).unwrap_or(0);
+        // Apply each hunk by finding its old_context in the text and
+        // performing the edits. We search forward from where the previous
+        // hunk ended so that hunks are applied in order.
+        let mut new_text = old_text.to_string();
+        let mut search_from: usize = 0;
+        let mut first_hunk_pos: Option<usize> = None;
 
-        // Build the new text for the merged range.
+        for hunk in &hunks {
+            let context_pos = new_text[search_from..]
+                .find(&hunk.old_context)
+                .map(|pos| pos + search_from)
+                .ok_or_else(|| anyhow::anyhow!("could not locate hunk context in text"))?;
+
+            if first_hunk_pos.is_none() {
+                first_hunk_pos = Some(context_pos);
+            }
+
+            // Apply edits in reverse order so byte offsets remain valid.
+            for edit in hunk.edits.iter().rev() {
+                let abs_start = context_pos + edit.range.start;
+                let abs_end = context_pos + edit.range.end;
+                new_text.replace_range(abs_start..abs_end, &edit.text);
+            }
+
+            // Advance past this hunk's region in the (now modified) text.
+            let new_region_len: usize =
+                hunk.edits.iter().fold(hunk.old_context.len(), |len, edit| {
+                    len + edit.text.len() - (edit.range.end - edit.range.start)
+                });
+            search_from = context_pos + new_region_len;
+        }
+
+        // Now we have old_text and new_text. Find the changed line range by
+        // comparing them.
+        let old_lines: Vec<&str> = old_text.lines().collect();
+        let new_lines: Vec<&str> = new_text.lines().collect();
+
+        // Find first differing line.
+        let first_diff = old_lines
+            .iter()
+            .zip(new_lines.iter())
+            .position(|(a, b)| a != b)
+            .unwrap_or_else(|| old_lines.len().min(new_lines.len()));
+
+        // Find last differing line (from the end).
+        let max_suffix = old_lines.len().min(new_lines.len()) - first_diff;
+        let common_suffix = old_lines
+            .iter()
+            .rev()
+            .zip(new_lines.iter().rev())
+            .take(max_suffix)
+            .take_while(|(a, b)| a == b)
+            .count();
+
+        let old_end = old_lines.len() - common_suffix;
+        let new_end = new_lines.len() - common_suffix;
+
+        if first_diff == old_end && first_diff == new_end {
+            return Ok(String::new());
+        }
+
+        // Build the replacement text from new_lines[first_diff..new_end].
         let mut merged_new_text = String::new();
-        let mut current_old_line = first_changed_line;
-        for (hunk_start, hunk_end, new_lines) in &hunks {
-            // Copy unchanged lines between hunks.
-            for line in &old_lines[current_old_line..*hunk_start] {
-                merged_new_text.push_str(line);
-                merged_new_text.push('\n');
-            }
-            for new_line in new_lines {
-                merged_new_text.push_str(new_line);
-                merged_new_text.push('\n');
-            }
-            current_old_line = *hunk_end;
+        for line in &new_lines[first_diff..new_end] {
+            merged_new_text.push_str(line);
+            merged_new_text.push('\n');
         }
 
-        // Insert cursor marker if requested.
-        if let Some(offset) = cursor_offset {
-            if offset <= merged_new_text.len() {
-                merged_new_text.insert_str(offset, CURSOR_MARKER);
+        // cursor_offset is relative to the first hunk's new content in
+        // new_text. Translate it to an offset within merged_new_text, which
+        // only contains lines first_diff..new_end of new_text.
+        if let Some(hunk_offset) = cursor_offset {
+            let hunk_start = first_hunk_pos.unwrap_or(0);
+            let absolute_pos = hunk_start + hunk_offset;
+
+            // Byte offset where first_diff starts in new_text.
+            let merged_start: usize = new_lines[..first_diff]
+                .iter()
+                .map(|line| line.len() + 1)
+                .sum();
+
+            if absolute_pos >= merged_start {
+                let relative_offset = absolute_pos - merged_start;
+                if relative_offset <= merged_new_text.len() {
+                    merged_new_text.insert_str(relative_offset, CURSOR_MARKER);
+                }
             }
         }
 
-        // Trim trailing newline from new text for cleaner output.
         if merged_new_text.ends_with('\n') {
             merged_new_text.pop();
         }
 
-        // Build output with context lines.
+        // Build output with 2 lines of context above and below.
         let context_lines_count = 2;
-        let prefix_start = first_changed_line.saturating_sub(context_lines_count);
-        let suffix_end = (last_changed_line + context_lines_count).min(old_lines.len());
+        let prefix_start = first_diff.saturating_sub(context_lines_count);
+        let suffix_end = (old_end + context_lines_count).min(old_lines.len());
 
         let mut output = String::new();
-        for line in &old_lines[prefix_start..first_changed_line] {
+        for line in &old_lines[prefix_start..first_diff] {
             output.push_str(line);
             output.push('\n');
         }
         output.push_str("<|fim_middle|>\n");
         output.push_str(&merged_new_text);
         output.push_str("\n<|fim_suffix|>\n");
-        for line in &old_lines[last_changed_line..suffix_end] {
+        for line in &old_lines[old_end..suffix_end] {
             output.push_str(line);
             output.push('\n');
         }
 
         Ok(output)
+    }
+
+    struct ParsedHunk {
+        old_context: String,
+        edits: Vec<ParsedEdit>,
+    }
+
+    struct ParsedEdit {
+        range: Range<usize>,
+        text: String,
+    }
+
+    /// Parse a unified diff into content-based hunks. Each hunk contains an
+    /// `old_context` string (context lines + deleted lines, which together
+    /// form the text that should be found in the original) and a list of edits
+    /// expressed as byte ranges within that context.
+    fn parse_hunks(patch: &str) -> Vec<ParsedHunk> {
+        let mut hunks = Vec::new();
+        let mut current: Option<ParsedHunk> = None;
+
+        for line in patch.lines() {
+            if line.starts_with("@@") {
+                if let Some(hunk) = current.take() {
+                    if !hunk.old_context.is_empty() || !hunk.edits.is_empty() {
+                        hunks.push(hunk);
+                    }
+                }
+                current = Some(ParsedHunk {
+                    old_context: String::new(),
+                    edits: Vec::new(),
+                });
+            } else if line.starts_with("---") || line.starts_with("+++") {
+                continue;
+            } else if let Some(hunk) = &mut current {
+                if let Some(added) = line.strip_prefix('+') {
+                    let pos = hunk.old_context.len();
+                    if let Some(last_edit) = hunk.edits.last_mut() {
+                        if last_edit.range.end == pos {
+                            writeln!(&mut last_edit.text, "{added}").ok();
+                            continue;
+                        }
+                    }
+                    hunk.edits.push(ParsedEdit {
+                        range: pos..pos,
+                        text: format!("{added}\n"),
+                    });
+                } else if let Some(removed) = line.strip_prefix('-') {
+                    let start = hunk.old_context.len();
+                    writeln!(&mut hunk.old_context, "{removed}").ok();
+                    let end = hunk.old_context.len();
+                    if let Some(last_edit) = hunk.edits.last_mut() {
+                        if last_edit.range.end == start {
+                            last_edit.range.end = end;
+                            continue;
+                        }
+                    }
+                    hunk.edits.push(ParsedEdit {
+                        range: start..end,
+                        text: String::new(),
+                    });
+                } else {
+                    let ctx = line.strip_prefix(' ').unwrap_or(line);
+                    writeln!(&mut hunk.old_context, "{ctx}").ok();
+                }
+            }
+        }
+
+        if let Some(hunk) = current {
+            if !hunk.old_context.is_empty() || !hunk.edits.is_empty() {
+                hunks.push(hunk);
+            }
+        }
+
+        hunks
     }
 
     #[cfg(test)]
@@ -2897,6 +2985,43 @@ pub mod v0304_variable_edit {
             assert_eq!(
                 apply_variable_edit(old, &output).unwrap(),
                 "first\nsecond\nthird\nFOURTH\n"
+            );
+        }
+
+        #[test]
+        fn test_patch_to_variable_edit_with_cursor() {
+            // cursor_offset is a byte offset into the first hunk's new text
+            // (context + additions). For the hunk:
+            //   " two\n-three\n+THREE\n four\n"
+            // the new content is "two\nTHREE\nfour\n". Placing the cursor
+            // at byte 4 targets the 'T' in THREE.
+            let old = "zero\none\ntwo\nthree\nfour\nfive\n";
+            let output = patch_to_variable_edit_output(
+                old,
+                "@@ -3,3 +3,3 @@\n two\n-three\n+THREE\n four\n",
+                Some(4),
+            )
+            .unwrap();
+            assert_eq!(
+                output,
+                "one\ntwo\n<|fim_middle|>\n<|user_cursor|>THREE\n<|fim_suffix|>\nfour\nfive\n"
+            );
+            assert_eq!(
+                apply_variable_edit(old, &output).unwrap(),
+                "zero\none\ntwo\n<|user_cursor|>THREE\nfour\nfive\n"
+            );
+
+            // Cursor in the middle of the replacement: byte 6 in
+            // "two\nTHREE\nfour\n" is the 'R' in THREE.
+            let output = patch_to_variable_edit_output(
+                old,
+                "@@ -3,3 +3,3 @@\n two\n-three\n+THREE\n four\n",
+                Some(6),
+            )
+            .unwrap();
+            assert_eq!(
+                output,
+                "one\ntwo\n<|fim_middle|>\nTH<|user_cursor|>REE\n<|fim_suffix|>\nfour\nfive\n"
             );
         }
 

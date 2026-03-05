@@ -16,6 +16,8 @@ use zeta_prompt::{
     output_end_marker_for_format, resolve_cursor_region,
 };
 
+// one two three four five
+// six seven eight nine
 pub async fn run_format_prompt(
     example: &mut Example,
     args: &FormatPromptArgs,
