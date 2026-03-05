@@ -2717,6 +2717,8 @@ fn run_multi_workspace_sidebar_visual_tests(
                             speed: None,
                             thinking_enabled: false,
                             thinking_effort: None,
+                            ui_scroll_position: None,
+                            draft_prompt: None,
                         },
                         path_list,
                         cx,
