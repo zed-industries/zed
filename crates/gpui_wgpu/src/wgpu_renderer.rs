@@ -989,7 +989,8 @@ impl WgpuRenderer {
                 return;
             }
             Err(e) => {
-                log::error!("Failed to acquire surface texture: {e}");
+                *self.last_error.lock().unwrap() =
+                    Some(format!("Failed to acquire surface texture: {e}"));
                 return;
             }
         };
