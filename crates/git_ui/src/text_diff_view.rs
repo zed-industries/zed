@@ -63,7 +63,7 @@ impl TextDiffView {
             Some((source_buffer, start..end))
         });
 
-        let Some((source_buffer, expanded_selection_range)) = selection_data else {
+        let Some((source_buffer, selection_range)) = selection_data else {
             log::warn!("There should always be at least one selection in Zed. This is a bug.");
             return None;
         };
@@ -73,12 +73,8 @@ impl TextDiffView {
 
         let workspace = workspace.weak_handle();
         let diff_buffer = cx.new(|cx| BufferDiff::new(&source_buffer_snapshot.text, cx));
-        let clipboard_buffer = build_clipboard_buffer(
-            clipboard_text,
-            &source_buffer,
-            expanded_selection_range.clone(),
-            cx,
-        );
+        let clipboard_buffer =
+            build_clipboard_buffer(clipboard_text, &source_buffer, selection_range.clone(), cx);
 
         let task = window.spawn(cx, async move |cx| {
             let project = workspace.update(cx, |workspace, _| workspace.project().clone())?;
@@ -91,7 +87,7 @@ impl TextDiffView {
                         clipboard_buffer,
                         source_editor,
                         source_buffer,
-                        expanded_selection_range,
+                        selection_range,
                         diff_buffer,
                         project,
                         window,
