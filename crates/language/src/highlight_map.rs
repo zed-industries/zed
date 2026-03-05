@@ -19,28 +19,13 @@ impl HighlightMap {
         // For each capture name in the highlight query, find the longest
         // key in the theme's syntax styles that matches all of the
         // dot-separated components of the capture name.
-        let highlights: BTreeMap<_, _> = theme
-            .highlights
-            .iter()
-            .enumerate()
-            .map(|(i, (key, _))| (key.split('.').collect::<SmallVec<[&str; 2]>>(), i))
-            .collect();
         HighlightMap(
             capture_names
                 .iter()
                 .map(|capture_name| {
-                    let capture_name = capture_name.split('.').collect::<SmallVec<[&str; 2]>>();
-                    let index = highlights
-                        .range::<SmallVec<[&str; 2]>, _>((
-                            std::ops::Bound::Unbounded,
-                            std::ops::Bound::Included(&capture_name),
-                        ))
-                        .rfind(|(prefix, _)| capture_name.starts_with(prefix))
-                        .map(|(_, index)| *index);
-                    index.map_or(DEFAULT_SYNTAX_HIGHLIGHT_ID, |index| {
-                        HighlightId(index as u32)
-                    })
-
+                    theme
+                        .highlight_id(capture_name)
+                        .map_or(DEFAULT_SYNTAX_HIGHLIGHT_ID, HighlightId)
                 })
                 .collect(),
         )
@@ -90,8 +75,8 @@ mod tests {
 
     #[test]
     fn test_highlight_map() {
-        let theme = SyntaxTheme {
-            highlights: [
+        let theme = SyntaxTheme::new(
+            [
                 ("function", rgba(0x100000ff)),
                 ("function.method", rgba(0x200000ff)),
                 ("function.async", rgba(0x300000ff)),
@@ -102,7 +87,7 @@ mod tests {
             .iter()
             .map(|(name, color)| (name.to_string(), (*color).into()))
             .collect(),
-        };
+        );
 
         let capture_names = &[
             "function.special",
