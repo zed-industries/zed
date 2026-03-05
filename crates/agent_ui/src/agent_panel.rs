@@ -2024,9 +2024,34 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Some(server_view) = self.background_threads.remove(&thread.session_id) {
+        let session_id = thread.session_id.clone();
+        if let Some(server_view) = self.background_threads.remove(&session_id) {
             self.set_active_view(ActiveView::AgentThread { server_view }, true, window, cx);
             return;
+        }
+
+        if let ActiveView::AgentThread { server_view } = &self.active_view {
+            if server_view
+                .read(cx)
+                .active_thread()
+                .map(|t| t.read(cx).id.clone())
+                == Some(session_id.clone())
+            {
+                return;
+            }
+        }
+
+        if let Some(ActiveView::AgentThread { server_view }) = &self.previous_view {
+            if server_view
+                .read(cx)
+                .active_thread()
+                .map(|t| t.read(cx).id.clone())
+                == Some(session_id.clone())
+            {
+                let view = self.previous_view.take().unwrap();
+                self.set_active_view(view, true, window, cx);
+                return;
+            }
         }
 
         let Some(agent) = self.selected_external_agent() else {
