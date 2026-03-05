@@ -689,7 +689,9 @@ impl Sidebar {
             IconName::ChevronDown
         };
         let path_list_for_new_thread = path_list.clone();
+        let path_list_for_remove = path_list.clone();
         let path_list_for_toggle = path_list.clone();
+        let workspace_count = self.multi_workspace.read(cx).workspaces().len();
 
         ListItem::new(id)
             .group_name(&group)
@@ -713,20 +715,59 @@ impl Sidebar {
                     ),
             )
             .end_hover_slot(
-                IconButton::new(ib_id, IconName::NewThread)
-                    .icon_size(IconSize::Small)
-                    .icon_color(Color::Muted)
-                    .tooltip(Tooltip::text("New Thread"))
-                    .on_click(cx.listener(move |this, _, window, cx| {
-                        this.selection = None;
-                        this.create_new_thread(&path_list_for_new_thread, window, cx);
-                    })),
+                h_flex()
+                    .gap_0p5()
+                    .child(
+                        IconButton::new(ib_id, IconName::NewThread)
+                            .icon_size(IconSize::Small)
+                            .icon_color(Color::Muted)
+                            .tooltip(Tooltip::text("New Thread"))
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.selection = None;
+                                this.create_new_thread(&path_list_for_new_thread, window, cx);
+                            })),
+                    )
+                    .when(workspace_count > 1, |this| {
+                        this.child(
+                            IconButton::new(
+                                SharedString::from(format!("project-header-remove-{}", ix)),
+                                IconName::Close,
+                            )
+                            .icon_size(IconSize::Small)
+                            .icon_color(Color::Muted)
+                            .tooltip(Tooltip::text("Remove Project"))
+                            .on_click(cx.listener(
+                                move |this, _, window, cx| {
+                                    this.remove_workspace(&path_list_for_remove, window, cx);
+                                },
+                            )),
+                        )
+                    }),
             )
             .on_click(cx.listener(move |this, _, window, cx| {
                 this.selection = None;
                 this.toggle_collapse(&path_list_for_toggle, window, cx);
             }))
             .into_any_element()
+    }
+
+    fn remove_workspace(
+        &mut self,
+        path_list: &PathList,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let multi_workspace = self.multi_workspace.clone();
+        let workspaces = multi_workspace.read(cx).workspaces().to_vec();
+
+        let Some(workspace_index) = workspace_index_for_path_list(&workspaces, path_list, cx)
+        else {
+            return;
+        };
+
+        multi_workspace.update(cx, |multi_workspace, cx| {
+            multi_workspace.remove_workspace(workspace_index, window, cx);
+        });
     }
 
     fn toggle_collapse(
