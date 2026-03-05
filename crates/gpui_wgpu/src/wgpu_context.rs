@@ -40,8 +40,6 @@ impl WgpuContext {
             }
         };
 
-        let device_lost = Arc::new(AtomicBool::new(false));
-
         // Select an adapter by actually testing surface configuration with the real device.
         // This is the only reliable way to determine compatibility on hybrid GPU systems.
         let (adapter, device, queue, dual_source_blending) =
@@ -50,8 +48,10 @@ impl WgpuContext {
                 device_id_filter,
                 surface,
                 compositor_gpu.as_ref(),
-                Arc::clone(&device_lost),
             ))?;
+
+        let device_lost = Arc::new(AtomicBool::new(false));
+        Self::set_device_lost_callback(&device, Arc::clone(&device_lost));
 
         log::info!(
             "Selected GPU adapter: {:?} ({:?})",
@@ -94,8 +94,8 @@ impl WgpuContext {
         );
 
         let device_lost = Arc::new(AtomicBool::new(false));
-        let (device, queue, dual_source_blending) =
-            Self::create_device(&adapter, Arc::clone(&device_lost)).await?;
+        let (device, queue, dual_source_blending) = Self::create_device(&adapter).await?;
+        Self::set_device_lost_callback(&device, Arc::clone(&device_lost));
 
         Ok(Self {
             instance,
@@ -109,7 +109,6 @@ impl WgpuContext {
 
     async fn create_device(
         adapter: &wgpu::Adapter,
-        device_lost: Arc<AtomicBool>,
     ) -> anyhow::Result<(wgpu::Device, wgpu::Queue, bool)> {
         let dual_source_blending = adapter
             .features()
@@ -139,14 +138,16 @@ impl WgpuContext {
             .await
             .map_err(|e| anyhow::anyhow!("Failed to create wgpu device: {e}"))?;
 
+        Ok((device, queue, dual_source_blending))
+    }
+
+    fn set_device_lost_callback(device: &wgpu::Device, device_lost: Arc<AtomicBool>) {
         device.set_device_lost_callback(move |reason, message| {
             log::error!("wgpu device lost: reason={reason:?}, message={message}");
             if reason != wgpu::DeviceLostReason::Destroyed {
                 device_lost.store(true, Ordering::SeqCst);
             }
         });
-
-        Ok((device, queue, dual_source_blending))
     }
 
     #[cfg(not(target_family = "wasm"))]
@@ -156,124 +157,6 @@ impl WgpuContext {
             flags: wgpu::InstanceFlags::default(),
             backend_options: wgpu::BackendOptions::default(),
             memory_budget_thresholds: wgpu::MemoryBudgetThresholds::default(),
-        })
-    }
-
-    /// Create device for recovery - same as create_device but with detailed logging
-    /// to help diagnose where hangs occur.
-    #[cfg(not(target_family = "wasm"))]
-    async fn create_device_for_recovery(
-        adapter: &wgpu::Adapter,
-        device_lost: Arc<AtomicBool>,
-    ) -> anyhow::Result<(wgpu::Device, wgpu::Queue, bool)> {
-        log::info!("Recovery: checking adapter features...");
-        let dual_source_blending = adapter
-            .features()
-            .contains(wgpu::Features::DUAL_SOURCE_BLENDING);
-
-        let mut required_features = wgpu::Features::empty();
-        if dual_source_blending {
-            required_features |= wgpu::Features::DUAL_SOURCE_BLENDING;
-            log::info!("Recovery: dual-source blending available");
-        } else {
-            log::info!("Recovery: dual-source blending NOT available");
-        }
-
-        log::info!("Recovery: calling adapter.request_device()...");
-        let (device, queue) = adapter
-            .request_device(&wgpu::DeviceDescriptor {
-                label: Some("gpui_device_recovery"),
-                required_features,
-                required_limits: wgpu::Limits::downlevel_defaults()
-                    .using_resolution(adapter.limits())
-                    .using_alignment(adapter.limits()),
-                memory_hints: wgpu::MemoryHints::MemoryUsage,
-                trace: wgpu::Trace::Off,
-                experimental_features: wgpu::ExperimentalFeatures::disabled(),
-            })
-            .await
-            .map_err(|e| anyhow::anyhow!("Failed to create wgpu device during recovery: {e}"))?;
-        log::info!("Recovery: adapter.request_device() completed");
-
-        log::info!("Recovery: setting device lost callback...");
-        device.set_device_lost_callback(move |reason, message| {
-            log::error!("wgpu device lost: reason={reason:?}, message={message}");
-            if reason != wgpu::DeviceLostReason::Destroyed {
-                device_lost.store(true, Ordering::SeqCst);
-            }
-        });
-        log::info!("Recovery: device lost callback set");
-
-        Ok((device, queue, dual_source_blending))
-    }
-
-    /// Creates a new WgpuContext for device recovery, using a known-good adapter.
-    ///
-    /// Unlike `new()`, this method:
-    /// - Does NOT enumerate all adapters or test them
-    /// - Directly requests the adapter matching the provided info
-    /// - Skips surface configuration testing
-    ///
-    /// This is necessary during device recovery because the full adapter testing
-    /// can deadlock on Wayland when the main thread is blocked and the compositor
-    /// needs to process events related to the old surface/device cleanup.
-    #[cfg(not(target_family = "wasm"))]
-    pub fn new_for_recovery(
-        instance: wgpu::Instance,
-        surface: &wgpu::Surface<'_>,
-        previous_adapter_info: &wgpu::AdapterInfo,
-    ) -> anyhow::Result<Self> {
-        log::info!(
-            "Creating GPU context for recovery, targeting adapter: {} ({:?})",
-            previous_adapter_info.name,
-            previous_adapter_info.backend
-        );
-
-        let device_lost = Arc::new(AtomicBool::new(false));
-
-        // Request the same adapter we used before, without testing all of them
-        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::HighPerformance,
-            force_fallback_adapter: false,
-            compatible_surface: Some(surface),
-        }))
-        .map_err(|e| anyhow::anyhow!("No compatible GPU adapter found for recovery: {e}"))?;
-
-        let adapter_info = adapter.get_info();
-        log::info!(
-            "Got adapter for recovery: {} ({:?})",
-            adapter_info.name,
-            adapter_info.backend
-        );
-
-        // Verify we got the same adapter (or at least same backend)
-        if adapter_info.backend != previous_adapter_info.backend {
-            log::warn!(
-                "Recovery adapter backend ({:?}) differs from previous ({:?})",
-                adapter_info.backend,
-                previous_adapter_info.backend
-            );
-        }
-
-        // Create device without the full surface test dance
-        log::info!("Recovery: calling create_device...");
-        let (device, queue, dual_source_blending) = pollster::block_on(
-            Self::create_device_for_recovery(&adapter, Arc::clone(&device_lost)),
-        )?;
-
-        log::info!(
-            "Recovery device created: {} ({:?})",
-            adapter_info.name,
-            adapter_info.backend
-        );
-
-        Ok(Self {
-            instance,
-            adapter,
-            device: Arc::new(device),
-            queue: Arc::new(queue),
-            dual_source_blending,
-            device_lost,
         })
     }
 
@@ -303,7 +186,6 @@ impl WgpuContext {
         device_id_filter: Option<u32>,
         surface: &wgpu::Surface<'_>,
         compositor_gpu: Option<&CompositorGpuHint>,
-        device_lost: Arc<AtomicBool>,
     ) -> anyhow::Result<(wgpu::Adapter, wgpu::Device, wgpu::Queue, bool)> {
         let mut adapters: Vec<_> = instance.enumerate_adapters(wgpu::Backends::all()).await;
 
@@ -388,8 +270,7 @@ impl WgpuContext {
             let info = adapter.get_info();
             log::info!("Testing adapter: {} ({:?})...", info.name, info.backend);
 
-            match Self::try_adapter_with_surface(&adapter, surface, Arc::clone(&device_lost)).await
-            {
+            match Self::try_adapter_with_surface(&adapter, surface).await {
                 Ok((device, queue, dual_source_blending)) => {
                     log::info!(
                         "Selected GPU (passed configuration test): {} ({:?})",
@@ -418,7 +299,6 @@ impl WgpuContext {
     async fn try_adapter_with_surface(
         adapter: &wgpu::Adapter,
         surface: &wgpu::Surface<'_>,
-        device_lost: Arc<AtomicBool>,
     ) -> anyhow::Result<(wgpu::Device, wgpu::Queue, bool)> {
         let caps = surface.get_capabilities(adapter);
         if caps.formats.is_empty() {
@@ -429,8 +309,7 @@ impl WgpuContext {
         }
 
         // Create the real device with full features
-        let (device, queue, dual_source_blending) =
-            Self::create_device(adapter, device_lost).await?;
+        let (device, queue, dual_source_blending) = Self::create_device(adapter).await?;
 
         // Use an error scope to capture any validation errors during configure
         let error_scope = device.push_error_scope(wgpu::ErrorFilter::Validation);

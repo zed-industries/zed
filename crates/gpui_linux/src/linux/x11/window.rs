@@ -9,7 +9,7 @@ use gpui::{
     Tiling, WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControlArea,
     WindowDecorations, WindowKind, WindowParams, px,
 };
-use gpui_wgpu::{CompositorGpuHint, WgpuContext, WgpuRenderer, WgpuSurfaceConfig, wgpu};
+use gpui_wgpu::{CompositorGpuHint, WgpuRenderer, WgpuSurfaceConfig};
 
 use collections::FxHashSet;
 use raw_window_handle as rwh;
@@ -409,7 +409,7 @@ impl X11WindowState {
         handle: AnyWindowHandle,
         client: X11ClientStatePtr,
         executor: ForegroundExecutor,
-        gpu_context: &mut Option<WgpuContext>,
+        gpu_context: gpui_wgpu::GpuContext,
         compositor_gpu: Option<CompositorGpuHint>,
         params: WindowParams,
         xcb: &Rc<XCBConnection>,
@@ -823,7 +823,7 @@ impl X11Window {
         handle: AnyWindowHandle,
         client: X11ClientStatePtr,
         executor: ForegroundExecutor,
-        gpu_context: &mut Option<WgpuContext>,
+        gpu_context: gpui_wgpu::GpuContext,
         compositor_gpu: Option<CompositorGpuHint>,
         params: WindowParams,
         xcb: &Rc<XCBConnection>,
@@ -1177,13 +1177,11 @@ impl X11WindowStatePtr {
     }
 
     pub fn set_bounds(&self, bounds: Bounds<i32>) -> anyhow::Result<()> {
-        let mut resize_args = None;
-        let is_resize;
-        {
+        let (is_resize, content_size, scale_factor) = {
             let mut state = self.state.borrow_mut();
             let bounds = bounds.map(|f| px(f as f32 / state.scale_factor));
 
-            is_resize = bounds.size.width != state.bounds.size.width
+            let is_resize = bounds.size.width != state.bounds.size.width
                 || bounds.size.height != state.bounds.size.height;
 
             // If it's a resize event (only width/height changed), we ignore `bounds.origin`
@@ -1195,22 +1193,19 @@ impl X11WindowStatePtr {
             }
 
             let gpu_size = query_render_extent(&self.xcb, self.x_window)?;
-            if true {
-                state.renderer.update_drawable_size(gpu_size);
-                resize_args = Some((state.content_size(), state.scale_factor));
-            }
+            state.renderer.update_drawable_size(gpu_size);
+            let result = (is_resize, state.content_size(), state.scale_factor);
             if let Some(value) = state.last_sync_counter.take() {
                 check_reply(
                     || "X11 sync SetCounter failed.",
                     sync::set_counter(&self.xcb, state.counter_id, value),
                 )?;
             }
-        }
+            result
+        };
 
         let mut callbacks = self.callbacks.borrow_mut();
-        if let Some((content_size, scale_factor)) = resize_args
-            && let Some(ref mut fun) = callbacks.resize
-        {
+        if let Some(ref mut fun) = callbacks.resize {
             fun(content_size, scale_factor)
         }
 
@@ -1503,6 +1498,7 @@ impl PlatformWindow for X11Window {
                 let state = ref_cell.borrow();
                 state
                     .gpu_context
+                    .borrow()
                     .as_ref()
                     .is_some_and(|ctx| ctx.supports_dual_source_blending())
             })
@@ -1597,74 +1593,37 @@ impl PlatformWindow for X11Window {
 
     fn draw(&self, scene: &Scene) {
         let mut inner = self.0.state.borrow_mut();
-        let Some(client) = inner.client.get_client() else {
-            return;
-        };
 
-        // Check if device lost recovery is needed
         if inner.renderer.device_lost() {
-            let mut client_state = client.0.borrow_mut();
+            let raw_window = RawWindow {
+                connection: as_raw_xcb_connection::AsRawXcbConnection::as_raw_xcb_connection(
+                    &*self.0.xcb,
+                ) as *mut _,
+                screen_id: inner.x_screen_index,
+                window_id: self.0.x_window,
+                visual_id: inner.visual_id,
+            };
+            let display_handle = rwh::HasDisplayHandle::display_handle(&raw_window)
+                .unwrap()
+                .as_raw();
+            let window_handle = rwh::HasWindowHandle::window_handle(&raw_window)
+                .unwrap()
+                .as_raw();
 
-            let xcb = &self.0.xcb;
-            let x_window = self.0.x_window;
-            let x_screen_index = inner.x_screen_index;
-            let visual_id = inner.visual_id;
-
-            // Take ownership of the renderer for recovery.
-            // SAFETY: We use ptr::read to take ownership, then ptr::write to put the new
-            // renderer back. This avoids Rust trying to drop uninitialized memory.
-            let renderer_ptr = &mut inner.renderer as *mut gpui_wgpu::WgpuRenderer;
-            let old_renderer = unsafe { std::ptr::read(renderer_ptr) };
-
-            let result = gpui_wgpu::recover_from_device_lost(
-                old_renderer,
-                &mut client_state.gpu_context,
-                |instance| {
-                    let raw_window = RawWindow {
-                        connection: as_raw_xcb_connection::AsRawXcbConnection::as_raw_xcb_connection(
-                            &**xcb,
-                        ) as *mut _,
-                        screen_id: x_screen_index,
-                        window_id: x_window,
-                        visual_id,
-                    };
-                    unsafe {
-                        instance
-                            .create_surface_unsafe(wgpu::SurfaceTargetUnsafe::RawHandle {
-                                raw_display_handle: rwh::HasDisplayHandle::display_handle(
-                                    &raw_window,
-                                )
-                                .unwrap()
-                                .as_raw(),
-                                raw_window_handle: rwh::HasWindowHandle::window_handle(&raw_window)
-                                    .unwrap()
-                                    .as_raw(),
-                            })
-                            .map_err(|e| anyhow::anyhow!("{e}"))
-                    }
-                },
-            );
-            drop(client_state);
-
-            match result {
-                gpui_wgpu::DeviceRecoveryResult::NotNeeded(renderer) => {
-                    // SAFETY: Write the renderer back without dropping the uninitialized memory
-                    unsafe { std::ptr::write(renderer_ptr, renderer) };
-                }
-                gpui_wgpu::DeviceRecoveryResult::Recovered(renderer) => {
-                    // SAFETY: Write the new renderer without dropping the uninitialized memory
-                    unsafe { std::ptr::write(renderer_ptr, renderer) };
-                    // Skip this frame to let the new renderer stabilize
-                    return;
-                }
-                gpui_wgpu::DeviceRecoveryResult::Failed(err) => {
+            inner
+                .renderer
+                .recover(display_handle, window_handle)
+                .unwrap_or_else(|err| {
                     panic!(
                         "GPU device lost and recovery failed. \
                         This may happen after system suspend/resume. \
                         Please restart the application.\n\nError: {err}"
-                    );
-                }
-            }
+                    )
+                });
+
+            // The current scene references atlas textures that were cleared during recovery.
+            // Skip this frame and let the next frame rebuild the scene with fresh textures.
+            return;
         }
 
         inner.renderer.draw(scene);

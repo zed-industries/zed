@@ -8,5 +8,5 @@ pub use wgpu;
 pub use wgpu_atlas::*;
 pub use wgpu_context::*;
 #[cfg(not(target_family = "wasm"))]
-pub use wgpu_renderer::{DeviceRecoveryResult, recover_from_device_lost};
+pub use wgpu_renderer::GpuContext;
 pub use wgpu_renderer::{WgpuRenderer, WgpuSurfaceConfig};

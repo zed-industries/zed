@@ -64,7 +64,7 @@ use gpui::{
     PlatformKeyboardLayout, PlatformWindow, Point, RequestFrameOptions, ScrollDelta, Size,
     TouchPhase, WindowParams, point, px,
 };
-use gpui_wgpu::{CompositorGpuHint, WgpuContext};
+use gpui_wgpu::CompositorGpuHint;
 
 /// Value for DeviceId parameters which selects all devices.
 pub(crate) const XINPUT_ALL_DEVICES: xinput::DeviceId = 0;
@@ -177,7 +177,7 @@ pub struct X11ClientState {
     pub(crate) last_location: Point<Pixels>,
     pub(crate) current_count: usize,
 
-    pub(crate) gpu_context: Option<WgpuContext>,
+    pub(crate) gpu_context: gpui_wgpu::GpuContext,
     pub(crate) compositor_gpu: Option<CompositorGpuHint>,
 
     pub(crate) scale_factor: f32,
@@ -493,7 +493,7 @@ impl X11Client {
             last_mouse_button: None,
             last_location: Point::new(px(0.0), px(0.0)),
             current_count: 0,
-            gpu_context: None,
+            gpu_context: std::rc::Rc::new(std::cell::RefCell::new(None)),
             compositor_gpu,
             scale_factor,
 
@@ -1524,7 +1524,7 @@ impl LinuxClient for X11Client {
             handle,
             X11ClientStatePtr(Rc::downgrade(&self.0)),
             state.common.foreground_executor.clone(),
-            &mut state.gpu_context,
+            state.gpu_context.clone(),
             compositor_gpu,
             params,
             &xcb_connection,

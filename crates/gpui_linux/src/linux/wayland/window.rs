@@ -34,7 +34,7 @@ use gpui::{
     WindowDecorations, WindowKind, WindowParams, layer_shell::LayerShellNotSupportedError, px,
     size,
 };
-use gpui_wgpu::{CompositorGpuHint, WgpuContext, WgpuRenderer, WgpuSurfaceConfig, wgpu};
+use gpui_wgpu::{CompositorGpuHint, WgpuRenderer, WgpuSurfaceConfig};
 
 #[derive(Default)]
 pub(crate) struct Callbacks {
@@ -317,7 +317,7 @@ impl WaylandWindowState {
         viewport: Option<wp_viewport::WpViewport>,
         client: WaylandClientStatePtr,
         globals: Globals,
-        gpu_context: &mut Option<WgpuContext>,
+        gpu_context: gpui_wgpu::GpuContext,
         compositor_gpu: Option<CompositorGpuHint>,
         options: WindowParams,
         parent: Option<WaylandWindowStatePtr>,
@@ -488,7 +488,7 @@ impl WaylandWindow {
     pub fn new(
         handle: AnyWindowHandle,
         globals: Globals,
-        gpu_context: &mut Option<WgpuContext>,
+        gpu_context: gpui_wgpu::GpuContext,
         compositor_gpu: Option<CompositorGpuHint>,
         client: WaylandClientStatePtr,
         params: WindowParams,
@@ -1251,6 +1251,7 @@ impl PlatformWindow for WaylandWindow {
         let state = client.borrow();
         state
             .gpu_context
+            .borrow()
             .as_ref()
             .is_some_and(|ctx| ctx.supports_dual_source_blending())
     }
@@ -1329,65 +1330,38 @@ impl PlatformWindow for WaylandWindow {
     fn draw(&self, scene: &Scene) {
         let mut state = self.borrow_mut();
 
-        // Check if device lost recovery is needed
         if state.renderer.device_lost() {
-            let client = state.client.get_client();
-            let mut client_state = client.borrow_mut();
+            let raw_window = RawWindow {
+                window: state.surface.id().as_ptr().cast::<std::ffi::c_void>(),
+                display: state
+                    .surface
+                    .backend()
+                    .upgrade()
+                    .unwrap()
+                    .display_ptr()
+                    .cast::<std::ffi::c_void>(),
+            };
+            let display_handle = rwh::HasDisplayHandle::display_handle(&raw_window)
+                .unwrap()
+                .as_raw();
+            let window_handle = rwh::HasWindowHandle::window_handle(&raw_window)
+                .unwrap()
+                .as_raw();
 
-            let surface_id = state.surface.id();
-            let display_ptr = state.surface.backend().upgrade().unwrap().display_ptr();
-
-            // Take ownership of the renderer for recovery.
-            // SAFETY: We use ptr::read to take ownership, then ptr::write to put the new
-            // renderer back. This avoids Rust trying to drop uninitialized memory.
-            let renderer_ptr = &mut state.renderer as *mut gpui_wgpu::WgpuRenderer;
-            let old_renderer = unsafe { std::ptr::read(renderer_ptr) };
-
-            let result = gpui_wgpu::recover_from_device_lost(
-                old_renderer,
-                &mut client_state.gpu_context,
-                |instance| {
-                    let raw_window = RawWindow {
-                        window: surface_id.as_ptr().cast::<std::ffi::c_void>(),
-                        display: display_ptr.cast::<std::ffi::c_void>(),
-                    };
-                    unsafe {
-                        instance
-                            .create_surface_unsafe(wgpu::SurfaceTargetUnsafe::RawHandle {
-                                raw_display_handle: rwh::HasDisplayHandle::display_handle(
-                                    &raw_window,
-                                )
-                                .unwrap()
-                                .as_raw(),
-                                raw_window_handle: rwh::HasWindowHandle::window_handle(&raw_window)
-                                    .unwrap()
-                                    .as_raw(),
-                            })
-                            .map_err(|e| anyhow::anyhow!("{e}"))
-                    }
-                },
-            );
-            drop(client_state);
-
-            match result {
-                gpui_wgpu::DeviceRecoveryResult::NotNeeded(renderer) => {
-                    // SAFETY: Write the renderer back without dropping the uninitialized memory
-                    unsafe { std::ptr::write(renderer_ptr, renderer) };
-                }
-                gpui_wgpu::DeviceRecoveryResult::Recovered(renderer) => {
-                    // SAFETY: Write the new renderer without dropping the uninitialized memory
-                    unsafe { std::ptr::write(renderer_ptr, renderer) };
-                    // Skip this frame to let the new renderer stabilize
-                    return;
-                }
-                gpui_wgpu::DeviceRecoveryResult::Failed(err) => {
+            state
+                .renderer
+                .recover(display_handle, window_handle)
+                .unwrap_or_else(|err| {
                     panic!(
                         "GPU device lost and recovery failed. \
                         This may happen after system suspend/resume. \
                         Please restart the application.\n\nError: {err}"
-                    );
-                }
-            }
+                    )
+                });
+
+            // The current scene references atlas textures that were cleared during recovery.
+            // Skip this frame and let the next frame rebuild the scene with fresh textures.
+            return;
         }
 
         state.renderer.draw(scene);
