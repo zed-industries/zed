@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use serde::{Deserialize, Serialize};
 use std::fmt::Write;
 use std::ops::Range;
@@ -442,27 +442,29 @@ pub fn parse_zeta2_model_output(
     };
 
     let (context, editable_range, _) = resolve_cursor_region(prompt_inputs, format);
-    let old_editable_region = &context[editable_range];
+    let old_editable_region = &context[editable_range.clone()];
 
     match format {
-        ZetaFormat::v0226Hashline => {
+        ZetaFormat::v0226Hashline => Ok((
+            editable_range,
             if hashline::output_has_edit_commands(output) {
-                Ok(hashline::apply_edit_commands(old_editable_region, output))
+                hashline::apply_edit_commands(old_editable_region, output)
             } else {
-                Ok(output.to_string())
-            }
-        }
+                output.to_string()
+            },
+        )),
         ZetaFormat::V0304VariableEdit => {
             v0304_variable_edit::apply_variable_edit(old_editable_region, output)
         }
-        ZetaFormat::V0304SeedNoEdits => {
+        ZetaFormat::V0304SeedNoEdits => Ok((
+            editable_range,
             if output.starts_with(seed_coder::NO_EDITS) {
-                Ok(old_editable_region.to_string())
+                old_editable_region.to_string()
             } else {
-                Ok(output.to_string())
-            }
-        }
-        _ => Ok(output.to_string()),
+                output.to_string()
+            },
+        )),
+        _ => Ok((editable_range, output.to_string())),
     }
 }
 
@@ -2584,87 +2586,50 @@ pub mod v0304_variable_edit {
     ///
     /// We locate the prefix/suffix context lines in the original text and replace
     /// everything between them with the new text.
-    pub fn apply_variable_edit(context: &str, model_output: &str) -> Result<String> {
+    pub fn apply_variable_edit(
+        context: &str,
+        model_output: &str,
+    ) -> Result<(Range<usize>, String)> {
         let (prefix_context, rest) = model_output
             .split_once("<|fim_middle|>\n")
             .or_else(|| model_output.split_once("<|fim_middle|>"))
             .ok_or_else(|| anyhow::anyhow!("missing <|fim_middle|> in model output"))?;
 
         let (new_text, suffix_context) = rest
-            .split_once("\n<|fim_suffix|>\n")
-            .or_else(|| rest.split_once("<|fim_suffix|>\n"))
+            .split_once("<|fim_suffix|>\n")
             .or_else(|| rest.split_once("<|fim_suffix|>"))
             .unwrap_or((rest, ""));
 
-        let prefix_lines: Vec<&str> = if prefix_context.is_empty() {
-            Vec::new()
+        let suffix_context = if prefix_context.is_empty() && !suffix_context.is_empty() {
+            suffix_context.strip_prefix('\n').unwrap_or(suffix_context)
         } else {
-            prefix_context.lines().collect()
-        };
-        let suffix_lines: Vec<&str> = if suffix_context.is_empty() {
-            Vec::new()
-        } else {
-            suffix_context.lines().collect()
+            suffix_context
         };
 
-        let context_lines: Vec<&str> = context.lines().collect();
-
-        let replace_start_line = if prefix_lines.is_empty() {
-            0
+        let prefix_offset = find_substring_at_line_boundary(context, prefix_context)
+            .ok_or_else(|| anyhow!("could not locate prefix lines"))?
+            + prefix_context.len();
+        let suffix_offset = if suffix_context.is_empty() {
+            context.len()
         } else {
-            find_context_match(&context_lines, &prefix_lines, 0)
-                .map(|i| i + prefix_lines.len())
-                .ok_or_else(|| {
-                    anyhow::anyhow!("could not locate prefix context lines in original text")
-                })?
+            find_substring_at_line_boundary(&context[prefix_offset..], suffix_context)
+                .ok_or_else(|| anyhow!("could not locate suffix lines"))?
+                + prefix_offset
         };
 
-        let replace_end_line = if suffix_lines.is_empty() {
-            context_lines.len()
-        } else {
-            find_context_match(&context_lines, &suffix_lines, replace_start_line).ok_or_else(
-                || anyhow::anyhow!("could not locate suffix context lines in original text"),
-            )?
-        };
-
-        let mut result = String::new();
-        for line in &context_lines[..replace_start_line] {
-            result.push_str(line);
-            result.push('\n');
-        }
-        if !new_text.is_empty() {
-            result.push_str(new_text);
-            if !new_text.ends_with('\n') {
-                result.push('\n');
-            }
-        }
-        for line in &context_lines[replace_end_line..] {
-            result.push_str(line);
-            result.push('\n');
-        }
-
-        if !context.ends_with('\n') && result.ends_with('\n') {
-            result.pop();
-        }
-
-        Ok(result)
+        let edit_range = prefix_offset..suffix_offset;
+        return Ok((edit_range, new_text.to_string()));
     }
 
-    /// Find the first position in `haystack` (starting from `from`) where
-    /// `needle` lines appear consecutively.
-    fn find_context_match(haystack: &[&str], needle: &[&str], from: usize) -> Option<usize> {
+    fn find_substring_at_line_boundary(haystack: &str, needle: &str) -> Option<usize> {
         if needle.is_empty() {
-            return Some(from);
+            return Some(0);
         }
-        if needle.len() > haystack.len().saturating_sub(from) {
-            return None;
-        }
-        for i in from..=haystack.len() - needle.len() {
-            if haystack[i..i + needle.len()] == *needle {
-                return Some(i);
-            }
-        }
-        None
+
+        haystack.match_indices(needle).find_map(|(offset, _)| {
+            let matched_line_start = offset == 0 || haystack[..offset].ends_with('\n');
+            matched_line_start.then_some(offset)
+        })
     }
 
     /// Convert a unified diff patch into the variable-edit output format.
@@ -2776,10 +2741,6 @@ pub mod v0304_variable_edit {
             }
         }
 
-        if merged_new_text.ends_with('\n') {
-            merged_new_text.pop();
-        }
-
         // Build output with 2 lines of context above and below.
         let context_lines_count = 2;
         let prefix_start = first_diff.saturating_sub(context_lines_count);
@@ -2792,7 +2753,7 @@ pub mod v0304_variable_edit {
         }
         output.push_str("<|fim_middle|>\n");
         output.push_str(&merged_new_text);
-        output.push_str("\n<|fim_suffix|>\n");
+        output.push_str("<|fim_suffix|>\n");
         for line in &old_lines[old_end..suffix_end] {
             output.push_str(line);
             output.push('\n');
@@ -2878,181 +2839,510 @@ pub mod v0304_variable_edit {
     #[cfg(test)]
     mod tests {
         use super::*;
+        use indoc::indoc;
 
         #[test]
         fn test_apply_variable_edit() {
-            // Simple single-line replacement
-            assert_eq!(
-                apply_variable_edit(
-                    "zero\none\ntwo\nthree\nfour\nfive",
-                    "two\n<|fim_middle|>\nTHREE\n<|fim_suffix|>\nfour",
-                )
-                .unwrap(),
-                "zero\none\ntwo\nTHREE\nfour\nfive"
-            );
+            struct Case {
+                name: &'static str,
+                original: &'static str,
+                model_output: &'static str,
+                expected: &'static str,
+            }
 
-            // Multi-line replacement
-            assert_eq!(
-                apply_variable_edit(
-                    "a\nb\nc\nd\ne",
-                    "a\n<|fim_middle|>\nB\nC\nD\n<|fim_suffix|>\ne",
-                )
-                .unwrap(),
-                "a\nB\nC\nD\ne"
-            );
+            let cases = [
+                Case {
+                    name: "simple_single_line_replacement",
+                    original: indoc! {"
+                        zero
+                        one
+                        two
+                        three
+                        four
+                        five
+                    "},
+                    model_output: indoc! {"
+                        two
+                        <|fim_middle|>
+                        THREE
+                        <|fim_suffix|>
+                        four
+                    "},
+                    expected: indoc! {"
+                        zero
+                        one
+                        two
+                        THREE
+                        four
+                        five
+                    "},
+                },
+                Case {
+                    name: "multi_line_replacement",
+                    original: indoc! {"
+                        a
+                        b
+                        c
+                        d
+                        e
+                    "},
+                    model_output: indoc! {"
+                        a
+                        <|fim_middle|>
+                        B
+                        C
+                        D
+                        <|fim_suffix|>
+                        e
+                    "},
+                    expected: indoc! {"
+                        a
+                        B
+                        C
+                        D
+                        e
+                    "},
+                },
+                Case {
+                    name: "insertion_between_existing_lines",
+                    original: indoc! {"
+                        a
+                        b
+                        c
+                    "},
+                    model_output: indoc! {"
+                        a
+                        <|fim_middle|>
+                        X
+                        <|fim_suffix|>
+                        b
+                    "},
+                    expected: indoc! {"
+                        a
+                        X
+                        b
+                        c
+                    "},
+                },
+                Case {
+                    name: "deletion",
+                    original: indoc! {"
+                        a
+                        b
+                        c
+                        d
+                    "},
+                    model_output: indoc! {"
+                        a
+                        <|fim_middle|>
+                        <|fim_suffix|>
+                        c
+                    "},
+                    expected: indoc! {"
+                        a
+                        c
+                        d
+                    "},
+                },
+                Case {
+                    name: "replacement_at_start_no_prefix_context",
+                    original: indoc! {"
+                        a
+                        b
+                        c
+                    "},
+                    model_output: indoc! {"
+                        <|fim_middle|>
+                        X
+                        <|fim_suffix|>
+                        b
+                    "},
+                    expected: indoc! {"
+                        X
+                        b
+                        c
+                    "},
+                },
+                Case {
+                    name: "replacement_at_end_no_suffix_context",
+                    original: indoc! {"
+                        a
+                        b
+                        c
+                    "},
+                    model_output: indoc! {"
+                        b
+                        <|fim_middle|>
+                        Z
+                        <|fim_suffix|>
+                    "},
+                    expected: indoc! {"
+                        a
+                        b
+                        Z
+                    "},
+                },
+                Case {
+                    name: "context_with_trailing_newline_is_preserved",
+                    original: indoc! {"
+                        a
+                        b
+                        c
+                    "},
+                    model_output: indoc! {"
+                        a
+                        <|fim_middle|>
+                        B
+                        <|fim_suffix|>
+                        c
+                    "},
+                    expected: indoc! {"
+                        a
+                        B
+                        c
+                    "},
+                },
+                Case {
+                    name: "cursor_marker_passes_through_untouched",
+                    original: indoc! {"
+                        a
+                        b
+                        c
+                    "},
+                    model_output: indoc! {"
+                        a
+                        <|fim_middle|>
+                        B<|user_cursor|>B
+                        <|fim_suffix|>
+                        c
+                    "},
+                    expected: indoc! {"
+                        a
+                        B<|user_cursor|>B
+                        c
+                    "},
+                },
+                Case {
+                    name: "multiple_prefix_context_lines",
+                    original: indoc! {"
+                        a
+                        b
+                        c
+                        d
+                        e
+                    "},
+                    model_output: indoc! {"
+                        b
+                        c
+                        <|fim_middle|>
+                        D
+                        <|fim_suffix|>
+                        e
+                    "},
+                    expected: indoc! {"
+                        a
+                        b
+                        c
+                        D
+                        e
+                    "},
+                },
+            ];
 
-            // Insertion between existing lines
-            assert_eq!(
-                apply_variable_edit("a\nb\nc", "a\n<|fim_middle|>\nX\n<|fim_suffix|>\nb",).unwrap(),
-                "a\nX\nb\nc"
-            );
-
-            // Deletion
-            assert_eq!(
-                apply_variable_edit("a\nb\nc\nd", "a\n<|fim_middle|>\n<|fim_suffix|>\nc",).unwrap(),
-                "a\nc\nd"
-            );
-
-            // Replacement at the start (no prefix context)
-            assert_eq!(
-                apply_variable_edit("a\nb\nc", "<|fim_middle|>\nX\n<|fim_suffix|>\nb",).unwrap(),
-                "X\nb\nc"
-            );
-
-            // Replacement at the end (no suffix context)
-            assert_eq!(
-                apply_variable_edit("a\nb\nc", "b\n<|fim_middle|>\nZ\n<|fim_suffix|>",).unwrap(),
-                "a\nb\nZ"
-            );
-
-            // Context with trailing newline is preserved
-            assert_eq!(
-                apply_variable_edit("a\nb\nc\n", "a\n<|fim_middle|>\nB\n<|fim_suffix|>\nc",)
-                    .unwrap(),
-                "a\nB\nc\n"
-            );
-
-            // Cursor marker passes through untouched
-            assert_eq!(
-                apply_variable_edit(
-                    "a\nb\nc",
-                    "a\n<|fim_middle|>\nB<|user_cursor|>B\n<|fim_suffix|>\nc",
-                )
-                .unwrap(),
-                "a\nB<|user_cursor|>B\nc"
-            );
-
-            // Multiple prefix context lines
-            assert_eq!(
-                apply_variable_edit(
-                    "a\nb\nc\nd\ne",
-                    "b\nc\n<|fim_middle|>\nD\n<|fim_suffix|>\ne",
-                )
-                .unwrap(),
-                "a\nb\nc\nD\ne"
-            );
+            for case in cases {
+                let (edit_range, replacement) =
+                    apply_variable_edit(case.original, case.model_output).unwrap();
+                let mut edited = case.original.to_string();
+                edited.replace_range(edit_range, &replacement);
+                assert_eq!(edited, case.expected, "{}", case.name);
+            }
         }
 
         #[test]
-        fn test_patch_to_variable_edit_roundtrip() {
-            // Simple replacement — enough lines for 2 context lines above and below
-            let old = "zero\none\ntwo\nthree\nfour\nfive\n";
-            let output = patch_to_variable_edit_output(
-                old,
-                "@@ -3,3 +3,3 @@\n two\n-three\n+THREE\n four\n",
-                None,
-            )
-            .unwrap();
-            assert_eq!(
-                output,
-                "one\ntwo\n<|fim_middle|>\nTHREE\n<|fim_suffix|>\nfour\nfive\n"
-            );
-            assert_eq!(
-                apply_variable_edit(old, &output).unwrap(),
-                "zero\none\ntwo\nTHREE\nfour\nfive\n"
-            );
+        fn test_patch_to_variable_edit() {
+            struct Case {
+                name: &'static str,
+                old: &'static str,
+                patch: &'static str,
+                cursor_offset: Option<usize>,
+                expected_variable_edit: &'static str,
+                expected_after_apply: &'static str,
+            }
 
-            // Insertion
-            let old = "a\nb\nc\nd\ne\n";
-            let output =
-                patch_to_variable_edit_output(old, "@@ -2,0 +3,1 @@\n b\n+X\n c\n", None).unwrap();
-            assert_eq!(output, "a\nb\n<|fim_middle|>\nX\n<|fim_suffix|>\nc\nd\n");
-            assert_eq!(
-                apply_variable_edit(old, &output).unwrap(),
-                "a\nb\nX\nc\nd\ne\n"
-            );
+            let cases = [
+                Case {
+                    name: "simple_replacement",
+                    old: indoc! {"
+                        zero
+                        one
+                        two
+                        three
+                        four
+                        five
+                    "},
+                    patch: indoc! {"
+                        @@ -3,3 +3,3 @@
+                         two
+                        -three
+                        +THREE
+                         four
+                    "},
+                    cursor_offset: None,
+                    expected_variable_edit: indoc! {"
+                        one
+                        two
+                        <|fim_middle|>
+                        THREE
+                        <|fim_suffix|>
+                        four
+                        five
+                    "},
+                    expected_after_apply: indoc! {"
+                        zero
+                        one
+                        two
+                        THREE
+                        four
+                        five
+                    "},
+                },
+                Case {
+                    name: "insertion",
+                    old: indoc! {"
+                        a
+                        b
+                        c
+                        d
+                        e
+                    "},
+                    patch: indoc! {"
+                        @@ -2,0 +3,1 @@
+                         b
+                        +X
+                         c
+                    "},
+                    cursor_offset: None,
+                    expected_variable_edit: indoc! {"
+                        a
+                        b
+                        <|fim_middle|>
+                        X
+                        <|fim_suffix|>
+                        c
+                        d
+                    "},
+                    expected_after_apply: indoc! {"
+                        a
+                        b
+                        X
+                        c
+                        d
+                        e
+                    "},
+                },
+                Case {
+                    name: "deletion",
+                    old: indoc! {"
+                        a
+                        b
+                        c
+                        d
+                        e
+                    "},
+                    patch: indoc! {"
+                        @@ -2,3 +2,2 @@
+                         b
+                        -c
+                         d
+                    "},
+                    cursor_offset: None,
+                    expected_variable_edit: indoc! {"
+                        a
+                        b
+                        <|fim_middle|>
+                        <|fim_suffix|>
+                        d
+                        e
+                    "},
+                    expected_after_apply: indoc! {"
+                        a
+                        b
+                        d
+                        e
+                    "},
+                },
+                Case {
+                    name: "edit_near_start",
+                    old: indoc! {"
+                        first
+                        second
+                        third
+                        fourth
+                    "},
+                    patch: indoc! {"
+                        @@ -1,1 +1,1 @@
+                        -first
+                        +FIRST
+                    "},
+                    cursor_offset: None,
+                    expected_variable_edit: indoc! {"
+                        <|fim_middle|>
+                        FIRST
+                        <|fim_suffix|>
+                        second
+                        third
+                    "},
+                    expected_after_apply: indoc! {"
+                        FIRST
+                        second
+                        third
+                        fourth
+                    "},
+                },
+                Case {
+                    name: "edit_near_end",
+                    old: indoc! {"
+                        first
+                        second
+                        third
+                        fourth
+                    "},
+                    patch: indoc! {"
+                        @@ -4,1 +4,1 @@
+                        -fourth
+                        +FOURTH
+                    "},
+                    cursor_offset: None,
+                    expected_variable_edit: indoc! {"
+                        second
+                        third
+                        <|fim_middle|>
+                        FOURTH
+                        <|fim_suffix|>
+                    "},
+                    expected_after_apply: indoc! {"
+                        first
+                        second
+                        third
+                        FOURTH
+                    "},
+                },
+                Case {
+                    name: "cursor_at_start_of_replacement",
+                    old: indoc! {"
+                        zero
+                        one
+                        two
+                        three
+                        four
+                        five
+                    "},
+                    patch: indoc! {"
+                        @@ -3,3 +3,3 @@
+                         two
+                        -three
+                        +THREE
+                         four
+                    "},
+                    cursor_offset: Some(4),
+                    expected_variable_edit: indoc! {"
+                        one
+                        two
+                        <|fim_middle|>
+                        <|user_cursor|>THREE
+                        <|fim_suffix|>
+                        four
+                        five
+                    "},
+                    expected_after_apply: indoc! {"
+                        zero
+                        one
+                        two
+                        <|user_cursor|>THREE
+                        four
+                        five
+                    "},
+                },
+                Case {
+                    name: "cursor_in_middle_of_replacement",
+                    old: indoc! {"
+                        zero
+                        one
+                        two
+                        three
+                        four
+                        five
+                    "},
+                    patch: indoc! {"
+                        @@ -3,3 +3,3 @@
+                         two
+                        -three
+                        +THREE
+                         four
+                    "},
+                    cursor_offset: Some(6),
+                    expected_variable_edit: indoc! {"
+                        one
+                        two
+                        <|fim_middle|>
+                        TH<|user_cursor|>REE
+                        <|fim_suffix|>
+                        four
+                        five
+                    "},
+                    expected_after_apply: indoc! {"
+                        zero
+                        one
+                        two
+                        TH<|user_cursor|>REE
+                        four
+                        five
+                    "},
+                },
+            ];
 
-            // Deletion
-            let old = "a\nb\nc\nd\ne\n";
-            let output =
-                patch_to_variable_edit_output(old, "@@ -2,3 +2,2 @@\n b\n-c\n d\n", None).unwrap();
-            assert_eq!(output, "a\nb\n<|fim_middle|>\n\n<|fim_suffix|>\nd\ne\n");
-            assert_eq!(apply_variable_edit(old, &output).unwrap(), "a\nb\nd\ne\n");
+            for case in cases {
+                let output =
+                    patch_to_variable_edit_output(case.old, case.patch, case.cursor_offset)
+                        .unwrap_or_else(|error| {
+                            panic!("failed converting patch for {}: {error}", case.name)
+                        });
+                assert_eq!(
+                    output, case.expected_variable_edit,
+                    "patch->variable_edit mismatch for {}",
+                    case.name
+                );
 
-            // Edit near the start — fewer than 2 lines available above
-            let old = "first\nsecond\nthird\nfourth\n";
-            let output =
-                patch_to_variable_edit_output(old, "@@ -1,1 +1,1 @@\n-first\n+FIRST\n", None)
-                    .unwrap();
-            assert_eq!(
-                output,
-                "<|fim_middle|>\nFIRST\n<|fim_suffix|>\nsecond\nthird\n"
-            );
-            assert_eq!(
-                apply_variable_edit(old, &output).unwrap(),
-                "FIRST\nsecond\nthird\nfourth\n"
-            );
+                let (edit_range, replacement) = apply_variable_edit(case.old, &output)
+                    .unwrap_or_else(|error| {
+                        panic!("failed applying variable_edit for {}: {error}", case.name)
+                    });
+                let mut edited_by_variable_edit = case.old.to_string();
+                edited_by_variable_edit.replace_range(edit_range, &replacement);
+                assert_eq!(
+                    edited_by_variable_edit, case.expected_after_apply,
+                    "variable_edit apply mismatch for {}",
+                    case.name
+                );
 
-            // Edit near the end — fewer than 2 lines available below
-            let old = "first\nsecond\nthird\nfourth\n";
-            let output =
-                patch_to_variable_edit_output(old, "@@ -4,1 +4,1 @@\n-fourth\n+FOURTH\n", None)
-                    .unwrap();
-            assert_eq!(
-                output,
-                "second\nthird\n<|fim_middle|>\nFOURTH\n<|fim_suffix|>\n"
-            );
-            assert_eq!(
-                apply_variable_edit(old, &output).unwrap(),
-                "first\nsecond\nthird\nFOURTH\n"
-            );
-        }
-
-        #[test]
-        fn test_patch_to_variable_edit_with_cursor() {
-            // cursor_offset is a byte offset into the first hunk's new text
-            // (context + additions). For the hunk:
-            //   " two\n-three\n+THREE\n four\n"
-            // the new content is "two\nTHREE\nfour\n". Placing the cursor
-            // at byte 4 targets the 'T' in THREE.
-            let old = "zero\none\ntwo\nthree\nfour\nfive\n";
-            let output = patch_to_variable_edit_output(
-                old,
-                "@@ -3,3 +3,3 @@\n two\n-three\n+THREE\n four\n",
-                Some(4),
-            )
-            .unwrap();
-            assert_eq!(
-                output,
-                "one\ntwo\n<|fim_middle|>\n<|user_cursor|>THREE\n<|fim_suffix|>\nfour\nfive\n"
-            );
-            assert_eq!(
-                apply_variable_edit(old, &output).unwrap(),
-                "zero\none\ntwo\n<|user_cursor|>THREE\nfour\nfive\n"
-            );
-
-            // Cursor in the middle of the replacement: byte 6 in
-            // "two\nTHREE\nfour\n" is the 'R' in THREE.
-            let output = patch_to_variable_edit_output(
-                old,
-                "@@ -3,3 +3,3 @@\n two\n-three\n+THREE\n four\n",
-                Some(6),
-            )
-            .unwrap();
-            assert_eq!(
-                output,
-                "one\ntwo\n<|fim_middle|>\nTH<|user_cursor|>REE\n<|fim_suffix|>\nfour\nfive\n"
-            );
+                let (expected_edit_range, expected_replacement) =
+                    apply_variable_edit(case.old, case.expected_variable_edit).unwrap_or_else(
+                        |error| {
+                            panic!(
+                                "failed applying expected variable_edit for {}: {error}",
+                                case.name
+                            )
+                        },
+                    );
+                let mut edited_by_expected_variable_edit = case.old.to_string();
+                edited_by_expected_variable_edit
+                    .replace_range(expected_edit_range, &expected_replacement);
+                assert_eq!(
+                    edited_by_expected_variable_edit, case.expected_after_apply,
+                    "expected variable_edit apply mismatch for {}",
+                    case.name
+                );
+            }
         }
 
         #[test]
@@ -3066,17 +3356,6 @@ pub mod v0304_variable_edit {
                 prompt,
                 "<|file_sep|>test.rs\nfn main() {\n    h<|user_cursor|>ello();\n}\n<|fim_prefix|>\n"
             );
-        }
-
-        #[test]
-        fn test_find_context_match() {
-            let haystack = vec!["a", "b", "c", "d", "e"];
-            assert_eq!(find_context_match(&haystack, &["b", "c"], 0), Some(1));
-            assert_eq!(find_context_match(&haystack, &["b", "c"], 2), None);
-            assert_eq!(find_context_match(&haystack, &["a"], 0), Some(0));
-            assert_eq!(find_context_match(&haystack, &["e"], 0), Some(4));
-            assert_eq!(find_context_match(&haystack, &[], 3), Some(3));
-            assert_eq!(find_context_match(&haystack, &["x"], 0), None);
         }
     }
 }
