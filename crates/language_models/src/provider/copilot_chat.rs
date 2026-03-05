@@ -748,7 +748,7 @@ impl CopilotResponsesEventMapper {
             }
 
             copilot_responses::StreamEvent::GenericError { error } => vec![Err(
-                LanguageModelCompletionError::Other(anyhow!(format!("{error:?}"))),
+                LanguageModelCompletionError::Other(anyhow!(error.message)),
             )],
 
             copilot_responses::StreamEvent::Created { .. }
