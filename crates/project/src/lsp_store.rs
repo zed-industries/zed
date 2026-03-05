@@ -4450,6 +4450,57 @@ impl LspStore {
         Ok(())
     }
 
+    pub fn notify_user_focus(&mut self, buffer: &Entity<Buffer>, cx: &mut Context<Self>) {
+        if self.as_local().is_none() {
+            return;
+        }
+
+        let buffer_ref = buffer.read(cx);
+        let Some(file) = File::from_dyn(buffer_ref.file()) else {
+            return;
+        };
+        let Some(local_file) = file.as_local() else {
+            return;
+        };
+        let Some(uri) = file_path_to_lsp_url(&local_file.abs_path(cx)).log_err() else {
+            return;
+        };
+
+        let params = lsp::DidFocusTextDocumentParams {
+            text_document: lsp::TextDocumentIdentifier { uri },
+            user_initiated: true,
+        };
+
+        let Some(local) = self.as_local() else {
+            return;
+        };
+        if let Some(server_ids) = local.buffers_opened_in_servers.get(&buffer_ref.remote_id()) {
+            for server_id in server_ids {
+                if let Some(LanguageServerState::Running { server, .. }) =
+                    local.language_servers.get(server_id)
+                {
+                    server
+                        .notify::<lsp::DidFocusTextDocument>(params.clone())
+                        .log_err();
+                }
+            }
+        }
+    }
+
+    pub fn on_user_focused_project_path(
+        &mut self,
+        project_path: &ProjectPath,
+        cx: &mut Context<Self>,
+    ) {
+        if self.as_local().is_none() {
+            return;
+        }
+
+        if let Some(buffer) = self.buffer_store.read(cx).get_by_path(project_path) {
+            self.notify_user_focus(&buffer, cx);
+        }
+    }
+
     pub fn refresh_background_diagnostics_for_buffers(
         &mut self,
         buffers: HashSet<BufferId>,

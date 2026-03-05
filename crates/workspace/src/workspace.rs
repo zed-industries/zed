@@ -1256,6 +1256,7 @@ pub struct Workspace {
     active_pane: Entity<Pane>,
     last_active_center_pane: Option<WeakEntity<Pane>>,
     last_active_view_id: Option<proto::ViewId>,
+    last_user_focused_path: Option<ProjectPath>,
     status_bar: Entity<StatusBar>,
     pub(crate) modal_layer: Entity<ModalLayer>,
     toast_layer: Entity<ToastLayer>,
@@ -1654,6 +1655,7 @@ impl Workspace {
             active_pane: center_pane.clone(),
             last_active_center_pane: Some(center_pane.downgrade()),
             last_active_view_id: None,
+            last_user_focused_path: None,
             status_bar,
             modal_layer,
             toast_layer,
@@ -4693,7 +4695,7 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) {
         self.active_pane = pane.clone();
-        self.active_item_path_changed(true, window, cx);
+        self.active_item_path_changed(window, cx);
         self.last_active_center_pane = Some(pane.downgrade());
     }
 
@@ -4753,7 +4755,7 @@ impl Workspace {
                 }
                 serialize_workspace = *focus_changed || pane != self.active_pane();
                 if pane == self.active_pane() {
-                    self.active_item_path_changed(*focus_changed, window, cx);
+                    self.active_item_path_changed(window, cx);
                     self.update_active_view_for_followers(window, cx);
                 } else if *local {
                     self.set_active_pane(pane, window, cx);
@@ -4769,13 +4771,16 @@ impl Workspace {
             }
             pane::Event::ChangeItemTitle => {
                 if *pane == self.active_pane {
-                    self.active_item_path_changed(false, window, cx);
+                    self.active_item_path_changed(window, cx);
                 }
                 serialize_workspace = false;
             }
             pane::Event::RemovedItem { item } => {
                 cx.emit(Event::ActiveItemChanged);
                 self.update_window_edited(window, cx);
+                if *pane == self.active_pane {
+                    self.active_item_path_changed(window, cx);
+                }
                 if let hash_map::Entry::Occupied(entry) = self.panes_by_item.entry(item.item_id())
                     && entry.get().entity_id() == pane.entity_id()
                 {
@@ -4939,7 +4944,7 @@ impl Workspace {
 
             cx.notify();
         } else {
-            self.active_item_path_changed(true, window, cx);
+            self.active_item_path_changed(window, cx);
         }
         cx.emit(Event::PaneRemoved);
     }
@@ -5205,19 +5210,33 @@ impl Workspace {
         self.follower_states.contains_key(&id.into())
     }
 
-    fn active_item_path_changed(
-        &mut self,
-        focus_changed: bool,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    fn active_item_path_changed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         cx.emit(Event::ActiveItemChanged);
         let active_entry = self.active_project_path(cx);
+        let path_changed = active_entry != self.last_user_focused_path;
         self.project.update(cx, |project, cx| {
             project.set_active_path(active_entry.clone(), cx)
         });
 
-        if focus_changed && let Some(project_path) = &active_entry {
+        let user_focus = path_changed
+            && window.is_window_active()
+            && !matches!(
+                self.leader_for_pane(&self.active_pane),
+                Some(CollaboratorId::Agent)
+            );
+
+        if user_focus {
+            if let Some(project_path) = &active_entry {
+                self.project.update(cx, |project, cx| {
+                    project.notify_user_focused_path(project_path, cx)
+                });
+            }
+            self.last_user_focused_path = active_entry.clone();
+        } else if path_changed {
+            self.last_user_focused_path = active_entry.clone();
+        }
+
+        if path_changed && let Some(project_path) = &active_entry {
             let git_store_entity = self.project.read(cx).git_store().clone();
             git_store_entity.update(cx, |git_store, cx| {
                 git_store.set_active_repo_for_path(project_path, cx);

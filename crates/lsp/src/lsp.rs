@@ -60,6 +60,20 @@ pub const DEFAULT_LSP_REQUEST_TIMEOUT: Duration =
 /// The shutdown timeout for LSP servers (including Prettier/Copilot).
 const SERVER_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DidFocusTextDocumentParams {
+    pub text_document: TextDocumentIdentifier,
+    #[serde(default)]
+    pub user_initiated: bool,
+}
+
+pub enum DidFocusTextDocument {}
+
+impl notification::Notification for DidFocusTextDocument {
+    type Params = DidFocusTextDocumentParams;
+    const METHOD: &'static str = "textDocument/didFocus";
+}
+
 type NotificationHandler = Box<dyn Send + FnMut(Option<RequestId>, Value, &mut AsyncApp)>;
 type PendingRespondTasks = Arc<Mutex<HashMap<RequestId, Task<()>>>>;
 type ResponseHandler = Box<dyn Send + FnOnce(Result<String, Error>) -> Task<()>>;
