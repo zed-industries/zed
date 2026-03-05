@@ -269,7 +269,7 @@ pub fn request_prediction_with_zeta(
                     .await?;
 
                     let request_id = EditPredictionId(response.request_id.into());
-                    let output_text = Some(response.output).filter(String::is_empty);
+                    let output_text = Some(response.output).filter(|s| !s.is_empty());
                     let model_version = response.model_version;
 
                     (
