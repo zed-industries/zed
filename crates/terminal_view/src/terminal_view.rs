@@ -1999,10 +1999,46 @@ mod tests {
     use super::*;
     use gpui::TestAppContext;
     use project::{Entry, Project, ProjectPath, Worktree};
-    use std::path::Path;
+    use std::path::{Path, PathBuf};
     use util::paths::PathStyle;
     use util::rel_path::RelPath;
-    use workspace::{AppState, MultiWorkspace};
+    use workspace::item::test::{TestItem, TestProjectItem};
+    use workspace::{AppState, MultiWorkspace, SelectedEntry};
+
+    fn expected_drop_text(paths: &[PathBuf]) -> String {
+        let mut text = String::new();
+        for path in paths {
+            text.push(' ');
+            text.push_str(&format!("{path:?}"));
+        }
+        text.push(' ');
+        text
+    }
+
+    fn assert_drop_writes_to_terminal(
+        pane: &Entity<Pane>,
+        terminal_view_index: usize,
+        terminal: &Entity<Terminal>,
+        dropped: &dyn Any,
+        expected_text: &str,
+        window: &mut Window,
+        cx: &mut Context<MultiWorkspace>,
+    ) {
+        let _ = terminal.update(cx, |terminal, _| terminal.take_input_log());
+
+        let handled = pane.update(cx, |pane, cx| {
+            pane.item_for_index(terminal_view_index)
+                .unwrap()
+                .handle_drop(pane, dropped, window, cx)
+        });
+        assert!(handled, "handle_drop should return true for {:?}", dropped);
+
+        let mut input_log = terminal.update(cx, |terminal, _| terminal.take_input_log());
+        assert_eq!(input_log.len(), 1, "expected exactly one write to terminal");
+        let written =
+            String::from_utf8(input_log.remove(0)).expect("terminal write should be valid UTF-8");
+        assert_eq!(written, expected_text);
+    }
 
     // Working directory calculation tests
 
@@ -2131,24 +2167,7 @@ mod tests {
         let (project, _workspace) = init_test(cx).await;
 
         let (wt, _entry) = create_folder_wt(project.clone(), "/root/", cx).await;
-        let entry = cx
-            .update(|cx| {
-                wt.update(cx, |wt, cx| {
-                    wt.create_entry(
-                        RelPath::new(Path::new("src/main.rs"), PathStyle::local())
-                            .unwrap()
-                            .as_ref()
-                            .into(),
-                        false,
-                        None,
-                        cx,
-                    )
-                })
-            })
-            .await
-            .unwrap()
-            .into_included()
-            .unwrap();
+        let entry = create_file_in_worktree(wt.clone(), "src/main.rs", cx).await;
         insert_active_entry_for(wt, entry, project.clone(), cx);
 
         cx.update(|cx| {
@@ -2173,6 +2192,18 @@ mod tests {
 
     /// Creates a worktree with 1 file: /root.txt
     pub async fn init_test(cx: &mut TestAppContext) -> (Entity<Project>, Entity<Workspace>) {
+        let (project, workspace, _) = init_test_with_window(cx).await;
+        (project, workspace)
+    }
+
+    /// Creates a worktree with 1 file /root.txt and returns the project, workspace, and window handle.
+    async fn init_test_with_window(
+        cx: &mut TestAppContext,
+    ) -> (
+        Entity<Project>,
+        Entity<Workspace>,
+        gpui::WindowHandle<MultiWorkspace>,
+    ) {
         let params = cx.update(AppState::test);
         cx.update(|cx| {
             theme::init(theme::LoadThemes::JustBase, cx);
@@ -2185,7 +2216,32 @@ mod tests {
             .read_with(cx, |mw, _| mw.workspace().clone())
             .unwrap();
 
-        (project, workspace)
+        (project, workspace, window_handle)
+    }
+
+    /// Creates a file in the given worktree and returns its entry.
+    async fn create_file_in_worktree(
+        worktree: Entity<Worktree>,
+        relative_path: impl AsRef<Path>,
+        cx: &mut TestAppContext,
+    ) -> Entry {
+        cx.update(|cx| {
+            worktree.update(cx, |worktree, cx| {
+                worktree.create_entry(
+                    RelPath::new(relative_path.as_ref(), PathStyle::local())
+                        .unwrap()
+                        .as_ref()
+                        .into(),
+                    false,
+                    None,
+                    cx,
+                )
+            })
+        })
+        .await
+        .unwrap()
+        .into_included()
+        .unwrap()
     }
 
     /// Creates a worktree with 1 folder: /root{suffix}/
@@ -2246,6 +2302,183 @@ mod tests {
             };
             project.update(cx, |project, cx| project.set_active_path(Some(p), cx));
         });
+    }
+
+    // Terminal drag/drop test
+
+    #[gpui::test]
+    async fn test_handle_drop_writes_paths_for_all_drop_types(cx: &mut TestAppContext) {
+        let (project, _workspace, window_handle) = init_test_with_window(cx).await;
+
+        let (worktree, _) = create_folder_wt(project.clone(), "/root/", cx).await;
+        let first_entry = create_file_in_worktree(worktree.clone(), "first.txt", cx).await;
+        let second_entry = create_file_in_worktree(worktree.clone(), "second.txt", cx).await;
+
+        let worktree_id = worktree.read_with(cx, |worktree, _| worktree.id());
+        let first_path = project
+            .read_with(cx, |project, cx| {
+                project.absolute_path(
+                    &ProjectPath {
+                        worktree_id,
+                        path: first_entry.path.clone(),
+                    },
+                    cx,
+                )
+            })
+            .unwrap();
+        let second_path = project
+            .read_with(cx, |project, cx| {
+                project.absolute_path(
+                    &ProjectPath {
+                        worktree_id,
+                        path: second_entry.path.clone(),
+                    },
+                    cx,
+                )
+            })
+            .unwrap();
+
+        let (active_pane, terminal, terminal_view, tab_item) = window_handle
+            .update(cx, |multi_workspace, window, cx| {
+                let workspace = multi_workspace.workspace().clone();
+                let active_pane = workspace.read(cx).active_pane().clone();
+
+                let terminal = cx.new(|cx| {
+                    terminal::TerminalBuilder::new_display_only(
+                        CursorShape::default(),
+                        terminal::terminal_settings::AlternateScroll::On,
+                        None,
+                        0,
+                        cx.background_executor(),
+                        PathStyle::local(),
+                    )
+                    .unwrap()
+                    .subscribe(cx)
+                });
+                let terminal_view = cx.new(|cx| {
+                    TerminalView::new(
+                        terminal.clone(),
+                        workspace.downgrade(),
+                        None,
+                        project.downgrade(),
+                        window,
+                        cx,
+                    )
+                });
+
+                active_pane.update(cx, |pane, cx| {
+                    pane.add_item(
+                        Box::new(terminal_view.clone()),
+                        true,
+                        false,
+                        None,
+                        window,
+                        cx,
+                    );
+                });
+
+                let tab_project_item = cx.new(|_| TestProjectItem {
+                    entry_id: Some(second_entry.id),
+                    project_path: Some(ProjectPath {
+                        worktree_id,
+                        path: second_entry.path.clone(),
+                    }),
+                    is_dirty: false,
+                });
+                let tab_item =
+                    cx.new(|cx| TestItem::new(cx).with_project_items(&[tab_project_item]));
+                active_pane.update(cx, |pane, cx| {
+                    pane.add_item(Box::new(tab_item.clone()), true, false, None, window, cx);
+                });
+
+                (active_pane, terminal, terminal_view, tab_item)
+            })
+            .unwrap();
+
+        cx.run_until_parked();
+
+        window_handle
+            .update(cx, |multi_workspace, window, cx| {
+                let workspace = multi_workspace.workspace().clone();
+                let terminal_view_index =
+                    active_pane.read(cx).index_for_item(&terminal_view).unwrap();
+                let dragged_tab_index = active_pane.read(cx).index_for_item(&tab_item).unwrap();
+
+                assert!(
+                    workspace.read(cx).pane_for(&terminal_view).is_some(),
+                    "terminal view not registered with workspace after run_until_parked"
+                );
+
+                // Dragging an external file should write its path to the terminal
+                let external_paths = ExternalPaths(vec![first_path.clone()].into());
+                assert_drop_writes_to_terminal(
+                    &active_pane,
+                    terminal_view_index,
+                    &terminal,
+                    &external_paths,
+                    &expected_drop_text(&[first_path.clone()]),
+                    window,
+                    cx,
+                );
+
+                // Dragging a tab should write the path of the tab's item to the terminal
+                let dragged_tab = DraggedTab {
+                    pane: active_pane.clone(),
+                    item: Box::new(tab_item.clone()),
+                    ix: dragged_tab_index,
+                    detail: 0,
+                    is_active: false,
+                };
+                assert_drop_writes_to_terminal(
+                    &active_pane,
+                    terminal_view_index,
+                    &terminal,
+                    &dragged_tab,
+                    &expected_drop_text(&[second_path.clone()]),
+                    window,
+                    cx,
+                );
+
+                // Dragging multiple selections should write both paths to the terminal
+                let dragged_selection = DraggedSelection {
+                    active_selection: SelectedEntry {
+                        worktree_id,
+                        entry_id: first_entry.id,
+                    },
+                    marked_selections: Arc::from([
+                        SelectedEntry {
+                            worktree_id,
+                            entry_id: first_entry.id,
+                        },
+                        SelectedEntry {
+                            worktree_id,
+                            entry_id: second_entry.id,
+                        },
+                    ]),
+                };
+                assert_drop_writes_to_terminal(
+                    &active_pane,
+                    terminal_view_index,
+                    &terminal,
+                    &dragged_selection,
+                    &expected_drop_text(&[first_path.clone(), second_path.clone()]),
+                    window,
+                    cx,
+                );
+
+                // Dropping a project entry should write the entry's path to the terminal
+                let dropped_entry_id = first_entry.id;
+                assert_drop_writes_to_terminal(
+                    &active_pane,
+                    terminal_view_index,
+                    &terminal,
+                    &dropped_entry_id,
+                    &expected_drop_text(&[first_path]),
+                    window,
+                    cx,
+                );
+            })
+            .unwrap();
     }
 
     // Terminal rename tests
