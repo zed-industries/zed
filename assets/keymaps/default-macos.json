@@ -435,7 +435,7 @@
     },
   },
   {
-    "context": "BufferSearchBar > Editor",
+    "context": "(BufferSearchBar || ProjectSearchBar) > Editor",
     "use_key_equivalents": true,
     "bindings": {
       "cmd-up": ["editor::MoveToBeginningOfLine", { "stop_at_soft_wraps": true, "stop_at_indent": true }],
