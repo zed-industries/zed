@@ -1212,18 +1212,18 @@ impl Render for Sidebar {
                                     cx,
                                 ))
                             })
-                            .trigger(
+                            .trigger_with_tooltip(
                                 IconButton::new("new-workspace", IconName::OpenFolder)
-                                    .icon_size(IconSize::Small)
-                                    .tooltip(|_window, cx| {
-                                        Tooltip::for_action(
-                                            "Open Recent Project",
-                                            &zed_actions::OpenRecent {
-                                                create_new_window: false,
-                                            },
-                                            cx,
-                                        )
-                                    }),
+                                    .icon_size(IconSize::Small),
+                                |_window, cx| {
+                                    Tooltip::for_action(
+                                        "Open Recent Project",
+                                        &zed_actions::OpenRecent {
+                                            create_new_window: false,
+                                        },
+                                        cx,
+                                    )
+                                },
                             )
                             .anchor(gpui::Corner::TopLeft)
                     }),
