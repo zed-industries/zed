@@ -1069,9 +1069,9 @@ impl OpenAiResponseEventMapper {
             }
             ResponsesStreamEvent::Error { error }
             | ResponsesStreamEvent::GenericError { error } => {
-                vec![Err(LanguageModelCompletionError::Other(anyhow!(format!(
-                    "{error:?}"
-                ))))]
+                vec![Err(LanguageModelCompletionError::Other(anyhow!(
+                    error.message
+                )))]
             }
             ResponsesStreamEvent::OutputTextDone { .. } => Vec::new(),
             ResponsesStreamEvent::OutputItemDone { .. }
