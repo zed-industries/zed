@@ -520,7 +520,7 @@ impl ThreadsDatabase {
 
             let mut select = connection
                 .select_bound::<(), (Arc<str>, Option<Arc<str>>, Option<String>, Option<String>, String, String, Option<String>)>(indoc! {"
-                SELECT id, parent_id, folder_paths, folder_paths_order, summary, updated_at, created_at FROM threads ORDER BY created_at DESC, updated_at DESC
+                SELECT id, parent_id, folder_paths, folder_paths_order, summary, updated_at, created_at FROM threads ORDER BY updated_at DESC, created_at DESC
             "})?;
 
             let rows = select(())?;
