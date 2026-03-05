@@ -3291,6 +3291,7 @@ impl MultiBuffer {
                         Some(ExcerptRange::new(start_ix..end_ix))
                     })
                     .collect::<Vec<_>>();
+                // todo!() mutate excerpts more realistically?
                 log::info!(
                     "Inserting excerpts from buffer {} and ranges {:?}: {:?}",
                     buffer_handle.read(cx).remote_id(),

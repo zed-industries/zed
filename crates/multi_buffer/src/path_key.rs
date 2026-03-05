@@ -185,6 +185,10 @@ impl MultiBuffer {
         direction: ExpandExcerptDirection,
         cx: &mut Context<Self>,
     ) {
+        if line_count == 0 {
+            return;
+        }
+
         let snapshot = self.snapshot(cx);
         let mut sorted_anchors = anchors
             .into_iter()
