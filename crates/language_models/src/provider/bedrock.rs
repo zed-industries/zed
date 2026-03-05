@@ -658,6 +658,10 @@ impl LanguageModel for BedrockModel {
         }
     }
 
+    fn supports_streaming_tools(&self) -> bool {
+        true
+    }
+
     fn telemetry_id(&self) -> String {
         format!("bedrock/{}", self.model.id())
     }
@@ -1200,8 +1204,25 @@ pub fn map_to_language_model_completion_events(
                                     .get_mut(&cb_delta.content_block_index)
                                 {
                                     tool_use.input_json.push_str(tool_output.input());
+                                    if let Ok(input) = serde_json::from_str::<serde_json::Value>(
+                                        &partial_json_fixer::fix_json(&tool_use.input_json),
+                                    ) {
+                                        Some(Ok(LanguageModelCompletionEvent::ToolUse(
+                                            LanguageModelToolUse {
+                                                id: tool_use.id.clone().into(),
+                                                name: tool_use.name.clone().into(),
+                                                is_input_complete: false,
+                                                raw_input: tool_use.input_json.clone(),
+                                                input,
+                                                thought_signature: None,
+                                            },
+                                        )))
+                                    } else {
+                                        None
+                                    }
+                                } else {
+                                    None
                                 }
-                                None
                             }
                             Some(ContentBlockDelta::ReasoningContent(thinking)) => match thinking {
                                 ReasoningContentBlockDelta::Text(thoughts) => {

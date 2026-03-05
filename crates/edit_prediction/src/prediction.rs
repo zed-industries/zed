@@ -165,6 +165,7 @@ mod tests {
                 experiment: None,
                 in_open_source_repo: false,
                 can_collect_data: false,
+                repo_url: None,
             },
             buffer_snapshotted_at: Instant::now(),
             response_received_at: Instant::now(),

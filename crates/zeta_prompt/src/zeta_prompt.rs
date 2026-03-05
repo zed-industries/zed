@@ -61,6 +61,8 @@ pub struct ZetaPromptInput {
     pub in_open_source_repo: bool,
     #[serde(default)]
     pub can_collect_data: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repo_url: Option<String>,
 }
 
 #[derive(
@@ -2715,6 +2717,7 @@ mod tests {
             experiment: None,
             in_open_source_repo: false,
             can_collect_data: false,
+            repo_url: None,
         }
     }
 
@@ -3312,6 +3315,7 @@ mod tests {
             experiment: None,
             in_open_source_repo: false,
             can_collect_data: false,
+            repo_url: None,
         };
 
         let prompt = zeta1::format_zeta1_from_input(&input, 15..41, 0..excerpt.len());
@@ -3374,6 +3378,7 @@ mod tests {
             experiment: None,
             in_open_source_repo: false,
             can_collect_data: false,
+            repo_url: None,
         };
 
         let prompt = zeta1::format_zeta1_from_input(&input, 0..28, 0..28);
@@ -3431,6 +3436,7 @@ mod tests {
             experiment: None,
             in_open_source_repo: false,
             can_collect_data: false,
+            repo_url: None,
         };
 
         let prompt = zeta1::format_zeta1_from_input(&input, editable_range, context_range);

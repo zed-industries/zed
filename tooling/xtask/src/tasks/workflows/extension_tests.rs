@@ -1,5 +1,5 @@
 use gh_workflow::*;
-use indoc::{formatdoc, indoc};
+use indoc::indoc;
 
 use crate::tasks::workflows::{
     extension_bump::compare_versions,
@@ -142,12 +142,14 @@ pub fn check() -> Step<Run> {
 }
 
 fn verify_version_did_not_change(version_changed: StepOutput) -> Step<Run> {
-    named::bash(formatdoc! {r#"
-        if [[ {version_changed} == "true" && "${{{{ github.event_name }}}}" == "pull_request" && "${{{{ github.event.pull_request.user.login }}}}" != "zed-zippy[bot]" ]] ; then
+    named::bash(indoc! {r#"
+        if [[ "$VERSION_CHANGED" == "true" && "$GITHUB_EVENT_NAME" == "pull_request" && "$PR_USER_LOGIN" != "zed-zippy[bot]" ]] ; then
             echo "Version change detected in your change!"
             echo "Version changes happen in separate PRs and will be performed by the zed-zippy bot"
             exit 42
         fi
         "#
     })
+    .add_env(("VERSION_CHANGED", version_changed.to_string()))
+    .add_env(("PR_USER_LOGIN", "${{ github.event.pull_request.user.login }}"))
 }
