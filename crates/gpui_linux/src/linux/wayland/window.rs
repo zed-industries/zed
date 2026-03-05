@@ -762,7 +762,6 @@ impl WaylandWindowStatePtr {
                     minimize: false,
                     fullscreen: false,
                     window_menu: false,
-                    ..Default::default()
                 };
 
                 let states = extract_states::<xdg_toplevel::WmCapabilities>(&capabilities);

@@ -28,7 +28,7 @@ impl RenderOnce for LinuxWindowControls {
                     WindowControlType::Minimize,
                     cx,
                 ))
-            )
+            })
             .when(supported_controls.maximize, |this| {
                 this.child(WindowControl::new(
                     "maximize-or-restore",
@@ -39,7 +39,7 @@ impl RenderOnce for LinuxWindowControls {
                     },
                     cx,
                 ))
-            )
+            })
             .child(WindowControl::new_close(
                 "close",
                 WindowControlType::Close,
