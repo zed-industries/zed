@@ -1654,28 +1654,30 @@ pub mod test {
         where
             Self: Sized,
         {
-            Task::ready(Some(cx.new(|cx| Self {
-                state: self.state.clone(),
-                label: self.label.clone(),
-                save_count: self.save_count,
-                save_as_count: self.save_as_count,
-                reload_count: self.reload_count,
-                is_dirty: self.is_dirty,
-                buffer_kind: self.buffer_kind,
-                has_conflict: self.has_conflict,
-                has_deleted_file: self.has_deleted_file,
-                project_items: self.project_items.clone(),
-                nav_history: None,
-                tab_descriptions: None,
-                tab_detail: Default::default(),
-                workspace_id: self.workspace_id,
-                focus_handle: cx.focus_handle(),
-                serialize: None,
-                child_focus_handles: self
-                    .child_focus_handles
-                    .iter()
-                    .map(|_| cx.focus_handle())
-                    .collect(),
+            Task::ready(Some(cx.new(|cx| {
+                Self {
+                    state: self.state.clone(),
+                    label: self.label.clone(),
+                    save_count: self.save_count,
+                    save_as_count: self.save_as_count,
+                    reload_count: self.reload_count,
+                    is_dirty: self.is_dirty,
+                    buffer_kind: self.buffer_kind,
+                    has_conflict: self.has_conflict,
+                    has_deleted_file: self.has_deleted_file,
+                    project_items: self.project_items.clone(),
+                    nav_history: None,
+                    tab_descriptions: None,
+                    tab_detail: Default::default(),
+                    workspace_id: self.workspace_id,
+                    focus_handle: cx.focus_handle(),
+                    serialize: None,
+                    child_focus_handles: self
+                        .child_focus_handles
+                        .iter()
+                        .map(|_| cx.focus_handle())
+                        .collect(),
+                }
             })))
         }
 
