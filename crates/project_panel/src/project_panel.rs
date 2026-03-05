@@ -1,7 +1,8 @@
 pub mod project_panel_settings;
+mod undo;
 mod utils;
 
-use anyhow::{Context as _, Result, anyhow};
+use anyhow::{Context as _, Result};
 use client::{ErrorCode, ErrorExt};
 use collections::{BTreeSet, HashMap, hash_map};
 use command_palette_hooks::CommandPaletteFilter;
@@ -80,6 +81,8 @@ use zed_actions::{
     workspace::OpenWithSystem,
 };
 
+use crate::undo::{ProjectPanelOperation, UndoManager};
+
 const PROJECT_PANEL_KEY: &str = "ProjectPanel";
 const NEW_ENTRY_ID: ProjectEntryId = ProjectEntryId::MAX;
 
@@ -156,7 +159,7 @@ pub struct ProjectPanel {
     sticky_items_count: usize,
     last_reported_update: Instant,
     update_visible_entries_task: UpdateVisibleEntriesTask,
-    undo_stack: Vec<ProjectPanelOperation>,
+    undo_manager: UndoManager,
     state: State,
 }
 
@@ -603,18 +606,6 @@ pub enum Event {
     Focus,
 }
 
-pub enum ProjectPanelOperation {
-    Batch(Vec<ProjectPanelOperation>),
-    Create {
-        is_directory: bool,
-        project_path: ProjectPath,
-    },
-    Rename {
-        old_path: ProjectPath,
-        new_path: ProjectPath,
-    },
-}
-
 #[derive(Serialize, Deserialize)]
 struct SerializedProjectPanel {
     width: Option<Pixels>,
@@ -907,7 +898,7 @@ impl ProjectPanel {
                     unfolded_dir_ids: Default::default(),
                 },
                 update_visible_entries_task: Default::default(),
-                undo_stack: Default::default(),
+                undo_manager: UndoManager::new(project.clone()),
             };
             this.update_visible_entries(None, false, false, window, cx);
 
@@ -1947,17 +1938,17 @@ impl ProjectPanel {
 
                 // Record the operation if the edit was applied
                 if new_entry.is_ok() {
-                    if let Some(old_entry) = edited_entry {
-                        project_panel.record_operation(ProjectPanelOperation::Rename {
+                    let operation = if let Some(old_entry) = edited_entry {
+                        ProjectPanelOperation::Rename {
                             old_path: (worktree_id, old_entry.path).into(),
                             new_path: new_project_path,
-                        });
+                        }
                     } else {
-                        project_panel.record_operation(ProjectPanelOperation::Create {
-                            is_directory: is_dir,
+                        ProjectPanelOperation::Create {
                             project_path: new_project_path,
-                        });
-                    }
+                        }
+                    };
+                    project_panel.undo_manager.record(Some(operation));
                 }
 
                 cx.notify();
@@ -2211,70 +2202,8 @@ impl ProjectPanel {
     }
 
     pub fn undo(&mut self, _: &Undo, _window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(operation) = self.undo_stack.pop() {
-            let task = self.revert_operation(operation, cx);
-            cx.spawn(async |_, _| task.await).detach_and_log_err(cx);
-        }
-    }
-
-    fn record_operation(&mut self, operation: ProjectPanelOperation) {
-        self.undo_stack.push(operation);
-    }
-
-    fn revert_operation(
-        &self,
-        operation: ProjectPanelOperation,
-        cx: &mut Context<'_, Self>,
-    ) -> Task<Result<()>> {
-        match operation {
-            ProjectPanelOperation::Rename { old_path, new_path } => {
-                let Some(entry_id) = self
-                    .project
-                    .read(cx)
-                    .entry_for_path(&new_path, cx)
-                    .map(|e| e.id)
-                else {
-                    return Task::ready(Err(anyhow!("no entry for path")));
-                };
-                let task = self.project.update(cx, |project, cx| {
-                    project.rename_entry(entry_id, old_path.clone(), cx)
-                });
-                cx.spawn(async move |_, _| task.await.map(|_| ()))
-            }
-            ProjectPanelOperation::Create {
-                is_directory: _,
-                project_path,
-            } => {
-                let Some(entry_id) = self
-                    .project
-                    .read(cx)
-                    .entry_for_path(&project_path, cx)
-                    .map(|e| e.id)
-                else {
-                    return Task::ready(Err(anyhow!("no entry for path")));
-                };
-                let Some(task) = self
-                    .project
-                    .update(cx, |project, cx| project.delete_entry(entry_id, false, cx))
-                else {
-                    return Task::ready(Err(anyhow!("failed to trash entry")));
-                };
-                cx.spawn(async move |_, _cx| task.await.map(|_| ()))
-            }
-            ProjectPanelOperation::Batch(operations) => {
-                let tasks: Vec<_> = operations
-                    .into_iter()
-                    .map(|op| self.revert_operation(op, cx))
-                    .collect();
-
-                cx.spawn(async move |_, _| {
-                    for task in tasks {
-                        task.await?;
-                    }
-                    Ok(())
-                })
-            }
-        }
+        self.undo_manager.undo(cx);
+        cx.notify();
     }
 
     fn rename_impl(
@@ -3239,7 +3168,6 @@ impl ProjectPanel {
                                 .notify_workspace_async_err(workspace.clone(), &mut cx)
                             {
                                 operations.push(ProjectPanelOperation::Create {
-                                    is_directory: entry.is_dir(),
                                     project_path: destination,
                                 });
                                 last_succeed = Some(entry);
@@ -3251,11 +3179,7 @@ impl ProjectPanel {
                 if !operations.is_empty() {
                     project_panel
                         .update(cx, |this, _| {
-                            if operations.len() == 1 {
-                                this.record_operation(operations.pop().unwrap());
-                            } else {
-                                this.record_operation(ProjectPanelOperation::Batch(operations));
-                            }
+                            this.undo_manager.record(operations);
                         })
                         .ok();
                 }
@@ -4487,7 +4411,6 @@ impl ProjectPanel {
                         if let Some(Some(entry)) = task.await.log_err() {
                             last_succeed = Some(entry.id);
                             operations.push(ProjectPanelOperation::Create {
-                                is_directory: entry.is_dir(),
                                 project_path: (worktree_id, entry.path).into(),
                             });
                         }
@@ -4501,12 +4424,7 @@ impl ProjectPanel {
                                     entry_id,
                                 });
 
-                                if operations.len() == 1 {
-                                    project_panel.record_operation(operations.pop().unwrap());
-                                } else {
-                                    project_panel
-                                        .record_operation(ProjectPanelOperation::Batch(operations));
-                                }
+                                project_panel.undo_manager.record(operations);
 
                                 // if only one entry was dragged and it was disambiguated, open the rename editor
                                 if item_count == 1 && disambiguation_range.is_some() {
@@ -4605,11 +4523,7 @@ impl ProjectPanel {
                     if !operations.is_empty() {
                         project_panel
                             .update(cx, |this, _| {
-                                if operations.len() == 1 {
-                                    this.record_operation(operations.pop().unwrap());
-                                } else {
-                                    this.record_operation(ProjectPanelOperation::Batch(operations));
-                                }
+                                this.undo_manager.record(operations);
                             })
                             .ok();
                     }
@@ -4641,11 +4555,7 @@ impl ProjectPanel {
                     if !operations.is_empty() {
                         project_panel
                             .update(cx, |this, _| {
-                                if operations.len() == 1 {
-                                    this.record_operation(operations.pop().unwrap());
-                                } else {
-                                    this.record_operation(ProjectPanelOperation::Batch(operations));
-                                }
+                                this.undo_manager.record(operations);
                             })
                             .ok();
                     }
