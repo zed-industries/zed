@@ -122,6 +122,10 @@ pub struct WorkspaceSettingsContent {
     /// What draws window decorations/titlebar, the client application (Zed) or display server
     /// Default: client
     pub window_decorations: Option<WindowDecorations>,
+    /// The icon size used for side dock (left_side/right_side) panel buttons.
+    ///
+    /// Default: small
+    pub sidebar_icon_size: Option<SidebarIconSize>,
 }
 
 #[with_fallible_options]
@@ -340,6 +344,31 @@ pub enum WindowDecorations {
     Client,
     /// Show system's window titlebar (server-side decoration; not supported by GNOME Wayland)
     Server,
+}
+
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    Default,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum SidebarIconSize {
+    /// 12px
+    XSmall,
+    /// 14px
+    #[default]
+    Small,
+    /// 16px
+    Medium,
 }
 
 #[derive(

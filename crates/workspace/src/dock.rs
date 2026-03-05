@@ -89,6 +89,8 @@ pub trait PanelHandle: Send + Sync {
             DockPosition::Left,
             DockPosition::Bottom,
             DockPosition::Right,
+            DockPosition::LeftSide,
+            DockPosition::RightSide,
         ]
         .into_iter()
         .filter(|position| self.position_is_valid(*position, cx))
@@ -221,6 +223,8 @@ pub enum DockPosition {
     Left,
     Bottom,
     Right,
+    LeftSide,
+    RightSide,
 }
 
 impl From<settings::DockPosition> for DockPosition {
@@ -229,6 +233,8 @@ impl From<settings::DockPosition> for DockPosition {
             settings::DockPosition::Left => Self::Left,
             settings::DockPosition::Bottom => Self::Bottom,
             settings::DockPosition::Right => Self::Right,
+            settings::DockPosition::LeftSide => Self::LeftSide,
+            settings::DockPosition::RightSide => Self::RightSide,
         }
     }
 }
@@ -239,6 +245,8 @@ impl Into<settings::DockPosition> for DockPosition {
             Self::Left => settings::DockPosition::Left,
             Self::Bottom => settings::DockPosition::Bottom,
             Self::Right => settings::DockPosition::Right,
+            Self::LeftSide => settings::DockPosition::LeftSide,
+            Self::RightSide => settings::DockPosition::RightSide,
         }
     }
 }
@@ -249,14 +257,20 @@ impl DockPosition {
             Self::Left => "Left",
             Self::Bottom => "Bottom",
             Self::Right => "Right",
+            Self::LeftSide => "Left Side",
+            Self::RightSide => "Right Side",
         }
     }
 
     pub fn axis(&self) -> Axis {
         match self {
-            Self::Left | Self::Right => Axis::Horizontal,
+            Self::Left | Self::Right | Self::LeftSide | Self::RightSide => Axis::Horizontal,
             Self::Bottom => Axis::Vertical,
         }
+    }
+
+    pub fn is_side(&self) -> bool {
+        matches!(self, Self::LeftSide | Self::RightSide)
     }
 }
 
@@ -760,6 +774,8 @@ impl Dock {
             DockPosition::Left => crate::ToggleLeftDock.boxed_clone(),
             DockPosition::Bottom => crate::ToggleBottomDock.boxed_clone(),
             DockPosition::Right => crate::ToggleRightDock.boxed_clone(),
+            DockPosition::LeftSide => crate::ToggleLeftSideDock.boxed_clone(),
+            DockPosition::RightSide => crate::ToggleRightSideDock.boxed_clone(),
         }
     }
 
@@ -816,7 +832,7 @@ impl Render for Dock {
                     )
                     .occlude();
                 match self.position() {
-                    DockPosition::Left => deferred(
+                    DockPosition::Left | DockPosition::LeftSide => deferred(
                         handle
                             .absolute()
                             .right(-RESIZE_HANDLE_SIZE / 2.)
@@ -834,7 +850,7 @@ impl Render for Dock {
                             .h(RESIZE_HANDLE_SIZE)
                             .cursor_row_resize(),
                     ),
-                    DockPosition::Right => deferred(
+                    DockPosition::Right | DockPosition::RightSide => deferred(
                         handle
                             .absolute()
                             .top(px(0.))
@@ -858,8 +874,8 @@ impl Render for Dock {
                     Axis::Vertical => this.h(size).w_full().flex_col(),
                 })
                 .map(|this| match self.position() {
-                    DockPosition::Left => this.border_r_1(),
-                    DockPosition::Right => this.border_l_1(),
+                    DockPosition::Left | DockPosition::LeftSide => this.border_r_1(),
+                    DockPosition::Right | DockPosition::RightSide => this.border_l_1(),
                     DockPosition::Bottom => this.border_t_1(),
                 })
                 .child(
@@ -905,8 +921,10 @@ impl Render for PanelButtons {
         let dock_position = dock.position;
 
         let (menu_anchor, menu_attach) = match dock.position {
-            DockPosition::Left => (Corner::BottomLeft, Corner::TopLeft),
-            DockPosition::Bottom | DockPosition::Right => (Corner::BottomRight, Corner::TopRight),
+            DockPosition::Left | DockPosition::LeftSide => (Corner::BottomLeft, Corner::TopLeft),
+            DockPosition::Bottom | DockPosition::Right | DockPosition::RightSide => {
+                (Corner::BottomRight, Corner::TopRight)
+            }
         };
 
         let buttons: Vec<_> = dock
@@ -944,10 +962,12 @@ impl Render for PanelButtons {
                 Some(
                     right_click_menu(name)
                         .menu(move |window, cx| {
-                            const POSITIONS: [DockPosition; 3] = [
+                            const POSITIONS: [DockPosition; 5] = [
                                 DockPosition::Left,
                                 DockPosition::Right,
                                 DockPosition::Bottom,
+                                DockPosition::LeftSide,
+                                DockPosition::RightSide,
                             ];
 
                             ContextMenu::build(window, cx, |mut menu, _, cx| {
@@ -1016,6 +1036,147 @@ impl StatusItemView for PanelButtons {
         _cx: &mut Context<Self>,
     ) {
         // Nothing to do, panel buttons don't depend on the active center item
+    }
+}
+
+pub struct SideDockButtons {
+    dock: Entity<Dock>,
+    _settings_subscription: Subscription,
+}
+
+impl SideDockButtons {
+    pub fn new(dock: Entity<Dock>, cx: &mut Context<Self>) -> Self {
+        cx.observe(&dock, |_, _, cx| cx.notify()).detach();
+        let settings_subscription = cx.observe_global::<SettingsStore>(|_, cx| cx.notify());
+        Self {
+            dock,
+            _settings_subscription: settings_subscription,
+        }
+    }
+
+    pub fn has_panels(&self, window: &Window, cx: &App) -> bool {
+        let dock = self.dock.read(cx);
+        dock.panel_entries
+            .iter()
+            .any(|entry| entry.panel.icon(window, cx).is_some())
+    }
+}
+
+impl Render for SideDockButtons {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let dock = self.dock.read(cx);
+        let active_index = dock.active_panel_index;
+        let is_open = dock.is_open;
+        let dock_position = dock.position;
+
+        let icon_size = match crate::WorkspaceSettings::get_global(cx).sidebar_icon_size {
+            settings::SidebarIconSize::XSmall => IconSize::XSmall,
+            settings::SidebarIconSize::Small => IconSize::Small,
+            settings::SidebarIconSize::Medium => IconSize::Medium,
+        };
+
+        let (menu_anchor, menu_attach) = match dock.position {
+            DockPosition::LeftSide | DockPosition::Left => {
+                (Corner::BottomLeft, Corner::TopLeft)
+            }
+            _ => (Corner::BottomRight, Corner::TopRight),
+        };
+
+        let buttons: Vec<_> = dock
+            .panel_entries
+            .iter()
+            .enumerate()
+            .filter_map(|(i, entry)| {
+                let icon = entry.panel.icon(window, cx)?;
+                let icon_tooltip = entry
+                    .panel
+                    .icon_tooltip(window, cx)
+                    .ok_or_else(|| {
+                        anyhow::anyhow!("can't render a panel button without an icon tooltip")
+                    })
+                    .log_err()?;
+                let name = entry.panel.persistent_name();
+                let panel = entry.panel.clone();
+
+                let is_active_button = Some(i) == active_index && is_open;
+                let (action, tooltip) = if is_active_button {
+                    let action = dock.toggle_action();
+                    let tooltip: SharedString =
+                        format!("Close {} Dock", dock.position.label()).into();
+                    (action, tooltip)
+                } else {
+                    let action = entry.panel.toggle_action(window, cx);
+                    (action, icon_tooltip.into())
+                };
+
+                let focus_handle = dock.focus_handle(cx);
+
+                Some(
+                    right_click_menu(name)
+                        .menu(move |window, cx| {
+                            const POSITIONS: [DockPosition; 5] = [
+                                DockPosition::Left,
+                                DockPosition::Right,
+                                DockPosition::Bottom,
+                                DockPosition::LeftSide,
+                                DockPosition::RightSide,
+                            ];
+
+                            ContextMenu::build(window, cx, |mut menu, _, cx| {
+                                for position in POSITIONS {
+                                    if position != dock_position
+                                        && panel.position_is_valid(position, cx)
+                                    {
+                                        let panel = panel.clone();
+                                        menu = menu.entry(
+                                            format!("Dock {}", position.label()),
+                                            None,
+                                            move |window, cx| {
+                                                panel.set_position(position, window, cx);
+                                            },
+                                        )
+                                    }
+                                }
+                                menu
+                            })
+                        })
+                        .anchor(menu_anchor)
+                        .attach(menu_attach)
+                        .trigger(move |is_active, _window, _cx| {
+                            IconButton::new((name, is_active_button as u64), icon)
+                                .icon_size(icon_size)
+                                .toggle_state(is_active_button)
+                                .on_click({
+                                    let action = action.boxed_clone();
+                                    move |_, window, cx| {
+                                        window.focus(&focus_handle, cx);
+                                        window.dispatch_action(action.boxed_clone(), cx)
+                                    }
+                                })
+                                .when(!is_active, |this| {
+                                    this.tooltip(move |_window, cx| {
+                                        Tooltip::for_action(tooltip.clone(), &*action, cx)
+                                    })
+                                })
+                        }),
+                )
+            })
+            .collect();
+
+        div()
+            .flex()
+            .flex_col()
+            .items_center()
+            .gap_1()
+            .py_1()
+            .bg(cx.theme().colors().panel_background)
+            .border_color(cx.theme().colors().border)
+            .map(|this| match dock_position {
+                DockPosition::LeftSide => this.border_r_1(),
+                DockPosition::RightSide => this.border_l_1(),
+                _ => this,
+            })
+            .children(buttons)
     }
 }
 

@@ -481,6 +481,7 @@ fn init_renderers(cx: &mut App) {
         .add_basic_renderer::<settings::DockSide>(render_dropdown)
         .add_basic_renderer::<settings::TerminalDockPosition>(render_dropdown)
         .add_basic_renderer::<settings::DockPosition>(render_dropdown)
+        .add_basic_renderer::<settings::SidebarIconSize>(render_dropdown)
         .add_basic_renderer::<settings::GitGutterSetting>(render_dropdown)
         .add_basic_renderer::<settings::GitHunkStyleSetting>(render_dropdown)
         .add_basic_renderer::<settings::GitPathStyle>(render_dropdown)

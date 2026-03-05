@@ -6,7 +6,7 @@ use serde::Deserialize;
 pub use settings::{
     AutosaveSetting, BottomDockLayout, EncodingDisplayOptions, InactiveOpacity,
     PaneSplitDirectionHorizontal, PaneSplitDirectionVertical, RegisterSetting,
-    RestoreOnStartupBehavior, Settings,
+    RestoreOnStartupBehavior, Settings, SidebarIconSize,
 };
 
 #[derive(RegisterSetting)]
@@ -35,6 +35,7 @@ pub struct WorkspaceSettings {
     pub use_system_window_tabs: bool,
     pub zoomed_padding: bool,
     pub window_decorations: settings::WindowDecorations,
+    pub sidebar_icon_size: settings::SidebarIconSize,
 }
 
 #[derive(Copy, Clone, PartialEq, Debug, Default)]
