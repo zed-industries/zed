@@ -29839,14 +29839,47 @@ async fn test_end_of_editor_context(cx: &mut TestAppContext) {
     cx.set_state("line1\nline2ˇ");
     cx.update_editor(|e, window, cx| {
         e.set_mode(EditorMode::SingleLine);
+        assert!(!e.key_context(window, cx).contains("start_of_input"));
         assert!(e.key_context(window, cx).contains("end_of_input"));
     });
     cx.set_state("ˇline1\nline2");
     cx.update_editor(|e, window, cx| {
+        e.set_mode(EditorMode::SingleLine);
+        assert!(e.key_context(window, cx).contains("start_of_input"));
         assert!(!e.key_context(window, cx).contains("end_of_input"));
     });
     cx.set_state("line1ˇ\nline2");
     cx.update_editor(|e, window, cx| {
+        e.set_mode(EditorMode::SingleLine);
+        assert!(!e.key_context(window, cx).contains("start_of_input"));
+        assert!(!e.key_context(window, cx).contains("end_of_input"));
+    });
+
+    cx.set_state("line1\nline2ˇ");
+    cx.update_editor(|e, window, cx| {
+        e.set_mode(EditorMode::AutoHeight {
+            min_lines: 1,
+            max_lines: Some(4),
+        });
+        assert!(!e.key_context(window, cx).contains("start_of_input"));
+        assert!(e.key_context(window, cx).contains("end_of_input"));
+    });
+    cx.set_state("ˇline1\nline2");
+    cx.update_editor(|e, window, cx| {
+        e.set_mode(EditorMode::AutoHeight {
+            min_lines: 1,
+            max_lines: Some(4),
+        });
+        assert!(e.key_context(window, cx).contains("start_of_input"));
+        assert!(!e.key_context(window, cx).contains("end_of_input"));
+    });
+    cx.set_state("line1ˇ\nline2");
+    cx.update_editor(|e, window, cx| {
+        e.set_mode(EditorMode::AutoHeight {
+            min_lines: 1,
+            max_lines: Some(4),
+        });
+        assert!(!e.key_context(window, cx).contains("start_of_input"));
         assert!(!e.key_context(window, cx).contains("end_of_input"));
     });
 }

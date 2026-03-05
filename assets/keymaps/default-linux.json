@@ -396,7 +396,17 @@
     "bindings": {
       "ctrl-enter": "editor::Newline",
       "shift-enter": "search::SelectPreviousMatch",
+    },
+  },
+  {
+    "context": "BufferSearchBar && !in_replace > Editor && mode == auto_height && start_of_input",
+    "bindings": {
       "up": "search::PreviousHistoryQuery",
+    },
+  },
+  {
+    "context": "BufferSearchBar && !in_replace > Editor && mode == auto_height && end_of_input",
+    "bindings": {
       "down": "search::NextHistoryQuery",
     },
   },
@@ -413,9 +423,21 @@
     },
   },
   {
-    "context": "ProjectSearchBar > Editor",
+    "context": "ProjectSearchBar > Editor && mode == single_line",
     "bindings": {
       "up": "search::PreviousHistoryQuery",
+      "down": "search::NextHistoryQuery",
+    },
+  },
+  {
+    "context": "ProjectSearchBar > Editor && mode == auto_height && start_of_input",
+    "bindings": {
+      "up": "search::PreviousHistoryQuery",
+    },
+  },
+  {
+    "context": "ProjectSearchBar > Editor && mode == auto_height && end_of_input",
+    "bindings": {
       "down": "search::NextHistoryQuery",
     },
   },
