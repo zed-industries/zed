@@ -72,7 +72,7 @@ impl Mercury {
                     MAX_REWRITE_TOKENS,
                 );
 
-            let related_files = crate::filter_redundant_excerpts(
+            let related_files = zeta_prompt::filter_redundant_excerpts(
                 related_files,
                 full_path.as_ref(),
                 context_range.start.row..context_range.end.row,
