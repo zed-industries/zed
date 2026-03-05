@@ -103,7 +103,7 @@ impl FilePathNav {
     }
 }
 
-fn open_breadcrumb_file(
+pub(crate) fn open_breadcrumb_file(
     project_path: ProjectPath,
     workspace: &Option<WeakEntity<Workspace>>,
     window: &mut Window,

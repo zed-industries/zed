@@ -41,7 +41,7 @@ use multi_buffer::{
 use parking_lot::Mutex;
 use pretty_assertions::{assert_eq, assert_ne};
 use project::{
-    FakeFs, Project,
+    FakeFs, Project, ProjectPath,
     debugger::breakpoint_store::{BreakpointState, SourceBreakpoint},
     project_settings::LspSettings,
     trusted_worktrees::{PathTrust, TrustedWorktrees},
@@ -33330,4 +33330,83 @@ async fn test_file_path_nav_nested_directory_structure(cx: &mut TestAppContext) 
             "breadcrumb_prefix should return Some for a deeply nested file"
         );
     });
+}
+
+/// Verifies that `open_breadcrumb_file` does not panic when workspace is `None`.
+#[gpui::test]
+async fn test_file_path_nav_open_file_missing_workspace(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/project"),
+        json!({ "main.rs": "fn main() {}" }),
+    )
+    .await;
+
+    let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
+
+    let worktree_id = project.update(cx, |project, cx| {
+        project.visible_worktrees(cx).next().unwrap().read(cx).id()
+    });
+
+    let (_window, cx) = cx.add_window_view(|window, cx| {
+        let project_path = ProjectPath {
+            worktree_id,
+            path: Arc::from(rel_path("main.rs")),
+        };
+        crate::file_path_nav::open_breadcrumb_file(project_path, &None, window, cx);
+        let buffer = cx.new(|cx| language::Buffer::local("", cx));
+        let multibuffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+        build_editor(multibuffer, window, cx)
+    });
+    cx.run_until_parked();
+}
+
+/// Verifies that `open_breadcrumb_file` does not panic when the workspace
+/// weak handle has been dropped (stale reference).
+#[gpui::test]
+async fn test_file_path_nav_open_file_stale_workspace(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/project"),
+        json!({ "main.rs": "fn main() {}" }),
+    )
+    .await;
+
+    let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
+
+    let worktree_id = project.update(cx, |project, cx| {
+        project.visible_worktrees(cx).next().unwrap().read(cx).id()
+    });
+
+    let weak_workspace = {
+        let window =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let weak = window
+            .read_with(cx, |mw, _| mw.workspace().downgrade())
+            .unwrap();
+        let _ = window;
+        cx.run_until_parked();
+        weak
+    };
+
+    let (_window, cx) = cx.add_window_view(|window, cx| {
+        let project_path = ProjectPath {
+            worktree_id,
+            path: Arc::from(rel_path("main.rs")),
+        };
+        crate::file_path_nav::open_breadcrumb_file(
+            project_path,
+            &Some(weak_workspace.clone()),
+            window,
+            cx,
+        );
+        let buffer = cx.new(|cx| language::Buffer::local("", cx));
+        let multibuffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+        build_editor(multibuffer, window, cx)
+    });
+    cx.run_until_parked();
 }
