@@ -206,6 +206,7 @@ pub struct ThreadView {
     pub(crate) conversation: Entity<super::Conversation>,
     pub server_view: WeakEntity<ConnectionView>,
     pub agent_icon: IconName,
+    pub agent_icon_from_external_svg: Option<SharedString>,
     pub agent_name: SharedString,
     pub focus_handle: FocusHandle,
     pub workspace: WeakEntity<Workspace>,
@@ -293,6 +294,7 @@ impl ThreadView {
         conversation: Entity<super::Conversation>,
         server_view: WeakEntity<ConnectionView>,
         agent_icon: IconName,
+        agent_icon_from_external_svg: Option<SharedString>,
         agent_name: SharedString,
         agent_display_name: SharedString,
         workspace: WeakEntity<Workspace>,
@@ -424,6 +426,7 @@ impl ThreadView {
             conversation,
             server_view,
             agent_icon,
+            agent_icon_from_external_svg,
             agent_name,
             workspace,
             entry_view_state,
@@ -934,6 +937,7 @@ impl ThreadView {
         let session_id = self.thread.read(cx).session_id().clone();
         let parent_session_id = self.thread.read(cx).parent_session_id().cloned();
         let agent_telemetry_id = self.thread.read(cx).connection().telemetry_id();
+        let is_first_message = self.thread.read(cx).entries().is_empty();
         let thread = self.thread.downgrade();
 
         self.is_loading_contents = true;
@@ -974,6 +978,25 @@ impl ThreadView {
                     .ok();
                 }
             });
+            if is_first_message {
+                let text: String = contents
+                    .iter()
+                    .filter_map(|block| match block {
+                        acp::ContentBlock::Text(text_content) => Some(text_content.text.as_str()),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                let text = text.lines().next().unwrap_or("").trim();
+                if !text.is_empty() {
+                    let title: SharedString = util::truncate_and_trailoff(text, 20).into();
+                    thread
+                        .update(cx, |thread, cx| thread.set_title(title, cx))?
+                        .await
+                        .log_err();
+                }
+            }
+
             let turn_start_time = Instant::now();
             let send = thread.update(cx, |thread, cx| {
                 thread.action_log().update(cx, |action_log, cx| {

@@ -1801,6 +1801,9 @@ impl EditPredictionStore {
 
         // Prefer predictions from buffer
         if project_state.current_prediction.is_some() {
+            log::debug!(
+                "edit_prediction: diagnostic refresh skipped, current prediction already exists"
+            );
             return;
         }
 
@@ -2262,7 +2265,13 @@ impl EditPredictionStore {
         cx.spawn(async move |this, cx| {
             let prediction = task.await?;
 
-            if prediction.is_none() && allow_jump && has_events {
+            // Only fall back to diagnostics-based prediction if we got a
+            // the model had nothing to suggest for the buffer
+            if prediction.is_none()
+                && allow_jump
+                && has_events
+                && !matches!(trigger, PredictEditsRequestTrigger::Diagnostics)
+            {
                 this.update(cx, |this, cx| {
                     this.refresh_prediction_from_diagnostics(
                         project,
