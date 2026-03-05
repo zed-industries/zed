@@ -10652,6 +10652,85 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_autosave_on_focus_change_in_multibuffer(cx: &mut gpui::TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+
+        // Create a multibuffer-like item with two child focus handles,
+        // simulating individual buffer editors within a multibuffer.
+        let item = cx.new(|cx| {
+            TestItem::new(cx)
+                .with_project_items(&[TestProjectItem::new(1, "1.txt", cx)])
+                .with_child_focus_handles(2, cx)
+        });
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.add_item_to_active_pane(Box::new(item.clone()), None, true, window, cx);
+        });
+
+        // Set autosave to OnFocusChange and focus the first child handle,
+        // simulating the user's cursor being inside one of the multibuffer's excerpts.
+        item.update_in(cx, |item, window, cx| {
+            SettingsStore::update_global(cx, |settings, cx| {
+                settings.update_user_settings(cx, |settings| {
+                    settings.workspace.autosave = Some(AutosaveSetting::OnFocusChange);
+                })
+            });
+            item.is_dirty = true;
+            window.focus(&item.child_focus_handles[0], cx);
+        });
+        cx.executor().run_until_parked();
+        item.read_with(cx, |item, _| assert_eq!(item.save_count, 0));
+
+        // Moving focus from one child to another within the same item should
+        // NOT trigger autosave — focus is still within the item's focus hierarchy.
+        item.update_in(cx, |item, window, cx| {
+            window.focus(&item.child_focus_handles[1], cx);
+        });
+        cx.executor().run_until_parked();
+        item.read_with(cx, |item, _| {
+            assert_eq!(
+                item.save_count, 0,
+                "Switching focus between children within the same item should not autosave"
+            );
+        });
+
+        // Blurring the item saves the file. This is the core regression scenario:
+        // with `on_blur`, this would NOT trigger because `on_blur` only fires when
+        // the item's own focus handle is the leaf that lost focus. In a multibuffer,
+        // the leaf is always a child focus handle, so `on_blur` never detected
+        // focus leaving the item.
+        item.update_in(cx, |_, window, _| window.blur());
+        cx.executor().run_until_parked();
+        item.read_with(cx, |item, _| {
+            assert_eq!(
+                item.save_count, 1,
+                "Blurring should trigger autosave when focus was on a child of the item"
+            );
+        });
+
+        // Deactivating the window should also trigger autosave when a child of
+        // the multibuffer item currently owns focus.
+        item.update_in(cx, |item, window, cx| {
+            item.is_dirty = true;
+            window.focus(&item.child_focus_handles[0], cx);
+        });
+        cx.executor().run_until_parked();
+        item.read_with(cx, |item, _| assert_eq!(item.save_count, 1));
+
+        cx.deactivate_window();
+        item.read_with(cx, |item, _| {
+            assert_eq!(
+                item.save_count, 2,
+                "Deactivating window should trigger autosave when focus was on a child"
+            );
+        });
+    }
+
+    #[gpui::test]
     async fn test_pane_navigation(cx: &mut gpui::TestAppContext) {
         init_test(cx);
 
