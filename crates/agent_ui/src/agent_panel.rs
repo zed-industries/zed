@@ -3425,13 +3425,12 @@ impl AgentPanel {
                                     .filter(|id| {
                                         !agent_server_store.external_agents.contains_key(*id)
                                     })
-                                    .map(|name| {
+                                    .filter_map(|name| {
                                         let display_name = registry_store_ref
                                             .as_ref()
                                             .and_then(|store| store.agent(name.0.as_ref()))
-                                            .map(|a| a.name().clone())
-                                            .unwrap_or_else(|| name.0.clone());
-                                        (name.clone(), display_name)
+                                            .map(|a| a.name().clone())?;
+                                        Some((name.clone(), display_name))
                                     })
                                     .sorted_unstable_by_key(|(_, display_name)| display_name.to_lowercase())
                                     .collect::<Vec<_>>();
