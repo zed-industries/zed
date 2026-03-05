@@ -1848,4 +1848,26 @@ mod test {
             Mode::HelixSelect,
         );
     }
+
+    #[gpui::test]
+    async fn test_helix_select_line_keeps_cursor_at_line_end(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.enable_helix();
+        cx.set_state(
+            indoc! {"
+            line one
+            line twoˇ
+            line three"},
+            Mode::HelixNormal,
+        );
+
+        cx.simulate_keystrokes("x");
+        cx.assert_state(
+            indoc! {"
+            line one
+            «line twoˇ»
+            line three"},
+            Mode::HelixNormal,
+        );
+    }
 }
