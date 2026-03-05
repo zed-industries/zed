@@ -3631,8 +3631,8 @@ async fn test_streaming_tool_completes_when_llm_stream_ends_without_final_input(
     let tool_use = LanguageModelToolUse {
         id: "tool_1".into(),
         name: "streaming_echo".into(),
-        raw_input: r#"{"text": "hel"}"#.into(),
-        input: json!({"text": "hel"}),
+        raw_input: r#"{"text": "partial"}"#.into(),
+        input: json!({"text": "partial"}),
         is_input_complete: false,
         thought_signature: None,
     };
