@@ -1,13 +1,15 @@
 use proc_macro2::TokenStream;
-use quote::{ToTokens, format_ident, quote, quote_spanned};
-use syn::{FnArg, Ident, ItemFn, Type, parse2, punctuated::Punctuated, spanned::Spanned, token::Comma};
+use quote::{format_ident, quote, quote_spanned};
+use syn::{
+    FnArg, Ident, ItemFn, Type, parse2, punctuated::Punctuated, spanned::Spanned, token::Comma,
+};
 
 pub fn test(args: TokenStream, item: TokenStream) -> TokenStream {
     let item_span = item.span();
     let Ok(func) = parse2::<ItemFn>(item) else {
-        return quote_spanned! { item_span => 
+        return quote_spanned! { item_span =>
             compile_error!("#[gpui::property_test] must be placed on a function");
-        }
+        };
     };
 
     let test_name = func.sig.ident.clone();
@@ -18,9 +20,9 @@ pub fn test(args: TokenStream, item: TokenStream) -> TokenStream {
     let inner_body = func.block;
     let inner_arg_decls = parsed_args.inner_fn_decl_args;
     let asyncness = func.sig.asyncness;
-    
+
     let inner_fn = quote! {
-        let #inner_fn_name = #asyncness |#inner_arg_decls| #inner_body;
+        let #inner_fn_name = #asyncness move |#inner_arg_decls| #inner_body;
     };
 
     let arg_errors = parsed_args.errors;
@@ -30,12 +32,12 @@ pub fn test(args: TokenStream, item: TokenStream) -> TokenStream {
     let cx_teardowns = parsed_args.cx_teardowns;
 
     let run_test_body = match &asyncness {
-        None => quote! { 
+        None => quote! {
             #cx_vars
             #inner_fn_name(#inner_args);
             #cx_teardowns
         },
-        Some(_) => quote! { 
+        Some(_) => quote! {
             let foreground_executor = gpui::ForegroundExecutor::new(std::sync::Arc::new(dispatcher.clone()));
             #cx_vars
             foreground_executor.block_test(#inner_fn_name(#inner_args));
@@ -44,20 +46,16 @@ pub fn test(args: TokenStream, item: TokenStream) -> TokenStream {
     };
 
     quote! {
-        #arg_errors 
+        #arg_errors
 
         #[::gpui::proptest::property_test(#args)]
         fn #test_name(#proptest_args) {
             #inner_fn
 
-            ::gpui::run_test(
-                1,    // iterations handled by proptest
-                &[],  // explicit seeds handled by proptest
-                0,    // retries handled by proptest
-                &mut |dispatcher, _seed| {
+            ::gpui::run_test_once(
+                Box::new(move |dispatcher| {
                     #run_test_body
-                },
-                None,
+                }),
             )
         }
     }
@@ -126,7 +124,7 @@ fn remove_std_rng(parsed: &mut ParsedArgs, args: &mut Vec<FnArg>) {
             return true;
         }
 
-        parsed.errors.extend(quote_spanned! { arg.span() => 
+        parsed.errors.extend(quote_spanned! { arg.span() =>
             compile_error!("`StdRng` is not allowed in a property test. Consider implementing `Arbitrary`, or implementing a custom `Strategy`. https://altsysrq.github.io/proptest-book/proptest/tutorial/strategy-basics.html");
         });
 
@@ -141,9 +139,11 @@ fn remove_background_executor(parsed: &mut ParsedArgs, args: &mut Vec<FnArg>) {
         }
 
         parsed.inner_fn_decl_args.extend(quote!(#arg,));
-        parsed.inner_fn_args.extend(quote!(
-            gpui::BackgroundExecutor::new(std::sync::Arc::new(dispatcher.clone())),
-        ));
+        parsed
+            .inner_fn_args
+            .extend(quote!(gpui::BackgroundExecutor::new(std::sync::Arc::new(
+                dispatcher.clone()
+            )),));
 
         false
     });
@@ -191,4 +191,3 @@ fn is_path_with_last_segment(arg: &FnArg, last_segment: &str) -> bool {
         .last()
         .is_some_and(|seg| seg.ident == last_segment)
 }
-

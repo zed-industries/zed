@@ -29,9 +29,30 @@ use crate::{Entity, Subscription, TestAppContext, TestDispatcher};
 use futures::StreamExt as _;
 use std::{
     env,
-    panic::{self, RefUnwindSafe},
+    panic::{self, RefUnwindSafe, UnwindSafe},
     pin::Pin,
 };
+
+/// Similar to [`run_test`], but only runs the callback once, allowing
+/// [`FnOnce`] callbacks. This is intended for use with the
+/// `gpui::property_test` macro and generally should not be used directly.
+/// 
+/// Doesn't support many features of [`run_test`], since these are provided by
+/// proptest.
+pub fn run_test_once(test_fn: Box<dyn UnwindSafe + FnOnce(TestDispatcher)>) {
+    let result = panic::catch_unwind(|| {
+        // todo! find some way to inject the seed into 
+        let dispatcher = TestDispatcher::new(0);
+        let scheduler = dispatcher.scheduler().clone();
+        test_fn(dispatcher);
+        scheduler.end_test();
+    });
+    
+    match result {
+        Ok(()) => {},
+        Err(e) => panic::resume_unwind(e),
+    }
+}
 
 /// Run the given test function with the configured parameters.
 /// This is intended for use with the `gpui::test` macro

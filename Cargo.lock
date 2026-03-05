@@ -5468,6 +5468,8 @@ dependencies = [
  "parking_lot",
  "pretty_assertions",
  "project",
+ "proptest",
+ "proptest-derive",
  "rand 0.9.2",
  "regex",
  "release_channel",
@@ -13255,6 +13257,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "proptest-derive"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c57924a81864dddafba92e1bf92f9bf82f97096c44489548a60e888e1547549b"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.117",
+]
+
+[[package]]
 name = "proptest-macro"
 version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -16586,6 +16599,7 @@ dependencies = [
  "arrayvec",
  "ctor",
  "log",
+ "proptest",
  "rand 0.9.2",
  "rayon",
  "tracing",
@@ -17395,6 +17409,7 @@ dependencies = [
  "log",
  "parking_lot",
  "postage",
+ "proptest",
  "rand 0.9.2",
  "regex",
  "rope",

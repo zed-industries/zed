@@ -643,6 +643,7 @@ pretty_assertions = { version = "1.3.0", features = ["unstable"] }
 proc-macro2 = "1.0.93"
 profiling = "1"
 proptest = { version = "1.10.0", features = ["attr-macro"] }
+proptest-derive = "0.8.0"
 prost = "0.9"
 prost-build = "0.9"
 prost-types = "0.9"

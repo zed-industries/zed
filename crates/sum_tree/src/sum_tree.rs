@@ -1,5 +1,7 @@
 mod cursor;
 mod tree_map;
+#[cfg(any(test, feature = "test-support"))]
+pub mod property_test;
 
 use arrayvec::ArrayVec;
 pub use cursor::{Cursor, FilterCursor, Iter};
