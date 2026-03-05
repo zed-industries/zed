@@ -546,9 +546,11 @@ impl Sidebar {
                     });
                 }
 
-                entries.push(ListEntry::NewThread {
-                    path_list: path_list.clone(),
-                });
+                if total == 0 {
+                    entries.push(ListEntry::NewThread {
+                        path_list: path_list.clone(),
+                    });
+                }
             }
         }
 
@@ -665,6 +667,7 @@ impl Sidebar {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let id = SharedString::from(format!("project-header-{}", ix));
+        let ib_id = SharedString::from(format!("project-header-new-thread-{}", ix));
         let group = SharedString::from(format!("group-{}", ix));
 
         let is_collapsed = self.collapsed_groups.contains(path_list);
@@ -673,7 +676,8 @@ impl Sidebar {
         } else {
             IconName::ChevronDown
         };
-        let path_list = path_list.clone();
+        let path_list_for_new_thread = path_list.clone();
+        let path_list_for_toggle = path_list.clone();
 
         ListItem::new(id)
             .group_name(&group)
@@ -696,9 +700,19 @@ impl Sidebar {
                         ),
                     ),
             )
+            .end_hover_slot(
+                IconButton::new(ib_id, IconName::NewThread)
+                    .icon_size(IconSize::Small)
+                    .icon_color(Color::Muted)
+                    .tooltip(Tooltip::text("New Thread"))
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.selection = None;
+                        this.create_new_thread(&path_list_for_new_thread, window, cx);
+                    })),
+            )
             .on_click(cx.listener(move |this, _, window, cx| {
                 this.selection = None;
-                this.toggle_collapse(&path_list, window, cx);
+                this.toggle_collapse(&path_list_for_toggle, window, cx);
             }))
             .into_any_element()
     }
@@ -975,7 +989,7 @@ impl Sidebar {
         let path_list = path_list.clone();
         let id = SharedString::from(format!("view-more-{}", ix));
 
-        let label = format!("View More ({})", remaining_count);
+        let count = format!("({})", remaining_count);
 
         ListItem::new(id)
             .toggle_state(is_selected)
@@ -983,17 +997,14 @@ impl Sidebar {
                 h_flex()
                     .px_1()
                     .py_1p5()
-                    .gap_0p5()
+                    .gap_1p5()
                     .child(
                         Icon::new(IconName::Plus)
                             .size(IconSize::Small)
                             .color(Color::Muted),
                     )
-                    .child(
-                        Label::new(label.clone())
-                            .size(LabelSize::Small)
-                            .color(Color::Muted),
-                    ),
+                    .child(Label::new("View More"))
+                    .child(Label::new(count).color(Color::Muted)),
             )
             .on_click(cx.listener(move |this, _, window, cx| {
                 this.selection = None;
@@ -1043,18 +1054,27 @@ impl Sidebar {
     ) -> AnyElement {
         let path_list = path_list.clone();
 
-        Button::new(
-            SharedString::from(format!("new-thread-btn-{}", ix)),
-            "+ New Thread",
-        )
-        .style(ButtonStyle::OutlinedGhost)
-        .full_width()
-        .toggle_state(is_selected)
-        .on_click(cx.listener(move |this, _, window, cx| {
-            this.selection = None;
-            this.create_new_thread(&path_list, window, cx);
-        }))
-        .into_any_element()
+        div()
+            .w_full()
+            .p_2()
+            .child(
+                Button::new(
+                    SharedString::from(format!("new-thread-btn-{}", ix)),
+                    "New Thread",
+                )
+                .full_width()
+                .style(ButtonStyle::Outlined)
+                .icon(IconName::Plus)
+                .icon_color(Color::Muted)
+                .icon_size(IconSize::Small)
+                .icon_position(IconPosition::Start)
+                .toggle_state(is_selected)
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    this.selection = None;
+                    this.create_new_thread(&path_list, window, cx);
+                })),
+            )
+            .into_any_element()
     }
 }
 
@@ -1183,7 +1203,7 @@ impl Render for Sidebar {
                                 ))
                             })
                             .trigger(
-                                IconButton::new("new-workspace", IconName::Plus)
+                                IconButton::new("new-workspace", IconName::OpenFolder)
                                     .icon_size(IconSize::Small)
                                     .tooltip(|_window, cx| {
                                         Tooltip::for_action(
