@@ -114,7 +114,9 @@ stdenv.mkDerivation {
       stripLen = 1;
       extraPrefix = "third_party/";
     })
-    # Required for dynamically linking to ffmpeg libraries and exposing symbols
+    # Required for dynamically linking to ffmpeg libraries, exposing symbols,
+    # and hiding PipeWire symbols via version script (Linux only) to prevent
+    # SIGSEGV when ALSA's PipeWire plugin is loaded.
     ./0001-shared-libraries.patch
     # Borrow a patch from chromium to prevent a build failure due to missing libclang libraries
     ./chromium-129-rust.patch
@@ -161,6 +163,7 @@ stdenv.mkDerivation {
   + lib.optionalString stdenv.hostPlatform.isLinux ''
     mkdir -p buildtools/linux64
     ln -sf ${lib.getExe gn} buildtools/linux64/gn
+    cp ${./libwebrtc.version} libwebrtc.version
     substituteInPlace build/toolchain/linux/BUILD.gn \
       --replace 'toolprefix = "aarch64-linux-gnu-"' 'toolprefix = ""'
   ''

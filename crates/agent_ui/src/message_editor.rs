@@ -154,6 +154,7 @@ impl MessageEditor {
                             Box::new(editor::actions::Copy),
                         )
                         .action("Paste", Box::new(editor::actions::Paste))
+                        .action("Paste as Plain Text", Box::new(PasteRaw))
                 }))
             });
 
@@ -722,6 +723,8 @@ impl MessageEditor {
                         crease_text.into(),
                         mention_uri.icon_path(cx),
                         mention_uri.tooltip_text(),
+                        Some(mention_uri.clone()),
+                        Some(self.workspace.clone()),
                         None,
                         self.editor.clone(),
                         window,
@@ -833,6 +836,8 @@ impl MessageEditor {
                             mention_uri.name().into(),
                             mention_uri.icon_path(cx),
                             mention_uri.tooltip_text(),
+                            Some(mention_uri.clone()),
+                            Some(self.workspace.clone()),
                             None,
                             self.editor.clone(),
                             window,
@@ -1014,6 +1019,8 @@ impl MessageEditor {
             mention_uri.name().into(),
             mention_uri.icon_path(cx),
             mention_uri.tooltip_text(),
+            Some(mention_uri.clone()),
+            Some(self.workspace.clone()),
             None,
             self.editor.clone(),
             window,
@@ -1370,6 +1377,8 @@ impl MessageEditor {
                 mention_uri.name().into(),
                 mention_uri.icon_path(cx),
                 mention_uri.tooltip_text(),
+                Some(mention_uri.clone()),
+                Some(self.workspace.clone()),
                 None,
                 self.editor.clone(),
                 window,
