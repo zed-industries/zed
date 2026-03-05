@@ -161,29 +161,42 @@ impl AgentTool for SpawnAgentTool {
                 Ok((subagent, session_info))
             })?;
 
-            match subagent.send(input.message, cx).await {
-                Ok(output) => {
-                    session_info.message_end_index =
-                        cx.update(|cx| Some(subagent.num_entries(cx).saturating_sub(1)));
-                    event_stream.update_fields_with_meta(
-                        acp::ToolCallUpdateFields::new().content(vec![output.clone().into()]),
-                        Some(acp::Meta::from_iter([(
-                            SUBAGENT_SESSION_INFO_META_KEY.into(),
-                            serde_json::json!(&session_info),
-                        )])),
-                    );
+            let send_result = subagent.send(input.message, cx).await;
+
+            session_info.message_end_index =
+                cx.update(|cx| Some(subagent.num_entries(cx).saturating_sub(1)));
+
+            let meta = Some(acp::Meta::from_iter([(
+                SUBAGENT_SESSION_INFO_META_KEY.into(),
+                serde_json::json!(&session_info),
+            )]));
+
+            let (output, result) = match send_result {
+                Ok(output) => (
+                    output.clone(),
                     Ok(SpawnAgentToolOutput::Success {
                         session_id: session_info.session_id.clone(),
                         session_info,
                         output,
-                    })
+                    }),
+                ),
+                Err(e) => {
+                    let error = e.to_string();
+                    (
+                        error.clone(),
+                        Err(SpawnAgentToolOutput::Error {
+                            session_id: Some(session_info.session_id.clone()),
+                            error,
+                            session_info: Some(session_info),
+                        }),
+                    )
                 }
-                Err(e) => Err(SpawnAgentToolOutput::Error {
-                    session_id: Some(session_info.session_id.clone()),
-                    error: e.to_string(),
-                    session_info: Some(session_info),
-                }),
-            }
+            };
+            event_stream.update_fields_with_meta(
+                acp::ToolCallUpdateFields::new().content(vec![output.into()]),
+                meta,
+            );
+            result
         })
     }
 

@@ -20,6 +20,7 @@ buffer_diff.workspace = true
 log.workspace = true
 clock.workspace = true
 collections.workspace = true
+fs.workspace = true
 futures.workspace = true
 gpui.workspace = true
 language.workspace = true

@@ -2,15 +2,12 @@ use client::{Client, UserStore};
 use codestral::{CodestralEditPredictionDelegate, load_codestral_api_key};
 use collections::HashMap;
 use copilot::CopilotEditPredictionDelegate;
-use edit_prediction::{EditPredictionModel, ZedEditPredictionDelegate, Zeta2FeatureFlag};
+use edit_prediction::{EditPredictionModel, ZedEditPredictionDelegate};
 use editor::Editor;
-use feature_flags::FeatureFlagAppExt;
 use gpui::{AnyWindowHandle, App, AppContext as _, Context, Entity, WeakEntity};
 use language::language_settings::{EditPredictionProvider, all_language_settings};
 
-use settings::{
-    EXPERIMENTAL_ZETA2_EDIT_PREDICTION_PROVIDER_NAME, EditPredictionPromptFormat, SettingsStore,
-};
+use settings::{EditPredictionPromptFormat, SettingsStore};
 use std::{cell::RefCell, rc::Rc, sync::Arc};
 use ui::Window;
 
@@ -81,9 +78,6 @@ pub fn init(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut App) {
     .detach();
 
     cx.observe_global::<SettingsStore>({
-        let editors = editors.clone();
-        let client = client.clone();
-        let user_store = user_store.clone();
         let mut previous_config = edit_prediction_provider_config_for_settings(cx);
         move |cx| {
             let new_provider_config = edit_prediction_provider_config_for_settings(cx);
@@ -95,24 +89,6 @@ pub fn init(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut App) {
                     to = new_provider_config.map(|config| config.name())
                 );
 
-                previous_config = new_provider_config;
-                assign_edit_prediction_providers(
-                    &editors,
-                    new_provider_config,
-                    &client,
-                    user_store.clone(),
-                    cx,
-                );
-            }
-        }
-    })
-    .detach();
-
-    cx.observe_flag::<Zeta2FeatureFlag, _>({
-        let mut previous_config = edit_prediction_provider_config_for_settings(cx);
-        move |_is_enabled, cx| {
-            let new_provider_config = edit_prediction_provider_config_for_settings(cx);
-            if new_provider_config != previous_config {
                 previous_config = new_provider_config;
                 assign_edit_prediction_providers(
                     &editors,
@@ -154,7 +130,10 @@ fn edit_prediction_provider_config_for_settings(cx: &App) -> Option<EditPredicti
                 }
             }
 
-            if format == EditPredictionPromptFormat::Zeta {
+            if matches!(
+                format,
+                EditPredictionPromptFormat::Zeta | EditPredictionPromptFormat::Zeta2
+            ) {
                 Some(EditPredictionProviderConfig::Zed(EditPredictionModel::Zeta))
             } else {
                 Some(EditPredictionProviderConfig::Zed(
@@ -168,15 +147,7 @@ fn edit_prediction_provider_config_for_settings(cx: &App) -> Option<EditPredicti
         EditPredictionProvider::Mercury => Some(EditPredictionProviderConfig::Zed(
             EditPredictionModel::Mercury,
         )),
-        EditPredictionProvider::Experimental(name) => {
-            if name == EXPERIMENTAL_ZETA2_EDIT_PREDICTION_PROVIDER_NAME
-                && cx.has_flag::<Zeta2FeatureFlag>()
-            {
-                Some(EditPredictionProviderConfig::Zed(EditPredictionModel::Zeta))
-            } else {
-                None
-            }
-        }
+        EditPredictionProvider::Experimental(_) => None,
     }
 }
 

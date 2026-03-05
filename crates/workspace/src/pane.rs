@@ -3450,7 +3450,7 @@ impl Pane {
                 cx,
             )
             .children(pinned_tabs.len().ne(&0).then(|| {
-                let max_scroll = self.tab_bar_scroll_handle.max_offset().width;
+                let max_scroll = self.tab_bar_scroll_handle.max_offset().x;
                 // We need to check both because offset returns delta values even when the scroll handle is not scrollable
                 let is_scrolled = self.tab_bar_scroll_handle.offset().x < px(0.);
                 // Avoid flickering when max_offset is very small (< 2px).
@@ -7974,7 +7974,7 @@ mod tests {
         let scroll_handle =
             pane.update_in(cx, |pane, _window, _cx| pane.tab_bar_scroll_handle.clone());
         assert!(
-            scroll_handle.max_offset().width > px(0.),
+            scroll_handle.max_offset().x > px(0.),
             "Test requires tab overflow to verify scrolling. Increase tab count or reduce window width."
         );
 

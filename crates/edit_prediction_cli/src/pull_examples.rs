@@ -34,7 +34,7 @@ pub struct MinCaptureVersion {
     pub patch: u32,
 }
 
-const DEFAULT_STATEMENT_TIMEOUT_SECONDS: u64 = 120;
+const DEFAULT_STATEMENT_TIMEOUT_SECONDS: u64 = 240;
 const SETTLED_STATEMENT_TIMEOUT_SECONDS: u64 = 240;
 pub(crate) const POLL_INTERVAL: Duration = Duration::from_secs(2);
 pub(crate) const MAX_POLL_ATTEMPTS: usize = 120;
@@ -715,7 +715,7 @@ pub async fn fetch_rated_examples_after(
                 AND rated.event_properties:inputs IS NOT NULL
                 AND rated.event_properties:inputs:cursor_excerpt IS NOT NULL
                 AND rated.event_properties:output IS NOT NULL
-                AND rated.event_properties:can_collect_data = true
+                AND rated.event_properties:inputs:can_collect_data = true
             ORDER BY rated.time ASC
             LIMIT ?
             OFFSET ?
@@ -823,11 +823,11 @@ fn rated_examples_from_response<'a>(
             let environment = get_string("environment");
             let zed_version = get_string("zed_version");
 
-            match (inputs, output.clone(), rating.clone(), device_id.clone(), time.clone()) {
-                (Some(inputs), Some(output), Some(rating), Some(device_id), Some(time)) => {
+            match (inputs, output.clone(), rating.clone(), time.clone()) {
+                (Some(inputs), Some(output), Some(rating), Some(time)) => {
                     Some(build_rated_example(
                         request_id,
-                        device_id,
+                        device_id.unwrap_or_default(),
                         time,
                         inputs,
                         output,
@@ -840,11 +840,10 @@ fn rated_examples_from_response<'a>(
                 }
                 _ => {
                     log::warn!(
-                        "skipping row {row_index}: missing fields - inputs={:?} output={:?} rating={:?} device_id={:?} time={:?}",
+                        "skipping row {row_index}: missing fields - inputs={:?} output={:?} rating={:?} time={:?}",
                         inputs_json.is_some(),
                         output.is_some(),
                         rating.is_some(),
-                        device_id.is_some(),
                         time.is_some(),
                     );
                     None
