@@ -4,8 +4,8 @@ use language::HighlightMap;
 use theme::SyntaxTheme;
 
 fn syntax_theme(highlight_names: &[&str]) -> SyntaxTheme {
-    SyntaxTheme {
-        highlights: highlight_names
+    SyntaxTheme::new(
+        highlight_names
             .iter()
             .enumerate()
             .map(|(i, name)| {
@@ -16,7 +16,7 @@ fn syntax_theme(highlight_names: &[&str]) -> SyntaxTheme {
                 (name.to_string(), color.into())
             })
             .collect(),
-    }
+    )
 }
 
 static SMALL_THEME_KEYS: &[&str] = &[

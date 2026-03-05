@@ -1,15 +1,34 @@
 #![allow(missing_docs)]
 
-use std::sync::Arc;
+use std::{collections::BTreeMap, sync::Arc};
 
 use gpui::{HighlightStyle, Hsla};
+use smallvec::SmallVec;
 
 #[derive(Debug, PartialEq, Eq, Clone, Default)]
 pub struct SyntaxTheme {
     pub highlights: Vec<(String, HighlightStyle)>,
+    capture_name_map: BTreeMap<SmallVec<[Arc<str>; 2]>, usize>,
 }
 
 impl SyntaxTheme {
+    pub fn new(highlights: Vec<(String, HighlightStyle)>) -> Self {
+        Self {
+            capture_name_map: Self::create_capture_name_map(&highlights),
+            highlights,
+        }
+    }
+
+    fn create_capture_name_map(
+        highlights: &[(String, HighlightStyle)],
+    ) -> BTreeMap<SmallVec<[Arc<str>; 2]>, usize> {
+        highlights
+            .iter()
+            .enumerate()
+            .map(|(i, (key, _))| (key.split('.').map(Arc::from).collect(), i))
+            .collect()
+    }
+
     #[cfg(any(test, feature = "test-support"))]
     pub fn new_test(colors: impl IntoIterator<Item = (&'static str, Hsla)>) -> Self {
         Self::new_test_styles(colors.into_iter().map(|(key, color)| {
@@ -27,12 +46,12 @@ impl SyntaxTheme {
     pub fn new_test_styles(
         colors: impl IntoIterator<Item = (&'static str, HighlightStyle)>,
     ) -> Self {
-        Self {
-            highlights: colors
+        Self::new(
+            colors
                 .into_iter()
                 .map(|(key, style)| (key.to_owned(), style))
                 .collect(),
-        }
+        )
     }
 
     pub fn get(&self, name: &str) -> HighlightStyle {
@@ -53,8 +72,19 @@ impl SyntaxTheme {
     }
 
     pub fn highlight_id(&self, name: &str) -> Option<u32> {
-        let ix = self.highlights.iter().position(|entry| entry.0 == name)?;
-        Some(ix as u32)
+        let capture_name = name
+            .split('.')
+            .map(Arc::from)
+            .collect::<SmallVec<[Arc<str>; 2]>>();
+        self.capture_name_map
+            .range::<[Arc<str>], _>((
+                std::ops::Bound::Unbounded,
+                std::ops::Bound::Included(capture_name.as_slice()),
+            ))
+            .rfind(|(prefix, _)| capture_name.starts_with(prefix.as_slice()))
+            .map(|(_, index)| *index as u32)
+        // let ix = self.highlights.iter().position(|entry| entry.0 == name)?;
+        // Some(ix as u32)
     }
 
     /// Returns a new [`Arc<SyntaxTheme>`] with the given syntax styles merged in.
@@ -87,9 +117,7 @@ impl SyntaxTheme {
             }
         }
 
-        Arc::new(Self {
-            highlights: merged_highlights,
-        })
+        Arc::new(Self::new(merged_highlights))
     }
 }
 
