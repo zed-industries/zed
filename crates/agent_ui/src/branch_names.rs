@@ -19,8 +19,8 @@ const TYPEWRITER_NAMES: &[&str] = &[
     "agil",
     "aguia",
     "aguila",
-    "aigle",
     "ahram",
+    "aigle",
     "ajax",
     "aktiv",
     "ala",
@@ -151,10 +151,10 @@ const TYPEWRITER_NAMES: &[&str] = &[
     "daugherty",
     "davis",
     "dayton",
-    "depantio",
     "dea",
     "delmar",
     "densmore",
+    "depantio",
     "diadema",
     "dial",
     "diamant",
@@ -260,9 +260,9 @@ const TYPEWRITER_NAMES: &[&str] = &[
     "hall",
     "hammond",
     "hammonia",
-    "harmony",
     "hanford",
     "hansa",
+    "harmony",
     "harris",
     "hartford",
     "hassia",
@@ -486,9 +486,9 @@ const TYPEWRITER_NAMES: &[&str] = &[
     "pulsatta",
     "quick",
     "racer",
-    "rand",
     "radio",
     "rally",
+    "rand",
     "readers",
     "reed",
     "referent",
@@ -499,11 +499,11 @@ const TYPEWRITER_NAMES: &[&str] = &[
     "rekord",
     "reliable",
     "reliance",
-    "remsho",
     "remagg",
     "rembrandt",
     "remer",
     "remington",
+    "remsho",
     "remstar",
     "remtor",
     "reporters",
@@ -589,7 +589,6 @@ const TYPEWRITER_NAMES: &[&str] = &[
     "taylorix",
     "tell",
     "tempotype",
-    "society",
     "tippco",
     "titania",
     "tops",
@@ -810,5 +809,39 @@ mod tests {
             prefix, "olivetti",
             "should avoid olivetti regardless of how many variants exist"
         );
+    }
+
+    #[test]
+    fn test_typewriter_names_are_valid() {
+        let mut seen = HashSet::default();
+        for &name in TYPEWRITER_NAMES {
+            assert!(
+                seen.insert(name),
+                "duplicate entry in TYPEWRITER_NAMES: {name:?}"
+            );
+        }
+
+        for window in TYPEWRITER_NAMES.windows(2) {
+            assert!(
+                window[0] <= window[1],
+                "TYPEWRITER_NAMES is not sorted: {0:?} should come after {1:?}",
+                window[1],
+                window[0],
+            );
+        }
+
+        for &name in TYPEWRITER_NAMES {
+            assert!(
+                !name.contains('-'),
+                "TYPEWRITER_NAMES entry contains a hyphen: {name:?}"
+            );
+        }
+
+        for &name in TYPEWRITER_NAMES {
+            assert!(
+                name.chars().all(|c| c.is_lowercase() || !c.is_alphabetic()),
+                "TYPEWRITER_NAMES entry is not lowercase: {name:?}"
+            );
+        }
     }
 }

@@ -2282,10 +2282,16 @@ impl AgentPanel {
             // Await the branch listings we kicked off earlier.
             let mut existing_branches = Vec::new();
             for result in futures::future::join_all(branch_receivers).await {
-                if let Ok(Ok(branches)) = result {
-                    for branch in branches {
-                        existing_branches.push(branch.name().to_string());
+                match result {
+                    Ok(Ok(branches)) => {
+                        for branch in branches {
+                            existing_branches.push(branch.name().to_string());
+                        }
                     }
+                    Ok(Err(err)) => {
+                        Err::<(), _>(err).log_err();
+                    }
+                    Err(_) => {}
                 }
             }
 
@@ -2308,15 +2314,27 @@ impl AgentPanel {
                     }
                 };
 
-            let (creation_infos, path_remapping) =
-                this.update_in(cx, |_this, _window, cx| {
-                    Self::start_worktree_creations(
-                        &git_repos,
-                        &branch_name,
-                        &worktree_directory_setting,
-                        cx,
-                    )
-                })??;
+            let (creation_infos, path_remapping) = match this.update_in(cx, |_this, _window, cx| {
+                Self::start_worktree_creations(
+                    &git_repos,
+                    &branch_name,
+                    &worktree_directory_setting,
+                    cx,
+                )
+            }) {
+                Ok(Ok(result)) => result,
+                Ok(Err(err)) | Err(err) => {
+                    this.update_in(cx, |this, window, cx| {
+                        this.set_worktree_creation_error(
+                            format!("Failed to validate worktree directory: {err}").into(),
+                            window,
+                            cx,
+                        );
+                    })
+                    .log_err();
+                    return anyhow::Ok(());
+                }
+            };
 
             let created_paths = match Self::await_and_rollback_on_failure(creation_infos, cx).await
             {
