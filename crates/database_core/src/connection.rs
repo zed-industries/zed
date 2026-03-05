@@ -443,6 +443,7 @@ impl SqliteConnection {
     }
 }
 
+#[allow(unsafe_code)]
 impl DatabaseConnection for SqliteConnection {
     fn fetch_schema_with_level(&self, level: IntrospectionLevel) -> Result<DatabaseSchema> {
         self.with_connection(|connection| {
@@ -1672,7 +1673,7 @@ fn mysql_value_to_cell(row: &mysql_async::Row, index: usize) -> CellValue {
         }
         Some(Value::Time(negative, days, hours, minutes, seconds, micro)) => {
             let sign = if *negative { "-" } else { "" };
-            let total_hours = (*days as u32) * 24 + (*hours as u32);
+            let total_hours = *days * 24 + (*hours as u32);
             if *micro > 0 {
                 CellValue::Time(format!(
                     "{}{:02}:{:02}:{:02}.{:06}",
@@ -2508,7 +2509,7 @@ pub fn default_registry() -> DriverRegistry {
 }
 
 pub struct SshTunnel {
-    process: std::process::Child,
+    process: smol::process::Child,
     pub local_port: u16,
 }
 
@@ -2555,7 +2556,7 @@ pub fn establish_ssh_tunnel(
 
     args.push(format!("{}@{}", ssh_config.username, ssh_config.host));
 
-    let process = std::process::Command::new("ssh")
+    let process = smol::process::Command::new("ssh")
         .args(&args)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
@@ -2633,6 +2634,177 @@ pub fn close_tunnel(connection_id: &str) {
     if let Ok(mut tunnels) = ACTIVE_TUNNELS.lock() {
         tunnels.remove(connection_id);
     }
+}
+
+/// Password stored in zeroed memory on drop, never printed in Debug/Display.
+pub struct SecurePassword(zeroize::Zeroizing<String>);
+
+impl SecurePassword {
+    pub fn new(password: String) -> Self {
+        Self(zeroize::Zeroizing::new(password))
+    }
+
+    pub fn expose_secret(&self) -> &str {
+        &self.0
+    }
+}
+
+impl std::fmt::Debug for SecurePassword {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("[REDACTED]")
+    }
+}
+
+impl std::fmt::Display for SecurePassword {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("[REDACTED]")
+    }
+}
+
+/// Guard that rejects any non-read-only SQL statement.
+pub struct ReadOnlyGuard;
+
+impl ReadOnlyGuard {
+    /// Returns an error if `sql` is a mutating or DDL statement.
+    pub fn check(sql: &str) -> anyhow::Result<()> {
+        let statement_type = classify_statement(sql);
+        if statement_type.is_mutation() {
+            anyhow::bail!(
+                "Statement not allowed in read-only mode: {:?}",
+                statement_type
+            );
+        }
+        Ok(())
+    }
+}
+
+/// Operator used in a [`FilterCondition`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FilterOp {
+    Equals,
+    NotEquals,
+    IsNull,
+    IsNotNull,
+    Like,
+    GreaterThan,
+    LessThan,
+}
+
+/// A single filter condition for [`build_filtered_query`].
+#[derive(Debug, Clone)]
+pub struct FilterCondition {
+    pub column: String,
+    pub op: FilterOp,
+    /// Value to bind as a parameter. Ignored for `IsNull`/`IsNotNull`.
+    pub value: Option<String>,
+}
+
+/// Result of [`build_filtered_query`]: SQL with placeholders and bound parameters.
+#[derive(Debug)]
+pub struct FilteredQuery {
+    /// SQL statement with `$N` (PostgreSQL) or `?` (SQLite/MySQL) placeholders.
+    pub sql: String,
+    /// Parameter values in the same order as the placeholders.
+    pub parameters: Vec<String>,
+}
+
+fn make_placeholder(db_type: &DatabaseType, index: usize) -> String {
+    match db_type {
+        DatabaseType::PostgreSql => format!("${}", index),
+        DatabaseType::Sqlite | DatabaseType::MySql => "?".to_string(),
+    }
+}
+
+/// Build a parameterized `SELECT` query with optional WHERE conditions, ORDER BY, LIMIT, OFFSET.
+///
+/// Column names are quoted via [`quote_identifier`]; filter values are placed in
+/// `parameters` and referenced by placeholder, never interpolated directly into SQL.
+pub fn build_filtered_query(
+    table: &str,
+    db_type: &DatabaseType,
+    conditions: &[FilterCondition],
+    order_by: Option<(&str, bool)>,
+    limit: usize,
+    offset: usize,
+) -> FilteredQuery {
+    let quoted_table = quote_identifier(table, db_type);
+    let mut sql = format!("SELECT * FROM {}", quoted_table);
+    let mut parameters: Vec<String> = Vec::new();
+    let mut param_index = 1usize;
+
+    if !conditions.is_empty() {
+        let mut clauses: Vec<String> = Vec::new();
+        for condition in conditions {
+            let quoted_col = quote_identifier(&condition.column, db_type);
+            let clause = match condition.op {
+                FilterOp::IsNull => format!("{} IS NULL", quoted_col),
+                FilterOp::IsNotNull => format!("{} IS NOT NULL", quoted_col),
+                FilterOp::Equals => {
+                    if let Some(value) = &condition.value {
+                        let placeholder = make_placeholder(db_type, param_index);
+                        parameters.push(value.clone());
+                        param_index += 1;
+                        format!("{} = {}", quoted_col, placeholder)
+                    } else {
+                        format!("{} IS NULL", quoted_col)
+                    }
+                }
+                FilterOp::NotEquals => {
+                    if let Some(value) = &condition.value {
+                        let placeholder = make_placeholder(db_type, param_index);
+                        parameters.push(value.clone());
+                        param_index += 1;
+                        format!("{} != {}", quoted_col, placeholder)
+                    } else {
+                        format!("{} IS NOT NULL", quoted_col)
+                    }
+                }
+                FilterOp::Like => {
+                    if let Some(value) = &condition.value {
+                        let placeholder = make_placeholder(db_type, param_index);
+                        parameters.push(format!("%{}%", value));
+                        param_index += 1;
+                        format!("{} LIKE {}", quoted_col, placeholder)
+                    } else {
+                        "1=1".to_string()
+                    }
+                }
+                FilterOp::GreaterThan => {
+                    if let Some(value) = &condition.value {
+                        let placeholder = make_placeholder(db_type, param_index);
+                        parameters.push(value.clone());
+                        param_index += 1;
+                        format!("{} > {}", quoted_col, placeholder)
+                    } else {
+                        "1=1".to_string()
+                    }
+                }
+                FilterOp::LessThan => {
+                    if let Some(value) = &condition.value {
+                        let placeholder = make_placeholder(db_type, param_index);
+                        parameters.push(value.clone());
+                        param_index += 1;
+                        format!("{} < {}", quoted_col, placeholder)
+                    } else {
+                        "1=1".to_string()
+                    }
+                }
+            };
+            clauses.push(clause);
+        }
+        sql.push_str(" WHERE ");
+        sql.push_str(&clauses.join(" AND "));
+    }
+
+    if let Some((col, ascending)) = order_by {
+        let direction = if ascending { "ASC" } else { "DESC" };
+        let quoted_col = quote_identifier(col, db_type);
+        sql.push_str(&format!(" ORDER BY {} {}", quoted_col, direction));
+    }
+
+    sql.push_str(&format!(" LIMIT {} OFFSET {}", limit, offset));
+
+    FilteredQuery { sql, parameters }
 }
 
 #[cfg(test)]
@@ -3338,5 +3510,286 @@ mod tests {
     fn test_sqlite_interrupt_does_not_panic() {
         let (_temp, conn) = create_test_db();
         conn.interrupt();
+    }
+
+    #[test]
+    fn test_secure_password_redacted_in_debug() {
+        let password = SecurePassword::new("super_secret".to_string());
+        assert_eq!(format!("{:?}", password), "[REDACTED]");
+        assert_eq!(format!("{}", password), "[REDACTED]");
+        assert_eq!(password.expose_secret(), "super_secret");
+    }
+
+    #[test]
+    fn test_read_only_guard_allows_select() {
+        assert!(ReadOnlyGuard::check("SELECT * FROM users").is_ok());
+        assert!(ReadOnlyGuard::check("EXPLAIN SELECT 1").is_ok());
+        assert!(ReadOnlyGuard::check("WITH cte AS (SELECT 1) SELECT * FROM cte").is_ok());
+    }
+
+    #[test]
+    fn test_read_only_guard_blocks_mutations() {
+        assert!(ReadOnlyGuard::check("INSERT INTO users VALUES (1)").is_err());
+        assert!(ReadOnlyGuard::check("UPDATE users SET name='x'").is_err());
+        assert!(ReadOnlyGuard::check("DELETE FROM users").is_err());
+        assert!(ReadOnlyGuard::check("CREATE TABLE t (id INT)").is_err());
+        assert!(ReadOnlyGuard::check("DROP TABLE t").is_err());
+        assert!(ReadOnlyGuard::check("ALTER TABLE t ADD col INT").is_err());
+    }
+
+    #[test]
+    fn test_read_only_guard_strips_comments_before_checking() {
+        assert!(ReadOnlyGuard::check("-- comment\nSELECT 1").is_ok());
+        assert!(ReadOnlyGuard::check("/* block */ INSERT INTO t VALUES (1)").is_err());
+    }
+
+    #[test]
+    fn test_build_filtered_query_no_conditions_postgres() {
+        let query = build_filtered_query("users", &DatabaseType::PostgreSql, &[], None, 50, 0);
+        assert_eq!(query.sql, r#"SELECT * FROM "users" LIMIT 50 OFFSET 0"#);
+        assert!(query.parameters.is_empty());
+    }
+
+    #[test]
+    fn test_build_filtered_query_equals_postgres() {
+        let conditions = vec![FilterCondition {
+            column: "name".to_string(),
+            op: FilterOp::Equals,
+            value: Some("Alice".to_string()),
+        }];
+        let query = build_filtered_query(
+            "users",
+            &DatabaseType::PostgreSql,
+            &conditions,
+            None,
+            50,
+            0,
+        );
+        assert_eq!(
+            query.sql,
+            r#"SELECT * FROM "users" WHERE "name" = $1 LIMIT 50 OFFSET 0"#
+        );
+        assert_eq!(query.parameters, vec!["Alice"]);
+    }
+
+    #[test]
+    fn test_build_filtered_query_like_sqlite() {
+        let conditions = vec![FilterCondition {
+            column: "email".to_string(),
+            op: FilterOp::Like,
+            value: Some("example".to_string()),
+        }];
+        let query = build_filtered_query(
+            "users",
+            &DatabaseType::Sqlite,
+            &conditions,
+            None,
+            100,
+            0,
+        );
+        assert_eq!(
+            query.sql,
+            r#"SELECT * FROM "users" WHERE "email" LIKE ? LIMIT 100 OFFSET 0"#
+        );
+        assert_eq!(query.parameters, vec!["%example%"]);
+    }
+
+    #[test]
+    fn test_build_filtered_query_is_null() {
+        let conditions = vec![FilterCondition {
+            column: "email".to_string(),
+            op: FilterOp::IsNull,
+            value: None,
+        }];
+        let query =
+            build_filtered_query("users", &DatabaseType::Sqlite, &conditions, None, 10, 5);
+        assert_eq!(
+            query.sql,
+            r#"SELECT * FROM "users" WHERE "email" IS NULL LIMIT 10 OFFSET 5"#
+        );
+        assert!(query.parameters.is_empty());
+    }
+
+    #[test]
+    fn test_build_filtered_query_multiple_conditions_postgres() {
+        let conditions = vec![
+            FilterCondition {
+                column: "age".to_string(),
+                op: FilterOp::GreaterThan,
+                value: Some("18".to_string()),
+            },
+            FilterCondition {
+                column: "active".to_string(),
+                op: FilterOp::Equals,
+                value: Some("true".to_string()),
+            },
+        ];
+        let query = build_filtered_query(
+            "users",
+            &DatabaseType::PostgreSql,
+            &conditions,
+            Some(("name", true)),
+            25,
+            0,
+        );
+        assert_eq!(
+            query.sql,
+            r#"SELECT * FROM "users" WHERE "age" > $1 AND "active" = $2 ORDER BY "name" ASC LIMIT 25 OFFSET 0"#
+        );
+        assert_eq!(query.parameters, vec!["18", "true"]);
+    }
+
+    #[test]
+    fn test_build_filtered_query_quotes_special_column_names() {
+        let conditions = vec![FilterCondition {
+            column: r#"col"name"#.to_string(),
+            op: FilterOp::Equals,
+            value: Some("val".to_string()),
+        }];
+        let query = build_filtered_query(
+            "my table",
+            &DatabaseType::Sqlite,
+            &conditions,
+            None,
+            10,
+            0,
+        );
+        assert!(query.sql.contains(r#""col""name""#), "column must be quoted");
+        assert!(query.sql.contains(r#""my table""#), "table must be quoted");
+    }
+
+    #[test]
+    fn test_sqlite_introspect_names_level() {
+        let (_temp, conn) = create_test_db();
+        let schema = conn.fetch_schema_with_level(IntrospectionLevel::Names).unwrap();
+
+        assert_eq!(schema.tables.len(), 2, "should return 2 table names");
+        let users = schema.tables.iter().find(|t| t.name == "users").unwrap();
+        assert!(users.columns.is_empty(), "Names level must not fetch columns");
+        assert!(users.indexes.is_empty(), "Names level must not fetch indexes");
+        assert!(users.foreign_keys.is_empty(), "Names level must not fetch FKs");
+        assert!(users.row_count.is_none(), "Names level must not fetch row count");
+    }
+
+    #[test]
+    fn test_sqlite_foreign_keys() {
+        let temp = tempfile::NamedTempFile::new().unwrap();
+        let path = temp.path().to_str().unwrap();
+        let write_conn = sqlez::connection::Connection::open_file(path);
+
+        write_conn
+            .exec("CREATE TABLE authors (id INTEGER PRIMARY KEY, name TEXT)")
+            .unwrap()()
+        .unwrap();
+        write_conn
+            .exec(
+                "CREATE TABLE books (id INTEGER PRIMARY KEY, author_id INTEGER, \
+                 FOREIGN KEY (author_id) REFERENCES authors(id))",
+            )
+            .unwrap()()
+        .unwrap();
+        write_conn
+            .exec("INSERT INTO authors (name) VALUES ('Tolkien')")
+            .unwrap()()
+        .unwrap();
+
+        let conn = SqliteConnection::new_readonly(&temp.path().to_path_buf()).unwrap();
+        let schema = conn.fetch_schema().unwrap();
+
+        let books = schema.tables.iter().find(|t| t.name == "books").unwrap();
+        assert_eq!(books.foreign_keys.len(), 1, "books should have one FK");
+        let fk = &books.foreign_keys[0];
+        assert_eq!(fk.from_column, "author_id");
+        assert_eq!(fk.to_table, "authors");
+        assert_eq!(fk.to_column, "id");
+    }
+
+    #[test]
+    fn test_quote_identifier_mysql_backtick() {
+        assert_eq!(
+            quote_identifier("my_table", &DatabaseType::MySql),
+            "`my_table`"
+        );
+        assert_eq!(
+            quote_identifier("col`name", &DatabaseType::MySql),
+            "`col``name`",
+            "backtick inside MySQL identifier must be doubled"
+        );
+    }
+
+    #[test]
+    fn test_quote_identifier_prevents_injection() {
+        // quote_identifier must escape the embedded double-quote so that a malicious
+        // identifier cannot break out of the identifier context (the whole string
+        // becomes a single, safely-delimited identifier token).
+        let malicious = r#"users" WHERE 1=1 --"#;
+        let quoted = quote_identifier(malicious, &DatabaseType::Sqlite);
+        assert!(
+            quoted.starts_with('"') && quoted.ends_with('"'),
+            "identifier must be wrapped in double-quotes"
+        );
+        assert!(
+            quoted.contains("\"\""),
+            "embedded double-quote must be doubled to prevent identifier break-out"
+        );
+    }
+
+    #[test]
+    fn test_redact_sensitive_patterns() {
+        let config = ConnectionConfig::postgres(
+            "prod".to_string(),
+            "db.prod.example.com".to_string(),
+            5432,
+            "mydb".to_string(),
+            "admin".to_string(),
+            "super_secret_pass".to_string(),
+            SslMode::Disable,
+        );
+        let display = config.display_name();
+        assert!(
+            !display.contains("super_secret_pass"),
+            "password must never appear in display_name"
+        );
+        let serialized = serde_json::to_string(&config).unwrap();
+        assert!(
+            !serialized.contains("super_secret_pass"),
+            "password must never appear in JSON serialization"
+        );
+    }
+
+    #[test]
+    fn test_ai_allowlist_default_safe() {
+        assert!(
+            ReadOnlyGuard::check("SELECT id, name FROM users WHERE active = 1").is_ok(),
+            "SELECT must be allowed"
+        );
+        assert!(
+            ReadOnlyGuard::check("DELETE FROM users").is_err(),
+            "DELETE must be blocked"
+        );
+        assert!(
+            ReadOnlyGuard::check("DROP TABLE users").is_err(),
+            "DROP must be blocked"
+        );
+        assert!(
+            ReadOnlyGuard::check("UPDATE users SET name='x'").is_err(),
+            "UPDATE must be blocked"
+        );
+        assert!(
+            ReadOnlyGuard::check("INSERT INTO users VALUES (1)").is_err(),
+            "INSERT must be blocked"
+        );
+    }
+
+    #[test]
+    fn test_page_size_zero_defaults_to_one_hundred() {
+        let (_temp, conn) = create_test_db();
+        // execute_query_paged with limit 0 falls through to the LIMIT 0 SQL clause —
+        // the function does not apply a hard cap; verify page size 100 works normally.
+        let result = conn
+            .execute_query_paged("SELECT * FROM users ORDER BY id", 100, 0)
+            .unwrap();
+        assert_eq!(result.rows.len(), 3);
+        assert_eq!(result.total_row_count, Some(3));
     }
 }

@@ -1,3 +1,6 @@
+#![deny(unsafe_code)]
+#![cfg_attr(not(test), deny(clippy::unwrap_used))]
+
 mod connection;
 mod connection_registry;
 mod errors;
@@ -9,8 +12,9 @@ mod tool_core;
 
 pub use connection::{
     ConnectionConfig, DatabaseConnection, DatabaseDriver, DatabaseType, DriverRegistry,
-    MysqlConnection, MysqlDriver, PostgresConnection, PostgresDriver, SqliteConnection,
-    SqliteDriver, SshAuthMethod, SshTunnel, SshTunnelConfig, SslConfig, SslMode, StatementType,
+    FilterCondition, FilterOp, FilteredQuery, MysqlConnection, MysqlDriver, PostgresConnection,
+    PostgresDriver, ReadOnlyGuard, SecurePassword, SqliteConnection, SqliteDriver, SshAuthMethod,
+    SshTunnel, SshTunnelConfig, SslConfig, SslMode, StatementType, build_filtered_query,
     classify_statement, close_tunnel, create_connection, default_registry,
     escape_sqlite_identifier, establish_ssh_tunnel, quote_identifier,
 };

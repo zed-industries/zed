@@ -53,3 +53,6 @@ crates/docs_preprocessor/actions.json
 # Local documentation audit files
 /december-2025-releases.md
 /docs/december-2025-documentation-gaps.md
+
+.claude
+scripts

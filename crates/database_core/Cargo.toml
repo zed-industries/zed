@@ -31,7 +31,9 @@ tokio-postgres.workspace = true
 tokio-postgres-rustls.workspace = true
 rust_xlsxwriter.workspace = true
 url.workspace = true
+smol.workspace = true
 uuid.workspace = true
+zeroize.workspace = true
 
 [dev-dependencies]
 indoc.workspace = true

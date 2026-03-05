@@ -629,7 +629,7 @@ mod tests {
             ],
             rows: vec![vec![
                 CellValue::Integer(1),
-                CellValue::Float(3.14),
+                CellValue::Float(2.71),
                 CellValue::Text("hello".to_string()),
                 CellValue::Blob(vec![0xDE, 0xAD]),
                 CellValue::Null,

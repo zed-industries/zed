@@ -4602,14 +4602,18 @@ dependencies = [
  "agent",
  "agent-client-protocol",
  "anyhow",
+ "assistant_slash_command",
  "context_server",
  "database_core",
  "gpui",
+ "language",
  "log",
  "schemars",
  "serde",
  "serde_json",
+ "ui",
  "util",
+ "workspace",
 ]
 
 [[package]]
@@ -4629,6 +4633,7 @@ dependencies = [
  "rustls-platform-verifier",
  "serde",
  "serde_json",
+ "smol",
  "sqlez",
  "tempfile",
  "thiserror 2.0.17",
@@ -4637,6 +4642,7 @@ dependencies = [
  "tokio-postgres-rustls",
  "url",
  "uuid",
+ "zeroize",
 ]
 
 [[package]]
