@@ -109,8 +109,8 @@ pub struct DiffHunk {
     // Offsets relative to the start of the deleted diff that represent word diff locations
     pub base_word_diffs: Vec<Range<usize>>,
     // These fields are nonempty only if the secondary status is OverlapsWithSecondaryHunk
-    pub buffer_staged_lines: Vec<Range<Anchor>>,
-    pub base_staged_lines: Vec<Range<Point>>,
+    pub buffer_staged_ranges: Vec<Range<Anchor>>,
+    pub base_staged_ranges: Vec<Range<usize>>,
 }
 
 /// We store [`InternalDiffHunk`]s internally so we don't need to store the additional row range.
@@ -544,6 +544,56 @@ impl BufferDiffSnapshot {
             edit.new.start
         }
     }
+
+    #[cfg(test)]
+    fn debug_text(&self, buffer: &text::BufferSnapshot) -> String {
+        let mut text = String::new();
+        let mut last_hunk_end = text::Anchor::MIN;
+
+        for hunk in self.hunks(buffer) {
+            text.extend(buffer.text_for_range(last_hunk_end..hunk.buffer_range.start));
+            {
+                let deleted_text = self
+                    .base_text()
+                    .text_for_range(hunk.diff_base_byte_range.clone())
+                    .collect::<String>();
+                let mut start_of_line = hunk.diff_base_byte_range.start;
+                text.extend(deleted_text.lines().map(|line| {
+                    let is_staged = hunk.secondary_status
+                        == DiffHunkSecondaryStatus::OverlapsWithSecondaryHunk
+                        || hunk.base_staged_ranges.iter().any(|range| {
+                            range.start <= start_of_line && start_of_line + line.len() <= range.end
+                        });
+                    let modifier = if is_staged { "*" } else { "" };
+                    start_of_line += line.len() + 1;
+                    format!("[-{modifier}] {line}\n")
+                }));
+            }
+            {
+                let inserted_text = buffer
+                    .text_for_range(hunk.buffer_range.clone())
+                    .collect::<String>();
+                let mut start_of_line = hunk.buffer_range.start.to_offset(buffer);
+                text.extend(inserted_text.lines().map(|line| {
+                    let start_of_line_anchor = buffer.anchor_after(start_of_line);
+                    let end_of_line_anchor = buffer.anchor_before(start_of_line + line.len());
+                    let is_staged = hunk.secondary_status
+                        == DiffHunkSecondaryStatus::OverlapsWithSecondaryHunk
+                        || hunk.buffer_staged_ranges.iter().any(|range| {
+                            range.start.cmp(&start_of_line_anchor, buffer).is_le()
+                                && end_of_line_anchor.cmp(&range.end, buffer).is_le()
+                        });
+                    let modifier = if is_staged { "*" } else { "" };
+                    start_of_line += line.len() + 1;
+                    format!("[+{modifier}] {line}\n")
+                }));
+            }
+            last_hunk_end = hunk.buffer_range.end;
+        }
+
+        text.extend(buffer.text_for_range(last_hunk_end..text::Anchor::MAX));
+        text
+    }
 }
 
 impl BufferDiffInner<Entity<language::Buffer>> {
@@ -757,6 +807,15 @@ impl BufferDiffInner<Entity<language::Buffer>> {
         new_index_text.append(index_cursor.suffix());
         Some(new_index_text)
     }
+    
+    // Updates the index text to stage the given range from the buffer
+    fn stage_or_unstage_buffer_range(&mut self, stage: bool, range: Range<text::Anchor>) {
+        todo!()
+    }
+    
+    fn stage_or_unstage_base_text_range(&mut self, stage: bool, range: Range<usize>) {
+        todo!()
+    }
 }
 
 impl BufferDiffInner<language::BufferSnapshot> {
@@ -825,8 +884,8 @@ impl BufferDiffInner<language::BufferSnapshot> {
                 let base_word_diffs = hunk.base_word_diffs.clone();
                 let buffer_word_diffs = hunk.buffer_word_diffs.clone();
 
-                let mut buffer_staged_lines = Vec::new();
-                let mut base_staged_lines = Vec::new();
+                let mut buffer_staged_ranges = Vec::new();
+                let mut base_staged_ranges = Vec::new();
 
                 if !start_anchor.is_valid(buffer) {
                     continue;
@@ -887,6 +946,9 @@ impl BufferDiffInner<language::BufferSnapshot> {
                         } else if secondary_range == (start_point..end_point) {
                             secondary_status = DiffHunkSecondaryStatus::HasSecondaryHunk;
                         } else if secondary_range.start <= end_point {
+                            // primary (uncommitted) diff: current buffer vs. HEAD
+                            // secondary (unstaged) diff: current buffer vs. index
+
                             // FIXME this should be a background computation that only happens when either the diff or the secondary diff changes
                             let (buffer, base) = compute_staged_lines(
                                 &hunk,
@@ -895,8 +957,8 @@ impl BufferDiffInner<language::BufferSnapshot> {
                                 &self.base_text,
                                 &secondary.unwrap().base_text,
                             );
-                            buffer_staged_lines = buffer;
-                            base_staged_lines = base;
+                            buffer_staged_ranges = buffer;
+                            base_staged_ranges = base;
 
                             secondary_status = DiffHunkSecondaryStatus::OverlapsWithSecondaryHunk;
                         }
@@ -910,8 +972,8 @@ impl BufferDiffInner<language::BufferSnapshot> {
                     base_word_diffs,
                     buffer_word_diffs,
                     secondary_status,
-                    buffer_staged_lines,
-                    base_staged_lines,
+                    buffer_staged_ranges,
+                    base_staged_ranges,
                 });
             }
         })
@@ -938,8 +1000,8 @@ impl BufferDiffInner<language::BufferSnapshot> {
                 secondary_status: DiffHunkSecondaryStatus::NoSecondaryHunk,
                 base_word_diffs: hunk.base_word_diffs.clone(),
                 buffer_word_diffs: hunk.buffer_word_diffs.clone(),
-                base_staged_lines: Vec::new(),
-                buffer_staged_lines: Vec::new(),
+                base_staged_ranges: Vec::new(),
+                buffer_staged_ranges: Vec::new(),
             })
         })
     }
@@ -2551,6 +2613,79 @@ mod tests {
                 );
             });
         }
+    }
+
+    #[gpui::test]
+    async fn test_partially_staged_hunks(cx: &mut TestAppContext) {
+        let head_text = "
+            aaa
+            bbb
+            ccc
+            ddd
+            eee
+            fff
+            ggg
+            hhh
+            iii
+        "
+        .unindent();
+
+        let buffer_text = "
+            aaa
+            bbb
+            XXX
+            YYY
+            ggg
+            hhh
+            iii
+        "
+        .unindent();
+
+        // Initially, we have one hunk that's fully unstaged.
+        let buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), buffer_text);
+        let unstaged_diff = cx.new(|cx| BufferDiff::new_with_base_text(&head_text, &buffer, cx));
+        let uncommitted_diff = cx.new(|cx| {
+            let mut diff = BufferDiff::new_with_base_text(&head_text, &buffer, cx);
+            diff.set_secondary_diff(unstaged_diff.clone());
+            diff
+        });
+
+        let buffer_snapshot = buffer.snapshot();
+        let diff_snapshot = uncommitted_diff.read_with(cx, |diff, cx| diff.snapshot(cx));
+        let hunks = diff_snapshot.hunks(&buffer_snapshot).collect::<Vec<_>>();
+
+        eprintln!("{}", diff_snapshot.debug_text(&buffer_snapshot));
+
+        // Now stage a couple of lines
+        let new_index_text = "
+            aaa
+            bbb
+            ccc
+            ddd
+            eee
+            XXX
+            ggg
+            hhh
+            iii
+        "
+        .unindent();
+
+        unstaged_diff
+            .update(cx, |diff, cx| {
+                diff.set_base_text(Some(new_index_text.into()), None, buffer_snapshot, cx)
+            })
+            .await
+            .unwrap();
+
+        uncommitted_diff.update(cx, |diff, cx| {
+            diff.set_snapshot_with_secondary(
+                update,
+                buffer,
+                secondary_diff_change,
+                clear_pending_hunks,
+                cx,
+            )
+        })
     }
 
     #[gpui::test]
