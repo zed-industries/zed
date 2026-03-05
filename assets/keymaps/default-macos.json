@@ -435,14 +435,6 @@
     },
   },
   {
-    "context": "(BufferSearchBar || ProjectSearchBar) > Editor",
-    "use_key_equivalents": true,
-    "bindings": {
-      "cmd-up": ["editor::MoveToBeginningOfLine", { "stop_at_soft_wraps": true, "stop_at_indent": true }],
-      "cmd-down": ["editor::MoveToEndOfLine", { "stop_at_soft_wraps": true }],
-    },
-  },
-  {
     "context": "BufferSearchBar && in_replace > Editor",
     "use_key_equivalents": true,
     "bindings": {
