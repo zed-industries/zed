@@ -707,7 +707,7 @@ fn render_markdown_table(parsed: &ParsedMarkdownTable, cx: &mut RenderContext) -
                 .min_w_0()
                 .w_full()
                 .grid()
-                .grid_cols(max_column_count as u16)
+                .grid_cols_max_content(max_column_count as u16)
                 .children(cells),
         )
         .into_any()
