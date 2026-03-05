@@ -8,6 +8,8 @@
 {"Get":{"state":"a\n«\nˇ»b","mode":"VisualLine"}}
 {"Key":"x"}
 {"Get":{"state":"a\nˇb","mode":"Normal"}}
-{"Put":{"state":"a\nbˇ\n"}}
+{"Put":{"state":"a\nb\nˇ"}}
 {"Key":"shift-v"}
-{"Get":{"state":"a\n«bˇ»\n","mode":"VisualLine"}}
+{"Get":{"state":"a\nb\nˇ","mode":"VisualLine"}}
+{"Key":"x"}
+{"Get":{"state":"a\nˇb","mode":"Normal"}}

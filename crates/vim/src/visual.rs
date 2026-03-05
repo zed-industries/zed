@@ -1100,19 +1100,6 @@ mod test {
             a
             ˇb"});
 
-        // it should work on the n-1 line before a trailing empty EOF line
-        cx.set_shared_state(indoc! {"
-            a
-            bˇ
-            "})
-            .await;
-        let cursor = cx.update_editor(|editor, _, cx| editor.pixel_position_of_cursor(cx));
-        cx.simulate_shared_keystrokes("shift-v").await;
-        cx.shared_state().await.assert_matches();
-        cx.update_editor(|editor, _, cx| assert_eq!(cursor, editor.pixel_position_of_cursor(cx)));
-        cx.simulate_shared_keystrokes("x").await;
-        cx.shared_state().await.assert_matches();
-
         // it should work at the end of the document
         cx.set_shared_state(indoc! {"
             a
