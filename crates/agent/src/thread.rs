@@ -2234,7 +2234,6 @@ impl Thread {
         self.send_or_update_tool_use(&tool_use, title, kind, event_stream);
 
         let Some(tool) = tool else {
-            dbg!(&tool_use);
             let content = format!("No tool named {} exists", tool_use.name);
             return Some(Task::ready(LanguageModelToolResult {
                 content: LanguageModelToolResultContent::Text(Arc::from(content)),
@@ -2245,7 +2244,6 @@ impl Thread {
             }));
         };
 
-        dbg!(&tool_use);
         if !tool_use.is_input_complete {
             if tool.supports_input_streaming() {
                 let running_turn = self.running_turn.as_mut()?;
@@ -2256,7 +2254,6 @@ impl Thread {
 
                 let (sender, tool_input) = ToolInputSender::channel();
                 sender.send_partial(tool_use.input);
-                dbg!("Insertting tool input for {}", &tool_use.id);
                 running_turn
                     .streaming_tool_inputs
                     .insert(tool_use.id.clone(), sender);
