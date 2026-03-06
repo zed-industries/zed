@@ -860,6 +860,7 @@ impl Vim {
 #[cfg(test)]
 mod test {
     use gpui::{UpdateGlobal, VisualTestContext};
+    use gpui::KeyBinding;
     use indoc::indoc;
     use project::FakeFs;
     use search::{ProjectSearchView, project_search};
@@ -869,6 +870,34 @@ mod test {
     use workspace::{DeploySearch, MultiWorkspace};
 
     use crate::{VimAddon, state::Mode, test::VimTestContext};
+    use crate::SwitchToHelixNormalMode;
+
+    #[gpui::test]
+    async fn test_insert_line(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.enable_helix();
+
+        cx.update(|_, cx| {
+            cx.bind_keys([KeyBinding::new("j j", SwitchToHelixNormalMode, None)]);
+        });
+
+        cx.set_state(
+            indoc! {
+            "hello world!ˇ"},
+            Mode::Insert,
+        );
+        cx.simulate_keystrokes("j j");
+        cx.simulate_keystrokes("o");
+        let state = cx.editor_state();
+
+        cx.set_state(
+            indoc! {
+            "hello world!ˇ"},
+            Mode::HelixNormal,
+        );
+        cx.simulate_keystrokes("o");
+        assert_eq!(state, cx.editor_state());
+    }
 
     #[gpui::test]
     async fn test_word_motions(cx: &mut gpui::TestAppContext) {
