@@ -123,6 +123,18 @@ impl WindowInvalidator {
         }
     }
 
+    /// Marks a specific view entity as dirty and schedules a redraw.
+    ///
+    /// Call this when the view's internal state has changed and the UI needs
+    /// to reflect the update. GPUI will automatically schedule a new paint pass.
+    ///
+    /// # Arguments
+    /// * `entity` - The [`EntityId`] of the view being invalidated
+    /// * `cx` - The application context
+    ///
+    /// # Returns
+    /// `true` if a new render pass was successfully scheduled, `false` if the window
+    /// was already actively drawing.
     pub fn invalidate_view(&self, entity: EntityId, cx: &mut App) -> bool {
         let mut inner = self.inner.borrow_mut();
         inner.dirty_views.insert(entity);
@@ -135,6 +147,10 @@ impl WindowInvalidator {
         }
     }
 
+    /// Checks whether the window has pending visual updates.
+    ///
+    /// When `true`, the window content is stale and a layout and paint pass
+    /// will be performed on the next frame. Set to `true` by [`WindowInvalidator::invalidate_view`].
     pub fn is_dirty(&self) -> bool {
         self.inner.borrow().dirty
     }
@@ -143,6 +159,15 @@ impl WindowInvalidator {
         self.inner.borrow_mut().dirty = dirty
     }
 
+    /// Updates the current execution phase of the window's render cycle.
+    ///
+    /// GPUI transitions the window through different [`DrawPhase`] stages
+    /// (e.g., `Prepaint`, `Paint`). This is used internally to ensure that
+    /// certain operations only occur during valid phases of the render loop.
+    ///
+    /// # Panics
+    /// This should only be called by the GPUI runtime. Calling it from
+    /// user code during an invalid phase may cause a panic.
     pub fn set_phase(&self, phase: DrawPhase) {
         self.inner.borrow_mut().draw_phase = phase
     }
@@ -330,7 +355,25 @@ impl FocusId {
     }
 }
 
-/// A handle which can be used to track and manipulate the focused element in a window.
+/// A handle used to track, check, and manipulate the focused element within a window.
+///
+/// Elements in GPUI use focus handles to participate in the application's focus tree,
+/// allowing them to receive keyboard events and participate in tab navigation. Focus
+/// handles are usually created via [`AppContext::focus_handle`] when building UI elements.
+/// Only one element per window can hold focus at a time.
+///
+/// # Example
+/// ```rust
+/// let handle = cx.focus_handle();
+///
+/// // Focus the element programmatically:
+/// handle.focus(cx);
+///
+/// // Check if this element is currently the active focus:
+/// if handle.is_focused(cx) {
+///     // Render focused styling
+/// }
+/// ```
 pub struct FocusHandle {
     pub(crate) id: FocusId,
     handles: Arc<FocusMap>,
@@ -588,8 +631,24 @@ impl HitboxId {
     }
 }
 
-/// A rectangular region that potentially blocks hitboxes inserted prior.
-/// See [Window::insert_hitbox] for more details.
+/// A rectangular interactive region that connects screen coordinates to pointer events.
+///
+/// Hitboxes are the primary mechanism through which GPUI routes pointer events
+/// (like clicks, hovers, and scroll) to the correct elements. When elements intersect
+/// on screen, hitboxes inserted later (typically drawn on top) have priority,
+/// inherently supporting visual stacking and occlusion via their `HitboxBehavior`.
+///
+/// See [`Window::insert_hitbox`] for more details.
+///
+/// # Example
+/// ```rust
+/// // Typically used internally by interactive elements during paint:
+/// let bounds = Bounds { origin: point(px(0.), px(0.)), size: size(px(100.), px(100.)) };
+/// let hitbox = cx.insert_hitbox(bounds, false);
+/// if hitbox.is_hovered(cx) {
+///     // Paint hover styles
+/// }
+/// ```
 #[derive(Clone, Debug, Deref)]
 pub struct Hitbox {
     /// A unique identifier for the hitbox.
