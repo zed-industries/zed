@@ -6510,14 +6510,14 @@ async fn test_streaming_tool_error_waits_for_prior_tools_to_complete(cx: &mut Te
                 content: vec![
                     language_model::MessageContent::ToolResult(LanguageModelToolResult {
                         tool_use_id: second_tool_use.id.clone(),
-                        tool_name: second_tool_use.name.clone(),
+                        tool_name: second_tool_use.name,
                         is_error: true,
                         content: "failed".into(),
                         output: Some("failed".into()),
                     }),
                     language_model::MessageContent::ToolResult(LanguageModelToolResult {
                         tool_use_id: first_tool_use.id.clone(),
-                        tool_name: first_tool_use.name.clone(),
+                        tool_name: first_tool_use.name,
                         is_error: false,
                         content: "hello world".into(),
                         output: Some("hello world".into()),
