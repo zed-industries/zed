@@ -39,7 +39,8 @@ use crate::{
     ui::EndTrialUpsell,
 };
 use crate::{
-    AgentInitialContent, ExternalAgent, NewExternalAgentThread, NewNativeAgentThreadFromSummary,
+    AgentInitialContent, ExternalAgent, ExternalSourcePrompt, NewExternalAgentThread,
+    NewNativeAgentThreadFromSummary,
 };
 use crate::{
     ExpandMessageEditor, ThreadHistory, ThreadHistoryEvent,
@@ -1994,9 +1995,9 @@ impl AgentPanel {
         }
     }
 
-    pub fn new_external_thread_with_text(
+    pub fn new_agent_thread_with_external_source_prompt(
         &mut self,
-        initial_text: Option<String>,
+        external_source_prompt: Option<ExternalSourcePrompt>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -2005,10 +2006,7 @@ impl AgentPanel {
             None,
             None,
             None,
-            initial_text.map(|text| AgentInitialContent::ContentBlock {
-                blocks: vec![acp::ContentBlock::Text(acp::TextContent::new(text))],
-                auto_submit: false,
-            }),
+            external_source_prompt.map(AgentInitialContent::from),
             window,
             cx,
         );
