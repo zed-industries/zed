@@ -2800,23 +2800,6 @@ fn merge_trailing_events_if_needed(
     }
 }
 
-pub(crate) fn filter_redundant_excerpts(
-    mut related_files: Vec<RelatedFile>,
-    cursor_path: &Path,
-    cursor_row_range: Range<u32>,
-) -> Vec<RelatedFile> {
-    for file in &mut related_files {
-        if file.path.as_ref() == cursor_path {
-            file.excerpts.retain(|excerpt| {
-                excerpt.row_range.start < cursor_row_range.start
-                    || excerpt.row_range.end > cursor_row_range.end
-            });
-        }
-    }
-    related_files.retain(|file| !file.excerpts.is_empty());
-    related_files
-}
-
 #[derive(Error, Debug)]
 #[error(
     "You must update to Zed version {minimum_version} or higher to continue using edit predictions."

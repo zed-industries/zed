@@ -439,12 +439,6 @@ pub fn zeta2_prompt_input(
     let (full_context, full_context_offset_range, excerpt_ranges) =
         compute_excerpt_ranges(cursor_point, snapshot);
 
-    let related_files = crate::filter_redundant_excerpts(
-        related_files,
-        excerpt_path.as_ref(),
-        full_context.start.row..full_context.end.row,
-    );
-
     let full_context_start_offset = full_context_offset_range.start;
     let full_context_start_row = full_context.start.row;
 

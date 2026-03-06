@@ -95,7 +95,7 @@ pub fn zeta2_output_for_patch(
     cursor_offset: Option<usize>,
     version: ZetaFormat,
 ) -> Result<String> {
-    let (context, editable_range, _) = resolve_cursor_region(input, version);
+    let (context, editable_range, _, _) = resolve_cursor_region(input, version);
     let mut old_editable_region = context[editable_range].to_string();
 
     if !old_editable_region.ends_with_newline() {

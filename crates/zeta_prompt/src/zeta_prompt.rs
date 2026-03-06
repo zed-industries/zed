@@ -305,13 +305,36 @@ pub fn write_cursor_excerpt_section_for_format(
     }
 }
 
+fn offset_range_to_row_range(text: &str, range: Range<usize>) -> Range<u32> {
+    let start_row = text[0..range.start].matches('\n').count() as u32;
+    let mut end_row = start_row + text[range.clone()].matches('\n').count() as u32;
+    if !text[..range.end].ends_with('\n') {
+        end_row += 1;
+    }
+    return start_row..end_row;
+}
+
 pub fn format_prompt_with_budget_for_format(
     input: &ZetaPromptInput,
     format: ZetaFormat,
     max_tokens: usize,
 ) -> String {
-    let (context, editable_range, cursor_offset) = resolve_cursor_region(input, format);
+    let (context, editable_range, context_range, cursor_offset) =
+        resolve_cursor_region(input, format);
     let path = &*input.cursor_path;
+
+    let related_files = if let Some(cursor_excerpt_start_row) = input.excerpt_start_row {
+        let relative_row_range = offset_range_to_row_range(context, context_range);
+        let row_range = relative_row_range.start + cursor_excerpt_start_row
+            ..relative_row_range.end + cursor_excerpt_start_row;
+        &filter_redundant_excerpts(
+            input.related_files.clone(),
+            input.cursor_path.as_ref(),
+            row_range,
+        )
+    } else {
+        &input.related_files
+    };
 
     match format {
         ZetaFormat::V0211SeedCoder | ZetaFormat::V0304SeedNoEdits => {
@@ -321,7 +344,7 @@ pub fn format_prompt_with_budget_for_format(
                 &editable_range,
                 cursor_offset,
                 &input.events,
-                &input.related_files,
+                related_files,
                 max_tokens,
             )
         }
@@ -349,7 +372,7 @@ pub fn format_prompt_with_budget_for_format(
             let budget_after_edit_history = budget_after_cursor.saturating_sub(edit_history_tokens);
 
             let related_files_section = format_related_files_within_budget(
-                &input.related_files,
+                &related_files,
                 "<|file_sep|>",
                 "",
                 budget_after_edit_history,
@@ -362,6 +385,23 @@ pub fn format_prompt_with_budget_for_format(
             prompt
         }
     }
+}
+
+pub fn filter_redundant_excerpts(
+    mut related_files: Vec<RelatedFile>,
+    cursor_path: &Path,
+    cursor_row_range: Range<u32>,
+) -> Vec<RelatedFile> {
+    for file in &mut related_files {
+        if file.path.as_ref() == cursor_path {
+            file.excerpts.retain(|excerpt| {
+                excerpt.row_range.start < cursor_row_range.start
+                    || excerpt.row_range.end > cursor_row_range.end
+            });
+        }
+    }
+    related_files.retain(|file| !file.excerpts.is_empty());
+    related_files
 }
 
 pub fn get_prefill_for_format(
@@ -480,19 +520,26 @@ pub fn excerpt_range_for_format(
 pub fn resolve_cursor_region(
     input: &ZetaPromptInput,
     format: ZetaFormat,
-) -> (&str, Range<usize>, usize) {
+) -> (&str, Range<usize>, Range<usize>, usize) {
     let (editable_range, context_range) = excerpt_range_for_format(format, &input.excerpt_ranges);
     let context_start = context_range.start;
-    let context_text = &input.cursor_excerpt[context_range];
+    let context_text = &input.cursor_excerpt[context_range.clone()];
     let adjusted_editable =
         (editable_range.start - context_start)..(editable_range.end - context_start);
     let adjusted_cursor = input.cursor_offset_in_excerpt - context_start;
+    let adjusted_context =
+        (context_range.start - context_start)..(context_range.end - context_start);
 
-    (context_text, adjusted_editable, adjusted_cursor)
+    (
+        context_text,
+        adjusted_editable,
+        adjusted_context,
+        adjusted_cursor,
+    )
 }
 
 pub fn get_prefill(input: &ZetaPromptInput, format: ZetaFormat) -> String {
-    let (context, editable_range, _) = resolve_cursor_region(input, format);
+    let (context, editable_range, _, _) = resolve_cursor_region(input, format);
     get_prefill_for_format(format, context, &editable_range)
 }
 
