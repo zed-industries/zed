@@ -28,9 +28,9 @@ mod workspace_settings;
 pub use crate::notifications::NotificationFrame;
 pub use dock::Panel;
 pub use multi_workspace::{
-    DraggedSidebar, FocusWorkspaceSidebar, MultiWorkspace, NewWorkspaceInWindow,
-    NextWorkspaceInWindow, PreviousWorkspaceInWindow, Sidebar, SidebarEvent, SidebarHandle,
-    ToggleWorkspaceSidebar,
+    DraggedSidebar, FocusWorkspaceSidebar, MultiWorkspace, MultiWorkspaceEvent,
+    NewWorkspaceInWindow, NextWorkspaceInWindow, PreviousWorkspaceInWindow, Sidebar, SidebarEvent,
+    SidebarHandle, ToggleWorkspaceSidebar,
 };
 pub use path_list::{PathList, SerializedPathList};
 pub use toast_layer::{ToastAction, ToastLayer, ToastView};
@@ -210,6 +210,34 @@ pub trait DebuggerProvider {
     fn active_thread_state(&self, cx: &App) -> Option<ThreadStatus>;
 }
 
+/// Opens a file or directory.
+#[derive(Clone, PartialEq, Deserialize, JsonSchema, Action)]
+#[action(namespace = workspace)]
+pub struct Open {
+    /// When true, opens in a new window. When false, adds to the current
+    /// window as a new workspace (multi-workspace).
+    #[serde(default = "Open::default_create_new_window")]
+    pub create_new_window: bool,
+}
+
+impl Open {
+    pub const DEFAULT: Self = Self {
+        create_new_window: true,
+    };
+
+    /// Used by `#[serde(default)]` on the `create_new_window` field so that
+    /// the serde default and `Open::DEFAULT` stay in sync.
+    fn default_create_new_window() -> bool {
+        Self::DEFAULT.create_new_window
+    }
+}
+
+impl Default for Open {
+    fn default() -> Self {
+        Self::DEFAULT
+    }
+}
+
 actions!(
     workspace,
     [
@@ -255,8 +283,6 @@ actions!(
         NewSearch,
         /// Opens a new window.
         NewWindow,
-        /// Opens a file or directory.
-        Open,
         /// Opens multiple files.
         OpenFiles,
         /// Opens the current location in terminal.
@@ -627,7 +653,7 @@ fn prompt_and_open_paths(app_state: Arc<AppState>, options: PathPromptOptions, c
             .update(cx, |multi_workspace, window, cx| {
                 let workspace = multi_workspace.workspace().clone();
                 workspace.update(cx, |workspace, cx| {
-                    prompt_for_open_path_and_open(workspace, app_state, options, window, cx);
+                    prompt_for_open_path_and_open(workspace, app_state, options, true, window, cx);
                 });
             })
             .ok();
@@ -639,7 +665,7 @@ fn prompt_and_open_paths(app_state: Arc<AppState>, options: PathPromptOptions, c
                 window.activate_window();
                 let workspace = multi_workspace.workspace().clone();
                 workspace.update(cx, |workspace, cx| {
-                    prompt_for_open_path_and_open(workspace, app_state, options, window, cx);
+                    prompt_for_open_path_and_open(workspace, app_state, options, true, window, cx);
                 });
             })?;
             anyhow::Ok(())
@@ -652,6 +678,7 @@ pub fn prompt_for_open_path_and_open(
     workspace: &mut Workspace,
     app_state: Arc<AppState>,
     options: PathPromptOptions,
+    create_new_window: bool,
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) {
@@ -661,10 +688,24 @@ pub fn prompt_for_open_path_and_open(
         window,
         cx,
     );
+    let multi_workspace_handle = window.window_handle().downcast::<MultiWorkspace>();
     cx.spawn_in(window, async move |this, cx| {
         let Some(paths) = paths.await.log_err().flatten() else {
             return;
         };
+        if !create_new_window {
+            if let Some(handle) = multi_workspace_handle {
+                if let Some(task) = handle
+                    .update(cx, |multi_workspace, window, cx| {
+                        multi_workspace.open_project(paths, window, cx)
+                    })
+                    .log_err()
+                {
+                    task.await.log_err();
+                }
+                return;
+            }
+        }
         if let Some(task) = this
             .update_in(cx, |this, window, cx| {
                 this.open_workspace_for_paths(false, paths, window, cx)
@@ -1190,6 +1231,7 @@ pub enum Event {
     ZoomChanged,
     ModalOpened,
     Activate,
+    PanelAdded(AnyView),
 }
 
 #[derive(Debug, Clone)]
@@ -2089,10 +2131,13 @@ impl Workspace {
 
         let dock_position = panel.position(window, cx);
         let dock = self.dock_at_position(dock_position);
+        let any_panel = panel.to_any();
 
         dock.update(cx, |dock, cx| {
             dock.add_panel(panel, self.weak_self.clone(), window, cx)
         });
+
+        cx.emit(Event::PanelAdded(any_panel));
     }
 
     pub fn remove_panel<T: Panel>(

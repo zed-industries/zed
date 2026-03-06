@@ -3,7 +3,7 @@ use crate::{
     prelude::*,
 };
 
-use gpui::{AnyView, ClickEvent, SharedString};
+use gpui::{AnyView, ClickEvent, Hsla, SharedString};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum AgentThreadStatus {
@@ -18,10 +18,10 @@ pub enum AgentThreadStatus {
 pub struct ThreadItem {
     id: ElementId,
     icon: IconName,
+    custom_icon_from_external_svg: Option<SharedString>,
     title: SharedString,
     timestamp: SharedString,
-    running: bool,
-    generation_done: bool,
+    notified: bool,
     status: AgentThreadStatus,
     selected: bool,
     hovered: bool,
@@ -41,10 +41,10 @@ impl ThreadItem {
         Self {
             id: id.into(),
             icon: IconName::ZedAgent,
+            custom_icon_from_external_svg: None,
             title: title.into(),
             timestamp: "".into(),
-            running: false,
-            generation_done: false,
+            notified: false,
             status: AgentThreadStatus::default(),
             selected: false,
             hovered: false,
@@ -70,13 +70,13 @@ impl ThreadItem {
         self
     }
 
-    pub fn running(mut self, running: bool) -> Self {
-        self.running = running;
+    pub fn custom_icon_from_external_svg(mut self, svg: impl Into<SharedString>) -> Self {
+        self.custom_icon_from_external_svg = Some(svg.into());
         self
     }
 
-    pub fn generation_done(mut self, generation_done: bool) -> Self {
-        self.generation_done = generation_done;
+    pub fn notified(mut self, notified: bool) -> Self {
+        self.notified = notified;
         self
     }
 
@@ -155,49 +155,34 @@ impl RenderOnce for ThreadItem {
         // };
 
         let icon_container = || h_flex().size_4().justify_center();
-        let agent_icon = Icon::new(self.icon)
-            .color(Color::Muted)
-            .size(IconSize::Small);
+        let agent_icon = if let Some(custom_svg) = self.custom_icon_from_external_svg {
+            Icon::from_external_svg(custom_svg)
+                .color(Color::Muted)
+                .size(IconSize::Small)
+        } else {
+            Icon::new(self.icon)
+                .color(Color::Muted)
+                .size(IconSize::Small)
+        };
+
+        let decoration = |icon: IconDecorationKind, color: Hsla| {
+            IconDecoration::new(icon, cx.theme().colors().surface_background, cx)
+                .color(color)
+                .position(gpui::Point {
+                    x: px(-2.),
+                    y: px(-2.),
+                })
+        };
 
         let decoration = if self.status == AgentThreadStatus::WaitingForConfirmation {
-            Some(
-                IconDecoration::new(
-                    IconDecorationKind::Triangle,
-                    cx.theme().colors().surface_background,
-                    cx,
-                )
-                .color(cx.theme().status().warning)
-                .position(gpui::Point {
-                    x: px(-2.),
-                    y: px(-2.),
-                }),
-            )
+            Some(decoration(
+                IconDecorationKind::Triangle,
+                cx.theme().status().warning,
+            ))
         } else if self.status == AgentThreadStatus::Error {
-            Some(
-                IconDecoration::new(
-                    IconDecorationKind::X,
-                    cx.theme().colors().surface_background,
-                    cx,
-                )
-                .color(cx.theme().status().error)
-                .position(gpui::Point {
-                    x: px(-2.),
-                    y: px(-2.),
-                }),
-            )
-        } else if self.generation_done {
-            Some(
-                IconDecoration::new(
-                    IconDecorationKind::Dot,
-                    cx.theme().colors().surface_background,
-                    cx,
-                )
-                .color(cx.theme().colors().text_accent)
-                .position(gpui::Point {
-                    x: px(-2.),
-                    y: px(-2.),
-                }),
-            )
+            Some(decoration(IconDecorationKind::X, cx.theme().status().error))
+        } else if self.notified {
+            Some(decoration(IconDecorationKind::Dot, clr.text_accent))
         } else {
             None
         };
@@ -208,9 +193,11 @@ impl RenderOnce for ThreadItem {
             icon_container().child(agent_icon)
         };
 
-        let running_or_action = self.running || (self.hovered && self.action_slot.is_some());
-
-        // let has_no_changes = self.added.is_none() && self.removed.is_none();
+        let is_running = matches!(
+            self.status,
+            AgentThreadStatus::Running | AgentThreadStatus::WaitingForConfirmation
+        );
+        let running_or_action = is_running || (self.hovered && self.action_slot.is_some());
 
         let title = self.title;
         let highlight_positions = self.highlight_positions;
@@ -225,6 +212,7 @@ impl RenderOnce for ThreadItem {
         v_flex()
             .id(self.id.clone())
             .cursor_pointer()
+            .w_full()
             .map(|this| {
                 if self.worktree.is_some() {
                     this.p_2()
@@ -255,7 +243,7 @@ impl RenderOnce for ThreadItem {
                         this.child(
                             h_flex()
                                 .gap_1()
-                                .when(self.running, |this| {
+                                .when(is_running, |this| {
                                     this.child(
                                         icon_container()
                                             .child(SpinnerLabel::new().color(Color::Accent)),
@@ -347,12 +335,12 @@ impl Component for ThreadItem {
                     .into_any_element(),
             ),
             single_example(
-                "Generation Done",
+                "Notified",
                 container()
                     .child(
                         ThreadItem::new("ti-2", "Refine thread view scrolling behavior")
                             .timestamp("12:12 AM")
-                            .generation_done(true),
+                            .notified(true),
                     )
                     .into_any_element(),
             ),
@@ -383,7 +371,7 @@ impl Component for ThreadItem {
                         ThreadItem::new("ti-3", "Add line numbers option to FileEditBlock")
                             .icon(IconName::AiClaude)
                             .timestamp("7:30 PM")
-                            .running(true),
+                            .status(AgentThreadStatus::Running),
                     )
                     .into_any_element(),
             ),

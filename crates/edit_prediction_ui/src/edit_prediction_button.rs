@@ -1198,6 +1198,7 @@ impl EditPredictionButton {
                     let store = store.read(cx);
                     let experiments = store.available_experiments().to_vec();
                     let preferred = store.preferred_experiment().map(|s| s.to_owned());
+                    let active = store.active_experiment().map(|s| s.to_owned());
 
                     let preferred_for_submenu = preferred.clone();
                     menu = menu
@@ -1219,7 +1220,8 @@ impl EditPredictionButton {
                                 },
                             );
                             for experiment in &experiments {
-                                let is_selected = preferred.as_deref() == Some(experiment.as_str());
+                                let is_selected = active.as_deref() == Some(experiment.as_str())
+                                    || preferred.as_deref() == Some(experiment.as_str());
                                 let experiment_name = experiment.clone();
                                 menu = menu.toggleable_entry(
                                     experiment.clone(),
