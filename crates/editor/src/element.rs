@@ -157,6 +157,9 @@ impl SelectionLayout {
             if head.column() > 0 {
                 head = map.clip_point(DisplayPoint::new(head.row(), head.column() - 1), Bias::Left);
             } else if head.row().0 > 0 && (head != map.max_point() || cursor_offset_at_max_point) {
+                // cursor_offset_at_max_point case handles helix line selection
+                // removing head != map.max_point() would be the correct behavior in helix mode
+                // but causes a mismatch in vim mode.
                 head = map.clip_point(
                     DisplayPoint::new(
                         head.row().previous_row(),
