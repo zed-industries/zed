@@ -109,7 +109,7 @@ pub struct Edit {
     /// The exact text to find in the file. This will be matched using fuzzy matching
     /// to handle minor differences in whitespace or formatting.
     ///
-    /// Always include complete lines — do not start or end mid-line.
+    /// Always include complete lines. Do not start or end mid-line.
     /// Be minimal with replacements:
     /// - For unique lines, include only those lines
     /// - For non-unique lines, include enough context to identify them
