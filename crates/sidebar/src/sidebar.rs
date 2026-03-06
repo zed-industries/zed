@@ -18,8 +18,8 @@ use std::mem;
 use theme::{ActiveTheme, ThemeSettings};
 use ui::utils::TRAFFIC_LIGHT_PADDING;
 use ui::{
-    AgentThreadStatus, HighlightedLabel, IconButtonShape, KeyBinding, ListItem, PopoverMenu, Tab,
-    ThreadItem, Tooltip, WithScrollbar, prelude::*,
+    AgentThreadStatus, HighlightedLabel, IconButtonShape, KeyBinding, ListItem, Tab, ThreadItem,
+    Tooltip, WithScrollbar, prelude::*,
 };
 use util::path_list::PathList;
 use workspace::{
@@ -1350,43 +1350,27 @@ impl Render for Sidebar {
                             })
                             .child(Label::new("Threads").size(LabelSize::Small)),
                     )
-                    .child({
-                        let workspace = self
-                            .multi_workspace
-                            .upgrade()
-                            .map(|mw| mw.read(cx).workspace().downgrade());
-                        let focus_handle = workspace
-                            .as_ref()
-                            .and_then(|w| w.upgrade())
-                            .map(|w| w.read(cx).focus_handle(cx))
-                            .unwrap_or_else(|| cx.focus_handle());
-
-                        PopoverMenu::new("sidebar-recent-projects-menu")
-                            .menu(move |window, cx| {
-                                let workspace = workspace.clone()?;
-                                Some(recent_projects::RecentProjects::popover(
-                                    workspace,
-                                    false,
-                                    focus_handle.clone(),
-                                    window,
+                    .child(
+                        IconButton::new("open-project", IconName::OpenFolder)
+                            .icon_size(IconSize::Small)
+                            .tooltip(|_window, cx| {
+                                Tooltip::for_action(
+                                    "Open Project",
+                                    &workspace::Open {
+                                        create_new_window: false,
+                                    },
                                     cx,
-                                ))
+                                )
                             })
-                            .trigger_with_tooltip(
-                                IconButton::new("new-workspace", IconName::OpenFolder)
-                                    .icon_size(IconSize::Small),
-                                |_window, cx| {
-                                    Tooltip::for_action(
-                                        "Open Recent Project",
-                                        &zed_actions::OpenRecent {
-                                            create_new_window: false,
-                                        },
-                                        cx,
-                                    )
-                                },
-                            )
-                            .anchor(gpui::Corner::TopLeft)
-                    }),
+                            .on_click(|_event, window, cx| {
+                                window.dispatch_action(
+                                    Box::new(workspace::Open {
+                                        create_new_window: false,
+                                    }),
+                                    cx,
+                                );
+                            }),
+                    ),
             )
             .child(
                 h_flex()
