@@ -1,7 +1,4 @@
-use std::{
-    path::{Path, PathBuf},
-    sync::Arc,
-};
+use std::{path::PathBuf, sync::Arc};
 
 use anyhow::{Context as _, Result};
 use client::{TypedEnvelope, proto};
@@ -17,6 +14,7 @@ use http_client::HttpClient;
 use language::{LanguageConfig, LanguageName, LanguageQueries, LoadedLanguage};
 use lsp::LanguageServerName;
 use node_runtime::NodeRuntime;
+use util::{paths::PathStyle, rel_path::RelPath};
 
 use crate::wasm_host::{WasmExtension, WasmHost};
 
@@ -139,15 +137,9 @@ impl HeadlessExtensionStore {
             )
         }
 
-        let norm = |p: &Path| {
-            p.to_string_lossy()
-                .split(|c| c == '\\' || c == '/')
-                .filter(|s| !s.is_empty())
-                .collect::<PathBuf>()
-        };
-
         for language_path in &manifest.languages {
-            let language_path = extension_dir.join(norm(language_path.as_path()));
+            let language_path = extension_dir
+                .join(RelPath::new(language_path.as_path(), PathStyle::Windows)?.as_std_path());
             let config = fs.load(&language_path.join("config.toml")).await?;
             let mut config = ::toml::from_str::<LanguageConfig>(&config)?;
 
@@ -202,9 +194,13 @@ impl HeadlessExtensionStore {
         }
 
         for (debug_adapter, meta) in &manifest.debug_adapters {
-            let schema_path = extension_dir.join(norm(
-                &extension::build_debug_adapter_schema_path(debug_adapter, meta),
-            ));
+            let schema_path = extension_dir.join(
+                RelPath::new(
+                    &extension::build_debug_adapter_schema_path(debug_adapter, meta),
+                    PathStyle::Windows,
+                )?
+                .as_std_path(),
+            );
 
             this.update(cx, |this, _cx| {
                 this.proxy.register_debug_adapter(
