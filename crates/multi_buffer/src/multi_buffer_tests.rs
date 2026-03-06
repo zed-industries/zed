@@ -2390,6 +2390,10 @@ impl ReferenceMultibuffer {
                         .start
                         .cmp(&range.start, &e.buffer.read(cx).snapshot())
                         .is_le()
+                    && e.range
+                        .end
+                        .cmp(&range.end, &e.buffer.read(cx).snapshot())
+                        .is_ge()
             })
             .unwrap();
         let buffer = excerpt.buffer.read(cx).snapshot();
@@ -2403,7 +2407,7 @@ impl ReferenceMultibuffer {
         let Some(diff) = self.diffs.get(&buffer_id) else {
             return;
         };
-        let excerpt_range = excerpt.range.to_offset(&buffer);
+        let excerpt_range = excerpt.range.to_point(&buffer);
         let expanded_diff_hunks = self
             .expanded_diff_hunks_by_buffer
             .entry(buffer_id)
@@ -2413,7 +2417,7 @@ impl ReferenceMultibuffer {
             .snapshot(cx)
             .hunks_intersecting_range(range, &buffer)
         {
-            let hunk_range = hunk.buffer_range.to_offset(&buffer);
+            let hunk_range = hunk.buffer_range.to_point(&buffer);
             if dbg!(hunk_range.start) < dbg!(excerpt_range.start)
                 || dbg!(hunk_range.start) > dbg!(excerpt_range.end)
             {
@@ -2945,7 +2949,7 @@ async fn test_random_multibuffer(cx: &mut TestAppContext, mut rng: StdRng) {
 
                     log::info!(
                         "expanding diff hunks in range {:?} (excerpt index {excerpt_ix:?}, buffer id {:?})",
-                        range.to_offset(&snapshot),
+                        range.to_point(&snapshot),
                         buffer_id,
                     );
                     reference.expand_diff_hunks(excerpt.path_key.clone(), start..end, cx);
