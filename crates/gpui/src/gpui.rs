@@ -121,7 +121,6 @@ pub use util::{FutureExt, Timeout};
 pub use view::*;
 pub use window::*;
 
-
 /// The context trait, allows the different contexts in GPUI to be used
 /// interchangeably for certain operations.
 pub trait AppContext {

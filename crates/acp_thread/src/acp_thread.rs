@@ -2613,7 +2613,7 @@ mod tests {
     use super::*;
     use anyhow::anyhow;
     use futures::{channel::mpsc, future::LocalBoxFuture, select};
-    use gpui::{App, AsyncApp, BackgroundExecutor, TestAppContext, WeakEntity};
+    use gpui::{App, AsyncApp, TestAppContext, WeakEntity};
     use indoc::indoc;
     use project::{FakeFs, Fs};
     use rand::{distr, prelude::*};
