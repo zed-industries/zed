@@ -371,29 +371,21 @@ impl ContextServerStore {
             let ai_was_disabled = this.ai_disabled;
             this.ai_disabled = ai_disabled;
 
-            // When AI is disabled, stop all running servers and don't start new ones
-            if ai_disabled {
-                if maintain_server_loop {
-                    let server_ids: Vec<_> = this.servers.keys().cloned().collect();
-                    for id in server_ids {
-                        this.stop_server(&id, cx).log_err();
-                    }
-                }
-                // Still update cached settings so we know what to start when AI is re-enabled
-                this.context_server_settings =
-                    Self::resolve_project_settings(&this.worktree_store, cx)
-                        .context_servers
-                        .clone();
-                return;
-            }
-
-            let settings = Self::resolve_project_settings(&this.worktree_store, cx)
-                .context_servers
-                .clone();
-            let settings_changed = this.context_server_settings != settings;
+            let settings =
+                &Self::resolve_project_settings(&this.worktree_store, cx).context_servers;
+            let settings_changed = &this.context_server_settings != settings;
 
             if settings_changed {
-                this.context_server_settings = settings;
+                this.context_server_settings = settings.clone();
+            }
+
+            // When AI is disabled, stop all running servers
+            if ai_disabled && maintain_server_loop {
+                let server_ids: Vec<_> = this.servers.keys().cloned().collect();
+                for id in server_ids {
+                    this.stop_server(&id, cx).log_err();
+                }
+                return;
             }
 
             // Trigger updates if AI was re-enabled or settings changed
