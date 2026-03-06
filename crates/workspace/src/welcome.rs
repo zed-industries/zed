@@ -10,12 +10,12 @@ use gpui::{
     ParentElement, Render, Styled, Task, Window, actions,
 };
 use menu::{SelectNext, SelectPrevious};
+use project::DisableAiSettings;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use settings::Settings;
 use ui::{ButtonLike, Divider, DividerColor, KeyBinding, Vector, VectorName, prelude::*};
 use util::ResultExt;
-use project::DisableAiSettings;
-use settings::Settings;
 use zed_actions::{Extensions, OpenOnboarding, OpenSettings, agent, command_palette};
 
 #[derive(PartialEq, Clone, Debug, Deserialize, Serialize, JsonSchema, Action)]
@@ -131,7 +131,12 @@ struct SectionEntry {
 }
 
 impl SectionEntry {
-    fn render(&self, button_index: usize, focus: &FocusHandle, cx: &App) -> Option<impl IntoElement> {
+    fn render(
+        &self,
+        button_index: usize,
+        focus: &FocusHandle,
+        cx: &App,
+    ) -> Option<impl IntoElement> {
         if self.visibility.is_some_and(|is_visible| !is_visible(cx)) {
             return None;
         }
