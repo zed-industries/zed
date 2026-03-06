@@ -60,7 +60,7 @@ fn parse_zeta2_output(
         .as_ref()
         .context("prompt_inputs required")?;
 
-    let (context, editable_range, _) = resolve_cursor_region(prompt_inputs, format);
+    let (context, editable_range, _, _) = resolve_cursor_region(prompt_inputs, format);
     let old_text = context[editable_range].to_string();
 
     let mut new_text = actual_output.to_string();
