@@ -2,6 +2,7 @@ use super::*;
 use agent_settings::AgentSettings;
 use gpui::{App, SharedString, Task};
 use std::future;
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
@@ -14,7 +15,22 @@ pub struct StreamingEchoToolInput {
     pub text: String,
 }
 
-pub struct StreamingEchoTool;
+pub struct StreamingEchoTool {
+    wait_until_complete_rx: Mutex<Option<oneshot::Receiver<()>>>,
+}
+
+impl StreamingEchoTool {
+    pub fn new() -> Self {
+        Self {
+            wait_until_complete_rx: Mutex::new(None),
+        }
+    }
+
+    pub fn with_wait_until_complete(mut self, receiver: oneshot::Receiver<()>) -> Self {
+        self.wait_until_complete_rx = Mutex::new(Some(receiver));
+        self
+    }
+}
 
 impl AgentTool for StreamingEchoTool {
     type Input = StreamingEchoToolInput;
@@ -44,12 +60,16 @@ impl AgentTool for StreamingEchoTool {
         _event_stream: ToolCallEventStream,
         cx: &mut App,
     ) -> Task<Result<String, String>> {
+        let wait_until_complete_rx = self.wait_until_complete_rx.lock().unwrap().take();
         cx.spawn(async move |_cx| {
             while input.recv_partial().await.is_some() {}
             let input = input
                 .recv()
                 .await
                 .map_err(|e| format!("Failed to receive tool input: {e}"))?;
+            if let Some(rx) = wait_until_complete_rx {
+                rx.await.ok();
+            }
             Ok(input.text)
         })
     }
