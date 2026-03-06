@@ -804,4 +804,223 @@ mod tests {
         assert!(not_workspace.eval(slice::from_ref(&editor_context)));
         assert!(!not_workspace.eval(&workspace_pane_editor));
     }
+
+    // MARK: - Display
+
+    #[test]
+    fn test_display_identifier() {
+        assert_eq!(Identifier("a".into()).to_string(), "a")
+    }
+
+    #[test]
+    fn test_display_equal() {
+        assert_eq!(Equal("a".into(), "b".into()).to_string(), "a == b")
+    }
+
+    #[test]
+    fn test_display_not_equal() {
+        assert_eq!(NotEqual("a".into(), "b".into()).to_string(), "a != b")
+    }
+
+    #[test]
+    fn test_display_descendant() {
+        assert_eq!(
+            Descendant(
+                Box::new(Identifier("a".into())),
+                Box::new(Identifier("b".into()))
+            )
+            .to_string(),
+            "a > b"
+        )
+    }
+
+    #[test]
+    fn test_display_not_identifier() {
+        assert_eq!(Not(Box::new(Identifier("a".into()))).to_string(), "!a");
+    }
+
+    #[test]
+    fn test_display_not_with_equal() {
+        assert_eq!(
+            Not(Box::new(Equal("a".into(), "b".into()))).to_string(),
+            "!(a == b)"
+        );
+    }
+
+    #[test]
+    fn test_display_not_with_descendant() {
+        assert_eq!(
+            Not(Box::new(Descendant(
+                Box::new(Identifier("a".into())),
+                Box::new(Identifier("b".into()))
+            )))
+            .to_string(),
+            "!(a > b)"
+        );
+    }
+
+    #[test]
+    fn test_display_not_with_and() {
+        assert_eq!(
+            Not(Box::new(And(
+                Box::new(Identifier("a".into())),
+                Box::new(Identifier("b".into()))
+            )))
+            .to_string(),
+            "!(a && b)"
+        );
+    }
+
+    #[test]
+    fn test_display_not_with_or() {
+        assert_eq!(
+            Not(Box::new(Or(
+                Box::new(Identifier("a".into())),
+                Box::new(Identifier("b".into()))
+            )))
+            .to_string(),
+            "!(a || b)"
+        );
+    }
+
+    #[test]
+    fn test_display_and() {
+        assert_eq!(
+            And(
+                Box::new(Identifier("a".into())),
+                Box::new(Identifier("b".into()))
+            )
+            .to_string(),
+            "a && b"
+        );
+    }
+
+    #[test]
+    fn test_display_and_chained() {
+        assert_eq!(
+            And(
+                Box::new(And(
+                    Box::new(Identifier("a".into())),
+                    Box::new(Identifier("b".into()))
+                )),
+                Box::new(Identifier("c".into()))
+            )
+            .to_string(),
+            "a && b && c"
+        );
+    }
+
+    #[test]
+    fn test_display_and_with_nested_or() {
+        assert_eq!(
+            And(
+                Box::new(Identifier("a".into())),
+                Box::new(Or(
+                    Box::new(Identifier("b".into())),
+                    Box::new(Identifier("c".into()))
+                ))
+            )
+            .to_string(),
+            "a && (b || c)"
+        );
+    }
+
+    #[test]
+    fn test_display_or() {
+        assert_eq!(
+            Or(
+                Box::new(Identifier("a".into())),
+                Box::new(Identifier("b".into()))
+            )
+            .to_string(),
+            "a || b"
+        );
+    }
+
+    #[test]
+    fn test_display_or_chained() {
+        assert_eq!(
+            Or(
+                Box::new(Or(
+                    Box::new(Identifier("a".into())),
+                    Box::new(Identifier("b".into()))
+                )),
+                Box::new(Identifier("c".into()))
+            )
+            .to_string(),
+            "a || b || c"
+        );
+    }
+
+    #[test]
+    fn test_display_or_with_nested_and() {
+        assert_eq!(
+            Or(
+                Box::new(Identifier("a".into())),
+                Box::new(And(
+                    Box::new(Identifier("b".into())),
+                    Box::new(Identifier("c".into()))
+                ))
+            )
+            .to_string(),
+            "a || (b && c)"
+        );
+    }
+
+    #[test]
+    fn test_display_mixed() {
+        assert_eq!(
+            And(
+                Box::new(And(
+                    Box::new(And(
+                        Box::new(Identifier("a".into())),
+                        Box::new(Equal("b".into(), "c".into())),
+                    )),
+                    Box::new(Not(Box::new(Descendant(
+                        Box::new(Identifier("d".into())),
+                        Box::new(Identifier("e".into()))
+                    ))))
+                )),
+                Box::new(Equal("f".into(), "g".into()))
+            )
+            .to_string(),
+            "a && b == c && !(d > e) && f == g"
+        );
+    }
+
+    #[test]
+    fn test_display_or_inside_and_chain() {
+        assert_eq!(
+            And(
+                Box::new(And(
+                    Box::new(Identifier("a".into())),
+                    Box::new(Or(
+                        Box::new(Identifier("b".into())),
+                        Box::new(Identifier("c".into()))
+                    ))
+                )),
+                Box::new(Identifier("d".into()))
+            )
+            .to_string(),
+            "a && (b || c) && d"
+        );
+    }
+
+    #[test]
+    fn test_display_and_inside_or_chain() {
+        assert_eq!(
+            Or(
+                Box::new(Or(
+                    Box::new(Identifier("a".into())),
+                    Box::new(And(
+                        Box::new(Identifier("b".into())),
+                        Box::new(Identifier("c".into()))
+                    ))
+                )),
+                Box::new(Identifier("d".into()))
+            )
+            .to_string(),
+            "a || (b && c) || d"
+        );
+    }
 }
