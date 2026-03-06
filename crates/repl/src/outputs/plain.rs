@@ -527,14 +527,9 @@ impl Render for TerminalOutput {
         };
 
         // If no max height is configured or the content fits, render the canvas directly.
-        let content_overflows = output_max_height
-            .map(|max_h| content_height > max_h)
-            .unwrap_or(false);
-        if !content_overflows {
+        let Some(max_height) = output_max_height.filter(|&max_h| content_height > max_h) else {
             return canvas_element.into_any_element();
-        }
-
-        let max_height = output_max_height.expect("checked above");
+        };
         if self.focus_handle.is_none() {
             let handle = cx.focus_handle();
             self._focus_subscription = Some(cx.on_focus_out(&handle, window, |this, _, _, cx| {
