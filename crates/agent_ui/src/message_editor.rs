@@ -1222,8 +1222,10 @@ impl MessageEditor {
 
     pub fn set_mode(&mut self, mode: EditorMode, cx: &mut Context<Self>) {
         self.editor.update(cx, |editor, cx| {
-            editor.set_mode(mode);
-            cx.notify()
+            if *editor.mode() != mode {
+                editor.set_mode(mode);
+                cx.notify()
+            }
         });
     }
 
