@@ -5913,7 +5913,6 @@ dependencies = [
  "gpui",
  "gpui_platform",
  "gpui_tokio",
- "http_client",
  "language",
  "language_extension",
  "language_model",
