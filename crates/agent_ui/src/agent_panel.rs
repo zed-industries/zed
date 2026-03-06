@@ -9,7 +9,7 @@ use std::{
     time::Duration,
 };
 
-use acp_thread::{AcpThread, AgentSessionInfo, MentionUri, ThreadStatus};
+use acp_thread::{AcpThread, MentionUri, ThreadStatus};
 use agent::{ContextServerRegistry, SharedThread, ThreadStore};
 use agent_client_protocol as acp;
 use agent_servers::AgentServer;
@@ -191,7 +191,15 @@ pub fn init(cx: &mut App) {
                     if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
                         workspace.focus_panel::<AgentPanel>(window, cx);
                         panel.update(cx, |panel, cx| {
-                            panel.external_thread(action.agent.clone(), None, None, window, cx)
+                            panel.external_thread(
+                                action.agent.clone(),
+                                None,
+                                None,
+                                None,
+                                None,
+                                window,
+                                cx,
+                            )
                         });
                     }
                 })
@@ -322,6 +330,8 @@ pub fn init(cx: &mut App) {
 
                     panel.update(cx, |panel, cx| {
                         panel.external_thread(
+                            None,
+                            None,
                             None,
                             None,
                             Some(AgentInitialContent::ContentBlock {
@@ -715,16 +725,9 @@ impl AgentPanel {
 
                 if let Some(thread_info) = last_active_thread {
                     let agent_type = thread_info.agent_type.clone();
-                    let session_info = AgentSessionInfo {
-                        session_id: acp::SessionId::new(thread_info.session_id),
-                        cwd: thread_info.cwd,
-                        title: thread_info.title.map(SharedString::from),
-                        updated_at: None,
-                        meta: None,
-                    };
                     panel.update(cx, |panel, cx| {
                         panel.selected_agent = agent_type;
-                        panel.load_agent_thread(session_info, window, cx);
+                        panel.load_agent_thread(thread_info.session_id.into(), thread_info.cwd, thread_info.title.map(SharedString::from), window, cx);
                     });
                 }
                 panel
@@ -761,7 +764,13 @@ impl AgentPanel {
             window,
             |this, _, event, window, cx| match event {
                 ThreadHistoryEvent::Open(thread) => {
-                    this.load_agent_thread(thread.clone(), window, cx);
+                    this.load_agent_thread(
+                        thread.session_id.clone(),
+                        thread.cwd.clone(),
+                        thread.title.clone(),
+                        window,
+                        cx,
+                    );
                 }
             },
         )
@@ -950,13 +959,17 @@ impl AgentPanel {
 
     pub fn open_thread(
         &mut self,
-        thread: AgentSessionInfo,
+        session_id: acp::SessionId,
+        cwd: Option<PathBuf>,
+        title: Option<SharedString>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         self.external_thread(
             Some(crate::ExternalAgent::NativeAgent),
-            Some(thread),
+            Some(session_id),
+            cwd,
+            title,
             None,
             window,
             cx,
@@ -1015,7 +1028,12 @@ impl AgentPanel {
         self.external_thread(
             Some(ExternalAgent::NativeAgent),
             None,
-            Some(AgentInitialContent::ThreadSummary(thread)),
+            None,
+            None,
+            Some(AgentInitialContent::ThreadSummary {
+                session_id: thread.session_id,
+                title: thread.title,
+            }),
             window,
             cx,
         );
@@ -1067,7 +1085,9 @@ impl AgentPanel {
     fn external_thread(
         &mut self,
         agent_choice: Option<crate::ExternalAgent>,
-        resume_thread: Option<AgentSessionInfo>,
+        resume_session_id: Option<acp::SessionId>,
+        cwd: Option<PathBuf>,
+        title: Option<SharedString>,
         initial_content: Option<AgentInitialContent>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -1129,7 +1149,9 @@ impl AgentPanel {
             this.update_in(cx, |agent_panel, window, cx| {
                 agent_panel.create_external_thread(
                     server,
-                    resume_thread,
+                    resume_session_id,
+                    cwd,
+                    title,
                     initial_content,
                     workspace,
                     project,
@@ -1548,16 +1570,8 @@ impl AgentPanel {
                 })
                 .await?;
 
-            let thread_metadata = acp_thread::AgentSessionInfo {
-                session_id,
-                cwd: None,
-                title: Some(title),
-                updated_at: Some(chrono::Utc::now()),
-                meta: None,
-            };
-
             this.update_in(cx, |this, window, cx| {
-                this.open_thread(thread_metadata, window, cx);
+                this.open_thread(session_id, None, Some(title), window, cx);
             })?;
 
             this.update_in(cx, |_, _window, cx| {
@@ -1839,7 +1853,13 @@ impl AgentPanel {
                             let entry = entry.clone();
                             panel
                                 .update(cx, move |this, cx| {
-                                    this.load_agent_thread(entry.clone(), window, cx);
+                                    this.load_agent_thread(
+                                        entry.session_id.clone(),
+                                        entry.cwd.clone(),
+                                        entry.title.clone(),
+                                        window,
+                                        cx,
+                                    );
                                 })
                                 .ok();
                         }
@@ -1983,6 +2003,8 @@ impl AgentPanel {
         self.external_thread(
             None,
             None,
+            None,
+            None,
             initial_text.map(|text| AgentInitialContent::ContentBlock {
                 blocks: vec![acp::ContentBlock::Text(acp::TextContent::new(text))],
                 auto_submit: false,
@@ -2006,11 +2028,15 @@ impl AgentPanel {
                 Some(crate::ExternalAgent::NativeAgent),
                 None,
                 None,
+                None,
+                None,
                 window,
                 cx,
             ),
             AgentType::Custom { name } => self.external_thread(
                 Some(crate::ExternalAgent::Custom { name }),
+                None,
+                None,
                 None,
                 None,
                 window,
@@ -2021,11 +2047,12 @@ impl AgentPanel {
 
     pub fn load_agent_thread(
         &mut self,
-        thread: AgentSessionInfo,
+        session_id: acp::SessionId,
+        cwd: Option<PathBuf>,
+        title: Option<SharedString>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let session_id = thread.session_id.clone();
         if let Some(server_view) = self.background_threads.remove(&session_id) {
             self.set_active_view(ActiveView::AgentThread { server_view }, true, window, cx);
             return;
@@ -2059,13 +2086,15 @@ impl AgentPanel {
         let Some(agent) = self.selected_external_agent() else {
             return;
         };
-        self.external_thread(Some(agent), Some(thread), None, window, cx);
+        self.external_thread(Some(agent), Some(session_id), cwd, title, None, window, cx);
     }
 
     pub(crate) fn create_external_thread(
         &mut self,
         server: Rc<dyn AgentServer>,
-        resume_thread: Option<AgentSessionInfo>,
+        resume_session_id: Option<acp::SessionId>,
+        cwd: Option<PathBuf>,
+        title: Option<SharedString>,
         initial_content: Option<AgentInitialContent>,
         workspace: WeakEntity<Workspace>,
         project: Entity<Project>,
@@ -2087,7 +2116,9 @@ impl AgentPanel {
         let server_view = cx.new(|cx| {
             crate::ConnectionView::new(
                 server,
-                resume_thread,
+                resume_session_id,
+                cwd,
+                title,
                 initial_content,
                 workspace.clone(),
                 project,
@@ -2598,7 +2629,15 @@ impl AgentPanel {
                 workspace.focus_panel::<AgentPanel>(window, cx);
                 if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
                     panel.update(cx, |panel, cx| {
-                        panel.external_thread(None, None, Some(initial_content), window, cx);
+                        panel.external_thread(
+                            None,
+                            None,
+                            None,
+                            None,
+                            Some(initial_content),
+                            window,
+                            cx,
+                        );
                     });
                 }
             });
@@ -4466,7 +4505,7 @@ impl AgentPanel {
         };
 
         self.create_external_thread(
-            server, None, None, workspace, project, ext_agent, window, cx,
+            server, None, None, None, None, workspace, project, ext_agent, window, cx,
         );
     }
 
@@ -4877,17 +4916,7 @@ mod tests {
 
         // Load thread A back via load_agent_thread — should promote from background.
         panel.update_in(&mut cx, |panel, window, cx| {
-            panel.load_agent_thread(
-                AgentSessionInfo {
-                    session_id: session_id_a.clone(),
-                    cwd: None,
-                    title: None,
-                    updated_at: None,
-                    meta: None,
-                },
-                window,
-                cx,
-            );
+            panel.load_agent_thread(session_id_a.clone(), None, None, window, cx);
         });
 
         // Thread A should now be the active view, promoted from background.

@@ -1013,7 +1013,13 @@ impl Sidebar {
 
         if let Some(agent_panel) = workspace.read(cx).panel::<AgentPanel>(cx) {
             agent_panel.update(cx, |panel, cx| {
-                panel.load_agent_thread(session_info, window, cx);
+                panel.load_agent_thread(
+                    session_info.session_id,
+                    session_info.cwd,
+                    session_info.title,
+                    window,
+                    cx,
+                );
             });
         }
     }

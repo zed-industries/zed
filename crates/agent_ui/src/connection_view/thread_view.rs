@@ -247,7 +247,6 @@ pub struct ThreadView {
     pub is_loading_contents: bool,
     pub new_server_version_available: Option<SharedString>,
     pub resumed_without_history: bool,
-    pub resume_thread_metadata: Option<AgentSessionInfo>,
     pub _cancel_task: Option<Task<()>>,
     _save_task: Option<Task<()>>,
     _draft_resolve_task: Option<Task<()>>,
@@ -307,7 +306,6 @@ impl ThreadView {
         prompt_capabilities: Rc<RefCell<PromptCapabilities>>,
         available_commands: Rc<RefCell<Vec<agent_client_protocol::AvailableCommand>>>,
         resumed_without_history: bool,
-        resume_thread_metadata: Option<AgentSessionInfo>,
         project: WeakEntity<Project>,
         thread_store: Option<Entity<ThreadStore>>,
         history: Entity<ThreadHistory>,
@@ -347,8 +345,8 @@ impl ThreadView {
             );
             if let Some(content) = initial_content {
                 match content {
-                    AgentInitialContent::ThreadSummary(entry) => {
-                        editor.insert_thread_summary(entry, window, cx);
+                    AgentInitialContent::ThreadSummary { session_id, title } => {
+                        editor.insert_thread_summary(session_id, title, window, cx);
                     }
                     AgentInitialContent::ContentBlock {
                         blocks,
@@ -439,7 +437,6 @@ impl ThreadView {
             prompt_capabilities,
             available_commands,
             resumed_without_history,
-            resume_thread_metadata,
             _subscriptions: subscriptions,
             permission_dropdown_handle: PopoverMenuHandle::default(),
             thread_retry_status: None,
@@ -1772,18 +1769,7 @@ impl ThreadView {
                 })
                 .await?;
 
-            let thread_metadata = AgentSessionInfo {
-                session_id,
-                cwd: None,
-                title: Some(format!("🔗 {}", response.title).into()),
-                updated_at: Some(chrono::Utc::now()),
-                meta: None,
-            };
-
-            this.update_in(cx, |this, window, cx| {
-                this.resume_thread_metadata = Some(thread_metadata);
-                server_view.update(cx, |server_view, cx| server_view.reset(window, cx));
-            })?;
+            server_view.update_in(cx, |server_view, window, cx| server_view.reset(window, cx))?;
 
             this.update_in(cx, |this, _window, cx| {
                 if let Some(workspace) = this.workspace.upgrade() {
@@ -7906,17 +7892,7 @@ pub(crate) fn open_link(
             MentionUri::Thread { id, name } => {
                 if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
                     panel.update(cx, |panel, cx| {
-                        panel.open_thread(
-                            AgentSessionInfo {
-                                session_id: id,
-                                cwd: None,
-                                title: Some(name.into()),
-                                updated_at: None,
-                                meta: None,
-                            },
-                            window,
-                            cx,
-                        )
+                        panel.open_thread(id, None, Some(name.into()), window, cx)
                     });
                 }
             }

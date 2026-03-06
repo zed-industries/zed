@@ -979,21 +979,19 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
                         })
                         .await?;
 
-                    let thread_metadata = acp_thread::AgentSessionInfo {
-                        session_id,
-                        cwd: None,
-                        title: Some(format!("🔗 {}", response.title).into()),
-                        updated_at: Some(chrono::Utc::now()),
-                        meta: None,
-                    };
-
                     let sharer_username = response.sharer_username.clone();
 
                     multi_workspace.update(cx, |_, window, cx| {
                         workspace.update(cx, |workspace, cx| {
                             if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
                                 panel.update(cx, |panel, cx| {
-                                    panel.open_thread(thread_metadata, window, cx);
+                                    panel.open_thread(
+                                        session_id,
+                                        None,
+                                        Some(format!("🔗 {}", response.title).into()),
+                                        window,
+                                        cx,
+                                    );
                                 });
                                 panel.focus_handle(cx).focus(window, cx);
                             }

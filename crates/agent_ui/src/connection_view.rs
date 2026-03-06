@@ -39,7 +39,7 @@ use prompt_store::{PromptId, PromptStore};
 use rope::Point;
 use settings::{NotifyWhenAgentWaiting, Settings as _, SettingsStore};
 use std::cell::RefCell;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
 use std::{collections::BTreeMap, rc::Rc, time::Duration};
@@ -470,7 +470,9 @@ impl ConnectedServerState {
 impl ConnectionView {
     pub fn new(
         agent: Rc<dyn AgentServer>,
-        resume_thread: Option<AgentSessionInfo>,
+        resume_session_id: Option<acp::SessionId>,
+        cwd: Option<PathBuf>,
+        title: Option<SharedString>,
         initial_content: Option<AgentInitialContent>,
         workspace: WeakEntity<Workspace>,
         project: Entity<Project>,
@@ -514,7 +516,9 @@ impl ConnectionView {
             prompt_store,
             server_state: Self::initial_state(
                 agent.clone(),
-                resume_thread,
+                resume_session_id,
+                cwd,
+                title,
                 project,
                 initial_content,
                 window,
@@ -540,13 +544,23 @@ impl ConnectionView {
     }
 
     fn reset(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let resume_thread_metadata = self
+        let (resume_session_id, cwd, title) = self
             .active_thread()
-            .and_then(|thread| thread.read(cx).resume_thread_metadata.clone());
+            .map(|thread_view| {
+                let thread = thread_view.read(cx).thread.read(cx);
+                (
+                    Some(thread.session_id().clone()),
+                    thread.cwd().cloned(),
+                    Some(thread.title()),
+                )
+            })
+            .unwrap_or((None, None, None));
 
         let state = Self::initial_state(
             self.agent.clone(),
-            resume_thread_metadata,
+            resume_session_id,
+            cwd,
+            title,
             self.project.clone(),
             None,
             window,
@@ -570,15 +584,14 @@ impl ConnectionView {
 
     fn initial_state(
         agent: Rc<dyn AgentServer>,
-        resume_thread: Option<AgentSessionInfo>,
+        resume_session_id: Option<acp::SessionId>,
+        cwd: Option<PathBuf>,
+        title: Option<SharedString>,
         project: Entity<Project>,
         initial_content: Option<AgentInitialContent>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> ServerState {
-        let session_id = resume_thread
-            .as_ref()
-            .map(|thread| thread.session_id.clone());
         if project.read(cx).is_via_collab()
             && agent.clone().downcast::<NativeAgentServer>().is_none()
         {
@@ -586,7 +599,7 @@ impl ConnectionView {
                 error: LoadError::Other(
                     "External agents are not yet supported in shared projects.".into(),
                 ),
-                session_id,
+                session_id: resume_session_id.clone(),
             };
         }
         let mut worktrees = project.read(cx).visible_worktrees(cx).collect::<Vec<_>>();
@@ -608,28 +621,22 @@ impl ConnectionView {
                 }
             })
             .collect();
-        let session_cwd = resume_thread
-            .as_ref()
-            .and_then(|resume| {
-                resume
-                    .cwd
-                    .as_ref()
-                    .filter(|cwd| {
-                        // Validate with the normalized path (rejects `..` traversals),
-                        // but return the original cwd to preserve its path separators.
-                        // On Windows, `normalize_lexically` rebuilds the path with
-                        // backslashes via `PathBuf::push`, which would corrupt
-                        // forward-slash Linux paths used by WSL agents.
-                        util::paths::normalize_lexically(cwd)
-                            .ok()
-                            .is_some_and(|normalized| {
-                                worktree_roots
-                                    .iter()
-                                    .any(|root| normalized.starts_with(root.as_ref()))
-                            })
+        let session_cwd = cwd
+            .filter(|cwd| {
+                // Validate with the normalized path (rejects `..` traversals),
+                // but return the original cwd to preserve its path separators.
+                // On Windows, `normalize_lexically` rebuilds the path with
+                // backslashes via `PathBuf::push`, which would corrupt
+                // forward-slash Linux paths used by WSL agents.
+                util::paths::normalize_lexically(cwd)
+                    .ok()
+                    .is_some_and(|normalized| {
+                        worktree_roots
+                            .iter()
+                            .any(|root| normalized.starts_with(root.as_ref()))
                     })
-                    .map(|path| Arc::from(path.as_path()))
             })
+            .map(|path| path.into())
             .or_else(|| worktree_roots.first().cloned())
             .unwrap_or_else(|| paths::home_dir().as_path().into());
 
@@ -643,7 +650,7 @@ impl ConnectionView {
         );
 
         let connect_task = agent.connect(delegate, cx);
-        let load_session_id = session_id.clone();
+        let load_session_id = resume_session_id.clone();
         let load_task = cx.spawn_in(window, async move |this, cx| {
             let connection = match connect_task.await {
                 Ok(connection) => connection,
@@ -666,17 +673,25 @@ impl ConnectionView {
             telemetry::event!("Agent Thread Started", agent = connection.telemetry_id());
 
             let mut resumed_without_history = false;
-            let result = if let Some(resume) = resume_thread.clone() {
+            let result = if let Some(session_id) = load_session_id.clone() {
                 cx.update(|_, cx| {
                     if connection.supports_load_session() {
-                        connection
-                            .clone()
-                            .load_session(resume, project.clone(), &session_cwd, cx)
+                        connection.clone().load_session(
+                            session_id,
+                            project.clone(),
+                            &session_cwd,
+                            title,
+                            cx,
+                        )
                     } else if connection.supports_resume_session() {
                         resumed_without_history = true;
-                        connection
-                            .clone()
-                            .resume_session(resume, project.clone(), &session_cwd, cx)
+                        connection.clone().resume_session(
+                            session_id,
+                            project.clone(),
+                            &session_cwd,
+                            title,
+                            cx,
+                        )
                     } else {
                         Task::ready(Err(anyhow!(LoadError::Other(
                             "Loading or resuming sessions is not supported by this agent.".into()
@@ -732,7 +747,6 @@ impl ConnectionView {
                             thread,
                             conversation.clone(),
                             resumed_without_history,
-                            resume_thread,
                             initial_content,
                             window,
                             cx,
@@ -803,7 +817,7 @@ impl ConnectionView {
             });
 
             LoadingView {
-                session_id,
+                session_id: resume_session_id,
                 title: "Loading…".into(),
                 _load_task: load_task,
                 _update_title_task: update_title_task,
@@ -819,7 +833,6 @@ impl ConnectionView {
         thread: Entity<AcpThread>,
         conversation: Entity<Conversation>,
         resumed_without_history: bool,
-        resume_thread: Option<AgentSessionInfo>,
         initial_content: Option<AgentInitialContent>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -1002,7 +1015,6 @@ impl ConnectionView {
                 prompt_capabilities,
                 available_commands,
                 resumed_without_history,
-                resume_thread,
                 self.project.downgrade(),
                 self.thread_store.clone(),
                 self.history.clone(),
@@ -1680,9 +1692,10 @@ impl ConnectionView {
         let cwd = root_dir.unwrap_or_else(|| paths::home_dir().as_path().into());
 
         let subagent_thread_task = connected.connection.clone().load_session(
-            AgentSessionInfo::new(subagent_id.clone()),
+            subagent_id.clone(),
             self.project.clone(),
             &cwd,
+            None,
             cx,
         );
 
@@ -1703,7 +1716,6 @@ impl ConnectionView {
                     subagent_thread,
                     conversation,
                     false,
-                    None,
                     None,
                     window,
                     cx,
@@ -2606,10 +2618,10 @@ impl ConnectionView {
         })
     }
 
-    pub fn delete_history_entry(&mut self, entry: AgentSessionInfo, cx: &mut Context<Self>) {
-        let task = self.history.update(cx, |history, cx| {
-            history.delete_session(&entry.session_id, cx)
-        });
+    pub fn delete_history_entry(&mut self, session_id: &acp::SessionId, cx: &mut Context<Self>) {
+        let task = self
+            .history
+            .update(cx, |history, cx| history.delete_session(&session_id, cx));
         task.detach_and_log_err(cx);
     }
 }
@@ -2856,6 +2868,8 @@ pub(crate) mod tests {
                     Rc::new(StubAgentServer::default_response()),
                     None,
                     None,
+                    None,
+                    None,
                     workspace.downgrade(),
                     project,
                     Some(thread_store),
@@ -2939,7 +2953,6 @@ pub(crate) mod tests {
     async fn test_resume_without_history_adds_notice(cx: &mut TestAppContext) {
         init_test(cx);
 
-        let session = AgentSessionInfo::new(SessionId::new("resume-session"));
         let fs = FakeFs::new(cx.executor());
         let project = Project::test(fs, [], cx).await;
         let (multi_workspace, cx) =
@@ -2953,7 +2966,9 @@ pub(crate) mod tests {
             cx.new(|cx| {
                 ConnectionView::new(
                     Rc::new(StubAgentServer::new(ResumeOnlyAgentConnection)),
-                    Some(session),
+                    Some(SessionId::new("resume-session")),
+                    None,
+                    None,
                     None,
                     workspace.downgrade(),
                     project,
@@ -2997,9 +3012,6 @@ pub(crate) mod tests {
         let connection = CwdCapturingConnection::new();
         let captured_cwd = connection.captured_cwd.clone();
 
-        let mut session = AgentSessionInfo::new(SessionId::new("session-1"));
-        session.cwd = Some(PathBuf::from("/project/subdir"));
-
         let thread_store = cx.update(|_window, cx| cx.new(|cx| ThreadStore::new(cx)));
         let history = cx.update(|window, cx| cx.new(|cx| ThreadHistory::new(None, window, cx)));
 
@@ -3007,7 +3019,9 @@ pub(crate) mod tests {
             cx.new(|cx| {
                 ConnectionView::new(
                     Rc::new(StubAgentServer::new(connection)),
-                    Some(session),
+                    Some(SessionId::new("session-1")),
+                    Some(PathBuf::from("/project/subdir")),
+                    None,
                     None,
                     workspace.downgrade(),
                     project,
@@ -3049,9 +3063,6 @@ pub(crate) mod tests {
         let connection = CwdCapturingConnection::new();
         let captured_cwd = connection.captured_cwd.clone();
 
-        let mut session = AgentSessionInfo::new(SessionId::new("session-1"));
-        session.cwd = Some(PathBuf::from("/some/other/path"));
-
         let thread_store = cx.update(|_window, cx| cx.new(|cx| ThreadStore::new(cx)));
         let history = cx.update(|window, cx| cx.new(|cx| ThreadHistory::new(None, window, cx)));
 
@@ -3059,7 +3070,9 @@ pub(crate) mod tests {
             cx.new(|cx| {
                 ConnectionView::new(
                     Rc::new(StubAgentServer::new(connection)),
-                    Some(session),
+                    Some(SessionId::new("session-1")),
+                    Some(PathBuf::from("/some/other/path")),
+                    None,
                     None,
                     workspace.downgrade(),
                     project,
@@ -3101,9 +3114,6 @@ pub(crate) mod tests {
         let connection = CwdCapturingConnection::new();
         let captured_cwd = connection.captured_cwd.clone();
 
-        let mut session = AgentSessionInfo::new(SessionId::new("session-1"));
-        session.cwd = Some(PathBuf::from("/project/../outside"));
-
         let thread_store = cx.update(|_window, cx| cx.new(|cx| ThreadStore::new(cx)));
         let history = cx.update(|window, cx| cx.new(|cx| ThreadHistory::new(None, window, cx)));
 
@@ -3111,7 +3121,9 @@ pub(crate) mod tests {
             cx.new(|cx| {
                 ConnectionView::new(
                     Rc::new(StubAgentServer::new(connection)),
-                    Some(session),
+                    Some(SessionId::new("session-1")),
+                    Some(PathBuf::from("/project/../outside")),
+                    None,
                     None,
                     workspace.downgrade(),
                     project,
@@ -3424,6 +3436,8 @@ pub(crate) mod tests {
                     Rc::new(agent),
                     None,
                     None,
+                    None,
+                    None,
                     workspace1.downgrade(),
                     project1.clone(),
                     Some(thread_store),
@@ -3612,6 +3626,8 @@ pub(crate) mod tests {
                     Rc::new(agent),
                     None,
                     None,
+                    None,
+                    None,
                     workspace.downgrade(),
                     project,
                     Some(thread_store),
@@ -3792,6 +3808,7 @@ pub(crate) mod tests {
             AcpThread::new(
                 None,
                 name,
+                None,
                 connection,
                 project,
                 action_log,
@@ -3894,18 +3911,14 @@ pub(crate) mod tests {
 
         fn resume_session(
             self: Rc<Self>,
-            session: AgentSessionInfo,
+            session_id: acp::SessionId,
             project: Entity<Project>,
             _cwd: &Path,
+            _title: Option<SharedString>,
             cx: &mut App,
         ) -> Task<gpui::Result<Entity<AcpThread>>> {
-            let thread = build_test_thread(
-                self,
-                project,
-                "ResumeOnlyAgentConnection",
-                session.session_id,
-                cx,
-            );
+            let thread =
+                build_test_thread(self, project, "ResumeOnlyAgentConnection", session_id, cx);
             Task::ready(Ok(thread))
         }
 
@@ -3965,7 +3978,7 @@ pub(crate) mod tests {
         fn new_session(
             self: Rc<Self>,
             project: Entity<Project>,
-            _cwd: &Path,
+            cwd: &Path,
             cx: &mut gpui::App,
         ) -> Task<gpui::Result<Entity<AcpThread>>> {
             if !*self.authenticated.lock() {
@@ -3980,6 +3993,7 @@ pub(crate) mod tests {
                 AcpThread::new(
                     None,
                     "AuthGatedAgent",
+                    Some(cwd.to_path_buf()),
                     self,
                     project,
                     action_log,
@@ -4041,7 +4055,7 @@ pub(crate) mod tests {
         fn new_session(
             self: Rc<Self>,
             project: Entity<Project>,
-            _cwd: &Path,
+            cwd: &Path,
             cx: &mut gpui::App,
         ) -> Task<gpui::Result<Entity<AcpThread>>> {
             Task::ready(Ok(cx.new(|cx| {
@@ -4049,6 +4063,7 @@ pub(crate) mod tests {
                 AcpThread::new(
                     None,
                     "SaboteurAgentConnection",
+                    Some(cwd.to_path_buf()),
                     self,
                     project,
                     action_log,
@@ -4106,7 +4121,7 @@ pub(crate) mod tests {
         fn new_session(
             self: Rc<Self>,
             project: Entity<Project>,
-            _cwd: &Path,
+            cwd: &Path,
             cx: &mut gpui::App,
         ) -> Task<gpui::Result<Entity<AcpThread>>> {
             Task::ready(Ok(cx.new(|cx| {
@@ -4114,6 +4129,7 @@ pub(crate) mod tests {
                 AcpThread::new(
                     None,
                     "RefusalAgentConnection",
+                    Some(cwd.to_path_buf()),
                     self,
                     project,
                     action_log,
@@ -4189,6 +4205,7 @@ pub(crate) mod tests {
                 AcpThread::new(
                     None,
                     "CwdCapturingConnection",
+                    Some(cwd.to_path_buf()),
                     self.clone(),
                     project,
                     action_log,
@@ -4211,9 +4228,10 @@ pub(crate) mod tests {
 
         fn load_session(
             self: Rc<Self>,
-            session: AgentSessionInfo,
+            session_id: acp::SessionId,
             project: Entity<Project>,
             cwd: &Path,
+            _title: Option<SharedString>,
             cx: &mut App,
         ) -> Task<gpui::Result<Entity<AcpThread>>> {
             *self.captured_cwd.lock() = Some(cwd.to_path_buf());
@@ -4222,10 +4240,11 @@ pub(crate) mod tests {
                 AcpThread::new(
                     None,
                     "CwdCapturingConnection",
+                    Some(cwd.to_path_buf()),
                     self.clone(),
                     project,
                     action_log,
-                    session.session_id,
+                    session_id,
                     watch::Receiver::constant(
                         acp::PromptCapabilities::new()
                             .image(true)
@@ -4325,6 +4344,8 @@ pub(crate) mod tests {
             cx.new(|cx| {
                 ConnectionView::new(
                     Rc::new(StubAgentServer::new(connection.as_ref().clone())),
+                    None,
+                    None,
                     None,
                     None,
                     workspace.downgrade(),
@@ -6036,6 +6057,7 @@ pub(crate) mod tests {
             AcpThread::new(
                 parent_session_id,
                 "Test Thread",
+                None,
                 connection,
                 project,
                 action_log,
