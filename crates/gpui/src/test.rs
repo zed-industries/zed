@@ -52,7 +52,6 @@ pub fn seed_strategy() -> impl Strategy<Value = u64> {
 /// proptest.
 pub fn run_test_once(seed: u64, test_fn: Box<dyn UnwindSafe + FnOnce(TestDispatcher)>) {
     let result = panic::catch_unwind(|| {
-        // todo! find some way to inject the seed into
         let dispatcher = TestDispatcher::new(seed);
         let scheduler = dispatcher.scheduler().clone();
         test_fn(dispatcher);
