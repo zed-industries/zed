@@ -198,6 +198,7 @@ pub fn init(cx: &mut App) {
                                 None,
                                 None,
                                 None,
+                                true,
                                 window,
                                 cx,
                             )
@@ -339,6 +340,7 @@ pub fn init(cx: &mut App) {
                                 blocks: content_blocks,
                                 auto_submit: true,
                             }),
+                            true,
                             window,
                             cx,
                         );
@@ -728,7 +730,7 @@ impl AgentPanel {
                     let agent_type = thread_info.agent_type.clone();
                     panel.update(cx, |panel, cx| {
                         panel.selected_agent = agent_type;
-                        panel.load_agent_thread(thread_info.session_id.into(), thread_info.cwd, thread_info.title.map(SharedString::from), window, cx);
+                        panel.load_agent_thread_inner(thread_info.session_id.into(), thread_info.cwd, thread_info.title.map(SharedString::from), false, window, cx);
                     });
                 }
                 panel
@@ -972,6 +974,7 @@ impl AgentPanel {
             cwd,
             title,
             None,
+            true,
             window,
             cx,
         );
@@ -1035,6 +1038,7 @@ impl AgentPanel {
                 session_id: thread.session_id,
                 title: thread.title,
             }),
+            true,
             window,
             cx,
         );
@@ -1090,6 +1094,7 @@ impl AgentPanel {
         cwd: Option<PathBuf>,
         title: Option<SharedString>,
         initial_content: Option<AgentInitialContent>,
+        focus: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -1107,64 +1112,75 @@ impl AgentPanel {
 
         let thread_store = self.thread_store.clone();
 
-        cx.spawn_in(window, async move |this, cx| {
-            let ext_agent = match agent_choice {
-                Some(agent) => {
-                    cx.background_spawn({
-                        let agent = agent.clone();
-                        async move {
-                            if let Some(serialized) =
-                                serde_json::to_string(&LastUsedExternalAgent { agent }).log_err()
-                            {
-                                KEY_VALUE_STORE
-                                    .write_kvp(LAST_USED_EXTERNAL_AGENT_KEY.to_string(), serialized)
-                                    .await
-                                    .log_err();
-                            }
-                        }
-                    })
-                    .detach();
-
-                    agent
-                }
-                None => {
-                    if is_via_collab {
-                        ExternalAgent::NativeAgent
-                    } else {
-                        cx.background_spawn(async move {
-                            KEY_VALUE_STORE.read_kvp(LAST_USED_EXTERNAL_AGENT_KEY)
-                        })
-                        .await
-                        .log_err()
-                        .flatten()
-                        .and_then(|value| {
-                            serde_json::from_str::<LastUsedExternalAgent>(&value).log_err()
-                        })
-                        .map(|agent| agent.agent)
-                        .unwrap_or(ExternalAgent::NativeAgent)
+        if let Some(agent) = agent_choice {
+            cx.background_spawn({
+                let agent = agent.clone();
+                async move {
+                    if let Some(serialized) =
+                        serde_json::to_string(&LastUsedExternalAgent { agent }).log_err()
+                    {
+                        KEY_VALUE_STORE
+                            .write_kvp(LAST_USED_EXTERNAL_AGENT_KEY.to_string(), serialized)
+                            .await
+                            .log_err();
                     }
                 }
-            };
+            })
+            .detach();
 
-            let server = ext_agent.server(fs, thread_store);
-            this.update_in(cx, |agent_panel, window, cx| {
-                agent_panel.create_external_thread(
-                    server,
-                    resume_session_id,
-                    cwd,
-                    title,
-                    initial_content,
-                    workspace,
-                    project,
-                    ext_agent,
-                    window,
-                    cx,
-                );
-            })?;
+            let server = agent.server(fs, thread_store);
+            self.create_external_thread(
+                server,
+                resume_session_id,
+                cwd,
+                title,
+                initial_content,
+                workspace,
+                project,
+                agent,
+                focus,
+                window,
+                cx,
+            );
+        } else {
+            cx.spawn_in(window, async move |this, cx| {
+                let ext_agent = if is_via_collab {
+                    ExternalAgent::NativeAgent
+                } else {
+                    cx.background_spawn(async move {
+                        KEY_VALUE_STORE.read_kvp(LAST_USED_EXTERNAL_AGENT_KEY)
+                    })
+                    .await
+                    .log_err()
+                    .flatten()
+                    .and_then(|value| {
+                        serde_json::from_str::<LastUsedExternalAgent>(&value).log_err()
+                    })
+                    .map(|agent| agent.agent)
+                    .unwrap_or(ExternalAgent::NativeAgent)
+                };
 
-            anyhow::Ok(())
-        })
-        .detach_and_log_err(cx);
+                let server = ext_agent.server(fs, thread_store);
+                this.update_in(cx, |agent_panel, window, cx| {
+                    agent_panel.create_external_thread(
+                        server,
+                        resume_session_id,
+                        cwd,
+                        title,
+                        initial_content,
+                        workspace,
+                        project,
+                        ext_agent,
+                        focus,
+                        window,
+                        cx,
+                    );
+                })?;
+
+                anyhow::Ok(())
+            })
+            .detach_and_log_err(cx);
+        }
     }
 
     fn deploy_rules_library(
@@ -2007,6 +2023,7 @@ impl AgentPanel {
             None,
             None,
             external_source_prompt.map(AgentInitialContent::from),
+            true,
             window,
             cx,
         );
@@ -2015,6 +2032,16 @@ impl AgentPanel {
     pub fn new_agent_thread(
         &mut self,
         agent: AgentType,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.new_agent_thread_inner(agent, true, window, cx);
+    }
+
+    fn new_agent_thread_inner(
+        &mut self,
+        agent: AgentType,
+        focus: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -2028,6 +2055,7 @@ impl AgentPanel {
                 None,
                 None,
                 None,
+                focus,
                 window,
                 cx,
             ),
@@ -2037,6 +2065,7 @@ impl AgentPanel {
                 None,
                 None,
                 None,
+                focus,
                 window,
                 cx,
             ),
@@ -2051,8 +2080,20 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.load_agent_thread_inner(session_id, cwd, title, true, window, cx);
+    }
+
+    fn load_agent_thread_inner(
+        &mut self,
+        session_id: acp::SessionId,
+        cwd: Option<PathBuf>,
+        title: Option<SharedString>,
+        focus: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if let Some(server_view) = self.background_threads.remove(&session_id) {
-            self.set_active_view(ActiveView::AgentThread { server_view }, true, window, cx);
+            self.set_active_view(ActiveView::AgentThread { server_view }, focus, window, cx);
             return;
         }
 
@@ -2076,7 +2117,7 @@ impl AgentPanel {
                 == Some(session_id.clone())
             {
                 let view = self.previous_view.take().unwrap();
-                self.set_active_view(view, true, window, cx);
+                self.set_active_view(view, focus, window, cx);
                 return;
             }
         }
@@ -2084,7 +2125,16 @@ impl AgentPanel {
         let Some(agent) = self.selected_external_agent() else {
             return;
         };
-        self.external_thread(Some(agent), Some(session_id), cwd, title, None, window, cx);
+        self.external_thread(
+            Some(agent),
+            Some(session_id),
+            cwd,
+            title,
+            None,
+            focus,
+            window,
+            cx,
+        );
     }
 
     pub(crate) fn create_external_thread(
@@ -2097,6 +2147,7 @@ impl AgentPanel {
         workspace: WeakEntity<Workspace>,
         project: Entity<Project>,
         ext_agent: ExternalAgent,
+        focus: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -2142,7 +2193,7 @@ impl AgentPanel {
         })
         .detach();
 
-        self.set_active_view(ActiveView::AgentThread { server_view }, true, window, cx);
+        self.set_active_view(ActiveView::AgentThread { server_view }, focus, window, cx);
     }
 
     fn active_thread_has_messages(&self, cx: &App) -> bool {
@@ -2633,6 +2684,7 @@ impl AgentPanel {
                             None,
                             None,
                             Some(initial_content),
+                            true,
                             window,
                             cx,
                         );
@@ -2744,7 +2796,7 @@ impl Panel for AgentPanel {
             )
         {
             let selected_agent = self.selected_agent.clone();
-            self.new_agent_thread(selected_agent, window, cx);
+            self.new_agent_thread_inner(selected_agent, false, window, cx);
         }
     }
 
@@ -4503,7 +4555,7 @@ impl AgentPanel {
         };
 
         self.create_external_thread(
-            server, None, None, None, None, workspace, project, ext_agent, window, cx,
+            server, None, None, None, None, workspace, project, ext_agent, true, window, cx,
         );
     }
 

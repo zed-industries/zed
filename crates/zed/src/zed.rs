@@ -502,7 +502,9 @@ pub fn initialize_workspace(
         workspace.set_panels_task(panels_task);
         register_actions(app_state.clone(), workspace, window, cx);
 
-        workspace.focus_handle(cx).focus(window, cx);
+        if !workspace.has_active_modal(window, cx) {
+            workspace.focus_handle(cx).focus(window, cx);
+        }
     })
     .detach();
 }
