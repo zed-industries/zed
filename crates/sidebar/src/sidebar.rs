@@ -22,8 +22,8 @@ use ui::{
 };
 use util::path_list::PathList;
 use workspace::{
-    FocusWorkspaceSidebar, MultiWorkspace, Sidebar as WorkspaceSidebar, SidebarEvent,
-    ToggleWorkspaceSidebar, Workspace,
+    FocusWorkspaceSidebar, MultiWorkspace, MultiWorkspaceEvent, Sidebar as WorkspaceSidebar,
+    SidebarEvent, ToggleWorkspaceSidebar, Workspace,
 };
 use zed_actions::editor::{MoveDown, MoveUp};
 
@@ -222,8 +222,8 @@ pub struct Sidebar {
     ///
     /// Note: This is NOT the same as the active item.
     selection: Option<usize>,
-    /// Stores either the active thread or if there is no active thread, the
-    /// focused workspace.
+    /// Tracks the user's intended selection target in the sidebar.
+    /// Set explicitly by click/confirm handlers and external event subscriptions.
     active_item: ActiveItem,
     collapsed_groups: HashSet<PathList>,
     expanded_groups: HashSet<PathList>,
@@ -256,6 +256,18 @@ impl Sidebar {
             window,
             |this, _multi_workspace, window, cx| {
                 this.update_entries(window, cx);
+            },
+        );
+
+        let workspace_event_subscription = cx.subscribe_in(
+            &multi_workspace,
+            window,
+            |this, multi_workspace, event: &MultiWorkspaceEvent, _window, cx| match event {
+                MultiWorkspaceEvent::ActiveWorkspaceChanged => {
+                    let workspace = multi_workspace.read(cx).workspace().clone();
+                    this.active_item = ActiveItem::Workspace(workspace);
+                    cx.notify();
+                }
             },
         );
 
@@ -296,7 +308,11 @@ impl Sidebar {
             active_item: ActiveItem::from_multi_workspace(&multi_workspace, cx),
             collapsed_groups: HashSet::new(),
             expanded_groups: HashSet::new(),
-            _subscriptions: vec![observe_subscription, filter_subscription],
+            _subscriptions: vec![
+                observe_subscription,
+                workspace_event_subscription,
+                filter_subscription,
+            ],
             _project_subscriptions: Vec::new(),
             _agent_panel_subscriptions: Vec::new(),
             _thread_store_subscription: None,
@@ -356,7 +372,14 @@ impl Sidebar {
                     cx.subscribe_in(
                         &agent_panel,
                         window,
-                        |this, _, _event: &AgentPanelEvent, window, cx| {
+                        |this, agent_panel, event: &AgentPanelEvent, window, cx| {
+                            if matches!(event, AgentPanelEvent::ActiveViewChanged) {
+                                if let Some(thread) = agent_panel.read(cx).active_connection_view()
+                                    && let Some(session_id) = thread.read(cx).parent_id(cx)
+                                {
+                                    this.active_item = ActiveItem::Thread(session_id);
+                                }
+                            }
                             this.update_entries(window, cx);
                         },
                     )
@@ -666,12 +689,6 @@ impl Sidebar {
 
             this.list_state.reset(this.contents.entries.len());
 
-            let new_active = ActiveItem::from_multi_workspace(&multi_workspace, cx);
-            if new_active != this.active_item {
-                // TODO: update self.selected with the index of the new active item
-                this.active_item = new_active;
-            }
-
             if had_notifications != this.has_notifications(cx) {
                 multi_workspace.update(cx, |_, cx| {
                     cx.notify();
@@ -783,7 +800,7 @@ impl Sidebar {
 
         ListItem::new(id)
             .group_name(&group)
-            .toggle_state(dbg!(self.active_item.is_workspace(workspace)))
+            .toggle_state(self.active_item.is_workspace(workspace))
             .child(
                 h_flex()
                     .px_1()
@@ -864,6 +881,21 @@ impl Sidebar {
 
         multi_workspace.update(cx, |multi_workspace, cx| {
             multi_workspace.activate(workspace.clone(), cx);
+        });
+
+        // `multi_workspace.activate` queues an `ActiveWorkspaceChanged` event as
+        // a pending effect. Our event subscription would set `active_item` to the
+        // workspace when that effect is delivered. By deferring our own assignment,
+        // it runs *after* the event is delivered, so the sidebar's intent (the
+        // user clicked this workspace) wins over the event.
+        let workspace = workspace.clone();
+        let this = cx.weak_entity();
+        cx.defer(move |cx| {
+            this.update(cx, |this, cx| {
+                this.active_item = ActiveItem::Workspace(workspace);
+                cx.notify();
+            })
+            .ok();
         });
     }
 
@@ -1033,9 +1065,26 @@ impl Sidebar {
 
         if let Some(agent_panel) = workspace.read(cx).panel::<AgentPanel>(cx) {
             agent_panel.update(cx, |panel, cx| {
-                panel.load_agent_thread(session_info, window, cx);
+                panel.load_agent_thread(session_info.clone(), window, cx);
             });
         }
+
+        // Both `multi_workspace.activate` and `load_agent_thread` queue events
+        // (`ActiveWorkspaceChanged`, possibly `ActiveViewChanged`) as pending
+        // effects. Those events would set `active_item` to the workspace or
+        // thread when delivered. By deferring our assignment, it runs *after*
+        // all of those effects, so the sidebar's intent (the user clicked this
+        // thread) wins regardless of whether `load_agent_thread` fires an event
+        // (it doesn't when the thread is already loaded).
+        let session_id = session_info.session_id;
+        let this = cx.weak_entity();
+        cx.defer(move |cx| {
+            this.update(cx, |this, cx| {
+                this.active_item = ActiveItem::Thread(session_id);
+                cx.notify();
+            })
+            .ok();
+        });
     }
 
     fn expand_selected_entry(
@@ -1277,9 +1326,6 @@ impl Focusable for Sidebar {
 
 impl Render for Sidebar {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        println!("**********************************************************************");
-        dbg!(&self.active_item);
-
         let titlebar_height = ui::utils::platform_title_bar_height(window);
         let ui_font = theme::setup_ui_font(window, cx);
         let is_focused = self.focus_handle.is_focused(window)
@@ -3216,5 +3262,177 @@ mod tests {
             visible_entries_as_strings(&sidebar, cx),
             vec!["v [my-project]", "  Friendly Greeting with AI *"]
         );
+    }
+
+    #[gpui::test]
+    async fn test_active_item_tracks_user_intent(cx: &mut TestAppContext) {
+        let project_a = init_test_project_with_agent_panel("/project-a", cx).await;
+        let (multi_workspace, cx) = cx
+            .add_window_view(|window, cx| MultiWorkspace::test_new(project_a.clone(), window, cx));
+        let (sidebar, panel_a) = setup_sidebar_with_agent_panel(&multi_workspace, &project_a, cx);
+
+        let path_list_a = PathList::new(&[std::path::PathBuf::from("/project-a")]);
+
+        // Save a thread so it appears in the list.
+        let connection_a = StubAgentConnection::new();
+        connection_a.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
+            acp::ContentChunk::new("Done".into()),
+        )]);
+        open_thread_with_connection(&panel_a, connection_a, cx);
+        send_message(&panel_a, cx);
+        let session_id_a = active_session_id(&panel_a, cx);
+        save_thread_to_store(&session_id_a, &path_list_a, cx).await;
+
+        // Add a second workspace with its own agent panel.
+        let fs = cx.update(|_, cx| <dyn fs::Fs>::global(cx));
+        let project_b = project::Project::test(fs, [], cx).await;
+        let workspace_b = multi_workspace.update_in(cx, |mw, window, cx| {
+            mw.test_add_workspace(project_b.clone(), window, cx)
+        });
+        let panel_b = add_agent_panel(&workspace_b, &project_b, cx);
+        cx.run_until_parked();
+
+        let workspace_a = multi_workspace.read_with(cx, |mw, _cx| mw.workspaces()[0].clone());
+
+        // ── 1. Initial state: workspace B is active (it was just created) ───────
+        sidebar.read_with(cx, |sidebar, _cx| {
+            assert!(
+                sidebar.active_item.is_workspace(&workspace_b),
+                "After adding workspace B, it should be the active item"
+            );
+        });
+
+        // ── 2. Click on workspace A header ──────────────────────────────────────
+        // Simulates the project header click handler.
+        sidebar.update_in(cx, |sidebar, _, cx| {
+            sidebar.active_item = ActiveItem::Workspace(workspace_a.clone());
+            sidebar.activate_workspace(&workspace_a, cx);
+        });
+        cx.run_until_parked();
+
+        sidebar.read_with(cx, |sidebar, _cx| {
+            assert!(
+                sidebar.active_item.is_workspace(&workspace_a),
+                "After clicking workspace A header, workspace A should be active — \
+                 not snapping to thread A even though it has one loaded"
+            );
+        });
+
+        // ── 3. Click on a thread ────────────────────────────────────────────────
+        // Simulates the thread click handler.
+        sidebar.update_in(cx, |sidebar, window, cx| {
+            sidebar.active_item = ActiveItem::Thread(session_id_a.clone());
+            sidebar.activate_thread(
+                acp_thread::AgentSessionInfo {
+                    session_id: session_id_a.clone(),
+                    cwd: None,
+                    title: Some("Test".into()),
+                    updated_at: None,
+                    meta: None,
+                },
+                &workspace_a,
+                window,
+                cx,
+            );
+        });
+        cx.run_until_parked();
+
+        sidebar.read_with(cx, |sidebar, _cx| {
+            assert!(
+                sidebar.active_item.is_thread(&session_id_a),
+                "After clicking a thread, that thread should be the active item"
+            );
+        });
+
+        // ── 4. External workspace switch (e.g. NextWorkspaceInWindow keybinding)
+        multi_workspace.update_in(cx, |mw, window, cx| {
+            mw.activate_next_workspace(window, cx);
+        });
+        cx.run_until_parked();
+
+        sidebar.read_with(cx, |sidebar, _cx| {
+            assert!(
+                sidebar.active_item.is_workspace(&workspace_b),
+                "After an external workspace switch, active item should follow"
+            );
+        });
+
+        // Switch back to workspace A.
+        multi_workspace.update_in(cx, |mw, window, cx| {
+            mw.activate_next_workspace(window, cx);
+        });
+        cx.run_until_parked();
+
+        sidebar.read_with(cx, |sidebar, _cx| {
+            assert!(
+                sidebar.active_item.is_workspace(&workspace_a),
+                "Switching back to workspace A should show workspace A as active"
+            );
+        });
+
+        // ── 5. External thread change (e.g. opening a thread from the agent panel)
+        let connection_b = StubAgentConnection::new();
+        connection_b.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
+            acp::ContentChunk::new("Hello from B".into()),
+        )]);
+        open_thread_with_connection(&panel_b, connection_b, cx);
+        send_message(&panel_b, cx);
+        let _session_id_b = active_session_id(&panel_b, cx);
+        cx.run_until_parked();
+
+        // Activate workspace B so the panel_b thread becomes the "current" one.
+        multi_workspace.update_in(cx, |mw, window, cx| {
+            mw.activate(workspace_b.clone(), cx);
+            let _ = window;
+        });
+        cx.run_until_parked();
+
+        // The ActiveViewChanged event from panel_b should have updated active_item.
+        sidebar.read_with(cx, |sidebar, _cx| {
+            assert!(
+                sidebar.active_item.is_workspace(&workspace_b),
+                "After activating workspace B, workspace B should be the active item"
+            );
+        });
+
+        // Now open a thread on workspace B's panel directly (external thread open).
+        // This simulates someone clicking a thread in the agent panel's history.
+        let connection_b2 = StubAgentConnection::new();
+        connection_b2.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
+            acp::ContentChunk::new("New thread".into()),
+        )]);
+        open_thread_with_connection(&panel_b, connection_b2, cx);
+        send_message(&panel_b, cx);
+        let session_id_b2 = active_session_id(&panel_b, cx);
+        cx.run_until_parked();
+
+        sidebar.read_with(cx, |sidebar, _cx| {
+            assert!(
+                sidebar.active_item.is_thread(&session_id_b2),
+                "When a thread is opened externally in the agent panel, \
+                 active_item should follow to that thread"
+            );
+        });
+
+        // ── 6. Thread selection is sticky across defocus ────────────────────────
+        // Defocus the sidebar — active_item should NOT change.
+        let active_before_defocus = sidebar.read_with(cx, |sidebar, _cx| {
+            sidebar.active_item.is_thread(&session_id_b2)
+        });
+        assert!(active_before_defocus);
+
+        // Focus something else (the workspace focus handle).
+        workspace_b.update_in(cx, |workspace, window, cx| {
+            workspace.focus_handle(cx).focus(window, cx);
+        });
+        cx.run_until_parked();
+
+        sidebar.read_with(cx, |sidebar, _cx| {
+            assert!(
+                sidebar.active_item.is_thread(&session_id_b2),
+                "Thread selection should be sticky — defocusing the sidebar \
+                 should not change active_item"
+            );
+        });
     }
 }

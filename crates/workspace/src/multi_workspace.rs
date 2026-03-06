@@ -35,6 +35,10 @@ actions!(
     ]
 );
 
+pub enum MultiWorkspaceEvent {
+    ActiveWorkspaceChanged,
+}
+
 pub enum SidebarEvent {
     Open,
     Close,
@@ -108,6 +112,8 @@ pub struct MultiWorkspace {
     _create_task: Option<Task<()>>,
     _subscriptions: Vec<Subscription>,
 }
+
+impl EventEmitter<MultiWorkspaceEvent> for MultiWorkspace {}
 
 impl MultiWorkspace {
     pub fn new(workspace: Entity<Workspace>, window: &mut Window, cx: &mut Context<Self>) -> Self {
@@ -304,6 +310,7 @@ impl MultiWorkspace {
         if !self.multi_workspace_enabled(cx) {
             self.workspaces[0] = workspace;
             self.active_workspace_index = 0;
+            cx.emit(MultiWorkspaceEvent::ActiveWorkspaceChanged);
             cx.notify();
             return;
         }
@@ -321,7 +328,11 @@ impl MultiWorkspace {
         cx: &mut Context<Self>,
     ) -> usize {
         let index = self.add_workspace(workspace, cx);
+        let changed = self.active_workspace_index != index;
         self.active_workspace_index = index;
+        if changed {
+            cx.emit(MultiWorkspaceEvent::ActiveWorkspaceChanged);
+        }
         cx.notify();
         index
     }
@@ -349,9 +360,13 @@ impl MultiWorkspace {
             index < self.workspaces.len(),
             "workspace index out of bounds"
         );
+        let changed = self.active_workspace_index != index;
         self.active_workspace_index = index;
         self.serialize(cx);
         self.focus_active_workspace(window, cx);
+        if changed {
+            cx.emit(MultiWorkspaceEvent::ActiveWorkspaceChanged);
+        }
         cx.notify();
     }
 
@@ -633,6 +648,7 @@ impl MultiWorkspace {
 
         self.serialize(cx);
         self.focus_active_workspace(window, cx);
+        cx.emit(MultiWorkspaceEvent::ActiveWorkspaceChanged);
         cx.notify();
     }
 
