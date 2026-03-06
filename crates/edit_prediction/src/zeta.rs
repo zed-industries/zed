@@ -175,11 +175,9 @@ pub fn request_prediction_with_zeta(
 
                             let request_id = EditPredictionId(request_id.into());
                             let output_text = zeta1::clean_zeta1_model_output(&response_text);
-                            let parsed_output = output_text.and_then(|text| {
-                                Some(ParsedOutput {
-                                    new_editable_region: text,
-                                    range_in_excerpt: editable_range_in_excerpt,
-                                })
+                            let parsed_output = output_text.map(|text| ParsedOutput {
+                                new_editable_region: text,
+                                range_in_excerpt: editable_range_in_excerpt,
                             });
 
                             (request_id, parsed_output, None, None)

@@ -75,7 +75,7 @@ fn parse_zeta2_output(
     };
 
     // Normalize trailing newlines for diff generation
-    let mut old_text_normalized = old_text.clone();
+    let mut old_text_normalized = old_text;
     if !new_text.is_empty() && !new_text.ends_with('\n') {
         new_text.push('\n');
     }
