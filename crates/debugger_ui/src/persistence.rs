@@ -265,49 +265,72 @@ pub(crate) fn deserialize_pane_layout(
                 pane.entity_id(),
                 cx.subscribe_in(&pane, window, RunningState::handle_pane_event),
             );
+            let running_state = cx.weak_entity();
+            let pane_handle = pane.downgrade();
 
             let sub_views: Vec<_> = serialized_pane
                 .children
                 .iter()
                 .map(|child| match child {
-                    DebuggerPaneItem::Frames => {
-                        Box::new(SubView::stack_frame_list(stack_frame_list.clone(), cx))
-                    }
+                    DebuggerPaneItem::Frames => Box::new(SubView::stack_frame_list(
+                        stack_frame_list.clone(),
+                        running_state.clone(),
+                        pane_handle.clone(),
+                        cx,
+                    )),
                     DebuggerPaneItem::Variables => Box::new(SubView::new(
                         variable_list.focus_handle(cx),
                         variable_list.clone().into(),
                         DebuggerPaneItem::Variables,
+                        running_state.clone(),
+                        pane_handle.clone(),
                         cx,
                     )),
-                    DebuggerPaneItem::BreakpointList => {
-                        Box::new(SubView::breakpoint_list(breakpoint_list.clone(), cx))
-                    }
+                    DebuggerPaneItem::BreakpointList => Box::new(SubView::breakpoint_list(
+                        breakpoint_list.clone(),
+                        running_state.clone(),
+                        pane_handle.clone(),
+                        cx,
+                    )),
                     DebuggerPaneItem::Modules => Box::new(SubView::new(
                         module_list.focus_handle(cx),
                         module_list.clone().into(),
                         DebuggerPaneItem::Modules,
+                        running_state.clone(),
+                        pane_handle.clone(),
                         cx,
                     )),
                     DebuggerPaneItem::LoadedSources => Box::new(SubView::new(
                         loaded_sources.focus_handle(cx),
                         loaded_sources.clone().into(),
                         DebuggerPaneItem::LoadedSources,
+                        running_state.clone(),
+                        pane_handle.clone(),
                         cx,
                     )),
                     DebuggerPaneItem::Console => {
-                        let view = SubView::console(console.clone(), cx);
+                        let view = SubView::console(
+                            console.clone(),
+                            running_state.clone(),
+                            pane_handle.clone(),
+                            cx,
+                        );
                         Box::new(view)
                     }
                     DebuggerPaneItem::Terminal => Box::new(SubView::new(
                         terminal.focus_handle(cx),
                         terminal.clone().into(),
                         DebuggerPaneItem::Terminal,
+                        running_state.clone(),
+                        pane_handle.clone(),
                         cx,
                     )),
                     DebuggerPaneItem::MemoryView => Box::new(SubView::new(
                         memory_view.focus_handle(cx),
                         memory_view.clone().into(),
                         DebuggerPaneItem::MemoryView,
+                        running_state.clone(),
+                        pane_handle.clone(),
                         cx,
                     )),
                 })

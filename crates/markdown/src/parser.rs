@@ -10,7 +10,7 @@ use collections::HashSet;
 
 use crate::path_range::PathWithRange;
 
-const PARSE_OPTIONS: Options = Options::ENABLE_TABLES
+pub const PARSE_OPTIONS: Options = Options::ENABLE_TABLES
     .union(Options::ENABLE_FOOTNOTES)
     .union(Options::ENABLE_STRIKETHROUGH)
     .union(Options::ENABLE_TASKLISTS)

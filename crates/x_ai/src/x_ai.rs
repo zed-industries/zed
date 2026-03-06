@@ -165,6 +165,18 @@ impl Model {
         }
     }
 
+    pub fn requires_json_schema_subset(&self) -> bool {
+        match self {
+            Self::Grok4
+            | Self::Grok4FastReasoning
+            | Self::Grok4FastNonReasoning
+            | Self::Grok41FastNonReasoning
+            | Self::Grok41FastReasoning
+            | Self::GrokCodeFast1 => true,
+            _ => false,
+        }
+    }
+
     pub fn supports_prompt_cache_key(&self) -> bool {
         false
     }

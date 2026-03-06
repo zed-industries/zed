@@ -1,5 +1,5 @@
 use gh_workflow::{Container, Event, Port, Push, Run, Step, Use, Workflow};
-use indoc::{formatdoc, indoc};
+use indoc::indoc;
 
 use crate::tasks::workflows::runners::{self, Platform};
 use crate::tasks::workflows::steps::{
@@ -115,9 +115,10 @@ fn deploy(deps: &[&NamedJob]) -> NamedJob {
     }
 
     fn sign_into_kubernetes() -> Step<Run> {
-        named::bash(formatdoc! {r#"
-            doctl kubernetes cluster kubeconfig save --expiry-seconds 600 {cluster_name}
-        "#, cluster_name = vars::CLUSTER_NAME})
+        named::bash(
+            r#"doctl kubernetes cluster kubeconfig save --expiry-seconds 600 "$CLUSTER_NAME""#,
+        )
+        .add_env(("CLUSTER_NAME", vars::CLUSTER_NAME))
     }
 
     fn start_rollout() -> Step<Run> {
@@ -139,7 +140,7 @@ fn deploy(deps: &[&NamedJob]) -> NamedJob {
             echo "Deploying collab:$GITHUB_SHA to $ZED_KUBE_NAMESPACE"
 
             source script/lib/deploy-helpers.sh
-            export_vars_for_environment $ZED_KUBE_NAMESPACE
+            export_vars_for_environment "$ZED_KUBE_NAMESPACE"
 
             ZED_DO_CERTIFICATE_ID="$(doctl compute certificate list --format ID --no-header)"
             export ZED_DO_CERTIFICATE_ID
@@ -149,14 +150,14 @@ fn deploy(deps: &[&NamedJob]) -> NamedJob {
             export ZED_LOAD_BALANCER_SIZE_UNIT=$ZED_COLLAB_LOAD_BALANCER_SIZE_UNIT
             export DATABASE_MAX_CONNECTIONS=850
             envsubst < crates/collab/k8s/collab.template.yml | kubectl apply -f -
-            kubectl -n "$ZED_KUBE_NAMESPACE" rollout status deployment/$ZED_SERVICE_NAME --watch
+            kubectl -n "$ZED_KUBE_NAMESPACE" rollout status "deployment/$ZED_SERVICE_NAME" --watch
             echo "deployed ${ZED_SERVICE_NAME} to ${ZED_KUBE_NAMESPACE}"
 
             export ZED_SERVICE_NAME=api
             export ZED_LOAD_BALANCER_SIZE_UNIT=$ZED_API_LOAD_BALANCER_SIZE_UNIT
             export DATABASE_MAX_CONNECTIONS=60
             envsubst < crates/collab/k8s/collab.template.yml | kubectl apply -f -
-            kubectl -n "$ZED_KUBE_NAMESPACE" rollout status deployment/$ZED_SERVICE_NAME --watch
+            kubectl -n "$ZED_KUBE_NAMESPACE" rollout status "deployment/$ZED_SERVICE_NAME" --watch
             echo "deployed ${ZED_SERVICE_NAME} to ${ZED_KUBE_NAMESPACE}"
         "#})
     }

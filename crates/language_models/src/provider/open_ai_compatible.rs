@@ -319,6 +319,10 @@ impl LanguageModel for OpenAiCompatibleLanguageModel {
         }
     }
 
+    fn supports_streaming_tools(&self) -> bool {
+        true
+    }
+
     fn supports_split_token_display(&self) -> bool {
         true
     }

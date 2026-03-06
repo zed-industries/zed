@@ -5,6 +5,56 @@ use std::future;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
+/// A streaming tool that echoes its input, used to test streaming tool
+/// lifecycle (e.g. partial delivery and cleanup when the LLM stream ends
+/// before `is_input_complete`).
+#[derive(JsonSchema, Serialize, Deserialize)]
+pub struct StreamingEchoToolInput {
+    /// The text to echo.
+    pub text: String,
+}
+
+pub struct StreamingEchoTool;
+
+impl AgentTool for StreamingEchoTool {
+    type Input = StreamingEchoToolInput;
+    type Output = String;
+
+    const NAME: &'static str = "streaming_echo";
+
+    fn supports_input_streaming() -> bool {
+        true
+    }
+
+    fn kind() -> acp::ToolKind {
+        acp::ToolKind::Other
+    }
+
+    fn initial_title(
+        &self,
+        _input: Result<Self::Input, serde_json::Value>,
+        _cx: &mut App,
+    ) -> SharedString {
+        "Streaming Echo".into()
+    }
+
+    fn run(
+        self: Arc<Self>,
+        mut input: ToolInput<Self::Input>,
+        _event_stream: ToolCallEventStream,
+        cx: &mut App,
+    ) -> Task<Result<String, String>> {
+        cx.spawn(async move |_cx| {
+            while input.recv_partial().await.is_some() {}
+            let input = input
+                .recv()
+                .await
+                .map_err(|e| format!("Failed to receive tool input: {e}"))?;
+            Ok(input.text)
+        })
+    }
+}
+
 /// A tool that echoes its input
 #[derive(JsonSchema, Serialize, Deserialize)]
 pub struct EchoToolInput {

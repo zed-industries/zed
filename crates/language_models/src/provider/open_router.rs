@@ -314,6 +314,10 @@ impl LanguageModel for OpenRouterLanguageModel {
         self.model.supports_tool_calls()
     }
 
+    fn supports_streaming_tools(&self) -> bool {
+        true
+    }
+
     fn supports_thinking(&self) -> bool {
         matches!(self.model.mode, OpenRouterModelMode::Thinking { .. })
     }
@@ -650,6 +654,23 @@ impl OpenRouterEventMapper {
                         entry.thought_signature = Some(signature);
                     }
                 }
+
+                if !entry.id.is_empty() && !entry.name.is_empty() {
+                    if let Ok(input) = serde_json::from_str::<serde_json::Value>(
+                        &partial_json_fixer::fix_json(&entry.arguments),
+                    ) {
+                        events.push(Ok(LanguageModelCompletionEvent::ToolUse(
+                            LanguageModelToolUse {
+                                id: entry.id.clone().into(),
+                                name: entry.name.as_str().into(),
+                                is_input_complete: false,
+                                input,
+                                raw_input: entry.arguments.clone(),
+                                thought_signature: entry.thought_signature.clone(),
+                            },
+                        )));
+                    }
+                }
             }
         }
 
@@ -889,7 +910,7 @@ mod tests {
             ResponseStreamEvent {
                 id: Some("response_123".into()),
                 created: 1234567890,
-                model: "google/gemini-3-pro-preview".into(),
+                model: "google/gemini-3.1-pro-preview".into(),
                 choices: vec![ChoiceDelta {
                     index: 0,
                     delta: ResponseMessageDelta {
@@ -914,7 +935,7 @@ mod tests {
             ResponseStreamEvent {
                 id: Some("response_123".into()),
                 created: 1234567890,
-                model: "google/gemini-3-pro-preview".into(),
+                model: "google/gemini-3.1-pro-preview".into(),
                 choices: vec![ChoiceDelta {
                     index: 0,
                     delta: ResponseMessageDelta {
@@ -940,7 +961,7 @@ mod tests {
             ResponseStreamEvent {
                 id: Some("response_123".into()),
                 created: 1234567890,
-                model: "google/gemini-3-pro-preview".into(),
+                model: "google/gemini-3.1-pro-preview".into(),
                 choices: vec![ChoiceDelta {
                     index: 0,
                     delta: ResponseMessageDelta {
@@ -967,7 +988,7 @@ mod tests {
             ResponseStreamEvent {
                 id: Some("response_123".into()),
                 created: 1234567890,
-                model: "google/gemini-3-pro-preview".into(),
+                model: "google/gemini-3.1-pro-preview".into(),
                 choices: vec![ChoiceDelta {
                     index: 0,
                     delta: ResponseMessageDelta {
