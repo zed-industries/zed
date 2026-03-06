@@ -777,13 +777,15 @@ impl Sidebar {
             .toggle_state(is_active_workspace)
             .focused(is_selected)
             .child(
-                h_flex().px_1().py_1p5().gap_0p5().child(label).child(
-                    div().visible_on_hover(group).child(
+                h_flex()
+                    .p_1()
+                    .gap_1p5()
+                    .child(
                         Icon::new(disclosure_icon)
                             .size(IconSize::Small)
-                            .color(Color::Muted),
-                    ),
-                ),
+                            .color(Color::Custom(cx.theme().colors().icon_muted.opacity(0.6))),
+                    )
+                    .child(label),
             )
             .end_hover_slot(
                 h_flex()
