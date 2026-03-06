@@ -11,6 +11,7 @@ pub(crate) mod connection_view;
 mod context;
 mod context_server_configuration;
 mod entry_view_state;
+mod external_source_prompt;
 mod favorite_models;
 mod inline_assistant;
 mod inline_prompt_editor;
@@ -66,6 +67,7 @@ use crate::agent_registry_ui::AgentRegistryPage;
 pub use crate::inline_assistant::InlineAssistant;
 pub use agent_diff::{AgentDiffPane, AgentDiffToolbar};
 pub(crate) use connection_view::ConnectionView;
+pub use external_source_prompt::ExternalSourcePrompt;
 pub(crate) use mode_selector::ModeSelector;
 pub(crate) use model_selector::ModelSelector;
 pub(crate) use model_selector_popover::ModelSelectorPopover;
@@ -250,6 +252,13 @@ pub enum AgentInitialContent {
         blocks: Vec<agent_client_protocol::ContentBlock>,
         auto_submit: bool,
     },
+    FromExternalSource(ExternalSourcePrompt),
+}
+
+impl From<ExternalSourcePrompt> for AgentInitialContent {
+    fn from(prompt: ExternalSourcePrompt) -> Self {
+        Self::FromExternalSource(prompt)
+    }
 }
 
 /// Opens the profile management interface for configuring agent tools and settings.

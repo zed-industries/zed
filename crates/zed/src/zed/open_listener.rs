@@ -1,5 +1,6 @@
 use crate::handle_open_request;
 use crate::restore_or_create_workspace;
+use agent_ui::ExternalSourcePrompt;
 use anyhow::{Context as _, Result, anyhow};
 use cli::{CliRequest, CliResponse, ipc::IpcSender};
 use cli::{IpcHandshake, ipc};
@@ -48,7 +49,7 @@ pub enum OpenRequestKind {
         extension_id: String,
     },
     AgentPanel {
-        initial_prompt: Option<String>,
+        external_source_prompt: Option<ExternalSourcePrompt>,
     },
     SharedAgentThread {
         session_id: String,
@@ -164,13 +165,14 @@ impl OpenRequest {
 
     fn parse_agent_url(&mut self, agent_path: &str) {
         // Format: "" or "?prompt=<text>"
-        let initial_prompt = agent_path.strip_prefix('?').and_then(|query| {
+        let external_source_prompt = agent_path.strip_prefix('?').and_then(|query| {
             url::form_urlencoded::parse(query.as_bytes())
                 .find_map(|(key, value)| (key == "prompt").then_some(value))
-                .filter(|s| !s.is_empty())
-                .map(|s| s.into_owned())
+                .and_then(|prompt| ExternalSourcePrompt::new(prompt.as_ref()))
         });
-        self.kind = Some(OpenRequestKind::AgentPanel { initial_prompt });
+        self.kind = Some(OpenRequestKind::AgentPanel {
+            external_source_prompt,
+        });
     }
 
     fn parse_git_clone_url(&mut self, clone_path: &str) -> Result<()> {
@@ -788,21 +790,30 @@ mod tests {
         });
 
         match request.kind {
-            Some(OpenRequestKind::AgentPanel { initial_prompt }) => {
-                assert_eq!(initial_prompt, None);
+            Some(OpenRequestKind::AgentPanel {
+                external_source_prompt,
+            }) => {
+                assert_eq!(external_source_prompt, None);
             }
             _ => panic!("Expected AgentPanel kind"),
         }
     }
 
+    fn agent_url_with_prompt(prompt: &str) -> String {
+        let mut serializer = url::form_urlencoded::Serializer::new("zed://agent?".to_string());
+        serializer.append_pair("prompt", prompt);
+        serializer.finish()
+    }
+
     #[gpui::test]
     fn test_parse_agent_url_with_prompt(cx: &mut TestAppContext) {
         let _app_state = init_test(cx);
+        let prompt = "Write me a script\nThanks";
 
         let request = cx.update(|cx| {
             OpenRequest::parse(
                 RawOpenRequest {
-                    urls: vec!["zed://agent?prompt=Write%20me%20a%20script%0AThanks".into()],
+                    urls: vec![agent_url_with_prompt(prompt)],
                     ..Default::default()
                 },
                 cx,
@@ -811,10 +822,14 @@ mod tests {
         });
 
         match request.kind {
-            Some(OpenRequestKind::AgentPanel { initial_prompt }) => {
+            Some(OpenRequestKind::AgentPanel {
+                external_source_prompt,
+            }) => {
                 assert_eq!(
-                    initial_prompt,
-                    Some("Write me a script\nThanks".to_string())
+                    external_source_prompt
+                        .as_ref()
+                        .map(ExternalSourcePrompt::as_str),
+                    Some("Write me a script\nThanks")
                 );
             }
             _ => panic!("Expected AgentPanel kind"),
@@ -828,7 +843,7 @@ mod tests {
         let request = cx.update(|cx| {
             OpenRequest::parse(
                 RawOpenRequest {
-                    urls: vec!["zed://agent?prompt=".into()],
+                    urls: vec![agent_url_with_prompt("")],
                     ..Default::default()
                 },
                 cx,
@@ -837,8 +852,10 @@ mod tests {
         });
 
         match request.kind {
-            Some(OpenRequestKind::AgentPanel { initial_prompt }) => {
-                assert_eq!(initial_prompt, None);
+            Some(OpenRequestKind::AgentPanel {
+                external_source_prompt,
+            }) => {
+                assert_eq!(external_source_prompt, None);
             }
             _ => panic!("Expected AgentPanel kind"),
         }
