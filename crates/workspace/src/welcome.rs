@@ -14,6 +14,8 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use ui::{ButtonLike, Divider, DividerColor, KeyBinding, Vector, VectorName, prelude::*};
 use util::ResultExt;
+use project::DisableAiSettings;
+use settings::Settings;
 use zed_actions::{Extensions, OpenOnboarding, OpenSettings, agent, command_palette};
 
 #[derive(PartialEq, Clone, Debug, Deserialize, Serialize, JsonSchema, Action)]
@@ -125,17 +127,21 @@ struct SectionEntry {
     icon: IconName,
     title: &'static str,
     action: &'static dyn Action,
+    visibility: Option<fn(&App) -> bool>,
 }
 
 impl SectionEntry {
-    fn render(&self, button_index: usize, focus: &FocusHandle, _cx: &App) -> impl IntoElement {
-        SectionButton::new(
+    fn render(&self, button_index: usize, focus: &FocusHandle, cx: &App) -> Option<impl IntoElement> {
+        if self.visibility.is_some_and(|is_visible| !is_visible(cx)) {
+            return None;
+        }
+        Some(SectionButton::new(
             self.title,
             self.icon,
             self.action,
             button_index,
             focus.clone(),
-        )
+        ))
     }
 }
 
@@ -147,21 +153,25 @@ const CONTENT: (Section<4>, Section<3>) = (
                 icon: IconName::Plus,
                 title: "New File",
                 action: &NewFile,
+                visibility: None,
             },
             SectionEntry {
                 icon: IconName::FolderOpen,
                 title: "Open Project",
                 action: &Open,
+                visibility: None,
             },
             SectionEntry {
                 icon: IconName::CloudDownload,
                 title: "Clone Repository",
                 action: &GitClone,
+                visibility: None,
             },
             SectionEntry {
                 icon: IconName::ListCollapse,
                 title: "Open Command Palette",
                 action: &command_palette::Toggle,
+                visibility: None,
             },
         ],
     },
@@ -172,11 +182,13 @@ const CONTENT: (Section<4>, Section<3>) = (
                 icon: IconName::Settings,
                 title: "Open Settings",
                 action: &OpenSettings,
+                visibility: None,
             },
             SectionEntry {
                 icon: IconName::ZedAssistant,
                 title: "View AI Settings",
                 action: &agent::OpenSettings,
+                visibility: Some(|cx| !DisableAiSettings::get_global(cx).disable_ai),
             },
             SectionEntry {
                 icon: IconName::Blocks,
@@ -185,6 +197,7 @@ const CONTENT: (Section<4>, Section<3>) = (
                     category_filter: None,
                     id: None,
                 },
+                visibility: None,
             },
         ],
     },
@@ -204,7 +217,7 @@ impl<const COLS: usize> Section<COLS> {
                 self.entries
                     .iter()
                     .enumerate()
-                    .map(|(index, entry)| entry.render(index_offset + index, focus, cx)),
+                    .filter_map(|(index, entry)| entry.render(index_offset + index, focus, cx)),
             )
     }
 }
