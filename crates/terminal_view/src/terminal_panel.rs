@@ -64,8 +64,13 @@ pub fn init(cx: &mut App) {
             });
             workspace.register_action(|workspace, _: &Toggle, window, cx| {
                 if is_enabled_in_workspace(workspace, cx) {
-                    if !workspace.toggle_panel_focus::<TerminalPanel>(window, cx) {
+                    if workspace
+                        .panel::<TerminalPanel>(cx)
+                        .is_some_and(|panel| panel.read(cx).is_active())
+                    {
                         workspace.close_panel::<TerminalPanel>(window, cx);
+                    } else {
+                        workspace.open_panel::<TerminalPanel>(window, cx);
                     }
                 }
             });
@@ -1086,6 +1091,10 @@ impl TerminalPanel {
         self.assistant_enabled
     }
 
+    pub fn is_active(&self) -> bool {
+        self.active
+    }
+
     /// Returns all panes in the terminal panel.
     pub fn panes(&self) -> Vec<&Entity<Pane>> {
         self.center.panes()
@@ -1898,6 +1907,130 @@ mod tests {
             result.is_ok(),
             "local terminal should successfully create in local project"
         );
+    }
+
+    #[gpui::test]
+    async fn test_toggle_shows_and_hides_terminal_panel_without_focus_toggle(
+        cx: &mut TestAppContext,
+    ) {
+        cx.executor().allow_parking();
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let window_handle =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project, window, cx));
+
+        let terminal_panel = window_handle
+            .update(cx, |multi_workspace, window, cx| {
+                multi_workspace.workspace().update(cx, |workspace, cx| {
+                    let terminal_panel = cx.new(|cx| TerminalPanel::new(workspace, window, cx));
+                    workspace.add_panel(terminal_panel.clone(), window, cx);
+                    terminal_panel
+                })
+            })
+            .unwrap();
+
+        assert!(
+            !terminal_panel.read_with(cx, |terminal_panel, _| terminal_panel.is_active()),
+            "terminal panel should start hidden in this test"
+        );
+
+        window_handle
+            .update(cx, |_, window, cx| {
+                window.dispatch_action(Toggle.boxed_clone(), cx);
+            })
+            .unwrap();
+        cx.run_until_parked();
+
+        assert!(
+            terminal_panel.read_with(cx, |terminal_panel, _| terminal_panel.is_active()),
+            "toggle should show the panel when hidden"
+        );
+
+        window_handle
+            .update(cx, |_, window, cx| {
+                window.dispatch_action(Toggle.boxed_clone(), cx);
+            })
+            .unwrap();
+        cx.run_until_parked();
+
+        assert!(
+            !terminal_panel.read_with(cx, |terminal_panel, _| terminal_panel.is_active()),
+            "toggle should hide the panel when shown"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_toggle_focus_keeps_focus_behavior_separate(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let window_handle =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project, window, cx));
+
+        let (terminal_panel, workspace) = window_handle
+            .update(cx, |multi_workspace, window, cx| {
+                let workspace = multi_workspace.workspace().clone();
+                let terminal_panel = workspace.update(cx, |workspace, cx| {
+                    let terminal_panel = cx.new(|cx| TerminalPanel::new(workspace, window, cx));
+                    workspace.add_panel(terminal_panel.clone(), window, cx);
+                    terminal_panel
+                });
+                (terminal_panel, workspace)
+            })
+            .unwrap();
+
+        assert!(
+            !terminal_panel.read_with(cx, |terminal_panel, _| terminal_panel.is_active()),
+            "terminal panel should start hidden in this test"
+        );
+
+        window_handle
+            .update(cx, |_, window, cx| {
+                window.dispatch_action(ToggleFocus.boxed_clone(), cx);
+            })
+            .unwrap();
+        cx.run_until_parked();
+
+        assert!(
+            terminal_panel.read_with(cx, |terminal_panel, _| terminal_panel.is_active()),
+            "toggle focus should show the panel"
+        );
+
+        window_handle
+            .update(cx, |_, window, cx| {
+                window.dispatch_action(ToggleFocus.boxed_clone(), cx);
+            })
+            .unwrap();
+        cx.run_until_parked();
+
+        let (panel_focused, center_focused) = window_handle
+            .update(cx, |_, window, cx| {
+                let panel_focused = terminal_panel.read_with(cx, |terminal_panel, cx| {
+                    terminal_panel.focus_handle(cx).contains_focused(window, cx)
+                });
+                let center_focused = workspace.read_with(cx, |workspace, cx| {
+                    workspace
+                        .active_pane()
+                        .focus_handle(cx)
+                        .contains_focused(window, cx)
+                });
+                (panel_focused, center_focused)
+            })
+            .unwrap();
+
+        assert!(
+            terminal_panel.read_with(cx, |terminal_panel, _| terminal_panel.is_active()),
+            "toggle focus should keep the panel open"
+        );
+        assert!(
+            !panel_focused,
+            "toggle focus should return focus to the center"
+        );
+        assert!(center_focused, "center pane should be focused");
     }
 
     fn set_max_tabs(cx: &mut TestAppContext, value: Option<usize>) {
