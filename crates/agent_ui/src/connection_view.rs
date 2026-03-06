@@ -399,7 +399,10 @@ impl ConnectionView {
 
 enum ServerState {
     Loading(Entity<LoadingView>),
-    LoadError(LoadError),
+    LoadError {
+        error: LoadError,
+        session_id: Option<acp::SessionId>,
+    },
     Connected(ConnectedServerState),
 }
 
@@ -430,6 +433,7 @@ impl AuthState {
 }
 
 struct LoadingView {
+    session_id: Option<acp::SessionId>,
     title: SharedString,
     _load_task: Task<()>,
     _update_title_task: Task<anyhow::Result<()>>,
@@ -572,12 +576,18 @@ impl ConnectionView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> ServerState {
+        let session_id = resume_thread
+            .as_ref()
+            .map(|thread| thread.session_id.clone());
         if project.read(cx).is_via_collab()
             && agent.clone().downcast::<NativeAgentServer>().is_none()
         {
-            return ServerState::LoadError(LoadError::Other(
-                "External agents are not yet supported in shared projects.".into(),
-            ));
+            return ServerState::LoadError {
+                error: LoadError::Other(
+                    "External agents are not yet supported in shared projects.".into(),
+                ),
+                session_id,
+            };
         }
         let mut worktrees = project.read(cx).visible_worktrees(cx).collect::<Vec<_>>();
         // Pick the first non-single-file worktree for the root directory if there are any,
@@ -633,17 +643,18 @@ impl ConnectionView {
         );
 
         let connect_task = agent.connect(delegate, cx);
+        let load_session_id = session_id.clone();
         let load_task = cx.spawn_in(window, async move |this, cx| {
             let connection = match connect_task.await {
                 Ok(connection) => connection,
                 Err(err) => {
                     this.update_in(cx, |this, window, cx| {
                         if err.downcast_ref::<LoadError>().is_some() {
-                            this.handle_load_error(err, window, cx);
+                            this.handle_load_error(load_session_id.clone(), err, window, cx);
                         } else if let Some(active) = this.active_thread() {
                             active.update(cx, |active, cx| active.handle_thread_error(err, cx));
                         } else {
-                            this.handle_load_error(err, window, cx);
+                            this.handle_load_error(load_session_id.clone(), err, window, cx);
                         }
                         cx.notify();
                     })
@@ -756,7 +767,7 @@ impl ConnectionView {
                         );
                     }
                     Err(err) => {
-                        this.handle_load_error(err, window, cx);
+                        this.handle_load_error(load_session_id.clone(), err, window, cx);
                     }
                 };
             })
@@ -792,6 +803,7 @@ impl ConnectionView {
             });
 
             LoadingView {
+                session_id,
                 title: "Loading…".into(),
                 _load_task: load_task,
                 _update_title_task: update_title_task,
@@ -1086,6 +1098,7 @@ impl ConnectionView {
 
     fn handle_load_error(
         &mut self,
+        session_id: Option<acp::SessionId>,
         err: anyhow::Error,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -1106,7 +1119,13 @@ impl ConnectionView {
             LoadError::Other(format!("{:#}", err).into())
         };
         self.emit_load_error_telemetry(&load_error);
-        self.set_server_state(ServerState::LoadError(load_error), cx);
+        self.set_server_state(
+            ServerState::LoadError {
+                error: load_error,
+                session_id,
+            },
+            cx,
+        );
     }
 
     fn handle_agent_servers_updated(
@@ -1121,7 +1140,7 @@ impl ConnectionView {
         // This handles the case where a thread is restored before authentication completes.
         let should_retry = match &self.server_state {
             ServerState::Loading(_) => false,
-            ServerState::LoadError(_) => true,
+            ServerState::LoadError { .. } => true,
             ServerState::Connected(connected) => {
                 connected.auth_state.is_ok() && connected.has_thread_error(cx)
             }
@@ -1145,7 +1164,7 @@ impl ConnectionView {
         match &self.server_state {
             ServerState::Connected(_) => "New Thread".into(),
             ServerState::Loading(loading_view) => loading_view.read(cx).title.clone(),
-            ServerState::LoadError(error) => match error {
+            ServerState::LoadError { error, .. } => match error {
                 LoadError::Unsupported { .. } => format!("Upgrade {}", self.agent.name()).into(),
                 LoadError::FailedToInstall(_) => {
                     format!("Failed to Install {}", self.agent.name()).into()
@@ -1161,6 +1180,17 @@ impl ConnectionView {
             active.update(cx, |active, cx| {
                 active.cancel_generation(cx);
             });
+        }
+    }
+
+    // The parent ID is None if we haven't created a thread yet
+    pub fn parent_id(&self, cx: &App) -> Option<acp::SessionId> {
+        match &self.server_state {
+            ServerState::Connected(_) => self
+                .parent_thread(cx)
+                .map(|thread| thread.read(cx).id.clone()),
+            ServerState::Loading(loading) => loading.read(cx).session_id.clone(),
+            ServerState::LoadError { session_id, .. } => session_id.clone(),
         }
     }
 
@@ -1361,7 +1391,13 @@ impl ConnectionView {
                         self.focus_handle.focus(window, cx)
                     }
                 }
-                self.set_server_state(ServerState::LoadError(error.clone()), cx);
+                self.set_server_state(
+                    ServerState::LoadError {
+                        error: error.clone(),
+                        session_id: Some(thread_id),
+                    },
+                    cx,
+                );
             }
             AcpThreadEvent::TitleUpdated => {
                 let title = thread.read(cx).title();
@@ -2635,7 +2671,7 @@ impl Render for ConnectionView {
                     .flex_1()
                     // .child(self.render_recent_history(cx))
                     .into_any(),
-                ServerState::LoadError(e) => v_flex()
+                ServerState::LoadError { error: e, .. } => v_flex()
                     .flex_1()
                     .size_full()
                     .items_center()
@@ -3126,7 +3162,10 @@ pub(crate) mod tests {
                 "Tab title should show the agent name with an error prefix"
             );
             match &view.server_state {
-                ServerState::LoadError(LoadError::Other(msg)) => {
+                ServerState::LoadError {
+                    error: LoadError::Other(msg),
+                    ..
+                } => {
                     assert!(
                         msg.contains("Invalid gzip header"),
                         "Error callout should contain the underlying extraction error, got: {msg}"
@@ -3136,7 +3175,7 @@ pub(crate) mod tests {
                     "Expected LoadError::Other, got: {}",
                     match other {
                         ServerState::Loading(_) => "Loading (stuck!)",
-                        ServerState::LoadError(_) => "LoadError (wrong variant)",
+                        ServerState::LoadError { .. } => "LoadError (wrong variant)",
                         ServerState::Connected(_) => "Connected",
                     }
                 ),
