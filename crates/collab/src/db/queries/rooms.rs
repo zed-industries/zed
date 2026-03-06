@@ -738,7 +738,7 @@ impl Database {
                     while let Some(db_status) = db_statuses.next().await {
                         let db_status: project_repository_statuses::Model = db_status?;
                         if db_status.is_deleted {
-                            removed_statuses.push(db_status.repo_path);
+                            removed_statuses.push(db_status.repo_path.clone());
                         } else {
                             updated_statuses.push(db_status_to_proto(db_status)?);
                         }

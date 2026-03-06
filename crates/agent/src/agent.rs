@@ -1490,16 +1490,6 @@ impl NativeAgentSessionList {
         }
     }
 
-    fn to_session_info(entry: DbThreadMetadata) -> AgentSessionInfo {
-        AgentSessionInfo {
-            session_id: entry.id,
-            cwd: None,
-            title: Some(entry.title),
-            updated_at: Some(entry.updated_at),
-            meta: None,
-        }
-    }
-
     pub fn thread_store(&self) -> &Entity<ThreadStore> {
         &self.thread_store
     }
@@ -1515,7 +1505,7 @@ impl AgentSessionList for NativeAgentSessionList {
             .thread_store
             .read(cx)
             .entries()
-            .map(Self::to_session_info)
+            .map(|entry| AgentSessionInfo::from(&entry))
             .collect();
         Task::ready(Ok(AgentSessionListResponse::new(sessions)))
     }
@@ -1639,6 +1629,16 @@ impl NativeThreadEnvironment {
             agent.register_session(subagent_thread.clone(), cx)
         })?;
 
+        let depth = current_depth + 1;
+
+        telemetry::event!(
+            "Subagent Started",
+            session = parent_thread_entity.read(cx).id().to_string(),
+            subagent_session = session_id.to_string(),
+            depth,
+            is_resumed = false,
+        );
+
         self.prompt_subagent(session_id, subagent_thread, acp_thread)
     }
 
@@ -1654,6 +1654,18 @@ impl NativeThreadEnvironment {
                 .ok_or_else(|| anyhow!("No subagent session found with id {session_id}"))?;
             anyhow::Ok((session.thread.clone(), session.acp_thread.clone()))
         })??;
+
+        let depth = subagent_thread.read(cx).depth();
+
+        if let Some(parent_thread_entity) = self.thread.upgrade() {
+            telemetry::event!(
+                "Subagent Started",
+                session = parent_thread_entity.read(cx).id().to_string(),
+                subagent_session = session_id.to_string(),
+                depth,
+                is_resumed = true,
+            );
+        }
 
         self.prompt_subagent(session_id, subagent_thread, acp_thread)
     }

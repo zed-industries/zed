@@ -1452,6 +1452,7 @@ impl Thread {
         self.add_tool(StreamingEditFileTool::new(
             self.project.clone(),
             cx.weak_entity(),
+            self.action_log.clone(),
             language_registry,
         ));
         self.add_tool(FetchTool::new(self.project.read(cx).client().http_client()));
@@ -1917,6 +1918,19 @@ impl Thread {
             // that need their own permits.
             drop(events);
 
+            // Drop streaming tool input senders that never received their final input.
+            // This prevents deadlock when the LLM stream ends (e.g. because of an error)
+            // before sending a tool use with `is_input_complete: true`.
+            this.update(cx, |this, _cx| {
+                if let Some(running_turn) = this.running_turn.as_mut() {
+                    if running_turn.streaming_tool_inputs.is_empty() {
+                        return;
+                    }
+                    log::warn!("Dropping partial tool inputs because the stream ended");
+                    running_turn.streaming_tool_inputs.drain();
+                }
+            })?;
+
             let end_turn = tool_results.is_empty();
             while let Some(tool_result) = tool_results.next().await {
                 log::debug!("Tool finished {:?}", tool_result);
@@ -2335,20 +2349,18 @@ impl Thread {
     ) {
         // Ensure the last message ends in the current tool use
         let last_message = self.pending_message();
-        let push_new_tool_use = last_message.content.last_mut().is_none_or(|content| {
+
+        let has_tool_use = last_message.content.iter_mut().rev().any(|content| {
             if let AgentMessageContent::ToolUse(last_tool_use) = content {
                 if last_tool_use.id == tool_use.id {
                     *last_tool_use = tool_use.clone();
-                    false
-                } else {
-                    true
+                    return true;
                 }
-            } else {
-                true
             }
+            false
         });
 
-        if push_new_tool_use {
+        if !has_tool_use {
             event_stream.send_tool_call(
                 &tool_use.id,
                 &tool_use.name,
@@ -3020,7 +3032,7 @@ impl<T: DeserializeOwned> ToolInput<T> {
         let value = self
             .final_rx
             .await
-            .map_err(|_| anyhow!("tool input sender was dropped before sending final input"))?;
+            .map_err(|_| anyhow!("tool input was not fully received"))?;
         serde_json::from_value(value).map_err(Into::into)
     }
 

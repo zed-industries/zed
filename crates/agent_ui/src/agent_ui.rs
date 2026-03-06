@@ -3,6 +3,7 @@ mod agent_diff;
 mod agent_model_selector;
 mod agent_panel;
 mod agent_registry_ui;
+mod branch_names;
 mod buffer_codegen;
 mod completion_provider;
 mod config_options;
@@ -24,6 +25,8 @@ mod slash_command;
 mod slash_command_picker;
 mod terminal_codegen;
 mod terminal_inline_assistant;
+#[cfg(any(test, feature = "test-support"))]
+pub mod test_support;
 mod text_thread_editor;
 mod text_thread_history;
 mod thread_history;

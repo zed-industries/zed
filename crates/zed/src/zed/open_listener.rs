@@ -110,8 +110,6 @@ impl OpenRequest {
                 this.kind = Some(OpenRequestKind::Extension {
                     extension_id: extension_id.to_string(),
                 });
-            } else if let Some(agent_path) = url.strip_prefix("zed://agent") {
-                this.parse_agent_url(agent_path)
             } else if let Some(session_id_str) = url.strip_prefix("zed://agent/shared/") {
                 if uuid::Uuid::parse_str(session_id_str).is_ok() {
                     this.kind = Some(OpenRequestKind::SharedAgentThread {
@@ -120,6 +118,8 @@ impl OpenRequest {
                 } else {
                     log::error!("Invalid session ID in URL: {}", session_id_str);
                 }
+            } else if let Some(agent_path) = url.strip_prefix("zed://agent") {
+                this.parse_agent_url(agent_path)
             } else if let Some(schema_path) = url.strip_prefix("zed://schemas/") {
                 this.kind = Some(OpenRequestKind::BuiltinJsonSchema {
                     schema_path: schema_path.to_string(),
@@ -770,6 +770,122 @@ mod tests {
             })
         );
         assert_eq!(request.open_paths, vec!["/"]);
+    }
+
+    #[gpui::test]
+    fn test_parse_agent_url(cx: &mut TestAppContext) {
+        let _app_state = init_test(cx);
+
+        let request = cx.update(|cx| {
+            OpenRequest::parse(
+                RawOpenRequest {
+                    urls: vec!["zed://agent".into()],
+                    ..Default::default()
+                },
+                cx,
+            )
+            .unwrap()
+        });
+
+        match request.kind {
+            Some(OpenRequestKind::AgentPanel { initial_prompt }) => {
+                assert_eq!(initial_prompt, None);
+            }
+            _ => panic!("Expected AgentPanel kind"),
+        }
+    }
+
+    #[gpui::test]
+    fn test_parse_agent_url_with_prompt(cx: &mut TestAppContext) {
+        let _app_state = init_test(cx);
+
+        let request = cx.update(|cx| {
+            OpenRequest::parse(
+                RawOpenRequest {
+                    urls: vec!["zed://agent?prompt=Write%20me%20a%20script%0AThanks".into()],
+                    ..Default::default()
+                },
+                cx,
+            )
+            .unwrap()
+        });
+
+        match request.kind {
+            Some(OpenRequestKind::AgentPanel { initial_prompt }) => {
+                assert_eq!(
+                    initial_prompt,
+                    Some("Write me a script\nThanks".to_string())
+                );
+            }
+            _ => panic!("Expected AgentPanel kind"),
+        }
+    }
+
+    #[gpui::test]
+    fn test_parse_agent_url_with_empty_prompt(cx: &mut TestAppContext) {
+        let _app_state = init_test(cx);
+
+        let request = cx.update(|cx| {
+            OpenRequest::parse(
+                RawOpenRequest {
+                    urls: vec!["zed://agent?prompt=".into()],
+                    ..Default::default()
+                },
+                cx,
+            )
+            .unwrap()
+        });
+
+        match request.kind {
+            Some(OpenRequestKind::AgentPanel { initial_prompt }) => {
+                assert_eq!(initial_prompt, None);
+            }
+            _ => panic!("Expected AgentPanel kind"),
+        }
+    }
+
+    #[gpui::test]
+    fn test_parse_shared_agent_thread_url(cx: &mut TestAppContext) {
+        let _app_state = init_test(cx);
+        let session_id = "123e4567-e89b-12d3-a456-426614174000";
+
+        let request = cx.update(|cx| {
+            OpenRequest::parse(
+                RawOpenRequest {
+                    urls: vec![format!("zed://agent/shared/{session_id}")],
+                    ..Default::default()
+                },
+                cx,
+            )
+            .unwrap()
+        });
+
+        match request.kind {
+            Some(OpenRequestKind::SharedAgentThread {
+                session_id: parsed_session_id,
+            }) => {
+                assert_eq!(parsed_session_id, session_id);
+            }
+            _ => panic!("Expected SharedAgentThread kind"),
+        }
+    }
+
+    #[gpui::test]
+    fn test_parse_shared_agent_thread_url_with_invalid_uuid(cx: &mut TestAppContext) {
+        let _app_state = init_test(cx);
+
+        let request = cx.update(|cx| {
+            OpenRequest::parse(
+                RawOpenRequest {
+                    urls: vec!["zed://agent/shared/not-a-uuid".into()],
+                    ..Default::default()
+                },
+                cx,
+            )
+            .unwrap()
+        });
+
+        assert!(request.kind.is_none());
     }
 
     #[gpui::test]

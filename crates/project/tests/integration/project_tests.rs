@@ -31,7 +31,7 @@ use futures::{StreamExt, future};
 use git::{
     GitHostingProviderRegistry,
     repository::{RepoPath, repo_path},
-    status::{FileStatus, StatusCode, TrackedStatus},
+    status::{DiffStat, FileStatus, StatusCode, TrackedStatus},
 };
 use git2::RepositoryInitOptions;
 use gpui::{
@@ -9253,14 +9253,23 @@ async fn test_git_repository_status(cx: &mut gpui::TestAppContext) {
                 StatusEntry {
                     repo_path: repo_path("a.txt"),
                     status: StatusCode::Modified.worktree(),
+                    diff_stat: Some(DiffStat {
+                        added: 1,
+                        deleted: 1,
+                    }),
                 },
                 StatusEntry {
                     repo_path: repo_path("b.txt"),
                     status: FileStatus::Untracked,
+                    diff_stat: None,
                 },
                 StatusEntry {
                     repo_path: repo_path("d.txt"),
                     status: StatusCode::Deleted.worktree(),
+                    diff_stat: Some(DiffStat {
+                        added: 0,
+                        deleted: 1,
+                    }),
                 },
             ]
         );
@@ -9282,18 +9291,31 @@ async fn test_git_repository_status(cx: &mut gpui::TestAppContext) {
                 StatusEntry {
                     repo_path: repo_path("a.txt"),
                     status: StatusCode::Modified.worktree(),
+                    diff_stat: Some(DiffStat {
+                        added: 1,
+                        deleted: 1,
+                    }),
                 },
                 StatusEntry {
                     repo_path: repo_path("b.txt"),
                     status: FileStatus::Untracked,
+                    diff_stat: None,
                 },
                 StatusEntry {
                     repo_path: repo_path("c.txt"),
                     status: StatusCode::Modified.worktree(),
+                    diff_stat: Some(DiffStat {
+                        added: 1,
+                        deleted: 1,
+                    }),
                 },
                 StatusEntry {
                     repo_path: repo_path("d.txt"),
                     status: StatusCode::Deleted.worktree(),
+                    diff_stat: Some(DiffStat {
+                        added: 0,
+                        deleted: 1,
+                    }),
                 },
             ]
         );
@@ -9327,6 +9349,10 @@ async fn test_git_repository_status(cx: &mut gpui::TestAppContext) {
             [StatusEntry {
                 repo_path: repo_path("a.txt"),
                 status: StatusCode::Deleted.worktree(),
+                diff_stat: Some(DiffStat {
+                    added: 0,
+                    deleted: 1,
+                }),
             }]
         );
     });
@@ -9391,6 +9417,7 @@ async fn test_git_status_postprocessing(cx: &mut gpui::TestAppContext) {
                     worktree_status: StatusCode::Added
                 }
                 .into(),
+                diff_stat: None,
             }]
         )
     });
@@ -9593,6 +9620,10 @@ async fn test_repository_pending_ops_staging(
                     worktree_status: StatusCode::Unmodified
                 }
                 .into(),
+                diff_stat: Some(DiffStat {
+                    added: 1,
+                    deleted: 0,
+                }),
             }]
         );
     });
@@ -9699,6 +9730,10 @@ async fn test_repository_pending_ops_long_running_staging(
                     worktree_status: StatusCode::Unmodified
                 }
                 .into(),
+                diff_stat: Some(DiffStat {
+                    added: 1,
+                    deleted: 0,
+                }),
             }]
         );
     });
@@ -9823,10 +9858,12 @@ async fn test_repository_pending_ops_stage_all(
                 StatusEntry {
                     repo_path: repo_path("a.txt"),
                     status: FileStatus::Untracked,
+                    diff_stat: None,
                 },
                 StatusEntry {
                     repo_path: repo_path("b.txt"),
                     status: FileStatus::Untracked,
+                    diff_stat: None,
                 },
             ]
         );

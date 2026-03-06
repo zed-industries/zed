@@ -954,6 +954,7 @@ struct RunningTurn {
 pub struct AcpThread {
     parent_session_id: Option<acp::SessionId>,
     title: SharedString,
+    provisional_title: Option<SharedString>,
     entries: Vec<AgentThreadEntry>,
     plan: Plan,
     project: Entity<Project>,
@@ -1199,6 +1200,7 @@ impl AcpThread {
             entries: Default::default(),
             plan: Default::default(),
             title: title.into(),
+            provisional_title: None,
             project,
             running_turn: None,
             turn_id: 0,
@@ -1253,7 +1255,9 @@ impl AcpThread {
     }
 
     pub fn title(&self) -> SharedString {
-        self.title.clone()
+        self.provisional_title
+            .clone()
+            .unwrap_or_else(|| self.title.clone())
     }
 
     pub fn entries(&self) -> &[AgentThreadEntry] {
@@ -1505,14 +1509,27 @@ impl AcpThread {
     }
 
     pub fn set_title(&mut self, title: SharedString, cx: &mut Context<Self>) -> Task<Result<()>> {
+        let had_provisional = self.provisional_title.take().is_some();
         if title != self.title {
             self.title = title.clone();
             cx.emit(AcpThreadEvent::TitleUpdated);
             if let Some(set_title) = self.connection.set_title(&self.session_id, cx) {
                 return set_title.run(title, cx);
             }
+        } else if had_provisional {
+            cx.emit(AcpThreadEvent::TitleUpdated);
         }
         Task::ready(Ok(()))
+    }
+
+    /// Sets a provisional display title without propagating back to the
+    /// underlying agent connection. This is used for quick preview titles
+    /// (e.g. first 20 chars of the user message) that should be shown
+    /// immediately but replaced once the LLM generates a proper title via
+    /// `set_title`.
+    pub fn set_provisional_title(&mut self, title: SharedString, cx: &mut Context<Self>) {
+        self.provisional_title = Some(title);
+        cx.emit(AcpThreadEvent::TitleUpdated);
     }
 
     pub fn subagent_spawned(&mut self, session_id: acp::SessionId, cx: &mut Context<Self>) {
@@ -3916,6 +3933,7 @@ mod tests {
     struct FakeAgentConnection {
         auth_methods: Vec<acp::AuthMethod>,
         sessions: Arc<parking_lot::Mutex<HashMap<acp::SessionId, WeakEntity<AcpThread>>>>,
+        set_title_calls: Rc<RefCell<Vec<SharedString>>>,
         on_user_message: Option<
             Rc<
                 dyn Fn(
@@ -3934,6 +3952,7 @@ mod tests {
                 auth_methods: Vec::new(),
                 on_user_message: None,
                 sessions: Arc::default(),
+                set_title_calls: Default::default(),
             }
         }
 
@@ -4038,8 +4057,29 @@ mod tests {
             }))
         }
 
+        fn set_title(
+            &self,
+            _session_id: &acp::SessionId,
+            _cx: &App,
+        ) -> Option<Rc<dyn AgentSessionSetTitle>> {
+            Some(Rc::new(FakeAgentSessionSetTitle {
+                calls: self.set_title_calls.clone(),
+            }))
+        }
+
         fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
             self
+        }
+    }
+
+    struct FakeAgentSessionSetTitle {
+        calls: Rc<RefCell<Vec<SharedString>>>,
+    }
+
+    impl AgentSessionSetTitle for FakeAgentSessionSetTitle {
+        fn run(&self, title: SharedString, _cx: &mut App) -> Task<Result<()>> {
+            self.calls.borrow_mut().push(title);
+            Task::ready(Ok(()))
         }
     }
 
@@ -4633,5 +4673,55 @@ mod tests {
                 tool_entry.status
             );
         });
+    }
+
+    #[gpui::test]
+    async fn test_provisional_title_replaced_by_real_title(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let connection = Rc::new(FakeAgentConnection::new());
+        let set_title_calls = connection.set_title_calls.clone();
+
+        let thread = cx
+            .update(|cx| connection.new_session(project, Path::new(path!("/test")), cx))
+            .await
+            .unwrap();
+
+        // Initial title is the default.
+        thread.read_with(cx, |thread, _| {
+            assert_eq!(thread.title().as_ref(), "Test");
+        });
+
+        // Setting a provisional title updates the display title.
+        thread.update(cx, |thread, cx| {
+            thread.set_provisional_title("Hello, can you help…".into(), cx);
+        });
+        thread.read_with(cx, |thread, _| {
+            assert_eq!(thread.title().as_ref(), "Hello, can you help…");
+        });
+
+        // The provisional title should NOT have propagated to the connection.
+        assert_eq!(
+            set_title_calls.borrow().len(),
+            0,
+            "provisional title should not propagate to the connection"
+        );
+
+        // When the real title arrives via set_title, it replaces the
+        // provisional title and propagates to the connection.
+        let task = thread.update(cx, |thread, cx| {
+            thread.set_title("Helping with Rust question".into(), cx)
+        });
+        task.await.expect("set_title should succeed");
+        thread.read_with(cx, |thread, _| {
+            assert_eq!(thread.title().as_ref(), "Helping with Rust question");
+        });
+        assert_eq!(
+            set_title_calls.borrow().as_slice(),
+            &[SharedString::from("Helping with Rust question")],
+            "real title should propagate to the connection"
+        );
     }
 }
