@@ -27,25 +27,6 @@ use workspace::{
 };
 use zed_actions::editor::{MoveDown, MoveUp};
 
-/*
- * 1. Selection states are all messy
- *  - Semantic Selection Target ("selecting a project") or ("selecting a thread") (so that we can maintain coherence across changes)
- *  - But we also want to easily convert that target, to an index (up/down needs indexing behavior)
- *  - We need to go through these interactions, and make sure that the selection and timing behavior works.
- *  - Solution:
- *      - 2 indicators, one for "selection" and one for "active"
- *      - Active (dark grey):
- *          - Thread that is showing in the current agent panel
- *          - If no thread in the agent panel (OR focused on a new thread?), focus the header
- *          - When does this change?
- *              - When the active thread changes
- *              - When you change workspaces in the multi workspace
- *      - Selected (blue border):
- *          - When active changes, selected changes
- *          - When keyboard navigating, selected changes
- *          - (Also only shows on focus)
- *      - Hovered (light grey): Mouse over
- */
 actions!(
     agents_sidebar,
     [
