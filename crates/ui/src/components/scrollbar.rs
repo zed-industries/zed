@@ -1053,8 +1053,6 @@ impl PartialEq for ScrollbarLayout {
 
         thumb_offset == other_thumb_offset
             && self.thumb_bounds.size.along(axis) == other.thumb_bounds.size.along(axis)
-            && self.track_bounds.size.along(axis) == other.track_bounds.size.along(axis)
-            && self.reserved_space == other.reserved_space
     }
 }
 
