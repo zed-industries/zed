@@ -470,12 +470,12 @@ mod test {
         "},
             Mode::Normal,
         );
-        cx.simulate_keystrokes("y y j \" _ d d . shift-p");
+        cx.simulate_keystrokes("y y j \" _ d d . p");
         cx.assert_state(
             indoc! {"
             tocopytext
-            ˇtocopytext
             3
+            ˇtocopytext
         "},
             Mode::Normal,
         );
