@@ -58,10 +58,9 @@ pub struct TerminalOutput {
     /// Alacritty terminal instance that manages the terminal state and content.
     handler: alacritty_terminal::Term<VoidListener>,
     scroll_handle: ScrollHandle,
-    /// Created lazily on first render (requires `Context<Self>`).
-    focus_handle: Option<FocusHandle>,
+    focus_handle: FocusHandle,
     scroll_active: bool,
-    _focus_subscription: Option<Subscription>,
+    _focus_subscription: Subscription,
 }
 
 /// Returns the default text style for the terminal output.
@@ -171,21 +170,27 @@ impl TerminalOutput {
     /// This method initializes a new terminal emulator with default configuration
     /// and sets up the necessary components for handling terminal events and rendering.
     ///
-    pub fn new(window: &mut Window, cx: &mut App) -> Self {
+    pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let term = alacritty_terminal::Term::new(
             Config::default(),
             &terminal_size(window, cx),
             VoidListener,
         );
 
+        let focus_handle = cx.focus_handle();
+        let focus_subscription = cx.on_focus_out(&focus_handle, window, |this, _, _, cx| {
+            this.scroll_active = false;
+            cx.notify();
+        });
+
         Self {
             parser: Processor::new(),
             handler: term,
             full_buffer: None,
             scroll_handle: ScrollHandle::new(),
-            focus_handle: None,
+            focus_handle,
             scroll_active: false,
-            _focus_subscription: None,
+            _focus_subscription: focus_subscription,
         }
     }
 
@@ -201,7 +206,7 @@ impl TerminalOutput {
     /// # Returns
     ///
     /// A new instance of `TerminalOutput` containing the provided text.
-    pub fn from(text: &str, window: &mut Window, cx: &mut App) -> Self {
+    pub fn from(text: &str, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let mut output = Self::new(window, cx);
         output.append_text(text, cx);
         output
@@ -358,17 +363,19 @@ mod tests {
     fn test_full_text_preserves_all_lines_beyond_max_lines(cx: &mut TestAppContext) {
         let cx = init_test(cx);
         cx.update(|window, cx| {
-            let mut output = TerminalOutput::new(window, cx);
-            // Default max_lines is 32; generate 50 lines to exceed it.
-            let lines: Vec<String> = (0..50).map(|i| format!("Line {i}")).collect();
-            output.append_text(&lines.join("\n"), cx);
+            let output = cx.new(|cx| TerminalOutput::new(window, cx));
+            output.update(cx, |output, cx| {
+                // Default max_lines is 32; generate 50 lines to exceed it.
+                let lines: Vec<String> = (0..50).map(|i| format!("Line {i}")).collect();
+                output.append_text(&lines.join("\n"), cx);
 
-            let text = output.full_text();
-            assert!(
-                text.contains("Line 0"),
-                "first line should be preserved in scrollback"
-            );
-            assert!(text.contains("Line 49"), "last line should be preserved");
+                let text = output.full_text();
+                assert!(
+                    text.contains("Line 0"),
+                    "first line should be preserved in scrollback"
+                );
+                assert!(text.contains("Line 49"), "last line should be preserved");
+            });
         });
     }
 
@@ -383,30 +390,20 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_focus_handle_not_created_until_render(cx: &mut TestAppContext) {
-        let cx = init_test(cx);
-        cx.update(|window, cx| {
-            let output = TerminalOutput::new(window, cx);
-            assert!(
-                output.focus_handle.is_none(),
-                "focus_handle should be None before first render"
-            );
-        });
-    }
-
-    #[gpui::test]
     fn test_streaming_append_accumulates_content(cx: &mut TestAppContext) {
         let cx = init_test(cx);
         cx.update(|window, cx| {
-            let mut output = TerminalOutput::new(window, cx);
-            output.append_text("Hello,", cx);
-            output.append_text(" world!", cx);
+            let output = cx.new(|cx| TerminalOutput::new(window, cx));
+            output.update(cx, |output, cx| {
+                output.append_text("Hello,", cx);
+                output.append_text(" world!", cx);
 
-            let text = output.full_text();
-            assert!(
-                text.contains("Hello, world!"),
-                "streaming appends should concatenate: got {text:?}"
-            );
+                let text = output.full_text();
+                assert!(
+                    text.contains("Hello, world!"),
+                    "streaming appends should concatenate: got {text:?}"
+                );
+            });
         });
     }
 
@@ -414,15 +411,17 @@ mod tests {
     fn test_append_empty_string_is_noop(cx: &mut TestAppContext) {
         let cx = init_test(cx);
         cx.update(|window, cx| {
-            let mut output = TerminalOutput::new(window, cx);
-            output.append_text("first line", cx);
-            let before = output.full_text();
-            output.append_text("", cx);
-            let after = output.full_text();
-            assert_eq!(
-                before, after,
-                "appending empty string should not change output"
-            );
+            let output = cx.new(|cx| TerminalOutput::new(window, cx));
+            output.update(cx, |output, cx| {
+                output.append_text("first line", cx);
+                let before = output.full_text();
+                output.append_text("", cx);
+                let after = output.full_text();
+                assert_eq!(
+                    before, after,
+                    "appending empty string should not change output"
+                );
+            });
         });
     }
 
@@ -430,9 +429,9 @@ mod tests {
     fn test_empty_output_produces_empty_text(cx: &mut TestAppContext) {
         let cx = init_test(cx);
         cx.update(|window, cx| {
-            let output = TerminalOutput::new(window, cx);
+            let output = cx.new(|cx| TerminalOutput::new(window, cx));
             assert!(
-                output.full_text().is_empty(),
+                output.read(cx).full_text().is_empty(),
                 "new output should have empty text"
             );
         });
@@ -442,17 +441,19 @@ mod tests {
     fn test_multiline_append_preserves_line_order(cx: &mut TestAppContext) {
         let cx = init_test(cx);
         cx.update(|window, cx| {
-            let mut output = TerminalOutput::new(window, cx);
-            output.append_text("alpha\nbeta\ngamma", cx);
+            let output = cx.new(|cx| TerminalOutput::new(window, cx));
+            output.update(cx, |output, cx| {
+                output.append_text("alpha\nbeta\ngamma", cx);
 
-            let text = output.full_text();
-            let alpha_pos = text.find("alpha").expect("should contain alpha");
-            let beta_pos = text.find("beta").expect("should contain beta");
-            let gamma_pos = text.find("gamma").expect("should contain gamma");
-            assert!(
-                alpha_pos < beta_pos && beta_pos < gamma_pos,
-                "lines should appear in order: {text:?}"
-            );
+                let text = output.full_text();
+                let alpha_pos = text.find("alpha").expect("should contain alpha");
+                let beta_pos = text.find("beta").expect("should contain beta");
+                let gamma_pos = text.find("gamma").expect("should contain gamma");
+                assert!(
+                    alpha_pos < beta_pos && beta_pos < gamma_pos,
+                    "lines should appear in order: {text:?}"
+                );
+            });
         });
     }
 }
@@ -530,15 +531,7 @@ impl Render for TerminalOutput {
         let Some(max_height) = output_max_height.filter(|&max_h| content_height > max_h) else {
             return canvas_element.into_any_element();
         };
-        if self.focus_handle.is_none() {
-            let handle = cx.focus_handle();
-            self._focus_subscription = Some(cx.on_focus_out(&handle, window, |this, _, _, cx| {
-                this.scroll_active = false;
-                cx.notify();
-            }));
-            self.focus_handle = Some(handle);
-        }
-        let focus_handle = self.focus_handle.clone().expect("initialized above");
+        let focus_handle = self.focus_handle.clone();
 
         let max_offset = self.scroll_handle.max_offset();
         let offset = self.scroll_handle.offset();
@@ -592,9 +585,7 @@ impl Render for TerminalOutput {
                             MouseButton::Left,
                             cx.listener(|this, _, window, cx| {
                                 this.scroll_active = true;
-                                if let Some(handle) = &this.focus_handle {
-                                    handle.focus(window, cx);
-                                }
+                                this.focus_handle.focus(window, cx);
                                 cx.notify();
                             }),
                         )
