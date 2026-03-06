@@ -568,7 +568,7 @@ async fn test_context_server_respects_disable_ai(cx: &mut TestAppContext) {
         // Set disable_ai via user settings (not override_global) so it persists through recompute_values
         SettingsStore::update_global(cx, |store, cx| {
             store.update_user_settings(cx, |content| {
-                content.disable_ai = Some(SaturatingBool(true));
+                content.project.disable_ai = Some(SaturatingBool(true));
             });
         });
     });
@@ -630,7 +630,7 @@ async fn test_context_server_respects_disable_ai(cx: &mut TestAppContext) {
         cx.update(|cx| {
             SettingsStore::update_global(cx, |store, cx| {
                 store.update_user_settings(cx, |content| {
-                    content.disable_ai = Some(SaturatingBool(false));
+                    content.project.disable_ai = Some(SaturatingBool(false));
                 });
             });
         });
@@ -647,7 +647,7 @@ async fn test_context_server_respects_disable_ai(cx: &mut TestAppContext) {
         cx.update(|cx| {
             SettingsStore::update_global(cx, |store, cx| {
                 store.update_user_settings(cx, |content| {
-                    content.disable_ai = Some(SaturatingBool(true));
+                    content.project.disable_ai = Some(SaturatingBool(true));
                 });
             });
         });
