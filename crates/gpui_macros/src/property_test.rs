@@ -30,6 +30,12 @@ pub fn test(args: TokenStream, item: TokenStream) -> TokenStream {
     let inner_args = parsed_args.inner_fn_args;
     let cx_vars = parsed_args.cx_vars;
     let cx_teardowns = parsed_args.cx_teardowns;
+    
+    
+    let proptest_args = quote! {
+        #[strategy = ::gpui::seed_strategy()] __seed: u64,
+        #proptest_args
+    };
 
     let run_test_body = match &asyncness {
         None => quote! {
@@ -48,11 +54,12 @@ pub fn test(args: TokenStream, item: TokenStream) -> TokenStream {
     quote! {
         #arg_errors
 
-        #[::gpui::proptest::property_test(#args)]
+        #[::gpui::proptest::property_test(proptest_path = "::gpui::proptest", #args)]
         fn #test_name(#proptest_args) {
             #inner_fn
 
             ::gpui::run_test_once(
+                __seed,
                 Box::new(move |dispatcher| {
                     #run_test_body
                 }),

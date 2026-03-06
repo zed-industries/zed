@@ -995,8 +995,3 @@ fn test_edit_undo_after_split() {
     assert_eq!(buffer.text(), original);
     buffer.check_invariants();
 }
-
-#[gpui::property_test]
-fn trivial_property_test() {
-    
-}

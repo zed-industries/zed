@@ -27,29 +27,40 @@
 //! ```
 use crate::{Entity, Subscription, TestAppContext, TestDispatcher};
 use futures::StreamExt as _;
+use proptest::prelude::{Just, Strategy, any};
 use std::{
     env,
     panic::{self, RefUnwindSafe, UnwindSafe},
     pin::Pin,
 };
 
+/// Strategy injected into `#[gpui::property_test]` tests to control the seed
+/// given to the scheduler. Doesn't shrink, since all scheduler seeds are
+/// equivalent in complexity. If `$SEED` is set, it always uses that value.
+pub fn seed_strategy() -> impl Strategy<Value = u64> {
+    match std::env::var("SEED") {
+        Ok(val) => Just(val.parse().unwrap()).boxed(),
+        Err(_) => any::<u64>().no_shrink().boxed(),
+    }
+}
+
 /// Similar to [`run_test`], but only runs the callback once, allowing
 /// [`FnOnce`] callbacks. This is intended for use with the
 /// `gpui::property_test` macro and generally should not be used directly.
-/// 
+///
 /// Doesn't support many features of [`run_test`], since these are provided by
 /// proptest.
-pub fn run_test_once(test_fn: Box<dyn UnwindSafe + FnOnce(TestDispatcher)>) {
+pub fn run_test_once(seed: u64, test_fn: Box<dyn UnwindSafe + FnOnce(TestDispatcher)>) {
     let result = panic::catch_unwind(|| {
-        // todo! find some way to inject the seed into 
-        let dispatcher = TestDispatcher::new(0);
+        // todo! find some way to inject the seed into
+        let dispatcher = TestDispatcher::new(seed);
         let scheduler = dispatcher.scheduler().clone();
         test_fn(dispatcher);
         scheduler.end_test();
     });
-    
+
     match result {
-        Ok(()) => {},
+        Ok(()) => {}
         Err(e) => panic::resume_unwind(e),
     }
 }
