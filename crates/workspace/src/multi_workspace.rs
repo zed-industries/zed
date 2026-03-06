@@ -24,10 +24,20 @@ actions!(
     [
         /// Creates a new workspace within the current window.
         NewWorkspaceInWindow,
+        /// Creates a new workspace in a new window.
+        NewWorkspaceNewWindow,
         /// Switches to the next workspace within the current window.
         NextWorkspaceInWindow,
         /// Switches to the previous workspace within the current window.
         PreviousWorkspaceInWindow,
+        /// Moves the active workspace to a new window.
+        MoveWorkspaceToNewWindow,
+        /// Duplicates the active workspace within the same window.
+        DuplicateWorkspace,
+        /// Duplicates the active workspace into a new window.
+        DuplicateWorkspaceToNewWindow,
+        /// Pulls all workspaces from other windows into the current window.
+        MergeAllWindows,
         /// Toggles the workspace switcher sidebar.
         ToggleWorkspaceSidebar,
         /// Moves focus to or from the workspace sidebar without closing it.
