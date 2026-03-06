@@ -380,7 +380,7 @@ impl ContextServerStore {
             }
 
             // When AI is disabled, stop all running servers
-            if ai_disabled && maintain_server_loop {
+            if ai_disabled {
                 let server_ids: Vec<_> = this.servers.keys().cloned().collect();
                 for id in server_ids {
                     this.stop_server(&id, cx).log_err();
