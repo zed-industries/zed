@@ -19,7 +19,6 @@ use lmstudio::{LMSTUDIO_API_URL, ModelType, get_models};
 pub use settings::LmStudioAvailableModel as AvailableModel;
 use settings::{Settings, SettingsStore, update_settings_file};
 use std::pin::Pin;
-use std::str::FromStr;
 use std::sync::LazyLock;
 use std::{collections::BTreeMap, sync::Arc};
 use ui::{
@@ -897,7 +896,11 @@ impl Render for ConfigurationView {
                                     .child(Label::new("To get your first model, try running"))
                                     .child(Label::new("lms get qwen2.5-coder-7b").inline_code(cx)),
                             ),
-                    ),
+                    )
+                    .child(Label::new(
+                        "Alternatively, you can connect to an LM Studio server by specifying its \
+                        URL and API key (may not be required):",
+                    )),
             )
             .child(self.render_api_url_editor(cx))
             .child(self.render_api_key_editor(cx))
