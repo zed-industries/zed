@@ -1929,19 +1929,13 @@ impl WorkspaceDb {
         }
     }
 
-    async fn all_paths_exist_with_a_directory(paths: &[PathBuf], fs: &dyn Fs) -> bool {
-        let mut any_dir = false;
+    async fn all_paths_exist(paths: &[PathBuf], fs: &dyn Fs) -> bool {
         for path in paths {
-            match fs.metadata(path).await.ok().flatten() {
-                None => return false,
-                Some(meta) => {
-                    if meta.is_dir {
-                        any_dir = true;
-                    }
-                }
+            if fs.metadata(path).await.ok().flatten().is_none() {
+                return false;
             }
         }
-        any_dir
+        true
     }
 
     // Returns the recent project workspaces suitable for showing in the recent-projects UI.
@@ -1977,7 +1971,7 @@ impl WorkspaceDb {
                 continue;
             }
 
-            if Self::all_paths_exist_with_a_directory(paths.paths(), fs).await {
+            if Self::all_paths_exist(paths.paths(), fs).await {
                 result.push((id, SerializedWorkspaceLocation::Local, paths, timestamp));
             }
         }
@@ -2022,7 +2016,7 @@ impl WorkspaceDb {
                 continue;
             }
 
-            if !Self::all_paths_exist_with_a_directory(paths.paths(), fs).await
+            if !Self::all_paths_exist(paths.paths(), fs).await
                 && now - timestamp >= chrono::Duration::days(7)
             {
                 workspaces_to_delete.push(id);
@@ -2081,7 +2075,7 @@ impl WorkspaceDb {
                 continue;
             }
 
-            if paths.is_empty() || Self::all_paths_exist_with_a_directory(paths.paths(), fs).await {
+            if paths.is_empty() || Self::all_paths_exist(paths.paths(), fs).await {
                 workspaces.push(SessionWorkspace {
                     workspace_id,
                     location: SerializedWorkspaceLocation::Local,
@@ -3948,6 +3942,93 @@ mod tests {
                 paths: PathList::default(),
                 window_id: Some(WindowId::from(9u64)),
             }
+        );
+    }
+
+    #[gpui::test]
+    async fn test_recent_project_workspaces_keeps_regular_file_only_workspace(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let dir = tempfile::TempDir::with_prefix("regular-file-workspace").unwrap();
+        let regular_file = dir.path().join("a");
+
+        let fs = fs::FakeFs::new(cx.executor());
+        fs.insert_tree(dir.path(), json!({"a": "hey"})).await;
+
+        let db = WorkspaceDb::open_test_db("test_recent_workspaces_keeps_regular_file_only").await;
+        let workspace = SerializedWorkspace {
+            id: WorkspaceId(1),
+            paths: PathList::new(&[regular_file.clone()]),
+            location: SerializedWorkspaceLocation::Local,
+            center_group: Default::default(),
+            window_bounds: Default::default(),
+            display: Default::default(),
+            docks: Default::default(),
+            centered_layout: false,
+            breakpoints: Default::default(),
+            session_id: None,
+            window_id: Some(1),
+            user_toolchains: Default::default(),
+        };
+
+        db.save_workspace(workspace.clone()).await;
+
+        let recent = db.recent_project_workspaces(fs.as_ref()).await.unwrap();
+        assert_eq!(
+            recent,
+            vec![(
+                workspace.id,
+                SerializedWorkspaceLocation::Local,
+                workspace.paths.clone(),
+                recent[0].3,
+            )]
+        );
+        assert_eq!(
+            db.workspace_for_roots(&[regular_file]).unwrap().id,
+            workspace.id
+        );
+    }
+
+    #[gpui::test]
+    async fn test_last_session_workspace_locations_keeps_regular_file_only_workspace(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let dir = tempfile::TempDir::with_prefix("regular-file-workspace-session").unwrap();
+        let regular_file = dir.path().join("a");
+
+        let fs = fs::FakeFs::new(cx.executor());
+        fs.insert_tree(dir.path(), json!({"a": "hey"})).await;
+
+        let db = WorkspaceDb::open_test_db("test_last_session_keeps_regular_file_only").await;
+        let workspace = SerializedWorkspace {
+            id: WorkspaceId(1),
+            paths: PathList::new(&[regular_file.clone()]),
+            location: SerializedWorkspaceLocation::Local,
+            center_group: Default::default(),
+            window_bounds: Default::default(),
+            display: Default::default(),
+            docks: Default::default(),
+            centered_layout: false,
+            breakpoints: Default::default(),
+            session_id: Some("one-session".to_owned()),
+            window_id: Some(7),
+            user_toolchains: Default::default(),
+        };
+
+        db.save_workspace(workspace.clone()).await;
+
+        let locations = db
+            .last_session_workspace_locations("one-session", None, fs.as_ref())
+            .await
+            .unwrap();
+        assert_eq!(
+            locations,
+            vec![SessionWorkspace {
+                workspace_id: workspace.id,
+                location: SerializedWorkspaceLocation::Local,
+                paths: workspace.paths,
+                window_id: Some(WindowId::from(7u64)),
+            }]
         );
     }
 
