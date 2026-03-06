@@ -2680,7 +2680,7 @@ impl AgentPanel {
                 workspace.focus_panel::<AgentPanel>(window, cx);
                 if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
                     panel.update(cx, |panel, cx| {
-                        panel.external_thread(None, None, Some(initial_content), window, cx);
+                        panel.external_thread(None, None, Some(initial_content), true, window, cx);
                     });
                 }
             });
