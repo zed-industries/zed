@@ -123,11 +123,25 @@ impl RenderOnce for SectionButton {
     }
 }
 
+enum SectionVisibility {
+    Always,
+    Conditional(fn(&App) -> bool),
+}
+
+impl SectionVisibility {
+    fn is_visible(&self, cx: &App) -> bool {
+        match self {
+            SectionVisibility::Always => true,
+            SectionVisibility::Conditional(f) => f(cx),
+        }
+    }
+}
+
 struct SectionEntry {
     icon: IconName,
     title: &'static str,
     action: &'static dyn Action,
-    visibility: Option<fn(&App) -> bool>,
+    visibility_guard: SectionVisibility,
 }
 
 impl SectionEntry {
@@ -137,16 +151,15 @@ impl SectionEntry {
         focus: &FocusHandle,
         cx: &App,
     ) -> Option<impl IntoElement> {
-        if self.visibility.is_some_and(|is_visible| !is_visible(cx)) {
-            return None;
-        }
-        Some(SectionButton::new(
-            self.title,
-            self.icon,
-            self.action,
-            button_index,
-            focus.clone(),
-        ))
+        self.visibility_guard.is_visible(cx).then(|| {
+            SectionButton::new(
+                self.title,
+                self.icon,
+                self.action,
+                button_index,
+                focus.clone(),
+            )
+        })
     }
 }
 
@@ -158,25 +171,25 @@ const CONTENT: (Section<4>, Section<3>) = (
                 icon: IconName::Plus,
                 title: "New File",
                 action: &NewFile,
-                visibility: None,
+                visibility_guard: SectionVisibility::Always,
             },
             SectionEntry {
                 icon: IconName::FolderOpen,
                 title: "Open Project",
                 action: &Open::DEFAULT,
-                visibility: None,
+                visibility_guard: SectionVisibility::Always,
             },
             SectionEntry {
                 icon: IconName::CloudDownload,
                 title: "Clone Repository",
                 action: &GitClone,
-                visibility: None,
+                visibility_guard: SectionVisibility::Always,
             },
             SectionEntry {
                 icon: IconName::ListCollapse,
                 title: "Open Command Palette",
                 action: &command_palette::Toggle,
-                visibility: None,
+                visibility_guard: SectionVisibility::Always,
             },
         ],
     },
@@ -187,13 +200,15 @@ const CONTENT: (Section<4>, Section<3>) = (
                 icon: IconName::Settings,
                 title: "Open Settings",
                 action: &OpenSettings,
-                visibility: None,
+                visibility_guard: SectionVisibility::Always,
             },
             SectionEntry {
                 icon: IconName::ZedAssistant,
                 title: "View AI Settings",
                 action: &agent::OpenSettings,
-                visibility: Some(|cx| !DisableAiSettings::get_global(cx).disable_ai),
+                visibility_guard: SectionVisibility::Conditional(|cx| {
+                    !DisableAiSettings::get_global(cx).disable_ai
+                }),
             },
             SectionEntry {
                 icon: IconName::Blocks,
@@ -202,7 +217,7 @@ const CONTENT: (Section<4>, Section<3>) = (
                     category_filter: None,
                     id: None,
                 },
-                visibility: None,
+                visibility_guard: SectionVisibility::Always,
             },
         ],
     },
