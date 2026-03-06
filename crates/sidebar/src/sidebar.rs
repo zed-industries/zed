@@ -237,7 +237,21 @@ impl Sidebar {
         })
         .detach();
 
-        let this = Self {
+        let thread_store = ThreadStore::global(cx);
+        cx.observe_in(&thread_store, window, |this, _, _window, cx| {
+            this.update_entries(cx);
+        })
+        .detach();
+
+        let workspaces = multi_workspace.read(cx).workspaces().to_vec();
+        cx.defer_in(window, move |this, window, cx| {
+            for workspace in &workspaces {
+                this.subscribe_to_workspace(workspace, window, cx);
+            }
+            this.update_entries(cx);
+        });
+
+        Self {
             multi_workspace: multi_workspace.downgrade(),
             width: DEFAULT_WIDTH,
             focus_handle,
@@ -249,20 +263,7 @@ impl Sidebar {
             active_entry_index: None,
             collapsed_groups: HashSet::new(),
             expanded_groups: HashSet::new(),
-        };
-        let thread_store = ThreadStore::global(cx);
-        cx.observe_in(&thread_store, window, |this, _, _window, cx| {
-            this.update_entries(cx);
-        })
-        .detach();
-
-        for workspace in multi_workspace.read(cx).workspaces().to_vec() {
-            this.subscribe_to_workspace(&workspace, window, cx);
         }
-        cx.defer_in(window, |this, _window, cx| {
-            this.update_entries(cx);
-        });
-        this
     }
 
     fn subscribe_to_workspace(
