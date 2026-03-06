@@ -3802,6 +3802,35 @@ mod tests {
         }
     }
 
+    fn make_input_with_context_range(
+        excerpt: &str,
+        editable_range: Range<usize>,
+        context_range: Range<usize>,
+        cursor_offset: usize,
+    ) -> ZetaPromptInput {
+        ZetaPromptInput {
+            cursor_path: Path::new("test.rs").into(),
+            cursor_excerpt: excerpt.into(),
+            cursor_offset_in_excerpt: cursor_offset,
+            excerpt_start_row: None,
+            events: vec![],
+            related_files: vec![],
+            excerpt_ranges: ExcerptRanges {
+                editable_150: editable_range.clone(),
+                editable_180: editable_range.clone(),
+                editable_350: editable_range,
+                editable_150_context_350: context_range.clone(),
+                editable_180_context_350: context_range.clone(),
+                editable_350_context_150: context_range,
+                ..Default::default()
+            },
+            experiment: None,
+            in_open_source_repo: false,
+            can_collect_data: false,
+            repo_url: None,
+        }
+    }
+
     fn make_event(path: &str, diff: &str) -> Event {
         Event::BufferChange {
             path: Path::new(path).into(),
@@ -4589,35 +4618,6 @@ mod tests {
         result
     }
 
-    fn make_parse_input(
-        excerpt: &str,
-        editable_range: Range<usize>,
-        context_range: Range<usize>,
-        cursor_offset: usize,
-    ) -> ZetaPromptInput {
-        ZetaPromptInput {
-            cursor_path: Path::new("test.rs").into(),
-            cursor_excerpt: excerpt.into(),
-            cursor_offset_in_excerpt: cursor_offset,
-            excerpt_start_row: None,
-            events: vec![],
-            related_files: vec![],
-            excerpt_ranges: ExcerptRanges {
-                editable_150: editable_range.clone(),
-                editable_180: editable_range.clone(),
-                editable_350: editable_range.clone(),
-                editable_150_context_350: context_range.clone(),
-                editable_180_context_350: context_range.clone(),
-                editable_350_context_150: context_range.clone(),
-                ..Default::default()
-            },
-            experiment: None,
-            in_open_source_repo: false,
-            can_collect_data: false,
-            repo_url: None,
-        }
-    }
-
     #[test]
     fn test_parse_zeta2_model_output() {
         let excerpt = "before ctx\nctx start\neditable old\nctx end\nafter ctx\n";
@@ -4625,7 +4625,7 @@ mod tests {
         let context_end = excerpt.find("after ctx").unwrap();
         let editable_start = excerpt.find("editable old").unwrap();
         let editable_end = editable_start + "editable old\n".len();
-        let input = make_parse_input(
+        let input = make_input_with_context_range(
             excerpt,
             editable_start..editable_end,
             context_start..context_end,
@@ -4650,7 +4650,7 @@ mod tests {
         let excerpt = "aaa\nbbb\nccc\nddd\neee\n";
         let editable_start = excerpt.find("bbb").unwrap();
         let editable_end = excerpt.find("ddd").unwrap();
-        let input = make_parse_input(
+        let input = make_input_with_context_range(
             excerpt,
             editable_start..editable_end,
             0..excerpt.len(),
@@ -4667,7 +4667,7 @@ mod tests {
     #[test]
     fn test_parse_zeta2_model_output_strips_end_marker() {
         let excerpt = "hello\nworld\n";
-        let input = make_parse_input(excerpt, 0..excerpt.len(), 0..excerpt.len(), 0);
+        let input = make_input_with_context_range(excerpt, 0..excerpt.len(), 0..excerpt.len(), 0);
 
         let format = ZetaFormat::V0131GitMergeMarkersPrefix;
         let (range1, text1) =
