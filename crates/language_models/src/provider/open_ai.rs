@@ -1088,9 +1088,20 @@ impl OpenAiResponseEventMapper {
                     error.message
                 )))]
             }
+            ResponsesStreamEvent::ReasoningSummaryPartAdded {
+                summary_index, ..
+            } => {
+                if summary_index > 0 {
+                    vec![Ok(LanguageModelCompletionEvent::Thinking {
+                        text: "\n\n".to_string(),
+                        signature: None,
+                    })]
+                } else {
+                    Vec::new()
+                }
+            }
             ResponsesStreamEvent::OutputTextDone { .. }
             | ResponsesStreamEvent::ReasoningSummaryTextDone { .. }
-            | ResponsesStreamEvent::ReasoningSummaryPartAdded { .. }
             | ResponsesStreamEvent::ReasoningSummaryPartDone { .. } => Vec::new(),
             ResponsesStreamEvent::OutputItemDone { .. }
             | ResponsesStreamEvent::ContentPartAdded { .. }
