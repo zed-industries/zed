@@ -19,7 +19,10 @@ use ui::{
     Styled as _, Window, div, px,
 };
 
+use settings::Settings;
+
 use crate::{
+    EditorSettings,
     display_map::CompanionExcerptPatch,
     split_editor_view::{SplitEditorState, SplitEditorView},
 };
@@ -1524,8 +1527,9 @@ impl Render for SplittableEditor {
     ) -> impl ui::IntoElement {
         let inner = if self.lhs.is_some() {
             let mut style = self.rhs_editor.read(cx).create_style(cx);
-            // Reduce font size by 30% in split view
-            style.text.font_size = (style.text.font_size.to_pixels(px(16.0)) * 0.7).into();
+            let decrease = EditorSettings::get_global(cx).split_diff_font_decrease.clamp(0.0, 1.0);
+            style.text.font_size =
+                (style.text.font_size.to_pixels(px(16.0)) * (1.0 - decrease)).into();
             SplitEditorView::new(cx.entity(), style, self.split_state.clone()).into_any_element()
         } else {
             self.rhs_editor.clone().into_any_element()

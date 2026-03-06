@@ -229,6 +229,14 @@ pub struct EditorSettingsContent {
     ///
     /// Default: left
     pub completion_detail_alignment: Option<CompletionDetailAlignment>,
+
+    /// How much to decrease the font size in the split diff view,
+    /// as a fraction of the original font size.
+    /// 0.0 means no change, 0.3 means 30% smaller.
+    ///
+    /// Default: 0.25
+    #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
+    pub split_diff_font_decrease: Option<f32>,
 }
 
 #[derive(
