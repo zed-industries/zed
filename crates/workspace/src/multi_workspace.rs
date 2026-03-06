@@ -499,11 +499,14 @@ impl MultiWorkspace {
         cx.notify();
     }
 
-    pub fn merge_windows(&mut self, cx: &mut Context<Self>) -> Result<()> {
-        let windows = cx
+    pub fn merge_windows(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Result<()> {
+        let current_window_id = window.window_handle().window_id();
+        let windows: Vec<_> = cx
             .windows()
             .into_iter()
-            .filter_map(|handle| handle.downcast::<Self>());
+            .filter_map(|handle| handle.downcast::<Self>())
+            .filter(|handle| handle.window_id() != current_window_id)
+            .collect();
         for window_handle in windows {
             let multi_workspace = window_handle.read(cx)?;
             let workspaces = multi_workspace.workspaces().to_vec();
@@ -578,8 +581,8 @@ impl Render for MultiWorkspace {
                         this.activate_next_workspace(window, cx);
                     }),
                 )
-                .on_action(cx.listener(|this: &mut Self, _: &MergeAllWindows, _, cx| {
-                    this.merge_windows(cx).log_err();
+                .on_action(cx.listener(|this: &mut Self, _: &MergeAllWindows, window, cx| {
+                    this.merge_windows(window, cx).log_err();
                 }))
                 .on_action(cx.listener(
                     |this: &mut Self, _: &PreviousWorkspaceInWindow, window, cx| {
