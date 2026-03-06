@@ -3187,6 +3187,60 @@ impl Buffer {
         }
     }
 
+    /// Navigate to the chronologically earlier undo state (g- in Vim).
+    pub fn undo_earlier(&mut self, cx: &mut Context<Self>) -> Option<TransactionId> {
+        let was_dirty = self.is_dirty();
+        let old_version = self.version.clone();
+
+        if let Some((transaction_id, operations)) = self.text.undo_earlier() {
+            for operation in operations {
+                self.send_operation(Operation::Buffer(operation), true, cx);
+            }
+            self.did_edit(&old_version, was_dirty, cx);
+            Some(transaction_id)
+        } else {
+            None
+        }
+    }
+
+    /// Navigate to the chronologically later undo state (g+ in Vim).
+    pub fn undo_later(&mut self, cx: &mut Context<Self>) -> Option<TransactionId> {
+        let was_dirty = self.is_dirty();
+        let old_version = self.version.clone();
+
+        if let Some((transaction_id, operations)) = self.text.undo_later() {
+            for operation in operations {
+                self.send_operation(Operation::Buffer(operation), true, cx);
+            }
+            self.did_edit(&old_version, was_dirty, cx);
+            Some(transaction_id)
+        } else {
+            None
+        }
+    }
+
+    /// Navigate to a specific transaction, restoring the buffer to the state
+    /// right after that transaction was committed. Works across branches.
+    pub fn goto_transaction(
+        &mut self,
+        target: TransactionId,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let was_dirty = self.is_dirty();
+        let old_version = self.version.clone();
+
+        let operations = self.text.goto_transaction(target);
+        if !operations.is_empty() {
+            for operation in operations {
+                self.send_operation(Operation::Buffer(operation), true, cx);
+            }
+            self.did_edit(&old_version, was_dirty, cx);
+            true
+        } else {
+            false
+        }
+    }
+
     fn restore_encoding_for_transaction(&mut self, transaction_id: TransactionId, was_dirty: bool) {
         if let Some((old_encoding, old_has_bom)) =
             self.reload_with_encoding_txns.get(&transaction_id)
