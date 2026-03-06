@@ -1,0 +1,12 @@
+{"SetOption":{"value":"scrolloff=3"}}
+{"SetOption":{"value":"lines=12"}}
+{"Put":{"state":"ˇalpha 01\nalpha 02\nalpha 03\nalpha 04\nalpha 05\nalpha 06\nalpha 07\nalpha 08\nalpha 09\nalpha 10\nalpha 11\nalpha 12\nalpha 13\nalpha 14\nalpha 15\nalpha 16\nalpha 17\nalpha 18\nalpha 19\nalpha 20\nalpha 21\nalpha 22\nalpha 23\nalpha 24\nalpha 25\nalpha 26\nalpha 27\nalpha 28\nalpha 29\nalpha 30\nalpha 31\nalpha 32\nalpha 33\nalpha 34\nalpha 35\nalpha 36\nalpha 37\nalpha 38\nalpha 39\nalpha 40\nalpha 41\nalpha 42\nalpha 43\nalpha 44\nalpha 45\nalpha 46\nalpha 47\nalpha 48\nalpha 49\nalpha 50\nalpha 51\nalpha 52\nalpha 53\nalpha 54\nalpha 55\nalpha 56\nalpha 57\nalpha 58\nalpha 59\nalpha 60\n"}}
+{"Key":"ctrl-v"}
+{"Key":"5"}
+{"Key":"j"}
+{"Key":"ctrl-d"}
+{"Get":{"state":"«aˇ»lpha 01\n«aˇ»lpha 02\n«aˇ»lpha 03\n«aˇ»lpha 04\n«aˇ»lpha 05\n«aˇ»lpha 06\n«aˇ»lpha 07\n«aˇ»lpha 08\n«aˇ»lpha 09\n«aˇ»lpha 10\n«aˇ»lpha 11\nalpha 12\nalpha 13\nalpha 14\nalpha 15\nalpha 16\nalpha 17\nalpha 18\nalpha 19\nalpha 20\nalpha 21\nalpha 22\nalpha 23\nalpha 24\nalpha 25\nalpha 26\nalpha 27\nalpha 28\nalpha 29\nalpha 30\nalpha 31\nalpha 32\nalpha 33\nalpha 34\nalpha 35\nalpha 36\nalpha 37\nalpha 38\nalpha 39\nalpha 40\nalpha 41\nalpha 42\nalpha 43\nalpha 44\nalpha 45\nalpha 46\nalpha 47\nalpha 48\nalpha 49\nalpha 50\nalpha 51\nalpha 52\nalpha 53\nalpha 54\nalpha 55\nalpha 56\nalpha 57\nalpha 58\nalpha 59\nalpha 60\n","mode":"VisualBlock"}}
+{"Key":"shift-i"}
+{"Key":"x"}
+{"Key":"escape"}
+{"Get":{"state":"ˇxalpha 01\nxalpha 02\nxalpha 03\nxalpha 04\nxalpha 05\nxalpha 06\nxalpha 07\nxalpha 08\nxalpha 09\nxalpha 10\nxalpha 11\nalpha 12\nalpha 13\nalpha 14\nalpha 15\nalpha 16\nalpha 17\nalpha 18\nalpha 19\nalpha 20\nalpha 21\nalpha 22\nalpha 23\nalpha 24\nalpha 25\nalpha 26\nalpha 27\nalpha 28\nalpha 29\nalpha 30\nalpha 31\nalpha 32\nalpha 33\nalpha 34\nalpha 35\nalpha 36\nalpha 37\nalpha 38\nalpha 39\nalpha 40\nalpha 41\nalpha 42\nalpha 43\nalpha 44\nalpha 45\nalpha 46\nalpha 47\nalpha 48\nalpha 49\nalpha 50\nalpha 51\nalpha 52\nalpha 53\nalpha 54\nalpha 55\nalpha 56\nalpha 57\nalpha 58\nalpha 59\nalpha 60\n","mode":"Normal"}}
