@@ -4,6 +4,8 @@ use gh_workflow::Workflow;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use crate::tasks::workflow_checks::{self};
+
 mod after_release;
 mod autofix_pr;
 mod bump_patch_version;
@@ -87,8 +89,8 @@ impl WorkflowFile {
     }
 }
 
-#[derive(PartialEq, Eq)]
-enum WorkflowType {
+#[derive(PartialEq, Eq, strum::EnumIter)]
+pub enum WorkflowType {
     /// Workflows living in the Zed repository
     Zed,
     /// Workflows living in the `zed-extensions/workflows` repository that are
@@ -113,7 +115,7 @@ impl WorkflowType {
         )
     }
 
-    fn folder_path(&self) -> PathBuf {
+    pub fn folder_path(&self) -> PathBuf {
         match self {
             WorkflowType::Zed => PathBuf::from(".github/workflows"),
             WorkflowType::ExtensionCi => PathBuf::from("extensions/workflows"),
@@ -155,5 +157,5 @@ pub fn run_workflows(_: GenerateWorkflowArgs) -> Result<()> {
         workflow_file.generate_file()?;
     }
 
-    Ok(())
+    workflow_checks::validate(Default::default())
 }
