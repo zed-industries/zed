@@ -402,25 +402,50 @@ mod tests {
             TestCase {
                 name: "cursor near end of function - expands to syntax boundaries",
                 marked_text: indoc! {r#"
-                    [fn first() {
+                    fn prologue() {
+                        let z = 0;
+                    }
+
+                    fn first() {
                         let a = 1;
-                        let b = 2;
+                    [    let b = 2;
                     }
 
                     fn foo() {
                     «    let x = 1;
                         let y = 2;
                         println!("{}", x + y);ˇ
-                    }»]
+                    }
+                    »
+                    fn trailing_a() {
+                        let t = 1;
+                        let u = 2;
+                    }
+                    ]
+                    fn trailing_b() {
+                        let v = 3;
+                        let w = 4;
+                    }
                 "#},
-                // 18 tokens - expands symmetrically then to syntax boundaries
                 editable_token_limit: 18,
-                context_token_limit: 35,
+                context_token_limit: 25,
             },
             TestCase {
                 name: "cursor at function start - expands to syntax boundaries",
                 marked_text: indoc! {r#"
-                    [fn before() {
+                    fn prologue_a() {
+                        let pa = "hello world";
+                        let pb = pa.len();
+                        let pc = pb + 1;
+                    }
+
+                    fn prologue_b() {
+                    [    let pd = 42;
+                        let pe = pd + 1;
+                        let pf = pe * 2;
+                    }
+
+                    fn before() {
                     «    let a = 1;
                     }
 
@@ -432,15 +457,24 @@ mod tests {
                     »
                     fn after() {
                         let b = 2;
-                    }]
+                    }
+
+                    fn epilogue_a() {]
+                        let e1 = 10;
+                        let e2 = 20;
+                        let e3 = 30;
+                    }
                 "#},
-                // 25 tokens - expands symmetrically then to syntax boundaries
                 editable_token_limit: 25,
-                context_token_limit: 50,
+                context_token_limit: 40,
             },
             TestCase {
                 name: "tiny budget - just lines around cursor",
                 marked_text: indoc! {r#"
+                    fn prologue() {
+                        let p = 1;
+                    }
+
                     fn outer() {
                     [    let line1 = 1;
                         let line2 = 2;
@@ -450,41 +484,74 @@ mod tests {
                         let line6 = 6;]
                         let line7 = 7;
                     }
+
+                    fn epilogue() {
+                        let e = 2;
+                    }
                 "#},
-                // 12 tokens (~36 bytes) = just the cursor line with tiny budget
                 editable_token_limit: 12,
                 context_token_limit: 24,
             },
             TestCase {
-                name: "small function fits entirely",
+                name: "small function fits entirely - context bounded by budget",
                 marked_text: indoc! {r#"
-                    [«fn foo() {
+                    fn prologue_a() {
+                        let pa = "hello world";
+                        let pb = pa.len();
+                        let pc = pb + 1;
+                    }
+
+                    [fn prologue_b() {
+                        let pd = 42;
+                    «    let pe = pd + 1;
+                    }
+
+                    fn foo() {
                         let x = 1;ˇ
                         let y = 2;
-                    }»]
+                    }
+
+                    fn epilogue_a() {»
+                        let e1 = 10;]
+                        let e2 = 20;
+                        let e3 = 30;
+                    }
                 "#},
-                // Plenty of budget for this small function
                 editable_token_limit: 30,
-                context_token_limit: 60,
+                context_token_limit: 15,
             },
             TestCase {
                 name: "context extends beyond editable",
                 marked_text: indoc! {r#"
-                    [fn first() { let a = 1; }
+                    fn preamble_b() { let pb = 2; }
+                    [fn preamble_c() { let pc = 3; }
+                    fn first() { let a = 1; }
                     «fn second() { let b = 2; }
                     fn third() { let c = 3; }ˇ
                     fn fourth() { let d = 4; }»
-                    fn fifth() { let e = 5; }]
+                    fn fifth() { let e = 5; }
+                    fn postamble_a() { let qa = 6; }]
+                    fn postamble_b() { let qb = 7; }
                 "#},
-                // Small editable, larger context
                 editable_token_limit: 25,
                 context_token_limit: 45,
             },
-            // Tests for syntax-aware editable and context expansion
             TestCase {
                 name: "cursor in first if-statement - expands to syntax boundaries",
                 marked_text: indoc! {r#"
-                    [«fn before() { }
+                    fn prologue_a() {
+                        let pa = "hello world";
+                        let pb = pa.len();
+                        let pc = pb + 1;
+                    }
+                    [
+                    fn prologue_b() {
+                        let pd = 42;
+                        let pe = pd + 1;
+                        let pf = pe * 2;
+                    }
+
+                    «fn before() { }
 
                     fn process() {
                         if condition1 {
@@ -496,17 +563,15 @@ mod tests {
                             let d = 4;
                         }
                         if condition3 {
-                            let e = 5;
+                            let e = 5;]
                             let f = 6;
                         }
                     }
 
-                    fn after() { }]
+                    fn after() { }
                 "#},
-                // 35 tokens allows expansion to include function header and first two if blocks
                 editable_token_limit: 35,
-                // 60 tokens allows context to include the whole file
-                context_token_limit: 60,
+                context_token_limit: 50,
             },
             TestCase {
                 name: "cursor in middle if-statement - expands to syntax boundaries",
@@ -530,19 +595,17 @@ mod tests {
 
                     fn after() { }]
                 "#},
-                // 40 tokens allows expansion to surrounding if blocks
                 editable_token_limit: 40,
-                // 60 tokens allows context to include the whole file
-                context_token_limit: 60,
+                context_token_limit: 50,
             },
             TestCase {
                 name: "cursor near bottom of long function - editable expands toward syntax, context reaches function",
                 marked_text: indoc! {r#"
-                    [fn other() { }
+                    fn other() { }
 
                     fn long_function() {
                         let line1 = 1;
-                        let line2 = 2;
+                    [    let line2 = 2;
                         let line3 = 3;
                         let line4 = 4;
                         let line5 = 5;
@@ -554,11 +617,21 @@ mod tests {
                         let line11 = 11;
                     }
 
-                    fn another() { }»]
+                    fn another() { }
+                    »
+                    fn suffix_a() {
+                        let sa = 1;
+                        let sb = 2;
+                        let sc = 3;
+                    }
+                    ]
+                    fn suffix_b() {
+                        let sd = 4;
+                        let se = 5;
+                        let sf = 6;
+                    }
                 "#},
-                // 40 tokens for editable - allows several lines plus syntax expansion
                 editable_token_limit: 40,
-                // 55 tokens - enough for function but not whole file
                 context_token_limit: 55,
             },
         ];
