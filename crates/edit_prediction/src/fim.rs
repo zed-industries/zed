@@ -85,6 +85,7 @@ pub fn request_prediction(
             experiment: None,
             in_open_source_repo: false,
             can_collect_data: false,
+            repo_url: None,
         };
 
         let prefix = inputs.cursor_excerpt[..inputs.cursor_offset_in_excerpt].to_string();

@@ -225,8 +225,6 @@ This could be useful for launching a terminal application that you want to use i
 
 ## VS Code Task Format
 
-> **Preview:** This feature is available in Zed Preview. It will be included in the next Stable release.
-
 When importing VS Code tasks from `.vscode/tasks.json`, you can omit the `label` field. Zed automatically generates labels based on the task type:
 
 - **npm tasks**: `npm: <script>` (e.g., `npm: start`)

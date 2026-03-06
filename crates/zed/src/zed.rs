@@ -371,15 +371,12 @@ pub fn initialize_workspace(
     })
     .detach();
 
-    cx.observe_new(|multi_workspace: &mut MultiWorkspace, window, cx| {
+    cx.observe_new(|_multi_workspace: &mut MultiWorkspace, window, cx| {
         let Some(window) = window else {
             return;
         };
-        let multi_workspace_handle = cx.entity();
-        let sidebar = cx.new(|cx| Sidebar::new(multi_workspace_handle.clone(), window, cx));
-        multi_workspace.register_sidebar(sidebar, window, cx);
 
-        let multi_workspace_handle = multi_workspace_handle.downgrade();
+        let multi_workspace_handle = cx.entity().downgrade();
         window.on_window_should_close(cx, move |window, cx| {
             multi_workspace_handle
                 .update(cx, |multi_workspace, cx| {
@@ -388,6 +385,20 @@ pub fn initialize_workspace(
                     false
                 })
                 .unwrap_or(true)
+        });
+
+        let window_handle = window.window_handle();
+        let multi_workspace_handle = cx.entity();
+        cx.defer(move |cx| {
+            window_handle
+                .update(cx, |_, window, cx| {
+                    let sidebar =
+                        cx.new(|cx| Sidebar::new(multi_workspace_handle.clone(), window, cx));
+                    multi_workspace_handle.update(cx, |multi_workspace, cx| {
+                        multi_workspace.register_sidebar(sidebar, window, cx);
+                    });
+                })
+                .ok();
         });
     })
     .detach();
@@ -422,16 +433,7 @@ pub fn initialize_workspace(
         if let Some(specs) = window.gpu_specs() {
             log::info!("Using GPU: {:?}", specs);
             show_software_emulation_warning_if_needed(specs.clone(), window, cx);
-            if let Some((crash_server, message)) = crashes::CRASH_HANDLER
-                .get()
-                .zip(bincode::serialize(&specs).ok())
-                && let Err(err) = crash_server.send_message(3, message)
-            {
-                log::warn!(
-                    "Failed to store active gpu info for crash reporting: {}",
-                    err
-                );
-            }
+            crashes::set_gpu_info(specs);
         }
 
         let edit_prediction_menu_handle = PopoverMenuHandle::default();
@@ -500,7 +502,9 @@ pub fn initialize_workspace(
         workspace.set_panels_task(panels_task);
         register_actions(app_state.clone(), workspace, window, cx);
 
-        workspace.focus_handle(cx).focus(window, cx);
+        if !workspace.has_active_modal(window, cx) {
+            workspace.focus_handle(cx).focus(window, cx);
+        }
     })
     .detach();
 }
@@ -794,7 +798,7 @@ fn register_actions(
                 }
             }
         })
-        .register_action(|workspace, _: &workspace::Open, window, cx| {
+        .register_action(|workspace, action: &workspace::Open, window, cx| {
             telemetry::event!("Project Opened");
             workspace::prompt_for_open_path_and_open(
                 workspace,
@@ -805,6 +809,7 @@ fn register_actions(
                     multiple: true,
                     prompt: None,
                 },
+                action.create_new_window,
                 window,
                 cx,
             );
@@ -820,6 +825,7 @@ fn register_actions(
                     multiple: true,
                     prompt: None,
                 },
+                true,
                 window,
                 cx,
             );
@@ -4792,6 +4798,7 @@ mod tests {
                 "action",
                 "activity_indicator",
                 "agent",
+                "agents_sidebar",
                 "app_menu",
                 "assistant",
                 "assistant2",

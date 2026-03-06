@@ -158,7 +158,7 @@ const CONTENT: (Section<4>, Section<3>) = (
             SectionEntry {
                 icon: IconName::FolderOpen,
                 title: "Open Project",
-                action: &Open,
+                action: &Open::DEFAULT,
                 visibility: None,
             },
             SectionEntry {

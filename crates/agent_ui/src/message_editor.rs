@@ -10,7 +10,7 @@ use crate::{
         Mention, MentionImage, MentionSet, insert_crease_for_mention, paste_images_as_context,
     },
 };
-use acp_thread::{AgentSessionInfo, MentionUri};
+use acp_thread::MentionUri;
 use agent::ThreadStore;
 use agent_client_protocol as acp;
 use anyhow::{Result, anyhow};
@@ -154,6 +154,7 @@ impl MessageEditor {
                             Box::new(editor::actions::Copy),
                         )
                         .action("Paste", Box::new(editor::actions::Paste))
+                        .action("Paste as Plain Text", Box::new(PasteRaw))
                 }))
             });
 
@@ -300,7 +301,8 @@ impl MessageEditor {
 
     pub fn insert_thread_summary(
         &mut self,
-        thread: AgentSessionInfo,
+        session_id: acp::SessionId,
+        title: Option<SharedString>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -310,13 +312,11 @@ impl MessageEditor {
         let Some(workspace) = self.workspace.upgrade() else {
             return;
         };
-        let thread_title = thread
-            .title
-            .clone()
+        let thread_title = title
             .filter(|title| !title.is_empty())
             .unwrap_or_else(|| SharedString::new_static("New Thread"));
         let uri = MentionUri::Thread {
-            id: thread.session_id,
+            id: session_id,
             name: thread_title.to_string(),
         };
         let content = format!("{}\n", uri.as_link());
@@ -1424,7 +1424,7 @@ impl MessageEditor {
         });
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     pub fn set_text(&mut self, text: &str, window: &mut Window, cx: &mut Context<Self>) {
         self.editor.update(cx, |editor, cx| {
             editor.set_text(text, window, cx);
@@ -1570,7 +1570,7 @@ fn find_matching_bracket(text: &str, open: char, close: char) -> Option<usize> {
 mod tests {
     use std::{cell::RefCell, ops::Range, path::Path, rc::Rc, sync::Arc};
 
-    use acp_thread::{AgentSessionInfo, MentionUri};
+    use acp_thread::MentionUri;
     use agent::{ThreadStore, outline};
     use agent_client_protocol as acp;
     use editor::{
@@ -2810,14 +2810,8 @@ mod tests {
         let history =
             cx.update(|window, cx| cx.new(|cx| crate::ThreadHistory::new(None, window, cx)));
 
-        // Create a thread metadata to insert as summary
-        let thread_metadata = AgentSessionInfo {
-            session_id: acp::SessionId::new("thread-123"),
-            cwd: None,
-            title: Some("Previous Conversation".into()),
-            updated_at: Some(chrono::Utc::now()),
-            meta: None,
-        };
+        let session_id = acp::SessionId::new("thread-123");
+        let title = Some("Previous Conversation".into());
 
         let message_editor = cx.update(|window, cx| {
             cx.new(|cx| {
@@ -2838,17 +2832,17 @@ mod tests {
                     window,
                     cx,
                 );
-                editor.insert_thread_summary(thread_metadata.clone(), window, cx);
+                editor.insert_thread_summary(session_id.clone(), title.clone(), window, cx);
                 editor
             })
         });
 
         // Construct expected values for verification
         let expected_uri = MentionUri::Thread {
-            id: thread_metadata.session_id.clone(),
-            name: thread_metadata.title.as_ref().unwrap().to_string(),
+            id: session_id.clone(),
+            name: title.as_ref().unwrap().to_string(),
         };
-        let expected_title = thread_metadata.title.as_ref().unwrap();
+        let expected_title = title.as_ref().unwrap();
         let expected_link = format!("[@{}]({})", expected_title, expected_uri.to_uri());
 
         message_editor.read_with(cx, |editor, cx| {
@@ -2892,14 +2886,6 @@ mod tests {
         let history =
             cx.update(|window, cx| cx.new(|cx| crate::ThreadHistory::new(None, window, cx)));
 
-        let thread_metadata = AgentSessionInfo {
-            session_id: acp::SessionId::new("thread-123"),
-            cwd: None,
-            title: Some("Previous Conversation".into()),
-            updated_at: Some(chrono::Utc::now()),
-            meta: None,
-        };
-
         let message_editor = cx.update(|window, cx| {
             cx.new(|cx| {
                 let mut editor = MessageEditor::new(
@@ -2919,7 +2905,12 @@ mod tests {
                     window,
                     cx,
                 );
-                editor.insert_thread_summary(thread_metadata, window, cx);
+                editor.insert_thread_summary(
+                    acp::SessionId::new("thread-123"),
+                    Some("Previous Conversation".into()),
+                    window,
+                    cx,
+                );
                 editor
             })
         });

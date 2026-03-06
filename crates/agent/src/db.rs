@@ -32,9 +32,22 @@ pub struct DbThreadMetadata {
     #[serde(alias = "summary")]
     pub title: SharedString,
     pub updated_at: DateTime<Utc>,
+    pub created_at: Option<DateTime<Utc>>,
     /// The workspace folder paths this thread was created against, sorted
     /// lexicographically. Used for grouping threads by project in the sidebar.
     pub folder_paths: PathList,
+}
+
+impl From<&DbThreadMetadata> for acp_thread::AgentSessionInfo {
+    fn from(meta: &DbThreadMetadata) -> Self {
+        Self {
+            session_id: meta.id.clone(),
+            cwd: None,
+            title: Some(meta.title.clone()),
+            updated_at: Some(meta.updated_at),
+            meta: None,
+        }
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -408,6 +421,17 @@ impl ThreadsDatabase {
             s().ok();
         }
 
+        if let Ok(mut s) = connection.exec(indoc! {"
+            ALTER TABLE threads ADD COLUMN created_at TEXT;
+        "})
+        {
+            if s().is_ok() {
+                connection.exec(indoc! {"
+                    UPDATE threads SET created_at = updated_at WHERE created_at IS NULL
+                "})?()?;
+            }
+        }
+
         let db = Self {
             executor,
             connection: Arc::new(Mutex::new(connection)),
@@ -458,8 +482,19 @@ impl ThreadsDatabase {
         let data_type = DataType::Zstd;
         let data = compressed;
 
-        let mut insert = connection.exec_bound::<(Arc<str>, Option<Arc<str>>, Option<String>, Option<String>, String, String, DataType, Vec<u8>)>(indoc! {"
-            INSERT OR REPLACE INTO threads (id, parent_id, folder_paths, folder_paths_order, summary, updated_at, data_type, data) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        let created_at = Utc::now().to_rfc3339();
+
+        let mut insert = connection.exec_bound::<(Arc<str>, Option<Arc<str>>, Option<String>, Option<String>, String, String, DataType, Vec<u8>, String)>(indoc! {"
+            INSERT INTO threads (id, parent_id, folder_paths, folder_paths_order, summary, updated_at, data_type, data, created_at)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+            ON CONFLICT(id) DO UPDATE SET
+                parent_id = excluded.parent_id,
+                folder_paths = excluded.folder_paths,
+                folder_paths_order = excluded.folder_paths_order,
+                summary = excluded.summary,
+                updated_at = excluded.updated_at,
+                data_type = excluded.data_type,
+                data = excluded.data
         "})?;
 
         insert((
@@ -471,6 +506,7 @@ impl ThreadsDatabase {
             updated_at,
             data_type,
             data,
+            created_at,
         ))?;
 
         Ok(())
@@ -483,14 +519,14 @@ impl ThreadsDatabase {
             let connection = connection.lock();
 
             let mut select = connection
-                .select_bound::<(), (Arc<str>, Option<Arc<str>>, Option<String>, Option<String>, String, String)>(indoc! {"
-                SELECT id, parent_id, folder_paths, folder_paths_order, summary, updated_at FROM threads ORDER BY updated_at DESC
+                .select_bound::<(), (Arc<str>, Option<Arc<str>>, Option<String>, Option<String>, String, String, Option<String>)>(indoc! {"
+                SELECT id, parent_id, folder_paths, folder_paths_order, summary, updated_at, created_at FROM threads ORDER BY updated_at DESC, created_at DESC
             "})?;
 
             let rows = select(())?;
             let mut threads = Vec::new();
 
-            for (id, parent_id, folder_paths, folder_paths_order, summary, updated_at) in rows {
+            for (id, parent_id, folder_paths, folder_paths_order, summary, updated_at, created_at) in rows {
                 let folder_paths = folder_paths
                     .map(|paths| {
                         PathList::deserialize(&util::path_list::SerializedPathList {
@@ -499,11 +535,18 @@ impl ThreadsDatabase {
                         })
                     })
                     .unwrap_or_default();
+                let created_at = created_at
+                    .as_deref()
+                    .map(DateTime::parse_from_rfc3339)
+                    .transpose()?
+                    .map(|dt| dt.with_timezone(&Utc));
+
                 threads.push(DbThreadMetadata {
                     id: acp::SessionId::new(id),
                     parent_session_id: parent_id.map(acp::SessionId::new),
                     title: summary.into(),
                     updated_at: DateTime::parse_from_rfc3339(&updated_at)?.with_timezone(&Utc),
+                    created_at,
                     folder_paths,
                 });
             }
@@ -652,7 +695,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_list_threads_orders_by_updated_at(cx: &mut TestAppContext) {
+    async fn test_list_threads_orders_by_created_at(cx: &mut TestAppContext) {
         let database = ThreadsDatabase::new(cx.executor()).unwrap();
 
         let older_id = session_id("thread-a");
@@ -712,6 +755,10 @@ mod tests {
         assert_eq!(
             entries[0].updated_at,
             Utc.with_ymd_and_hms(2024, 1, 2, 0, 0, 0).unwrap()
+        );
+        assert!(
+            entries[0].created_at.is_some(),
+            "created_at should be populated"
         );
     }
 
