@@ -71,7 +71,7 @@ if "$rustup_installed"; then
     rustup target add "$remote_server_triple"
 fi
 
-export CC=$(which clang)
+export CC=${CC:-$(which clang)}
 
 # Build binary in release mode
 export RUSTFLAGS="${RUSTFLAGS:-} -C link-args=-Wl,--disable-new-dtags,-rpath,\$ORIGIN/../lib"

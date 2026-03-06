@@ -1,3 +1,8 @@
+---
+title: Diff
+description: "Configure Diff language support in Zed, including language servers, formatting, and debugging."
+---
+
 # Diff
 
 Diff support is available natively in Zed.

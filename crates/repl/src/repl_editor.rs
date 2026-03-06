@@ -14,7 +14,8 @@ use crate::kernels::PythonEnvKernelSpecification;
 use crate::repl_store::ReplStore;
 use crate::session::SessionEvent;
 use crate::{
-    ClearOutputs, Interrupt, JupyterSettings, KernelSpecification, Restart, Session, Shutdown,
+    ClearCurrentOutput, ClearOutputs, Interrupt, JupyterSettings, KernelSpecification, Restart,
+    Session, Shutdown,
 };
 
 pub fn assign_kernelspec(
@@ -349,6 +350,24 @@ pub fn clear_outputs(editor: WeakEntity<Editor>, cx: &mut App) {
     });
 }
 
+pub fn clear_current_output(editor: WeakEntity<Editor>, cx: &mut App) {
+    let Some(editor_entity) = editor.upgrade() else {
+        return;
+    };
+
+    let store = ReplStore::global(cx);
+    let entity_id = editor.entity_id();
+    let Some(session) = store.read(cx).get_session(entity_id).cloned() else {
+        return;
+    };
+
+    let position = editor_entity.read(cx).selections.newest_anchor().head();
+
+    session.update(cx, |session, cx| {
+        session.clear_output_at_position(position, cx);
+    });
+}
+
 pub fn interrupt(editor: WeakEntity<Editor>, cx: &mut App) {
     let store = ReplStore::global(cx);
     let entity_id = editor.entity_id();
@@ -406,6 +425,19 @@ pub fn setup_editor_session_actions(editor: &mut Editor, editor_handle: WeakEnti
                 }
 
                 crate::clear_outputs(editor_handle.clone(), cx);
+            }
+        })
+        .detach();
+
+    editor
+        .register_action({
+            let editor_handle = editor_handle.clone();
+            move |_: &ClearCurrentOutput, _, cx| {
+                if !JupyterSettings::enabled(cx) {
+                    return;
+                }
+
+                crate::clear_current_output(editor_handle.clone(), cx);
             }
         })
         .detach();
@@ -530,7 +562,7 @@ fn runnable_ranges(
     cx: &mut App,
 ) -> (Vec<Range<Point>>, Option<Point>) {
     if let Some(language) = buffer.language()
-        && language.name() == "Markdown".into()
+        && language.name() == "Markdown"
     {
         return (markdown_code_blocks(buffer, range, cx), None);
     }
@@ -604,12 +636,9 @@ fn language_supported(language: &Arc<Language>, cx: &mut App) -> bool {
     let store = ReplStore::global(cx);
     let store_read = store.read(cx);
 
-    // Since we're just checking for general language support, we only need to look at
-    // the pure Jupyter kernels - these are all the globally available ones
-    store_read.pure_jupyter_kernel_specifications().any(|spec| {
-        // Convert to lowercase for case-insensitive comparison since kernels might report "python" while our language is "Python"
-        spec.language().as_ref().to_lowercase() == language.name().as_ref().to_lowercase()
-    })
+    store_read
+        .pure_jupyter_kernel_specifications()
+        .any(|spec| language.matches_kernel_language(spec.language().as_ref()))
 }
 
 fn get_language(editor: WeakEntity<Editor>, cx: &mut App) -> Option<Arc<Language>> {
