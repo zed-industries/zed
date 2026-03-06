@@ -677,9 +677,15 @@ impl Sidebar {
                 label,
                 workspace,
                 highlight_positions,
-            } => {
-                self.render_project_header(ix, path_list, label, workspace, highlight_positions, cx)
-            }
+            } => self.render_project_header(
+                ix,
+                path_list,
+                label,
+                workspace,
+                highlight_positions,
+                is_selected,
+                cx,
+            ),
             ListEntry::Thread {
                 session_info,
                 icon,
@@ -730,6 +736,7 @@ impl Sidebar {
         label: &SharedString,
         workspace: &Entity<Workspace>,
         highlight_positions: &[usize],
+        is_selected: bool,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let id = SharedString::from(format!("project-header-{}", ix));
@@ -755,9 +762,8 @@ impl Sidebar {
                 .as_ref()
                 .is_some_and(|mw| mw.read(cx).workspace() == workspace);
 
-        // TODO: if is_selected, draw a blue border around the item.
-
         ListItem::new(id)
+            .selection_outlined(is_selected)
             .group_name(&group)
             .toggle_state(is_active_workspace)
             .child(
@@ -1097,7 +1103,7 @@ impl Sidebar {
         status: AgentThreadStatus,
         workspace: &Entity<Workspace>,
         highlight_positions: &[usize],
-        _is_selected: bool,
+        is_selected: bool,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let has_notification = self.contents.is_thread_notified(&session_info.session_id);
@@ -1119,6 +1125,7 @@ impl Sidebar {
             .status(status)
             .notified(has_notification)
             .selected(self.focused_thread.as_ref() == Some(&session_info.session_id))
+            .outlined(is_selected)
             .on_click(cx.listener(move |this, _, window, cx| {
                 this.selection = None;
                 this.activate_thread(session_info.clone(), &workspace, window, cx);
@@ -1164,7 +1171,7 @@ impl Sidebar {
         let count = format!("({})", remaining_count);
 
         ListItem::new(id)
-            .toggle_state(is_selected)
+            .selection_outlined(is_selected)
             .child(
                 h_flex()
                     .px_1()

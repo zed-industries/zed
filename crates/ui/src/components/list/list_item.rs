@@ -42,6 +42,7 @@ pub struct ListItem {
     selectable: bool,
     always_show_disclosure_icon: bool,
     outlined: bool,
+    selection_outlined: bool,
     rounded: bool,
     overflow_x: bool,
     focused: Option<bool>,
@@ -71,6 +72,7 @@ impl ListItem {
             selectable: true,
             always_show_disclosure_icon: false,
             outlined: false,
+            selection_outlined: false,
             rounded: false,
             overflow_x: false,
             focused: None,
@@ -171,6 +173,11 @@ impl ListItem {
         self
     }
 
+    pub fn selection_outlined(mut self, outlined: bool) -> Self {
+        self.selection_outlined = outlined;
+        self
+    }
+
     pub fn rounded(mut self) -> Self {
         self.rounded = true;
         self
@@ -241,6 +248,11 @@ impl RenderOnce for ListItem {
                     })
             })
             .when(self.rounded, |this| this.rounded_sm())
+            .border_1()
+            .border_color(gpui::transparent_black())
+            .when(self.selection_outlined, |this| {
+                this.border_color(cx.theme().colors().panel_focused_border)
+            })
             .when_some(self.on_hover, |this, on_hover| this.on_hover(on_hover))
             .child(
                 h_flex()
