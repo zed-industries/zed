@@ -149,6 +149,10 @@ impl EditorBlock {
             let editor_margins = cx.margins;
             let gutter = editor_margins.gutter;
 
+            execution_view.update(cx.app, |view, _| {
+                view.editor_gutter_width = Some(gutter.full_width());
+            });
+
             let block_id = cx.block_id;
             let on_close = on_close.clone();
 

@@ -93,6 +93,7 @@ pub struct TerminalOutput {
     focus_handle: FocusHandle,
     scroll_active: bool,
     _focus_subscription: Subscription,
+    pub editor_gutter_width: Option<Pixels>,
 }
 
 /// Returns the default text style for the terminal output.
@@ -137,7 +138,11 @@ fn cell_width(window: &mut Window, cx: &App) -> Pixels {
 /// Computes the number of terminal columns that fit in the available viewport width,
 /// accounting for the editor gutter and margins. If `max_columns` is set to a nonzero
 /// value in settings, that value is used instead.
-fn columns_for_viewport(window: &mut Window, cx: &App) -> usize {
+fn columns_for_viewport(
+    editor_gutter_width: Option<Pixels>,
+    window: &mut Window,
+    cx: &App,
+) -> usize {
     let max_columns = ReplSettings::get_global(cx).max_columns;
     if max_columns > 0 {
         return max_columns;
@@ -149,8 +154,8 @@ fn columns_for_viewport(window: &mut Window, cx: &App) -> usize {
     }
 
     let viewport_width = window.viewport_size().width;
-    let gutter_estimate = cell_width * 8.0;
-    let available_width = (viewport_width - gutter_estimate).max(cell_width * 20.0);
+    let gutter_width = editor_gutter_width.unwrap_or(cell_width * 8.0);
+    let available_width = (viewport_width - gutter_width).max(cell_width * 20.0);
     (available_width / cell_width).floor() as usize
 }
 
@@ -160,7 +165,7 @@ pub fn terminal_size(window: &mut Window, cx: &mut App) -> terminal::TerminalBou
     let cell_width = cell_width(window, cx);
 
     let num_lines = ReplSettings::get_global(cx).max_lines;
-    let columns = columns_for_viewport(window, cx);
+    let columns = columns_for_viewport(None, window, cx);
 
     let width = columns as f32 * cell_width;
     let height = num_lines as f32 * line_height;
@@ -223,6 +228,7 @@ impl TerminalOutput {
             focus_handle,
             scroll_active: false,
             _focus_subscription: focus_subscription,
+            editor_gutter_width: None,
         }
     }
 
@@ -415,7 +421,7 @@ mod tests {
     #[gpui::test]
     fn test_columns_for_viewport_returns_reasonable_value(cx: &mut TestAppContext) {
         let cx = init_test(cx);
-        let columns = cx.update(|window, cx| columns_for_viewport(window, cx));
+        let columns = cx.update(|window, cx| columns_for_viewport(None, window, cx));
         assert!(
             columns >= 20,
             "viewport columns should be at least 20, got {columns}"
@@ -497,7 +503,7 @@ impl Render for TerminalOutput {
         let cell_width = cell_width(window, cx);
 
         // Resize terminal to match current viewport width so text reflows appropriately.
-        let target_columns = columns_for_viewport(window, cx);
+        let target_columns = columns_for_viewport(self.editor_gutter_width, window, cx);
         if target_columns != self.handler.columns() {
             let num_lines = ReplSettings::get_global(cx).max_lines;
             let width = target_columns as f32 * cell_width;
