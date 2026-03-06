@@ -202,10 +202,35 @@ impl fmt::Display for KeyBindingContextPredicate {
             Self::Identifier(name) => write!(f, "{}", name),
             Self::Equal(left, right) => write!(f, "{} == {}", left, right),
             Self::NotEqual(left, right) => write!(f, "{} != {}", left, right),
-            Self::Not(pred) => write!(f, "!{}", pred),
             Self::Descendant(parent, child) => write!(f, "{} > {}", parent, child),
-            Self::And(left, right) => write!(f, "({} && {})", left, right),
-            Self::Or(left, right) => write!(f, "({} || {})", left, right),
+            Self::Not(pred) => match pred.as_ref() {
+                Self::Identifier(name) => write!(f, "!{}", name),
+                _ => write!(f, "!({})", pred),
+            },
+            Self::And(..) => {
+                let nodes = self
+                    .collect_and_nodes()
+                    .iter()
+                    .map(|node| match node {
+                        Self::Or(..) => format!("({})", node),
+                        _ => format!("{}", node),
+                    })
+                    .collect::<Vec<String>>();
+
+                write!(f, "{}", nodes.join(" && "))
+            }
+            Self::Or(..) => {
+                let nodes = self
+                    .collect_or_nodes()
+                    .iter()
+                    .map(|node| match node {
+                        Self::And(..) => format!("({})", node),
+                        _ => format!("{}", node),
+                    })
+                    .collect::<Vec<String>>();
+
+                write!(f, "{}", nodes.join(" || "))
+            }
         }
     }
 }
@@ -434,6 +459,28 @@ impl KeyBindingContextPredicate {
             Ok(Self::NotEqual(left, right))
         } else {
             anyhow::bail!("operands of != must be identifiers");
+        }
+    }
+
+    fn collect_and_nodes(&self) -> Vec<&Self> {
+        match self {
+            Self::And(left, right) => {
+                let mut nodes = left.collect_and_nodes();
+                nodes.extend(right.collect_and_nodes());
+                nodes
+            }
+            _ => vec![self],
+        }
+    }
+
+    fn collect_or_nodes(&self) -> Vec<&Self> {
+        match self {
+            Self::Or(left, right) => {
+                let mut nodes = left.collect_or_nodes();
+                nodes.extend(right.collect_or_nodes());
+                nodes
+            }
+            _ => vec![self],
         }
     }
 }
