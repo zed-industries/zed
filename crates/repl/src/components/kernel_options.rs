@@ -22,15 +22,25 @@ pub enum KernelPickerEntry {
 fn build_grouped_entries(store: &ReplStore, worktree_id: WorktreeId) -> Vec<KernelPickerEntry> {
     let mut entries = Vec::new();
     let mut recommended_entry: Option<KernelPickerEntry> = None;
+    let mut found_selected = false;
+    let selected_kernel = store.selected_kernel(worktree_id);
 
     let mut python_envs = Vec::new();
     let mut jupyter_kernels = Vec::new();
+    let mut wsl_kernels = Vec::new();
     let mut remote_kernels = Vec::new();
 
     for spec in store.kernel_specifications_for_worktree(worktree_id) {
         let is_recommended = store.is_recommended_kernel(worktree_id, spec);
+        let is_selected = selected_kernel.map_or(false, |s| s == spec);
 
-        if is_recommended {
+        if is_selected {
+            recommended_entry = Some(KernelPickerEntry::Kernel {
+                spec: spec.clone(),
+                is_recommended: true,
+            });
+            found_selected = true;
+        } else if is_recommended && !found_selected {
             recommended_entry = Some(KernelPickerEntry::Kernel {
                 spec: spec.clone(),
                 is_recommended: true,
@@ -50,8 +60,14 @@ fn build_grouped_entries(store: &ReplStore, worktree_id: WorktreeId) -> Vec<Kern
                     is_recommended,
                 });
             }
-            KernelSpecification::Remote(_) => {
+            KernelSpecification::JupyterServer(_) | KernelSpecification::SshRemote(_) => {
                 remote_kernels.push(KernelPickerEntry::Kernel {
+                    spec: spec.clone(),
+                    is_recommended,
+                });
+            }
+            KernelSpecification::WslRemote(_) => {
+                wsl_kernels.push(KernelPickerEntry::Kernel {
                     spec: spec.clone(),
                     is_recommended,
                 });
@@ -92,6 +108,12 @@ fn build_grouped_entries(store: &ReplStore, worktree_id: WorktreeId) -> Vec<Kern
     if !jupyter_kernels.is_empty() {
         entries.push(KernelPickerEntry::SectionHeader("Jupyter Kernels".into()));
         entries.extend(jupyter_kernels);
+    }
+
+    // WSL Kernels section
+    if !wsl_kernels.is_empty() {
+        entries.push(KernelPickerEntry::SectionHeader("WSL Kernels".into()));
+        entries.extend(wsl_kernels);
     }
 
     // Remote section
@@ -314,7 +336,10 @@ impl PickerDelegate for KernelPickerDelegate {
 
                 let subtitle = match spec {
                     KernelSpecification::Jupyter(_) => None,
-                    KernelSpecification::PythonEnv(_) | KernelSpecification::Remote(_) => {
+                    KernelSpecification::WslRemote(_) => Some(spec.path().to_string()),
+                    KernelSpecification::PythonEnv(_)
+                    | KernelSpecification::JupyterServer(_)
+                    | KernelSpecification::SshRemote(_) => {
                         let env_kind = spec.environment_kind_label();
                         let path = spec.path();
                         match env_kind {

@@ -259,7 +259,7 @@ impl MarkdownPreviewView {
         if let Some(buffer) = buffer.as_singleton()
             && let Some(language) = buffer.read(cx).language()
         {
-            return language.name() == "Markdown".into();
+            return language.name() == "Markdown";
         }
         false
     }
@@ -525,15 +525,10 @@ impl Item for MarkdownPreviewView {
     fn tab_content_text(&self, _detail: usize, cx: &App) -> SharedString {
         self.active_editor
             .as_ref()
-            .and_then(|editor_state| {
+            .map(|editor_state| {
                 let buffer = editor_state.editor.read(cx).buffer().read(cx);
-                let buffer = buffer.as_singleton()?;
-                let file = buffer.read(cx).file()?;
-                let local_file = file.as_local()?;
-                local_file
-                    .abs_path(cx)
-                    .file_name()
-                    .map(|name| format!("Preview {}", name.to_string_lossy()).into())
+                let title = buffer.title(cx);
+                format!("Preview {}", title).into()
             })
             .unwrap_or_else(|| SharedString::from("Markdown Preview"))
     }
@@ -542,7 +537,7 @@ impl Item for MarkdownPreviewView {
         Some("Markdown Preview Opened")
     }
 
-    fn to_item_events(_event: &Self::Event, _f: impl FnMut(workspace::item::ItemEvent)) {}
+    fn to_item_events(_event: &Self::Event, _f: &mut dyn FnMut(workspace::item::ItemEvent)) {}
 }
 
 impl Render for MarkdownPreviewView {

@@ -311,7 +311,7 @@ pub(crate) fn refresh_enabled_in_any_buffer(
     editor.jsx_tag_auto_close_enabled_in_any_buffer = {
         let multi_buffer = multi_buffer.read(cx);
         let mut found_enabled = false;
-        multi_buffer.for_each_buffer(|buffer| {
+        multi_buffer.for_each_buffer(&mut |buffer| {
             if found_enabled {
                 return;
             }
@@ -619,7 +619,7 @@ mod jsx_tag_autoclose_tests {
     use super::*;
     use gpui::{AppContext as _, TestAppContext};
     use languages::language;
-    use multi_buffer::{ExcerptRange, MultiBufferOffset};
+    use multi_buffer::{MultiBufferOffset, PathKey};
     use text::Selection;
 
     async fn test_setup(cx: &mut TestAppContext) -> EditorTestContext {
@@ -816,21 +816,12 @@ mod jsx_tag_autoclose_tests {
         let buffer_c = cx.new(|cx| language::Buffer::local("<span", cx));
         let buffer = cx.new(|cx| {
             let mut buf = MultiBuffer::new(language::Capability::ReadWrite);
-            buf.push_excerpts(
-                buffer_a,
-                [ExcerptRange::new(text::Anchor::MIN..text::Anchor::MAX)],
-                cx,
-            );
-            buf.push_excerpts(
-                buffer_b,
-                [ExcerptRange::new(text::Anchor::MIN..text::Anchor::MAX)],
-                cx,
-            );
-            buf.push_excerpts(
-                buffer_c,
-                [ExcerptRange::new(text::Anchor::MIN..text::Anchor::MAX)],
-                cx,
-            );
+            let range_a = language::Point::zero()..buffer_a.read(cx).max_point();
+            let range_b = language::Point::zero()..buffer_b.read(cx).max_point();
+            let range_c = language::Point::zero()..buffer_c.read(cx).max_point();
+            buf.set_excerpts_for_path(PathKey::sorted(0), buffer_a, [range_a], 0, cx);
+            buf.set_excerpts_for_path(PathKey::sorted(1), buffer_b, [range_b], 0, cx);
+            buf.set_excerpts_for_path(PathKey::sorted(2), buffer_c, [range_c], 0, cx);
             buf
         });
         let editor = cx.add_window(|window, cx| build_editor(buffer.clone(), window, cx));

@@ -222,7 +222,7 @@ impl PickerDelegate for RulePickerDelegate {
         cx.notify();
     }
 
-    fn can_select(&mut self, ix: usize, _: &mut Window, _: &mut Context<Picker<Self>>) -> bool {
+    fn can_select(&self, ix: usize, _: &mut Window, _: &mut Context<Picker<Self>>) -> bool {
         match self.filtered_entries.get(ix) {
             Some(RulePickerEntry::Rule(_)) => true,
             Some(RulePickerEntry::Header(_)) | Some(RulePickerEntry::Separator) | None => false,
@@ -1106,6 +1106,7 @@ impl RulesLibrary {
                                     temperature: None,
                                     thinking_allowed: true,
                                     thinking_effort: None,
+                                    speed: None,
                                 },
                                 cx,
                             )

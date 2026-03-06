@@ -25,17 +25,10 @@ impl SearchToken {
     }
 }
 
-#[derive(Clone, Debug)]
-pub enum CollapseDirection {
-    Collapsed,
-    Expanded,
-}
-
 #[derive(Debug, Clone)]
 pub enum SearchEvent {
     MatchesInvalidated,
     ActiveMatchChanged,
-    ResultsCollapsedChanged(CollapseDirection),
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]

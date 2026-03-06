@@ -13,7 +13,8 @@ use crate::tasks::workflows::{
     },
 };
 
-const VERSION_CHECK: &str = r#"sed -n 's/version = \"\(.*\)\"/\1/p' < extension.toml"#;
+const VERSION_CHECK: &str =
+    r#"sed -n 's/^version = \"\(.*\)\"/\1/p' < extension.toml | tr -d '[:space:]'"#;
 
 // This is used by various extensions repos in the zed-extensions org to bump extension versions.
 pub(crate) fn extension_bump() -> Workflow {
@@ -95,7 +96,7 @@ fn check_version_changed() -> (NamedJob, StepOutput, StepOutput) {
         ])
         .runs_on(runners::LINUX_SMALL)
         .timeout_minutes(1u32)
-        .add_step(steps::checkout_repo().add_with(("fetch-depth", 0)))
+        .add_step(steps::checkout_repo().with_full_history())
         .add_step(compare_versions);
 
     (named::job(job), version_changed, current_version)
@@ -148,10 +149,10 @@ pub(crate) fn compare_versions() -> (Step<Run>, StepOutput, StepOutput) {
     let check_needs_bump = named::bash(formatdoc! {
     r#"
         CURRENT_VERSION="$({VERSION_CHECK})"
-        PR_PARENT_SHA="${{{{ github.event.pull_request.head.sha }}}}"
 
-        if [[ -n "$PR_PARENT_SHA" ]]; then
-            git checkout "$PR_PARENT_SHA"
+        if [[ "$GITHUB_EVENT_NAME" == "pull_request" ]]; then
+            PR_FORK_POINT="$(git merge-base origin/main HEAD)"
+            git checkout "$PR_FORK_POINT"
         elif BRANCH_PARENT_SHA="$(git merge-base origin/main origin/zed-zippy-autobump)"; then
             git checkout "$BRANCH_PARENT_SHA"
         else
@@ -190,7 +191,7 @@ fn bump_extension_version(
 
     let job = steps::dependant_job(dependencies)
         .cond(Expression::new(format!(
-            "{DEFAULT_REPOSITORY_OWNER_GUARD} &&\n({force_bump} == 'true' || {version_changed} == 'false')",
+            "{DEFAULT_REPOSITORY_OWNER_GUARD} &&\n({force_bump} == true || {version_changed} == 'false')",
             force_bump = force_bump_output.expr(),
             version_changed = version_changed_output.expr(),
         )))
@@ -257,8 +258,6 @@ fn install_bump_2_version() -> Step<Run> {
 
 fn bump_version(current_version: &JobOutput, bump_type: &WorkflowInput) -> (Step<Run>, StepOutput) {
     let step = named::bash(formatdoc! {r#"
-        OLD_VERSION="{current_version}"
-
         BUMP_FILES=("extension.toml")
         if [[ -f "Cargo.toml" ]]; then
             BUMP_FILES+=("Cargo.toml")
@@ -268,7 +267,7 @@ fn bump_version(current_version: &JobOutput, bump_type: &WorkflowInput) -> (Step
             --search "version = \"{{current_version}}"\" \
             --replace "version = \"{{new_version}}"\" \
             --current-version "$OLD_VERSION" \
-            --no-configured-files {bump_type} "${{BUMP_FILES[@]}}"
+            --no-configured-files "$BUMP_TYPE" "${{BUMP_FILES[@]}}"
 
         if [[ -f "Cargo.toml" ]]; then
             cargo update --workspace
@@ -279,7 +278,9 @@ fn bump_version(current_version: &JobOutput, bump_type: &WorkflowInput) -> (Step
         echo "new_version=${{NEW_VERSION}}" >> "$GITHUB_OUTPUT"
         "#
     })
-    .id("bump-version");
+    .id("bump-version")
+    .add_env(("OLD_VERSION", current_version.to_string()))
+    .add_env(("BUMP_TYPE", bump_type.to_string()));
 
     let new_version = StepOutput::new(&step, "new_version");
     (step, new_version)

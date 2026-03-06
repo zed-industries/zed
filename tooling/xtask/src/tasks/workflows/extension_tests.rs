@@ -1,11 +1,16 @@
 use gh_workflow::*;
-use indoc::{formatdoc, indoc};
+use indoc::indoc;
 
 use crate::tasks::workflows::{
     extension_bump::compare_versions,
-    run_tests::{orchestrate_without_package_filter, tests_pass},
+    run_tests::{
+        fetch_ts_query_ls, orchestrate_without_package_filter, run_ts_query_ls, tests_pass,
+    },
     runners,
-    steps::{self, CommonJobConditions, FluentBuilder, NamedJob, named},
+    steps::{
+        self, CommonJobConditions, FluentBuilder, NamedJob, cache_rust_dependencies_namespace,
+        named,
+    },
     vars::{PathCondition, StepOutput, one_workflow_per_non_main_branch},
 };
 
@@ -17,7 +22,8 @@ const EXTENSION_RUST_TARGET: &str = "wasm32-wasip2";
 // This is used by various extensions repos in the zed-extensions org to run automated tests.
 pub(crate) fn extension_tests() -> Workflow {
     let should_check_rust = PathCondition::new("check_rust", r"^(Cargo.lock|Cargo.toml|.*\.rs)$");
-    let should_check_extension = PathCondition::new("check_extension", r"^.*\.scm$");
+    let should_check_extension =
+        PathCondition::new("check_extension", r"^(extension\.toml|.*\.scm)$");
 
     let orchestrate =
         orchestrate_without_package_filter(&[&should_check_rust, &should_check_extension]);
@@ -84,11 +90,14 @@ pub(crate) fn check_extension() -> NamedJob {
     let job = Job::default()
         .with_repository_owner_guard()
         .runs_on(runners::LINUX_LARGE_RAM)
-        .timeout_minutes(4u32)
-        .add_step(steps::checkout_repo())
+        .timeout_minutes(6u32)
+        .add_step(steps::checkout_repo().with_full_history())
         .add_step(cache_download)
         .add_step(download_zed_extension_cli(cache_hit))
+        .add_step(cache_rust_dependencies_namespace()) // Extensions can compile Rust, so provide the cache if needed.
         .add_step(check())
+        .add_step(fetch_ts_query_ls())
+        .add_step(run_ts_query_ls())
         .add_step(check_version_job)
         .add_step(verify_version_did_not_change(version_changed));
 
@@ -133,12 +142,14 @@ pub fn check() -> Step<Run> {
 }
 
 fn verify_version_did_not_change(version_changed: StepOutput) -> Step<Run> {
-    named::bash(formatdoc! {r#"
-        if [[ {version_changed} == "true" && "${{{{ github.event_name }}}}" == "pull_request" && "${{{{ github.event.pull_request.user.login }}}}" != "zed-zippy[bot]" ]] ; then
+    named::bash(indoc! {r#"
+        if [[ "$VERSION_CHANGED" == "true" && "$GITHUB_EVENT_NAME" == "pull_request" && "$PR_USER_LOGIN" != "zed-zippy[bot]" ]] ; then
             echo "Version change detected in your change!"
             echo "Version changes happen in separate PRs and will be performed by the zed-zippy bot"
             exit 42
         fi
         "#
     })
+    .add_env(("VERSION_CHANGED", version_changed.to_string()))
+    .add_env(("PR_USER_LOGIN", "${{ github.event.pull_request.user.login }}"))
 }

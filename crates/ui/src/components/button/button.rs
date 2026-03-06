@@ -434,6 +434,7 @@ impl RenderOnce for Button {
 
         self.base.child(
             h_flex()
+                .when(self.truncate, |this| this.min_w_0().overflow_hidden())
                 .gap(DynamicSpacing::Base04.rems(cx))
                 .when(self.icon_position == Some(IconPosition::Start), |this| {
                     this.children(self.icon.map(|icon| {
@@ -448,6 +449,7 @@ impl RenderOnce for Button {
                 })
                 .child(
                     h_flex()
+                        .when(self.truncate, |this| this.min_w_0().overflow_hidden())
                         .when(
                             self.key_binding_position == KeybindingPosition::Start,
                             |this| this.flex_row_reverse(),
