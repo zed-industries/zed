@@ -19,7 +19,7 @@ use settings::EditPredictionPromptFormat;
 use text::{Anchor, Bias};
 use ui::SharedString;
 use workspace::notifications::{ErrorMessagePrompt, NotificationId, show_app_notification};
-use zeta_prompt::ZetaPromptInput;
+use zeta_prompt::{ParsedOutput, ZetaPromptInput};
 
 use std::{env, ops::Range, path::Path, sync::Arc, time::Instant};
 use zeta_prompt::{
@@ -175,13 +175,12 @@ pub fn request_prediction_with_zeta(
 
                             let request_id = EditPredictionId(request_id.into());
                             let output_text = zeta1::clean_zeta1_model_output(&response_text);
+                            let parsed_output = output_text.map(|text| ParsedOutput {
+                                new_editable_region: text,
+                                range_in_excerpt: editable_range_in_excerpt,
+                            });
 
-                            (
-                                request_id,
-                                Some(editable_range_in_excerpt).zip(output_text),
-                                None,
-                                None,
-                            )
+                            (request_id, parsed_output, None, None)
                         }
                         EditPredictionPromptFormat::Zeta2 => {
                             let prompt = format_zeta_prompt(&prompt_input, zeta_version);
@@ -271,20 +270,23 @@ pub fn request_prediction_with_zeta(
                     let request_id = EditPredictionId(response.request_id.into());
                     let output_text = Some(response.output).filter(|s| !s.is_empty());
                     let model_version = response.model_version;
+                    let parsed_output = ParsedOutput {
+                        new_editable_region: output_text.unwrap_or_default(),
+                        range_in_excerpt: response.editable_range,
+                    };
 
-                    (
-                        request_id,
-                        Some(response.editable_range).zip(output_text),
-                        model_version,
-                        usage,
-                    )
+                    (request_id, Some(parsed_output), model_version, usage)
                 };
 
             let received_response_at = Instant::now();
 
             log::trace!("Got edit prediction response");
 
-            let Some((editable_range_in_excerpt, mut output_text)) = output else {
+            let Some(ParsedOutput {
+                new_editable_region: mut output_text,
+                range_in_excerpt: editable_range_in_excerpt,
+            }) = output
+            else {
                 return Ok(((request_id, None), None));
             };
 
