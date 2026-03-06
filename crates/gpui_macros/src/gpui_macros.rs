@@ -245,6 +245,14 @@ pub fn test(args: TokenStream, function: TokenStream) -> TokenStream {
 /// 
 /// For more information on writing custom `Strategy` and `Arbitrary`
 /// implementations, see [the proptest book][book], and the [`Strategy`] trait.
+/// 
+/// ## Scheduler
+/// 
+/// Similar to `#[gpui::test]`, this macro will choose random seeds for the test
+/// scheduler. It uses `.no_shrink()` to tell proptest that all seeds are
+/// roughly equivalent in terms of "complexity". If `$SEED` is set, it will
+/// affect **ONLY** the seed passed to the scheduler. To control other values,
+/// use custom `Strategy`s.
 ///
 /// [`#[proptest::property_test]`]: https://docs.rs/proptest/latest/proptest/attr.property_test.html
 /// [book]: https://proptest-rs.github.io/proptest/intro.html
