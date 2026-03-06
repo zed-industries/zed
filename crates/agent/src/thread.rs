@@ -1854,10 +1854,7 @@ impl Thread {
                 // Race between getting the first event, tool completion, and cancellation.
                 // Including tool_results here ensures that tool errors cause us to
                 // break out of the stream loop immediately rather than waiting for
-                // the LLM stream to finish. Completed results are stashed in
-                // `early_tool_results` and processed in the post-loop along with
-                // any remaining results, preserving the flow that returns them
-                // to the LLM.
+                // the LLM stream to finish.
                 let first_event = futures::select! {
                     event = events.next().fuse() => event,
                     tool_result = futures::StreamExt::select_next_some(&mut tool_results) => {
@@ -1949,9 +1946,6 @@ impl Thread {
 
             let end_turn = tool_results.is_empty() && early_tool_results.is_empty();
 
-            // Process tool results that completed while the stream was still
-            // running (stashed earlier to avoid being consumed from the
-            // FuturesUnordered before the end_turn check).
             for tool_result in early_tool_results {
                 Self::process_tool_result(this, event_stream, cx, tool_result)?;
             }
