@@ -73,6 +73,7 @@ enum ListEntry {
         label: SharedString,
         workspace: Entity<Workspace>,
         highlight_positions: Vec<usize>,
+        has_threads: bool,
     },
     Thread {
         session_info: acp_thread::AgentSessionInfo,
@@ -527,6 +528,7 @@ impl Sidebar {
             }
 
             if !query.is_empty() {
+                let has_threads = !threads.is_empty();
                 let mut matched_threads = Vec::new();
                 for mut thread in threads {
                     if let ListEntry::Thread {
@@ -559,14 +561,17 @@ impl Sidebar {
                     label,
                     workspace: workspace.clone(),
                     highlight_positions: workspace_highlight_positions,
+                    has_threads,
                 });
                 entries.extend(matched_threads);
             } else {
+                let has_threads = !threads.is_empty();
                 entries.push(ListEntry::ProjectHeader {
                     path_list: path_list.clone(),
                     label,
                     workspace: workspace.clone(),
                     highlight_positions: Vec::new(),
+                    has_threads,
                 });
 
                 if is_collapsed {
@@ -682,12 +687,14 @@ impl Sidebar {
                 label,
                 workspace,
                 highlight_positions,
+                has_threads,
             } => self.render_project_header(
                 ix,
                 path_list,
                 label,
                 workspace,
                 highlight_positions,
+                *has_threads,
                 is_selected,
                 cx,
             ),
@@ -741,6 +748,7 @@ impl Sidebar {
         label: &SharedString,
         workspace: &Entity<Workspace>,
         highlight_positions: &[usize],
+        has_threads: bool,
         is_selected: bool,
         cx: &mut Context<Self>,
     ) -> AnyElement {
@@ -811,16 +819,18 @@ impl Sidebar {
                             )),
                         )
                     })
-                    .child(
-                        IconButton::new(ib_id, IconName::NewThread)
-                            .icon_size(IconSize::Small)
-                            .icon_color(Color::Muted)
-                            .tooltip(Tooltip::text("New Thread"))
-                            .on_click(cx.listener(move |this, _, window, cx| {
-                                this.selection = None;
-                                this.create_new_thread(&workspace_for_new_thread, window, cx);
-                            })),
-                    ),
+                    .when(has_threads, |this| {
+                        this.child(
+                            IconButton::new(ib_id, IconName::NewThread)
+                                .icon_size(IconSize::Small)
+                                .icon_color(Color::Muted)
+                                .tooltip(Tooltip::text("New Thread"))
+                                .on_click(cx.listener(move |this, _, window, cx| {
+                                    this.selection = None;
+                                    this.create_new_thread(&workspace_for_new_thread, window, cx);
+                                })),
+                        )
+                    }),
             )
             .on_click(cx.listener(move |this, _, window, cx| {
                 this.selection = None;
@@ -1844,6 +1854,7 @@ mod tests {
                     label: "expanded-project".into(),
                     workspace: workspace.clone(),
                     highlight_positions: Vec::new(),
+                    has_threads: true,
                 },
                 // Thread with default (Completed) status, not active
                 ListEntry::Thread {
@@ -1946,6 +1957,7 @@ mod tests {
                     label: "collapsed-project".into(),
                     workspace: workspace.clone(),
                     highlight_positions: Vec::new(),
+                    has_threads: true,
                 },
             ];
             // Select the Running thread (index 2)
