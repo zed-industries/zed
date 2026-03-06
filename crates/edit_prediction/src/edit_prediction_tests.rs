@@ -1851,7 +1851,7 @@ fn init_test_with_fake_client(
         client.cloud_client().set_credentials(1, "test".into());
 
         let user_store = cx.new(|cx| UserStore::new(client.clone(), cx));
-        language_model::init(client.clone(), user_store.clone(), cx);
+        language_model::init(user_store.clone(), client.clone(), cx);
         let ep_store = EditPredictionStore::global(&client, &user_store, cx);
 
         (

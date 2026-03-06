@@ -62,7 +62,7 @@ pub const ZED_CLOUD_PROVIDER_ID: LanguageModelProviderId = LanguageModelProvider
 pub const ZED_CLOUD_PROVIDER_NAME: LanguageModelProviderName =
     LanguageModelProviderName::new("Zed");
 
-pub fn init(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut App) {
+pub fn init(user_store: Entity<UserStore>, client: Arc<Client>, cx: &mut App) {
     init_settings(cx);
     RefreshLlmTokenListener::register(client, user_store, cx);
 }
