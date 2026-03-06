@@ -7473,8 +7473,8 @@ impl ThreadView {
         Callout::new()
             .icon(IconName::Warning)
             .severity(Severity::Warning)
-            .title("External Link Prompt")
-            .description("This prompt was pre-filled from an external link. Review it carefully before submitting.")
+            .title("Review before sending")
+            .description("This prompt was pre-filled by an external link. Read it carefully before you send it.")
             .dismiss_action(
                 IconButton::new("dismiss-external-source-prompt-warning", IconName::Close)
                     .icon_size(IconSize::Small)
