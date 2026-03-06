@@ -336,7 +336,7 @@ pub fn format_prompt_with_budget_for_format(
     let path = &*input.cursor_path;
 
     let related_files = if let Some(cursor_excerpt_start_row) = input.excerpt_start_row {
-        let relative_row_range = offset_range_to_row_range(context, context_range);
+        let relative_row_range = offset_range_to_row_range(&input.cursor_excerpt, context_range);
         let row_range = relative_row_range.start + cursor_excerpt_start_row
             ..relative_row_range.end + cursor_excerpt_start_row;
         &filter_redundant_excerpts(
@@ -481,31 +481,35 @@ pub fn parse_zeta2_model_output(
         None => output,
     };
 
-    let (context, editable_range, _, _) = resolve_cursor_region(prompt_inputs, format);
-    let old_editable_region = &context[editable_range.clone()];
+    let (context, editable_range_in_context, context_range, _) =
+        resolve_cursor_region(prompt_inputs, format);
+    let context_start = context_range.start;
+    let old_editable_region = &context[editable_range_in_context.clone()];
 
-    match format {
-        ZetaFormat::v0226Hashline => Ok((
-            editable_range,
+    let (range_in_context, output) = match format {
+        ZetaFormat::v0226Hashline => (
+            editable_range_in_context,
             if hashline::output_has_edit_commands(output) {
                 hashline::apply_edit_commands(old_editable_region, output)
             } else {
                 output.to_string()
             },
-        )),
-        ZetaFormat::V0304VariableEdit => {
-            v0304_variable_edit::apply_variable_edit(old_editable_region, output)
-        }
-        ZetaFormat::V0304SeedNoEdits => Ok((
-            editable_range,
+        ),
+        ZetaFormat::V0304VariableEdit => v0304_variable_edit::apply_variable_edit(context, output)?,
+        ZetaFormat::V0304SeedNoEdits => (
+            editable_range_in_context,
             if output.starts_with(seed_coder::NO_EDITS) {
                 old_editable_region.to_string()
             } else {
                 output.to_string()
             },
-        )),
-        _ => Ok((editable_range, output.to_string())),
-    }
+        ),
+        _ => (editable_range_in_context, output.to_string()),
+    };
+
+    let range_in_excerpt =
+        range_in_context.start + context_start..range_in_context.end + context_start;
+    Ok((range_in_excerpt, output))
 }
 
 pub fn excerpt_range_for_format(
@@ -525,13 +529,11 @@ pub fn resolve_cursor_region(
     let adjusted_editable =
         (editable_range.start - context_start)..(editable_range.end - context_start);
     let adjusted_cursor = input.cursor_offset_in_excerpt - context_start;
-    let adjusted_context =
-        (context_range.start - context_start)..(context_range.end - context_start);
 
     (
         context_text,
         adjusted_editable,
-        adjusted_context,
+        context_range,
         adjusted_cursor,
     )
 }
@@ -3800,6 +3802,35 @@ mod tests {
         }
     }
 
+    fn make_input_with_context_range(
+        excerpt: &str,
+        editable_range: Range<usize>,
+        context_range: Range<usize>,
+        cursor_offset: usize,
+    ) -> ZetaPromptInput {
+        ZetaPromptInput {
+            cursor_path: Path::new("test.rs").into(),
+            cursor_excerpt: excerpt.into(),
+            cursor_offset_in_excerpt: cursor_offset,
+            excerpt_start_row: None,
+            events: vec![],
+            related_files: vec![],
+            excerpt_ranges: ExcerptRanges {
+                editable_150: editable_range.clone(),
+                editable_180: editable_range.clone(),
+                editable_350: editable_range,
+                editable_150_context_350: context_range.clone(),
+                editable_180_context_350: context_range.clone(),
+                editable_350_context_150: context_range,
+                ..Default::default()
+            },
+            experiment: None,
+            in_open_source_repo: false,
+            can_collect_data: false,
+            repo_url: None,
+        }
+    }
+
     fn make_event(path: &str, diff: &str) -> Event {
         Event::BufferChange {
             path: Path::new(path).into(),
@@ -4579,5 +4610,74 @@ mod tests {
         let output = "<|editable_region_start|>\n<|editable_region_end|>\n";
         let cleaned = zeta1::clean_zeta1_model_output(output).unwrap();
         assert_eq!(cleaned, "");
+    }
+
+    fn apply_edit(excerpt: &str, range: &Range<usize>, new_text: &str) -> String {
+        let mut result = excerpt.to_string();
+        result.replace_range(range.clone(), new_text);
+        result
+    }
+
+    #[test]
+    fn test_parse_zeta2_model_output() {
+        let excerpt = "before ctx\nctx start\neditable old\nctx end\nafter ctx\n";
+        let context_start = excerpt.find("ctx start").unwrap();
+        let context_end = excerpt.find("after ctx").unwrap();
+        let editable_start = excerpt.find("editable old").unwrap();
+        let editable_end = editable_start + "editable old\n".len();
+        let input = make_input_with_context_range(
+            excerpt,
+            editable_start..editable_end,
+            context_start..context_end,
+            editable_start,
+        );
+
+        let (range, text) = parse_zeta2_model_output(
+            "editable new\n>>>>>>> UPDATED\n",
+            ZetaFormat::V0131GitMergeMarkersPrefix,
+            &input,
+        )
+        .unwrap();
+
+        assert_eq!(
+            apply_edit(excerpt, &range, &text),
+            "before ctx\nctx start\neditable new\nctx end\nafter ctx\n"
+        );
+    }
+
+    #[test]
+    fn test_parse_zeta2_model_output_identity() {
+        let excerpt = "aaa\nbbb\nccc\nddd\neee\n";
+        let editable_start = excerpt.find("bbb").unwrap();
+        let editable_end = excerpt.find("ddd").unwrap();
+        let input = make_input_with_context_range(
+            excerpt,
+            editable_start..editable_end,
+            0..excerpt.len(),
+            editable_start,
+        );
+
+        let format = ZetaFormat::V0131GitMergeMarkersPrefix;
+        let (range, text) =
+            parse_zeta2_model_output("bbb\nccc\n>>>>>>> UPDATED\n", format, &input).unwrap();
+
+        assert_eq!(apply_edit(excerpt, &range, &text), excerpt);
+    }
+
+    #[test]
+    fn test_parse_zeta2_model_output_strips_end_marker() {
+        let excerpt = "hello\nworld\n";
+        let input = make_input_with_context_range(excerpt, 0..excerpt.len(), 0..excerpt.len(), 0);
+
+        let format = ZetaFormat::V0131GitMergeMarkersPrefix;
+        let (range1, text1) =
+            parse_zeta2_model_output("new content\n>>>>>>> UPDATED\n", format, &input).unwrap();
+        let (range2, text2) = parse_zeta2_model_output("new content\n", format, &input).unwrap();
+
+        assert_eq!(
+            apply_edit(excerpt, &range1, &text1),
+            apply_edit(excerpt, &range2, &text2)
+        );
+        assert_eq!(apply_edit(excerpt, &range1, &text1), "new content\n");
     }
 }
