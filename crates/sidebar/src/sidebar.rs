@@ -18,8 +18,8 @@ use std::mem;
 use theme::{ActiveTheme, ThemeSettings};
 use ui::utils::TRAFFIC_LIGHT_PADDING;
 use ui::{
-    AgentThreadStatus, HighlightedLabel, IconButtonShape, KeyBinding, ListItem, PopoverMenu, Tab,
-    ThreadItem, Tooltip, WithScrollbar, prelude::*,
+    AgentThreadStatus, HighlightedLabel, IconButtonShape, KeyBinding, ListItem, Tab, ThreadItem,
+    Tooltip, WithScrollbar, prelude::*,
 };
 use util::path_list::PathList;
 use workspace::{
@@ -190,7 +190,7 @@ impl Sidebar {
 
         let filter_editor = cx.new(|cx| {
             let mut editor = Editor::single_line(window, cx);
-            editor.set_placeholder_text("Search threads…", window, cx);
+            editor.set_placeholder_text("Search…", window, cx);
             editor
         });
 
@@ -744,7 +744,7 @@ impl Sidebar {
         };
         let workspace_for_new_thread = workspace.clone();
         let workspace_for_remove = workspace.clone();
-        let workspace_for_activate = workspace.clone();
+        // let workspace_for_activate = workspace.clone();
         let path_list_for_toggle = path_list.clone();
         let multi_workspace = self.multi_workspace.upgrade();
         let workspace_count = multi_workspace
@@ -755,60 +755,35 @@ impl Sidebar {
                 .as_ref()
                 .is_some_and(|mw| mw.read(cx).workspace() == workspace);
 
+        let label = if highlight_positions.is_empty() {
+            Label::new(label.clone())
+                .size(LabelSize::Small)
+                .color(Color::Muted)
+                .into_any_element()
+        } else {
+            HighlightedLabel::new(label.clone(), highlight_positions.to_vec())
+                .size(LabelSize::Small)
+                .color(Color::Muted)
+                .into_any_element()
+        };
+
         // TODO: if is_selected, draw a blue border around the item.
 
         ListItem::new(id)
             .group_name(&group)
             .toggle_state(is_active_workspace)
             .child(
-                h_flex()
-                    .px_1()
-                    .py_1p5()
-                    .gap_0p5()
-                    .child(
-                        IconButton::new(
-                            SharedString::from(format!("project-header-chevron-{}", ix)),
-                            disclosure_icon,
-                        )
-                        .icon_size(IconSize::Small)
-                        .icon_color(Color::Muted)
-                        .shape(IconButtonShape::Square)
-                        .tooltip(Tooltip::text(if is_collapsed {
-                            "Expand"
-                        } else {
-                            "Collapse"
-                        }))
-                        .on_click(cx.listener(
-                            move |this, _, window, cx| {
-                                this.toggle_collapse(&path_list_for_toggle, window, cx);
-                            },
-                        )),
-                    )
-                    .child(if highlight_positions.is_empty() {
-                        Label::new(label.clone())
-                            .size(LabelSize::Small)
-                            .color(Color::Muted)
-                            .into_any_element()
-                    } else {
-                        HighlightedLabel::new(label.clone(), highlight_positions.to_vec())
-                            .size(LabelSize::Small)
-                            .color(Color::Muted)
-                            .into_any_element()
-                    }),
+                h_flex().px_1().py_1p5().gap_0p5().child(label).child(
+                    div().visible_on_hover(group).child(
+                        Icon::new(disclosure_icon)
+                            .size(IconSize::Small)
+                            .color(Color::Muted),
+                    ),
+                ),
             )
             .end_hover_slot(
                 h_flex()
                     .gap_0p5()
-                    .child(
-                        IconButton::new(ib_id, IconName::NewThread)
-                            .icon_size(IconSize::Small)
-                            .icon_color(Color::Muted)
-                            .tooltip(Tooltip::text("New Thread"))
-                            .on_click(cx.listener(move |this, _, window, cx| {
-                                this.selection = None;
-                                this.create_new_thread(&workspace_for_new_thread, window, cx);
-                            })),
-                    )
                     .when(workspace_count > 1, |this| {
                         this.child(
                             IconButton::new(
@@ -824,12 +799,26 @@ impl Sidebar {
                                 },
                             )),
                         )
-                    }),
+                    })
+                    .child(
+                        IconButton::new(ib_id, IconName::NewThread)
+                            .icon_size(IconSize::Small)
+                            .icon_color(Color::Muted)
+                            .tooltip(Tooltip::text("New Thread"))
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.selection = None;
+                                this.create_new_thread(&workspace_for_new_thread, window, cx);
+                            })),
+                    ),
             )
             .on_click(cx.listener(move |this, _, window, cx| {
-                this.selection = None;
-                this.activate_workspace(&workspace_for_activate, window, cx);
+                this.toggle_collapse(&path_list_for_toggle, window, cx);
             }))
+            // TODO: Decide if we really want the header to be activating different workspaces
+            // .on_click(cx.listener(move |this, _, window, cx| {
+            //     this.selection = None;
+            //     this.activate_workspace(&workspace_for_activate, window, cx);
+            // }))
             .into_any_element()
     }
 
@@ -1175,7 +1164,7 @@ impl Sidebar {
                             .size(IconSize::Small)
                             .color(Color::Muted),
                     )
-                    .child(Label::new("View More"))
+                    .child(Label::new("View More").color(Color::Muted))
                     .child(Label::new(count).color(Color::Muted).size(LabelSize::Small)),
             )
             .on_click(cx.listener(move |this, _, _window, cx| {
@@ -1315,82 +1304,73 @@ impl Render for Sidebar {
                     .justify_between()
                     .border_b_1()
                     .border_color(cx.theme().colors().border)
-                    .child({
-                        let focus_handle_toggle = self.focus_handle.clone();
-                        let focus_handle_focus = self.focus_handle.clone();
-                        IconButton::new("close-sidebar", IconName::WorkspaceNavOpen)
-                            .icon_size(IconSize::Small)
-                            .tooltip(Tooltip::element(move |_, cx| {
-                                v_flex()
-                                    .gap_1()
-                                    .child(
-                                        h_flex()
-                                            .gap_2()
-                                            .justify_between()
-                                            .child(Label::new("Close Sidebar"))
-                                            .child(KeyBinding::for_action_in(
-                                                &ToggleWorkspaceSidebar,
-                                                &focus_handle_toggle,
-                                                cx,
-                                            )),
-                                    )
-                                    .child(
-                                        h_flex()
-                                            .pt_1()
-                                            .gap_2()
-                                            .border_t_1()
-                                            .border_color(cx.theme().colors().border_variant)
-                                            .justify_between()
-                                            .child(Label::new(focus_tooltip_label))
-                                            .child(KeyBinding::for_action_in(
-                                                &FocusWorkspaceSidebar,
-                                                &focus_handle_focus,
-                                                cx,
-                                            )),
-                                    )
-                                    .into_any_element()
-                            }))
-                            .on_click(cx.listener(|_this, _, _window, cx| {
-                                cx.emit(SidebarEvent::Close);
-                            }))
-                    })
-                    .child({
-                        let workspace = self
-                            .multi_workspace
-                            .upgrade()
-                            .map(|mw| mw.read(cx).workspace().downgrade());
-                        let focus_handle = workspace
-                            .as_ref()
-                            .and_then(|w| w.upgrade())
-                            .map(|w| w.read(cx).focus_handle(cx))
-                            .unwrap_or_else(|| cx.focus_handle());
-
-                        PopoverMenu::new("sidebar-recent-projects-menu")
-                            .menu(move |window, cx| {
-                                let workspace = workspace.clone()?;
-                                Some(recent_projects::RecentProjects::popover(
-                                    workspace,
-                                    false,
-                                    focus_handle.clone(),
-                                    window,
-                                    cx,
-                                ))
+                    .child(
+                        h_flex()
+                            .gap_1()
+                            .child({
+                                let focus_handle_toggle = self.focus_handle.clone();
+                                let focus_handle_focus = self.focus_handle.clone();
+                                IconButton::new("close-sidebar", IconName::WorkspaceNavOpen)
+                                    .icon_size(IconSize::Small)
+                                    .tooltip(Tooltip::element(move |_, cx| {
+                                        v_flex()
+                                            .gap_1()
+                                            .child(
+                                                h_flex()
+                                                    .gap_2()
+                                                    .justify_between()
+                                                    .child(Label::new("Close Sidebar"))
+                                                    .child(KeyBinding::for_action_in(
+                                                        &ToggleWorkspaceSidebar,
+                                                        &focus_handle_toggle,
+                                                        cx,
+                                                    )),
+                                            )
+                                            .child(
+                                                h_flex()
+                                                    .pt_1()
+                                                    .gap_2()
+                                                    .border_t_1()
+                                                    .border_color(
+                                                        cx.theme().colors().border_variant,
+                                                    )
+                                                    .justify_between()
+                                                    .child(Label::new(focus_tooltip_label))
+                                                    .child(KeyBinding::for_action_in(
+                                                        &FocusWorkspaceSidebar,
+                                                        &focus_handle_focus,
+                                                        cx,
+                                                    )),
+                                            )
+                                            .into_any_element()
+                                    }))
+                                    .on_click(cx.listener(|_this, _, _window, cx| {
+                                        cx.emit(SidebarEvent::Close);
+                                    }))
                             })
-                            .trigger_with_tooltip(
-                                IconButton::new("new-workspace", IconName::OpenFolder)
-                                    .icon_size(IconSize::Small),
-                                |_window, cx| {
-                                    Tooltip::for_action(
-                                        "Open Recent Project",
-                                        &zed_actions::OpenRecent {
-                                            create_new_window: false,
-                                        },
-                                        cx,
-                                    )
-                                },
-                            )
-                            .anchor(gpui::Corner::TopLeft)
-                    }),
+                            .child(Label::new("Threads").size(LabelSize::Small)),
+                    )
+                    .child(
+                        IconButton::new("open-project", IconName::OpenFolder)
+                            .icon_size(IconSize::Small)
+                            .tooltip(|_window, cx| {
+                                Tooltip::for_action(
+                                    "Open Project",
+                                    &workspace::Open {
+                                        create_new_window: false,
+                                    },
+                                    cx,
+                                )
+                            })
+                            .on_click(|_event, window, cx| {
+                                window.dispatch_action(
+                                    Box::new(workspace::Open {
+                                        create_new_window: false,
+                                    }),
+                                    cx,
+                                );
+                            }),
+                    ),
             )
             .child(
                 h_flex()
