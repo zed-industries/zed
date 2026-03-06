@@ -700,12 +700,12 @@ impl UserStore {
         organization: Arc<Organization>,
         cx: &mut Context<Self>,
     ) {
-        if !self
+        let is_same_organization = self
             .current_organization
             .as_ref()
-            .is_some_and(|current| current.id == organization.id)
-        {
-            log::debug!("organization changed");
+            .is_some_and(|current| current.id == organization.id);
+
+        if !is_same_organization {
             self.current_organization.replace(organization);
             cx.emit(Event::OrganizationChanged);
             cx.notify();
