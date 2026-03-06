@@ -1165,8 +1165,8 @@ impl SplittableEditor {
                 let lhs_ranges: Vec<ExcerptRange<Point>> = rhs_multibuffer
                     .excerpts_for_buffer(main_buffer_snapshot.remote_id(), cx)
                     .into_iter()
-                    .filter(|(id, _)| rhs_excerpt_ids.contains(id))
-                    .map(|(_, excerpt_range)| {
+                    .filter(|(id, _, _)| rhs_excerpt_ids.contains(id))
+                    .map(|(_, _, excerpt_range)| {
                         let to_base_text = |range: Range<Point>| {
                             let start = diff_snapshot
                                 .buffer_point_to_base_text_range(
