@@ -741,7 +741,6 @@ impl Sidebar {
     ) -> AnyElement {
         let id = SharedString::from(format!("project-header-{}", ix));
         let ib_id = SharedString::from(format!("project-header-new-thread-{}", ix));
-        let group = SharedString::from(format!("group-{}", ix));
 
         let is_collapsed = self.collapsed_groups.contains(path_list);
         let disclosure_icon = if is_collapsed {
@@ -774,12 +773,9 @@ impl Sidebar {
                 .into_any_element()
         };
 
-        // TODO: if is_selected, draw a blue border around the item.
-
         ListItem::new(id)
-            .selection_outlined(is_selected)
-            .group_name(&group)
             .toggle_state(is_active_workspace)
+            .focused(is_selected)
             .child(
                 h_flex().px_1().py_1p5().gap_0p5().child(label).child(
                     div().visible_on_hover(group).child(
@@ -820,6 +816,7 @@ impl Sidebar {
                     ),
             )
             .on_click(cx.listener(move |this, _, window, cx| {
+                this.selection = None;
                 this.toggle_collapse(&path_list_for_toggle, window, cx);
             }))
             // TODO: Decide if we really want the header to be activating different workspaces
@@ -1122,7 +1119,7 @@ impl Sidebar {
             .status(status)
             .notified(has_notification)
             .selected(self.focused_thread.as_ref() == Some(&session_info.session_id))
-            .outlined(is_selected)
+            .focused(is_selected)
             .on_click(cx.listener(move |this, _, window, cx| {
                 this.selection = None;
                 this.activate_thread(session_info.clone(), &workspace, window, cx);
@@ -1168,7 +1165,7 @@ impl Sidebar {
         let count = format!("({})", remaining_count);
 
         ListItem::new(id)
-            .selection_outlined(is_selected)
+            .focused(is_selected)
             .child(
                 h_flex()
                     .px_1()

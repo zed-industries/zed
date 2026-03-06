@@ -24,7 +24,7 @@ pub struct ThreadItem {
     notified: bool,
     status: AgentThreadStatus,
     selected: bool,
-    outlined: bool,
+    focused: bool,
     hovered: bool,
     added: Option<usize>,
     removed: Option<usize>,
@@ -48,7 +48,7 @@ impl ThreadItem {
             notified: false,
             status: AgentThreadStatus::default(),
             selected: false,
-            outlined: false,
+            focused: false,
             hovered: false,
             added: None,
             removed: None,
@@ -92,8 +92,8 @@ impl ThreadItem {
         self
     }
 
-    pub fn outlined(mut self, outlined: bool) -> Self {
-        self.outlined = outlined;
+    pub fn focused(mut self, focused: bool) -> Self {
+        self.focused = focused;
         self
     }
 
@@ -230,7 +230,7 @@ impl RenderOnce for ThreadItem {
             .when(self.selected, |s| s.bg(clr.element_active))
             .border_1()
             .border_color(gpui::transparent_black())
-            .when(self.outlined, |s| s.border_color(clr.panel_focused_border))
+            .when(self.focused, |s| s.border_color(clr.panel_focused_border))
             .hover(|s| s.bg(clr.element_hover))
             .on_hover(self.on_hover)
             .child(
@@ -420,25 +420,25 @@ impl Component for ThreadItem {
                     .into_any_element(),
             ),
             single_example(
-                "Outlined Item (Keyboard Selection)",
+                "Focused Item (Keyboard Selection)",
                 container()
                     .child(
                         ThreadItem::new("ti-7", "Implement keyboard navigation")
                             .icon(IconName::AiClaude)
                             .timestamp("4:00 PM")
-                            .outlined(true),
+                            .focused(true),
                     )
                     .into_any_element(),
             ),
             single_example(
-                "Selected + Outlined",
+                "Selected + Focused",
                 container()
                     .child(
                         ThreadItem::new("ti-8", "Active and keyboard-focused thread")
                             .icon(IconName::AiGemini)
                             .timestamp("5:00 PM")
                             .selected(true)
-                            .outlined(true),
+                            .focused(true),
                     )
                     .into_any_element(),
             ),
