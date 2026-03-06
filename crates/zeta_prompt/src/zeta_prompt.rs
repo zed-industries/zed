@@ -246,8 +246,9 @@ pub fn excerpt_ranges_for_format(
         ),
         ZetaFormat::V0304VariableEdit => {
             let context = ranges
-                .context_8192
+                .editable_350_context_1024
                 .clone()
+                .or(ranges.editable_350_context_512.clone())
                 .unwrap_or_else(|| ranges.editable_350_context_150.clone());
             (context.clone(), context)
         }
