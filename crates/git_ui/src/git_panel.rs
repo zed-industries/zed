@@ -41,7 +41,7 @@ use gpui::{
     WeakEntity, actions, anchored, deferred, point, size, uniform_list,
 };
 use itertools::Itertools;
-use language::{Buffer, BufferEvent, File};
+use language::{Buffer, File};
 use language_model::{
     ConfiguredModel, LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage, Role,
 };
@@ -51,7 +51,6 @@ use notifications::status_toast::{StatusToast, ToastIcon};
 use panel::{PanelHeader, panel_button, panel_filled_button, panel_icon_button};
 use project::{
     Fs, Project, ProjectPath,
-    buffer_store::BufferStoreEvent,
     git_store::{GitStoreEvent, Repository, RepositoryEvent, RepositoryId, pending_op},
     project_settings::{GitPathStyle, ProjectSettings},
 };
@@ -533,6 +532,7 @@ pub struct GitStatusEntry {
     pub(crate) repo_path: RepoPath,
     pub(crate) status: FileStatus,
     pub(crate) staging: StageStatus,
+    pub(crate) diff_stat: Option<DiffStat>,
 }
 
 impl GitStatusEntry {
@@ -653,8 +653,7 @@ pub struct GitPanel {
     local_committer_task: Option<Task<()>>,
     bulk_staging: Option<BulkStaging>,
     stash_entries: GitStash,
-    diff_stats: HashMap<RepoPath, DiffStat>,
-    diff_stats_task: Task<()>,
+
     _settings_subscription: Subscription,
 }
 
@@ -723,18 +722,14 @@ impl GitPanel {
                 if tree_view != was_tree_view {
                     this.view_mode = GitPanelViewMode::from_settings(cx);
                 }
+
+                let mut update_entries = false;
                 if sort_by_path != was_sort_by_path || tree_view != was_tree_view {
                     this.bulk_staging.take();
-                    this.update_visible_entries(window, cx);
+                    update_entries = true;
                 }
-                if diff_stats != was_diff_stats {
-                    if diff_stats {
-                        this.fetch_diff_stats(cx);
-                    } else {
-                        this.diff_stats.clear();
-                        this.diff_stats_task = Task::ready(());
-                        cx.notify();
-                    }
+                if (diff_stats != was_diff_stats) || update_entries {
+                    this.update_visible_entries(window, cx);
                 }
                 was_sort_by_path = sort_by_path;
                 was_tree_view = tree_view;
@@ -791,33 +786,6 @@ impl GitPanel {
             )
             .detach();
 
-            let buffer_store = project.read(cx).buffer_store().clone();
-
-            for buffer in project.read(cx).opened_buffers(cx) {
-                cx.subscribe(&buffer, |this, _buffer, event, cx| {
-                    if matches!(event, BufferEvent::Saved) {
-                        if GitPanelSettings::get_global(cx).diff_stats {
-                            this.fetch_diff_stats(cx);
-                        }
-                    }
-                })
-                .detach();
-            }
-
-            cx.subscribe(&buffer_store, |_this, _store, event, cx| {
-                if let BufferStoreEvent::BufferAdded(buffer) = event {
-                    cx.subscribe(buffer, |this, _buffer, event, cx| {
-                        if matches!(event, BufferEvent::Saved) {
-                            if GitPanelSettings::get_global(cx).diff_stats {
-                                this.fetch_diff_stats(cx);
-                            }
-                        }
-                    })
-                    .detach();
-                }
-            })
-            .detach();
-
             let mut this = Self {
                 active_repository,
                 commit_editor,
@@ -858,8 +826,6 @@ impl GitPanel {
                 entry_count: 0,
                 bulk_staging: None,
                 stash_entries: Default::default(),
-                diff_stats: HashMap::default(),
-                diff_stats_task: Task::ready(()),
                 _settings_subscription,
             };
 
@@ -3575,6 +3541,7 @@ impl GitPanel {
                 repo_path: entry.repo_path.clone(),
                 status: entry.status,
                 staging,
+                diff_stat: entry.diff_stat,
             };
 
             if staging.has_staged() {
@@ -3611,6 +3578,7 @@ impl GitPanel {
                             repo_path: ops.repo_path.clone(),
                             status: status.status,
                             staging: StageStatus::Staged,
+                            diff_stat: status.diff_stat,
                         });
             }
         }
@@ -3743,58 +3711,7 @@ impl GitPanel {
             editor.set_placeholder_text(&placeholder_text, window, cx)
         });
 
-        if GitPanelSettings::get_global(cx).diff_stats {
-            self.fetch_diff_stats(cx);
-        }
-
         cx.notify();
-    }
-
-    fn fetch_diff_stats(&mut self, cx: &mut Context<Self>) {
-        let Some(repo) = self.active_repository.clone() else {
-            self.diff_stats.clear();
-            return;
-        };
-
-        let unstaged_rx = repo.update(cx, |repo, cx| repo.diff_stat(DiffType::HeadToWorktree, cx));
-        let staged_rx = repo.update(cx, |repo, cx| repo.diff_stat(DiffType::HeadToIndex, cx));
-
-        self.diff_stats_task = cx.spawn(async move |this, cx| {
-            let (unstaged_result, staged_result) =
-                futures::future::join(unstaged_rx, staged_rx).await;
-
-            let mut combined = match unstaged_result {
-                Ok(Ok(stats)) => stats,
-                Ok(Err(err)) => {
-                    log::warn!("Failed to fetch unstaged diff stats: {err:?}");
-                    HashMap::default()
-                }
-                Err(_) => HashMap::default(),
-            };
-
-            let staged = match staged_result {
-                Ok(Ok(stats)) => Some(stats),
-                Ok(Err(err)) => {
-                    log::warn!("Failed to fetch staged diff stats: {err:?}");
-                    None
-                }
-                Err(_) => None,
-            };
-
-            if let Some(staged) = staged {
-                for (path, stat) in staged {
-                    let entry = combined.entry(path).or_default();
-                    entry.added += stat.added;
-                    entry.deleted += stat.deleted;
-                }
-            }
-
-            this.update(cx, |this, cx| {
-                this.diff_stats = combined;
-                cx.notify();
-            })
-            .ok();
-        });
     }
 
     fn header_state(&self, header_type: Section) -> ToggleState {
@@ -5227,17 +5144,14 @@ impl GitPanel {
             .active(|s| s.bg(active_bg))
             .child(name_row)
             .when(GitPanelSettings::get_global(cx).diff_stats, |el| {
-                el.when_some(
-                    self.diff_stats.get(&entry.repo_path).copied(),
-                    move |this, stat| {
-                        let id = format!("diff-stat-{}", id_for_diff_stat);
-                        this.child(ui::DiffStat::new(
-                            id,
-                            stat.added as usize,
-                            stat.deleted as usize,
-                        ))
-                    },
-                )
+                el.when_some(entry.diff_stat, move |this, stat| {
+                    let id = format!("diff-stat-{}", id_for_diff_stat);
+                    this.child(ui::DiffStat::new(
+                        id,
+                        stat.added as usize,
+                        stat.deleted as usize,
+                    ))
+                })
             })
             .child(
                 div()
@@ -5626,6 +5540,21 @@ impl GitPanel {
         if self.amend_pending {
             self.load_last_commit_message(cx);
         }
+    }
+}
+
+#[cfg(any(test, feature = "test-support"))]
+impl GitPanel {
+    pub fn new_test(
+        workspace: &mut Workspace,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) -> Entity<Self> {
+        Self::new(workspace, window, cx)
+    }
+
+    pub fn active_repository(&self) -> Option<&Entity<Repository>> {
+        self.active_repository.as_ref()
     }
 }
 
@@ -6606,11 +6535,19 @@ mod tests {
                     repo_path: repo_path("crates/gpui/gpui.rs"),
                     status: StatusCode::Modified.worktree(),
                     staging: StageStatus::Unstaged,
+                    diff_stat: Some(DiffStat {
+                        added: 1,
+                        deleted: 1,
+                    }),
                 }),
                 GitListEntry::Status(GitStatusEntry {
                     repo_path: repo_path("crates/util/util.rs"),
                     status: StatusCode::Modified.worktree(),
                     staging: StageStatus::Unstaged,
+                    diff_stat: Some(DiffStat {
+                        added: 1,
+                        deleted: 1,
+                    }),
                 },),
             ],
         );
@@ -6631,11 +6568,19 @@ mod tests {
                     repo_path: repo_path("crates/gpui/gpui.rs"),
                     status: StatusCode::Modified.worktree(),
                     staging: StageStatus::Unstaged,
+                    diff_stat: Some(DiffStat {
+                        added: 1,
+                        deleted: 1,
+                    }),
                 }),
                 GitListEntry::Status(GitStatusEntry {
                     repo_path: repo_path("crates/util/util.rs"),
                     status: StatusCode::Modified.worktree(),
                     staging: StageStatus::Unstaged,
+                    diff_stat: Some(DiffStat {
+                        added: 1,
+                        deleted: 1,
+                    }),
                 },),
             ],
         );

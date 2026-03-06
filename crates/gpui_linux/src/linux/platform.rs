@@ -229,17 +229,14 @@ impl<P: LinuxClient + 'static> Platform for LinuxPlatform<P> {
         log::info!("Restarting process, using app path: {:?}", app_path);
 
         // Script to wait for the current process to exit and then restart the app.
-        let script = format!(
-            r#"
-            while kill -0 {pid} 2>/dev/null; do
+        // Pass dynamic values as positional parameters to avoid shell interpolation issues.
+        let script = r#"
+            while kill -0 "$0" 2>/dev/null; do
                 sleep 0.1
             done
 
-            {app_path}
-            "#,
-            pid = app_pid,
-            app_path = app_path.display()
-        );
+            "$1"
+            "#;
 
         #[allow(
             clippy::disallowed_methods,
@@ -249,6 +246,8 @@ impl<P: LinuxClient + 'static> Platform for LinuxPlatform<P> {
             .arg("bash")
             .arg("-c")
             .arg(script)
+            .arg(&app_pid)
+            .arg(&app_path)
             .process_group(0)
             .spawn();
 

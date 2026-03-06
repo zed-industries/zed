@@ -2776,6 +2776,7 @@ impl Fs for FakeFs {
                     repository_dir_path: repository_dir_path.to_owned(),
                     common_dir_path: common_dir_path.to_owned(),
                     checkpoints: Arc::default(),
+                    is_trusted: Arc::default(),
                 }) as _
             },
         )

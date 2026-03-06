@@ -1514,6 +1514,9 @@ impl project::ProjectItem for NotebookItem {
 
                             nbformat::upgrade_legacy_notebook(legacy_notebook)?
                         }
+                        nbformat::Notebook::V3(v3_notebook) => {
+                            nbformat::upgrade_v3_notebook(v3_notebook)?
+                        }
                     }
                 };
 
@@ -1790,6 +1793,9 @@ impl Item for NotebookEditor {
                 Ok(nbformat::Notebook::V4(notebook)) => notebook,
                 Ok(nbformat::Notebook::Legacy(legacy_notebook)) => {
                     nbformat::upgrade_legacy_notebook(legacy_notebook)?
+                }
+                Ok(nbformat::Notebook::V3(v3_notebook)) => {
+                    nbformat::upgrade_v3_notebook(v3_notebook)?
                 }
                 Err(e) => {
                     anyhow::bail!("Failed to parse notebook: {:?}", e);

@@ -26,10 +26,10 @@ use fs::Fs;
 use futures::FutureExt as _;
 use gpui::{
     Action, Animation, AnimationExt, AnyView, App, ClickEvent, ClipboardItem, CursorStyle,
-    ElementId, Empty, Entity, FocusHandle, Focusable, Hsla, ListOffset, ListState, ObjectFit,
-    PlatformDisplay, ScrollHandle, SharedString, Subscription, Task, TextStyle, WeakEntity, Window,
-    WindowHandle, div, ease_in_out, img, linear_color_stop, linear_gradient, list, point,
-    pulsating_between,
+    ElementId, Empty, Entity, EventEmitter, FocusHandle, Focusable, Hsla, ListOffset, ListState,
+    ObjectFit, PlatformDisplay, ScrollHandle, SharedString, Subscription, Task, TextStyle,
+    WeakEntity, Window, WindowHandle, div, ease_in_out, img, linear_color_stop, linear_gradient,
+    list, point, pulsating_between,
 };
 use language::Buffer;
 use language_model::LanguageModelRegistry;
@@ -295,6 +295,12 @@ impl Conversation {
     }
 }
 
+pub enum AcpServerViewEvent {
+    ActiveThreadChanged,
+}
+
+impl EventEmitter<AcpServerViewEvent> for ConnectionView {}
+
 pub struct ConnectionView {
     agent: Rc<dyn AgentServer>,
     agent_server_store: Entity<AgentServerStore>,
@@ -386,13 +392,17 @@ impl ConnectionView {
         if let Some(view) = self.active_thread() {
             view.focus_handle(cx).focus(window, cx);
         }
+        cx.emit(AcpServerViewEvent::ActiveThreadChanged);
         cx.notify();
     }
 }
 
 enum ServerState {
     Loading(Entity<LoadingView>),
-    LoadError(LoadError),
+    LoadError {
+        error: LoadError,
+        session_id: Option<acp::SessionId>,
+    },
     Connected(ConnectedServerState),
 }
 
@@ -423,6 +433,7 @@ impl AuthState {
 }
 
 struct LoadingView {
+    session_id: Option<acp::SessionId>,
     title: SharedString,
     _load_task: Task<()>,
     _update_title_task: Task<anyhow::Result<()>>,
@@ -524,6 +535,7 @@ impl ConnectionView {
         }
 
         self.server_state = state;
+        cx.emit(AcpServerViewEvent::ActiveThreadChanged);
         cx.notify();
     }
 
@@ -564,12 +576,18 @@ impl ConnectionView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> ServerState {
+        let session_id = resume_thread
+            .as_ref()
+            .map(|thread| thread.session_id.clone());
         if project.read(cx).is_via_collab()
             && agent.clone().downcast::<NativeAgentServer>().is_none()
         {
-            return ServerState::LoadError(LoadError::Other(
-                "External agents are not yet supported in shared projects.".into(),
-            ));
+            return ServerState::LoadError {
+                error: LoadError::Other(
+                    "External agents are not yet supported in shared projects.".into(),
+                ),
+                session_id,
+            };
         }
         let mut worktrees = project.read(cx).visible_worktrees(cx).collect::<Vec<_>>();
         // Pick the first non-single-file worktree for the root directory if there are any,
@@ -625,17 +643,18 @@ impl ConnectionView {
         );
 
         let connect_task = agent.connect(delegate, cx);
+        let load_session_id = session_id.clone();
         let load_task = cx.spawn_in(window, async move |this, cx| {
             let connection = match connect_task.await {
                 Ok(connection) => connection,
                 Err(err) => {
                     this.update_in(cx, |this, window, cx| {
                         if err.downcast_ref::<LoadError>().is_some() {
-                            this.handle_load_error(err, window, cx);
+                            this.handle_load_error(load_session_id.clone(), err, window, cx);
                         } else if let Some(active) = this.active_thread() {
                             active.update(cx, |active, cx| active.handle_thread_error(err, cx));
                         } else {
-                            this.handle_load_error(err, window, cx);
+                            this.handle_load_error(load_session_id.clone(), err, window, cx);
                         }
                         cx.notify();
                     })
@@ -728,6 +747,14 @@ impl ConnectionView {
                         }
 
                         let id = current.read(cx).thread.read(cx).session_id().clone();
+                        let session_list = if connection.supports_session_history() {
+                            connection.session_list(cx)
+                        } else {
+                            None
+                        };
+                        this.history.update(cx, |history, cx| {
+                            history.set_session_list(session_list, cx);
+                        });
                         this.set_server_state(
                             ServerState::Connected(ConnectedServerState {
                                 connection,
@@ -740,7 +767,7 @@ impl ConnectionView {
                         );
                     }
                     Err(err) => {
-                        this.handle_load_error(err, window, cx);
+                        this.handle_load_error(load_session_id.clone(), err, window, cx);
                     }
                 };
             })
@@ -776,6 +803,7 @@ impl ConnectionView {
             });
 
             LoadingView {
+                session_id,
                 title: "Loading…".into(),
                 _load_task: load_task,
                 _update_title_task: update_title_task,
@@ -829,18 +857,14 @@ impl ConnectionView {
             );
         });
 
+        if let Some(scroll_position) = thread.read(cx).ui_scroll_position() {
+            list_state.scroll_to(scroll_position);
+        }
+
         AgentDiff::set_active_thread(&self.workspace, thread.clone(), window, cx);
 
         let connection = thread.read(cx).connection().clone();
         let session_id = thread.read(cx).session_id().clone();
-        let session_list = if connection.supports_session_history() {
-            connection.session_list(cx)
-        } else {
-            None
-        };
-        self.history.update(cx, |history, cx| {
-            history.set_session_list(session_list, cx);
-        });
 
         // Check for config options first
         // Config options take precedence over legacy mode/model selectors
@@ -944,6 +968,18 @@ impl ConnectionView {
             .unwrap_or_else(|| agent_name.clone());
 
         let agent_icon = self.agent.logo();
+        let agent_icon_from_external_svg = self
+            .agent_server_store
+            .read(cx)
+            .agent_icon(&ExternalAgentServerName(self.agent.name()))
+            .or_else(|| {
+                project::AgentRegistryStore::try_global(cx).and_then(|store| {
+                    store
+                        .read(cx)
+                        .agent(self.agent.name().as_ref())
+                        .and_then(|a| a.icon_path().cloned())
+                })
+            });
 
         let weak = cx.weak_entity();
         cx.new(|cx| {
@@ -953,6 +989,7 @@ impl ConnectionView {
                 conversation,
                 weak,
                 agent_icon,
+                agent_icon_from_external_svg,
                 agent_name,
                 agent_display_name,
                 self.workspace.clone(),
@@ -1061,6 +1098,7 @@ impl ConnectionView {
 
     fn handle_load_error(
         &mut self,
+        session_id: Option<acp::SessionId>,
         err: anyhow::Error,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -1081,7 +1119,13 @@ impl ConnectionView {
             LoadError::Other(format!("{:#}", err).into())
         };
         self.emit_load_error_telemetry(&load_error);
-        self.set_server_state(ServerState::LoadError(load_error), cx);
+        self.set_server_state(
+            ServerState::LoadError {
+                error: load_error,
+                session_id,
+            },
+            cx,
+        );
     }
 
     fn handle_agent_servers_updated(
@@ -1096,7 +1140,7 @@ impl ConnectionView {
         // This handles the case where a thread is restored before authentication completes.
         let should_retry = match &self.server_state {
             ServerState::Loading(_) => false,
-            ServerState::LoadError(_) => true,
+            ServerState::LoadError { .. } => true,
             ServerState::Connected(connected) => {
                 connected.auth_state.is_ok() && connected.has_thread_error(cx)
             }
@@ -1120,7 +1164,7 @@ impl ConnectionView {
         match &self.server_state {
             ServerState::Connected(_) => "New Thread".into(),
             ServerState::Loading(loading_view) => loading_view.read(cx).title.clone(),
-            ServerState::LoadError(error) => match error {
+            ServerState::LoadError { error, .. } => match error {
                 LoadError::Unsupported { .. } => format!("Upgrade {}", self.agent.name()).into(),
                 LoadError::FailedToInstall(_) => {
                     format!("Failed to Install {}", self.agent.name()).into()
@@ -1136,6 +1180,17 @@ impl ConnectionView {
             active.update(cx, |active, cx| {
                 active.cancel_generation(cx);
             });
+        }
+    }
+
+    // The parent ID is None if we haven't created a thread yet
+    pub fn parent_id(&self, cx: &App) -> Option<acp::SessionId> {
+        match &self.server_state {
+            ServerState::Connected(_) => self
+                .parent_thread(cx)
+                .map(|thread| thread.read(cx).id.clone()),
+            ServerState::Loading(loading) => loading.read(cx).session_id.clone(),
+            ServerState::LoadError { session_id, .. } => session_id.clone(),
         }
     }
 
@@ -1336,7 +1391,13 @@ impl ConnectionView {
                         self.focus_handle.focus(window, cx)
                     }
                 }
-                self.set_server_state(ServerState::LoadError(error.clone()), cx);
+                self.set_server_state(
+                    ServerState::LoadError {
+                        error: error.clone(),
+                        session_id: Some(thread_id),
+                    },
+                    cx,
+                );
             }
             AcpThreadEvent::TitleUpdated => {
                 let title = thread.read(cx).title();
@@ -1348,6 +1409,7 @@ impl ConnectionView {
                         }
                     });
                 }
+                cx.notify();
             }
             AcpThreadEvent::PromptCapabilitiesUpdated => {
                 if let Some(active) = self.thread_view(&thread_id) {
@@ -2609,7 +2671,7 @@ impl Render for ConnectionView {
                     .flex_1()
                     // .child(self.render_recent_history(cx))
                     .into_any(),
-                ServerState::LoadError(e) => v_flex()
+                ServerState::LoadError { error: e, .. } => v_flex()
                     .flex_1()
                     .size_full()
                     .items_center()
@@ -2831,6 +2893,33 @@ pub(crate) mod tests {
             assert_eq!(
                 view.recent_history_entries[0].session_id,
                 session_b.session_id
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_new_thread_creation_triggers_session_list_refresh(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let session = AgentSessionInfo::new(SessionId::new("history-session"));
+        let (thread_view, history, cx) = setup_thread_view_with_history(
+            StubAgentServer::new(SessionHistoryConnection::new(vec![session.clone()])),
+            cx,
+        )
+        .await;
+
+        history.read_with(cx, |history, _cx| {
+            assert!(
+                history.has_session_list(),
+                "session list should be attached after thread creation"
+            );
+        });
+
+        active_thread(&thread_view, cx).read_with(cx, |view, _cx| {
+            assert_eq!(view.recent_history_entries.len(), 1);
+            assert_eq!(
+                view.recent_history_entries[0].session_id,
+                session.session_id
             );
         });
     }
@@ -3073,7 +3162,10 @@ pub(crate) mod tests {
                 "Tab title should show the agent name with an error prefix"
             );
             match &view.server_state {
-                ServerState::LoadError(LoadError::Other(msg)) => {
+                ServerState::LoadError {
+                    error: LoadError::Other(msg),
+                    ..
+                } => {
                     assert!(
                         msg.contains("Invalid gzip header"),
                         "Error callout should contain the underlying extraction error, got: {msg}"
@@ -3083,7 +3175,7 @@ pub(crate) mod tests {
                     "Expected LoadError::Other, got: {}",
                     match other {
                         ServerState::Loading(_) => "Loading (stuck!)",
-                        ServerState::LoadError(_) => "LoadError (wrong variant)",
+                        ServerState::LoadError { .. } => "LoadError (wrong variant)",
                         ServerState::Connected(_) => "Connected",
                     }
                 ),
@@ -3482,6 +3574,18 @@ pub(crate) mod tests {
         agent: impl AgentServer + 'static,
         cx: &mut TestAppContext,
     ) -> (Entity<ConnectionView>, &mut VisualTestContext) {
+        let (thread_view, _history, cx) = setup_thread_view_with_history(agent, cx).await;
+        (thread_view, cx)
+    }
+
+    async fn setup_thread_view_with_history(
+        agent: impl AgentServer + 'static,
+        cx: &mut TestAppContext,
+    ) -> (
+        Entity<ConnectionView>,
+        Entity<ThreadHistory>,
+        &mut VisualTestContext,
+    ) {
         let fs = FakeFs::new(cx.executor());
         let project = Project::test(fs, [], cx).await;
         let (multi_workspace, cx) =
@@ -3501,14 +3605,14 @@ pub(crate) mod tests {
                     project,
                     Some(thread_store),
                     None,
-                    history,
+                    history.clone(),
                     window,
                     cx,
                 )
             })
         });
         cx.run_until_parked();
-        (thread_view, cx)
+        (thread_view, history, cx)
     }
 
     fn add_to_workspace(thread_view: Entity<ConnectionView>, cx: &mut VisualTestContext) {
@@ -3648,6 +3752,102 @@ pub(crate) mod tests {
         ) -> Task<anyhow::Result<AgentSessionListResponse>> {
             Task::ready(Ok(AgentSessionListResponse::new(self.sessions.clone())))
         }
+
+        fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
+            self
+        }
+    }
+
+    #[derive(Clone)]
+    struct SessionHistoryConnection {
+        sessions: Vec<AgentSessionInfo>,
+    }
+
+    impl SessionHistoryConnection {
+        fn new(sessions: Vec<AgentSessionInfo>) -> Self {
+            Self { sessions }
+        }
+    }
+
+    fn build_test_thread(
+        connection: Rc<dyn AgentConnection>,
+        project: Entity<Project>,
+        name: &'static str,
+        session_id: SessionId,
+        cx: &mut App,
+    ) -> Entity<AcpThread> {
+        let action_log = cx.new(|_| ActionLog::new(project.clone()));
+        cx.new(|cx| {
+            AcpThread::new(
+                None,
+                name,
+                connection,
+                project,
+                action_log,
+                session_id,
+                watch::Receiver::constant(
+                    acp::PromptCapabilities::new()
+                        .image(true)
+                        .audio(true)
+                        .embedded_context(true),
+                ),
+                cx,
+            )
+        })
+    }
+
+    impl AgentConnection for SessionHistoryConnection {
+        fn telemetry_id(&self) -> SharedString {
+            "history-connection".into()
+        }
+
+        fn new_session(
+            self: Rc<Self>,
+            project: Entity<Project>,
+            _cwd: &Path,
+            cx: &mut App,
+        ) -> Task<anyhow::Result<Entity<AcpThread>>> {
+            let thread = build_test_thread(
+                self,
+                project,
+                "SessionHistoryConnection",
+                SessionId::new("history-session"),
+                cx,
+            );
+            Task::ready(Ok(thread))
+        }
+
+        fn supports_load_session(&self) -> bool {
+            true
+        }
+
+        fn session_list(&self, _cx: &mut App) -> Option<Rc<dyn AgentSessionList>> {
+            Some(Rc::new(StubSessionList::new(self.sessions.clone())))
+        }
+
+        fn auth_methods(&self) -> &[acp::AuthMethod] {
+            &[]
+        }
+
+        fn authenticate(
+            &self,
+            _method_id: acp::AuthMethodId,
+            _cx: &mut App,
+        ) -> Task<anyhow::Result<()>> {
+            Task::ready(Ok(()))
+        }
+
+        fn prompt(
+            &self,
+            _id: Option<acp_thread::UserMessageId>,
+            _params: acp::PromptRequest,
+            _cx: &mut App,
+        ) -> Task<anyhow::Result<acp::PromptResponse>> {
+            Task::ready(Ok(acp::PromptResponse::new(acp::StopReason::EndTurn)))
+        }
+
+        fn cancel(&self, _session_id: &acp::SessionId, _cx: &mut App) {}
+
         fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
             self
         }
@@ -3667,24 +3867,13 @@ pub(crate) mod tests {
             _cwd: &Path,
             cx: &mut gpui::App,
         ) -> Task<gpui::Result<Entity<AcpThread>>> {
-            let action_log = cx.new(|_| ActionLog::new(project.clone()));
-            let thread = cx.new(|cx| {
-                AcpThread::new(
-                    None,
-                    "ResumeOnlyAgentConnection",
-                    self.clone(),
-                    project,
-                    action_log,
-                    SessionId::new("new-session"),
-                    watch::Receiver::constant(
-                        acp::PromptCapabilities::new()
-                            .image(true)
-                            .audio(true)
-                            .embedded_context(true),
-                    ),
-                    cx,
-                )
-            });
+            let thread = build_test_thread(
+                self,
+                project,
+                "ResumeOnlyAgentConnection",
+                SessionId::new("new-session"),
+                cx,
+            );
             Task::ready(Ok(thread))
         }
 
@@ -3699,24 +3888,13 @@ pub(crate) mod tests {
             _cwd: &Path,
             cx: &mut App,
         ) -> Task<gpui::Result<Entity<AcpThread>>> {
-            let action_log = cx.new(|_| ActionLog::new(project.clone()));
-            let thread = cx.new(|cx| {
-                AcpThread::new(
-                    None,
-                    "ResumeOnlyAgentConnection",
-                    self.clone(),
-                    project,
-                    action_log,
-                    session.session_id,
-                    watch::Receiver::constant(
-                        acp::PromptCapabilities::new()
-                            .image(true)
-                            .audio(true)
-                            .embedded_context(true),
-                    ),
-                    cx,
-                )
-            });
+            let thread = build_test_thread(
+                self,
+                project,
+                "ResumeOnlyAgentConnection",
+                session.session_id,
+                cx,
+            );
             Task::ready(Ok(thread))
         }
 
