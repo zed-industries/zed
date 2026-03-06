@@ -23,7 +23,7 @@ use alacritty_terminal::{
     vte::ansi::Processor,
 };
 use gpui::{
-    Bounds, ClipboardItem, Entity, FocusHandle, FontStyle, MouseButton, Pixels, ScrollHandle,
+    Bounds, ClipboardItem, Entity, FocusHandle, FontStyle, Hsla, MouseButton, Pixels, ScrollHandle,
     ScrollWheelEvent, Subscription, TextStyle, WhiteSpace, canvas, linear_color_stop,
     linear_gradient, size,
 };
@@ -37,6 +37,38 @@ use ui::{IntoElement, prelude::*};
 
 use crate::outputs::OutputContent;
 use crate::repl_settings::ReplSettings;
+
+/// Tolerance for floating-point scroll position comparisons, accounting for
+/// sub-pixel rounding during layout.
+const SCROLL_POSITION_TOLERANCE: Pixels = px(1.);
+
+enum GradientEdge {
+    Top,
+    Bottom,
+}
+
+fn gradient_overlay(edge: GradientEdge, bg_color: Hsla, height: Pixels) -> Div {
+    let angle = match edge {
+        GradientEdge::Top => 0.,
+        GradientEdge::Bottom => 180.,
+    };
+
+    let base = div()
+        .absolute()
+        .left_0()
+        .w_full()
+        .h(height)
+        .bg(linear_gradient(
+            angle,
+            linear_color_stop(bg_color.opacity(0.), 0.),
+            linear_color_stop(bg_color, 1.),
+        ));
+
+    match edge {
+        GradientEdge::Top => base.top_0(),
+        GradientEdge::Bottom => base.bottom_0(),
+    }
+}
 
 /// The `TerminalOutput` struct handles the parsing and rendering of text input,
 /// simulating a basic terminal environment within REPL output.
@@ -241,7 +273,8 @@ impl TerminalOutput {
     pub fn append_text(&mut self, text: &str, cx: &mut App) {
         let max_offset = self.scroll_handle.max_offset();
         let offset = self.scroll_handle.offset();
-        let at_bottom = max_offset.y <= Pixels::ZERO || offset.y <= -max_offset.y + px(1.);
+        let at_bottom =
+            max_offset.y <= Pixels::ZERO || offset.y <= -max_offset.y + SCROLL_POSITION_TOLERANCE;
 
         for byte in text.as_bytes() {
             if *byte == b'\n' {
@@ -536,8 +569,8 @@ impl Render for TerminalOutput {
         let max_offset = self.scroll_handle.max_offset();
         let offset = self.scroll_handle.offset();
         let has_overflow = max_offset.y > text_line_height;
-        let not_at_top = has_overflow && offset.y < -px(1.);
-        let not_at_bottom = has_overflow && offset.y > -max_offset.y + px(1.);
+        let not_at_top = has_overflow && offset.y < -SCROLL_POSITION_TOLERANCE;
+        let not_at_bottom = has_overflow && offset.y > -max_offset.y + SCROLL_POSITION_TOLERANCE;
 
         let bg_color = cx.theme().colors().background;
         let fade_height = text_line_height * 1.5;
@@ -561,8 +594,11 @@ impl Render for TerminalOutput {
                     }))
                     .max_h(max_height)
                     .track_scroll(&self.scroll_handle)
-                    .when(scroll_active, |this| this.overflow_y_scroll())
-                    .when(!scroll_active, |this| this.overflow_y_hidden())
+                    .when_else(
+                        scroll_active,
+                        |this| this.overflow_y_scroll(),
+                        |this| this.overflow_y_hidden(),
+                    )
                     .on_scroll_wheel(cx.listener(|this, _: &ScrollWheelEvent, _, cx| {
                         if this.scroll_active {
                             cx.stop_propagation();
@@ -601,34 +637,14 @@ impl Render for TerminalOutput {
                 )
             })
             .when(not_at_top, |this| {
-                this.child(
-                    div()
-                        .absolute()
-                        .top_0()
-                        .left_0()
-                        .w_full()
-                        .h(fade_height)
-                        .bg(linear_gradient(
-                            0.,
-                            linear_color_stop(bg_color.opacity(0.), 0.),
-                            linear_color_stop(bg_color, 1.),
-                        )),
-                )
+                this.child(gradient_overlay(GradientEdge::Top, bg_color, fade_height))
             })
             .when(not_at_bottom, |this| {
-                this.child(
-                    div()
-                        .absolute()
-                        .bottom_0()
-                        .left_0()
-                        .w_full()
-                        .h(fade_height)
-                        .bg(linear_gradient(
-                            180.,
-                            linear_color_stop(bg_color.opacity(0.), 0.),
-                            linear_color_stop(bg_color, 1.),
-                        )),
-                )
+                this.child(gradient_overlay(
+                    GradientEdge::Bottom,
+                    bg_color,
+                    fade_height,
+                ))
             })
             .into_any_element()
     }
