@@ -52,7 +52,7 @@ jobs:
     timeout-minutes: 60
   run_tests_linux:
     if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
-    runs-on: namespace-profile-16x32-ubuntu-2204
+    runs-on: namespace-profile-ubuntu22-x86-16x32-custom
     env:
       CC: clang
       CXX: clang++
@@ -179,7 +179,7 @@ jobs:
     timeout-minutes: 60
   clippy_linux:
     if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
-    runs-on: namespace-profile-16x32-ubuntu-2204
+    runs-on: namespace-profile-ubuntu22-x86-16x32-custom
     env:
       CC: clang
       CXX: clang++

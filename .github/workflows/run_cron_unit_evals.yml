@@ -10,7 +10,7 @@ on:
   workflow_dispatch: {}
 jobs:
   cron_unit_evals:
-    runs-on: namespace-profile-16x32-ubuntu-2204
+    runs-on: namespace-profile-ubuntu22-x86-16x32-custom
     strategy:
       matrix:
         model:
