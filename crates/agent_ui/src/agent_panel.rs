@@ -738,43 +738,11 @@ impl AgentPanel {
                     };
                     panel.update(cx, |panel, cx| {
                         panel.selected_agent = agent_type;
-                        panel.load_agent_thread(session_info, window, cx);
+                        panel.load_agent_thread_inner(session_info, false, window, cx);
                     });
                 }
                 panel
             })?;
-
-            if let Some(thread_info) = serialized_panel.and_then(|p| p.last_active_thread) {
-                let session_id = acp::SessionId::new(thread_info.session_id.clone());
-                let load_task = panel.update(cx, |panel, cx| {
-                    let thread_store = panel.thread_store.clone();
-                    thread_store.update(cx, |store, cx| store.load_thread(session_id, cx))
-                });
-                let thread_exists = load_task
-                    .await
-                    .map(|thread: Option<agent::DbThread>| thread.is_some())
-                    .unwrap_or(false);
-
-                if thread_exists {
-                    panel.update_in(cx, |panel, window, cx| {
-                        panel.selected_agent = thread_info.agent_type.clone();
-                        let session_info = AgentSessionInfo {
-                            session_id: acp::SessionId::new(thread_info.session_id),
-                            cwd: thread_info.cwd,
-                            title: thread_info.title.map(SharedString::from),
-                            updated_at: None,
-                            meta: None,
-                        };
-                        panel.load_agent_thread_inner(session_info, false, window, cx);
-                    })?;
-                } else {
-                    log::error!(
-                        "could not restore last active thread: \
-                         no thread found in database with ID {:?}",
-                        thread_info.session_id
-                    );
-                }
-            }
 
             Ok(panel)
         })
