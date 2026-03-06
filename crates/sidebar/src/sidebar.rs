@@ -522,6 +522,10 @@ impl Sidebar {
             }
 
             if !query.is_empty() {
+                let workspace_highlight_positions =
+                    fuzzy_match_positions(&query, &label).unwrap_or_default();
+                let workspace_matches = !workspace_highlight_positions.is_empty();
+
                 let mut matched_threads = Vec::new();
                 for mut thread in threads {
                     if let ListEntry::Thread {
@@ -537,15 +541,14 @@ impl Sidebar {
                             .unwrap_or("");
                         if let Some(positions) = fuzzy_match_positions(&query, title) {
                             *highlight_positions = positions;
+                        }
+                        if !highlight_positions.is_empty() || workspace_matches {
                             matched_threads.push(thread);
                         }
                     }
                 }
 
-                let workspace_highlight_positions =
-                    fuzzy_match_positions(&query, &label).unwrap_or_default();
-
-                if matched_threads.is_empty() && workspace_highlight_positions.is_empty() {
+                if matched_threads.is_empty() && !workspace_matches {
                     continue;
                 }
 
@@ -2800,11 +2803,15 @@ mod tests {
         cx.run_until_parked();
 
         // "alpha" matches the workspace name "alpha-project" but no thread titles.
-        // The workspace header should appear with no child threads.
+        // The workspace header should appear with all its child threads.
         type_in_search(&sidebar, "alpha", cx);
         assert_eq!(
             visible_entries_as_strings(&sidebar, cx),
-            vec!["v [alpha-project]  <== selected"]
+            vec![
+                "v [alpha-project]  <== selected",
+                "  Fix bug in sidebar",
+                "  Add tests for editor",
+            ]
         );
 
         // "sidebar" matches thread titles in both workspaces but not workspace names.
@@ -2836,11 +2843,15 @@ mod tests {
         );
 
         // A query that matches a workspace name AND a thread in that same workspace.
-        // Both the header (highlighted) and the matching thread should appear.
+        // Both the header (highlighted) and all child threads should appear.
         type_in_search(&sidebar, "alpha", cx);
         assert_eq!(
             visible_entries_as_strings(&sidebar, cx),
-            vec!["v [alpha-project]  <== selected"]
+            vec![
+                "v [alpha-project]  <== selected",
+                "  Fix bug in sidebar",
+                "  Add tests for editor",
+            ]
         );
 
         // Now search for something that matches only a workspace name when there
@@ -2849,7 +2860,11 @@ mod tests {
         type_in_search(&sidebar, "alp", cx);
         assert_eq!(
             visible_entries_as_strings(&sidebar, cx),
-            vec!["v [alpha-project]  <== selected"]
+            vec![
+                "v [alpha-project]  <== selected",
+                "  Fix bug in sidebar",
+                "  Add tests for editor",
+            ]
         );
     }
 
