@@ -570,6 +570,7 @@ pub struct AgentPanel {
     start_thread_in: StartThreadIn,
     worktree_creation_status: Option<WorktreeCreationStatus>,
     _thread_view_subscription: Option<Subscription>,
+    _active_thread_focus_subscription: Option<Subscription>,
     _worktree_creation_task: Option<Task<()>>,
     show_trust_workspace_message: bool,
     last_configuration_error_telemetry: Option<String>,
@@ -898,6 +899,7 @@ impl AgentPanel {
             start_thread_in: StartThreadIn::default(),
             worktree_creation_status: None,
             _thread_view_subscription: None,
+            _active_thread_focus_subscription: None,
             _worktree_creation_task: None,
             show_trust_workspace_message: false,
             last_configuration_error_telemetry: None,
@@ -1763,6 +1765,12 @@ impl AgentPanel {
             ActiveView::AgentThread { server_view } => {
                 self._thread_view_subscription =
                     Self::subscribe_to_active_thread_view(server_view, window, cx);
+                let focus_handle = server_view.focus_handle(cx);
+                self._active_thread_focus_subscription =
+                    Some(cx.on_focus_in(&focus_handle, window, |_this, _window, cx| {
+                        cx.emit(AgentPanelEvent::ThreadFocused);
+                        cx.notify();
+                    }));
                 Some(
                     cx.observe_in(server_view, window, |this, server_view, window, cx| {
                         this._thread_view_subscription =
@@ -1775,6 +1783,7 @@ impl AgentPanel {
             }
             _ => {
                 self._thread_view_subscription = None;
+                self._active_thread_focus_subscription = None;
                 None
             }
         };
@@ -2035,6 +2044,7 @@ impl AgentPanel {
                 .map(|t| t.read(cx).id.clone())
                 == Some(session_id.clone())
             {
+                cx.emit(AgentPanelEvent::ActiveViewChanged);
                 return;
             }
         }
@@ -2642,6 +2652,7 @@ fn agent_panel_dock_position(cx: &App) -> DockPosition {
 
 pub enum AgentPanelEvent {
     ActiveViewChanged,
+    ThreadFocused,
     BackgroundThreadChanged,
 }
 
