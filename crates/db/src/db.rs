@@ -19,6 +19,12 @@ use std::future::Future;
 use std::path::Path;
 use std::sync::atomic::AtomicBool;
 use std::sync::{LazyLock, atomic::Ordering};
+#[cfg(any(test, feature = "test-support"))]
+use std::collections::HashMap;
+#[cfg(any(test, feature = "test-support"))]
+use std::sync::Mutex;
+#[cfg(any(test, feature = "test-support"))]
+use std::{borrow::Cow, ops::Deref};
 use util::{ResultExt, maybe};
 use zed_env_vars::ZED_STATELESS;
 
@@ -97,7 +103,8 @@ async fn open_fallback_db<M: Migrator>() -> ThreadSafeConnection {
 pub async fn open_test_db<M: Migrator>(db_name: &str) -> ThreadSafeConnection {
     use sqlez::thread_safe_connection::locking_queue;
 
-    ThreadSafeConnection::builder::<M>(db_name, false)
+    let db_name = scoped_test_db_name(db_name);
+    ThreadSafeConnection::builder::<M>(&db_name, false)
         .with_db_initialization_query(DB_INITIALIZE_QUERY)
         .with_connection_initialize_query(CONNECTION_INITIALIZE_QUERY)
         // Serialize queued writes via a mutex and run them synchronously
@@ -105,6 +112,69 @@ pub async fn open_test_db<M: Migrator>(db_name: &str) -> ThreadSafeConnection {
         .build()
         .await
         .unwrap()
+}
+
+#[cfg(any(test, feature = "test-support"))]
+fn scoped_test_db_name(db_name: &str) -> Cow<'_, str> {
+    let Some(test_name) = current_test_scope_name() else {
+        return Cow::Borrowed(db_name);
+    };
+
+    let mut scoped_name = String::with_capacity(db_name.len() + test_name.len() + 2);
+    scoped_name.push_str(db_name);
+    scoped_name.push('@');
+    for ch in test_name.chars() {
+        if ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.') {
+            scoped_name.push(ch);
+        } else {
+            scoped_name.push('_');
+        }
+    }
+
+    Cow::Owned(scoped_name)
+}
+
+#[cfg(any(test, feature = "test-support"))]
+fn current_test_scope_name() -> Option<String> {
+    if let Some(test_name) = gpui::current_test_name() {
+        return Some(test_name.to_string());
+    }
+
+    let current_thread = std::thread::current();
+    if let Some(test_name) = current_thread.name() {
+        return Some(test_name.to_string());
+    }
+
+    Some(format!("thread_{:?}", current_thread.id()))
+}
+
+#[cfg(any(test, feature = "test-support"))]
+pub struct TestScopedStatic<T: Send + Sync + 'static> {
+    initializer: fn() -> T,
+    values: Mutex<HashMap<String, &'static T>>,
+}
+
+#[cfg(any(test, feature = "test-support"))]
+impl<T: Send + Sync + 'static> TestScopedStatic<T> {
+    pub fn new(initializer: fn() -> T) -> Self {
+        Self {
+            initializer,
+            values: Mutex::new(HashMap::new()),
+        }
+    }
+}
+
+#[cfg(any(test, feature = "test-support"))]
+impl<T: Send + Sync + 'static> Deref for TestScopedStatic<T> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        let scope_name = current_test_scope_name().unwrap_or_else(|| "default".to_string());
+        let mut values = self.values.lock().unwrap();
+        *values
+            .entry(scope_name)
+            .or_insert_with(|| Box::leak(Box::new((self.initializer)())))
+    }
 }
 
 /// Implements a basic DB wrapper for a given domain
@@ -126,16 +196,23 @@ macro_rules! static_connection {
 
         impl $t {
             #[cfg(any(test, feature = "test-support"))]
-            pub async fn open_test_db(name: &'static str) -> Self {
+            pub async fn open_test_db(name: &str) -> Self {
                 $t($crate::open_test_db::<$t>(name).await)
             }
         }
 
         #[cfg(any(test, feature = "test-support"))]
-        pub static $id: std::sync::LazyLock<$t> = std::sync::LazyLock::new(|| {
-            #[allow(unused_parens)]
-            $t($crate::smol::block_on($crate::open_test_db::<($($d,)* $t)>(stringify!($id))))
-        });
+        pub static $id: std::sync::LazyLock<$crate::TestScopedStatic<$t>> =
+            std::sync::LazyLock::new(|| {
+                fn initializer() -> $t {
+                    #[allow(unused_parens)]
+                    $t($crate::smol::block_on(
+                        $crate::open_test_db::<($($d,)* $t)>(stringify!($id))
+                    ))
+                }
+
+                $crate::TestScopedStatic::new(initializer)
+            });
 
         #[cfg(not(any(test, feature = "test-support")))]
         pub static $id: std::sync::LazyLock<$t> = std::sync::LazyLock::new(|| {
@@ -161,9 +238,10 @@ where
 
 #[cfg(test)]
 mod tests {
+    use anyhow::Result;
     use std::thread;
 
-    use sqlez::domain::Domain;
+    use sqlez::{domain::Domain, thread_safe_connection::ThreadSafeConnection};
     use sqlez_macros::sql;
 
     use crate::open_db;
@@ -294,5 +372,65 @@ mod tests {
         for guard in guards.into_iter() {
             assert!(guard.join().is_ok());
         }
+    }
+
+    pub struct ScopedStaticDb(ThreadSafeConnection);
+
+    impl Domain for ScopedStaticDb {
+        const NAME: &str = "test_scoped_static_db";
+        const MIGRATIONS: &[&str] = &[sql!(
+            CREATE TABLE IF NOT EXISTS scoped_values(
+                value INTEGER NOT NULL
+            ) STRICT;
+        )];
+    }
+
+    crate::static_connection!(SCOPED_STATIC_DB, ScopedStaticDb, []);
+
+    impl ScopedStaticDb {
+        fn replace_value(&self, value: i64) -> Result<()> {
+            smol::block_on(self.write(move |connection| {
+                connection.exec("DELETE FROM scoped_values")?()?;
+                connection
+                    .exec_bound("INSERT INTO scoped_values(value) VALUES (?)")
+                    ?(value)?;
+                anyhow::Ok(())
+            }))
+        }
+
+        fn read_value(&self) -> Result<Option<i64>> {
+            self.select_row::<i64>("SELECT value FROM scoped_values").unwrap()()
+        }
+    }
+
+    #[test]
+    fn static_test_connections_are_scoped_by_test_name() {
+        gpui::with_test_name(Some("static_test_connections_are_scoped_by_test_name_a"), || {
+            assert_eq!(SCOPED_STATIC_DB.read_value().unwrap(), None);
+            SCOPED_STATIC_DB.replace_value(7).unwrap();
+            assert_eq!(SCOPED_STATIC_DB.read_value().unwrap(), Some(7));
+        });
+
+        gpui::with_test_name(Some("static_test_connections_are_scoped_by_test_name_b"), || {
+            assert_eq!(SCOPED_STATIC_DB.read_value().unwrap(), None);
+            SCOPED_STATIC_DB.replace_value(11).unwrap();
+            assert_eq!(SCOPED_STATIC_DB.read_value().unwrap(), Some(11));
+        });
+    }
+
+    #[test]
+    fn static_test_connections_share_state_across_threads_with_same_test_name() {
+        gpui::with_test_name(
+            Some("static_test_connections_share_state_across_threads_with_same_test_name"),
+            || {
+                SCOPED_STATIC_DB.replace_value(13).unwrap();
+
+                let test_name = gpui::current_test_name();
+                let thread = thread::spawn(move || {
+                    gpui::with_test_name(test_name, || SCOPED_STATIC_DB.read_value().unwrap())
+                });
+                assert_eq!(thread.join().unwrap(), Some(13));
+            },
+        );
     }
 }
