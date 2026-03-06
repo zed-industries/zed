@@ -1099,11 +1099,12 @@ impl OpenAiResponseEventMapper {
                 }
             }
             ResponsesStreamEvent::OutputTextDone { .. }
-            | ResponsesStreamEvent::ReasoningSummaryTextDone { .. }
-            | ResponsesStreamEvent::ReasoningSummaryPartDone { .. } => Vec::new(),
-            ResponsesStreamEvent::OutputItemDone { .. }
+            | ResponsesStreamEvent::OutputItemDone { .. }
             | ResponsesStreamEvent::ContentPartAdded { .. }
             | ResponsesStreamEvent::ContentPartDone { .. }
+            | ResponsesStreamEvent::ReasoningSummaryPartAdded { .. }
+            | ResponsesStreamEvent::ReasoningSummaryTextDone { .. }
+            | ResponsesStreamEvent::ReasoningSummaryPartDone { .. }
             | ResponsesStreamEvent::Created { .. }
             | ResponsesStreamEvent::InProgress { .. }
             | ResponsesStreamEvent::Unknown => Vec::new(),
