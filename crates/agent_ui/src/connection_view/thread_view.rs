@@ -5913,7 +5913,7 @@ impl ThreadView {
 
         let dropdown_label: SharedString =
             if matches!(selection, Some(PermissionSelection::SelectedPatterns(_))) {
-                "Allow selected commands".into()
+                "Always for selected commands".into()
             } else {
                 choices
                     .get(selected_index)
