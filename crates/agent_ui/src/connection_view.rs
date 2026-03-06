@@ -1394,7 +1394,7 @@ impl ConnectionView {
                 self.set_server_state(
                     ServerState::LoadError {
                         error: error.clone(),
-                        session_id: Some(thread_id.clone()),
+                        session_id: Some(thread_id),
                     },
                     cx,
                 );

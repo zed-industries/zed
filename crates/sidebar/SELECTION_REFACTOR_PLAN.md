@@ -11,124 +11,70 @@ open, the selection snaps to *that* thread instead of staying on what you clicke
 
 Selection should reflect **user intent**: what you clicked is what stays selected.
 
-## Implementation
+## Implementation: focus-based model
 
-### 1. `update_entries` never touches `active_item` ✅ DONE
+Replaced the `active_item: ActiveItem` enum with a single field:
 
-`update_entries` rebuilds the list entries — that's all it does.
+```rust
+focused_thread: Option<acp::SessionId>
+```
 
-### 2. Set `active_item` in `activate_workspace` / `activate_thread` via `cx.defer` ✅ DONE
+### Design principle
 
-`activate_workspace` and `activate_thread` (the sidebar's internal methods) use `cx.defer`
-to set `active_item` after all queued effects (events) have been processed. This ensures the
-sidebar's intent always wins over the `ActiveWorkspaceChanged` / `ActiveViewChanged` events
-that fire as side effects of the workspace/thread activation.
+- `Some(id)` → that thread is highlighted in the sidebar
+- `None` → the active workspace header is highlighted (derived from `multi_workspace.workspace()` at render time)
+- **Set** on thread click (`activate_thread`) or external `AgentPanelEvent::ActiveViewChanged`
+- **Cleared** on workspace header click (`activate_workspace`)
+- **Sticky** across defocus, external workspace switches, and re-renders
 
-- **Project header click / confirm** → calls `activate_workspace` → deferred `Workspace(X)`
-- **Thread click / confirm** → calls `activate_thread` → deferred `Thread(T)`
+### Why this works
 
-### 3. External sync via dedicated events ✅ DONE
+Each code path explicitly manages its own state:
 
-Instead of deriving state or diffing, we listen directly to specific events and set intent:
+1. **`activate_workspace`** (workspace header click) → `focused_thread = None`, then activates the workspace
+2. **`activate_thread`** (thread click/confirm) → `focused_thread = Some(session_id)`, then activates workspace + loads thread
+3. **`AgentPanelEvent::ActiveViewChanged`** (external thread open) → `focused_thread = Some(session_id)` from agent panel's active connection
+4. **`MultiWorkspaceEvent::ActiveWorkspaceChanged`** → just `cx.notify()` to trigger re-render; does NOT touch `focused_thread`
 
-**Workspace switches** — Added `MultiWorkspaceEvent::ActiveWorkspaceChanged` to the workspace
-crate. `MultiWorkspace` emits this from `set_active_workspace`, `activate` (disabled path),
-`activate_index`, and `remove_workspace`. The sidebar subscribes via `cx.subscribe_in` and
-sets `active_item = ActiveItem::Workspace(workspace)` directly.
+### Avoiding the deferred-effect ordering bug
 
-The existing `cx.observe_in` is kept for `update_entries` (rebuilding the list on any
-multi-workspace change), but it no longer touches `active_item`.
+The previous approach had `ActiveWorkspaceChanged` clear `focused_thread`. This caused a bug:
+when `activate_thread` switched workspaces (cross-workspace thread click), the event fired as
+a deferred effect and clobbered the `focused_thread` that was just set.
 
-**Thread changes** — In the `subscribe_to_agent_panels` callback, when
-`AgentPanelEvent::ActiveViewChanged` fires, read the agent panel's active thread and set
-`active_item = ActiveItem::Thread(session_id)` if there is one.
+The fix: `ActiveWorkspaceChanged` never touches `focused_thread`. The event only triggers a
+re-render via `cx.notify()`. This makes `focused_thread` "sticky" — it stays wherever the user
+put it until an explicit action changes it.
 
-**Why there's no conflict with sidebar clicks**: The sidebar's `activate_workspace` and
-`activate_thread` methods use `cx.defer` to set `active_item` after events are delivered.
-Events fire first (potentially setting `active_item` to something wrong), then the deferred
-callback runs last and sets the correct value — the user's actual intent.
+### Render logic
 
-### 4. Thread selection is sticky
+- **`render_project_header`**: `toggle_state` is true when `focused_thread.is_none()` AND
+  the workspace is the active one in `multi_workspace`
+- **`render_thread`**: `.selected()` is true when `focused_thread == Some(session_info.session_id)`
 
-Once you click a thread, it stays selected until you explicitly click something else.
-Defocusing the sidebar does NOT clear thread selection.
+### `update_entries` is purely structural
 
-### 5. Cleanup ✅ DONE
+`update_entries` rebuilds the list entries, re-subscribes to projects/agent panels, and
+resets the list state. It never touches `focused_thread`.
 
-- Removed `dbg!()` calls in `render_project_header` and `render`
+## Changes to workspace crate
 
-## Known issues with this approach
+Added `MultiWorkspaceEvent::ActiveWorkspaceChanged` enum and `impl EventEmitter<MultiWorkspaceEvent> for MultiWorkspace`.
 
-This event + defer approach almost works, but has problems:
+Emitted from:
+- `set_active_workspace` — guarded by `changed` check (only when index actually changes)
+- `activate` (disabled multi-workspace path) — always emits
+- `activate_index` — guarded by `changed` check
+- `remove_workspace` — always emits (active workspace may have shifted)
 
-1. **Background threads pull selection over.** When a background thread emits
-   `AgentPanelEvent::ActiveViewChanged`, the sidebar's subscription sets
-   `active_item = Thread(session_id)`, yanking the selection to that thread
-   even though the user didn't interact with it. Any agent panel activity
-   (thread status changes, title updates, etc.) can cause unwanted selection
-   jumps.
+## Test coverage
 
-2. **Redundant `update_entries` calls.** A single thread click triggers at least
-   2 full `update_entries` rebuilds (one from the multi-workspace observe, one
-   from the agent panel event subscription). Each rebuild re-subscribes to all
-   projects and agent panels. The defers are scheduled via the same effect
-   queue as events, so there's no clean way to coalesce them without a
-   shielding boolean.
-
-3. **`cx.defer` ordering is fragile.** The correctness relies on deferred
-   callbacks running after event effects in the GPUI effect queue. This is
-   an implementation detail of effect ordering, not a documented guarantee.
-
-## Next: explore focus-based approach
-
-Instead of explicit state tracking, derive `active_item` from what actually has
-focus. The sidebar would check focus state in the render path:
-- If the agent panel is focused and has an active thread → show that thread
-- Otherwise → show the active workspace
-
-Thread stickiness via a lightweight `focused_thread: Option<SessionId>` —
-filled when you click/focus a thread, cleared when you switch workspaces.
-
-This avoids the event/defer dance entirely because the side effects (focusing
-the workspace, focusing the agent panel) naturally produce the correct focus
-state.
-
-## External change inventory
-
-### Workspace switches (12 external paths)
-
-All handled by `cx.observe_in(&multi_workspace, ...)` + `last_active_workspace` tracking:
-- `NextWorkspaceInWindow` / `PreviousWorkspaceInWindow` keybindings
-- `NewWorkspaceInWindow` action
-- `WorkspaceEvent::Activate` (save prompts, close-in-call prompts)
-- `Workspace::new_local` (opening a folder/project)
-- `open_paths` (CLI, Finder, drag-and-drop)
-- `restore_multiworkspace` (session restore)
-- `open_remote_project_inner` (SSH project)
-- `join_in_room_project` (collab room)
-- Recent/remote project picker selection
-- Agent panel `setup_new_workspace` (agent creates workspace)
-- Agent notification "Accept" click
-- App quit flow (iterates workspaces for save prompts)
-
-### Thread changes (19 external paths)
-
-All handled by `AgentPanelEvent::ActiveViewChanged` subscription:
-- `NewThread` workspace action (keybinding)
-- `NewNativeAgentThreadFromSummary` action
-- `NewExternalAgentThread` action
-- `NewTextThread` action
-- `ReviewBranchDiff` action (git UI)
-- `LoadThreadFromClipboard` action
-- Panel deserialization (workspace restore)
-- Panel history `ThreadHistoryEvent::Open`
-- History entry element click
-- Navigation menu "Recently Updated" pick
-- Thread mention crease click (inline link)
-- Configuration view "New Thread" button
-- CLI `--agent` open request
-- Shared thread URL (`zed://agent-thread/...`)
-- Notification click (focuses panel with already-active thread)
-- ACP onboarding "Open Panel" button
-- Claude Agent onboarding "Open Panel" button
-- New worktree workspace setup
+`test_focused_thread_tracks_user_intent` covers 8 scenarios:
+1. Initial state — `focused_thread` tracks thread opened during setup
+2. Click workspace header — clears `focused_thread`
+3. Click thread — sets `focused_thread`
+4. Cross-workspace thread click — sets `focused_thread` (not clobbered by workspace change event)
+5. External workspace switch — `focused_thread` stays (sticky)
+6. External thread open — updates `focused_thread`
+7. Thread selection is sticky across defocus
+8. Clicking workspace header clears sticky thread
