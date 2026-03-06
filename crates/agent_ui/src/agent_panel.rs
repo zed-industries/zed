@@ -3632,7 +3632,6 @@ impl AgentPanel {
                         .size_full()
                         .gap(DynamicSpacing::Base04.rems(cx))
                         .pl(DynamicSpacing::Base04.rems(cx))
-                        .child(selected_agent)
                         .child(agent_selector_menu)
                         .child(self.render_start_thread_in_selector(cx)),
                 )
