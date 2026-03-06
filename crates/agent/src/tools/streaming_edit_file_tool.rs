@@ -455,7 +455,6 @@ enum EditPipelineEntry {
     },
     StreamingNewText {
         streaming_diff: StreamingDiff,
-        line_diff: LineDiff,
         edit_cursor: usize,
         reindenter: Reindenter,
         original_snapshot: text::BufferSnapshot,
@@ -607,7 +606,6 @@ impl EditPipeline {
                 let text_snapshot = buffer.read_with(cx, |buffer, _cx| buffer.text_snapshot());
                 self.current_edit = Some(EditPipelineEntry::StreamingNewText {
                     streaming_diff: StreamingDiff::new(old_text_in_buffer),
-                    line_diff: LineDiff::default(),
                     edit_cursor: range.start,
                     reindenter: Reindenter::new(indent_delta),
                     original_snapshot: text_snapshot,
@@ -623,7 +621,6 @@ impl EditPipeline {
             } => {
                 let Some(EditPipelineEntry::StreamingNewText {
                     streaming_diff,
-                    line_diff,
                     edit_cursor,
                     reindenter,
                     original_snapshot,
@@ -647,10 +644,6 @@ impl EditPipeline {
                     &tool.action_log,
                     cx,
                 );
-                line_diff.push_char_operations(&char_ops, original_snapshot.as_rope());
-                diff.update(cx, |diff, cx| {
-                    diff.update_pending(line_diff.line_operations(), original_snapshot.clone(), cx)
-                });
 
                 let position = original_snapshot.anchor_before(*edit_cursor);
                 cx.update(|cx| {
@@ -662,7 +655,6 @@ impl EditPipeline {
             } => {
                 let Some(EditPipelineEntry::StreamingNewText {
                     mut streaming_diff,
-                    mut line_diff,
                     mut edit_cursor,
                     mut reindenter,
                     original_snapshot,
@@ -684,14 +676,6 @@ impl EditPipeline {
                         &tool.action_log,
                         cx,
                     );
-                    line_diff.push_char_operations(&char_ops, original_snapshot.as_rope());
-                    diff.update(cx, |diff, cx| {
-                        diff.update_pending(
-                            line_diff.line_operations(),
-                            original_snapshot.clone(),
-                            cx,
-                        )
-                    });
                 }
 
                 let remaining_ops = streaming_diff.finish();
@@ -703,11 +687,6 @@ impl EditPipeline {
                     &tool.action_log,
                     cx,
                 );
-                line_diff.push_char_operations(&remaining_ops, original_snapshot.as_rope());
-                line_diff.finish(original_snapshot.as_rope());
-                diff.update(cx, |diff, cx| {
-                    diff.update_pending(line_diff.line_operations(), original_snapshot.clone(), cx)
-                });
 
                 let position = original_snapshot.anchor_before(edit_cursor);
                 cx.update(|cx| {
@@ -764,7 +743,13 @@ impl EditSession {
         tool.action_log
             .update(cx, |log, cx| log.buffer_read(buffer.clone(), cx));
 
-        let diff = cx.new(|cx| Diff::new(buffer.clone(), cx));
+        let diff = cx.new(|cx| {
+            let mut diff = Diff::new(buffer.clone(), cx);
+            if matches!(mode, StreamingEditFileMode::Write) {
+                diff.disable_auto_update();
+            }
+            diff
+        });
         event_stream.update_diff(diff.clone());
         let finalize_diff_guard = util::defer(Box::new({
             let diff = diff.downgrade();
