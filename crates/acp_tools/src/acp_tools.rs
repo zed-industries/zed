@@ -291,7 +291,6 @@ impl AcpTools {
         v_flex()
             .id(index)
             .group("message")
-            .cursor_pointer()
             .font_buffer(cx)
             .w_full()
             .py_3()
@@ -303,27 +302,29 @@ impl AcpTools {
             .border_color(colors.border)
             .border_b_1()
             .hover(|this| this.bg(colors.element_background.opacity(0.5)))
-            .on_click(cx.listener(move |this, _, _, cx| {
-                if this.expanded.contains(&index) {
-                    this.expanded.remove(&index);
-                } else {
-                    this.expanded.insert(index);
-                    let Some(connection) = &mut this.watched_connection else {
-                        return;
-                    };
-                    let Some(message) = connection.messages.get_mut(index) else {
-                        return;
-                    };
-                    message.expanded(this.project.read(cx).languages().clone(), cx);
-                    connection.list_state.scroll_to_reveal_item(index);
-                }
-                cx.notify()
-            }))
             .child(
                 h_flex()
+                    .id(("acp-log-message-header", index))
                     .w_full()
                     .gap_2()
                     .flex_shrink_0()
+                    .cursor_pointer()
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        if this.expanded.contains(&index) {
+                            this.expanded.remove(&index);
+                        } else {
+                            this.expanded.insert(index);
+                            let Some(connection) = &mut this.watched_connection else {
+                                return;
+                            };
+                            let Some(message) = connection.messages.get_mut(index) else {
+                                return;
+                            };
+                            message.expanded(this.project.read(cx).languages().clone(), cx);
+                            connection.list_state.scroll_to_reveal_item(index);
+                        }
+                        cx.notify()
+                    }))
                     .child(match message.direction {
                         acp::StreamMessageDirection::Incoming => Icon::new(IconName::ArrowDown)
                             .color(Color::Error)
