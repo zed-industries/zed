@@ -1,6 +1,4 @@
-#[cfg(not(target_family = "wasm"))]
-use crate::CompositorGpuHint;
-use crate::{WgpuAtlas, WgpuContext};
+use crate::{CompositorGpuHint, WgpuAtlas, WgpuContext};
 use bytemuck::{Pod, Zeroable};
 use gpui::{
     AtlasTextureId, Background, Bounds, DevicePixels, GpuSpecs, MonochromeSprite, Path, Point,
@@ -96,7 +94,6 @@ struct WgpuBindGroupLayouts {
 }
 
 /// Shared GPU context reference, used to coordinate device recovery across multiple windows.
-#[cfg(not(target_family = "wasm"))]
 pub type GpuContext = Rc<RefCell<Option<WgpuContext>>>;
 
 /// GPU resources that must be dropped together during device recovery.
@@ -118,9 +115,11 @@ struct WgpuResources {
 }
 
 pub struct WgpuRenderer {
-    #[cfg(not(target_family = "wasm"))]
-    context: GpuContext,
-    #[cfg(not(target_family = "wasm"))]
+    /// Shared GPU context for device recovery coordination (unused on WASM).
+    #[allow(dead_code)]
+    context: Option<GpuContext>,
+    /// Compositor GPU hint for adapter selection (unused on WASM).
+    #[allow(dead_code)]
     compositor_gpu: Option<CompositorGpuHint>,
     resources: Option<WgpuResources>,
     surface_config: wgpu::SurfaceConfiguration,
@@ -244,11 +243,11 @@ impl WgpuRenderer {
     }
 
     fn new_internal(
-        #[allow(unused_variables)] gpu_context: Option<GpuContext>,
+        gpu_context: Option<GpuContext>,
         context: &WgpuContext,
         surface: wgpu::Surface<'static>,
         config: WgpuSurfaceConfig,
-        #[allow(unused_variables)] compositor_gpu: Option<CompositorGpuHint>,
+        compositor_gpu: Option<CompositorGpuHint>,
         atlas: Arc<WgpuAtlas>,
     ) -> anyhow::Result<Self> {
         let surface_caps = surface.get_capabilities(&context.adapter);
@@ -449,9 +448,7 @@ impl WgpuRenderer {
         };
 
         Ok(Self {
-            #[cfg(not(target_family = "wasm"))]
-            context: gpu_context.expect("gpu_context required on non-wasm"),
-            #[cfg(not(target_family = "wasm"))]
+            context: gpu_context,
             compositor_gpu,
             resources: Some(resources),
             surface_config,
@@ -1633,9 +1630,10 @@ impl WgpuRenderer {
         raw_display_handle: raw_window_handle::RawDisplayHandle,
         raw_window_handle: raw_window_handle::RawWindowHandle,
     ) -> anyhow::Result<()> {
+        let gpu_context = self.context.as_ref().expect("recover requires gpu_context");
+
         // Check if another window already recovered the context
-        let needs_new_context = self
-            .context
+        let needs_new_context = gpu_context
             .borrow()
             .as_ref()
             .is_none_or(|ctx| ctx.device_lost());
@@ -1645,7 +1643,7 @@ impl WgpuRenderer {
 
             // Drop old resources to release Arc<Device>/Arc<Queue> and GPU resources
             self.resources = None;
-            *self.context.borrow_mut() = None;
+            *gpu_context.borrow_mut() = None;
 
             // Wait for GPU driver to stabilize (350ms copied from windows :shrug:)
             std::thread::sleep(std::time::Duration::from_millis(350));
@@ -1653,10 +1651,10 @@ impl WgpuRenderer {
             let instance = WgpuContext::instance();
             let surface = create_surface(&instance, raw_display_handle, raw_window_handle)?;
             let new_context = WgpuContext::new(instance, &surface, self.compositor_gpu)?;
-            *self.context.borrow_mut() = Some(new_context);
+            *gpu_context.borrow_mut() = Some(new_context);
             surface
         } else {
-            let ctx_ref = self.context.borrow();
+            let ctx_ref = gpu_context.borrow();
             let instance = &ctx_ref.as_ref().unwrap().instance;
             create_surface(instance, raw_display_handle, raw_window_handle)?
         };
@@ -1668,7 +1666,7 @@ impl WgpuRenderer {
             },
             transparent: self.surface_config.alpha_mode != wgpu::CompositeAlphaMode::Opaque,
         };
-        let gpu_context = Rc::clone(&self.context);
+        let gpu_context = Rc::clone(gpu_context);
         let ctx_ref = gpu_context.borrow();
         let context = ctx_ref.as_ref().expect("context should exist");
 
@@ -1677,7 +1675,7 @@ impl WgpuRenderer {
             .handle_device_lost(Arc::clone(&context.device), Arc::clone(&context.queue));
 
         *self = Self::new_internal(
-            Some(self.context.clone()),
+            Some(gpu_context.clone()),
             context,
             surface,
             config,

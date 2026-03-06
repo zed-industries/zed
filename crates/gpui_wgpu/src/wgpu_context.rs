@@ -14,7 +14,6 @@ pub struct WgpuContext {
     device_lost: Arc<AtomicBool>,
 }
 
-#[cfg(not(target_family = "wasm"))]
 #[derive(Clone, Copy)]
 pub struct CompositorGpuHint {
     pub vendor_id: u32,
