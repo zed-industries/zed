@@ -4,12 +4,13 @@ use std::time::Duration;
 use std::{ops::Range, path::PathBuf};
 
 use anyhow::Result;
+use editor::actions::SelectAll;
 use editor::scroll::Autoscroll;
 use editor::{Editor, EditorEvent, MultiBufferOffset, SelectionEffects};
 use gpui::{
-    App, ClickEvent, Context, Entity, EventEmitter, FocusHandle, Focusable, InteractiveElement,
-    IntoElement, IsZero, ListState, ParentElement, Render, RetainAllImageCache, Styled,
-    Subscription, Task, WeakEntity, Window, list,
+    App, ClickEvent, ClipboardItem, Context, Entity, EventEmitter, FocusHandle, Focusable,
+    InteractiveElement, IntoElement, IsZero, ListState, ParentElement, Render, RetainAllImageCache,
+    Styled, Subscription, Task, WeakEntity, Window, list,
 };
 use language::LanguageRegistry;
 use settings::Settings;
@@ -19,7 +20,9 @@ use workspace::item::{Item, ItemHandle};
 use workspace::{Pane, Workspace};
 
 use crate::markdown_elements::ParsedMarkdownElement;
-use crate::markdown_renderer::{CheckboxClickedEvent, MermaidState};
+use crate::markdown_renderer::{
+    CheckboxClickedEvent, MermaidState, PreviewTextModel, build_preview_text_model,
+};
 use crate::{
     OpenFollowingPreview, OpenPreview, OpenPreviewToTheSide, ScrollPageDown, ScrollPageUp,
     markdown_elements::ParsedMarkdown,
@@ -30,12 +33,27 @@ use crate::{ScrollDown, ScrollDownByItem, ScrollUp, ScrollUpByItem};
 
 const REPARSE_DEBOUNCE: Duration = Duration::from_millis(200);
 
+#[derive(Clone, Default)]
+struct PreviewSelection {
+    anchor: usize,
+    head: usize,
+    is_selecting: bool,
+}
+
+impl PreviewSelection {
+    fn range(&self) -> std::ops::Range<usize> {
+        self.anchor.min(self.head)..self.anchor.max(self.head)
+    }
+}
+
 pub struct MarkdownPreviewView {
     workspace: WeakEntity<Workspace>,
     image_cache: Entity<RetainAllImageCache>,
     active_editor: Option<EditorState>,
     focus_handle: FocusHandle,
     contents: Option<ParsedMarkdown>,
+    text_model: PreviewTextModel,
+    selection: Option<PreviewSelection>,
     selected_block: usize,
     list_state: ListState,
     language_registry: Arc<LanguageRegistry>,
@@ -213,6 +231,8 @@ impl MarkdownPreviewView {
                 focus_handle: cx.focus_handle(),
                 workspace: workspace.clone(),
                 contents: None,
+                text_model: PreviewTextModel::default(),
+                selection: None,
                 list_state,
                 language_registry,
                 mermaid_state: Default::default(),
@@ -350,6 +370,8 @@ impl MarkdownPreviewView {
 
             view.update(cx, move |view, cx| {
                 view.mermaid_state.update(&contents, cx);
+                view.text_model = build_preview_text_model(&contents);
+                view.clamp_selection();
                 let markdown_blocks_count = contents.children.len();
                 view.contents = Some(contents);
                 let scroll_top = view.list_state.logical_scroll_top();
@@ -358,6 +380,97 @@ impl MarkdownPreviewView {
                 cx.notify();
             })
         })
+    }
+
+    fn clamp_selection(&mut self) {
+        let len = self.text_model.text.len();
+        if let Some(selection) = self.selection.as_mut() {
+            selection.anchor = selection.anchor.min(len);
+            selection.head = selection.head.min(len);
+        }
+    }
+
+    fn selection_range(&self) -> Option<Range<usize>> {
+        let selection = self.selection.as_ref()?;
+        let range = selection.range();
+        (!range.is_empty()).then_some(range)
+    }
+
+    fn start_text_selection(
+        &mut self,
+        offset: usize,
+        extend_existing: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let offset = offset.min(self.text_model.text.len());
+        if extend_existing {
+            if let Some(selection) = self.selection.as_mut() {
+                selection.head = offset;
+                selection.is_selecting = true;
+            } else {
+                self.selection = Some(PreviewSelection {
+                    anchor: offset,
+                    head: offset,
+                    is_selecting: true,
+                });
+            }
+        } else {
+            self.selection = Some(PreviewSelection {
+                anchor: offset,
+                head: offset,
+                is_selecting: true,
+            });
+        }
+
+        self.focus_handle.focus(window, cx);
+        cx.notify();
+    }
+
+    fn update_text_selection(&mut self, offset: usize, cx: &mut Context<Self>) {
+        if let Some(selection) = self.selection.as_mut()
+            && selection.is_selecting
+        {
+            selection.head = offset.min(self.text_model.text.len());
+            cx.notify();
+        }
+    }
+
+    fn finish_text_selection(
+        &mut self,
+        _: &gpui::MouseUpEvent,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(selection) = self.selection.as_mut()
+            && selection.is_selecting
+        {
+            selection.is_selecting = false;
+            cx.notify();
+        }
+    }
+
+    fn select_all(&mut self, _: &SelectAll, _window: &mut Window, cx: &mut Context<Self>) {
+        if self.text_model.text.is_empty() {
+            return;
+        }
+
+        self.selection = Some(PreviewSelection {
+            anchor: 0,
+            head: self.text_model.text.len(),
+            is_selecting: false,
+        });
+        cx.notify();
+    }
+
+    fn copy_selection(&mut self, _: &markdown::Copy, _window: &mut Window, cx: &mut Context<Self>) {
+        let Some(range) = self.selection_range() else {
+            return;
+        };
+
+        cx.write_to_clipboard(ClipboardItem::new_string(
+            self.text_model.text[range].to_string(),
+        ));
     }
 
     fn move_cursor_to_block(
@@ -550,12 +663,22 @@ impl Render for MarkdownPreviewView {
             .id("MarkdownPreview")
             .key_context("MarkdownPreview")
             .track_focus(&self.focus_handle(cx))
+            .on_action(cx.listener(MarkdownPreviewView::copy_selection))
+            .on_action(cx.listener(MarkdownPreviewView::select_all))
             .on_action(cx.listener(MarkdownPreviewView::scroll_page_up))
             .on_action(cx.listener(MarkdownPreviewView::scroll_page_down))
             .on_action(cx.listener(MarkdownPreviewView::scroll_up))
             .on_action(cx.listener(MarkdownPreviewView::scroll_down))
             .on_action(cx.listener(MarkdownPreviewView::scroll_up_by_item))
             .on_action(cx.listener(MarkdownPreviewView::scroll_down_by_item))
+            .on_mouse_up(
+                gpui::MouseButton::Left,
+                cx.listener(MarkdownPreviewView::finish_text_selection),
+            )
+            .on_mouse_up_out(
+                gpui::MouseButton::Left,
+                cx.listener(MarkdownPreviewView::finish_text_selection),
+            )
             .size_full()
             .bg(cx.theme().colors().editor_background)
             .p_4()
@@ -573,8 +696,23 @@ impl Render for MarkdownPreviewView {
                             let mut render_cx = RenderContext::new(
                                 Some(this.workspace.clone()),
                                 &this.mermaid_state,
+                                &this.text_model,
+                                this.selection_range(),
                                 window,
                                 cx,
+                            )
+                            .with_text_selection_callbacks(
+                                cx.listener(|this, offset: &usize, window, cx| {
+                                    this.start_text_selection(
+                                        *offset,
+                                        window.modifiers().shift,
+                                        window,
+                                        cx,
+                                    );
+                                }),
+                                cx.listener(|this, offset: &usize, _window, cx| {
+                                    this.update_text_selection(*offset, cx);
+                                }),
                             )
                             .with_checkbox_clicked_callback(cx.listener(
                                 move |this, e: &CheckboxClickedEvent, window, cx| {

@@ -43,6 +43,69 @@ impl CheckboxClickedEvent {
 }
 
 type CheckboxClickedCallback = Arc<Box<dyn Fn(&CheckboxClickedEvent, &mut Window, &mut App)>>;
+type PreviewSelectionCallback = Arc<Box<dyn Fn(&usize, &mut Window, &mut App)>>;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum PreviewTextKind {
+    Text,
+    CodeBlock,
+    MermaidFallback,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct PreviewTextKey {
+    kind: PreviewTextKind,
+    start: usize,
+    end: usize,
+}
+
+impl PreviewTextKey {
+    fn text(range: &Range<usize>) -> Self {
+        Self {
+            kind: PreviewTextKind::Text,
+            start: range.start,
+            end: range.end,
+        }
+    }
+
+    fn code_block(range: &Range<usize>) -> Self {
+        Self {
+            kind: PreviewTextKind::CodeBlock,
+            start: range.start,
+            end: range.end,
+        }
+    }
+
+    fn mermaid_fallback(range: &Range<usize>) -> Self {
+        Self {
+            kind: PreviewTextKind::MermaidFallback,
+            start: range.start,
+            end: range.end,
+        }
+    }
+}
+
+#[derive(Clone, Default)]
+pub struct PreviewTextModel {
+    pub text: String,
+    ranges: HashMap<PreviewTextKey, Range<usize>>,
+}
+
+impl PreviewTextModel {
+    fn insert(&mut self, key: PreviewTextKey, text: &str) {
+        let start = self.text.len();
+        self.text.push_str(text);
+        self.ranges.insert(key, start..self.text.len());
+    }
+
+    fn push_separator(&mut self, separator: &str) {
+        self.text.push_str(separator);
+    }
+
+    fn range_for(&self, key: PreviewTextKey) -> Option<&Range<usize>> {
+        self.ranges.get(&key)
+    }
+}
 
 type MermaidDiagramCache = HashMap<ParsedMarkdownMermaidDiagramContents, CachedMermaidDiagram>;
 
@@ -189,6 +252,11 @@ pub struct RenderContext<'a> {
     syntax_theme: Arc<SyntaxTheme>,
     indent: usize,
     checkbox_clicked_callback: Option<CheckboxClickedCallback>,
+    text_selection_start_callback: Option<PreviewSelectionCallback>,
+    text_selection_update_callback: Option<PreviewSelectionCallback>,
+    text_model: &'a PreviewTextModel,
+    selected_text_range: Option<Range<usize>>,
+    selection_background_color: Hsla,
     is_last_child: bool,
     mermaid_state: &'a MermaidState,
 }
@@ -197,6 +265,8 @@ impl<'a> RenderContext<'a> {
     pub(crate) fn new(
         workspace: Option<WeakEntity<Workspace>>,
         mermaid_state: &'a MermaidState,
+        text_model: &'a PreviewTextModel,
+        selected_text_range: Option<Range<usize>>,
         window: &mut Window,
         cx: &mut App,
     ) -> Self {
@@ -228,6 +298,11 @@ impl<'a> RenderContext<'a> {
             code_block_background_color: theme.colors().surface_background,
             code_span_background_color: theme.colors().editor_document_highlight_read_background,
             checkbox_clicked_callback: None,
+            text_selection_start_callback: None,
+            text_selection_update_callback: None,
+            text_model,
+            selected_text_range,
+            selection_background_color: theme.colors().element_selection_background,
             is_last_child: false,
             mermaid_state,
         }
@@ -238,6 +313,16 @@ impl<'a> RenderContext<'a> {
         callback: impl Fn(&CheckboxClickedEvent, &mut Window, &mut App) + 'static,
     ) -> Self {
         self.checkbox_clicked_callback = Some(Arc::new(Box::new(callback)));
+        self
+    }
+
+    pub fn with_text_selection_callbacks(
+        mut self,
+        start_callback: impl Fn(&usize, &mut Window, &mut App) + 'static,
+        update_callback: impl Fn(&usize, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.text_selection_start_callback = Some(Arc::new(Box::new(start_callback)));
+        self.text_selection_update_callback = Some(Arc::new(Box::new(update_callback)));
         self
     }
 
@@ -290,6 +375,136 @@ impl<'a> RenderContext<'a> {
         self.is_last_child = false;
         element
     }
+
+    fn selected_highlights_for(
+        &self,
+        key: PreviewTextKey,
+    ) -> impl Iterator<Item = (Range<usize>, HighlightStyle)> {
+        let Some(selected_range) = self.selected_text_range.clone() else {
+            return Vec::new().into_iter();
+        };
+        let Some(text_range) = self.text_model.range_for(key) else {
+            return Vec::new().into_iter();
+        };
+
+        let start = selected_range.start.max(text_range.start);
+        let end = selected_range.end.min(text_range.end);
+        if start >= end {
+            return Vec::new().into_iter();
+        }
+
+        vec![(
+            start - text_range.start..end - text_range.start,
+            HighlightStyle {
+                background_color: Some(self.selection_background_color),
+                ..Default::default()
+            },
+        )]
+        .into_iter()
+    }
+}
+
+pub fn build_preview_text_model(parsed: &ParsedMarkdown) -> PreviewTextModel {
+    let mut model = PreviewTextModel::default();
+    for (ix, block) in parsed.children.iter().enumerate() {
+        append_block_text(block, &mut model);
+        if ix + 1 < parsed.children.len() {
+            model.push_separator("\n");
+        }
+    }
+    model
+}
+
+fn append_block_text(block: &ParsedMarkdownElement, model: &mut PreviewTextModel) {
+    use ParsedMarkdownElement::*;
+
+    match block {
+        Paragraph(paragraph) => append_paragraph_text(paragraph, model),
+        Heading(heading) => append_paragraph_text(&heading.contents, model),
+        ListItem(item) => {
+            let prefix = match item.item_type {
+                ParsedMarkdownListItemType::Ordered(order) => format!("{order}. "),
+                ParsedMarkdownListItemType::Task(checked, _) => {
+                    if checked {
+                        "[x] ".to_string()
+                    } else {
+                        "[ ] ".to_string()
+                    }
+                }
+                ParsedMarkdownListItemType::Unordered => "- ".to_string(),
+            };
+            model.push_separator(&prefix);
+            for (ix, child) in item.content.iter().enumerate() {
+                append_block_text(child, model);
+                if ix + 1 < item.content.len() {
+                    model.push_separator("\n");
+                }
+            }
+        }
+        Table(table) => {
+            if let Some(caption) = table.caption.as_ref() {
+                append_paragraph_text(caption, model);
+                model.push_separator("\n");
+            }
+
+            let rows = table.header.iter().chain(table.body.iter());
+            for (row_ix, row) in rows.enumerate() {
+                for (column_ix, column) in row.columns.iter().enumerate() {
+                    for child in &column.children {
+                        match child {
+                            MarkdownParagraphChunk::Text(text) => model.insert(
+                                PreviewTextKey::text(&text.source_range),
+                                text.contents.as_ref(),
+                            ),
+                            MarkdownParagraphChunk::Image(_) => {}
+                        }
+                    }
+                    if column_ix + 1 < row.columns.len() {
+                        model.push_separator("\t");
+                    }
+                }
+                let total_rows = table.header.len() + table.body.len();
+                if row_ix + 1 < total_rows {
+                    model.push_separator("\n");
+                }
+            }
+        }
+        BlockQuote(quote) => {
+            for (ix, child) in quote.children.iter().enumerate() {
+                append_block_text(child, model);
+                if ix + 1 < quote.children.len() {
+                    model.push_separator("\n");
+                }
+            }
+        }
+        CodeBlock(code_block) => {
+            model.insert(
+                PreviewTextKey::code_block(&code_block.source_range),
+                code_block.contents.as_ref(),
+            );
+        }
+        MermaidDiagram(diagram) => {
+            model.insert(
+                PreviewTextKey::mermaid_fallback(&diagram.source_range),
+                diagram.contents.contents.as_ref(),
+            );
+        }
+        HorizontalRule(_) | Image(_) => {}
+    }
+}
+
+fn append_paragraph_text(paragraph: &MarkdownParagraph, model: &mut PreviewTextModel) {
+    for chunk in paragraph {
+        match chunk {
+            MarkdownParagraphChunk::Text(text) => {
+                model.insert(
+                    PreviewTextKey::text(&text.source_range),
+                    text.contents.as_ref(),
+                );
+            }
+            MarkdownParagraphChunk::Image(_) => {}
+        }
+    }
 }
 
 pub fn render_parsed_markdown(
@@ -299,7 +514,8 @@ pub fn render_parsed_markdown(
     cx: &mut App,
 ) -> Div {
     let cache = Default::default();
-    let mut cx = RenderContext::new(workspace, &cache, window, cx);
+    let text_model = build_preview_text_model(parsed);
+    let mut cx = RenderContext::new(workspace, &cache, &text_model, None, window, cx);
 
     v_flex().gap_3().children(
         parsed
@@ -750,15 +966,56 @@ fn render_markdown_code_block(
     let body = if let Some(highlights) = parsed.highlights.as_ref() {
         StyledText::new(parsed.contents.clone()).with_default_highlights(
             &cx.buffer_text_style,
-            highlights.iter().filter_map(|(range, highlight_id)| {
-                highlight_id
-                    .style(cx.syntax_theme.as_ref())
-                    .map(|style| (range.clone(), style))
-            }),
+            highlights
+                .iter()
+                .filter_map(|(range, highlight_id)| {
+                    highlight_id
+                        .style(cx.syntax_theme.as_ref())
+                        .map(|style| (range.clone(), style))
+                })
+                .chain(
+                    cx.selected_highlights_for(PreviewTextKey::code_block(&parsed.source_range)),
+                ),
         )
     } else {
-        StyledText::new(parsed.contents.clone())
+        StyledText::new(parsed.contents.clone()).with_default_highlights(
+            &cx.buffer_text_style,
+            cx.selected_highlights_for(PreviewTextKey::code_block(&parsed.source_range)),
+        )
     };
+
+    let text_range = cx
+        .text_model
+        .range_for(PreviewTextKey::code_block(&parsed.source_range))
+        .cloned();
+
+    let mut body = InteractiveText::new(cx.next_id(&parsed.source_range), body);
+    if let Some(text_range) = text_range.clone() {
+        body = body.on_mouse_down({
+            let callback = cx.text_selection_start_callback.clone();
+            move |index, event, window, cx| {
+                if event.button == gpui::MouseButton::Left
+                    && let Some(callback) = callback.as_ref()
+                {
+                    let offset = text_range.start + index;
+                    callback(&offset, window, cx);
+                }
+            }
+        });
+    }
+    if let Some(text_range) = text_range {
+        body = body.on_hover({
+            let callback = cx.text_selection_update_callback.clone();
+            move |index, _event, window, cx| {
+                if let Some(index) = index
+                    && let Some(callback) = callback.as_ref()
+                {
+                    let offset = text_range.start + index;
+                    callback(&offset, window, cx);
+                }
+            }
+        });
+    }
 
     let copy_block_button = CopyButton::new("copy-codeblock", parsed.contents.clone())
         .tooltip_label("Copy Codeblock")
@@ -820,7 +1077,47 @@ fn render_mermaid_diagram(
                 .py_3()
                 .bg(cx.code_block_background_color)
                 .rounded_sm()
-                .child(StyledText::new(parsed.contents.contents.clone()))
+                .child({
+                    let text_range = cx
+                        .text_model
+                        .range_for(PreviewTextKey::mermaid_fallback(&parsed.source_range))
+                        .cloned();
+                    let styled = StyledText::new(parsed.contents.contents.clone())
+                        .with_default_highlights(
+                            &cx.buffer_text_style,
+                            cx.selected_highlights_for(PreviewTextKey::mermaid_fallback(
+                                &parsed.source_range,
+                            )),
+                        );
+                    let mut text = InteractiveText::new(cx.next_id(&parsed.source_range), styled);
+                    if let Some(text_range) = text_range.clone() {
+                        text = text.on_mouse_down({
+                            let callback = cx.text_selection_start_callback.clone();
+                            move |index, event, window, cx| {
+                                if event.button == gpui::MouseButton::Left
+                                    && let Some(callback) = callback.as_ref()
+                                {
+                                    let offset = text_range.start + index;
+                                    callback(&offset, window, cx);
+                                }
+                            }
+                        });
+                    }
+                    if let Some(text_range) = text_range {
+                        text = text.on_hover({
+                            let callback = cx.text_selection_update_callback.clone();
+                            move |index, _event, window, cx| {
+                                if let Some(index) = index
+                                    && let Some(callback) = callback.as_ref()
+                                {
+                                    let offset = text_range.start + index;
+                                    callback(&offset, window, cx);
+                                }
+                            }
+                        });
+                    }
+                    text
+                })
                 .into_any(),
         }
     } else if let Some(fallback) = cached.and_then(|c| c.fallback_image.as_ref()) {
@@ -892,34 +1189,38 @@ fn render_markdown_text(parsed_new: &MarkdownParagraph, cx: &mut RenderContext) 
         match parsed_region {
             MarkdownParagraphChunk::Text(parsed) => {
                 let element_id = cx.next_id(&parsed.source_range);
+                let preview_key = PreviewTextKey::text(&parsed.source_range);
 
                 let highlights = gpui::combine_highlights(
-                    parsed.highlights.iter().filter_map(|(range, highlight)| {
-                        highlight
-                            .to_highlight_style(&syntax_theme)
-                            .map(|style| (range.clone(), style))
-                    }),
-                    parsed.regions.iter().filter_map(|(range, region)| {
-                        if region.code {
-                            Some((
-                                range.clone(),
-                                HighlightStyle {
-                                    background_color: Some(code_span_bg_color),
-                                    ..Default::default()
-                                },
-                            ))
-                        } else if region.link.is_some() {
-                            Some((
-                                range.clone(),
-                                HighlightStyle {
-                                    color: Some(link_color),
-                                    ..Default::default()
-                                },
-                            ))
-                        } else {
-                            None
-                        }
-                    }),
+                    gpui::combine_highlights(
+                        parsed.highlights.iter().filter_map(|(range, highlight)| {
+                            highlight
+                                .to_highlight_style(&syntax_theme)
+                                .map(|style| (range.clone(), style))
+                        }),
+                        parsed.regions.iter().filter_map(|(range, region)| {
+                            if region.code {
+                                Some((
+                                    range.clone(),
+                                    HighlightStyle {
+                                        background_color: Some(code_span_bg_color),
+                                        ..Default::default()
+                                    },
+                                ))
+                            } else if region.link.is_some() {
+                                Some((
+                                    range.clone(),
+                                    HighlightStyle {
+                                        color: Some(link_color),
+                                        ..Default::default()
+                                    },
+                                ))
+                            } else {
+                                None
+                            }
+                        }),
+                    ),
+                    cx.selected_highlights_for(preview_key),
                 );
                 let mut links = Vec::new();
                 let mut link_ranges = Vec::new();
@@ -937,6 +1238,32 @@ fn render_markdown_text(parsed_new: &MarkdownParagraph, cx: &mut RenderContext) 
                             StyledText::new(parsed.contents.clone())
                                 .with_default_highlights(&text_style, highlights),
                         )
+                        .on_mouse_down({
+                            let callback = cx.text_selection_start_callback.clone();
+                            let text_range = cx.text_model.range_for(preview_key).cloned();
+                            move |index, event, window, cx| {
+                                if event.button == gpui::MouseButton::Left
+                                    && let Some(text_range) = text_range.as_ref()
+                                    && let Some(callback) = callback.as_ref()
+                                {
+                                    let offset = text_range.start + index;
+                                    callback(&offset, window, cx);
+                                }
+                            }
+                        })
+                        .on_hover({
+                            let callback = cx.text_selection_update_callback.clone();
+                            let text_range = cx.text_model.range_for(preview_key).cloned();
+                            move |index, _event, window, cx| {
+                                if let Some(index) = index
+                                    && let Some(text_range) = text_range.as_ref()
+                                    && let Some(callback) = callback.as_ref()
+                                {
+                                    let offset = text_range.start + index;
+                                    callback(&offset, window, cx);
+                                }
+                            }
+                        })
                         .tooltip({
                             let links = links.clone();
                             let link_ranges = link_ranges.clone();
@@ -1294,6 +1621,40 @@ mod tests {
         assert_eq!(list_item_prefix(1, false, 2), "▪ ");
         assert_eq!(list_item_prefix(1, false, 3), "‣ ");
         assert_eq!(list_item_prefix(1, false, 4), "⁃ ");
+    }
+
+    #[test]
+    fn test_build_preview_text_model_for_mixed_blocks() {
+        let parsed = ParsedMarkdown {
+            children: vec![
+                ParsedMarkdownElement::Paragraph(vec![MarkdownParagraphChunk::Text(
+                    ParsedMarkdownText {
+                        source_range: 0..5,
+                        contents: SharedString::new("hello"),
+                        highlights: Default::default(),
+                        regions: Default::default(),
+                    },
+                )]),
+                ParsedMarkdownElement::CodeBlock(ParsedMarkdownCodeBlock {
+                    source_range: 6..18,
+                    language: None,
+                    contents: SharedString::new("fn main() {}"),
+                    highlights: None,
+                }),
+            ],
+        };
+
+        let model = build_preview_text_model(&parsed);
+
+        assert_eq!(model.text, "hello\nfn main() {}");
+        assert_eq!(
+            model.range_for(PreviewTextKey::text(&(0..5))),
+            Some(&(0..5))
+        );
+        assert_eq!(
+            model.range_for(PreviewTextKey::code_block(&(6..18))),
+            Some(&(6..18))
+        );
     }
 
     fn mermaid_contents(s: &str) -> ParsedMarkdownMermaidDiagramContents {

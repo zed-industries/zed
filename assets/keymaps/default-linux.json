@@ -1224,6 +1224,10 @@
   {
     "context": "MarkdownPreview",
     "bindings": {
+      "copy": "markdown::Copy",
+      "ctrl-a": "editor::SelectAll",
+      "ctrl-c": "markdown::Copy",
+      "ctrl-insert": "markdown::Copy",
       "pageup": "markdown::ScrollPageUp",
       "pagedown": "markdown::ScrollPageDown",
       "up": "markdown::ScrollUp",
