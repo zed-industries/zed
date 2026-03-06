@@ -95,7 +95,7 @@ use gpui::{
     ScrollDelta, ScrollWheelEvent, SharedString, Size, TaskTiming, TouchPhase, WindowParams, point,
     profiler, px, size,
 };
-use gpui_wgpu::CompositorGpuHint;
+use gpui_wgpu::{CompositorGpuHint, GpuContext};
 use wayland_protocols::wp::linux_dmabuf::zv1::client::{
     zwp_linux_dmabuf_feedback_v1, zwp_linux_dmabuf_v1,
 };
@@ -204,7 +204,7 @@ pub struct Output {
 pub(crate) struct WaylandClientState {
     serial_tracker: SerialTracker,
     globals: Globals,
-    pub gpu_context: gpui_wgpu::GpuContext,
+    pub gpu_context: GpuContext,
     pub compositor_gpu: Option<CompositorGpuHint>,
     wl_seat: wl_seat::WlSeat, // TODO: Multi seat support
     wl_pointer: Option<wl_pointer::WlPointer>,
@@ -520,7 +520,7 @@ impl WaylandClient {
             .unwrap();
 
         let compositor_gpu = detect_compositor_gpu();
-        let gpu_context = std::rc::Rc::new(std::cell::RefCell::new(None));
+        let gpu_context = Rc::new(RefCell::new(None));
 
         let seat = seat.unwrap();
         let globals = Globals::new(

@@ -51,7 +51,15 @@ impl WgpuContext {
             ))?;
 
         let device_lost = Arc::new(AtomicBool::new(false));
-        Self::set_device_lost_callback(&device, Arc::clone(&device_lost));
+        device.set_device_lost_callback({
+            let device_lost = Arc::clone(&device_lost);
+            move |reason, message| {
+                log::error!("wgpu device lost: reason={reason:?}, message={message}");
+                if reason != wgpu::DeviceLostReason::Destroyed {
+                    device_lost.store(true, Ordering::Relaxed);
+                }
+            }
+        });
 
         log::info!(
             "Selected GPU adapter: {:?} ({:?})",
@@ -95,7 +103,6 @@ impl WgpuContext {
 
         let device_lost = Arc::new(AtomicBool::new(false));
         let (device, queue, dual_source_blending) = Self::create_device(&adapter).await?;
-        Self::set_device_lost_callback(&device, Arc::clone(&device_lost));
 
         Ok(Self {
             instance,
@@ -139,15 +146,6 @@ impl WgpuContext {
             .map_err(|e| anyhow::anyhow!("Failed to create wgpu device: {e}"))?;
 
         Ok((device, queue, dual_source_blending))
-    }
-
-    fn set_device_lost_callback(device: &wgpu::Device, device_lost: Arc<AtomicBool>) {
-        device.set_device_lost_callback(move |reason, message| {
-            log::error!("wgpu device lost: reason={reason:?}, message={message}");
-            if reason != wgpu::DeviceLostReason::Destroyed {
-                device_lost.store(true, Ordering::SeqCst);
-            }
-        });
     }
 
     #[cfg(not(target_family = "wasm"))]
@@ -343,7 +341,7 @@ impl WgpuContext {
     /// Returns true if the GPU device was lost (e.g., due to driver crash, suspend/resume).
     /// When this returns true, the context should be recreated.
     pub fn device_lost(&self) -> bool {
-        self.device_lost.load(Ordering::SeqCst)
+        self.device_lost.load(Ordering::Relaxed)
     }
 
     /// Returns a clone of the device_lost flag for sharing with renderers.
