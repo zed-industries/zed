@@ -744,7 +744,7 @@ impl Sidebar {
         };
         let workspace_for_new_thread = workspace.clone();
         let workspace_for_remove = workspace.clone();
-        let workspace_for_activate = workspace.clone();
+        // let workspace_for_activate = workspace.clone();
         let path_list_for_toggle = path_list.clone();
         let multi_workspace = self.multi_workspace.upgrade();
         let workspace_count = multi_workspace
@@ -755,60 +755,35 @@ impl Sidebar {
                 .as_ref()
                 .is_some_and(|mw| mw.read(cx).workspace() == workspace);
 
+        let label = if highlight_positions.is_empty() {
+            Label::new(label.clone())
+                .size(LabelSize::Small)
+                .color(Color::Muted)
+                .into_any_element()
+        } else {
+            HighlightedLabel::new(label.clone(), highlight_positions.to_vec())
+                .size(LabelSize::Small)
+                .color(Color::Muted)
+                .into_any_element()
+        };
+
         // TODO: if is_selected, draw a blue border around the item.
 
         ListItem::new(id)
             .group_name(&group)
             .toggle_state(is_active_workspace)
             .child(
-                h_flex()
-                    .px_1()
-                    .py_1p5()
-                    .gap_0p5()
-                    .child(
-                        IconButton::new(
-                            SharedString::from(format!("project-header-chevron-{}", ix)),
-                            disclosure_icon,
-                        )
-                        .icon_size(IconSize::Small)
-                        .icon_color(Color::Muted)
-                        .shape(IconButtonShape::Square)
-                        .tooltip(Tooltip::text(if is_collapsed {
-                            "Expand"
-                        } else {
-                            "Collapse"
-                        }))
-                        .on_click(cx.listener(
-                            move |this, _, window, cx| {
-                                this.toggle_collapse(&path_list_for_toggle, window, cx);
-                            },
-                        )),
-                    )
-                    .child(if highlight_positions.is_empty() {
-                        Label::new(label.clone())
-                            .size(LabelSize::Small)
-                            .color(Color::Muted)
-                            .into_any_element()
-                    } else {
-                        HighlightedLabel::new(label.clone(), highlight_positions.to_vec())
-                            .size(LabelSize::Small)
-                            .color(Color::Muted)
-                            .into_any_element()
-                    }),
+                h_flex().px_1().py_1p5().gap_0p5().child(label).child(
+                    div().visible_on_hover(group).child(
+                        Icon::new(disclosure_icon)
+                            .size(IconSize::Small)
+                            .color(Color::Muted),
+                    ),
+                ),
             )
             .end_hover_slot(
                 h_flex()
                     .gap_0p5()
-                    .child(
-                        IconButton::new(ib_id, IconName::NewThread)
-                            .icon_size(IconSize::Small)
-                            .icon_color(Color::Muted)
-                            .tooltip(Tooltip::text("New Thread"))
-                            .on_click(cx.listener(move |this, _, window, cx| {
-                                this.selection = None;
-                                this.create_new_thread(&workspace_for_new_thread, window, cx);
-                            })),
-                    )
                     .when(workspace_count > 1, |this| {
                         this.child(
                             IconButton::new(
@@ -824,12 +799,26 @@ impl Sidebar {
                                 },
                             )),
                         )
-                    }),
+                    })
+                    .child(
+                        IconButton::new(ib_id, IconName::NewThread)
+                            .icon_size(IconSize::Small)
+                            .icon_color(Color::Muted)
+                            .tooltip(Tooltip::text("New Thread"))
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.selection = None;
+                                this.create_new_thread(&workspace_for_new_thread, window, cx);
+                            })),
+                    ),
             )
             .on_click(cx.listener(move |this, _, window, cx| {
-                this.selection = None;
-                this.activate_workspace(&workspace_for_activate, window, cx);
+                this.toggle_collapse(&path_list_for_toggle, window, cx);
             }))
+            // TODO: Decide if we really want the header to be activating different workspaces
+            // .on_click(cx.listener(move |this, _, window, cx| {
+            //     this.selection = None;
+            //     this.activate_workspace(&workspace_for_activate, window, cx);
+            // }))
             .into_any_element()
     }
 
@@ -1175,7 +1164,7 @@ impl Sidebar {
                             .size(IconSize::Small)
                             .color(Color::Muted),
                     )
-                    .child(Label::new("View More"))
+                    .child(Label::new("View More").color(Color::Muted))
                     .child(Label::new(count).color(Color::Muted).size(LabelSize::Small)),
             )
             .on_click(cx.listener(move |this, _, _window, cx| {
