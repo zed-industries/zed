@@ -625,6 +625,7 @@ pub struct App {
     pub(crate) name: Option<&'static str>,
     pub(crate) text_rendering_mode: Rc<Cell<TextRenderingMode>>,
     quit_mode: QuitMode,
+    exit_on_drop: bool,
     quitting: bool,
     /// Per-App element arena. This isolates element allocations between different
     /// App instances (important for tests where multiple Apps run concurrently).
@@ -705,6 +706,7 @@ impl App {
                 #[cfg(any(feature = "inspector", debug_assertions))]
                 inspector_element_registry: InspectorElementRegistry::default(),
                 quit_mode: QuitMode::default(),
+                exit_on_drop: true,
                 quitting: false,
 
                 #[cfg(any(test, feature = "test-support", debug_assertions))]
@@ -1320,6 +1322,13 @@ impl App {
     /// By default, [`QuitMode::Default`] is used.
     pub fn set_quit_mode(&mut self, mode: QuitMode) {
         self.quit_mode = mode;
+    }
+
+    /// By default app.run will exit the process when the
+    /// app closes, if you don't want this you can configure it
+    /// (but it may cause panics in background tasks)
+    pub fn set_exit_on_drop(&mut self, exit_on_drop: bool) {
+        self.exit_on_drop = exit_on_drop;
     }
 
     /// Returns the SVG renderer used by the application.
@@ -2615,8 +2624,14 @@ impl<'a, T> Drop for GpuiBorrow<'a, T> {
 
 impl Drop for App {
     fn drop(&mut self) {
-        self.foreground_executor.close();
-        self.background_executor.close();
+        if self.exit_on_drop {
+            std::process::exit(0);
+        } else {
+            self.foreground_executor.close();
+            // NOTE: this may cause panics in async-task because Tasks
+            // can be cancelled while they are being awaited.
+            self.background_executor.close();
+        }
     }
 }
 

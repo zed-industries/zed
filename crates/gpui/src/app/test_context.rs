@@ -124,6 +124,7 @@ impl TestAppContext {
 
         let app = App::new_app(platform.clone(), asset_source, http_client);
         app.borrow_mut().mode = GpuiMode::test();
+        app.borrow_mut().set_exit_on_drop(false);
 
         Self {
             app,
