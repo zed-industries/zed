@@ -2417,7 +2417,16 @@ impl MultiBuffer {
         let mut last_hunk_row = None;
         for (range, excerpt_info) in ranges {
             for diff_hunk in snapshot.diff_hunks_in_range(range) {
-                dbg!(diff_hunk.multi_buffer_range().start.to_point(&snapshot));
+                dbg!(
+                    diff_hunk.buffer_range.to_point(
+                        &snapshot
+                            .buffers
+                            .get(&diff_hunk.buffer_id)
+                            .unwrap()
+                            .buffer_snapshot
+                    )
+                );
+                dbg!(diff_hunk.multi_buffer_range().to_point(&snapshot));
                 if let Some(excerpt_info) = &excerpt_info
                     && dbg!(&diff_hunk.excerpt_info) != dbg!(excerpt_info)
                 {
@@ -2458,6 +2467,7 @@ impl MultiBuffer {
                 .excerpt_containing(range.end..range.end)
                 .map(|excerpt| excerpt.excerpt.info());
             let range = range.to_point(&snapshot);
+            dbg!(range.start);
             let mut peek_end = dbg!(range.end);
             if range.end.row < snapshot.max_row().0 {
                 peek_end = Point::new(range.end.row + 1, 0);
@@ -3466,6 +3476,14 @@ impl MultiBufferSnapshot {
         })
         .filter_map(move |(range, (hunk, is_inverted), excerpt)| {
             let buffer_snapshot = excerpt.buffer_snapshot(self);
+            if !excerpt
+                .range
+                .context
+                .contains_anchor(hunk.buffer_range.start, excerpt.buffer_snapshot(self))
+            {
+                dbg!("HERE");
+                return None;
+            }
             if range.start != range.end && range.end == query_range.start && !hunk.range.is_empty()
             {
                 return None;
