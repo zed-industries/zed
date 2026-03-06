@@ -596,7 +596,7 @@ lsp-types = { git = "https://github.com/zed-industries/lsp-types", rev = "a4f410
 mach2 = "0.5"
 markup5ever_rcdom = "0.3.0"
 metal = "0.33"
-minidumper = "0.8"
+minidumper = "0.9"
 moka = { version = "0.12.10", features = ["sync"] }
 naga = { version = "28.0", features = ["wgsl-in"] }
 nanoid = "0.4"
