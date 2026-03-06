@@ -3768,7 +3768,8 @@ async fn setup(cx: &mut TestAppContext, model: TestModel) -> ThreadTest {
                             InfiniteTool::NAME: true,
                             CancellationAwareTool::NAME: true,
                             StreamingEchoTool::NAME: true,
-                            (TerminalTool::NAME): true,
+                            StreamingFailingEchoTool::NAME: true,
+                            TerminalTool::NAME: true,
                         }
                     }
                 }
@@ -6344,80 +6345,65 @@ async fn test_tool_error_breaks_stream_loop_immediately(cx: &mut TestAppContext)
     let ThreadTest { model, thread, .. } = setup(cx, TestModel::Fake).await;
     let fake_model = model.as_fake();
 
-    // Start a turn by sending a message
+    thread.update(cx, |thread, _cx| {
+        thread.add_tool(StreamingFailingEchoTool {
+            receive_chunks_until_failure: 1,
+        });
+    });
+
     let _events = thread
         .update(cx, |thread, cx| {
-            thread.send(UserMessageId::new(), ["Do something"], cx)
+            thread.send(UserMessageId::new(), ["Use the streaming_echo tool"], cx)
         })
         .unwrap();
     cx.run_until_parked();
 
-    // The model should have received one completion request.
-    assert_eq!(fake_model.completion_count(), 1);
-    let first_request = fake_model.pending_completions().into_iter().next().unwrap();
+    let tool_use = LanguageModelToolUse {
+        id: "call_1".into(),
+        name: StreamingFailingEchoTool::NAME.into(),
+        raw_input: "hello".into(),
+        input: json!({}),
+        is_input_complete: false,
+        thought_signature: None,
+    };
 
-    // Send a ToolUse for a tool that doesn't exist. This produces a
-    // Task::ready error result immediately. With the fix, the select
-    // loop detects this completed result and breaks out of the stream
-    // loop without waiting for the LLM stream to finish.
-    fake_model.send_completion_stream_event(
-        &first_request,
-        LanguageModelCompletionEvent::ToolUse(LanguageModelToolUse {
-            id: "call_1".into(),
-            name: "nonexistent_tool".into(),
-            raw_input: "{}".into(),
-            input: json!({}),
-            is_input_complete: true,
-            thought_signature: None,
-        }),
-    );
-    fake_model.send_completion_stream_event(
-        &first_request,
-        LanguageModelCompletionEvent::Stop(StopReason::ToolUse),
-    );
-    // Importantly, we do NOT end the first stream — it stays open.
-
-    cx.run_until_parked();
-
-    // The turn should have processed the tool error and moved on to a
-    // second completion request (to send the error result back to the
-    // LLM) even though the first stream was never closed.
-    assert_eq!(
-        fake_model.completion_count(),
-        2,
-        "A second completion request should have been made after the tool error, \
-         proving the error was detected during streaming"
-    );
-
-    // Verify the second request contains the tool error result sent
-    // back to the LLM.
-    let second_request = fake_model.pending_completions().into_iter().last().unwrap();
-    let has_tool_error_result = second_request.messages.iter().any(|message| {
-        message.content.iter().any(|content| {
-            matches!(
-                content,
-                MessageContent::ToolResult(result) if result.is_error
-            )
-        })
-    });
-    assert!(
-        has_tool_error_result,
-        "The second completion request should include the tool error result"
-    );
-
-    // End the second stream so the turn finishes cleanly.
-    fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::Text(
-        "Recovered from the error".into(),
-    ));
     fake_model
-        .send_last_completion_stream_event(LanguageModelCompletionEvent::Stop(StopReason::EndTurn));
-    fake_model.end_last_completion_stream();
+        .send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(tool_use.clone()));
+
     cx.run_until_parked();
 
-    thread.read_with(cx, |thread, _cx| {
-        assert!(
-            thread.is_turn_complete(),
-            "Thread should be idle after the turn completes"
-        );
-    });
+    let completions = fake_model.pending_completions();
+    let last_completion = completions.last().unwrap();
+
+    assert_eq!(
+        last_completion.messages[1..],
+        vec![
+            LanguageModelRequestMessage {
+                role: Role::User,
+                content: vec!["Use the streaming_echo tool".into()],
+                cache: false,
+                reasoning_details: None,
+            },
+            LanguageModelRequestMessage {
+                role: Role::Assistant,
+                content: vec![language_model::MessageContent::ToolUse(tool_use.clone())],
+                cache: false,
+                reasoning_details: None,
+            },
+            LanguageModelRequestMessage {
+                role: Role::User,
+                content: vec![language_model::MessageContent::ToolResult(
+                    LanguageModelToolResult {
+                        tool_use_id: tool_use.id.clone(),
+                        tool_name: tool_use.name,
+                        is_error: true,
+                        content: "failed".into(),
+                        output: Some("failed".into()),
+                    }
+                )],
+                cache: true,
+                reasoning_details: None,
+            },
+        ]
+    );
 }

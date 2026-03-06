@@ -1852,15 +1852,27 @@ impl Thread {
             let mut cancelled = false;
             loop {
                 // Race between getting the first event, tool completion, and cancellation.
-                // Including tool_results here ensures that tool errors cause us to
-                // break out of the stream loop immediately rather than waiting for
-                // the LLM stream to finish.
                 let first_event = futures::select! {
                     event = events.next().fuse() => event,
                     tool_result = futures::StreamExt::select_next_some(&mut tool_results) => {
                         let is_error = tool_result.is_error;
+                        let is_still_streaming = this
+                            .read_with(cx, |this, _cx| {
+                                this.running_turn
+                                    .as_ref()
+                                    .and_then(|turn| turn.streaming_tool_inputs.get(&tool_result.tool_use_id))
+                                    .map_or(false, |inputs| !inputs.has_received_final())
+                            })
+                            .unwrap_or(false);
+
                         early_tool_results.push(tool_result);
-                        if is_error {
+
+                        // Only break if the tool errored and we are still
+                        // streaming the input of the tool. If the tool errored
+                        // but we are no longer streaming its input (i.e. there
+                        // are parallel tool calls) we want to continue
+                        // processing those tool inputs.
+                        if is_error && is_still_streaming {
                             break;
                         }
                         continue;
@@ -2222,6 +2234,7 @@ impl Thread {
         self.send_or_update_tool_use(&tool_use, title, kind, event_stream);
 
         let Some(tool) = tool else {
+            dbg!(&tool_use);
             let content = format!("No tool named {} exists", tool_use.name);
             return Some(Task::ready(LanguageModelToolResult {
                 content: LanguageModelToolResultContent::Text(Arc::from(content)),
@@ -2232,6 +2245,7 @@ impl Thread {
             }));
         };
 
+        dbg!(&tool_use);
         if !tool_use.is_input_complete {
             if tool.supports_input_streaming() {
                 let running_turn = self.running_turn.as_mut()?;
@@ -2242,6 +2256,7 @@ impl Thread {
 
                 let (sender, tool_input) = ToolInputSender::channel();
                 sender.send_partial(tool_use.input);
+                dbg!("Insertting tool input for {}", &tool_use.id);
                 running_turn
                     .streaming_tool_inputs
                     .insert(tool_use.id.clone(), sender);
@@ -3097,6 +3112,10 @@ impl ToolInputSender {
             _phantom: PhantomData,
         };
         (sender, input)
+    }
+
+    pub(crate) fn has_received_final(&self) -> bool {
+        self.final_tx.is_none()
     }
 
     pub(crate) fn send_partial(&self, value: serde_json::Value) {
