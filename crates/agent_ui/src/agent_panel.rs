@@ -3215,7 +3215,7 @@ impl AgentPanel {
                 .unwrap_or_default();
 
             let focus_handle = focus_handle.clone();
-            let agent_server_store = agent_server_store.clone();
+            let agent_server_store = agent_server_store;
 
             Rc::new(move |window, cx| {
                 telemetry::event!("New Thread Clicked");
@@ -3658,7 +3658,6 @@ impl AgentPanel {
                     IconButton::new("new_thread_menu_btn", IconName::Plus)
                         .icon_size(IconSize::Small),
                     {
-                        let focus_handle = focus_handle.clone();
                         move |_window, cx| {
                             Tooltip::for_action_in(
                                 "New Thread\u{2026}",
