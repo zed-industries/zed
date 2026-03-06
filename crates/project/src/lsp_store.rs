@@ -4904,7 +4904,7 @@ impl LspStore {
         buffer: &Entity<Buffer>,
         mut check: F,
         cx: &App,
-    ) -> Vec<lsp::LanguageServerId>
+    ) -> Vec<(lsp::LanguageServerId, lsp::LanguageServerName)>
     where
         F: FnMut(&lsp::LanguageServerName, &lsp::ServerCapabilities) -> bool,
     {
@@ -4934,7 +4934,7 @@ impl LspStore {
                     .map(|c| (server_id, server_name, c))
             })
             .filter(|(_, server_name, capabilities)| check(server_name, capabilities))
-            .map(|(server_id, _, _)| *server_id)
+            .map(|(server_id, server_name, _)| (*server_id, server_name.clone()))
             .collect()
     }
 
@@ -6132,23 +6132,13 @@ impl LspStore {
 
             let language = buffer.read(cx).language().cloned();
 
-            // In the future, we should provide project guests with the names of LSP adapters,
-            // so that they can use the correct LSP adapter when computing labels. For now,
-            // guests just use the first LSP adapter associated with the buffer's language.
-            let lsp_adapter = language.as_ref().and_then(|language| {
-                language_registry
-                    .lsp_adapters(&language.name())
-                    .first()
-                    .cloned()
-            });
-
             let buffer = buffer.clone();
 
             cx.spawn(async move |this, cx| {
                 let requests = join_all(
                     capable_lsps
                         .into_iter()
-                        .map(|id| {
+                        .map(|(id, server_name)| {
                             let request = GetCompletions {
                                 position,
                                 context: context.clone(),
@@ -6156,7 +6146,14 @@ impl LspStore {
                             };
                             let buffer = buffer.clone();
                             let language = language.clone();
-                            let lsp_adapter = lsp_adapter.clone();
+                            let lsp_adapter = language.as_ref().and_then(|language| {
+                                let adapters = language_registry.lsp_adapters(&language.name());
+                                adapters
+                                    .iter()
+                                    .find(|adapter| adapter.name() == server_name)
+                                    .or_else(|| adapters.first())
+                                    .cloned()
+                            });
                             let upstream_client = upstream_client.clone();
                             let response = this
                                 .update(cx, |this, cx| {

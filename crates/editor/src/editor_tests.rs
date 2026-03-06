@@ -76,6 +76,9 @@ fn display_ranges(editor: &Editor, cx: &mut Context<'_, Editor>) -> Vec<Range<Di
         .display_ranges(&editor.display_snapshot(cx))
 }
 
+#[cfg(any(test, feature = "test-support"))]
+pub mod property_test;
+
 #[gpui::test]
 fn test_edit_events(cx: &mut TestAppContext) {
     init_test(cx, |_| {});

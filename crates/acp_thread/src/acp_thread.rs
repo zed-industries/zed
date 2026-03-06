@@ -952,6 +952,8 @@ struct RunningTurn {
 }
 
 pub struct AcpThread {
+    session_id: acp::SessionId,
+    cwd: Option<PathBuf>,
     parent_session_id: Option<acp::SessionId>,
     title: SharedString,
     provisional_title: Option<SharedString>,
@@ -963,7 +965,6 @@ pub struct AcpThread {
     turn_id: u32,
     running_turn: Option<RunningTurn>,
     connection: Rc<dyn AgentConnection>,
-    session_id: acp::SessionId,
     token_usage: Option<TokenUsage>,
     prompt_capabilities: acp::PromptCapabilities,
     _observe_prompt_capabilities: Task<anyhow::Result<()>>,
@@ -1048,87 +1049,6 @@ pub enum TerminalProviderCommand {
     },
 }
 
-impl AcpThread {
-    pub fn on_terminal_provider_event(
-        &mut self,
-        event: TerminalProviderEvent,
-        cx: &mut Context<Self>,
-    ) {
-        match event {
-            TerminalProviderEvent::Created {
-                terminal_id,
-                label,
-                cwd,
-                output_byte_limit,
-                terminal,
-            } => {
-                let entity = self.register_terminal_created(
-                    terminal_id.clone(),
-                    label,
-                    cwd,
-                    output_byte_limit,
-                    terminal,
-                    cx,
-                );
-
-                if let Some(mut chunks) = self.pending_terminal_output.remove(&terminal_id) {
-                    for data in chunks.drain(..) {
-                        entity.update(cx, |term, cx| {
-                            term.inner().update(cx, |inner, cx| {
-                                inner.write_output(&data, cx);
-                            })
-                        });
-                    }
-                }
-
-                if let Some(_status) = self.pending_terminal_exit.remove(&terminal_id) {
-                    entity.update(cx, |_term, cx| {
-                        cx.notify();
-                    });
-                }
-
-                cx.notify();
-            }
-            TerminalProviderEvent::Output { terminal_id, data } => {
-                if let Some(entity) = self.terminals.get(&terminal_id) {
-                    entity.update(cx, |term, cx| {
-                        term.inner().update(cx, |inner, cx| {
-                            inner.write_output(&data, cx);
-                        })
-                    });
-                } else {
-                    self.pending_terminal_output
-                        .entry(terminal_id)
-                        .or_default()
-                        .push(data);
-                }
-            }
-            TerminalProviderEvent::TitleChanged { terminal_id, title } => {
-                if let Some(entity) = self.terminals.get(&terminal_id) {
-                    entity.update(cx, |term, cx| {
-                        term.inner().update(cx, |inner, cx| {
-                            inner.breadcrumb_text = title;
-                            cx.emit(::terminal::Event::BreadcrumbsChanged);
-                        })
-                    });
-                }
-            }
-            TerminalProviderEvent::Exit {
-                terminal_id,
-                status,
-            } => {
-                if let Some(entity) = self.terminals.get(&terminal_id) {
-                    entity.update(cx, |_term, cx| {
-                        cx.notify();
-                    });
-                } else {
-                    self.pending_terminal_exit.insert(terminal_id, status);
-                }
-            }
-        }
-    }
-}
-
 #[derive(PartialEq, Eq, Debug)]
 pub enum ThreadStatus {
     Idle,
@@ -1175,6 +1095,7 @@ impl AcpThread {
     pub fn new(
         parent_session_id: Option<acp::SessionId>,
         title: impl Into<SharedString>,
+        cwd: Option<PathBuf>,
         connection: Rc<dyn AgentConnection>,
         project: Entity<Project>,
         action_log: Entity<ActionLog>,
@@ -1195,6 +1116,7 @@ impl AcpThread {
 
         Self {
             parent_session_id,
+            cwd,
             action_log,
             shared_buffers: Default::default(),
             entries: Default::default(),
@@ -1266,6 +1188,10 @@ impl AcpThread {
 
     pub fn session_id(&self) -> &acp::SessionId {
         &self.session_id
+    }
+
+    pub fn cwd(&self) -> Option<&PathBuf> {
+        self.cwd.as_ref()
     }
 
     pub fn status(&self) -> ThreadStatus {
@@ -2621,6 +2547,85 @@ impl AcpThread {
                 assistant_message.is_subagent_output = true;
                 cx.notify();
                 return;
+            }
+        }
+    }
+
+    pub fn on_terminal_provider_event(
+        &mut self,
+        event: TerminalProviderEvent,
+        cx: &mut Context<Self>,
+    ) {
+        match event {
+            TerminalProviderEvent::Created {
+                terminal_id,
+                label,
+                cwd,
+                output_byte_limit,
+                terminal,
+            } => {
+                let entity = self.register_terminal_created(
+                    terminal_id.clone(),
+                    label,
+                    cwd,
+                    output_byte_limit,
+                    terminal,
+                    cx,
+                );
+
+                if let Some(mut chunks) = self.pending_terminal_output.remove(&terminal_id) {
+                    for data in chunks.drain(..) {
+                        entity.update(cx, |term, cx| {
+                            term.inner().update(cx, |inner, cx| {
+                                inner.write_output(&data, cx);
+                            })
+                        });
+                    }
+                }
+
+                if let Some(_status) = self.pending_terminal_exit.remove(&terminal_id) {
+                    entity.update(cx, |_term, cx| {
+                        cx.notify();
+                    });
+                }
+
+                cx.notify();
+            }
+            TerminalProviderEvent::Output { terminal_id, data } => {
+                if let Some(entity) = self.terminals.get(&terminal_id) {
+                    entity.update(cx, |term, cx| {
+                        term.inner().update(cx, |inner, cx| {
+                            inner.write_output(&data, cx);
+                        })
+                    });
+                } else {
+                    self.pending_terminal_output
+                        .entry(terminal_id)
+                        .or_default()
+                        .push(data);
+                }
+            }
+            TerminalProviderEvent::TitleChanged { terminal_id, title } => {
+                if let Some(entity) = self.terminals.get(&terminal_id) {
+                    entity.update(cx, |term, cx| {
+                        term.inner().update(cx, |inner, cx| {
+                            inner.breadcrumb_text = title;
+                            cx.emit(::terminal::Event::BreadcrumbsChanged);
+                        })
+                    });
+                }
+            }
+            TerminalProviderEvent::Exit {
+                terminal_id,
+                status,
+            } => {
+                if let Some(entity) = self.terminals.get(&terminal_id) {
+                    entity.update(cx, |_term, cx| {
+                        cx.notify();
+                    });
+                } else {
+                    self.pending_terminal_exit.insert(terminal_id, status);
+                }
             }
         }
     }
@@ -3988,7 +3993,7 @@ mod tests {
         fn new_session(
             self: Rc<Self>,
             project: Entity<Project>,
-            _cwd: &Path,
+            cwd: &Path,
             cx: &mut App,
         ) -> Task<gpui::Result<Entity<AcpThread>>> {
             let session_id = acp::SessionId::new(
@@ -4003,6 +4008,7 @@ mod tests {
                 AcpThread::new(
                     None,
                     "Test",
+                    Some(cwd.to_path_buf()),
                     self.clone(),
                     project,
                     action_log,

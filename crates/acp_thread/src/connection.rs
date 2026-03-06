@@ -45,9 +45,10 @@ pub trait AgentConnection {
     /// Load an existing session by ID.
     fn load_session(
         self: Rc<Self>,
-        _session: AgentSessionInfo,
+        _session_id: acp::SessionId,
         _project: Entity<Project>,
         _cwd: &Path,
+        _title: Option<SharedString>,
         _cx: &mut App,
     ) -> Task<Result<Entity<AcpThread>>> {
         Task::ready(Err(anyhow::Error::msg("Loading sessions is not supported")))
@@ -71,9 +72,10 @@ pub trait AgentConnection {
     /// Resume an existing session by ID without replaying previous messages.
     fn resume_session(
         self: Rc<Self>,
-        _session: AgentSessionInfo,
+        _session_id: acp::SessionId,
         _project: Entity<Project>,
         _cwd: &Path,
+        _title: Option<SharedString>,
         _cx: &mut App,
     ) -> Task<Result<Entity<AcpThread>>> {
         Task::ready(Err(anyhow::Error::msg(
@@ -619,7 +621,7 @@ mod test_support {
         fn new_session(
             self: Rc<Self>,
             project: Entity<Project>,
-            _cwd: &Path,
+            cwd: &Path,
             cx: &mut gpui::App,
         ) -> Task<gpui::Result<Entity<AcpThread>>> {
             static NEXT_SESSION_ID: AtomicUsize = AtomicUsize::new(0);
@@ -630,6 +632,7 @@ mod test_support {
                 AcpThread::new(
                     None,
                     "Test",
+                    Some(cwd.to_path_buf()),
                     self.clone(),
                     project,
                     action_log,
