@@ -31,9 +31,9 @@ use release_channel::AppVersion;
 use schemars::JsonSchema;
 use semver::Version;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
-use settings::SettingsStore;
 pub use settings::ZedDotDevAvailableModel as AvailableModel;
 pub use settings::ZedDotDevAvailableProvider as AvailableProvider;
+use settings::{Settings, SettingsStore};
 use smol::io::{AsyncReadExt, BufReader};
 use std::collections::VecDeque;
 use std::pin::Pin;
@@ -318,7 +318,7 @@ impl CloudLanguageModelProvider {
         available_models: &[AvailableModel],
     ) -> cloud_llm_client::LanguageModel {
         let Some(override_model) = available_models.iter().find(|override_model| {
-            Self::provider_matches_override(model.provider, override_model.provider)
+            Self::provider_matches_override(model.provider, override_model.provider.clone())
                 && override_model.name == model.id.0.as_ref()
         }) else {
             return model.clone();
