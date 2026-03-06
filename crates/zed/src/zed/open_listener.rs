@@ -812,7 +812,10 @@ mod tests {
 
         match request.kind {
             Some(OpenRequestKind::AgentPanel { initial_prompt }) => {
-                assert_eq!(initial_prompt, Some("Write me a script\nThanks".to_string()));
+                assert_eq!(
+                    initial_prompt,
+                    Some("Write me a script\nThanks".to_string())
+                );
             }
             _ => panic!("Expected AgentPanel kind"),
         }
@@ -858,7 +861,9 @@ mod tests {
         });
 
         match request.kind {
-            Some(OpenRequestKind::SharedAgentThread { session_id: parsed_session_id }) => {
+            Some(OpenRequestKind::SharedAgentThread {
+                session_id: parsed_session_id,
+            }) => {
                 assert_eq!(parsed_session_id, session_id);
             }
             _ => panic!("Expected SharedAgentThread kind"),
