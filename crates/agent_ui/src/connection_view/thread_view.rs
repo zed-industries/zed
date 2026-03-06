@@ -796,6 +796,13 @@ impl ThreadView {
 
     // sending
 
+    fn clear_external_source_prompt_warning(&mut self, cx: &mut Context<Self>) {
+        if self.show_external_source_prompt_warning {
+            self.show_external_source_prompt_warning = false;
+            cx.notify();
+        }
+    }
+
     pub fn send(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let thread = &self.thread;
 
@@ -877,6 +884,7 @@ impl ThreadView {
                     .any(|command| command.name == "logout");
             if can_login && !logout_supported {
                 message_editor.update(cx, |editor, cx| editor.clear(window, cx));
+                self.clear_external_source_prompt_warning(cx);
 
                 let connection = self.thread.read(cx).connection().clone();
                 window.defer(cx, {
@@ -969,6 +977,7 @@ impl ThreadView {
             };
 
             let generation = this.update(cx, |this, cx| {
+                this.clear_external_source_prompt_warning(cx);
                 let generation = this.start_turn(cx);
                 this.in_flight_prompt = Some(contents.clone());
                 generation
