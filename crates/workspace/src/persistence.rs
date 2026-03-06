@@ -1830,6 +1830,10 @@ impl WorkspaceDb {
                 continue;
             }
 
+            if paths.is_empty() {
+                continue;
+            }
+
             let has_wsl_path = if cfg!(windows) {
                 paths
                     .paths()
