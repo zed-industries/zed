@@ -1100,7 +1100,6 @@ impl Sidebar {
         let session_info = session_info.clone();
         let workspace = workspace.clone();
 
-        // FIXME: add a blue border when is_selected
         let id = SharedString::from(format!("thread-entry-{}", ix));
         ThreadItem::new(id, title)
             .icon(icon)
