@@ -34,7 +34,7 @@ use gpui::{
     WindowDecorations, WindowKind, WindowParams, layer_shell::LayerShellNotSupportedError, px,
     size,
 };
-use gpui_wgpu::{WgpuContext, WgpuRenderer, WgpuSurfaceConfig};
+use gpui_wgpu::{CompositorGpuHint, WgpuRenderer, WgpuSurfaceConfig};
 
 #[derive(Default)]
 pub(crate) struct Callbacks {
@@ -317,7 +317,8 @@ impl WaylandWindowState {
         viewport: Option<wp_viewport::WpViewport>,
         client: WaylandClientStatePtr,
         globals: Globals,
-        gpu_context: &mut Option<WgpuContext>,
+        gpu_context: gpui_wgpu::GpuContext,
+        compositor_gpu: Option<CompositorGpuHint>,
         options: WindowParams,
         parent: Option<WaylandWindowStatePtr>,
     ) -> anyhow::Result<Self> {
@@ -338,7 +339,7 @@ impl WaylandWindowState {
                 },
                 transparent: true,
             };
-            WgpuRenderer::new(gpu_context, &raw_window, config)?
+            WgpuRenderer::new(gpu_context, &raw_window, config, compositor_gpu)?
         };
 
         if let WaylandSurfaceState::Xdg(ref xdg_state) = surface_state {
@@ -487,7 +488,8 @@ impl WaylandWindow {
     pub fn new(
         handle: AnyWindowHandle,
         globals: Globals,
-        gpu_context: &mut Option<WgpuContext>,
+        gpu_context: gpui_wgpu::GpuContext,
+        compositor_gpu: Option<CompositorGpuHint>,
         client: WaylandClientStatePtr,
         params: WindowParams,
         appearance: WindowAppearance,
@@ -515,6 +517,7 @@ impl WaylandWindow {
                 client,
                 globals,
                 gpu_context,
+                compositor_gpu,
                 params,
                 parent,
             )?)),
@@ -1248,6 +1251,7 @@ impl PlatformWindow for WaylandWindow {
         let state = client.borrow();
         state
             .gpu_context
+            .borrow()
             .as_ref()
             .is_some_and(|ctx| ctx.supports_dual_source_blending())
     }
@@ -1325,6 +1329,41 @@ impl PlatformWindow for WaylandWindow {
 
     fn draw(&self, scene: &Scene) {
         let mut state = self.borrow_mut();
+
+        if state.renderer.device_lost() {
+            let raw_window = RawWindow {
+                window: state.surface.id().as_ptr().cast::<std::ffi::c_void>(),
+                display: state
+                    .surface
+                    .backend()
+                    .upgrade()
+                    .unwrap()
+                    .display_ptr()
+                    .cast::<std::ffi::c_void>(),
+            };
+            let display_handle = rwh::HasDisplayHandle::display_handle(&raw_window)
+                .unwrap()
+                .as_raw();
+            let window_handle = rwh::HasWindowHandle::window_handle(&raw_window)
+                .unwrap()
+                .as_raw();
+
+            state
+                .renderer
+                .recover(display_handle, window_handle)
+                .unwrap_or_else(|err| {
+                    panic!(
+                        "GPU device lost and recovery failed. \
+                        This may happen after system suspend/resume. \
+                        Please restart the application.\n\nError: {err}"
+                    )
+                });
+
+            // The current scene references atlas textures that were cleared during recovery.
+            // Skip this frame and let the next frame rebuild the scene with fresh textures.
+            return;
+        }
+
         state.renderer.draw(scene);
     }
 

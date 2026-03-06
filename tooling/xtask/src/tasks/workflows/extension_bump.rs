@@ -150,7 +150,7 @@ pub(crate) fn compare_versions() -> (Step<Run>, StepOutput, StepOutput) {
     r#"
         CURRENT_VERSION="$({VERSION_CHECK})"
 
-        if [[ "${{{{ github.event_name }}}}" == "pull_request" ]]; then
+        if [[ "$GITHUB_EVENT_NAME" == "pull_request" ]]; then
             PR_FORK_POINT="$(git merge-base origin/main HEAD)"
             git checkout "$PR_FORK_POINT"
         elif BRANCH_PARENT_SHA="$(git merge-base origin/main origin/zed-zippy-autobump)"; then
@@ -258,8 +258,6 @@ fn install_bump_2_version() -> Step<Run> {
 
 fn bump_version(current_version: &JobOutput, bump_type: &WorkflowInput) -> (Step<Run>, StepOutput) {
     let step = named::bash(formatdoc! {r#"
-        OLD_VERSION="{current_version}"
-
         BUMP_FILES=("extension.toml")
         if [[ -f "Cargo.toml" ]]; then
             BUMP_FILES+=("Cargo.toml")
@@ -269,7 +267,7 @@ fn bump_version(current_version: &JobOutput, bump_type: &WorkflowInput) -> (Step
             --search "version = \"{{current_version}}"\" \
             --replace "version = \"{{new_version}}"\" \
             --current-version "$OLD_VERSION" \
-            --no-configured-files {bump_type} "${{BUMP_FILES[@]}}"
+            --no-configured-files "$BUMP_TYPE" "${{BUMP_FILES[@]}}"
 
         if [[ -f "Cargo.toml" ]]; then
             cargo update --workspace
@@ -280,7 +278,9 @@ fn bump_version(current_version: &JobOutput, bump_type: &WorkflowInput) -> (Step
         echo "new_version=${{NEW_VERSION}}" >> "$GITHUB_OUTPUT"
         "#
     })
-    .id("bump-version");
+    .id("bump-version")
+    .add_env(("OLD_VERSION", current_version.to_string()))
+    .add_env(("BUMP_TYPE", bump_type.to_string()));
 
     let new_version = StepOutput::new(&step, "new_version");
     (step, new_version)

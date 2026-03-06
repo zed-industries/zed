@@ -233,6 +233,7 @@ let
           lib.makeLibraryPath [
             gpu-lib
             wayland
+            libva
           ]
         }";
 

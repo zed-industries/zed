@@ -76,6 +76,7 @@ dependencies = [
  "clock",
  "collections",
  "ctor",
+ "fs",
  "futures 0.3.31",
  "gpui",
  "indoc",
@@ -169,7 +170,7 @@ dependencies = [
  "context_server",
  "ctor",
  "db",
- "derive_more 0.99.20",
+ "derive_more",
  "editor",
  "env_logger 0.11.8",
  "eval_utils",
@@ -241,7 +242,7 @@ dependencies = [
  "anyhow",
  "async-broadcast",
  "async-trait",
- "derive_more 2.0.1",
+ "derive_more",
  "futures 0.3.31",
  "log",
  "serde",
@@ -255,7 +256,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "44bc1fef9c32f03bce2ab44af35b6f483bfd169bf55cc59beeb2e3b1a00ae4d1"
 dependencies = [
  "anyhow",
- "derive_more 2.0.1",
+ "derive_more",
  "schemars",
  "serde",
  "serde_json",
@@ -368,6 +369,7 @@ dependencies = [
  "fs",
  "futures 0.3.31",
  "fuzzy",
+ "git",
  "gpui",
  "gpui_tokio",
  "html_to_markdown",
@@ -602,6 +604,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4b46cbb362ab8752921c97e041f5e366ee6297bd428a31275b9fcf1e380f7299"
 
 [[package]]
+name = "annotate-snippets"
+version = "0.12.12"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c86cd1c51b95d71dde52bca69ed225008f6ff4c8cc825b08042aa1ef823e1980"
+dependencies = [
+ "anstyle",
+ "memchr",
+ "unicode-width",
+]
+
+[[package]]
 name = "anstream"
 version = "0.6.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -813,7 +826,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "collections",
- "derive_more 0.99.20",
+ "derive_more",
  "extension",
  "futures 0.3.31",
  "gpui",
@@ -1351,6 +1364,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "log",
+ "scopeguard",
  "simplelog",
  "tempfile",
  "windows 0.61.3",
@@ -2999,7 +3013,7 @@ dependencies = [
  "cloud_llm_client",
  "collections",
  "credentials_provider",
- "derive_more 0.99.20",
+ "derive_more",
  "feature_flags",
  "fs",
  "futures 0.3.31",
@@ -3437,7 +3451,7 @@ name = "command_palette_hooks"
 version = "0.1.0"
 dependencies = [
  "collections",
- "derive_more 0.99.20",
+ "derive_more",
  "gpui",
  "workspace",
 ]
@@ -3613,15 +3627,18 @@ dependencies = [
 
 [[package]]
 name = "convert_case"
-version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6245d59a3e82a7fc217c5828a6692dbc6dfb63a0c8c90495621f7b9d79704a0e"
-
-[[package]]
-name = "convert_case"
 version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "baaaa0ecca5b51987b9423ccdc971514dd8b0bb7b4060b983d3664dad3f1f89f"
+dependencies = [
+ "unicode-segmentation",
+]
+
+[[package]]
+name = "convert_case"
+version = "0.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "633458d4ef8c78b72454de2d54fd6ab2e60f9e02be22f3c6104cdc8a4e0fceb9"
 dependencies = [
  "unicode-segmentation",
 ]
@@ -4120,13 +4137,13 @@ dependencies = [
 name = "crashes"
 version = "0.1.0"
 dependencies = [
- "bincode",
  "cfg-if",
  "crash-handler",
  "futures 0.3.31",
  "log",
  "mach2 0.5.0",
  "minidumper",
+ "parking_lot",
  "paths",
  "release_channel",
  "serde",
@@ -4338,6 +4355,20 @@ checksum = "13b588ba4ac1a99f7f2964d24b3d896ddc6bf847ee3855dbd4366f058cfcd331"
 dependencies = [
  "quote",
  "syn 2.0.106",
+]
+
+[[package]]
+name = "csv_preview"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "editor",
+ "feature_flags",
+ "gpui",
+ "log",
+ "text",
+ "ui",
+ "workspace",
 ]
 
 [[package]]
@@ -4777,34 +4808,23 @@ dependencies = [
 
 [[package]]
 name = "derive_more"
-version = "0.99.20"
+version = "2.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6edb4b64a43d977b8e99788fe3a04d483834fba1215a7e02caa415b626497f7f"
-dependencies = [
- "convert_case 0.4.0",
- "proc-macro2",
- "quote",
- "rustc_version",
- "syn 2.0.106",
-]
-
-[[package]]
-name = "derive_more"
-version = "2.0.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "093242cf7570c207c83073cf82f79706fe7b8317e98620a47d5be7c3d8497678"
+checksum = "d751e9e49156b02b44f9c1815bcb94b984cdcc4396ecc32521c739452808b134"
 dependencies = [
  "derive_more-impl",
 ]
 
 [[package]]
 name = "derive_more-impl"
-version = "2.0.1"
+version = "2.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bda628edc44c4bb645fbe0f758797143e4e07926f7ebf4e9bdfbd3d2ce621df3"
+checksum = "799a97264921d8623a957f6c3b9011f3b5492f557bbb7a5a19b7fa6d06ba8dcb"
 dependencies = [
+ "convert_case 0.10.0",
  "proc-macro2",
  "quote",
+ "rustc_version",
  "syn 2.0.106",
  "unicode-xid",
 ]
@@ -5403,7 +5423,6 @@ dependencies = [
  "semver",
  "serde_json",
  "settings",
- "supermaven",
  "telemetry",
  "text",
  "theme",
@@ -5870,6 +5889,47 @@ dependencies = [
  "unindent",
  "util",
  "uuid",
+ "watch",
+]
+
+[[package]]
+name = "eval_cli"
+version = "0.1.0"
+dependencies = [
+ "acp_thread",
+ "agent",
+ "agent-client-protocol",
+ "agent_ui",
+ "anyhow",
+ "clap",
+ "client",
+ "ctrlc",
+ "debug_adapter_extension",
+ "env_logger 0.11.8",
+ "extension",
+ "feature_flags",
+ "fs",
+ "futures 0.3.31",
+ "gpui",
+ "gpui_platform",
+ "gpui_tokio",
+ "language",
+ "language_extension",
+ "language_model",
+ "language_models",
+ "languages",
+ "node_runtime",
+ "paths",
+ "project",
+ "prompt_store",
+ "release_channel",
+ "reqwest_client",
+ "serde",
+ "serde_json",
+ "settings",
+ "shellexpand 2.1.2",
+ "terminal_view",
+ "util",
  "watch",
 ]
 
@@ -7114,7 +7174,7 @@ version = "0.8.0"
 source = "git+https://github.com/zed-industries/gh-workflow?rev=c9eac0ed361583e1072860d96776fa52775b82ac#c9eac0ed361583e1072860d96776fa52775b82ac"
 dependencies = [
  "async-trait",
- "derive_more 2.0.1",
+ "derive_more",
  "derive_setters",
  "gh-workflow-macros",
  "indexmap",
@@ -7183,7 +7243,7 @@ dependencies = [
  "askpass",
  "async-trait",
  "collections",
- "derive_more 0.99.20",
+ "derive_more",
  "futures 0.3.31",
  "git2",
  "gpui",
@@ -7562,7 +7622,7 @@ dependencies = [
  "core-text",
  "core-video",
  "ctor",
- "derive_more 0.99.20",
+ "derive_more",
  "embed-resource",
  "env_logger 0.11.8",
  "etagere",
@@ -7583,7 +7643,7 @@ dependencies = [
  "mach2 0.5.0",
  "media",
  "metal",
- "naga",
+ "naga 28.0.0",
  "num_cpus",
  "objc",
  "objc2",
@@ -7690,7 +7750,7 @@ dependencies = [
  "core-text",
  "core-video",
  "ctor",
- "derive_more 0.99.20",
+ "derive_more",
  "dispatch2",
  "etagere",
  "foreign-types 0.5.0",
@@ -8248,7 +8308,7 @@ dependencies = [
  "async-fs",
  "async-tar",
  "bytes 1.11.1",
- "derive_more 0.99.20",
+ "derive_more",
  "futures 0.3.31",
  "http 1.3.1",
  "http-body 1.0.1",
@@ -9125,9 +9185,9 @@ dependencies = [
 
 [[package]]
 name = "jupyter-protocol"
-version = "1.2.1"
+version = "1.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8c75a69caf8b8e781224badfb76c4a8da4d49856de36ce72ae3cf5d4a1c94e42"
+checksum = "4649647741f9794a7a02e3be976f1b248ba28a37dbfc626d5089316fd4fbf4c8"
 dependencies = [
  "async-trait",
  "bytes 1.11.1",
@@ -9700,7 +9760,7 @@ dependencies = [
 [[package]]
 name = "libwebrtc"
 version = "0.3.26"
-source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=fccf29d1d0d0a139b2e50746b0b9a1bac828fa04#fccf29d1d0d0a139b2e50746b0b9a1bac828fa04"
+source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=37835f840d0070d45ac8b31cce6a6ae7aca3f459#37835f840d0070d45ac8b31cce6a6ae7aca3f459"
 dependencies = [
  "cxx",
  "glib",
@@ -9798,7 +9858,7 @@ checksum = "11d3d7f243d5c5a8b9bb5d6dd2b1602c0cb0b9db1621bafc7ed66e35ff9fe092"
 [[package]]
 name = "livekit"
 version = "0.7.32"
-source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=fccf29d1d0d0a139b2e50746b0b9a1bac828fa04#fccf29d1d0d0a139b2e50746b0b9a1bac828fa04"
+source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=37835f840d0070d45ac8b31cce6a6ae7aca3f459#37835f840d0070d45ac8b31cce6a6ae7aca3f459"
 dependencies = [
  "base64 0.22.1",
  "bmrng",
@@ -9824,7 +9884,7 @@ dependencies = [
 [[package]]
 name = "livekit-api"
 version = "0.4.14"
-source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=fccf29d1d0d0a139b2e50746b0b9a1bac828fa04#fccf29d1d0d0a139b2e50746b0b9a1bac828fa04"
+source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=37835f840d0070d45ac8b31cce6a6ae7aca3f459#37835f840d0070d45ac8b31cce6a6ae7aca3f459"
 dependencies = [
  "base64 0.21.7",
  "futures-util",
@@ -9851,7 +9911,7 @@ dependencies = [
 [[package]]
 name = "livekit-protocol"
 version = "0.7.1"
-source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=fccf29d1d0d0a139b2e50746b0b9a1bac828fa04#fccf29d1d0d0a139b2e50746b0b9a1bac828fa04"
+source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=37835f840d0070d45ac8b31cce6a6ae7aca3f459#37835f840d0070d45ac8b31cce6a6ae7aca3f459"
 dependencies = [
  "futures-util",
  "livekit-runtime",
@@ -9867,7 +9927,7 @@ dependencies = [
 [[package]]
 name = "livekit-runtime"
 version = "0.4.0"
-source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=fccf29d1d0d0a139b2e50746b0b9a1bac828fa04#fccf29d1d0d0a139b2e50746b0b9a1bac828fa04"
+source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=37835f840d0070d45ac8b31cce6a6ae7aca3f459#37835f840d0070d45ac8b31cce6a6ae7aca3f459"
 dependencies = [
  "tokio",
  "tokio-stream",
@@ -10017,6 +10077,7 @@ dependencies = [
  "ctor",
  "futures 0.3.31",
  "gpui",
+ "gpui_util",
  "log",
  "lsp-types",
  "parking_lot",
@@ -10183,6 +10244,7 @@ dependencies = [
  "language",
  "linkify",
  "log",
+ "markdown",
  "markup5ever_rcdom",
  "mermaid-rs-renderer",
  "pretty_assertions",
@@ -10703,6 +10765,30 @@ dependencies = [
  "num-traits",
  "once_cell",
  "rustc-hash 1.1.0",
+ "thiserror 2.0.17",
+ "unicode-ident",
+]
+
+[[package]]
+name = "naga"
+version = "28.0.1"
+source = "git+https://github.com/zed-industries/wgpu?rev=0343151f535c8386df3c1db014cd42f44470e4c0#0343151f535c8386df3c1db014cd42f44470e4c0"
+dependencies = [
+ "arrayvec",
+ "bit-set",
+ "bitflags 2.10.0",
+ "cfg-if",
+ "cfg_aliases 0.2.1",
+ "codespan-reporting 0.12.0",
+ "half",
+ "hashbrown 0.16.1",
+ "hexf-parse",
+ "indexmap",
+ "libm",
+ "log",
+ "num-traits",
+ "once_cell",
+ "rustc-hash 1.1.0",
  "spirv",
  "thiserror 2.0.17",
  "unicode-ident",
@@ -10745,9 +10831,9 @@ dependencies = [
 
 [[package]]
 name = "nbformat"
-version = "1.1.0"
+version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b10a89a2d910233ec3fca4de359b16ebe95e833c8b2162643ef98c6053a0549d"
+checksum = "d4983a40792c45e8639f77ef8e4461c55679cbc618f4b9e83830e8c7e79c8383"
 dependencies = [
  "anyhow",
  "chrono",
@@ -12538,14 +12624,12 @@ name = "picker"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "ctor",
  "editor",
- "env_logger 0.11.8",
  "gpui",
  "menu",
  "schemars",
  "serde",
- "serde_json",
+ "settings",
  "theme",
  "ui",
  "ui_input",
@@ -14241,6 +14325,7 @@ dependencies = [
  "serde",
  "serde_json",
  "settings",
+ "shlex",
  "smol",
  "telemetry",
  "terminal",
@@ -14607,9 +14692,9 @@ dependencies = [
 
 [[package]]
 name = "runtimelib"
-version = "1.2.0"
+version = "1.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d80685459e1e5fa5603182058351ae91c98ca458dfef4e85f0a37be4f7cf1e6c"
+checksum = "fa84884e45ed4a1e663120cef3fc11f14d1a2a1933776e1c31599f7bd2dd0c9e"
 dependencies = [
  "async-dispatcher",
  "async-std",
@@ -15515,7 +15600,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "collections",
- "derive_more 0.99.20",
+ "derive_more",
  "gpui",
  "log",
  "schemars",
@@ -15734,22 +15819,25 @@ name = "sidebar"
 version = "0.1.0"
 dependencies = [
  "acp_thread",
+ "agent",
+ "agent-client-protocol",
  "agent_ui",
+ "assistant_text_thread",
  "chrono",
  "editor",
  "feature_flags",
  "fs",
- "fuzzy",
  "gpui",
- "picker",
+ "language_model",
+ "menu",
  "project",
- "recent_projects",
+ "serde_json",
  "settings",
  "theme",
  "ui",
- "ui_input",
  "util",
  "workspace",
+ "zed_actions",
 ]
 
 [[package]]
@@ -16522,49 +16610,6 @@ dependencies = [
  "tracing",
  "zlog",
  "ztracing",
-]
-
-[[package]]
-name = "supermaven"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "client",
- "collections",
- "edit_prediction_types",
- "editor",
- "env_logger 0.11.8",
- "futures 0.3.31",
- "gpui",
- "http_client",
- "language",
- "log",
- "postage",
- "project",
- "serde",
- "serde_json",
- "settings",
- "smol",
- "supermaven_api",
- "text",
- "theme",
- "ui",
- "unicode-segmentation",
- "util",
-]
-
-[[package]]
-name = "supermaven_api"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "futures 0.3.31",
- "http_client",
- "paths",
- "serde",
- "serde_json",
- "smol",
- "util",
 ]
 
 [[package]]
@@ -17341,7 +17386,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "collections",
- "derive_more 0.99.20",
+ "derive_more",
  "fs",
  "futures 0.3.31",
  "gpui",
@@ -19853,6 +19898,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "client",
+ "cloud_api_types",
  "cloud_llm_client",
  "futures 0.3.31",
  "gpui",
@@ -19884,7 +19930,7 @@ dependencies = [
 [[package]]
 name = "webrtc-sys"
 version = "0.3.23"
-source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=fccf29d1d0d0a139b2e50746b0b9a1bac828fa04#fccf29d1d0d0a139b2e50746b0b9a1bac828fa04"
+source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=37835f840d0070d45ac8b31cce6a6ae7aca3f459#37835f840d0070d45ac8b31cce6a6ae7aca3f459"
 dependencies = [
  "cc",
  "cxx",
@@ -19898,7 +19944,7 @@ dependencies = [
 [[package]]
 name = "webrtc-sys-build"
 version = "0.3.13"
-source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=fccf29d1d0d0a139b2e50746b0b9a1bac828fa04#fccf29d1d0d0a139b2e50746b0b9a1bac828fa04"
+source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=37835f840d0070d45ac8b31cce6a6ae7aca3f459#37835f840d0070d45ac8b31cce6a6ae7aca3f459"
 dependencies = [
  "anyhow",
  "fs2",
@@ -19917,9 +19963,8 @@ checksum = "a751b3277700db47d3e574514de2eced5e54dc8a5436a3bf7a0b248b2cee16f3"
 
 [[package]]
 name = "wgpu"
-version = "28.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f9cb534d5ffd109c7d1135f34cdae29e60eab94855a625dcfe1705f8bc7ad79f"
+version = "28.0.1"
+source = "git+https://github.com/zed-industries/wgpu?rev=0343151f535c8386df3c1db014cd42f44470e4c0#0343151f535c8386df3c1db014cd42f44470e4c0"
 dependencies = [
  "arrayvec",
  "bitflags 2.10.0",
@@ -19930,7 +19975,7 @@ dependencies = [
  "hashbrown 0.16.1",
  "js-sys",
  "log",
- "naga",
+ "naga 28.0.1",
  "parking_lot",
  "portable-atomic",
  "profiling",
@@ -19947,9 +19992,8 @@ dependencies = [
 
 [[package]]
 name = "wgpu-core"
-version = "28.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8bb4c8b5db5f00e56f1f08869d870a0dff7c8bc7ebc01091fec140b0cf0211a9"
+version = "28.0.1"
+source = "git+https://github.com/zed-industries/wgpu?rev=0343151f535c8386df3c1db014cd42f44470e4c0#0343151f535c8386df3c1db014cd42f44470e4c0"
 dependencies = [
  "arrayvec",
  "bit-set",
@@ -19961,7 +20005,7 @@ dependencies = [
  "hashbrown 0.16.1",
  "indexmap",
  "log",
- "naga",
+ "naga 28.0.1",
  "once_cell",
  "parking_lot",
  "portable-atomic",
@@ -19979,36 +20023,32 @@ dependencies = [
 
 [[package]]
 name = "wgpu-core-deps-apple"
-version = "28.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "87b7b696b918f337c486bf93142454080a32a37832ba8a31e4f48221890047da"
+version = "28.0.1"
+source = "git+https://github.com/zed-industries/wgpu?rev=0343151f535c8386df3c1db014cd42f44470e4c0#0343151f535c8386df3c1db014cd42f44470e4c0"
 dependencies = [
  "wgpu-hal",
 ]
 
 [[package]]
 name = "wgpu-core-deps-emscripten"
-version = "28.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "34b251c331f84feac147de3c4aa3aa45112622a95dd7ee1b74384fa0458dbd79"
+version = "28.0.1"
+source = "git+https://github.com/zed-industries/wgpu?rev=0343151f535c8386df3c1db014cd42f44470e4c0#0343151f535c8386df3c1db014cd42f44470e4c0"
 dependencies = [
  "wgpu-hal",
 ]
 
 [[package]]
 name = "wgpu-core-deps-windows-linux-android"
-version = "28.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "68ca976e72b2c9964eb243e281f6ce7f14a514e409920920dcda12ae40febaae"
+version = "28.0.1"
+source = "git+https://github.com/zed-industries/wgpu?rev=0343151f535c8386df3c1db014cd42f44470e4c0#0343151f535c8386df3c1db014cd42f44470e4c0"
 dependencies = [
  "wgpu-hal",
 ]
 
 [[package]]
 name = "wgpu-hal"
-version = "28.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "293080d77fdd14d6b08a67c5487dfddbf874534bb7921526db56a7b75d7e3bef"
+version = "28.0.1"
+source = "git+https://github.com/zed-industries/wgpu?rev=0343151f535c8386df3c1db014cd42f44470e4c0#0343151f535c8386df3c1db014cd42f44470e4c0"
 dependencies = [
  "android_system_properties",
  "arrayvec",
@@ -20031,7 +20071,7 @@ dependencies = [
  "libloading",
  "log",
  "metal",
- "naga",
+ "naga 28.0.1",
  "ndk-sys",
  "objc",
  "once_cell",
@@ -20054,9 +20094,8 @@ dependencies = [
 
 [[package]]
 name = "wgpu-types"
-version = "28.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e18308757e594ed2cd27dddbb16a139c42a683819d32a2e0b1b0167552f5840c"
+version = "28.0.1"
+source = "git+https://github.com/zed-industries/wgpu?rev=0343151f535c8386df3c1db014cd42f44470e4c0#0343151f535c8386df3c1db014cd42f44470e4c0"
 dependencies = [
  "bitflags 2.10.0",
  "bytemuck",
@@ -21280,7 +21319,6 @@ dependencies = [
  "any_vec",
  "anyhow",
  "async-recursion",
- "call",
  "chrono",
  "client",
  "clock",
@@ -21545,6 +21583,7 @@ checksum = "ec7a2a501ed189703dba8b08142f057e887dfc4b2cc4db2d343ac6376ba3e0b9"
 name = "xtask"
 version = "0.1.0"
 dependencies = [
+ "annotate-snippets",
  "anyhow",
  "backtrace",
  "cargo_metadata",
@@ -21553,8 +21592,12 @@ dependencies = [
  "gh-workflow",
  "indexmap",
  "indoc",
+ "itertools 0.14.0",
+ "regex",
  "serde",
  "serde_json",
+ "serde_yaml",
+ "strum 0.27.2",
  "toml 0.8.23",
  "toml_edit 0.22.27",
 ]
@@ -21733,7 +21776,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "0.227.0"
+version = "0.228.0"
 dependencies = [
  "acp_thread",
  "acp_tools",
@@ -21751,7 +21794,6 @@ dependencies = [
  "audio",
  "auto_update",
  "auto_update_ui",
- "bincode",
  "breadcrumbs",
  "call",
  "channel",
@@ -21770,6 +21812,7 @@ dependencies = [
  "copilot_chat",
  "copilot_ui",
  "crashes",
+ "csv_preview",
  "dap",
  "dap_adapters",
  "db",
@@ -21834,6 +21877,7 @@ dependencies = [
  "parking_lot",
  "paths",
  "picker",
+ "pkg-config",
  "pretty_assertions",
  "profiling",
  "project",
@@ -21861,7 +21905,6 @@ dependencies = [
  "smol",
  "snippet_provider",
  "snippets_ui",
- "supermaven",
  "svg_preview",
  "sysinfo 0.37.2",
  "system_specs",
