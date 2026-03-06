@@ -1088,9 +1088,7 @@ impl OpenAiResponseEventMapper {
                     error.message
                 )))]
             }
-            ResponsesStreamEvent::ReasoningSummaryPartAdded {
-                summary_index, ..
-            } => {
+            ResponsesStreamEvent::ReasoningSummaryPartAdded { summary_index, .. } => {
                 if summary_index > 0 {
                     vec![Ok(LanguageModelCompletionEvent::Thinking {
                         text: "\n\n".to_string(),
