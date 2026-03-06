@@ -136,6 +136,30 @@ Specify a custom temperature for a provider and/or model:
 }
 ```
 
+### Zed Hosted Model Overrides {#zed-hosted-model-overrides}
+
+If you're using Zed's hosted models and need to override a model's advertised context window, you can add an entry under `language_models."zed.dev".available_models`.
+
+This is useful when you want the thread token meter, context window icon, and token limit warnings to use a custom per-model limit.
+
+```json [settings]
+{
+  "language_models": {
+    "zed.dev": {
+      "available_models": [
+        {
+          "provider": "anthropic",
+          "name": "claude-sonnet-4",
+          "max_tokens": 128000
+        }
+      ]
+    }
+  }
+}
+```
+
+The `provider` and `name` fields must match the hosted model you selected in Zed.
+
 ## Agent Panel Settings {#agent-panel-settings}
 
 Note that some of these settings are also surfaced in the Agent Panel's settings UI, which you can access either via the `agent: open settings` action or by the dropdown menu on the top-right corner of the panel.

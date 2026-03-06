@@ -287,9 +287,11 @@ impl CloudLanguageModelProvider {
     fn create_language_model(
         &self,
         model: Arc<cloud_llm_client::LanguageModel>,
+        cx: &App,
         llm_api_token: LlmApiToken,
         user_store: Entity<UserStore>,
     ) -> Arc<dyn LanguageModel> {
+        let model = Arc::new(Self::apply_model_override(model.as_ref(), cx));
         Arc::new(CloudLanguageModel {
             id: LanguageModelId(SharedString::from(model.id.0.clone())),
             model,
@@ -298,6 +300,54 @@ impl CloudLanguageModelProvider {
             client: self.client.clone(),
             request_limiter: RateLimiter::new(4),
         })
+    }
+
+    fn settings(cx: &App) -> &ZedDotDevSettings {
+        &crate::AllLanguageModelSettings::get_global(cx).zed_dot_dev
+    }
+
+    fn apply_model_override(
+        model: &cloud_llm_client::LanguageModel,
+        cx: &App,
+    ) -> cloud_llm_client::LanguageModel {
+        Self::apply_model_override_from_settings(model, &Self::settings(cx).available_models)
+    }
+
+    fn apply_model_override_from_settings(
+        model: &cloud_llm_client::LanguageModel,
+        available_models: &[AvailableModel],
+    ) -> cloud_llm_client::LanguageModel {
+        let Some(override_model) = available_models.iter().find(|override_model| {
+            Self::provider_matches_override(model.provider, override_model.provider)
+                && override_model.name == model.id.0.as_ref()
+        }) else {
+            return model.clone();
+        };
+
+        let mut overridden_model = model.clone();
+        overridden_model.max_token_count = override_model.max_tokens;
+
+        if let Some(max_output_tokens) = override_model.max_output_tokens {
+            overridden_model.max_output_tokens = max_output_tokens as usize;
+        }
+
+        if let Some(display_name) = &override_model.display_name {
+            overridden_model.display_name = display_name.clone();
+        }
+
+        overridden_model
+    }
+
+    fn provider_matches_override(
+        provider: cloud_llm_client::LanguageModelProvider,
+        override_provider: AvailableProvider,
+    ) -> bool {
+        match (provider, override_provider) {
+            (cloud_llm_client::LanguageModelProvider::Anthropic, AvailableProvider::Anthropic)
+            | (cloud_llm_client::LanguageModelProvider::OpenAi, AvailableProvider::OpenAi)
+            | (cloud_llm_client::LanguageModelProvider::Google, AvailableProvider::Google) => true,
+            _ => false,
+        }
     }
 }
 
@@ -327,7 +377,7 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
         let default_model = state.default_model.clone()?;
         let llm_api_token = state.llm_api_token.clone();
         let user_store = state.user_store.clone();
-        Some(self.create_language_model(default_model, llm_api_token, user_store))
+        Some(self.create_language_model(default_model, cx, llm_api_token, user_store))
     }
 
     fn default_fast_model(&self, cx: &App) -> Option<Arc<dyn LanguageModel>> {
@@ -335,7 +385,7 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
         let default_fast_model = state.default_fast_model.clone()?;
         let llm_api_token = state.llm_api_token.clone();
         let user_store = state.user_store.clone();
-        Some(self.create_language_model(default_fast_model, llm_api_token, user_store))
+        Some(self.create_language_model(default_fast_model, cx, llm_api_token, user_store))
     }
 
     fn recommended_models(&self, cx: &App) -> Vec<Arc<dyn LanguageModel>> {
@@ -347,7 +397,7 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
             .iter()
             .cloned()
             .map(|model| {
-                self.create_language_model(model, llm_api_token.clone(), user_store.clone())
+                self.create_language_model(model, cx, llm_api_token.clone(), user_store.clone())
             })
             .collect()
     }
@@ -361,7 +411,7 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
             .iter()
             .cloned()
             .map(|model| {
-                self.create_language_model(model, llm_api_token.clone(), user_store.clone())
+                self.create_language_model(model, cx, llm_api_token.clone(), user_store.clone())
             })
             .collect()
     }
@@ -1288,8 +1338,51 @@ impl Component for ZedAiConfiguration {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use cloud_llm_client::{LanguageModel, LanguageModelId, LanguageModelProvider};
     use http_client::http::{HeaderMap, StatusCode};
     use language_model::LanguageModelCompletionError;
+    use std::sync::Arc;
+
+    #[test]
+    fn test_apply_model_override_from_settings_updates_context_window() {
+        let model = LanguageModel {
+            provider: LanguageModelProvider::Anthropic,
+            id: LanguageModelId(Arc::from("claude-sonnet-4")),
+            display_name: "Claude Sonnet 4".into(),
+            is_latest: true,
+            max_token_count: 200_000,
+            max_token_count_in_max_mode: None,
+            max_output_tokens: 8_192,
+            supports_tools: true,
+            supports_images: true,
+            supports_thinking: true,
+            supports_fast_mode: false,
+            supported_effort_levels: Vec::new(),
+            supports_streaming_tools: true,
+            supports_parallel_tool_calls: false,
+        };
+
+        let overridden_model = CloudLanguageModelProvider::apply_model_override_from_settings(
+            &model,
+            &[AvailableModel {
+                provider: AvailableProvider::Anthropic,
+                name: "claude-sonnet-4".into(),
+                display_name: Some("Claude Sonnet 4 (128k)".into()),
+                max_tokens: 128_000,
+                max_output_tokens: Some(4_096),
+                max_completion_tokens: None,
+                tool_override: None,
+                cache_configuration: None,
+                default_temperature: None,
+                extra_beta_headers: Vec::new(),
+                mode: None,
+            }],
+        );
+
+        assert_eq!(overridden_model.max_token_count, 128_000);
+        assert_eq!(overridden_model.max_output_tokens, 4_096);
+        assert_eq!(overridden_model.display_name, "Claude Sonnet 4 (128k)");
+    }
 
     #[test]
     fn test_api_error_conversion_with_upstream_http_error() {
