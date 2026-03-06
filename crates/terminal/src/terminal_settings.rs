@@ -179,3 +179,49 @@ impl From<CursorShape> for AlacCursorStyle {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui::{App, UpdateGlobal};
+    use settings::{Settings, SettingsStore};
+
+    #[gpui::test]
+    fn test_margin_top_default(cx: &mut App) {
+        let settings_store = SettingsStore::test(cx);
+        cx.set_global(settings_store);
+
+        let settings = TerminalSettings::get_global(cx);
+        assert_eq!(settings.margin_top, px(4.0));
+    }
+
+    #[gpui::test]
+    fn test_margin_top_custom_value(cx: &mut App) {
+        let settings_store = SettingsStore::test(cx);
+        cx.set_global(settings_store);
+
+        SettingsStore::update_global(cx, |store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.terminal.get_or_insert_default().margin_top = Some(10.0);
+            });
+        });
+
+        let settings = TerminalSettings::get_global(cx);
+        assert_eq!(settings.margin_top, px(10.0));
+    }
+
+    #[gpui::test]
+    fn test_margin_top_zero(cx: &mut App) {
+        let settings_store = SettingsStore::test(cx);
+        cx.set_global(settings_store);
+
+        SettingsStore::update_global(cx, |store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.terminal.get_or_insert_default().margin_top = Some(0.0);
+            });
+        });
+
+        let settings = TerminalSettings::get_global(cx);
+        assert_eq!(settings.margin_top, px(0.0));
+    }
+}
