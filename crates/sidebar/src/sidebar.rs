@@ -322,10 +322,15 @@ impl Sidebar {
             window,
             |this, agent_panel, event: &AgentPanelEvent, _window, cx| match event {
                 AgentPanelEvent::ActiveViewChanged => {
-                    if let Some(thread) = agent_panel.read(cx).active_connection_view()
-                        && let Some(session_id) = thread.read(cx).parent_id(cx)
-                    {
-                        this.focused_thread = Some(session_id);
+                    match agent_panel.read(cx).active_connection_view() {
+                        Some(thread) => {
+                            if let Some(session_id) = thread.read(cx).parent_id(cx) {
+                                this.focused_thread = Some(session_id);
+                            }
+                        }
+                        None => {
+                            this.focused_thread = None;
+                        }
                     }
                     this.update_entries(cx);
                 }
@@ -334,7 +339,7 @@ impl Sidebar {
                         .read(cx)
                         .active_connection_view()
                         .and_then(|thread| thread.read(cx).parent_id(cx));
-                    if new_focused != this.focused_thread {
+                    if new_focused.is_some() && new_focused != this.focused_thread {
                         this.focused_thread = new_focused;
                         this.update_entries(cx);
                     }
@@ -886,12 +891,7 @@ impl Sidebar {
         self.update_entries(cx);
     }
 
-    fn focus_in(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
-        if self.selection.is_none() && !self.contents.entries.is_empty() {
-            self.selection = Some(0);
-            cx.notify();
-        }
-    }
+    fn focus_in(&mut self, _window: &mut Window, _cx: &mut Context<Self>) {}
 
     fn cancel(&mut self, _: &Cancel, window: &mut Window, cx: &mut Context<Self>) {
         if self.reset_filter_editor_text(window, cx) {
@@ -2006,11 +2006,16 @@ mod tests {
         cx.run_until_parked();
 
         // Entries: [header, thread3, thread2, thread1]
-        // Focusing the sidebar triggers focus_in, which selects the first entry
+        // Focusing the sidebar does not set a selection; select_next/select_previous
+        // handle None gracefully by starting from the first or last entry.
         open_and_focus_sidebar(&sidebar, &multi_workspace, cx);
+        assert_eq!(sidebar.read_with(cx, |s, _| s.selection), None);
+
+        // First SelectNext from None starts at index 0
+        cx.dispatch_action(SelectNext);
         assert_eq!(sidebar.read_with(cx, |s, _| s.selection), Some(0));
 
-        // Move down through all entries
+        // Move down through remaining entries
         cx.dispatch_action(SelectNext);
         assert_eq!(sidebar.read_with(cx, |s, _| s.selection), Some(1));
 
@@ -2064,7 +2069,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_keyboard_focus_in_selects_first(cx: &mut TestAppContext) {
+    async fn test_keyboard_focus_in_does_not_set_selection(cx: &mut TestAppContext) {
         let project = init_test_project("/my-project", cx).await;
         let (multi_workspace, cx) =
             cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
@@ -2073,11 +2078,16 @@ mod tests {
         // Initially no selection
         assert_eq!(sidebar.read_with(cx, |s, _| s.selection), None);
 
-        // Open the sidebar so it's rendered, then focus it to trigger focus_in
+        // Open the sidebar so it's rendered, then focus it to trigger focus_in.
+        // focus_in no longer sets a default selection.
         open_and_focus_sidebar(&sidebar, &multi_workspace, cx);
-        assert_eq!(sidebar.read_with(cx, |s, _| s.selection), Some(0));
+        assert_eq!(sidebar.read_with(cx, |s, _| s.selection), None);
 
-        // Blur the sidebar, then refocus — existing selection should be preserved
+        // Manually set a selection, blur, then refocus — selection should be preserved
+        sidebar.update_in(cx, |sidebar, _window, _cx| {
+            sidebar.selection = Some(0);
+        });
+
         cx.update(|window, _cx| {
             window.blur();
         });
@@ -2127,9 +2137,11 @@ mod tests {
             1
         );
 
-        // Focus the sidebar — focus_in selects the header (index 0)
+        // Focus the sidebar and manually select the header (index 0)
         open_and_focus_sidebar(&sidebar, &multi_workspace, cx);
-        assert_eq!(sidebar.read_with(cx, |s, _| s.selection), Some(0));
+        sidebar.update_in(cx, |sidebar, _window, _cx| {
+            sidebar.selection = Some(0);
+        });
 
         // Press confirm on project header (workspace 0) to activate it.
         cx.dispatch_action(Confirm);
@@ -2168,9 +2180,9 @@ mod tests {
         assert_eq!(entries.len(), 7);
         assert!(entries.iter().any(|e| e.contains("View More (3)")));
 
-        // Focus sidebar (selects index 0), then navigate down to the "View More" entry (index 6)
+        // Focus sidebar (selection starts at None), then navigate down to the "View More" entry (index 6)
         open_and_focus_sidebar(&sidebar, &multi_workspace, cx);
-        for _ in 0..6 {
+        for _ in 0..7 {
             cx.dispatch_action(SelectNext);
         }
         assert_eq!(sidebar.read_with(cx, |s, _| s.selection), Some(6));
@@ -2202,9 +2214,11 @@ mod tests {
             vec!["v [my-project]", "  Thread 1"]
         );
 
-        // Focus sidebar — focus_in selects the header (index 0). Press left to collapse.
+        // Focus sidebar and manually select the header (index 0). Press left to collapse.
         open_and_focus_sidebar(&sidebar, &multi_workspace, cx);
-        assert_eq!(sidebar.read_with(cx, |s, _| s.selection), Some(0));
+        sidebar.update_in(cx, |sidebar, _window, _cx| {
+            sidebar.selection = Some(0);
+        });
 
         cx.dispatch_action(CollapseSelectedEntry);
         cx.run_until_parked();
@@ -2240,8 +2254,9 @@ mod tests {
         multi_workspace.update_in(cx, |_, _window, cx| cx.notify());
         cx.run_until_parked();
 
-        // Focus sidebar (selects header at index 0), then navigate down to the thread (child)
+        // Focus sidebar (selection starts at None), then navigate down to the thread (child)
         open_and_focus_sidebar(&sidebar, &multi_workspace, cx);
+        cx.dispatch_action(SelectNext);
         cx.dispatch_action(SelectNext);
         assert_eq!(sidebar.read_with(cx, |s, _| s.selection), Some(1));
 
@@ -2274,8 +2289,12 @@ mod tests {
             vec!["v [empty-project]", "  [+ New Thread]"]
         );
 
-        // Focus sidebar — focus_in selects the first entry (header at 0)
+        // Focus sidebar — focus_in does not set a selection
         open_and_focus_sidebar(&sidebar, &multi_workspace, cx);
+        assert_eq!(sidebar.read_with(cx, |s, _| s.selection), None);
+
+        // First SelectNext from None starts at index 0 (header)
+        cx.dispatch_action(SelectNext);
         assert_eq!(sidebar.read_with(cx, |s, _| s.selection), Some(0));
 
         // SelectNext moves to the new thread button
@@ -2303,8 +2322,9 @@ mod tests {
         multi_workspace.update_in(cx, |_, _window, cx| cx.notify());
         cx.run_until_parked();
 
-        // Focus sidebar (selects header at 0), navigate down to the thread (index 1)
+        // Focus sidebar (selection starts at None), navigate down to the thread (index 1)
         open_and_focus_sidebar(&sidebar, &multi_workspace, cx);
+        cx.dispatch_action(SelectNext);
         cx.dispatch_action(SelectNext);
         assert_eq!(sidebar.read_with(cx, |s, _| s.selection), Some(1));
 
@@ -2927,9 +2947,11 @@ mod tests {
         cx.run_until_parked();
 
         // User focuses the sidebar and collapses the group using keyboard:
-        // select the header, then press CollapseSelectedEntry to collapse.
+        // manually select the header, then press CollapseSelectedEntry to collapse.
         open_and_focus_sidebar(&sidebar, &multi_workspace, cx);
-        assert_eq!(sidebar.read_with(cx, |s, _| s.selection), Some(0));
+        sidebar.update_in(cx, |sidebar, _window, _cx| {
+            sidebar.selection = Some(0);
+        });
         cx.dispatch_action(CollapseSelectedEntry);
         cx.run_until_parked();
 
@@ -3143,15 +3165,12 @@ mod tests {
         });
         assert_eq!(sidebar.read_with(cx, |sidebar, _| sidebar.selection), None);
 
-        // When the user tabs back into the sidebar, focus_in restores
-        // selection to the first entry for keyboard navigation.
+        // When the user tabs back into the sidebar, focus_in no longer
+        // restores selection — it stays None.
         sidebar.update_in(cx, |sidebar, window, cx| {
             sidebar.focus_in(window, cx);
         });
-        assert_eq!(
-            sidebar.read_with(cx, |sidebar, _| sidebar.selection),
-            Some(0)
-        );
+        assert_eq!(sidebar.read_with(cx, |sidebar, _| sidebar.selection), None);
     }
 
     #[gpui::test]
