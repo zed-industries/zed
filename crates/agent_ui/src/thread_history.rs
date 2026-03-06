@@ -218,8 +218,9 @@ impl ThreadHistory {
         }));
     }
 
-    pub fn set_cwd(&mut self, cwd: Option<PathBuf>) {
+    pub fn set_cwd(&mut self, cwd: Option<PathBuf>, cx: &mut Context<Self>) {
         self.cwd = cwd;
+        cx.notify();
     }
 
     pub(crate) fn refresh_full_history(&mut self, cx: &mut Context<Self>) {
