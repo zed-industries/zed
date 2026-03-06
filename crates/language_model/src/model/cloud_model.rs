@@ -56,6 +56,10 @@ impl LlmApiToken {
         Self::fetch(self.0.write().await, client, organization_id).await
     }
 
+    pub async fn invalidate(&self) {
+        *self.0.write().await = None;
+    }
+
     async fn fetch(
         mut lock: RwLockWriteGuard<'_, Option<String>>,
         client: &Arc<Client>,
@@ -105,6 +109,7 @@ impl Global for GlobalRefreshLlmTokenListener {}
 pub struct RefreshLlmTokenEvent;
 
 pub struct RefreshLlmTokenListener {
+    llm_api_token: LlmApiToken,
     _subscription: Subscription,
 }
 
@@ -120,7 +125,13 @@ impl RefreshLlmTokenListener {
         GlobalRefreshLlmTokenListener::global(cx).0.clone()
     }
 
+    pub fn llm_api_token(cx: &App) -> LlmApiToken {
+        Self::global(cx).read(cx).llm_api_token.clone()
+    }
+
     fn new(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut Context<Self>) -> Self {
+        let llm_api_token = LlmApiToken::default();
+
         client.add_message_to_client_handler({
             let this = cx.entity();
             move |message, cx| {
@@ -128,13 +139,17 @@ impl RefreshLlmTokenListener {
             }
         });
 
-        let subscription = cx.subscribe(&user_store, |_this, _user_store, event, cx| {
+        let subscription = cx.subscribe(&user_store, |this, _user_store, event, cx| {
             if matches!(event, client::user::Event::OrganizationChanged) {
+                let llm_api_token = this.llm_api_token.clone();
+                cx.background_spawn(async move { llm_api_token.invalidate().await })
+                    .detach();
                 cx.emit(RefreshLlmTokenEvent);
             }
         });
 
         Self {
+            llm_api_token,
             _subscription: subscription,
         }
     }
@@ -142,7 +157,12 @@ impl RefreshLlmTokenListener {
     fn handle_refresh_llm_token(this: Entity<Self>, message: &MessageToClient, cx: &mut App) {
         match message {
             MessageToClient::UserUpdated => {
-                this.update(cx, |_this, cx| cx.emit(RefreshLlmTokenEvent));
+                this.update(cx, |this, cx| {
+                    let llm_api_token = this.llm_api_token.clone();
+                    cx.background_spawn(async move { llm_api_token.invalidate().await })
+                        .detach();
+                    cx.emit(RefreshLlmTokenEvent);
+                });
             }
         }
     }
