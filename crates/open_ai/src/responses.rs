@@ -414,10 +414,10 @@ pub async fn stream_response(
                                     for part in &reasoning.summary {
                                         if let ReasoningSummaryPart::SummaryText { text } = part {
                                             all_events.push(
-                                                StreamEvent::ReasoningSummaryTextDone {
+                                                StreamEvent::ReasoningSummaryTextDelta {
                                                     item_id: item_id.clone(),
                                                     output_index,
-                                                    text: text.clone(),
+                                                    delta: text.clone(),
                                                 },
                                             );
                                         }
