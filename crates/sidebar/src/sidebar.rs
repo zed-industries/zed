@@ -1319,52 +1319,45 @@ impl Render for Sidebar {
                     .justify_between()
                     .border_b_1()
                     .border_color(cx.theme().colors().border)
-                    .child(
-                        h_flex()
-                            .gap_1()
-                            .child({
-                                let focus_handle_toggle = self.focus_handle.clone();
-                                let focus_handle_focus = self.focus_handle.clone();
-                                IconButton::new("close-sidebar", IconName::WorkspaceNavOpen)
-                                    .icon_size(IconSize::Small)
-                                    .tooltip(Tooltip::element(move |_, cx| {
-                                        v_flex()
-                                            .gap_1()
-                                            .child(
-                                                h_flex()
-                                                    .gap_2()
-                                                    .justify_between()
-                                                    .child(Label::new("Close Sidebar"))
-                                                    .child(KeyBinding::for_action_in(
-                                                        &ToggleWorkspaceSidebar,
-                                                        &focus_handle_toggle,
-                                                        cx,
-                                                    )),
-                                            )
-                                            .child(
-                                                h_flex()
-                                                    .pt_1()
-                                                    .gap_2()
-                                                    .border_t_1()
-                                                    .border_color(
-                                                        cx.theme().colors().border_variant,
-                                                    )
-                                                    .justify_between()
-                                                    .child(Label::new(focus_tooltip_label))
-                                                    .child(KeyBinding::for_action_in(
-                                                        &FocusWorkspaceSidebar,
-                                                        &focus_handle_focus,
-                                                        cx,
-                                                    )),
-                                            )
-                                            .into_any_element()
-                                    }))
-                                    .on_click(cx.listener(|_this, _, _window, cx| {
-                                        cx.emit(SidebarEvent::Close);
-                                    }))
-                            })
-                            .child(Label::new("Threads").size(LabelSize::Small)),
-                    )
+                    .child({
+                        let focus_handle_toggle = self.focus_handle.clone();
+                        let focus_handle_focus = self.focus_handle.clone();
+                        IconButton::new("close-sidebar", IconName::WorkspaceNavOpen)
+                            .icon_size(IconSize::Small)
+                            .tooltip(Tooltip::element(move |_, cx| {
+                                v_flex()
+                                    .gap_1()
+                                    .child(
+                                        h_flex()
+                                            .gap_2()
+                                            .justify_between()
+                                            .child(Label::new("Close Sidebar"))
+                                            .child(KeyBinding::for_action_in(
+                                                &ToggleWorkspaceSidebar,
+                                                &focus_handle_toggle,
+                                                cx,
+                                            )),
+                                    )
+                                    .child(
+                                        h_flex()
+                                            .pt_1()
+                                            .gap_2()
+                                            .border_t_1()
+                                            .border_color(cx.theme().colors().border_variant)
+                                            .justify_between()
+                                            .child(Label::new(focus_tooltip_label))
+                                            .child(KeyBinding::for_action_in(
+                                                &FocusWorkspaceSidebar,
+                                                &focus_handle_focus,
+                                                cx,
+                                            )),
+                                    )
+                                    .into_any_element()
+                            }))
+                            .on_click(cx.listener(|_this, _, _window, cx| {
+                                cx.emit(SidebarEvent::Close);
+                            }))
+                    })
                     .child(
                         IconButton::new("open-project", IconName::OpenFolder)
                             .icon_size(IconSize::Small)
