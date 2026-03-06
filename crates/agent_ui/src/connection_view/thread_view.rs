@@ -990,10 +990,9 @@ impl ThreadView {
                 let text = text.lines().next().unwrap_or("").trim();
                 if !text.is_empty() {
                     let title: SharedString = util::truncate_and_trailoff(text, 20).into();
-                    thread
-                        .update(cx, |thread, cx| thread.set_title(title, cx))?
-                        .await
-                        .log_err();
+                    thread.update(cx, |thread, cx| {
+                        thread.set_provisional_title(title, cx);
+                    })?;
                 }
             }
 
