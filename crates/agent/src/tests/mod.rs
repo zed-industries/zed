@@ -6335,3 +6335,89 @@ async fn test_queued_message_ends_turn_at_boundary(cx: &mut TestAppContext) {
         );
     });
 }
+
+#[gpui::test]
+async fn test_tool_error_breaks_stream_loop_immediately(cx: &mut TestAppContext) {
+    init_test(cx);
+    always_allow_tools(cx);
+
+    let ThreadTest { model, thread, .. } = setup(cx, TestModel::Fake).await;
+    let fake_model = model.as_fake();
+
+    // Start a turn by sending a message
+    let _events = thread
+        .update(cx, |thread, cx| {
+            thread.send(UserMessageId::new(), ["Do something"], cx)
+        })
+        .unwrap();
+    cx.run_until_parked();
+
+    // The model should have received one completion request.
+    assert_eq!(fake_model.completion_count(), 1);
+    let first_request = fake_model.pending_completions().into_iter().next().unwrap();
+
+    // Send a ToolUse for a tool that doesn't exist. This produces a
+    // Task::ready error result immediately. With the fix, the select
+    // loop detects this completed result and breaks out of the stream
+    // loop without waiting for the LLM stream to finish.
+    fake_model.send_completion_stream_event(
+        &first_request,
+        LanguageModelCompletionEvent::ToolUse(LanguageModelToolUse {
+            id: "call_1".into(),
+            name: "nonexistent_tool".into(),
+            raw_input: "{}".into(),
+            input: json!({}),
+            is_input_complete: true,
+            thought_signature: None,
+        }),
+    );
+    fake_model.send_completion_stream_event(
+        &first_request,
+        LanguageModelCompletionEvent::Stop(StopReason::ToolUse),
+    );
+    // Importantly, we do NOT end the first stream — it stays open.
+
+    cx.run_until_parked();
+
+    // The turn should have processed the tool error and moved on to a
+    // second completion request (to send the error result back to the
+    // LLM) even though the first stream was never closed.
+    assert_eq!(
+        fake_model.completion_count(),
+        2,
+        "A second completion request should have been made after the tool error, \
+         proving the error was detected during streaming"
+    );
+
+    // Verify the second request contains the tool error result sent
+    // back to the LLM.
+    let second_request = fake_model.pending_completions().into_iter().last().unwrap();
+    let has_tool_error_result = second_request.messages.iter().any(|message| {
+        message.content.iter().any(|content| {
+            matches!(
+                content,
+                MessageContent::ToolResult(result) if result.is_error
+            )
+        })
+    });
+    assert!(
+        has_tool_error_result,
+        "The second completion request should include the tool error result"
+    );
+
+    // End the second stream so the turn finishes cleanly.
+    fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::Text(
+        "Recovered from the error".into(),
+    ));
+    fake_model
+        .send_last_completion_stream_event(LanguageModelCompletionEvent::Stop(StopReason::EndTurn));
+    fake_model.end_last_completion_stream();
+    cx.run_until_parked();
+
+    thread.read_with(cx, |thread, _cx| {
+        assert!(
+            thread.is_turn_complete(),
+            "Thread should be idle after the turn completes"
+        );
+    });
+}
