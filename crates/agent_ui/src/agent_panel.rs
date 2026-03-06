@@ -2127,7 +2127,16 @@ impl AgentPanel {
         let Some(agent) = self.selected_external_agent() else {
             return;
         };
-        self.external_thread(Some(agent), Some(session_id), cwd, title, None, focus, window, cx);
+        self.external_thread(
+            Some(agent),
+            Some(session_id),
+            cwd,
+            title,
+            None,
+            focus,
+            window,
+            cx,
+        );
     }
 
     pub(crate) fn create_external_thread(
