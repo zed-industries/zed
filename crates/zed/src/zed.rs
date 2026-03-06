@@ -371,15 +371,12 @@ pub fn initialize_workspace(
     })
     .detach();
 
-    cx.observe_new(|multi_workspace: &mut MultiWorkspace, window, cx| {
+    cx.observe_new(|_multi_workspace: &mut MultiWorkspace, window, cx| {
         let Some(window) = window else {
             return;
         };
-        let multi_workspace_handle = cx.entity();
-        let sidebar = cx.new(|cx| Sidebar::new(multi_workspace_handle.clone(), window, cx));
-        multi_workspace.register_sidebar(sidebar, window, cx);
 
-        let multi_workspace_handle = multi_workspace_handle.downgrade();
+        let multi_workspace_handle = cx.entity().downgrade();
         window.on_window_should_close(cx, move |window, cx| {
             multi_workspace_handle
                 .update(cx, |multi_workspace, cx| {
@@ -388,6 +385,20 @@ pub fn initialize_workspace(
                     false
                 })
                 .unwrap_or(true)
+        });
+
+        let window_handle = window.window_handle();
+        let multi_workspace_handle = cx.entity();
+        cx.defer(move |cx| {
+            window_handle
+                .update(cx, |_, window, cx| {
+                    let sidebar =
+                        cx.new(|cx| Sidebar::new(multi_workspace_handle.clone(), window, cx));
+                    multi_workspace_handle.update(cx, |multi_workspace, cx| {
+                        multi_workspace.register_sidebar(sidebar, window, cx);
+                    });
+                })
+                .ok();
         });
     })
     .detach();

@@ -208,7 +208,7 @@ pub fn init(cx: &mut App) {
                 .register_action(|workspace, _: &OpenAgentDiff, window, cx| {
                     let thread = workspace
                         .panel::<AgentPanel>(cx)
-                        .and_then(|panel| panel.read(cx).active_thread_view().cloned())
+                        .and_then(|panel| panel.read(cx).active_connection_view().cloned())
                         .and_then(|thread_view| {
                             thread_view
                                 .read(cx)
@@ -988,7 +988,7 @@ impl AgentPanel {
             .unwrap_or(false)
     }
 
-    pub(crate) fn active_thread_view(&self) -> Option<&Entity<ConnectionView>> {
+    pub fn active_connection_view(&self) -> Option<&Entity<ConnectionView>> {
         match &self.active_view {
             ActiveView::AgentThread { server_view, .. } => Some(server_view),
             ActiveView::Uninitialized
@@ -1173,7 +1173,7 @@ impl AgentPanel {
     }
 
     fn expand_message_editor(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(thread_view) = self.active_thread_view() else {
+        let Some(thread_view) = self.active_connection_view() else {
             return;
         };
 
@@ -1432,7 +1432,7 @@ impl AgentPanel {
         cx: &mut Context<Self>,
     ) {
         if let Some(workspace) = self.workspace.upgrade()
-            && let Some(thread_view) = self.active_thread_view()
+            && let Some(thread_view) = self.active_connection_view()
             && let Some(active_thread) = thread_view.read(cx).active_thread().cloned()
         {
             active_thread.update(cx, |thread, cx| {
@@ -3523,7 +3523,7 @@ impl AgentPanel {
             });
 
         let is_thread_loading = self
-            .active_thread_view()
+            .active_connection_view()
             .map(|thread| thread.read(cx).is_loading())
             .unwrap_or(false);
 
@@ -4077,7 +4077,7 @@ impl Render for AgentPanel {
             .on_action(cx.listener(Self::reset_font_size))
             .on_action(cx.listener(Self::toggle_zoom))
             .on_action(cx.listener(|this, _: &ReauthenticateAgent, window, cx| {
-                if let Some(thread_view) = this.active_thread_view() {
+                if let Some(thread_view) = this.active_connection_view() {
                     thread_view.update(cx, |thread_view, cx| thread_view.reauthenticate(window, cx))
                 }
             }))
@@ -4263,7 +4263,7 @@ impl AgentPanelDelegate for ConcreteAssistantPanelDelegate {
             // Wait to create a new context until the workspace is no longer
             // being updated.
             cx.defer_in(window, move |panel, window, cx| {
-                if let Some(thread_view) = panel.active_thread_view() {
+                if let Some(thread_view) = panel.active_connection_view() {
                     thread_view.update(cx, |thread_view, cx| {
                         thread_view.insert_selections(window, cx);
                     });
@@ -4301,7 +4301,7 @@ impl AgentPanelDelegate for ConcreteAssistantPanelDelegate {
             // Wait to create a new context until the workspace is no longer
             // being updated.
             cx.defer_in(window, move |panel, window, cx| {
-                if let Some(thread_view) = panel.active_thread_view() {
+                if let Some(thread_view) = panel.active_connection_view() {
                     thread_view.update(cx, |thread_view, cx| {
                         thread_view.insert_terminal_text(text, window, cx);
                     });
@@ -4367,7 +4367,7 @@ impl AgentPanel {
     /// This is a test-only accessor that exposes the private `active_thread_view()`
     /// method for test assertions. Not compiled into production builds.
     pub fn active_thread_view_for_tests(&self) -> Option<&Entity<ConnectionView>> {
-        self.active_thread_view()
+        self.active_connection_view()
     }
 
     /// Sets the start_thread_in value directly, bypassing validation.
@@ -4552,7 +4552,7 @@ mod tests {
                 "workspace A agent type should be restored"
             );
             assert!(
-                panel.active_thread_view().is_some(),
+                panel.active_connection_view().is_some(),
                 "workspace A should have its active thread restored"
             );
         });
@@ -4572,7 +4572,7 @@ mod tests {
                 "workspace B agent type should be restored"
             );
             assert!(
-                panel.active_thread_view().is_none(),
+                panel.active_connection_view().is_none(),
                 "workspace B should have no active thread"
             );
         });
@@ -4709,7 +4709,7 @@ mod tests {
         send_message(&panel, &mut cx);
 
         let weak_view_a = panel.read_with(&cx, |panel, _cx| {
-            panel.active_thread_view().unwrap().downgrade()
+            panel.active_connection_view().unwrap().downgrade()
         });
 
         // Thread A should be idle (auto-completed via set_next_prompt_updates).
