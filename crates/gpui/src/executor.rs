@@ -567,7 +567,6 @@ mod test {
         let http_client = http_client::FakeHttpClient::with_404_response();
 
         let app = App::new_app(platform, asset_source, http_client);
-        app.borrow_mut().set_exit_on_drop(false);
         (dispatcher, background_executor, app)
     }
 
