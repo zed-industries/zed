@@ -3241,27 +3241,6 @@ fn check_multibuffer(
             start_row
         );
     }
-    // dbg!(&expected_row_infos);
-
-    // dbg!(
-    //     snapshot
-    //         .excerpts()
-    //         .map(|(buffer_snapshot, excerpt)| {
-    //             (
-    //                 buffer_snapshot.remote_id(),
-    //                 excerpt.range.to_point(&buffer_snapshot),
-    //             )
-    //         })
-    //         .collect::<Vec<_>>()
-    // );
-    // dbg!(&expected_row_infos);
-    // dbg!(
-    //     reference
-    //         .excerpts
-    //         .iter()
-    //         .map(|excerpt| { excerpt.range.to_point(&excerpt.buffer.read(cx).snapshot()) })
-    //         .collect::<Vec<_>>()
-    // );
 
     assert_eq!(
         snapshot.widest_line_number(),

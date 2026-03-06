@@ -331,7 +331,6 @@ impl MultiBuffer {
         to_insert: &Vec<ExcerptRange<text::Anchor>>,
         cx: &mut Context<Self>,
     ) -> (bool, PathKeyIndex) {
-        dbg!(&path_key, &to_insert);
         let path_key_index = self.get_or_create_path_key_index(&path_key);
         if let Some(old_path_key) = self
             .snapshot(cx)
@@ -428,7 +427,6 @@ impl MultiBuffer {
                 let before = new_excerpts.summary().len();
                 new_excerpts.update_last(
                     |prev_excerpt| {
-                        dbg!("NORMAL INSERT");
                         prev_excerpt.has_trailing_newline = true;
                     },
                     (),
@@ -481,7 +479,6 @@ impl MultiBuffer {
             let before = new_excerpts.summary().len();
             new_excerpts.update_last(
                 |prev_excerpt| {
-                    dbg!("TRAILING INSERT");
                     prev_excerpt.has_trailing_newline = true;
                 },
                 (),
@@ -511,18 +508,16 @@ impl MultiBuffer {
             new_excerpts.update_last(
                 |prev_excerpt| {
                     if !prev_excerpt.has_trailing_newline {
-                        dbg!("BEFORE SUFFIX");
                         prev_excerpt.has_trailing_newline = true;
-                        patch.push(dbg!(Edit {
+                        patch.push(Edit {
                             old: suffix_start..suffix_start,
                             new: before..before + MultiBufferOffset(1),
-                        }));
+                        });
                     }
                 },
                 (),
             );
         }
-        dbg!(&patch);
         new_excerpts.append(suffix, ());
         drop(cursor);
 
@@ -614,7 +609,6 @@ impl MultiBuffer {
             })
         }
         drop(cursor);
-        dbg!("REMOVING");
         if changed_trailing_excerpt {
             snapshot.trailing_excerpt_update_count += 1;
             new_excerpts.update_last(
