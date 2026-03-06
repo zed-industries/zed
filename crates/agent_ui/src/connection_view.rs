@@ -2661,6 +2661,7 @@ impl ConnectionView {
 impl Render for ConnectionView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.sync_queued_message_editors(window, cx);
+        let v2_flag = cx.has_flag::<AgentV2FeatureFlag>();
 
         v_flex()
             .track_focus(&self.focus_handle)
@@ -2669,7 +2670,17 @@ impl Render for ConnectionView {
             .child(match &self.server_state {
                 ServerState::Loading { .. } => v_flex()
                     .flex_1()
-                    // .child(self.render_recent_history(cx))
+                    .when(v2_flag, |this| {
+                        this.size_full().items_center().justify_center().child(
+                            Label::new("Loading…").color(Color::Muted).with_animation(
+                                "loading-agent-label",
+                                Animation::new(Duration::from_secs(2))
+                                    .repeat()
+                                    .with_easing(pulsating_between(0.3, 0.7)),
+                                |label, delta| label.alpha(delta),
+                            ),
+                        )
+                    })
                     .into_any(),
                 ServerState::LoadError { error: e, .. } => v_flex()
                     .flex_1()

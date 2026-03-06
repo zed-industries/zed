@@ -2697,6 +2697,8 @@ impl ThreadView {
         let focus_handle = self.message_editor.focus_handle(cx);
         let editor_bg_color = cx.theme().colors().editor_background;
         let editor_expanded = self.editor_expanded;
+        let has_messages = self.list_state.item_count() > 0;
+        let v2_empty_state = cx.has_flag::<AgentV2FeatureFlag>() && !has_messages;
         let (expand_icon, expand_tooltip) = if editor_expanded {
             (IconName::Minimize, "Minimize Message Editor")
         } else {
@@ -2707,10 +2709,12 @@ impl ThreadView {
             .on_action(cx.listener(Self::expand_message_editor))
             .p_2()
             .gap_2()
-            .border_t_1()
-            .border_color(cx.theme().colors().border)
+            .when(!v2_empty_state, |this| {
+                this.border_t_1().border_color(cx.theme().colors().border)
+            })
             .bg(editor_bg_color)
-            .when(editor_expanded, |this| {
+            .when(v2_empty_state, |this| this.flex_1().size_full())
+            .when(editor_expanded && !v2_empty_state, |this| {
                 this.h(vh(0.8, window)).size_full().justify_between()
             })
             .child(
@@ -2720,36 +2724,38 @@ impl ThreadView {
                     .pt_1()
                     .pr_2p5()
                     .child(self.message_editor.clone())
-                    .child(
-                        h_flex()
-                            .absolute()
-                            .top_0()
-                            .right_0()
-                            .opacity(0.5)
-                            .hover(|this| this.opacity(1.0))
-                            .child(
-                                IconButton::new("toggle-height", expand_icon)
-                                    .icon_size(IconSize::Small)
-                                    .icon_color(Color::Muted)
-                                    .tooltip({
-                                        move |_window, cx| {
-                                            Tooltip::for_action_in(
-                                                expand_tooltip,
+                    .when(!v2_empty_state, |this| {
+                        this.child(
+                            h_flex()
+                                .absolute()
+                                .top_0()
+                                .right_0()
+                                .opacity(0.5)
+                                .hover(|this| this.opacity(1.0))
+                                .child(
+                                    IconButton::new("toggle-height", expand_icon)
+                                        .icon_size(IconSize::Small)
+                                        .icon_color(Color::Muted)
+                                        .tooltip({
+                                            move |_window, cx| {
+                                                Tooltip::for_action_in(
+                                                    expand_tooltip,
+                                                    &ExpandMessageEditor,
+                                                    &focus_handle,
+                                                    cx,
+                                                )
+                                            }
+                                        })
+                                        .on_click(cx.listener(|this, _, window, cx| {
+                                            this.expand_message_editor(
                                                 &ExpandMessageEditor,
-                                                &focus_handle,
+                                                window,
                                                 cx,
-                                            )
-                                        }
-                                    })
-                                    .on_click(cx.listener(|this, _, window, cx| {
-                                        this.expand_message_editor(
-                                            &ExpandMessageEditor,
-                                            window,
-                                            cx,
-                                        );
-                                    })),
-                            ),
-                    ),
+                                            );
+                                        })),
+                                ),
+                        )
+                    }),
             )
             .child(
                 h_flex()
@@ -7639,20 +7645,25 @@ impl ThreadView {
 impl Render for ThreadView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let has_messages = self.list_state.item_count() > 0;
+        let v2_empty_state = cx.has_flag::<AgentV2FeatureFlag>() && !has_messages;
 
-        let conversation = v_flex().flex_1().map(|this| {
-            let this = this.when(self.resumed_without_history, |this| {
-                this.child(Self::render_resume_notice(cx))
+        let conversation = v_flex()
+            .when(!v2_empty_state, |this| this.flex_1())
+            .map(|this| {
+                let this = this.when(self.resumed_without_history, |this| {
+                    this.child(Self::render_resume_notice(cx))
+                });
+                if has_messages {
+                    let list_state = self.list_state.clone();
+                    this.child(self.render_entries(cx))
+                        .vertical_scrollbar_for(&list_state, window, cx)
+                        .into_any()
+                } else if v2_empty_state {
+                    this.into_any()
+                } else {
+                    this.child(self.render_recent_history(cx)).into_any()
+                }
             });
-            if has_messages {
-                let list_state = self.list_state.clone();
-                this.child(self.render_entries(cx))
-                    .vertical_scrollbar_for(&list_state, window, cx)
-                    .into_any()
-            } else {
-                this.child(self.render_recent_history(cx)).into_any()
-            }
-        });
 
         v_flex()
             .key_context("AcpThread")
