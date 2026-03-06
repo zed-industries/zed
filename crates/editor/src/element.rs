@@ -3866,7 +3866,9 @@ impl EditorElement {
             Block::Custom(custom) => {
                 let block_start = custom.start().to_point(&snapshot.buffer_snapshot());
                 let block_end = custom.end().to_point(&snapshot.buffer_snapshot());
-                if block.place_near() && snapshot.is_line_folded(MultiBufferRow(block_start.row)) {
+                if (block.place_near() || block.is_inline())
+                    && snapshot.is_line_folded(MultiBufferRow(block_start.row))
+                {
                     return None;
                 }
                 let align_to = block_start.to_display_point(snapshot);
@@ -4036,7 +4038,7 @@ impl EditorElement {
         if let BlockId::Custom(custom_block_id) = block_id
             && block.has_height()
         {
-            if block.place_near()
+            if (block.place_near() || block.is_inline())
                 && let Some((x_target, line_width)) = x_position
             {
                 let margin = em_width * 2;
@@ -4235,7 +4237,7 @@ impl EditorElement {
 
         for (row, block) in non_fixed_blocks {
             let style = block.style();
-            let width = match (style, block.place_near()) {
+            let width = match (style, block.place_near() || block.is_inline()) {
                 (_, true) => AvailableSpace::MinContent,
                 (BlockStyle::Sticky, _) => hitbox.size.width.into(),
                 (BlockStyle::Flex, _) => hitbox
@@ -4285,7 +4287,7 @@ impl EditorElement {
                     element,
                     available_space: size(width, element_size.height.into()),
                     style,
-                    overlaps_gutter: !block.place_near(),
+                    overlaps_gutter: !(block.place_near() || block.is_inline()),
                     is_buffer_header: block.is_buffer_header(),
                 });
             }

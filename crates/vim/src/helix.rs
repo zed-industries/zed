@@ -1510,7 +1510,7 @@ impl Vim {
     ) -> BlockProperties<Anchor> {
         let text: SharedString = label.iter().collect::<String>().into();
         BlockProperties {
-            placement: BlockPlacement::Near(anchor),
+            placement: BlockPlacement::Inline(anchor),
             height: Some(0),
             style: BlockStyle::Fixed,
             render: Arc::new(move |_cx: &mut BlockContext| {
