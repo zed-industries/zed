@@ -35,6 +35,7 @@ mod ui;
 use std::rc::Rc;
 use std::sync::Arc;
 
+use agent_client_protocol as acp;
 use agent_settings::{AgentProfileId, AgentSettings};
 use assistant_slash_command::SlashCommandRegistry;
 use client::Client;
@@ -241,7 +242,10 @@ pub enum StartThreadIn {
 
 /// Content to initialize new external agent with.
 pub enum AgentInitialContent {
-    ThreadSummary(acp_thread::AgentSessionInfo),
+    ThreadSummary {
+        session_id: acp::SessionId,
+        title: Option<SharedString>,
+    },
     ContentBlock {
         blocks: Vec<agent_client_protocol::ContentBlock>,
         auto_submit: bool,
