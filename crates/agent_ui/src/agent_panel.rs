@@ -3685,7 +3685,7 @@ impl AgentPanel {
                     h_flex()
                         .gap_1()
                         .child(agent_icon_element)
-                        .child(Label::new(selected_agent_label).color(label_color))
+                        .child(Label::new(selected_agent_label).color(label_color).ml_0p5())
                         .child(
                             Icon::new(chevron_icon)
                                 .color(icon_color)
