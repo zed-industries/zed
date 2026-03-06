@@ -65,6 +65,17 @@ impl WgpuAtlas {
             view: texture.view.clone(),
         }
     }
+
+    /// Handles device lost by clearing all textures and cached tiles.
+    /// The atlas will lazily recreate textures as needed on subsequent frames.
+    pub fn handle_device_lost(&self, device: Arc<wgpu::Device>, queue: Arc<wgpu::Queue>) {
+        let mut lock = self.0.lock();
+        lock.device = device;
+        lock.queue = queue;
+        lock.storage = WgpuAtlasStorage::default();
+        lock.tiles_by_key.clear();
+        lock.pending_uploads.clear();
+    }
 }
 
 impl PlatformAtlas for WgpuAtlas {

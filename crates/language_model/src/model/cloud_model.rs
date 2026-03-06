@@ -4,6 +4,7 @@ use std::sync::Arc;
 use anyhow::{Context as _, Result};
 use client::Client;
 use cloud_api_client::ClientApiError;
+use cloud_api_types::OrganizationId;
 use cloud_api_types::websocket_protocol::MessageToClient;
 use cloud_llm_client::{EXPIRED_LLM_TOKEN_HEADER_NAME, OUTDATED_LLM_TOKEN_HEADER_NAME};
 use gpui::{App, AppContext as _, Context, Entity, EventEmitter, Global, ReadGlobal as _};
@@ -26,29 +27,46 @@ impl fmt::Display for PaymentRequiredError {
 pub struct LlmApiToken(Arc<RwLock<Option<String>>>);
 
 impl LlmApiToken {
-    pub async fn acquire(&self, client: &Arc<Client>) -> Result<String> {
+    pub async fn acquire(
+        &self,
+        client: &Arc<Client>,
+        organization_id: Option<OrganizationId>,
+    ) -> Result<String> {
         let lock = self.0.upgradable_read().await;
         if let Some(token) = lock.as_ref() {
             Ok(token.to_string())
         } else {
-            Self::fetch(RwLockUpgradableReadGuard::upgrade(lock).await, client).await
+            Self::fetch(
+                RwLockUpgradableReadGuard::upgrade(lock).await,
+                client,
+                organization_id,
+            )
+            .await
         }
     }
 
-    pub async fn refresh(&self, client: &Arc<Client>) -> Result<String> {
-        Self::fetch(self.0.write().await, client).await
+    pub async fn refresh(
+        &self,
+        client: &Arc<Client>,
+        organization_id: Option<OrganizationId>,
+    ) -> Result<String> {
+        Self::fetch(self.0.write().await, client, organization_id).await
     }
 
     async fn fetch(
         mut lock: RwLockWriteGuard<'_, Option<String>>,
         client: &Arc<Client>,
+        organization_id: Option<OrganizationId>,
     ) -> Result<String> {
         let system_id = client
             .telemetry()
             .system_id()
             .map(|system_id| system_id.to_string());
 
-        let result = client.cloud_client().create_llm_token(system_id).await;
+        let result = client
+            .cloud_client()
+            .create_llm_token(system_id, organization_id)
+            .await;
         match result {
             Ok(response) => {
                 *lock = Some(response.token.0.clone());

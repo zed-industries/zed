@@ -4501,9 +4501,9 @@ let c = 3;"#
             },
         );
 
-        let buffer = project
+        let (buffer, _buffer_handle) = project
             .update(cx, |project, cx| {
-                project.open_local_buffer(path!("/a/main.rs"), cx)
+                project.open_local_buffer_with_lsp(path!("/a/main.rs"), cx)
             })
             .await
             .unwrap();

@@ -254,6 +254,41 @@ impl MentionUri {
         }
     }
 
+    pub fn tooltip_text(&self) -> Option<SharedString> {
+        match self {
+            MentionUri::File { abs_path } | MentionUri::Directory { abs_path } => {
+                Some(abs_path.to_string_lossy().into_owned().into())
+            }
+            MentionUri::Symbol {
+                abs_path,
+                line_range,
+                ..
+            } => Some(
+                format!(
+                    "{}:{}-{}",
+                    abs_path.display(),
+                    line_range.start(),
+                    line_range.end()
+                )
+                .into(),
+            ),
+            MentionUri::Selection {
+                abs_path: Some(path),
+                line_range,
+                ..
+            } => Some(
+                format!(
+                    "{}:{}-{}",
+                    path.display(),
+                    line_range.start(),
+                    line_range.end()
+                )
+                .into(),
+            ),
+            _ => None,
+        }
+    }
+
     pub fn icon_path(&self, cx: &mut App) -> SharedString {
         match self {
             MentionUri::File { abs_path } => {

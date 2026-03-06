@@ -507,6 +507,7 @@ impl LspAdapter for PyrightLspAdapter {
     async fn initialization_options(
         self: Arc<Self>,
         _: &Arc<dyn LspAdapterDelegate>,
+        _: &mut AsyncApp,
     ) -> Result<Option<Value>> {
         // Provide minimal initialization options
         // Virtual environment configuration will be handled through workspace configuration
@@ -1377,12 +1378,9 @@ impl ToolchainLister for PythonToolchainProvider {
 
             match toolchain.environment.kind {
                 Some(PythonEnvironmentKind::Conda) => {
-                    let Some(manager_info) = &toolchain.environment.manager else {
+                    if toolchain.environment.manager.is_none() {
                         return vec![];
                     };
-                    if smol::fs::metadata(&manager_info.executable).await.is_err() {
-                        return vec![];
-                    }
 
                     let manager = match conda_manager {
                         settings::CondaManager::Conda => "conda",
@@ -1972,6 +1970,7 @@ impl LspAdapter for BasedPyrightLspAdapter {
     async fn initialization_options(
         self: Arc<Self>,
         _: &Arc<dyn LspAdapterDelegate>,
+        _: &mut AsyncApp,
     ) -> Result<Option<Value>> {
         // Provide minimal initialization options
         // Virtual environment configuration will be handled through workspace configuration
