@@ -2613,17 +2613,6 @@ impl<'a, T> Drop for GpuiBorrow<'a, T> {
     }
 }
 
-impl Drop for App {
-    fn drop(&mut self) {
-        if matches!(self.mode, GpuiMode::Test { .. }) {
-            // we do this in tests to reduce the chance of work leaking.
-            // in production, the app is dropped when the process exits.
-            self.foreground_executor.close();
-            self.background_executor.close();
-        }
-    }
-}
-
 #[cfg(test)]
 mod test {
     use std::{cell::RefCell, rc::Rc};
