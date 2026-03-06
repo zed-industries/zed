@@ -99,7 +99,7 @@ pub struct State {
     recommended_models: Vec<Arc<cloud_llm_client::LanguageModel>>,
     _fetch_models_task: Task<()>,
     _settings_subscription: Subscription,
-    _llm_token_subscription: Subscription,
+    _refresh_models_subscription: Subscription,
 }
 
 impl State {
@@ -110,23 +110,24 @@ impl State {
         cx: &mut Context<Self>,
     ) -> Self {
         let refresh_llm_token_listener = RefreshLlmTokenListener::global(cx);
+        let llm_api_token = RefreshLlmTokenListener::llm_api_token(cx);
         let mut current_user = user_store.read(cx).watch_current_user();
         Self {
             client: client.clone(),
-            llm_api_token: LlmApiToken::default(),
+            llm_api_token: llm_api_token.clone(),
             user_store,
             status,
             models: Vec::new(),
             default_model: None,
             default_fast_model: None,
             recommended_models: Vec::new(),
-            _fetch_models_task: cx.spawn(async move |this, cx| {
-                maybe!(async move {
-                    let (client, llm_api_token, organization_id) =
-                        this.read_with(cx, |this, cx| {
+            _fetch_models_task: cx.spawn({
+                let llm_api_token = llm_api_token.clone();
+                async move |this, cx| {
+                    maybe!(async move {
+                        let (client, organization_id) = this.read_with(cx, |this, cx| {
                             (
-                                client.clone(),
-                                this.llm_api_token.clone(),
+                                this.client.clone(),
                                 this.user_store
                                     .read(cx)
                                     .current_organization()
@@ -134,24 +135,24 @@ impl State {
                             )
                         })?;
 
-                    while current_user.borrow().is_none() {
-                        current_user.next().await;
-                    }
+                        while current_user.borrow().is_none() {
+                            current_user.next().await;
+                        }
 
-                    let response =
-                        Self::fetch_models(client.clone(), llm_api_token.clone(), organization_id)
-                            .await?;
-                    this.update(cx, |this, cx| this.update_models(response, cx))?;
-                    anyhow::Ok(())
-                })
-                .await
-                .context("failed to fetch Zed models")
-                .log_err();
+                        let response =
+                            Self::fetch_models(client, llm_api_token, organization_id).await?;
+                        this.update(cx, |this, cx| this.update_models(response, cx))?;
+                        anyhow::Ok(())
+                    })
+                    .await
+                    .context("failed to fetch Zed models")
+                    .log_err();
+                }
             }),
             _settings_subscription: cx.observe_global::<SettingsStore>(|_, cx| {
                 cx.notify();
             }),
-            _llm_token_subscription: cx.subscribe(
+            _refresh_models_subscription: cx.subscribe(
                 &refresh_llm_token_listener,
                 move |this, _listener, _event, cx| {
                     let client = this.client.clone();
@@ -162,9 +163,6 @@ impl State {
                         .current_organization()
                         .map(|o| o.id.clone());
                     cx.spawn(async move |this, cx| {
-                        llm_api_token
-                            .refresh(&client, organization_id.clone())
-                            .await?;
                         let response =
                             Self::fetch_models(client, llm_api_token, organization_id).await?;
                         this.update(cx, |this, cx| {
