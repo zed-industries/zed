@@ -15,8 +15,8 @@ pub struct Anchor {
     // we store the replica id and sequence number of the timestamp inline
     // to avoid the alignment of our fields from increasing the size of this struct
     // This saves 8 bytes, by allowing replica id, value and bias to occupy the padding
-    timestamp_replica_id: clock::ReplicaId,
-    timestamp_value: clock::Seq,
+    pub(crate) timestamp_replica_id: clock::ReplicaId,
+    pub(crate) timestamp_value: clock::Seq,
 
     /// The byte offset into the text inserted in the operation
     /// at `timestamp`.
