@@ -105,10 +105,8 @@ fn rollout_workflows_to_extension(fetch_repos_job: &NamedJob) -> NamedJob {
     }
 
     fn get_removed_files(prev_commit: &StepOutput) -> (Step<Run>, StepOutput) {
-        let step = named::bash(formatdoc! {r#"
-            PREV_COMMIT="{prev_commit}"
-
-            if [ "${{{{ matrix.repo }}}}" = "workflows" ]; then
+        let step = named::bash(indoc::indoc! {r#"
+            if [ "$MATRIX_REPO" = "workflows" ]; then
                 WORKFLOW_DIR="extensions/workflows"
             else
                 WORKFLOW_DIR="extensions/workflows/shared"
@@ -119,8 +117,8 @@ fn rollout_workflows_to_extension(fetch_repos_job: &NamedJob) -> NamedJob {
             # Get deleted files (status D) and renamed files (status R - old name needs removal)
             # Using -M to detect renames, then extracting files that are gone from their original location
             REMOVED_FILES=$(git diff --name-status -M "$PREV_COMMIT" HEAD -- "$WORKFLOW_DIR" | \
-                awk '/^D/ {{ print $2 }} /^R/ {{ print $2 }}' | \
-                xargs -I{{}} basename {{}} 2>/dev/null | \
+                awk '/^D/ { print $2 } /^R/ { print $2 }' | \
+                xargs -I{} basename {} 2>/dev/null | \
                 tr '\n' ' ' || echo "")
 
             REMOVED_FILES=$(echo "$REMOVED_FILES" | xargs)
@@ -129,7 +127,9 @@ fn rollout_workflows_to_extension(fetch_repos_job: &NamedJob) -> NamedJob {
             echo "removed_files=$REMOVED_FILES" >> "$GITHUB_OUTPUT"
         "#})
         .id("calc-changes")
-        .working_directory("zed");
+        .working_directory("zed")
+        .add_env(("PREV_COMMIT", prev_commit.to_string()))
+        .add_env(("MATRIX_REPO", "${{ matrix.repo }}"));
 
         let removed_files = StepOutput::new(&step, "removed_files");
 
@@ -137,9 +137,7 @@ fn rollout_workflows_to_extension(fetch_repos_job: &NamedJob) -> NamedJob {
     }
 
     fn sync_workflow_files(removed_files: &StepOutput) -> Step<Run> {
-        named::bash(formatdoc! {r#"
-            REMOVED_FILES="{removed_files}"
-
+        named::bash(indoc::indoc! {r#"
             mkdir -p extension/.github/workflows
             cd extension/.github/workflows
 
@@ -153,17 +151,19 @@ fn rollout_workflows_to_extension(fetch_repos_job: &NamedJob) -> NamedJob {
 
             cd - > /dev/null
 
-            if [ "${{{{ matrix.repo }}}}" = "workflows" ]; then
+            if [ "$MATRIX_REPO" = "workflows" ]; then
                 cp zed/extensions/workflows/*.yml extension/.github/workflows/
             else
                 cp zed/extensions/workflows/shared/*.yml extension/.github/workflows/
             fi
         "#})
+        .add_env(("REMOVED_FILES", removed_files.to_string()))
+        .add_env(("MATRIX_REPO", "${{ matrix.repo }}"))
     }
 
     fn get_short_sha() -> (Step<Run>, StepOutput) {
         let step = named::bash(indoc::indoc! {r#"
-            echo "sha_short=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+            echo "sha_short=$(git rev-parse --short=7 HEAD)" >> "$GITHUB_OUTPUT"
         "#})
         .id("short-sha")
         .working_directory("zed");
@@ -205,13 +205,16 @@ fn rollout_workflows_to_extension(fetch_repos_job: &NamedJob) -> NamedJob {
 
     fn enable_auto_merge(token: &StepOutput) -> Step<gh_workflow::Run> {
         named::bash(indoc::indoc! {r#"
-            PR_NUMBER="${{ steps.create-pr.outputs.pull-request-number }}"
             if [ -n "$PR_NUMBER" ]; then
                 cd extension
                 gh pr merge "$PR_NUMBER" --auto --squash
             fi
         "#})
         .add_env(("GH_TOKEN", token.to_string()))
+        .add_env((
+            "PR_NUMBER",
+            "${{ steps.create-pr.outputs.pull-request-number }}",
+        ))
     }
 
     let (authenticate, token) = generate_token(

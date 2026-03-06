@@ -4,7 +4,7 @@ use crate::{
     DebuggerTextObject, LanguageScope, Outline, OutlineConfig, PLAIN_TEXT, RunnableCapture,
     RunnableTag, TextObject, TreeSitterOptions,
     diagnostic_set::{DiagnosticEntry, DiagnosticEntryRef, DiagnosticGroup},
-    language_settings::{LanguageSettings, language_settings},
+    language_settings::{AutoIndentMode, LanguageSettings, language_settings},
     outline::OutlineItem,
     row_chunk::RowChunks,
     syntax_map::{
@@ -187,7 +187,7 @@ struct BufferBranchState {
 /// state of a buffer.
 pub struct BufferSnapshot {
     pub text: text::BufferSnapshot,
-    pub syntax: SyntaxSnapshot,
+    pub(crate) syntax: SyntaxSnapshot,
     tree_sitter_data: Arc<TreeSitterData>,
     diagnostics: TreeMap<LanguageServerId, DiagnosticSet>,
     remote_selections: TreeMap<ReplicaId, SelectionSet>,
@@ -1776,7 +1776,9 @@ impl Buffer {
         self.syntax_map.lock().contains_unknown_injections()
     }
 
-    #[cfg(any(test, feature = "test-support"))]
+    /// Sets the sync parse timeout for this buffer.
+    ///
+    /// Setting this to `None` disables sync parsing entirely.
     pub fn set_sync_parse_timeout(&mut self, timeout: Option<Duration>) {
         self.sync_parse_timeout = timeout;
     }
@@ -2736,17 +2738,18 @@ impl Buffer {
                 .filter(|((_, (range, _)), _)| {
                     let language = before_edit.language_at(range.start);
                     let language_id = language.map(|l| l.id());
-                    if let Some((cached_language_id, auto_indent)) = previous_setting
+                    if let Some((cached_language_id, apply_syntax_indent)) = previous_setting
                         && cached_language_id == language_id
                     {
-                        auto_indent
+                        apply_syntax_indent
                     } else {
                         // The auto-indent setting is not present in editorconfigs, hence
                         // we can avoid passing the file here.
-                        let auto_indent =
+                        let auto_indent_mode =
                             language_settings(language.map(|l| l.name()), None, cx).auto_indent;
-                        previous_setting = Some((language_id, auto_indent));
-                        auto_indent
+                        let apply_syntax_indent = auto_indent_mode == AutoIndentMode::SyntaxAware;
+                        previous_setting = Some((language_id, apply_syntax_indent));
+                        apply_syntax_indent
                     }
                 })
                 .map(|((ix, (range, _)), new_text)| {
@@ -3704,6 +3707,14 @@ impl BufferSnapshot {
             }
         }
         None
+    }
+
+    pub fn captures(
+        &self,
+        range: Range<usize>,
+        query: fn(&Grammar) -> Option<&tree_sitter::Query>,
+    ) -> SyntaxMapCaptures<'_> {
+        self.syntax.captures(range, &self.text, query)
     }
 
     #[ztracing::instrument(skip_all)]

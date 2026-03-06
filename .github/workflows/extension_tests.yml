@@ -32,7 +32,7 @@ jobs:
           git fetch origin "$GITHUB_BASE_REF" --depth=350
           COMPARE_REV="$(git merge-base "origin/${GITHUB_BASE_REF}" HEAD)"
         fi
-        CHANGED_FILES="$(git diff --name-only "$COMPARE_REV" ${{ github.sha }})"
+        CHANGED_FILES="$(git diff --name-only "$COMPARE_REV" "$GITHUB_SHA")"
 
         check_pattern() {
           local output_name="$1"
@@ -87,7 +87,7 @@ jobs:
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       with:
         clean: false
-        fetch-depth: ${{ github.ref == 'refs/heads/main' && 2 || 350 }}
+        fetch-depth: 0
     - id: cache-zed-extension-cli
       name: extension_tests::cache_zed_extension_cli
       uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
@@ -99,19 +99,39 @@ jobs:
       run: |
         wget --quiet "https://zed-extension-cli.nyc3.digitaloceanspaces.com/$ZED_EXTENSION_CLI_SHA/x86_64-unknown-linux-gnu/zed-extension"
         chmod +x zed-extension
+    - name: steps::cache_rust_dependencies_namespace
+      uses: namespacelabs/nscloud-cache-action@v1
+      with:
+        cache: rust
+        path: ~/.rustup
     - name: extension_tests::check
       run: |
         mkdir -p /tmp/ext-scratch
         mkdir -p /tmp/ext-output
         ./zed-extension --source-dir . --scratch-dir /tmp/ext-scratch --output-dir /tmp/ext-output
+    - name: run_tests::fetch_ts_query_ls
+      uses: dsaltares/fetch-gh-release-asset@aa37ae5c44d3c9820bc12fe675e8670ecd93bd1c
+      with:
+        repo: ribru17/ts_query_ls
+        version: tags/v3.15.1
+        file: ts_query_ls-x86_64-unknown-linux-gnu.tar.gz
+    - name: run_tests::run_ts_query_ls
+      run: |-
+        tar -xf ts_query_ls-x86_64-unknown-linux-gnu.tar.gz
+        ./ts_query_ls format --check . || {
+            echo "Found unformatted queries, please format them with ts_query_ls."
+            echo "For easy use, install the Tree-sitter query extension:"
+            echo "zed://extension/tree-sitter-query"
+            false
+        }
     - id: compare-versions-check
       name: extension_bump::compare_versions
       run: |
         CURRENT_VERSION="$(sed -n 's/^version = \"\(.*\)\"/\1/p' < extension.toml | tr -d '[:space:]')"
-        PR_PARENT_SHA="${{ github.event.pull_request.head.sha }}"
 
-        if [[ -n "$PR_PARENT_SHA" ]]; then
-            git checkout "$PR_PARENT_SHA"
+        if [[ "$GITHUB_EVENT_NAME" == "pull_request" ]]; then
+            PR_FORK_POINT="$(git merge-base origin/main HEAD)"
+            git checkout "$PR_FORK_POINT"
         elif BRANCH_PARENT_SHA="$(git merge-base origin/main origin/zed-zippy-autobump)"; then
             git checkout "$BRANCH_PARENT_SHA"
         else
@@ -127,12 +147,15 @@ jobs:
         echo "current_version=${CURRENT_VERSION}" >> "$GITHUB_OUTPUT"
     - name: extension_tests::verify_version_did_not_change
       run: |
-        if [[ ${{ steps.compare-versions-check.outputs.version_changed }} == "true" && "${{ github.event_name }}" == "pull_request" && "${{ github.event.pull_request.user.login }}" != "zed-zippy[bot]" ]] ; then
+        if [[ "$VERSION_CHANGED" == "true" && "$GITHUB_EVENT_NAME" == "pull_request" && "$PR_USER_LOGIN" != "zed-zippy[bot]" ]] ; then
             echo "Version change detected in your change!"
             echo "Version changes happen in separate PRs and will be performed by the zed-zippy bot"
             exit 42
         fi
-    timeout-minutes: 4
+      env:
+        VERSION_CHANGED: ${{ steps.compare-versions-check.outputs.version_changed }}
+        PR_USER_LOGIN: ${{ github.event.pull_request.user.login }}
+    timeout-minutes: 6
   tests_pass:
     needs:
     - orchestrate
@@ -151,11 +174,15 @@ jobs:
           if [[ "$2" != "skipped" && "$2" != "success" ]]; then EXIT_CODE=1; fi
         }
 
-        check_result "orchestrate" "${{ needs.orchestrate.result }}"
-        check_result "check_rust" "${{ needs.check_rust.result }}"
-        check_result "check_extension" "${{ needs.check_extension.result }}"
+        check_result "orchestrate" "$RESULT_ORCHESTRATE"
+        check_result "check_rust" "$RESULT_CHECK_RUST"
+        check_result "check_extension" "$RESULT_CHECK_EXTENSION"
 
         exit $EXIT_CODE
+      env:
+        RESULT_ORCHESTRATE: ${{ needs.orchestrate.result }}
+        RESULT_CHECK_RUST: ${{ needs.check_rust.result }}
+        RESULT_CHECK_EXTENSION: ${{ needs.check_extension.result }}
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref_name }}-${{ github.ref_name == 'main' && github.sha || 'anysha' }}
   cancel-in-progress: true

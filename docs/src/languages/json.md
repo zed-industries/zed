@@ -54,8 +54,6 @@ For example to for a `.luarc.json` for use with [lua-language-server](https://gi
 
 ### Schema Specification via Settings
 
-> **Preview:** This feature is available in Zed Preview. It will be included in the next Stable release.
-
 You can associate JSON Schemas with file paths using relative paths in your language server settings. Zed resolves paths relative to your project root:
 
 ```json [settings]

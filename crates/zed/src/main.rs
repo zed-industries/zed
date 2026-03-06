@@ -48,7 +48,7 @@ use std::{
     path::{Path, PathBuf},
     process,
     rc::Rc,
-    sync::{Arc, OnceLock},
+    sync::{Arc, LazyLock, OnceLock},
     time::Instant,
 };
 use theme::{ActiveTheme, GlobalTheme, ThemeRegistry};
@@ -276,7 +276,7 @@ fn main() {
 
     zlog::init();
 
-    if stdout_is_a_pty() {
+    if true {
         zlog::init_output_stdout();
     } else {
         let result = zlog::init_output_file(paths::log_file(), Some(paths::old_log_file()));
@@ -332,18 +332,27 @@ fn main() {
         .background_executor()
         .spawn(Session::new(session_id.clone()));
 
-    app.background_executor()
-        .spawn(crashes::init(InitCrashHandler {
+    crashes::init(
+        InitCrashHandler {
             session_id,
-            zed_version: app_version.to_string(),
+            // strip the build and channel information from the version string, we send them separately
+            zed_version: semver::Version::new(
+                app_version.major,
+                app_version.minor,
+                app_version.patch,
+            )
+            .to_string(),
             binary: "zed".to_string(),
             release_channel: release_channel::RELEASE_CHANNEL_NAME.clone(),
             commit_sha: app_commit_sha
                 .as_ref()
                 .map(|sha| sha.full())
                 .unwrap_or_else(|| "no sha".to_owned()),
-        }))
-        .detach();
+        },
+        |task| {
+            app.background_executor().spawn(task).detach();
+        },
+    );
 
     let (open_listener, mut open_rx) = OpenListener::new();
 
@@ -570,6 +579,19 @@ fn main() {
             session.id().to_owned(),
             cx,
         );
+        cx.subscribe(&user_store, {
+            let telemetry = telemetry.clone();
+            move |_, evt: &client::user::Event, _| match evt {
+                client::user::Event::PrivateUserInfoUpdated => {
+                    crashes::set_user_info(crashes::UserInfo {
+                        metrics_id: telemetry.metrics_id().map(|s| s.to_string()),
+                        is_staff: telemetry.is_staff(),
+                    });
+                }
+                _ => {}
+            }
+        })
+        .detach();
 
         // We should rename these in the future to `first app open`, `first app open for release channel`, and `app open`
         if let (Some(system_id), Some(installation_id)) = (&system_id, &installation_id) {
@@ -635,15 +657,14 @@ fn main() {
         );
 
         copilot_ui::init(&app_state, cx);
-        supermaven::init(app_state.client.clone(), cx);
-        language_model::init(app_state.client.clone(), cx);
+        language_model::init(app_state.user_store.clone(), app_state.client.clone(), cx);
         language_models::init(app_state.user_store.clone(), app_state.client.clone(), cx);
         acp_tools::init(cx);
         zed::telemetry_log::init(cx);
         zed::remote_debug::init(cx);
         edit_prediction_ui::init(cx);
         web_search::init(cx);
-        web_search_providers::init(app_state.client.clone(), cx);
+        web_search_providers::init(app_state.client.clone(), app_state.user_store.clone(), cx);
         snippet_provider::init(cx);
         edit_prediction_registry::init(app_state.client.clone(), app_state.user_store.clone(), cx);
         let prompt_builder = PromptBuilder::load(app_state.fs.clone(), stdout_is_a_pty(), cx);
@@ -713,6 +734,7 @@ fn main() {
         git_graph::init(cx);
         feedback::init(cx);
         markdown_preview::init(cx);
+        csv_preview::init(cx);
         svg_preview::init(cx);
         onboarding::init(cx);
         settings_ui::init(cx);
@@ -892,7 +914,9 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
                 })
                 .detach_and_log_err(cx);
             }
-            OpenRequestKind::AgentPanel { initial_prompt } => {
+            OpenRequestKind::AgentPanel {
+                external_source_prompt,
+            } => {
                 cx.spawn(async move |cx| {
                     let multi_workspace =
                         workspace::get_any_active_multi_workspace(app_state, cx.clone()).await?;
@@ -901,7 +925,11 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
                         multi_workspace.workspace().update(cx, |workspace, cx| {
                             if let Some(panel) = workspace.focus_panel::<AgentPanel>(window, cx) {
                                 panel.update(cx, |panel, cx| {
-                                    panel.new_external_thread_with_text(initial_prompt, window, cx);
+                                    panel.new_agent_thread_with_external_source_prompt(
+                                        external_source_prompt,
+                                        window,
+                                        cx,
+                                    );
                                 });
                             }
                         });
@@ -948,17 +976,14 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
 
                     thread_store
                         .update(&mut cx.clone(), |store, cx| {
-                            store.save_thread(save_session_id.clone(), db_thread, cx)
+                            store.save_thread(
+                                save_session_id.clone(),
+                                db_thread,
+                                Default::default(),
+                                cx,
+                            )
                         })
                         .await?;
-
-                    let thread_metadata = acp_thread::AgentSessionInfo {
-                        session_id,
-                        cwd: None,
-                        title: Some(format!("🔗 {}", response.title).into()),
-                        updated_at: Some(chrono::Utc::now()),
-                        meta: None,
-                    };
 
                     let sharer_username = response.sharer_username.clone();
 
@@ -966,7 +991,13 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
                         workspace.update(cx, |workspace, cx| {
                             if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
                                 panel.update(cx, |panel, cx| {
-                                    panel.open_thread(thread_metadata, window, cx);
+                                    panel.open_thread(
+                                        session_id,
+                                        None,
+                                        Some(format!("🔗 {}", response.title).into()),
+                                        window,
+                                        cx,
+                                    );
                                 });
                                 panel.focus_handle(cx).focus(window, cx);
                             }
@@ -1390,7 +1421,7 @@ pub(crate) async fn restore_or_create_workspace(
                         .update(cx, |multi_workspace, _, cx| {
                             multi_workspace.workspace().update(cx, |workspace, cx| {
                                 workspace.show_toast(
-                                    Toast::new(NotificationId::unique::<()>(), message),
+                                    Toast::new(NotificationId::unique::<()>(), message.clone()),
                                     cx,
                                 )
                             });
@@ -1402,11 +1433,23 @@ pub(crate) async fn restore_or_create_workspace(
             });
 
             // If we couldn't show a toast (no windows opened successfully),
-            // we've already logged the errors above, so the user can check logs
+            // open a fallback empty workspace and show the error there
             if !toast_shown {
-                log::error!(
-                    "Failed to show notification for window restoration errors, because no workspace windows were available."
-                );
+                log::error!("All workspace restorations failed. Opening fallback empty workspace.");
+                cx.update(|cx| {
+                    workspace::open_new(
+                        Default::default(),
+                        app_state.clone(),
+                        cx,
+                        |workspace, _window, cx| {
+                            workspace.show_toast(
+                                Toast::new(NotificationId::unique::<()>(), message),
+                                cx,
+                            );
+                        },
+                    )
+                })
+                .await?;
             }
         }
     } else if matches!(KEY_VALUE_STORE.read_kvp(FIRST_OPEN), Ok(None)) {
@@ -1534,8 +1577,14 @@ fn init_paths() -> HashMap<io::ErrorKind, Vec<&'static Path>> {
     })
 }
 
+pub(crate) static FORCE_CLI_MODE: LazyLock<bool> = LazyLock::new(|| {
+    let env_var = std::env::var(FORCE_CLI_MODE_ENV_VAR_NAME).ok().is_some();
+    unsafe { std::env::remove_var(FORCE_CLI_MODE_ENV_VAR_NAME) };
+    env_var
+});
+
 fn stdout_is_a_pty() -> bool {
-    std::env::var(FORCE_CLI_MODE_ENV_VAR_NAME).ok().is_none() && io::stdout().is_terminal()
+    !*FORCE_CLI_MODE && io::stdout().is_terminal()
 }
 
 #[derive(Parser, Debug)]

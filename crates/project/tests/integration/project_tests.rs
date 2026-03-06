@@ -31,7 +31,7 @@ use futures::{StreamExt, future};
 use git::{
     GitHostingProviderRegistry,
     repository::{RepoPath, repo_path},
-    status::{FileStatus, StatusCode, TrackedStatus},
+    status::{DiffStat, FileStatus, StatusCode, TrackedStatus},
 };
 use git2::RepositoryInitOptions;
 use gpui::{
@@ -5359,6 +5359,52 @@ async fn test_rescan_and_remote_updates(cx: &mut gpui::TestAppContext) {
     });
 }
 
+#[cfg(target_os = "linux")]
+#[gpui::test(retries = 5)]
+async fn test_recreated_directory_receives_child_events(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+    cx.executor().allow_parking();
+
+    let dir = TempTree::new(json!({}));
+    let project = Project::test(Arc::new(RealFs::new(None, cx.executor())), [dir.path()], cx).await;
+    let tree = project.update(cx, |project, cx| project.worktrees(cx).next().unwrap());
+
+    tree.flush_fs_events(cx).await;
+
+    let repro_dir = dir.path().join("repro");
+    std::fs::create_dir(&repro_dir).unwrap();
+    tree.flush_fs_events(cx).await;
+
+    cx.update(|cx| {
+        assert!(tree.read(cx).entry_for_path(rel_path("repro")).is_some());
+    });
+
+    std::fs::remove_dir_all(&repro_dir).unwrap();
+    tree.flush_fs_events(cx).await;
+
+    cx.update(|cx| {
+        assert!(tree.read(cx).entry_for_path(rel_path("repro")).is_none());
+    });
+
+    std::fs::create_dir(&repro_dir).unwrap();
+    tree.flush_fs_events(cx).await;
+
+    cx.update(|cx| {
+        assert!(tree.read(cx).entry_for_path(rel_path("repro")).is_some());
+    });
+
+    std::fs::write(repro_dir.join("repro-marker"), "").unwrap();
+    tree.flush_fs_events(cx).await;
+
+    cx.update(|cx| {
+        assert!(
+            tree.read(cx)
+                .entry_for_path(rel_path("repro/repro-marker"))
+                .is_some()
+        );
+    });
+}
+
 #[gpui::test(iterations = 10)]
 async fn test_buffer_identity_across_renames(cx: &mut gpui::TestAppContext) {
     init_test(cx);
@@ -9207,14 +9253,23 @@ async fn test_git_repository_status(cx: &mut gpui::TestAppContext) {
                 StatusEntry {
                     repo_path: repo_path("a.txt"),
                     status: StatusCode::Modified.worktree(),
+                    diff_stat: Some(DiffStat {
+                        added: 1,
+                        deleted: 1,
+                    }),
                 },
                 StatusEntry {
                     repo_path: repo_path("b.txt"),
                     status: FileStatus::Untracked,
+                    diff_stat: None,
                 },
                 StatusEntry {
                     repo_path: repo_path("d.txt"),
                     status: StatusCode::Deleted.worktree(),
+                    diff_stat: Some(DiffStat {
+                        added: 0,
+                        deleted: 1,
+                    }),
                 },
             ]
         );
@@ -9236,18 +9291,31 @@ async fn test_git_repository_status(cx: &mut gpui::TestAppContext) {
                 StatusEntry {
                     repo_path: repo_path("a.txt"),
                     status: StatusCode::Modified.worktree(),
+                    diff_stat: Some(DiffStat {
+                        added: 1,
+                        deleted: 1,
+                    }),
                 },
                 StatusEntry {
                     repo_path: repo_path("b.txt"),
                     status: FileStatus::Untracked,
+                    diff_stat: None,
                 },
                 StatusEntry {
                     repo_path: repo_path("c.txt"),
                     status: StatusCode::Modified.worktree(),
+                    diff_stat: Some(DiffStat {
+                        added: 1,
+                        deleted: 1,
+                    }),
                 },
                 StatusEntry {
                     repo_path: repo_path("d.txt"),
                     status: StatusCode::Deleted.worktree(),
+                    diff_stat: Some(DiffStat {
+                        added: 0,
+                        deleted: 1,
+                    }),
                 },
             ]
         );
@@ -9281,6 +9349,10 @@ async fn test_git_repository_status(cx: &mut gpui::TestAppContext) {
             [StatusEntry {
                 repo_path: repo_path("a.txt"),
                 status: StatusCode::Deleted.worktree(),
+                diff_stat: Some(DiffStat {
+                    added: 0,
+                    deleted: 1,
+                }),
             }]
         );
     });
@@ -9345,6 +9417,7 @@ async fn test_git_status_postprocessing(cx: &mut gpui::TestAppContext) {
                     worktree_status: StatusCode::Added
                 }
                 .into(),
+                diff_stat: None,
             }]
         )
     });
@@ -9547,6 +9620,10 @@ async fn test_repository_pending_ops_staging(
                     worktree_status: StatusCode::Unmodified
                 }
                 .into(),
+                diff_stat: Some(DiffStat {
+                    added: 1,
+                    deleted: 0,
+                }),
             }]
         );
     });
@@ -9653,6 +9730,10 @@ async fn test_repository_pending_ops_long_running_staging(
                     worktree_status: StatusCode::Unmodified
                 }
                 .into(),
+                diff_stat: Some(DiffStat {
+                    added: 1,
+                    deleted: 0,
+                }),
             }]
         );
     });
@@ -9777,10 +9858,12 @@ async fn test_repository_pending_ops_stage_all(
                 StatusEntry {
                     repo_path: repo_path("a.txt"),
                     status: FileStatus::Untracked,
+                    diff_stat: None,
                 },
                 StatusEntry {
                     repo_path: repo_path("b.txt"),
                     status: FileStatus::Untracked,
+                    diff_stat: None,
                 },
             ]
         );
@@ -10409,10 +10492,7 @@ async fn test_ignored_dirs_events(cx: &mut gpui::TestAppContext) {
 
     assert_eq!(
         repository_updates.lock().drain(..).collect::<Vec<_>>(),
-        vec![
-            RepositoryEvent::StatusesChanged,
-            RepositoryEvent::MergeHeadsChanged,
-        ],
+        vec![RepositoryEvent::StatusesChanged,],
         "Initial worktree scan should produce a repo update event"
     );
     assert_eq!(
@@ -10579,7 +10659,6 @@ async fn test_odd_events_for_ignored_dirs(
     assert_eq!(
         repository_updates.lock().drain(..).collect::<Vec<_>>(),
         vec![
-            RepositoryEvent::MergeHeadsChanged,
             RepositoryEvent::BranchChanged,
             RepositoryEvent::StatusesChanged,
             RepositoryEvent::StatusesChanged,

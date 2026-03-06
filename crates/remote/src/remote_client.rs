@@ -1056,6 +1056,11 @@ impl RemoteClient {
     }
 
     #[cfg(any(test, feature = "test-support"))]
+    pub fn force_server_not_running(&mut self, cx: &mut Context<Self>) {
+        self.set_state(State::ServerNotRunning, cx);
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
     pub fn simulate_disconnect(&self, client_cx: &mut App) -> Task<()> {
         let opts = self.connection_options();
         client_cx.spawn(async move |cx| {
@@ -1098,6 +1103,24 @@ impl RemoteClient {
         use crate::transport::mock::MockConnection;
         let (opts, server_client, connect_guard) = MockConnection::new(client_cx, server_cx);
         (opts.into(), server_client, connect_guard)
+    }
+
+    /// Registers a new mock server for existing connection options.
+    ///
+    /// Use this to simulate reconnection: after forcing a disconnect, register
+    /// a new server so the next `connect()` call succeeds.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn fake_server_with_opts(
+        opts: &RemoteConnectionOptions,
+        client_cx: &mut gpui::TestAppContext,
+        server_cx: &mut gpui::TestAppContext,
+    ) -> (AnyProtoClient, ConnectGuard) {
+        use crate::transport::mock::MockConnection;
+        let mock_opts = match opts {
+            RemoteConnectionOptions::Mock(mock_opts) => mock_opts.clone(),
+            _ => panic!("fake_server_with_opts requires Mock connection options"),
+        };
+        MockConnection::new_with_opts(mock_opts, client_cx, server_cx)
     }
 
     /// Creates a `RemoteClient` connected to a mock server.

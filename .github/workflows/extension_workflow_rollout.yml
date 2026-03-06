@@ -80,9 +80,7 @@ jobs:
     - id: calc-changes
       name: extension_workflow_rollout::rollout_workflows_to_extension::get_removed_files
       run: |
-        PREV_COMMIT="${{ steps.prev-tag.outputs.prev_commit }}"
-
-        if [ "${{ matrix.repo }}" = "workflows" ]; then
+        if [ "$MATRIX_REPO" = "workflows" ]; then
             WORKFLOW_DIR="extensions/workflows"
         else
             WORKFLOW_DIR="extensions/workflows/shared"
@@ -101,11 +99,12 @@ jobs:
 
         echo "Files to remove: $REMOVED_FILES"
         echo "removed_files=$REMOVED_FILES" >> "$GITHUB_OUTPUT"
+      env:
+        PREV_COMMIT: ${{ steps.prev-tag.outputs.prev_commit }}
+        MATRIX_REPO: ${{ matrix.repo }}
       working-directory: zed
     - name: extension_workflow_rollout::rollout_workflows_to_extension::sync_workflow_files
       run: |
-        REMOVED_FILES="${{ steps.calc-changes.outputs.removed_files }}"
-
         mkdir -p extension/.github/workflows
         cd extension/.github/workflows
 
@@ -119,15 +118,18 @@ jobs:
 
         cd - > /dev/null
 
-        if [ "${{ matrix.repo }}" = "workflows" ]; then
+        if [ "$MATRIX_REPO" = "workflows" ]; then
             cp zed/extensions/workflows/*.yml extension/.github/workflows/
         else
             cp zed/extensions/workflows/shared/*.yml extension/.github/workflows/
         fi
+      env:
+        REMOVED_FILES: ${{ steps.calc-changes.outputs.removed_files }}
+        MATRIX_REPO: ${{ matrix.repo }}
     - id: short-sha
       name: extension_workflow_rollout::rollout_workflows_to_extension::get_short_sha
       run: |
-        echo "sha_short=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+        echo "sha_short=$(git rev-parse --short=7 HEAD)" >> "$GITHUB_OUTPUT"
       working-directory: zed
     - id: create-pr
       name: extension_workflow_rollout::rollout_workflows_to_extension::create_pull_request
@@ -148,13 +150,13 @@ jobs:
         sign-commits: true
     - name: extension_workflow_rollout::rollout_workflows_to_extension::enable_auto_merge
       run: |
-        PR_NUMBER="${{ steps.create-pr.outputs.pull-request-number }}"
         if [ -n "$PR_NUMBER" ]; then
             cd extension
             gh pr merge "$PR_NUMBER" --auto --squash
         fi
       env:
         GH_TOKEN: ${{ steps.generate-token.outputs.token }}
+        PR_NUMBER: ${{ steps.create-pr.outputs.pull-request-number }}
     timeout-minutes: 10
   create_rollout_tag:
     needs:
