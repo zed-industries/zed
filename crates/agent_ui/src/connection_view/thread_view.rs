@@ -262,6 +262,7 @@ pub struct ThreadView {
     pub project: WeakEntity<Project>,
     pub recent_history_entries: Vec<AgentSessionInfo>,
     pub hovered_recent_history_item: Option<usize>,
+    pub show_external_source_prompt_warning: bool,
     pub show_codex_windows_warning: bool,
     pub history: Entity<ThreadHistory>,
     pub _history_subscription: Subscription,
@@ -324,6 +325,7 @@ impl ThreadView {
         });
 
         let mut should_auto_submit = false;
+        let mut show_external_source_prompt_warning = false;
 
         let message_editor = cx.new(|cx| {
             let mut editor = MessageEditor::new(
@@ -354,6 +356,18 @@ impl ThreadView {
                     } => {
                         should_auto_submit = auto_submit;
                         editor.set_message(blocks, window, cx);
+                    }
+                    AgentInitialContent::FromExternalSource(prompt) => {
+                        show_external_source_prompt_warning = true;
+                        // SECURITY: Be explicit about not auto submitting prompt from external source.
+                        should_auto_submit = false;
+                        editor.set_message(
+                            vec![acp::ContentBlock::Text(acp::TextContent::new(
+                                prompt.into_string(),
+                            ))],
+                            window,
+                            cx,
+                        );
                     }
                 }
             } else if let Some(draft) = thread.read(cx).draft_prompt() {
@@ -477,6 +491,7 @@ impl ThreadView {
             project,
             recent_history_entries,
             hovered_recent_history_item: None,
+            show_external_source_prompt_warning,
             history,
             _history_subscription: history_subscription,
             show_codex_windows_warning,
@@ -781,6 +796,13 @@ impl ThreadView {
 
     // sending
 
+    fn clear_external_source_prompt_warning(&mut self, cx: &mut Context<Self>) {
+        if self.show_external_source_prompt_warning {
+            self.show_external_source_prompt_warning = false;
+            cx.notify();
+        }
+    }
+
     pub fn send(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let thread = &self.thread;
 
@@ -862,6 +884,7 @@ impl ThreadView {
                     .any(|command| command.name == "logout");
             if can_login && !logout_supported {
                 message_editor.update(cx, |editor, cx| editor.clear(window, cx));
+                self.clear_external_source_prompt_warning(cx);
 
                 let connection = self.thread.read(cx).connection().clone();
                 window.defer(cx, {
@@ -954,6 +977,7 @@ impl ThreadView {
             };
 
             let generation = this.update(cx, |this, cx| {
+                this.clear_external_source_prompt_warning(cx);
                 let generation = this.start_turn(cx);
                 this.in_flight_prompt = Some(contents.clone());
                 generation
@@ -7445,6 +7469,26 @@ impl ThreadView {
             )
     }
 
+    fn render_external_source_prompt_warning(&self, cx: &mut Context<Self>) -> Callout {
+        Callout::new()
+            .icon(IconName::Warning)
+            .severity(Severity::Warning)
+            .title("Review before sending")
+            .description("This prompt was pre-filled by an external link. Read it carefully before you send it.")
+            .dismiss_action(
+                IconButton::new("dismiss-external-source-prompt-warning", IconName::Close)
+                    .icon_size(IconSize::Small)
+                    .icon_color(Color::Muted)
+                    .tooltip(Tooltip::text("Dismiss Warning"))
+                    .on_click(cx.listener({
+                        move |this, _, _, cx| {
+                            this.show_external_source_prompt_warning = false;
+                            cx.notify();
+                        }
+                    })),
+            )
+    }
+
     fn render_new_version_callout(&self, version: &SharedString, cx: &mut Context<Self>) -> Div {
         let server_view = self.server_view.clone();
         v_flex().w_full().justify_end().child(
@@ -7794,6 +7838,9 @@ impl Render for ThreadView {
             .children(self.render_subagent_titlebar(cx))
             .child(conversation)
             .children(self.render_activity_bar(window, cx))
+            .when(self.show_external_source_prompt_warning, |this| {
+                this.child(self.render_external_source_prompt_warning(cx))
+            })
             .when(self.show_codex_windows_warning, |this| {
                 this.child(self.render_codex_windows_warning(cx))
             })

@@ -2797,6 +2797,55 @@ pub(crate) mod tests {
     }
 
     #[gpui::test]
+    async fn test_external_source_prompt_requires_manual_send(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let Some(prompt) = crate::ExternalSourcePrompt::new("Write me a script") else {
+            panic!("expected prompt from external source to sanitize successfully");
+        };
+        let initial_content = AgentInitialContent::FromExternalSource(prompt);
+
+        let (thread_view, cx) = setup_thread_view_with_initial_content(
+            StubAgentServer::default_response(),
+            initial_content,
+            cx,
+        )
+        .await;
+
+        active_thread(&thread_view, cx).read_with(cx, |view, cx| {
+            assert!(view.show_external_source_prompt_warning);
+            assert_eq!(view.thread.read(cx).entries().len(), 0);
+            assert_eq!(view.message_editor.read(cx).text(cx), "Write me a script");
+        });
+    }
+
+    #[gpui::test]
+    async fn test_external_source_prompt_warning_clears_after_send(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let Some(prompt) = crate::ExternalSourcePrompt::new("Write me a script") else {
+            panic!("expected prompt from external source to sanitize successfully");
+        };
+        let initial_content = AgentInitialContent::FromExternalSource(prompt);
+
+        let (thread_view, cx) = setup_thread_view_with_initial_content(
+            StubAgentServer::default_response(),
+            initial_content,
+            cx,
+        )
+        .await;
+
+        active_thread(&thread_view, cx).update_in(cx, |view, window, cx| view.send(window, cx));
+        cx.run_until_parked();
+
+        active_thread(&thread_view, cx).read_with(cx, |view, cx| {
+            assert!(!view.show_external_source_prompt_warning);
+            assert_eq!(view.message_editor.read(cx).text(cx), "");
+            assert_eq!(view.thread.read(cx).entries().len(), 2);
+        });
+    }
+
+    #[gpui::test]
     async fn test_notification_for_stop_event(cx: &mut TestAppContext) {
         init_test(cx);
 
@@ -3611,6 +3660,29 @@ pub(crate) mod tests {
         Entity<ThreadHistory>,
         &mut VisualTestContext,
     ) {
+        setup_thread_view_with_history_and_initial_content(agent, None, cx).await
+    }
+
+    async fn setup_thread_view_with_initial_content(
+        agent: impl AgentServer + 'static,
+        initial_content: AgentInitialContent,
+        cx: &mut TestAppContext,
+    ) -> (Entity<ConnectionView>, &mut VisualTestContext) {
+        let (thread_view, _history, cx) =
+            setup_thread_view_with_history_and_initial_content(agent, Some(initial_content), cx)
+                .await;
+        (thread_view, cx)
+    }
+
+    async fn setup_thread_view_with_history_and_initial_content(
+        agent: impl AgentServer + 'static,
+        initial_content: Option<AgentInitialContent>,
+        cx: &mut TestAppContext,
+    ) -> (
+        Entity<ConnectionView>,
+        Entity<ThreadHistory>,
+        &mut VisualTestContext,
+    ) {
         let fs = FakeFs::new(cx.executor());
         let project = Project::test(fs, [], cx).await;
         let (multi_workspace, cx) =
@@ -3627,7 +3699,7 @@ pub(crate) mod tests {
                     None,
                     None,
                     None,
-                    None,
+                    initial_content,
                     workspace.downgrade(),
                     project,
                     Some(thread_store),
