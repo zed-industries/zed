@@ -26,6 +26,7 @@ const BUILTIN_MAPPINGS: &[BuiltinMapping] = &[
 ];
 
 const REGISTRY_COMPATIBLE_FIELDS: &[&str] = &[
+    "args",
     "env",
     "default_mode",
     "default_model",

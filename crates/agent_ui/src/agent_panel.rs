@@ -3480,6 +3480,7 @@ impl AgentPanel {
                                                             .get_or_insert_default();
                                                         agent_servers.entry(agent_id_string).or_insert_with(|| {
                                                             settings::CustomAgentServerSettings::Registry {
+                                                                args: Default::default(),
                                                                 default_mode: None,
                                                                 default_model: None,
                                                                 env: Default::default(),

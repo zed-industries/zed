@@ -480,7 +480,7 @@ impl AgentServerStore {
                         ),
                     );
                 }
-                CustomAgentServerSettings::Registry { env, .. } => {
+                CustomAgentServerSettings::Registry { env, args, .. } => {
                     let Some(agent) = registry_agents_by_id.get(name) else {
                         if registry_store.is_some() {
                             log::debug!("Registry agent '{}' not found in ACP registry", name);
@@ -510,6 +510,7 @@ impl AgentServerStore {
                                         registry_id: Arc::from(name.as_str()),
                                         targets: agent.targets.clone(),
                                         env: env.clone(),
+                                        settings_args: args.clone(),
                                     })
                                         as Box<dyn ExternalAgentServer>,
                                     ExternalAgentSource::Registry,
@@ -529,6 +530,7 @@ impl AgentServerStore {
                                         args: agent.args.clone(),
                                         distribution_env: agent.env.clone(),
                                         settings_env: env.clone(),
+                                        settings_args: args.clone(),
                                     })
                                         as Box<dyn ExternalAgentServer>,
                                     ExternalAgentSource::Registry,
@@ -1199,6 +1201,7 @@ struct LocalRegistryArchiveAgent {
     registry_id: Arc<str>,
     targets: HashMap<String, RegistryTargetConfig>,
     env: HashMap<String, String>,
+    settings_args: Vec<String>,
 }
 
 impl ExternalAgentServer for LocalRegistryArchiveAgent {
@@ -1216,6 +1219,7 @@ impl ExternalAgentServer for LocalRegistryArchiveAgent {
         let registry_id = self.registry_id.clone();
         let targets = self.targets.clone();
         let settings_env = self.env.clone();
+        let settings_args = self.settings_args.clone();
 
         cx.spawn(async move |cx| {
             let mut env = project_environment
@@ -1360,7 +1364,7 @@ impl ExternalAgentServer for LocalRegistryArchiveAgent {
 
             let command = AgentServerCommand {
                 path: cmd_path,
-                args: target_config.args.clone(),
+                args: merge_registry_args(&target_config.args, &settings_args),
                 env: Some(env),
             };
 
@@ -1380,6 +1384,7 @@ struct LocalRegistryNpxAgent {
     args: Vec<String>,
     distribution_env: HashMap<String, String>,
     settings_env: HashMap<String, String>,
+    settings_args: Vec<String>,
 }
 
 impl ExternalAgentServer for LocalRegistryNpxAgent {
@@ -1396,6 +1401,7 @@ impl ExternalAgentServer for LocalRegistryNpxAgent {
         let args = self.args.clone();
         let distribution_env = self.distribution_env.clone();
         let settings_env = self.settings_env.clone();
+        let settings_args = self.settings_args.clone();
 
         cx.spawn(async move |cx| {
             let mut env = project_environment
@@ -1412,9 +1418,10 @@ impl ExternalAgentServer for LocalRegistryNpxAgent {
             let mut exec_args = Vec::new();
             exec_args.push("--yes".to_string());
             exec_args.push(package.to_string());
-            if !args.is_empty() {
+            let combined_args = merge_registry_args(&args, &settings_args);
+            if !combined_args.is_empty() {
                 exec_args.push("--".to_string());
-                exec_args.extend(args);
+                exec_args.extend(combined_args);
             }
 
             let npm_command = node_runtime
@@ -1442,6 +1449,12 @@ impl ExternalAgentServer for LocalRegistryNpxAgent {
     fn as_any_mut(&mut self) -> &mut dyn Any {
         self
     }
+}
+
+fn merge_registry_args(distribution_args: &[String], settings_args: &[String]) -> Vec<String> {
+    let mut args = distribution_args.to_vec();
+    args.extend(settings_args.iter().cloned());
+    args
 }
 
 struct LocalCustomAgent {
@@ -1578,6 +1591,12 @@ pub enum CustomAgentServerSettings {
         favorite_config_option_values: HashMap<String, Vec<String>>,
     },
     Registry {
+        /// Additional command-line arguments to pass to the agent.
+        ///
+        /// These are appended after the registry-provided arguments.
+        ///
+        /// Default: []
+        args: Vec<String>,
         /// Additional environment variables to pass to the agent.
         ///
         /// Default: {}
@@ -1729,6 +1748,7 @@ impl From<settings::CustomAgentServerSettings> for CustomAgentServerSettings {
                 favorite_config_option_values,
             },
             settings::CustomAgentServerSettings::Registry {
+                args,
                 env,
                 default_mode,
                 default_model,
@@ -1736,6 +1756,7 @@ impl From<settings::CustomAgentServerSettings> for CustomAgentServerSettings {
                 favorite_models,
                 favorite_config_option_values,
             } => CustomAgentServerSettings::Registry {
+                args,
                 env,
                 default_mode,
                 default_model,
@@ -1757,5 +1778,34 @@ impl settings::Settings for AllAgentServersSettings {
                 .map(|(k, v)| (k, v.into()))
                 .collect(),
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::merge_registry_args;
+
+    #[test]
+    fn merge_registry_args_appends_settings_args() {
+        let merged = merge_registry_args(
+            &["--from-registry".to_string()],
+            &["--from-settings".to_string(), "value".to_string()],
+        );
+
+        assert_eq!(
+            merged,
+            vec![
+                "--from-registry".to_string(),
+                "--from-settings".to_string(),
+                "value".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn merge_registry_args_returns_registry_args_when_settings_are_empty() {
+        let merged = merge_registry_args(&["--from-registry".to_string()], &[]);
+
+        assert_eq!(merged, vec!["--from-registry".to_string()]);
     }
 }
