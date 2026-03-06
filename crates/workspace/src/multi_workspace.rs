@@ -24,16 +24,12 @@ actions!(
     [
         /// Creates a new workspace within the current window.
         NewWorkspaceInWindow,
-        /// Creates a new workspace in a new window.
-        NewWorkspaceNewWindow,
         /// Switches to the next workspace within the current window.
         NextWorkspaceInWindow,
         /// Switches to the previous workspace within the current window.
         PreviousWorkspaceInWindow,
         /// Moves the active workspace to a new window.
         MoveWorkspaceToNewWindow,
-        /// Duplicates the active workspace within the same window.
-        DuplicateWorkspace,
         /// Duplicates the active workspace into a new window.
         DuplicateWorkspaceToNewWindow,
         /// Pulls all workspaces from other windows into the current window.
@@ -668,6 +664,26 @@ impl MultiWorkspace {
         cx.notify();
     }
 
+    pub fn merge_windows(&mut self, cx: &mut Context<Self>) -> Result<()> {
+        let windows = cx
+            .windows()
+            .into_iter()
+            .filter_map(|handle| handle.downcast::<Self>());
+        for window_handle in windows {
+            let multi_workspace = window_handle.read(cx)?;
+            let workspaces = multi_workspace.workspaces().to_vec();
+            for workspace in workspaces {
+                self.add_workspace(workspace.clone(), cx);
+            }
+            window_handle
+                .update(cx, |_, window, _| {
+                    window.remove_window();
+                })
+                .log_err();
+        }
+        Ok(())
+    }
+
     pub fn open_project(
         &mut self,
         paths: Vec<PathBuf>,
@@ -778,6 +794,9 @@ impl Render for MultiWorkspace {
                         this.activate_next_workspace(window, cx);
                     }),
                 )
+                .on_action(cx.listener(|this: &mut Self, _: &MergeAllWindows, _, cx| {
+                    this.merge_windows(cx).log_err();
+                }))
                 .on_action(cx.listener(
                     |this: &mut Self, _: &PreviousWorkspaceInWindow, window, cx| {
                         this.activate_previous_workspace(window, cx);
