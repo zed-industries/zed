@@ -4,6 +4,7 @@ use agent_client_protocol as acp;
 use agent_ui::{AgentPanel, AgentPanelEvent, NewThread};
 use chrono::Utc;
 use editor::{Editor, EditorElement, EditorStyle};
+use feature_flags::{AgentV2FeatureFlag, FeatureFlagViewExt as _};
 use gpui::{
     AnyElement, App, Context, Entity, EventEmitter, FocusHandle, Focusable, FontStyle, ListState,
     Pixels, Render, SharedString, TextStyle, WeakEntity, Window, actions, list, prelude::*, px,
@@ -239,6 +240,11 @@ impl Sidebar {
 
         let thread_store = ThreadStore::global(cx);
         cx.observe_in(&thread_store, window, |this, _, _window, cx| {
+            this.update_entries(cx);
+        })
+        .detach();
+
+        cx.observe_flag::<AgentV2FeatureFlag, _>(window, |_is_enabled, this, _window, cx| {
             this.update_entries(cx);
         })
         .detach();
