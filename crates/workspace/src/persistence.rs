@@ -1786,12 +1786,14 @@ impl WorkspaceDb {
     async fn all_paths_exist_with_a_directory(
         paths: &[PathBuf],
         fs: &dyn Fs,
-        within_grace_period: bool,
+        timestamp: Option<DateTime<Utc>>,
     ) -> bool {
         let mut any_dir = false;
         for path in paths {
             match fs.metadata(path).await.ok().flatten() {
-                None => return within_grace_period,
+                None => {
+                    return timestamp.is_some_and(|t| Utc::now() - t < chrono::Duration::days(7));
+                }
                 Some(meta) => {
                     if meta.is_dir {
                         any_dir = true;
@@ -1848,12 +1850,7 @@ impl WorkspaceDb {
             // WSL VM and file server to boot up. This can block for many seconds.
             // Supported scenarios use remote workspaces.
             if !has_wsl_path
-                && Self::all_paths_exist_with_a_directory(
-                    paths.paths(),
-                    fs,
-                    Utc::now() - timestamp < chrono::Duration::days(7),
-                )
-                .await
+                && Self::all_paths_exist_with_a_directory(paths.paths(), fs, Some(timestamp)).await
             {
                 result.push((id, SerializedWorkspaceLocation::Local, paths, timestamp));
             } else {
@@ -1914,7 +1911,7 @@ impl WorkspaceDb {
                     window_id,
                 });
             } else {
-                if Self::all_paths_exist_with_a_directory(paths.paths(), fs, true).await {
+                if Self::all_paths_exist_with_a_directory(paths.paths(), fs, None).await {
                     workspaces.push(SessionWorkspace {
                         workspace_id,
                         location: SerializedWorkspaceLocation::Local,
