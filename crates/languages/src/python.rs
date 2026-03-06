@@ -1378,7 +1378,7 @@ impl ToolchainLister for PythonToolchainProvider {
 
             match toolchain.environment.kind {
                 Some(PythonEnvironmentKind::Conda) => {
-                    let Some(_) = &toolchain.environment.manager else {
+                    if toolchain.environment.manager.is_none() {
                         return vec![];
                     };
 
