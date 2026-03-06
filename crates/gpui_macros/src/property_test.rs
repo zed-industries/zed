@@ -30,8 +30,7 @@ pub fn test(args: TokenStream, item: TokenStream) -> TokenStream {
     let inner_args = parsed_args.inner_fn_args;
     let cx_vars = parsed_args.cx_vars;
     let cx_teardowns = parsed_args.cx_teardowns;
-    
-    
+
     let proptest_args = quote! {
         #[strategy = ::gpui::seed_strategy()] __seed: u64,
         #proptest_args

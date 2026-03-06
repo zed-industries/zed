@@ -89,7 +89,9 @@ pub use elements::*;
 pub use executor::*;
 pub use geometry::*;
 pub use global::*;
-pub use gpui_macros::{AppContext, IntoElement, Render, VisualContext, register_action, test, property_test};
+pub use gpui_macros::{
+    AppContext, IntoElement, Render, VisualContext, property_test, register_action, test,
+};
 pub use gpui_util::arc_cow::ArcCow;
 pub use http_client;
 pub use input::*;

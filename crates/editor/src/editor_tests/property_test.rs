@@ -58,7 +58,10 @@ fn test_actions() -> impl Strategy<Value = Vec<TestAction>> {
 }
 
 #[gpui::property_test(config = ProptestConfig {cases: 100, ..Default::default()})]
-fn editor_property_test(cx: &mut TestAppContext, #[strategy = test_actions()] actions: Vec<TestAction>) {
+fn editor_property_test(
+    cx: &mut TestAppContext,
+    #[strategy = test_actions()] actions: Vec<TestAction>,
+) {
     init_test(cx, |_| {});
 
     let group_interval = Duration::from_millis(1);

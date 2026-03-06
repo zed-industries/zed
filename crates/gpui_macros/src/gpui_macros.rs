@@ -3,10 +3,10 @@ mod derive_app_context;
 mod derive_into_element;
 mod derive_render;
 mod derive_visual_context;
+mod property_test;
 mod register_action;
 mod styles;
 mod test;
-mod property_test;
 
 #[cfg(any(feature = "inspector", debug_assertions))]
 mod derive_inspector_reflection;
@@ -189,7 +189,7 @@ pub fn test(args: TokenStream, function: TokenStream) -> TokenStream {
     test::test(args, function)
 }
 
-/// A variant of `#[gpui::test]` that supports property-based testing. 
+/// A variant of `#[gpui::test]` that supports property-based testing.
 ///
 /// A property test, much like a standard GPUI randomized test, allows testing
 /// claims of the form "for any possible X, Y should hold". For example:
@@ -204,14 +204,14 @@ pub fn test(args: TokenStream, function: TokenStream) -> TokenStream {
 /// advantages, however:
 /// - Shrinking - the harness also understands a notion of the "complexity" of a
 ///   particular value. This allows it to find the "simplest possible value that
-///   causes the test to fail". 
+///   causes the test to fail".
 /// - Ergonomics/clarity - the property-testing harness will automatically
 ///   generate values, removing the need to fill the test body with generation
 ///   logic.
 /// - Failure persistence - if a failing seed is identified, it is stored in a
 ///   file, which can be checked in, and future runs will check these cases before
 ///   future cases.
-/// 
+///
 /// Property tests work best when all inputs can be generated up-front and kept
 /// in a simple data structure. Sometimes, this isn't possible - for example, if
 /// a test needs to make a random decision based on the current state of some
@@ -242,12 +242,12 @@ pub fn test(args: TokenStream, function: TokenStream) -> TokenStream {
 ///   assert!(s.len() > (x as usize));
 /// }
 /// ```
-/// 
+///
 /// For more information on writing custom `Strategy` and `Arbitrary`
 /// implementations, see [the proptest book][book], and the [`Strategy`] trait.
-/// 
+///
 /// ## Scheduler
-/// 
+///
 /// Similar to `#[gpui::test]`, this macro will choose random seeds for the test
 /// scheduler. It uses `.no_shrink()` to tell proptest that all seeds are
 /// roughly equivalent in terms of "complexity". If `$SEED` is set, it will
