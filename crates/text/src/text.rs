@@ -2379,13 +2379,22 @@ impl BufferSnapshot {
                     anchor
                 );
             };
+            // TODO verbose debug because we are seeing is_max return false unexpectedly,
+            // remove this once that is understood and fixed
             assert_eq!(
                 insertion.timestamp,
                 anchor.timestamp(),
-                "invalid insertion for buffer {}@{:?} and anchor {:?}",
+                "invalid insertion for buffer {}@{:?}. anchor: {:?}, {:?}, {:?}, {:?}, {:?}. timestamp: {:?}, offset: {:?}, bias: {:?}",
                 self.remote_id(),
                 self.version,
-                anchor
+                anchor.timestamp_replica_id,
+                anchor.timestamp_value,
+                anchor.offset,
+                anchor.bias,
+                anchor.buffer_id,
+                anchor.timestamp() == clock::Lamport::MAX,
+                anchor.offset == u32::MAX,
+                anchor.bias == Bias::Right,
             );
 
             fragment_cursor.seek_forward(&Some(&insertion.fragment_id), Bias::Left);
