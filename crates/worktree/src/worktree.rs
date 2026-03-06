@@ -6169,8 +6169,7 @@ fn is_plausible_utf16_text(bytes: &[u8], little_endian: bool) -> bool {
     let mut total = 0usize;
 
     let mut i = 0;
-    while i + 1 < bytes.len() {
-        let code_unit = read_u16(bytes, i, little_endian);
+    while let Some(code_unit) = read_u16(bytes, i, little_endian) {
         total += 1;
 
         match code_unit {
@@ -6179,8 +6178,8 @@ fn is_plausible_utf16_text(bytes: &[u8], little_endian: bool) -> bool {
             0x0000..=0x001F | 0x007F..=0x009F | 0xFFFE | 0xFFFF => suspicious_count += 1,
             0xD800..=0xDBFF => {
                 let next_offset = i + 2;
-                let has_low_surrogate = next_offset + 1 < bytes.len()
-                    && (0xDC00..=0xDFFF).contains(&read_u16(bytes, next_offset, little_endian));
+                let has_low_surrogate = read_u16(bytes, next_offset, little_endian)
+                    .is_some_and(|next| (0xDC00..=0xDFFF).contains(&next));
                 if has_low_surrogate {
                     total += 1;
                     i += 2;
@@ -6205,11 +6204,12 @@ fn is_plausible_utf16_text(bytes: &[u8], little_endian: bool) -> bool {
     suspicious_count * 100 < total * 2
 }
 
-fn read_u16(bytes: &[u8], offset: usize, little_endian: bool) -> u16 {
+fn read_u16(bytes: &[u8], offset: usize, little_endian: bool) -> Option<u16> {
+    let pair = [*bytes.get(offset)?, *bytes.get(offset + 1)?];
     if little_endian {
-        return u16::from_le_bytes([bytes[offset], bytes[offset + 1]]);
+        return Some(u16::from_le_bytes(pair));
     }
-    u16::from_be_bytes([bytes[offset], bytes[offset + 1]])
+    Some(u16::from_be_bytes(pair))
 }
 
 #[cfg(test)]
