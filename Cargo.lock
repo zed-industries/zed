@@ -13241,6 +13241,7 @@ name = "project_panel"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "circular-buffer",
  "client",
  "collections",
  "command_palette_hooks",
@@ -13248,6 +13249,7 @@ dependencies = [
  "db",
  "editor",
  "file_icons",
+ "futures 0.3.31",
  "git",
  "git_ui",
  "gpui",
