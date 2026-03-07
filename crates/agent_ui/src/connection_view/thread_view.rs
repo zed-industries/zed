@@ -6014,6 +6014,57 @@ impl ThreadView {
             }))
     }
 
+    fn render_pending_permissions(&self, cx: &Context<Self>) -> Option<AnyElement> {
+        let conversation = self.conversation.read(cx);
+        let pending = conversation.all_pending_tool_calls(&self.id, cx);
+        if pending.is_empty() {
+            return None;
+        }
+
+        let total_count = pending.len();
+        let focus_handle = self.focus_handle.clone();
+
+        Some(
+            v_flex()
+                .bg(cx.theme().colors().editor_background)
+                .border_t_1()
+                .border_color(self.tool_card_border_color(cx))
+                .child(
+                    h_flex().px_2().py_1().justify_between().child(
+                        Label::new(format!("Pending Permissions ({})", total_count))
+                            .size(LabelSize::Small)
+                            .color(Color::Muted),
+                    ),
+                )
+                .children(pending.into_iter().enumerate().map(
+                    |(index, (session_id, tool_call_id, tool_call, options))| {
+                        let is_first = index == 0;
+
+                        v_flex()
+                            .border_t_1()
+                            .border_color(self.tool_card_border_color(cx))
+                            .child(
+                                h_flex().px_2().pt_1().overflow_hidden().child(
+                                    Label::new(tool_call.label.read(cx).source().to_string())
+                                        .size(LabelSize::Small)
+                                        .color(Color::Muted),
+                                ),
+                            )
+                            .child(self.render_permission_buttons(
+                                session_id,
+                                is_first,
+                                options,
+                                index,
+                                tool_call_id,
+                                &focus_handle,
+                                cx,
+                            ))
+                    },
+                ))
+                .into_any_element(),
+        )
+    }
+
     fn render_diff_loading(&self, cx: &Context<Self>) -> AnyElement {
         let bar = |n: u64, width_class: &str| {
             let bg_color = cx.theme().colors().element_active;
@@ -7880,6 +7931,7 @@ impl Render for ThreadView {
                 |this, version| this.child(self.render_new_version_callout(&version, cx)),
             )
             .children(self.render_token_limit_callout(cx))
+            .children(self.render_pending_permissions(cx))
             .child(self.render_message_editor(window, cx))
     }
 }
