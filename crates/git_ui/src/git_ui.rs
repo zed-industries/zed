@@ -430,6 +430,7 @@ fn render_remote_button(
     branch: &Branch,
     keybinding_target: Option<FocusHandle>,
     show_fetch_button: bool,
+    disabled: bool,
 ) -> Option<impl IntoElement> {
     let id = id.into();
     let upstream = branch.upstream.as_ref();
@@ -439,19 +440,21 @@ fn render_remote_button(
             ..
         }) => match (*ahead, *behind) {
             (0, 0) if show_fetch_button => {
-                Some(remote_button::render_fetch_button(keybinding_target, id))
+                Some(remote_button::render_fetch_button(keybinding_target, id, disabled))
             }
             (0, 0) => None,
             (ahead, 0) => Some(remote_button::render_push_button(
                 keybinding_target,
                 id,
                 ahead,
+                disabled,
             )),
             (ahead, behind) => Some(remote_button::render_pull_button(
                 keybinding_target,
                 id,
                 ahead,
                 behind,
+                disabled,
             )),
         },
         Some(Upstream {
@@ -460,22 +463,25 @@ fn render_remote_button(
         }) => Some(remote_button::render_republish_button(
             keybinding_target,
             id,
+            disabled,
         )),
-        None => Some(remote_button::render_publish_button(keybinding_target, id)),
+        None => Some(remote_button::render_publish_button(keybinding_target, id, disabled)),
     }
 }
 
 mod remote_button {
     use gpui::{Action, AnyView, ClickEvent, Corner, FocusHandle};
     use ui::{
-        App, ButtonCommon, Clickable, ContextMenu, ElementId, FluentBuilder, Icon, IconName,
-        IconSize, IntoElement, Label, LabelCommon, LabelSize, LineHeightStyle, ParentElement,
-        PopoverMenu, SharedString, SplitButton, Styled, Tooltip, Window, div, h_flex, rems,
+        App, ButtonCommon, Clickable, ContextMenu, Disableable, ElementId, FluentBuilder, Icon,
+        IconName, IconSize, IntoElement, Label, LabelCommon, LabelSize, LineHeightStyle,
+        ParentElement, PopoverMenu, SharedString, SplitButton, Styled, Tooltip, Window, div,
+        h_flex, rems,
     };
 
     pub fn render_fetch_button(
         keybinding_target: Option<FocusHandle>,
         id: SharedString,
+        disabled: bool,
     ) -> SplitButton {
         split_button(
             id,
@@ -484,6 +490,7 @@ mod remote_button {
             0,
             Some(IconName::ArrowCircle),
             keybinding_target.clone(),
+            disabled,
             move |_, window, cx| {
                 window.dispatch_action(Box::new(git::Fetch), cx);
             },
@@ -503,6 +510,7 @@ mod remote_button {
         keybinding_target: Option<FocusHandle>,
         id: SharedString,
         ahead: u32,
+        disabled: bool,
     ) -> SplitButton {
         split_button(
             id,
@@ -511,6 +519,7 @@ mod remote_button {
             0,
             None,
             keybinding_target.clone(),
+            disabled,
             move |_, window, cx| {
                 window.dispatch_action(Box::new(git::Push), cx);
             },
@@ -531,6 +540,7 @@ mod remote_button {
         id: SharedString,
         ahead: u32,
         behind: u32,
+        disabled: bool,
     ) -> SplitButton {
         split_button(
             id,
@@ -539,6 +549,7 @@ mod remote_button {
             behind as usize,
             None,
             keybinding_target.clone(),
+            disabled,
             move |_, window, cx| {
                 window.dispatch_action(Box::new(git::Pull), cx);
             },
@@ -557,6 +568,7 @@ mod remote_button {
     pub fn render_publish_button(
         keybinding_target: Option<FocusHandle>,
         id: SharedString,
+        disabled: bool,
     ) -> SplitButton {
         split_button(
             id,
@@ -565,6 +577,7 @@ mod remote_button {
             0,
             Some(IconName::ExpandUp),
             keybinding_target.clone(),
+            disabled,
             move |_, window, cx| {
                 window.dispatch_action(Box::new(git::Push), cx);
             },
@@ -583,6 +596,7 @@ mod remote_button {
     pub fn render_republish_button(
         keybinding_target: Option<FocusHandle>,
         id: SharedString,
+        disabled: bool,
     ) -> SplitButton {
         split_button(
             id,
@@ -591,6 +605,7 @@ mod remote_button {
             0,
             Some(IconName::ExpandUp),
             keybinding_target.clone(),
+            disabled,
             move |_, window, cx| {
                 window.dispatch_action(Box::new(git::Push), cx);
             },
@@ -665,6 +680,7 @@ mod remote_button {
         behind_count: usize,
         left_icon: Option<IconName>,
         keybinding_target: Option<FocusHandle>,
+        disabled: bool,
         left_on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
         tooltip: impl Fn(&mut Window, &mut App) -> AnyView + 'static,
     ) -> SplitButton {
@@ -715,6 +731,7 @@ mod remote_button {
                 .child(Label::new(left_label).size(LabelSize::Small))
                 .mr_0p5(),
         )
+        .disabled(disabled)
         .on_click(left_on_click)
         .tooltip(tooltip);
 
