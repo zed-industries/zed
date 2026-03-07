@@ -503,11 +503,11 @@ pub fn python_env_kernel_specifications(
             });
 
         #[allow(unused_mut)]
-        let mut kernel_specs: Vec<KernelSpecification> = futures::future::join_all(kernelspecs)
-            .await
-            .into_iter()
-            .flatten()
-            .collect();
+        let mut kernel_specs: Vec<KernelSpecification> = futures::stream::iter(kernelspecs)
+            .buffer_unordered(4)
+            .filter_map(|x| async move { x })
+            .collect::<Vec<_>>()
+            .await;
 
         #[cfg(target_os = "windows")]
         if kernel_specs.is_empty() && !is_remote {
