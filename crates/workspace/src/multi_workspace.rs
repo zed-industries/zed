@@ -16,7 +16,7 @@ const SIDEBAR_RESIZE_HANDLE_SIZE: Pixels = px(6.0);
 
 use crate::{
     CloseIntent, CloseWindow, DockPosition, Event as WorkspaceEvent, Item, ModalView, Panel, Toast,
-    Workspace, WorkspaceId, client_side_decorations, notifications::NotificationId,
+    Workspace, WorkspaceId, client_side_decorations, notifications::NotificationId, open_project,
 };
 
 actions!(
@@ -28,6 +28,12 @@ actions!(
         NextWorkspaceInWindow,
         /// Switches to the previous workspace within the current window.
         PreviousWorkspaceInWindow,
+        /// Moves the active workspace to a new window.
+        MoveWorkspaceToNewWindow,
+        /// Duplicates the active workspace into a new window.
+        DuplicateWorkspaceToNewWindow,
+        /// Pulls all workspaces from other windows into the current window.
+        MergeAllWindows,
         /// Toggles the workspace switcher sidebar.
         ToggleWorkspaceSidebar,
         /// Moves focus to or from the workspace sidebar without closing it.
@@ -658,6 +664,50 @@ impl MultiWorkspace {
         cx.notify();
     }
 
+    pub fn move_workspace(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.multi_workspace_enabled(cx) || self.workspaces.len() <= 1 {
+            return;
+        }
+        let workspace = self.workspace();
+        let app_state = workspace.read(cx).app_state().clone();
+        let project = workspace.read(cx).project().clone();
+        let index = self.active_workspace_index;
+        self.remove_workspace(index, window, cx);
+        // TODO: This will lose the state of the workspace being moved
+        // like open items etc..
+        open_project(project, app_state, cx).detach_and_log_err(cx);
+    }
+
+    pub fn duplicate_workspace(&mut self, cx: &mut Context<Self>) {
+        let workspace = self.workspace();
+        let app_state = workspace.read(cx).app_state().clone();
+        let project = workspace.read(cx).project().clone();
+        open_project(project, app_state, cx).detach_and_log_err(cx);
+    }
+
+    pub fn merge_windows(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Result<()> {
+        let current_window_id = window.window_handle().window_id();
+        let windows: Vec<_> = cx
+            .windows()
+            .into_iter()
+            .filter_map(|handle| handle.downcast::<Self>())
+            .filter(|handle| handle.window_id() != current_window_id)
+            .collect();
+        for window_handle in windows {
+            let multi_workspace = window_handle.read(cx)?;
+            let workspaces = multi_workspace.workspaces().to_vec();
+            for workspace in workspaces {
+                self.add_workspace(workspace.clone(), cx);
+            }
+            window_handle
+                .update(cx, |_, window, _| {
+                    window.remove_window();
+                })
+                .log_err();
+        }
+        Ok(())
+    }
+
     pub fn open_project(
         &mut self,
         paths: Vec<PathBuf>,
@@ -766,6 +816,21 @@ impl Render for MultiWorkspace {
                 .on_action(
                     cx.listener(|this: &mut Self, _: &NextWorkspaceInWindow, window, cx| {
                         this.activate_next_workspace(window, cx);
+                    }),
+                )
+                .on_action(cx.listener(
+                    |this: &mut Self, _: &MoveWorkspaceToNewWindow, window, cx| {
+                        this.move_workspace(window, cx);
+                    },
+                ))
+                .on_action(cx.listener(
+                    |this: &mut Self, _: &DuplicateWorkspaceToNewWindow, window, cx| {
+                        this.duplicate_workspace(cx);
+                    },
+                ))
+                .on_action(
+                    cx.listener(|this: &mut Self, _: &MergeAllWindows, window, cx| {
+                        this.merge_windows(window, cx).log_err();
                     }),
                 )
                 .on_action(cx.listener(
