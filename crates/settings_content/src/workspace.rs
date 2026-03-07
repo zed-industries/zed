@@ -10,6 +10,47 @@ use crate::{
     ScrollbarSettingsContent, ShowIndentGuides, serialize_optional_f32_with_two_decimal_places,
 };
 
+/// Which side of the workspace the activity bar appears on.
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Default,
+    PartialEq,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum ActivityBarSide {
+    /// Show the activity bar on the left side.
+    #[default]
+    Left,
+    /// Show the activity bar on the right side.
+    Right,
+}
+
+#[with_fallible_options]
+#[derive(Clone, Debug, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct ActivityBarContent {
+    /// Whether to show the activity bar.
+    ///
+    /// Default: false
+    pub enabled: Option<bool>,
+    /// Which side of the workspace to show the activity bar on.
+    ///
+    /// Default: left
+    pub side: Option<ActivityBarSide>,
+    /// Persistent names of panels to show in the activity bar.
+    /// Use the panel's persistent name (e.g. "GitPanel", "ProjectPanel").
+    ///
+    /// Default: []
+    pub panels: Option<Vec<String>>,
+}
+
 #[with_fallible_options]
 #[derive(Clone, Debug, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct WorkspaceSettingsContent {
@@ -23,6 +64,8 @@ pub struct WorkspaceSettingsContent {
     ///
     /// Default: contained
     pub bottom_dock_layout: Option<BottomDockLayout>,
+    /// Activity Bar settings.
+    pub activity_bar: Option<ActivityBarContent>,
     /// Direction to split horizontally.
     ///
     /// Default: "up"

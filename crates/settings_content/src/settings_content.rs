@@ -624,6 +624,11 @@ pub struct GitPanelSettingsContent {
     ///
     /// Default: false
     pub diff_stats: Option<bool>,
+
+    /// Whether to show a badge on the git panel icon with the count of uncommitted changes.
+    ///
+    /// Default: false
+    pub show_count_badge: Option<bool>,
 }
 
 #[derive(
