@@ -381,12 +381,6 @@ impl Theme {
         &self.styles.status
     }
 
-    /// Returns the color for the syntax node with the given name.
-    #[inline(always)]
-    pub fn syntax_color(&self, name: &str) -> Hsla {
-        self.syntax().color(name)
-    }
-
     /// Returns the [`Appearance`] for the theme.
     #[inline(always)]
     pub fn appearance(&self) -> Appearance {

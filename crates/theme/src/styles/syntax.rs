@@ -1,78 +1,35 @@
 #![allow(missing_docs)]
 
-use std::{borrow::Borrow, collections::BTreeMap, sync::Arc};
+use std::{
+    collections::{BTreeMap, btree_map::Entry},
+    sync::Arc,
+};
 
-use gpui::{HighlightStyle, Hsla};
-use smallvec::SmallVec;
+use gpui::HighlightStyle;
+#[cfg(any(test, feature = "test-support"))]
+use gpui::Hsla;
 
 #[derive(Debug, PartialEq, Eq, Clone, Default)]
 pub struct SyntaxTheme {
-    pub highlights: Vec<(String, HighlightStyle)>,
-    capture_name_map: BTreeMap<SmallVec<[CaptureName<'static>; 2]>, usize>,
-}
-
-#[derive(Clone, Debug, Ord, Eq)]
-enum CaptureName<'a> {
-    Borrowed(&'a str),
-    Owned(Arc<str>),
-}
-
-impl<'other> PartialEq<CaptureName<'other>> for CaptureName<'_> {
-    fn eq(&self, other: &CaptureName<'other>) -> bool {
-        let lhs = self.as_ref();
-        let rhs = other.as_ref();
-        lhs == rhs
-    }
-}
-
-impl<'other> PartialOrd<CaptureName<'other>> for CaptureName<'_> {
-    fn partial_cmp(&self, other: &CaptureName<'other>) -> Option<std::cmp::Ordering> {
-        let lhs = self.as_ref();
-        let rhs = other.as_ref();
-        lhs.partial_cmp(rhs)
-    }
-}
-
-impl Borrow<str> for CaptureName<'_> {
-    fn borrow(&self) -> &str {
-        match self {
-            CaptureName::Borrowed(str) => str,
-            CaptureName::Owned(str) => &str,
-        }
-    }
-}
-
-impl AsRef<str> for CaptureName<'_> {
-    fn as_ref(&self) -> &str {
-        match self {
-            CaptureName::Borrowed(str) => str,
-            CaptureName::Owned(str) => &str,
-        }
-    }
+    pub(self) highlights: Vec<HighlightStyle>,
+    pub(self) capture_name_map: BTreeMap<String, usize>,
 }
 
 impl SyntaxTheme {
     pub fn new(highlights: Vec<(String, HighlightStyle)>) -> Self {
+        let (capture_names, highlights) = highlights.into_iter().unzip();
+
         Self {
-            capture_name_map: Self::create_capture_name_map(&highlights),
+            capture_name_map: Self::create_capture_name_map(capture_names),
             highlights,
         }
     }
 
-    fn create_capture_name_map(
-        highlights: &[(String, HighlightStyle)],
-    ) -> BTreeMap<SmallVec<[CaptureName<'static>; 2]>, usize> {
+    fn create_capture_name_map(highlights: Vec<String>) -> BTreeMap<String, usize> {
         highlights
-            .iter()
+            .into_iter()
             .enumerate()
-            .map(|(i, (key, _))| {
-                (
-                    key.split('.')
-                        .map(|component| CaptureName::Owned(Arc::from(component)))
-                        .collect(),
-                    i,
-                )
-            })
+            .map(|(i, key)| (key, i))
             .collect()
     }
 
@@ -101,47 +58,37 @@ impl SyntaxTheme {
         )
     }
 
-    pub fn get(&self, name: &str) -> HighlightStyle {
-        self.highlights
-            .iter()
-            .find_map(|entry| if entry.0 == name { Some(entry.1) } else { None })
-            .unwrap_or_default()
+    pub fn get(&self, highlight_index: usize) -> Option<&HighlightStyle> {
+        self.highlights.get(highlight_index)
     }
 
-    pub fn get_opt(&self, name: &str) -> Option<HighlightStyle> {
-        self.highlights
-            .iter()
-            .find_map(|entry| if entry.0 == name { Some(entry.1) } else { None })
-    }
-
-    pub fn color(&self, name: &str) -> Hsla {
-        self.get(name).color.unwrap_or_default()
-    }
-
-    pub fn highlight_id<'a>(&self, name: &'a str) -> Option<u32> {
-        let capture_name = name
-            .split('.')
-            .map(CaptureName::Borrowed)
-            .collect::<SmallVec<[CaptureName<'a>; 2]>>();
-        // SAFETY: We're extending the slice lifetime to 'static solely for the
-        // range key comparison. The reference doesn't escape this call and the
-        // data is valid for 'a which outlives it.
-        let capture_name_static: SmallVec<[CaptureName<'static>; 2]> =
-            unsafe { std::mem::transmute(capture_name) };
+    pub fn style_for_name(&self, name: &str) -> Option<HighlightStyle> {
         self.capture_name_map
-            .range::<[CaptureName<'static>], _>((
-                std::ops::Bound::Unbounded,
-                std::ops::Bound::Included(capture_name_static.as_slice()),
+            .get(name)
+            .map(|higlight_idx| self.highlights[*higlight_idx])
+    }
+
+    pub fn get_capture_name(&self, idx: usize) -> Option<&str> {
+        self.capture_name_map
+            .iter()
+            .find_map(|(key, value)| (*value == idx).then_some(key.as_ref()))
+    }
+
+    pub fn highlight_id(&self, capture_name: &str) -> Option<u32> {
+        self.capture_name_map
+            .range::<str, _>((
+                capture_name
+                    .split(".")
+                    .next()
+                    .map_or(std::ops::Bound::Unbounded, std::ops::Bound::Included),
+                std::ops::Bound::Included(capture_name),
             ))
             .collect::<Vec<_>>()
             .into_iter()
             .rfind(|(prefix, _)| {
-                for (lhs, rhs) in capture_name_static.iter().zip(prefix.into_iter()) {
-                    if lhs != rhs {
-                        return false;
-                    }
-                }
-                true
+                capture_name
+                    .strip_prefix(*prefix)
+                    .is_some_and(|remainder| remainder.is_empty() || remainder.starts_with('.'))
             })
             .map(|(_, index)| *index as u32)
     }
@@ -152,31 +99,36 @@ impl SyntaxTheme {
             return base;
         }
 
-        let mut merged_highlights = base.highlights.clone();
+        let mut base = Arc::try_unwrap(base).unwrap_or_else(|base| (*base).clone());
 
         for (name, highlight) in user_syntax_styles {
-            if let Some((_, existing_highlight)) = merged_highlights
-                .iter_mut()
-                .find(|(existing_name, _)| existing_name == &name)
-            {
-                existing_highlight.color = highlight.color.or(existing_highlight.color);
-                existing_highlight.font_weight =
-                    highlight.font_weight.or(existing_highlight.font_weight);
-                existing_highlight.font_style =
-                    highlight.font_style.or(existing_highlight.font_style);
-                existing_highlight.background_color = highlight
-                    .background_color
-                    .or(existing_highlight.background_color);
-                existing_highlight.underline = highlight.underline.or(existing_highlight.underline);
-                existing_highlight.strikethrough =
-                    highlight.strikethrough.or(existing_highlight.strikethrough);
-                existing_highlight.fade_out = highlight.fade_out.or(existing_highlight.fade_out);
-            } else {
-                merged_highlights.push((name, highlight));
+            match base.capture_name_map.entry(name) {
+                Entry::Occupied(entry) => {
+                    if let Some(existing_highlight) = base.highlights.get_mut(*entry.get()) {
+                        existing_highlight.color = highlight.color.or(existing_highlight.color);
+                        existing_highlight.font_weight =
+                            highlight.font_weight.or(existing_highlight.font_weight);
+                        existing_highlight.font_style =
+                            highlight.font_style.or(existing_highlight.font_style);
+                        existing_highlight.background_color = highlight
+                            .background_color
+                            .or(existing_highlight.background_color);
+                        existing_highlight.underline =
+                            highlight.underline.or(existing_highlight.underline);
+                        existing_highlight.strikethrough =
+                            highlight.strikethrough.or(existing_highlight.strikethrough);
+                        existing_highlight.fade_out =
+                            highlight.fade_out.or(existing_highlight.fade_out);
+                    }
+                }
+                Entry::Vacant(vacant) => {
+                    vacant.insert(base.highlights.len());
+                    base.highlights.push(highlight);
+                }
             }
         }
 
-        Arc::new(Self::new(merged_highlights))
+        Arc::new(base)
     }
 }
 

@@ -1,9 +1,5 @@
 use gpui::HighlightStyle;
-use smallvec::SmallVec;
-use std::{
-    collections::{BTreeMap, btree_map::Range},
-    sync::Arc,
-};
+use std::sync::Arc;
 use theme::SyntaxTheme;
 
 #[derive(Clone, Debug)]
@@ -48,11 +44,11 @@ impl HighlightId {
     }
 
     pub fn style(&self, theme: &SyntaxTheme) -> Option<HighlightStyle> {
-        theme.highlights.get(self.0 as usize).map(|entry| entry.1)
+        theme.get(self.0 as usize).cloned()
     }
 
     pub fn name<'a>(&self, theme: &'a SyntaxTheme) -> Option<&'a str> {
-        theme.highlights.get(self.0 as usize).map(|e| e.0.as_str())
+        theme.get_capture_name(self.0 as usize)
     }
 }
 
