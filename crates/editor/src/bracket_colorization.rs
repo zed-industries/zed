@@ -1414,8 +1414,8 @@ mod foo «1{
                         theme.to_string(),
                         ThemeStyleContent {
                             accents: vec![
-                                AccentContent(Some("#ff0000".to_string())),
-                                AccentContent(Some("#0000ff".to_string())),
+                                AccentContent(Some("#ff0000".into())),
+                                AccentContent(Some("#0000ff".into())),
                             ],
                             ..ThemeStyleContent::default()
                         },
