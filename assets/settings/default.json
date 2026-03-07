@@ -194,6 +194,12 @@
   //
   // Default: "client"
   "window_decorations": "client",
+  // A template string for the window title.
+  // Available variables: $ZED_TAB_TITLE, $ZED_PROJECTS, $ZED_COLLAB,
+  // $ZED_FILE, $ZED_FILENAME, $ZED_STEM, $ZED_DIRNAME,
+  // $ZED_RELATIVE_FILE, $ZED_RELATIVE_DIR, $ZED_WORKTREE_ROOT
+  // Use ${VAR:default} for fallback values.
+  "window_title_template": "${ZED_PROJECTS:empty project}${ZED_SEPARATOR: — }$ZED_FILENAME${ZED_SEPARATOR: — }${ZED_COLLAB}",
   // Whether to use the system provided dialogs for Open and Save As.
   // When set to false, Zed will use the built-in keyboard-first pickers.
   "use_system_path_prompts": true,
