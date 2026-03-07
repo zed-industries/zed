@@ -1703,6 +1703,10 @@ impl LocalLspStore {
                 formatter
             };
             match formatter {
+                Formatter::None => {
+                    zlog::trace!(logger => "skipping formatter 'none'");
+                    continue;
+                }
                 Formatter::Auto => unreachable!("Auto resolved above"),
                 Formatter::Prettier => {
                     let logger = zlog::scoped!(logger => "prettier");
