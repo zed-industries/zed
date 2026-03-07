@@ -24862,7 +24862,7 @@ impl Editor {
     fn copy_highlight_json(
         &mut self,
         _: &CopyHighlightJson,
-        window: &mut Window,
+        _: &mut Window,
         cx: &mut Context<Self>,
     ) {
         #[derive(Serialize)]
@@ -24872,23 +24872,23 @@ impl Editor {
         }
 
         let snapshot = self.buffer.read(cx).snapshot(cx);
-        let range = self
-            .selected_text_range(false, window, cx)
-            .and_then(|selection| {
-                if selection.range.is_empty() {
-                    None
-                } else {
-                    Some(
-                        snapshot.offset_utf16_to_offset(MultiBufferOffsetUtf16(OffsetUtf16(
-                            selection.range.start,
-                        )))
-                            ..snapshot.offset_utf16_to_offset(MultiBufferOffsetUtf16(OffsetUtf16(
-                                selection.range.end,
-                            ))),
-                    )
-                }
-            })
-            .unwrap_or_else(|| MultiBufferOffset(0)..snapshot.len());
+        let mut selection = self.selections.newest::<Point>(&self.display_snapshot(cx));
+        let max_point = snapshot.max_point();
+
+        let range = if selection.is_empty() {
+            Point::new(0, 0)..max_point
+        } else if self.selections.line_mode() {
+            selection.start = Point::new(selection.start.row, 0);
+            if !selection.is_empty() && selection.end.column == 0 {
+                selection.end = cmp::min(max_point, selection.end);
+            } else {
+                selection.end = cmp::min(max_point, Point::new(selection.end.row + 1, 0));
+            }
+            selection.goal = SelectionGoal::None;
+            selection.range()
+        } else {
+            selection.range()
+        };
 
         let chunks = snapshot.chunks(range, true);
         let mut lines = Vec::new();
