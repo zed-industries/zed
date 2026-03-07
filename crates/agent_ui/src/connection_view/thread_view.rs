@@ -1,3 +1,4 @@
+use crate::SelectPermissionGranularity;
 use acp_thread::ContentBlock;
 use cloud_api_types::{SubmitAgentThreadFeedbackBody, SubmitAgentThreadFeedbackCommentsBody};
 use editor::actions::OpenExcerpts;
@@ -199,6 +200,56 @@ pub enum AcpThreadViewEvent {
 
 impl EventEmitter<AcpThreadViewEvent> for ThreadView {}
 
+/// Tracks the user's permission dropdown selection state for a specific tool call.
+///
+/// Default (no entry in the map) means the last dropdown choice is selected,
+/// which is typically "Only this time".
+#[derive(Clone)]
+pub(crate) enum PermissionSelection {
+    /// A specific choice from the dropdown (e.g., "Always for terminal", "Only this time").
+    /// The index corresponds to the position in the `choices` list from `PermissionOptions`.
+    Choice(usize),
+    /// "Select options…" mode where individual command patterns can be toggled.
+    /// Contains the indices of checked patterns in the `patterns` list.
+    /// All patterns start checked when this mode is first activated.
+    SelectedPatterns(Vec<usize>),
+}
+
+impl PermissionSelection {
+    /// Returns the choice index if a specific dropdown choice is selected,
+    /// or `None` if in per-command pattern mode.
+    pub(crate) fn choice_index(&self) -> Option<usize> {
+        match self {
+            Self::Choice(index) => Some(*index),
+            Self::SelectedPatterns(_) => None,
+        }
+    }
+
+    fn is_pattern_checked(&self, index: usize) -> bool {
+        match self {
+            Self::SelectedPatterns(checked) => checked.contains(&index),
+            _ => false,
+        }
+    }
+
+    fn has_any_checked_patterns(&self) -> bool {
+        match self {
+            Self::SelectedPatterns(checked) => !checked.is_empty(),
+            _ => false,
+        }
+    }
+
+    fn toggle_pattern(&mut self, index: usize) {
+        if let Self::SelectedPatterns(checked) = self {
+            if let Some(pos) = checked.iter().position(|&i| i == index) {
+                checked.swap_remove(pos);
+            } else {
+                checked.push(index);
+            }
+        }
+    }
+}
+
 pub struct ThreadView {
     pub id: acp::SessionId,
     pub parent_id: Option<acp::SessionId>,
@@ -247,6 +298,9 @@ pub struct ThreadView {
     pub is_loading_contents: bool,
     pub new_server_version_available: Option<SharedString>,
     pub resumed_without_history: bool,
+    pub(crate) permission_selections:
+        HashMap<agent_client_protocol::ToolCallId, PermissionSelection>,
+    pub resume_thread_metadata: Option<AgentSessionInfo>,
     pub _cancel_task: Option<Task<()>>,
     _save_task: Option<Task<()>>,
     _draft_resolve_task: Option<Task<()>>,
@@ -477,6 +531,7 @@ impl ThreadView {
             discarded_partial_edits: HashSet::default(),
             is_loading_contents: false,
             new_server_version_available: None,
+            permission_selections: HashMap::default(),
             _cancel_task: None,
             _save_task: None,
             _draft_resolve_task: None,
@@ -1588,6 +1643,70 @@ impl ThreadView {
         );
     }
 
+    pub fn handle_select_permission_granularity(
+        &mut self,
+        action: &SelectPermissionGranularity,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let tool_call_id = acp::ToolCallId::new(action.tool_call_id.clone());
+        self.permission_selections
+            .insert(tool_call_id, PermissionSelection::Choice(action.index));
+
+        cx.notify();
+    }
+
+    pub fn handle_toggle_command_pattern(
+        &mut self,
+        action: &crate::ToggleCommandPattern,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let tool_call_id = acp::ToolCallId::new(action.tool_call_id.clone());
+
+        match self.permission_selections.get_mut(&tool_call_id) {
+            Some(PermissionSelection::SelectedPatterns(checked)) => {
+                // Already in pattern mode — toggle the individual pattern.
+                if let Some(pos) = checked.iter().position(|&i| i == action.pattern_index) {
+                    checked.swap_remove(pos);
+                } else {
+                    checked.push(action.pattern_index);
+                }
+            }
+            _ => {
+                // First click: activate "Select options" with all patterns checked.
+                let thread = self.thread.read(cx);
+                let pattern_count = thread
+                    .entries()
+                    .iter()
+                    .find_map(|entry| {
+                        if let AgentThreadEntry::ToolCall(call) = entry {
+                            if call.id == tool_call_id {
+                                if let ToolCallStatus::WaitingForConfirmation { options, .. } =
+                                    &call.status
+                                {
+                                    if let PermissionOptions::DropdownWithPatterns {
+                                        patterns,
+                                        ..
+                                    } = options
+                                    {
+                                        return Some(patterns.len());
+                                    }
+                                }
+                            }
+                        }
+                        None
+                    })
+                    .unwrap_or(0);
+                self.permission_selections.insert(
+                    tool_call_id,
+                    PermissionSelection::SelectedPatterns((0..pattern_count).collect()),
+                );
+            }
+        }
+        cx.notify();
+    }
+
     fn authorize_pending_with_granularity(
         &mut self,
         is_allow: bool,
@@ -1596,20 +1715,81 @@ impl ThreadView {
     ) -> Option<()> {
         let (session_id, tool_call_id, options) =
             self.conversation.read(cx).pending_tool_call(&self.id, cx)?;
-        let PermissionOptions::Dropdown(choices) = options else {
-            let kind = if is_allow {
-                acp::PermissionOptionKind::AllowOnce
-            } else {
-                acp::PermissionOptionKind::RejectOnce
-            };
-            return self.authorize_pending_tool_call(kind, window, cx);
+        let options = options.clone();
+        self.authorize_with_granularity(session_id, tool_call_id, &options, is_allow, window, cx)
+    }
+
+    fn authorize_with_granularity(
+        &mut self,
+        session_id: acp::SessionId,
+        tool_call_id: acp::ToolCallId,
+        options: &PermissionOptions,
+        is_allow: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<()> {
+        let (choices, dropdown_with_patterns) = match options {
+            PermissionOptions::Dropdown(choices) => (choices.as_slice(), None),
+            PermissionOptions::DropdownWithPatterns {
+                choices,
+                patterns,
+                tool_name,
+            } => (
+                choices.as_slice(),
+                Some((patterns.as_slice(), tool_name.as_str())),
+            ),
+            _ => {
+                let kind = if is_allow {
+                    acp::PermissionOptionKind::AllowOnce
+                } else {
+                    acp::PermissionOptionKind::RejectOnce
+                };
+                return self.authorize_pending_tool_call(kind, window, cx);
+            }
         };
 
-        // Get selected index, defaulting to last option ("Only this time")
-        let selected_index = self
-            .conversation
-            .read(cx)
-            .selected_permission_granularity(&session_id, &tool_call_id)
+        let selection = self.permission_selections.get(&tool_call_id);
+
+        // When in per-command pattern mode, use the checked patterns.
+        if let Some(PermissionSelection::SelectedPatterns(checked)) = selection
+            && let Some((patterns, tool_name)) = dropdown_with_patterns
+        {
+            let checked_patterns: Vec<&str> = patterns
+                .iter()
+                .enumerate()
+                .filter(|(index, _)| checked.contains(index))
+                .map(|(_, cp)| cp.pattern.as_str())
+                .collect();
+
+            if !checked_patterns.is_empty() {
+                let (prefix, kind) = if is_allow {
+                    (
+                        "always_allow_patterns",
+                        acp::PermissionOptionKind::AllowAlways,
+                    )
+                } else {
+                    (
+                        "always_deny_patterns",
+                        acp::PermissionOptionKind::RejectAlways,
+                    )
+                };
+                let option_id =
+                    format!("{}:{}\n{}", prefix, tool_name, checked_patterns.join("\n"));
+                self.authorize_tool_call(
+                    session_id,
+                    tool_call_id,
+                    acp::PermissionOptionId::new(option_id),
+                    kind,
+                    window,
+                    cx,
+                );
+                return Some(());
+            }
+        }
+
+        // Use the selected granularity choice ("Always for terminal" or "Only this time")
+        let selected_index = selection
+            .and_then(|s| s.choice_index())
             .unwrap_or_else(|| choices.len().saturating_sub(1));
 
         let selected_choice = choices.get(selected_index).or(choices.last())?;
@@ -5716,10 +5896,23 @@ impl ThreadView {
                 focus_handle,
                 cx,
             ),
-            PermissionOptions::Dropdown(options) => self.render_permission_buttons_dropdown(
-                session_id,
+            PermissionOptions::Dropdown(choices) => self.render_permission_buttons_with_dropdown(
                 is_first,
-                options,
+                choices,
+                None,
+                entry_ix,
+                tool_call_id,
+                focus_handle,
+                cx,
+            ),
+            PermissionOptions::DropdownWithPatterns {
+                choices,
+                patterns,
+                tool_name,
+            } => self.render_permission_buttons_with_dropdown(
+                is_first,
+                choices,
+                Some((patterns, tool_name)),
                 entry_ix,
                 tool_call_id,
                 focus_handle,
@@ -5728,45 +5921,55 @@ impl ThreadView {
         }
     }
 
-    fn render_permission_buttons_dropdown(
+    fn render_permission_buttons_with_dropdown(
         &self,
-        session_id: acp::SessionId,
         is_first: bool,
         choices: &[PermissionOptionChoice],
+        patterns: Option<(&[PermissionPattern], &str)>,
         entry_ix: usize,
         tool_call_id: acp::ToolCallId,
         focus_handle: &FocusHandle,
         cx: &Context<Self>,
     ) -> Div {
-        // Get the selected granularity index, defaulting to the last option ("Only this time")
-        let selected_index = self
-            .conversation
-            .read(cx)
-            .selected_permission_granularity(&session_id, &tool_call_id)
+        let selection = self.permission_selections.get(&tool_call_id);
+
+        let selected_index = selection
+            .and_then(|s| s.choice_index())
             .unwrap_or_else(|| choices.len().saturating_sub(1));
 
-        let selected_choice = choices.get(selected_index).or(choices.last());
-
-        let dropdown_label: SharedString = selected_choice
-            .map(|choice| choice.label())
-            .unwrap_or_else(|| "Only this time".into());
-
-        let (allow_option_id, allow_option_kind, deny_option_id, deny_option_kind) =
-            if let Some(choice) = selected_choice {
-                (
-                    choice.allow.option_id.clone(),
-                    choice.allow.kind,
-                    choice.deny.option_id.clone(),
-                    choice.deny.kind,
-                )
+        let dropdown_label: SharedString =
+            if matches!(selection, Some(PermissionSelection::SelectedPatterns(_))) {
+                "Always for selected commands".into()
             } else {
-                (
-                    acp::PermissionOptionId::new("allow"),
-                    acp::PermissionOptionKind::AllowOnce,
-                    acp::PermissionOptionId::new("deny"),
-                    acp::PermissionOptionKind::RejectOnce,
-                )
+                choices
+                    .get(selected_index)
+                    .or(choices.last())
+                    .map(|choice| choice.label())
+                    .unwrap_or_else(|| "Only this time".into())
             };
+
+        let dropdown = if let Some((pattern_list, tool_name)) = patterns {
+            self.render_permission_granularity_dropdown_with_patterns(
+                choices,
+                pattern_list,
+                tool_name,
+                dropdown_label,
+                entry_ix,
+                tool_call_id.clone(),
+                is_first,
+                cx,
+            )
+        } else {
+            self.render_permission_granularity_dropdown(
+                choices,
+                dropdown_label,
+                entry_ix,
+                tool_call_id.clone(),
+                selected_index,
+                is_first,
+                cx,
+            )
+        };
 
         h_flex()
             .w_full()
@@ -5796,19 +5999,8 @@ impl ThreadView {
                                 )
                             })
                             .on_click(cx.listener({
-                                let session_id = session_id.clone();
-                                let tool_call_id = tool_call_id.clone();
-                                let option_id = allow_option_id;
-                                let option_kind = allow_option_kind;
                                 move |this, _, window, cx| {
-                                    this.authorize_tool_call(
-                                        session_id.clone(),
-                                        tool_call_id.clone(),
-                                        option_id.clone(),
-                                        option_kind,
-                                        window,
-                                        cx,
-                                    );
+                                    this.authorize_pending_with_granularity(true, window, cx);
                                 }
                             })),
                     )
@@ -5830,33 +6022,13 @@ impl ThreadView {
                                 )
                             })
                             .on_click(cx.listener({
-                                let session_id = session_id.clone();
-                                let tool_call_id = tool_call_id.clone();
-                                let option_id = deny_option_id;
-                                let option_kind = deny_option_kind;
                                 move |this, _, window, cx| {
-                                    this.authorize_tool_call(
-                                        session_id.clone(),
-                                        tool_call_id.clone(),
-                                        option_id.clone(),
-                                        option_kind,
-                                        window,
-                                        cx,
-                                    );
+                                    this.authorize_pending_with_granularity(false, window, cx);
                                 }
                             })),
                     ),
             )
-            .child(self.render_permission_granularity_dropdown(
-                choices,
-                dropdown_label,
-                entry_ix,
-                session_id,
-                tool_call_id,
-                selected_index,
-                is_first,
-                cx,
-            ))
+            .child(dropdown)
     }
 
     fn render_permission_granularity_dropdown(
@@ -5864,7 +6036,6 @@ impl ThreadView {
         choices: &[PermissionOptionChoice],
         current_label: SharedString,
         entry_ix: usize,
-        session_id: acp::SessionId,
         tool_call_id: acp::ToolCallId,
         selected_index: usize,
         is_first: bool,
@@ -5877,8 +6048,6 @@ impl ThreadView {
             .collect();
 
         let permission_dropdown_handle = self.permission_dropdown_handle.clone();
-
-        let conversation = self.conversation.clone();
 
         PopoverMenu::new(("permission-granularity", entry_ix))
             .with_handle(permission_dropdown_handle)
@@ -5900,8 +6069,6 @@ impl ThreadView {
                     }),
             )
             .menu(move |window, cx| {
-                let session_id = session_id.clone();
-                let conversation = conversation.clone();
                 let tool_call_id = tool_call_id.clone();
                 let options = menu_options.clone();
 
@@ -5909,29 +6076,213 @@ impl ThreadView {
                     for (index, display_name) in options.iter() {
                         let display_name = display_name.clone();
                         let index = *index;
-                        let session_id = session_id.clone();
-                        let conversation = conversation.clone();
-                        let tool_call_id = tool_call_id.clone();
+                        let tool_call_id_for_entry = tool_call_id.clone();
                         let is_selected = index == selected_index;
                         menu = menu.toggleable_entry(
                             display_name,
                             is_selected,
                             IconPosition::End,
                             None,
-                            move |_window, cx| {
-                                conversation.update(cx, |conversation, _cx| {
-                                    conversation.set_selected_permission_granularity(
-                                        session_id.clone(),
-                                        tool_call_id.clone(),
+                            move |window, cx| {
+                                window.dispatch_action(
+                                    SelectPermissionGranularity {
+                                        tool_call_id: tool_call_id_for_entry.0.to_string(),
                                         index,
-                                    );
-                                });
+                                    }
+                                    .boxed_clone(),
+                                    cx,
+                                );
                             },
                         );
                     }
 
                     menu
                 }))
+            })
+            .into_any_element()
+    }
+
+    fn render_permission_granularity_dropdown_with_patterns(
+        &self,
+        choices: &[PermissionOptionChoice],
+        patterns: &[PermissionPattern],
+        _tool_name: &str,
+        current_label: SharedString,
+        entry_ix: usize,
+        tool_call_id: acp::ToolCallId,
+        is_first: bool,
+        cx: &Context<Self>,
+    ) -> AnyElement {
+        let default_choice_index = choices.len().saturating_sub(1);
+        let menu_options: Vec<(usize, SharedString)> = choices
+            .iter()
+            .enumerate()
+            .map(|(i, choice)| (i, choice.label()))
+            .collect();
+
+        let pattern_options: Vec<(usize, SharedString)> = patterns
+            .iter()
+            .enumerate()
+            .map(|(i, cp)| {
+                (
+                    i,
+                    SharedString::from(format!("Always for `{}` commands", cp.display_name)),
+                )
+            })
+            .collect();
+
+        let pattern_count = patterns.len();
+        let permission_dropdown_handle = self.permission_dropdown_handle.clone();
+        let view = cx.entity().downgrade();
+
+        PopoverMenu::new(("permission-granularity", entry_ix))
+            .with_handle(permission_dropdown_handle.clone())
+            .anchor(Corner::TopRight)
+            .attach(Corner::BottomRight)
+            .trigger(
+                Button::new(("granularity-trigger", entry_ix), current_label)
+                    .icon(IconName::ChevronDown)
+                    .icon_size(IconSize::XSmall)
+                    .icon_color(Color::Muted)
+                    .label_size(LabelSize::Small)
+                    .when(is_first, |this| {
+                        this.key_binding(
+                            KeyBinding::for_action_in(
+                                &crate::OpenPermissionDropdown as &dyn Action,
+                                &self.focus_handle(cx),
+                                cx,
+                            )
+                            .map(|kb| kb.size(rems_from_px(10.))),
+                        )
+                    }),
+            )
+            .menu(move |window, cx| {
+                let tool_call_id = tool_call_id.clone();
+                let options = menu_options.clone();
+                let patterns = pattern_options.clone();
+                let view = view.clone();
+                let dropdown_handle = permission_dropdown_handle.clone();
+
+                Some(ContextMenu::build_persistent(
+                    window,
+                    cx,
+                    move |menu, _window, cx| {
+                        let mut menu = menu;
+
+                        // Read fresh selection state from the view on each rebuild.
+                        let selection: Option<PermissionSelection> = view.upgrade().and_then(|v| {
+                            let view = v.read(cx);
+                            view.permission_selections.get(&tool_call_id).cloned()
+                        });
+
+                        let is_pattern_mode =
+                            matches!(selection, Some(PermissionSelection::SelectedPatterns(_)));
+
+                        // Granularity choices: "Always for terminal", "Only this time"
+                        for (index, display_name) in options.iter() {
+                            let display_name = display_name.clone();
+                            let index = *index;
+                            let tool_call_id_for_entry = tool_call_id.clone();
+                            let is_selected = !is_pattern_mode
+                                && selection
+                                    .as_ref()
+                                    .and_then(|s| s.choice_index())
+                                    .map_or(index == default_choice_index, |ci| ci == index);
+
+                            let view = view.clone();
+                            menu = menu.toggleable_entry(
+                                display_name,
+                                is_selected,
+                                IconPosition::End,
+                                None,
+                                move |_window, cx| {
+                                    view.update(cx, |this, cx| {
+                                        this.permission_selections.insert(
+                                            tool_call_id_for_entry.clone(),
+                                            PermissionSelection::Choice(index),
+                                        );
+                                        cx.notify();
+                                    })
+                                    .log_err();
+                                },
+                            );
+                        }
+
+                        menu = menu.separator().header("Select Options…");
+
+                        for (pattern_index, label) in patterns.iter() {
+                            let label = label.clone();
+                            let pattern_index = *pattern_index;
+                            let tool_call_id_for_pattern = tool_call_id.clone();
+                            let is_checked = selection
+                                .as_ref()
+                                .is_some_and(|s| s.is_pattern_checked(pattern_index));
+
+                            let view = view.clone();
+                            menu = menu.toggleable_entry(
+                                label,
+                                is_checked,
+                                IconPosition::End,
+                                None,
+                                move |_window, cx| {
+                                    view.update(cx, |this, cx| {
+                                        let selection = this
+                                            .permission_selections
+                                            .get_mut(&tool_call_id_for_pattern);
+
+                                        match selection {
+                                            Some(PermissionSelection::SelectedPatterns(_)) => {
+                                                // Already in pattern mode — toggle.
+                                                this.permission_selections
+                                                    .get_mut(&tool_call_id_for_pattern)
+                                                    .expect("just matched above")
+                                                    .toggle_pattern(pattern_index);
+                                            }
+                                            _ => {
+                                                // First click: activate pattern mode
+                                                // with all patterns checked.
+                                                this.permission_selections.insert(
+                                                    tool_call_id_for_pattern.clone(),
+                                                    PermissionSelection::SelectedPatterns(
+                                                        (0..pattern_count).collect(),
+                                                    ),
+                                                );
+                                            }
+                                        }
+                                        cx.notify();
+                                    })
+                                    .log_err();
+                                },
+                            );
+                        }
+
+                        let any_patterns_checked = selection
+                            .as_ref()
+                            .is_some_and(|s| s.has_any_checked_patterns());
+                        let dropdown_handle = dropdown_handle.clone();
+                        menu = menu.custom_row(move |_window, _cx| {
+                            div()
+                                .py_1()
+                                .w_full()
+                                .child(
+                                    Button::new("apply-patterns", "Apply")
+                                        .full_width()
+                                        .style(ButtonStyle::Outlined)
+                                        .label_size(LabelSize::Small)
+                                        .disabled(!any_patterns_checked)
+                                        .on_click({
+                                            let dropdown_handle = dropdown_handle.clone();
+                                            move |_event, _window, cx| {
+                                                dropdown_handle.hide(cx);
+                                            }
+                                        }),
+                                )
+                                .into_any_element()
+                        });
+
+                        menu
+                    },
+                ))
             })
             .into_any_element()
     }
@@ -7606,7 +7957,10 @@ impl ThreadView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.permission_dropdown_handle.clone().toggle(window, cx);
+        let menu_handle = self.permission_dropdown_handle.clone();
+        window.defer(cx, move |window, cx| {
+            menu_handle.toggle(window, cx);
+        });
     }
 
     fn open_add_context_menu(
@@ -7745,6 +8099,8 @@ impl Render for ThreadView {
             .on_action(cx.listener(Self::allow_once))
             .on_action(cx.listener(Self::reject_once))
             .on_action(cx.listener(Self::handle_authorize_tool_call))
+            .on_action(cx.listener(Self::handle_select_permission_granularity))
+            .on_action(cx.listener(Self::handle_toggle_command_pattern))
             .on_action(cx.listener(Self::open_permission_dropdown))
             .on_action(cx.listener(Self::open_add_context_menu))
             .on_action(cx.listener(|this, _: &ToggleFastMode, _window, cx| {
