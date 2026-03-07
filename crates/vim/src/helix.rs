@@ -36,6 +36,8 @@ actions!(
         HelixInsert,
         /// Appends at the end of the selection.
         HelixAppend,
+        /// Inserts at the end of the current Helix cursor line.
+        HelixInsertEndOfLine,
         /// Goes to the location of the last modification.
         HelixGotoLastModification,
         /// Select entire line or multiple lines, extending downwards.
@@ -64,6 +66,7 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     Vim::action(editor, cx, Vim::helix_select_lines);
     Vim::action(editor, cx, Vim::helix_insert);
     Vim::action(editor, cx, Vim::helix_append);
+    Vim::action(editor, cx, Vim::helix_insert_end_of_line);
     Vim::action(editor, cx, Vim::helix_yank);
     Vim::action(editor, cx, Vim::helix_goto_last_modification);
     Vim::action(editor, cx, Vim::helix_paste);
@@ -600,6 +603,28 @@ impl Vim {
         });
     }
 
+    fn helix_insert_end_of_line(
+        &mut self,
+        _: &HelixInsertEndOfLine,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.start_recording(cx);
+        self.switch_mode(Mode::Insert, false, window, cx);
+        self.update_editor(cx, |_, editor, cx| {
+            editor.change_selections(Default::default(), window, cx, |s| {
+                s.move_with(&mut |map, selection| {
+                    let cursor = if !selection.is_empty() && !selection.reversed {
+                        movement::left(map, selection.head())
+                    } else {
+                        selection.head()
+                    };
+                    selection.collapse_to(motion::next_line_end(map, cursor, 1), SelectionGoal::None);
+                });
+            });
+        });
+    }
+
     pub fn helix_replace(&mut self, text: &str, window: &mut Window, cx: &mut Context<Self>) {
         self.update_editor(cx, |_, editor, cx| {
             editor.transact(window, cx, |editor, window, cx| {
@@ -706,13 +731,16 @@ impl Vim {
                 // Check if cursor is on empty line by checking first character
                 let line_start_offset = buffer_snapshot.point_to_offset(Point::new(start_row, 0));
                 let first_char = buffer_snapshot.chars_at(line_start_offset).next();
-                let extra_line = if first_char == Some('\n') && selection.is_empty() {
-                    1
-                } else {
-                    0
-                };
 
-                let end_row = current_end_row + count as u32 + extra_line;
+                // When we select an empty line, we should advance the row.
+                let is_empty_line_cursor = selection.is_empty() && first_char == Some('\n');
+
+                let should_advance_row = is_empty_line_cursor;
+
+                let mut end_row = current_end_row + count as u32;
+                if should_advance_row {
+                    end_row += 1;
+                }
 
                 selection.start = Point::new(start_row, 0);
                 selection.end = if end_row > max_point.row {
@@ -1846,6 +1874,66 @@ mod test {
             line «four
             line fiveˇ»"},
             Mode::HelixSelect,
+        );
+    }
+
+    #[gpui::test]
+    async fn test_helix_select_lines_does_not_over_advance_when_next_line_is_empty(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.enable_helix();
+        cx.set_state("line one\nline twoˇ\n\nline four\nline five", Mode::HelixNormal);
+        cx.simulate_keystrokes("x");
+        cx.assert_state(
+            indoc! {"
+            line one
+            «line two
+            ˇ»
+            line four
+            line five"},
+            Mode::HelixNormal,
+        );
+        cx.simulate_keystrokes("x");
+        cx.assert_state(
+            indoc! {"
+            line one
+            «line two
+
+            ˇ»line four
+            line five"},
+            Mode::HelixNormal,
+        );
+    }
+
+    #[gpui::test]
+    async fn test_helix_shift_a_after_x_stays_on_selected_line(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.enable_helix();
+        cx.set_state(
+            indoc! {"
+            line one
+            line tˇwo
+            line three"},
+            Mode::HelixNormal,
+        );
+
+        cx.simulate_keystrokes("x");
+        cx.assert_state(
+            indoc! {"
+            line one
+            «line two
+            ˇ»line three"},
+            Mode::HelixNormal,
+        );
+
+        cx.simulate_keystrokes("shift-a");
+        cx.assert_state(
+            indoc! {"
+            line one
+            line twoˇ
+            line three"},
+            Mode::Insert,
         );
     }
 }

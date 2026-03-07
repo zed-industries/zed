@@ -1369,6 +1369,10 @@ impl Vim {
         !(self.mode == Mode::Insert && self.last_mode == Mode::VisualBlock)
     }
 
+    pub fn should_offset_cursor_on_selection(&self) -> bool {
+        self.mode.is_visual() || self.mode == Mode::HelixNormal
+    }
+
     pub fn clip_at_line_ends(&self) -> bool {
         match self.mode {
             Mode::Insert
@@ -2059,7 +2063,7 @@ impl Vim {
             collapse_matches: !HelixModeSetting::get_global(cx).0,
             input_enabled: self.editor_input_enabled(),
             autoindent: self.should_autoindent(),
-            cursor_offset_on_selection: self.mode.is_visual(),
+            cursor_offset_on_selection: self.should_offset_cursor_on_selection(),
             line_mode: matches!(self.mode, Mode::VisualLine),
             hide_edit_predictions: !matches!(self.mode, Mode::Insert | Mode::Replace),
         }
