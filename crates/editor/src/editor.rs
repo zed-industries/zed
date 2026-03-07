@@ -25117,6 +25117,13 @@ impl Editor {
                 if let Some(existing_ranges) = existing_pending {
                     let edits = existing_ranges.iter().map(|range| (range.clone(), ""));
                     this.edit(edits, cx);
+
+                    let current_selections = this
+                        .selections
+                        .all::<MultiBufferOffset>(&this.display_snapshot(cx));
+                    this.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+                        s.select_ranges(current_selections.iter().map(|sel| sel.start..sel.end));
+                    });
                 }
             });
 
