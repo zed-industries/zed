@@ -15,7 +15,7 @@ pub const SIDEBAR_RESIZE_HANDLE_SIZE: Pixels = px(6.0);
 
 use crate::{
     CloseIntent, CloseWindow, DockPosition, Event as WorkspaceEvent, Item, ModalView, Panel, Toast,
-    Workspace, WorkspaceId, client_side_decorations, notifications::NotificationId,
+    Workspace, WorkspaceId, client_side_decorations, notifications::NotificationId, open_project,
     persistence::model::MultiWorkspaceId,
 };
 
@@ -499,6 +499,24 @@ impl MultiWorkspace {
         cx.notify();
     }
 
+    pub fn move_workspace(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.workspaces().len() < 1 {
+            return;
+        }
+        // let workspace = self.workspace().clone();
+        // let app_state = workspace.read(cx).app_state().clone();
+        // let index = self.active_workspace_index();
+        // self.remove_workspace(index, window, cx);
+        // open_workspace(workspace, app_state, cx).log_err();
+    }
+
+    pub fn duplicate_workspace(&mut self, cx: &mut Context<Self>) {
+        let workspace = self.workspace();
+        let app_state = workspace.read(cx).app_state().clone();
+        let project = workspace.read(cx).project().clone();
+        open_project(project, app_state, cx).detach_and_log_err(cx);
+    }
+
     pub fn merge_windows(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Result<()> {
         let current_window_id = window.window_handle().window_id();
         let windows: Vec<_> = cx
@@ -581,9 +599,21 @@ impl Render for MultiWorkspace {
                         this.activate_next_workspace(window, cx);
                     }),
                 )
-                .on_action(cx.listener(|this: &mut Self, _: &MergeAllWindows, window, cx| {
-                    this.merge_windows(window, cx).log_err();
-                }))
+                .on_action(cx.listener(
+                    |this: &mut Self, _: &MoveWorkspaceToNewWindow, window, cx| {
+                        this.move_workspace(window, cx);
+                    },
+                ))
+                .on_action(cx.listener(
+                    |this: &mut Self, _: &DuplicateWorkspaceToNewWindow, _, cx| {
+                        this.duplicate_workspace(cx);
+                    },
+                ))
+                .on_action(
+                    cx.listener(|this: &mut Self, _: &MergeAllWindows, window, cx| {
+                        this.merge_windows(window, cx).log_err();
+                    }),
+                )
                 .on_action(cx.listener(
                     |this: &mut Self, _: &PreviousWorkspaceInWindow, window, cx| {
                         this.activate_previous_workspace(window, cx);
