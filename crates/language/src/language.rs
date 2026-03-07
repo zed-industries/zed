@@ -2138,6 +2138,40 @@ impl Language {
         result
     }
 
+    pub async fn highlight_text_with_injections(
+        self: &Arc<Self>,
+        text: &Rope,
+        range: Range<usize>,
+        language_registry: &Arc<LanguageRegistry>,
+    ) -> Vec<(Range<usize>, HighlightId)> {
+        // Pre-load injection languages so now_or_never() succeeds in the sync path.
+        // Walk static injection patterns up to MAX_INJECTION_DEPTH levels deep.
+        let mut languages_to_check = vec![self.clone()];
+        for _ in 0..5 {
+            let mut next_languages = Vec::new();
+            for lang in &languages_to_check {
+                if let Some(grammar) = &lang.grammar {
+                    if let Some(config) = &grammar.injection_config {
+                        for pattern in &config.patterns {
+                            if let Some(name) = &pattern.language {
+                                if let Ok(loaded) =
+                                    language_registry.language_for_name_or_extension(name).await
+                                {
+                                    next_languages.push(loaded);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            if next_languages.is_empty() {
+                break;
+            }
+            languages_to_check = next_languages;
+        }
+        SyntaxSnapshot::highlight_text_with_injections(self, text, range, language_registry)
+    }
+
     pub fn path_suffixes(&self) -> &[String] {
         &self.config.matcher.path_suffixes
     }
