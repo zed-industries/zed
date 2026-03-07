@@ -8971,7 +8971,8 @@ impl LineWithInvisibles {
                                             && (non_whitespace_added || !is_soft_wrapped)
                                         {
                                             Some(Invisible::Whitespace {
-                                                line_offset: line.len() + index,
+                                                line_start_offset: line.len() + index,
+                                                line_end_offset: line.len() + index + c.len_utf8(),
                                             })
                                         } else {
                                             None
@@ -9253,9 +9254,14 @@ impl LineWithInvisibles {
                     line_start_offset,
                     line_end_offset,
                 } => (*line_start_offset, *line_end_offset, &layout.tab_invisible),
-                Invisible::Whitespace { line_offset } => {
-                    (*line_offset, line_offset + 1, &layout.space_invisible)
-                }
+                Invisible::Whitespace {
+                    line_start_offset,
+                    line_end_offset,
+                } => (
+                    *line_start_offset,
+                    *line_end_offset,
+                    &layout.space_invisible,
+                ),
             };
 
             let x_offset: ScrollPixelOffset = self.x_for_index(token_offset).into();
@@ -9458,7 +9464,8 @@ enum Invisible {
         line_end_offset: usize,
     },
     Whitespace {
-        line_offset: usize,
+        line_start_offset: usize,
+        line_end_offset: usize,
     },
 }
 
@@ -12992,7 +12999,8 @@ mod tests {
                 line_end_offset: TAB_SIZE as usize,
             },
             Invisible::Whitespace {
-                line_offset: TAB_SIZE as usize,
+                line_start_offset: TAB_SIZE as usize,
+                line_end_offset: TAB_SIZE as usize + 1,
             },
             Invisible::Tab {
                 line_start_offset: TAB_SIZE as usize + 1,
@@ -13003,10 +13011,12 @@ mod tests {
                 line_end_offset: TAB_SIZE as usize * 3,
             },
             Invisible::Whitespace {
-                line_offset: TAB_SIZE as usize * 3 + 1,
+                line_start_offset: TAB_SIZE as usize * 3 + 1,
+                line_end_offset: TAB_SIZE as usize * 3 + 2,
             },
             Invisible::Whitespace {
-                line_offset: TAB_SIZE as usize * 3 + 3,
+                line_start_offset: TAB_SIZE as usize * 3 + 3,
+                line_end_offset: TAB_SIZE as usize * 3 + 4,
             },
         ];
         assert_eq!(
@@ -13034,6 +13044,35 @@ mod tests {
 
             assert_eq!(expected_invisibles, actual_invisibles);
         }
+    }
+
+    #[gpui::test]
+    fn test_unicode_whitespace_uses_utf8_byte_offsets(cx: &mut TestAppContext) {
+        init_test(cx, |s| {
+            s.defaults.show_whitespaces = Some(ShowWhitespaceSetting::All);
+        });
+
+        let actual_invisibles = collect_invisibles_from_new_editor(
+            cx,
+            EditorMode::full(),
+            "a\u{00A0} ",
+            px(500.0),
+            false,
+        );
+
+        assert_eq!(
+            actual_invisibles,
+            vec![
+                Invisible::Whitespace {
+                    line_start_offset: 1,
+                    line_end_offset: 3,
+                },
+                Invisible::Whitespace {
+                    line_start_offset: 3,
+                    line_end_offset: 4,
+                },
+            ]
+        );
     }
 
     #[gpui::test]
@@ -13076,19 +13115,24 @@ mod tests {
                 line_end_offset: tab_size as usize,
             },
             Invisible::Whitespace {
-                line_offset: tab_size as usize + 3,
+                line_start_offset: tab_size as usize + 3,
+                line_end_offset: tab_size as usize + 4,
             },
             Invisible::Whitespace {
-                line_offset: tab_size as usize + 4,
+                line_start_offset: tab_size as usize + 4,
+                line_end_offset: tab_size as usize + 5,
             },
             Invisible::Whitespace {
-                line_offset: tab_size as usize + 5,
+                line_start_offset: tab_size as usize + 5,
+                line_end_offset: tab_size as usize + 6,
             },
             Invisible::Whitespace {
-                line_offset: tab_size as usize + 6,
+                line_start_offset: tab_size as usize + 6,
+                line_end_offset: tab_size as usize + 7,
             },
             Invisible::Whitespace {
-                line_offset: tab_size as usize + 7,
+                line_start_offset: tab_size as usize + 7,
+                line_end_offset: tab_size as usize + 8,
             },
         ];
         let expected_invisibles = std::iter::once(repeated_invisibles)
