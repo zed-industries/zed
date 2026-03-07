@@ -8851,6 +8851,47 @@ pub fn open_workspace_by_id(
     })
 }
 
+pub fn open_project(
+    project: Entity<Project>,
+    app_state: Arc<AppState>,
+    cx: &mut Context<MultiWorkspace>,
+) -> Task<anyhow::Result<WindowHandle<MultiWorkspace>>> {
+    cx.spawn(async move |_, cx| {
+        let workspace_id = DB.next_id().await.unwrap_or_else(|_| Default::default());
+        let window_bounds_override = window_bounds_env_override();
+
+        let (window_bounds, display) = if let Some(bounds) = window_bounds_override {
+            (Some(WindowBounds::Windowed(bounds)), None)
+        } else if let Some((display, bounds)) = persistence::read_default_window_bounds() {
+            (Some(bounds), Some(display))
+        } else {
+            (None, None)
+        };
+
+        let options = cx.update(|cx| {
+            let mut options = (app_state.build_window_options)(display, cx);
+            options.window_bounds = window_bounds;
+            options
+        });
+
+        let window = cx.open_window(options, {
+            let app_state = app_state.clone();
+            let project = project.clone();
+            move |window, cx| {
+                let workspace =
+                    cx.new(|cx| Workspace::new(Some(workspace_id), project, app_state, window, cx));
+                cx.new(|cx| MultiWorkspace::new(workspace, window, cx))
+            }
+        })?;
+
+        window.update(cx, |_, window, _| window.activate_window())?;
+
+        notify_if_database_failed(window, cx);
+
+        Ok(window)
+    })
+}
+
 #[allow(clippy::type_complexity)]
 pub fn open_paths(
     abs_paths: &[PathBuf],
