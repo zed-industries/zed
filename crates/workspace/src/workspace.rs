@@ -10,6 +10,7 @@ pub mod pane_group;
 pub mod path_list {
     pub use util::path_list::{PathList, SerializedPathList};
 }
+pub mod collapsible;
 mod persistence;
 pub mod searchable;
 mod security_modal;

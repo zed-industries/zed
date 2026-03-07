@@ -14,7 +14,7 @@ use any_vec::AnyVec;
 use collections::HashMap;
 use editor::{
     Editor, EditorSettings, MultiBufferOffset, SplittableEditor, ToggleSplitDiff,
-    actions::{Backtab, FoldAll, Tab, ToggleFoldAll, UnfoldAll},
+    actions::{Backtab, Tab, ToggleFoldAll},
 };
 use futures::channel::oneshot;
 use gpui::{
@@ -40,6 +40,7 @@ use ui::{
 use util::{ResultExt, paths::PathMatcher};
 use workspace::{
     ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace,
+    collapsible::CollapsibleItemHandle,
     item::{ItemBufferKind, ItemHandle},
     searchable::{
         Direction, FilteredSearchRange, SearchEvent, SearchToken, SearchableItemHandle,
@@ -64,12 +65,37 @@ pub fn init(cx: &mut App) {
         .detach();
 }
 
+struct ActiveItem {
+    searchable: Box<dyn SearchableItemHandle>,
+    collapsible: Option<Box<dyn CollapsibleItemHandle>>,
+}
+
+impl ActiveItem {
+    fn new(searchable: Box<dyn SearchableItemHandle>) -> Self {
+        Self {
+            searchable,
+            collapsible: None,
+        }
+    }
+
+    fn with_collapsible(mut self, collapsible: Box<dyn CollapsibleItemHandle>) -> Self {
+        self.collapsible = Some(collapsible);
+        self
+    }
+
+    fn has_any_collapsed(&self, cx: &App) -> bool {
+        self.collapsible
+            .as_ref()
+            .is_some_and(|collapsible| collapsible.has_any_collapsed(cx))
+    }
+}
+
 pub struct BufferSearchBar {
     query_editor: Entity<Editor>,
     query_editor_focused: bool,
     replacement_editor: Entity<Editor>,
     replacement_editor_focused: bool,
-    active_searchable_item: Option<Box<dyn SearchableItemHandle>>,
+    active_item: Option<ActiveItem>,
     active_match_index: Option<usize>,
     #[cfg(target_os = "macos")]
     active_searchable_item_subscriptions: Option<[Subscription; 2]>,
@@ -220,12 +246,10 @@ impl Render for BufferSearchBar {
             let query_editor_focus = self.query_editor.focus_handle(cx);
 
             let is_collapsed = self
-                .active_searchable_item
+                .active_item
                 .as_ref()
-                .and_then(|item| item.act_as_type(TypeId::of::<Editor>(), cx))
-                .and_then(|item| item.downcast::<Editor>().ok())
-                .map(|editor: Entity<Editor>| editor.read(cx).has_any_buffer_folded(cx))
-                .unwrap_or_default();
+                .is_some_and(|item| item.has_any_collapsed(cx));
+
             let (icon, tooltip_label) = if is_collapsed {
                 (IconName::ChevronUpDown, "Expand All Files")
             } else {
@@ -244,7 +268,7 @@ impl Render for BufferSearchBar {
                         )
                     })
                     .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
-                        this.toggle_fold_all(&ToggleFoldAll, window, cx);
+                        this.toggle_fold_all(&editor::actions::ToggleFoldAll, window, cx);
                     }))
             };
 
@@ -294,15 +318,15 @@ impl Render for BufferSearchBar {
 
         let mut color_override = None;
         let match_text = self
-            .active_searchable_item
+            .active_item
             .as_ref()
-            .and_then(|searchable_item| {
+            .and_then(|ActiveItem { searchable, .. }| {
                 if self.query(cx).is_empty() {
                     return None;
                 }
                 let matches_count = self
                     .searchable_items_with_matches
-                    .get(&searchable_item.downgrade())
+                    .get(&searchable.downgrade())
                     .map(|(matches, _)| matches.len())
                     .unwrap_or(0);
                 if let Some(match_ix) = self.active_match_index {
@@ -572,18 +596,18 @@ impl Render for BufferSearchBar {
             .on_action(cx.listener(Self::select_next_match))
             .on_action(cx.listener(Self::select_prev_match))
             .on_action(cx.listener(|this, _: &ToggleOutline, window, cx| {
-                if let Some(active_searchable_item) = &mut this.active_searchable_item {
-                    active_searchable_item.relay_action(Box::new(ToggleOutline), window, cx);
+                if let Some(ActiveItem { searchable, .. }) = &this.active_item {
+                    searchable.relay_action(Box::new(ToggleOutline), window, cx);
                 }
             }))
             .on_action(cx.listener(|this, _: &CopyPath, window, cx| {
-                if let Some(active_searchable_item) = &mut this.active_searchable_item {
-                    active_searchable_item.relay_action(Box::new(CopyPath), window, cx);
+                if let Some(ActiveItem { searchable, .. }) = &this.active_item {
+                    searchable.relay_action(Box::new(CopyPath), window, cx);
                 }
             }))
             .on_action(cx.listener(|this, _: &CopyRelativePath, window, cx| {
-                if let Some(active_searchable_item) = &mut this.active_searchable_item {
-                    active_searchable_item.relay_action(Box::new(CopyRelativePath), window, cx);
+                if let Some(ActiveItem { searchable, .. }) = &this.active_item {
+                    searchable.relay_action(Box::new(CopyRelativePath), window, cx);
                 }
             }))
             .when(replacement, |this| {
@@ -631,7 +655,7 @@ impl ToolbarItemView for BufferSearchBar {
     ) -> ToolbarItemLocation {
         cx.notify();
         self.active_searchable_item_subscriptions.take();
-        self.active_searchable_item.take();
+        self.active_item.take();
         self.splittable_editor = None;
         self._splittable_editor_subscription = None;
 
@@ -708,7 +732,16 @@ impl ToolbarItemView for BufferSearchBar {
             }
 
             let is_project_search = searchable_item_handle.supported_options(cx).find_in_results;
-            self.active_searchable_item = Some(searchable_item_handle);
+            let mut active_item = ActiveItem::new(searchable_item_handle);
+
+            if let Some(collapsible_item_handle) =
+                item.and_then(|item| item.to_collapsible_item_handle(cx))
+            {
+                active_item = active_item.with_collapsible(collapsible_item_handle);
+            }
+
+            self.active_item = Some(active_item);
+
             drop(self.update_matches(true, false, window, cx));
             if self.needs_expand_collapse_option(cx) {
                 return ToolbarItemLocation::PrimaryLeft;
@@ -720,11 +753,30 @@ impl ToolbarItemView for BufferSearchBar {
                 }
             }
         }
+
         ToolbarItemLocation::Hidden
     }
 }
 
 impl BufferSearchBar {
+    fn searchable(&self) -> Option<&dyn SearchableItemHandle> {
+        self.active_item
+            .as_ref()
+            .map(|item| item.searchable.as_ref())
+    }
+
+    fn collapsible(&self) -> Option<&dyn CollapsibleItemHandle> {
+        self.active_item
+            .as_ref()
+            .and_then(|item| item.collapsible.as_deref())
+    }
+
+    fn collapsible_mut(&mut self) -> Option<&mut dyn CollapsibleItemHandle> {
+        self.active_item
+            .as_mut()
+            .and_then(|item| item.collapsible.as_deref_mut())
+    }
+
     pub fn query_editor_focused(&self) -> bool {
         self.query_editor_focused
     }
@@ -878,7 +930,7 @@ impl BufferSearchBar {
             query_editor_focused: false,
             replacement_editor,
             replacement_editor_focused: false,
-            active_searchable_item: None,
+            active_item: None,
             active_searchable_item_subscriptions: None,
             #[cfg(target_os = "macos")]
             pending_external_query: None,
@@ -925,12 +977,12 @@ impl BufferSearchBar {
 
         let needs_collapse_expand = self.needs_expand_collapse_option(cx);
 
-        if let Some(active_editor) = self.active_searchable_item.as_mut() {
+        if let Some(ActiveItem { searchable, .. }) = self.active_item.as_mut() {
             self.selection_search_enabled = None;
             self.replace_enabled = false;
-            active_editor.search_bar_visibility_changed(false, window, cx);
-            active_editor.toggle_filtered_search_ranges(None, window, cx);
-            let handle = active_editor.item_focus_handle(cx);
+            searchable.search_bar_visibility_changed(false, window, cx);
+            searchable.toggle_filtered_search_ranges(None, window, cx);
+            let handle = searchable.item_focus_handle(cx);
             self.focus(&handle, window, cx);
         }
 
@@ -956,8 +1008,8 @@ impl BufferSearchBar {
             None
         };
         if self.show(window, cx) {
-            if let Some(active_item) = self.active_searchable_item.as_mut() {
-                active_item.toggle_filtered_search_ranges(filtered_search_range, window, cx);
+            if let Some(ActiveItem { searchable, .. }) = self.active_item.as_mut() {
+                searchable.toggle_filtered_search_ranges(filtered_search_range, window, cx);
             }
             self.search_suggested(window, cx);
             self.smartcase(window, cx);
@@ -1000,7 +1052,7 @@ impl BufferSearchBar {
     }
 
     pub fn show(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
-        let Some(handle) = self.active_searchable_item.as_ref() else {
+        let Some(ActiveItem { searchable, .. }) = self.active_item.as_ref() else {
             return false;
         };
 
@@ -1021,7 +1073,7 @@ impl BufferSearchBar {
 
         self.dismissed = false;
         self.adjust_query_regex_language(cx);
-        handle.search_bar_visibility_changed(true, window, cx);
+        searchable.search_bar_visibility_changed(true, window, cx);
         cx.notify();
         cx.emit(Event::UpdateLocation);
         cx.emit(ToolbarItemEvent::ChangeLocation(
@@ -1035,17 +1087,20 @@ impl BufferSearchBar {
     }
 
     fn supported_options(&self, cx: &mut Context<Self>) -> workspace::searchable::SearchOptions {
-        self.active_searchable_item
-            .as_ref()
-            .map(|item| item.supported_options(cx))
+        self.searchable()
+            .map(|searchable| searchable.supported_options(cx))
             .unwrap_or_default()
     }
 
     // We provide an expand/collapse button if we are in a multibuffer
     // and not doing a project search.
     fn needs_expand_collapse_option(&self, cx: &App) -> bool {
-        if let Some(item) = &self.active_searchable_item {
-            let buffer_kind = item.buffer_kind(cx);
+        if self.collapsible().is_none() {
+            return false;
+        }
+
+        if let Some(searchable) = self.searchable() {
+            let buffer_kind = searchable.buffer_kind(cx);
 
             if buffer_kind == ItemBufferKind::Singleton {
                 return false;
@@ -1053,29 +1108,28 @@ impl BufferSearchBar {
 
             let workspace::searchable::SearchOptions {
                 find_in_results, ..
-            } = item.supported_options(cx);
+            } = searchable.supported_options(cx);
             !find_in_results
         } else {
             false
         }
     }
 
-    fn toggle_fold_all(&mut self, _: &ToggleFoldAll, window: &mut Window, cx: &mut Context<Self>) {
-        self.toggle_fold_all_in_item(window, cx);
+    fn toggle_fold_all(
+        &mut self,
+        _: &editor::actions::ToggleFoldAll,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.toggle_collapse_all_in_item(window, cx);
     }
 
-    fn toggle_fold_all_in_item(&self, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(item) = &self.active_searchable_item {
-            if let Some(item) = item.act_as_type(TypeId::of::<Editor>(), cx) {
-                let editor = item.downcast::<Editor>().expect("Is an editor");
-                editor.update(cx, |editor, cx| {
-                    let is_collapsed = editor.has_any_buffer_folded(cx);
-                    if is_collapsed {
-                        editor.unfold_all(&UnfoldAll, window, cx);
-                    } else {
-                        editor.fold_all(&FoldAll, window, cx);
-                    }
-                })
+    fn toggle_collapse_all_in_item(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(collapsible) = self.collapsible_mut() {
+            if collapsible.has_any_collapsed(cx) {
+                collapsible.expand_all(window, cx);
+            } else {
+                collapsible.collapse_all(window, cx);
             }
         }
     }
@@ -1110,12 +1164,12 @@ impl BufferSearchBar {
 
     pub fn activate_current_match(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(match_ix) = self.active_match_index
-            && let Some(active_searchable_item) = self.active_searchable_item.as_ref()
+            && let Some(searchable) = self.searchable()
             && let Some((matches, token)) = self
                 .searchable_items_with_matches
-                .get(&active_searchable_item.downgrade())
+                .get(&searchable.downgrade())
         {
-            active_searchable_item.activate_match(match_ix, matches, *token, window, cx)
+            searchable.activate_match(match_ix, matches, *token, window, cx)
         }
     }
 
@@ -1138,9 +1192,8 @@ impl BufferSearchBar {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<String> {
-        self.active_searchable_item
-            .as_ref()
-            .map(|searchable_item| searchable_item.query_suggestion(window, cx))
+        self.searchable()
+            .map(|searchable| searchable.query_suggestion(window, cx))
             .filter(|suggestion| !suggestion.is_empty())
     }
 
@@ -1205,8 +1258,8 @@ impl BufferSearchBar {
     }
 
     pub fn focus_editor(&mut self, _: &FocusEditor, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(active_editor) = self.active_searchable_item.as_ref() {
-            let handle = active_editor.item_focus_handle(cx);
+        if let Some(searchable) = self.searchable() {
+            let handle = searchable.item_focus_handle(cx);
             window.focus(&handle, cx);
         }
     }
@@ -1246,9 +1299,13 @@ impl BufferSearchBar {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<oneshot::Receiver<()>> {
-        let active_item = self.active_searchable_item.as_mut()?;
+        let active_item = self.active_item.as_mut()?;
         self.selection_search_enabled = search_within_selection;
-        active_item.toggle_filtered_search_ranges(self.selection_search_enabled, window, cx);
+        active_item.searchable.toggle_filtered_search_ranges(
+            self.selection_search_enabled,
+            window,
+            cx,
+        );
         cx.notify();
         Some(self.update_matches(false, false, window, cx))
     }
@@ -1296,12 +1353,12 @@ impl BufferSearchBar {
     ) {
         if !self.dismissed
             && self.active_match_index.is_some()
-            && let Some(searchable_item) = self.active_searchable_item.as_ref()
+            && let Some(searchable) = self.searchable()
             && let Some((matches, token)) = self
                 .searchable_items_with_matches
-                .get(&searchable_item.downgrade())
+                .get(&searchable.downgrade())
         {
-            searchable_item.select_matches(matches, *token, window, cx);
+            searchable.select_matches(matches, *token, window, cx);
             self.focus_editor(&FocusEditor, window, cx);
         }
     }
@@ -1330,10 +1387,10 @@ impl BufferSearchBar {
         }
 
         if let Some(index) = self.active_match_index
-            && let Some(searchable_item) = self.active_searchable_item.as_ref()
+            && let Some(searchable) = self.searchable()
             && let Some((matches, token)) = self
                 .searchable_items_with_matches
-                .get(&searchable_item.downgrade())
+                .get(&searchable.downgrade())
                 .filter(|(matches, _)| !matches.is_empty())
         {
             // If 'wrapscan' is disabled, searches do not wrap around the end of the file.
@@ -1344,40 +1401,40 @@ impl BufferSearchBar {
                 crate::show_no_more_matches(window, cx);
                 return;
             }
-            let new_match_index = searchable_item
+            let new_match_index = searchable
                 .match_index_for_direction(matches, index, direction, count, *token, window, cx);
 
-            searchable_item.update_matches(matches, Some(new_match_index), *token, window, cx);
-            searchable_item.activate_match(new_match_index, matches, *token, window, cx);
+            searchable.update_matches(matches, Some(new_match_index), *token, window, cx);
+            searchable.activate_match(new_match_index, matches, *token, window, cx);
         }
     }
 
     pub fn select_first_match(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(searchable_item) = self.active_searchable_item.as_ref()
+        if let Some(searchable) = self.searchable()
             && let Some((matches, token)) = self
                 .searchable_items_with_matches
-                .get(&searchable_item.downgrade())
+                .get(&searchable.downgrade())
         {
             if matches.is_empty() {
                 return;
             }
-            searchable_item.update_matches(matches, Some(0), *token, window, cx);
-            searchable_item.activate_match(0, matches, *token, window, cx);
+            searchable.update_matches(matches, Some(0), *token, window, cx);
+            searchable.activate_match(0, matches, *token, window, cx);
         }
     }
 
     pub fn select_last_match(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(searchable_item) = self.active_searchable_item.as_ref()
+        if let Some(searchable) = self.searchable()
             && let Some((matches, token)) = self
                 .searchable_items_with_matches
-                .get(&searchable_item.downgrade())
+                .get(&searchable.downgrade())
         {
             if matches.is_empty() {
                 return;
             }
             let new_match_index = matches.len() - 1;
-            searchable_item.update_matches(matches, Some(new_match_index), *token, window, cx);
-            searchable_item.activate_match(new_match_index, matches, *token, window, cx);
+            searchable.update_matches(matches, Some(new_match_index), *token, window, cx);
+            searchable.activate_match(new_match_index, matches, *token, window, cx);
         }
     }
 
@@ -1479,11 +1536,11 @@ impl BufferSearchBar {
     }
 
     fn clear_active_searchable_item_matches(&mut self, window: &mut Window, cx: &mut App) {
-        if let Some(active_searchable_item) = self.active_searchable_item.as_ref() {
+        if let Some(active_item) = &self.active_item {
             self.active_match_index = None;
             self.searchable_items_with_matches
-                .remove(&active_searchable_item.downgrade());
-            active_searchable_item.clear_matches(window, cx);
+                .remove(&active_item.searchable.downgrade());
+            active_item.searchable.clear_matches(window, cx);
         }
     }
 
@@ -1492,12 +1549,16 @@ impl BufferSearchBar {
     }
 
     fn clear_matches(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let active_item_id = self
+            .active_item
+            .as_ref()
+            .map(|item| item.searchable.item_id());
         let mut active_item_matches = None;
         for (searchable_item, matches) in self.searchable_items_with_matches.drain() {
             if let Some(searchable_item) =
                 WeakSearchableItemHandle::upgrade(searchable_item.as_ref(), cx)
             {
-                if Some(&searchable_item) == self.active_searchable_item.as_ref() {
+                if active_item_id == Some(searchable_item.item_id()) {
                     active_item_matches = Some((searchable_item.downgrade(), matches));
                 } else {
                     searchable_item.clear_matches(window, cx);
@@ -1522,7 +1583,7 @@ impl BufferSearchBar {
         #[cfg(target_os = "macos")]
         self.pending_external_query.take();
 
-        if let Some(active_searchable_item) = self.active_searchable_item.as_ref() {
+        if let Some(active_item) = &self.active_item {
             self.query_error = None;
             if query.is_empty() {
                 self.clear_active_searchable_item_matches(window, cx);
@@ -1583,19 +1644,20 @@ impl BufferSearchBar {
                 self.active_search = Some(query.clone());
                 let query_text = query.as_str().to_string();
 
-                let matches_with_token =
-                    active_searchable_item.find_matches_with_token(query, window, cx);
+                let matches_with_token = active_item
+                    .searchable
+                    .find_matches_with_token(query, window, cx);
 
-                let active_searchable_item = active_searchable_item.downgrade();
+                let weak_searchable = active_item.searchable.downgrade();
                 self.pending_search = Some(cx.spawn_in(window, async move |this, cx| {
                     let (matches, token) = matches_with_token.await;
 
                     this.update_in(cx, |this, window, cx| {
-                        if let Some(active_searchable_item) =
-                            WeakSearchableItemHandle::upgrade(active_searchable_item.as_ref(), cx)
+                        if let Some(searchable) =
+                            WeakSearchableItemHandle::upgrade(weak_searchable.as_ref(), cx)
                         {
                             this.searchable_items_with_matches
-                                .insert(active_searchable_item.downgrade(), (matches, token));
+                                .insert(searchable.downgrade(), (matches, token));
 
                             this.update_match_index(window, cx);
 
@@ -1606,12 +1668,12 @@ impl BufferSearchBar {
                             if !this.dismissed {
                                 let (matches, token) = this
                                     .searchable_items_with_matches
-                                    .get(&active_searchable_item.downgrade())
+                                    .get(&searchable.downgrade())
                                     .unwrap();
                                 if matches.is_empty() {
-                                    active_searchable_item.clear_matches(window, cx);
+                                    searchable.clear_matches(window, cx);
                                 } else {
-                                    active_searchable_item.update_matches(
+                                    searchable.update_matches(
                                         matches,
                                         this.active_match_index,
                                         *token,
@@ -1641,25 +1703,22 @@ impl BufferSearchBar {
 
     pub fn update_match_index(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let direction = self.reverse_direction_if_backwards(Direction::Next);
-        let new_index = self
-            .active_searchable_item
-            .as_ref()
-            .and_then(|searchable_item| {
-                let (matches, token) = self
-                    .searchable_items_with_matches
-                    .get(&searchable_item.downgrade())?;
-                searchable_item.active_match_index(direction, matches, *token, window, cx)
-            });
+        let new_index = self.searchable().and_then(|searchable| {
+            let (matches, token) = self
+                .searchable_items_with_matches
+                .get(&searchable.downgrade())?;
+            searchable.active_match_index(direction, matches, *token, window, cx)
+        });
         if new_index != self.active_match_index {
             self.active_match_index = new_index;
             if !self.dismissed {
-                if let Some(searchable_item) = self.active_searchable_item.as_ref() {
+                if let Some(searchable) = self.searchable() {
                     if let Some((matches, token)) = self
                         .searchable_items_with_matches
-                        .get(&searchable_item.downgrade())
+                        .get(&searchable.downgrade())
                     {
                         if !matches.is_empty() {
-                            searchable_item.update_matches(matches, new_index, *token, window, cx);
+                            searchable.update_matches(matches, new_index, *token, window, cx);
                         }
                     }
                 }
@@ -1680,8 +1739,8 @@ impl BufferSearchBar {
         if self.replace_enabled {
             handles.push(self.replacement_editor.focus_handle(cx));
         }
-        if let Some(item) = self.active_searchable_item.as_ref() {
-            handles.push(item.item_focus_handle(cx));
+        if let Some(searchable) = self.searchable() {
+            handles.push(searchable.item_focus_handle(cx));
         }
         let current_index = match handles.iter().position(|focus| focus.is_focused(window)) {
             Some(index) => index,
@@ -1747,7 +1806,7 @@ impl BufferSearchBar {
     }
 
     fn toggle_replace(&mut self, _: &ToggleReplace, window: &mut Window, cx: &mut Context<Self>) {
-        if self.active_searchable_item.is_some() {
+        if self.active_item.is_some() {
             self.replace_enabled = !self.replace_enabled;
             let handle = if self.replace_enabled {
                 self.replacement_editor.focus_handle(cx)
@@ -1763,18 +1822,18 @@ impl BufferSearchBar {
         let mut should_propagate = true;
         if !self.dismissed
             && self.active_search.is_some()
-            && let Some(searchable_item) = self.active_searchable_item.as_ref()
+            && let Some(searchable) = self.searchable()
             && let Some(query) = self.active_search.as_ref()
             && let Some((matches, token)) = self
                 .searchable_items_with_matches
-                .get(&searchable_item.downgrade())
+                .get(&searchable.downgrade())
         {
             if let Some(active_index) = self.active_match_index {
                 let query = query
                     .as_ref()
                     .clone()
                     .with_replacement(self.replacement(cx));
-                searchable_item.replace(matches.at(active_index), &query, *token, window, cx);
+                searchable.replace(matches.at(active_index), &query, *token, window, cx);
                 self.select_next_match(&SelectNextMatch, window, cx);
             }
             should_propagate = false;
@@ -1787,17 +1846,17 @@ impl BufferSearchBar {
     pub fn replace_all(&mut self, _: &ReplaceAll, window: &mut Window, cx: &mut Context<Self>) {
         if !self.dismissed
             && self.active_search.is_some()
-            && let Some(searchable_item) = self.active_searchable_item.as_ref()
+            && let Some(searchable) = self.searchable()
             && let Some(query) = self.active_search.as_ref()
             && let Some((matches, token)) = self
                 .searchable_items_with_matches
-                .get(&searchable_item.downgrade())
+                .get(&searchable.downgrade())
         {
             let query = query
                 .as_ref()
                 .clone()
                 .with_replacement(self.replacement(cx));
-            searchable_item.replace_all(&mut matches.iter(), &query, *token, window, cx);
+            searchable.replace_all(&mut matches.iter(), &query, *token, window, cx);
         }
     }
 
@@ -1862,8 +1921,8 @@ impl BufferSearchBar {
             false => Some(self.search_options.contains(SearchOptions::CASE_SENSITIVE)),
         };
 
-        if let Some(active_searchable_item) = self.active_searchable_item.as_ref() {
-            active_searchable_item.set_search_is_case_sensitive(case_sensitive, cx);
+        if let Some(searchable) = self.searchable() {
+            searchable.set_search_is_case_sensitive(case_sensitive, cx);
         }
     }
 }
@@ -3390,7 +3449,7 @@ mod tests {
         });
 
         editor.update_in(cx, |editor, window, cx| {
-            editor.fold_all(&FoldAll, window, cx);
+            editor.fold_all(&editor::actions::FoldAll, window, cx);
         });
         cx.run_until_parked();
 
@@ -3398,7 +3457,7 @@ mod tests {
         assert!(is_collapsed);
 
         editor.update_in(cx, |editor, window, cx| {
-            editor.unfold_all(&UnfoldAll, window, cx);
+            editor.unfold_all(&editor::actions::UnfoldAll, window, cx);
         });
         cx.run_until_parked();
 
@@ -3417,7 +3476,7 @@ mod tests {
 
         // Fold all buffers via fold_all
         editor.update_in(cx, |editor, window, cx| {
-            editor.fold_all(&FoldAll, window, cx);
+            editor.fold_all(&editor::actions::FoldAll, window, cx);
         });
         cx.run_until_parked();
 

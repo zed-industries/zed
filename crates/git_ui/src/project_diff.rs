@@ -45,6 +45,7 @@ use util::{ResultExt as _, rel_path::RelPath};
 use workspace::{
     CloseActiveItem, ItemNavHistory, SerializableItem, ToolbarItemEvent, ToolbarItemLocation,
     ToolbarItemView, Workspace,
+    collapsible::CollapsibleItemHandle,
     item::{Item, ItemEvent, ItemHandle, SaveOptions, TabContentParams},
     notifications::NotifyTaskExt,
     searchable::SearchableItemHandle,
@@ -1001,6 +1002,14 @@ impl Item for ProjectDiff {
     }
 
     fn as_searchable(&self, _: &Entity<Self>, _cx: &App) -> Option<Box<dyn SearchableItemHandle>> {
+        Some(Box::new(self.editor.clone()))
+    }
+
+    fn as_collapsible(
+        &self,
+        _: &Entity<Self>,
+        _cx: &App,
+    ) -> Option<Box<dyn CollapsibleItemHandle>> {
         Some(Box::new(self.editor.clone()))
     }
 

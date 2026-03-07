@@ -33,6 +33,7 @@ use util::ResultExt;
 use workspace::{
     Item, ItemHandle, ItemNavHistory, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView,
     Workspace,
+    collapsible::CollapsibleItemHandle,
     item::{ItemEvent, SaveOptions, TabContentParams},
     searchable::SearchableItemHandle,
 };
@@ -548,6 +549,10 @@ impl Item for AgentDiffPane {
     }
 
     fn as_searchable(&self, _: &Entity<Self>, _: &App) -> Option<Box<dyn SearchableItemHandle>> {
+        Some(Box::new(self.editor.clone()))
+    }
+
+    fn as_collapsible(&self, _: &Entity<Self>, _: &App) -> Option<Box<dyn CollapsibleItemHandle>> {
         Some(Box::new(self.editor.clone()))
     }
 

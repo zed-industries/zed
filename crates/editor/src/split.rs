@@ -29,6 +29,7 @@ use crate::{
 };
 use workspace::{
     ActivatePaneLeft, ActivatePaneRight, Item, ToolbarItemLocation, Workspace,
+    collapsible::{CollapsibleItem, CollapsibleItemHandle},
     item::{BreadcrumbText, ItemBufferKind, ItemEvent, SaveOptions, TabContentParams},
     searchable::{SearchEvent, SearchToken, SearchableItem, SearchableItemHandle},
 };
@@ -1846,6 +1847,14 @@ impl Item for SplittableEditor {
         Some(Box::new(handle.clone()))
     }
 
+    fn as_collapsible(
+        &self,
+        handle: &Entity<Self>,
+        _: &App,
+    ) -> Option<Box<dyn CollapsibleItemHandle>> {
+        Some(Box::new(handle.clone()))
+    }
+
     fn breadcrumb_location(&self, cx: &App) -> ToolbarItemLocation {
         self.rhs_editor.read(cx).breadcrumb_location(cx)
     }
@@ -2010,6 +2019,24 @@ impl SearchableItem for SplittableEditor {
     ) -> Option<usize> {
         self.editor_for_token(token)?.update(cx, |editor, cx| {
             editor.active_match_index(direction, matches, token, window, cx)
+        })
+    }
+}
+
+impl CollapsibleItem for SplittableEditor {
+    fn has_any_collapsed(&self, cx: &App) -> bool {
+        self.rhs_editor().read(cx).has_any_buffer_folded(cx)
+    }
+
+    fn collapse_all(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.rhs_editor().update(cx, |editor, cx| {
+            editor.fold_all(&Default::default(), window, cx)
+        })
+    }
+
+    fn expand_all(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.rhs_editor().update(cx, |editor, cx| {
+            editor.unfold_all(&Default::default(), window, cx)
         })
     }
 }
