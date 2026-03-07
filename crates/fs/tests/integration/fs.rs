@@ -562,3 +562,13 @@ async fn test_realfs_symlink_loop_metadata(executor: BackgroundExecutor) {
     assert!(!metadata.is_executable);
     // don't care about len or mtime on symlinks?
 }
+
+#[gpui::test]
+async fn test_realfs_metadata_after_executor_close(executor: BackgroundExecutor) {
+    let fs = RealFs::new(None, executor.clone());
+    let temp_dir = TempDir::new().unwrap();
+    executor.close();
+
+    let result = fs.metadata(temp_dir.path()).await;
+    assert!(result.is_err());
+}
