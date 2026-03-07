@@ -267,6 +267,22 @@ impl Output {
         }
     }
 
+    pub fn set_editor_gutter_width(&self, width: Pixels, cx: &mut App) {
+        match self {
+            Self::Plain { content, .. } | Self::Stream { content } => {
+                content.update(cx, |terminal, _| {
+                    terminal.editor_gutter_width = Some(width);
+                });
+            }
+            Self::ErrorOutput(error_view) => {
+                error_view.traceback.update(cx, |terminal, _| {
+                    terminal.editor_gutter_width = Some(width);
+                });
+            }
+            _ => {}
+        }
+    }
+
     pub fn render(
         &self,
         workspace: WeakEntity<Workspace>,
@@ -484,6 +500,7 @@ pub struct ExecutionView {
     pub outputs: Vec<Output>,
     pub status: ExecutionStatus,
     pending_input: Option<PendingInput>,
+    pub editor_gutter_width: Option<Pixels>,
 }
 
 impl EventEmitter<ExecutionViewFinishedEmpty> for ExecutionView {}
@@ -501,6 +518,7 @@ impl ExecutionView {
             outputs: Default::default(),
             status,
             pending_input: None,
+            editor_gutter_width: None,
         }
     }
 
@@ -823,6 +841,12 @@ impl Render for ExecutionView {
                 .justify_center()
                 .child(status)
                 .into_any_element();
+        }
+
+        if let Some(gutter_width) = self.editor_gutter_width {
+            for output in &self.outputs {
+                output.set_editor_gutter_width(gutter_width, cx);
+            }
         }
 
         div()

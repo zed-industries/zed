@@ -10,7 +10,6 @@ use crate::{
         ExecutionStatus, ExecutionView, ExecutionViewFinishedEmpty, ExecutionViewFinishedSmall,
         InputReplyEvent,
     },
-    repl_settings::ReplSettings,
 };
 use anyhow::Context as _;
 use collections::{HashMap, HashSet};
@@ -38,7 +37,6 @@ use runtimelib::{
     ExecuteRequest, ExecutionState, InputReply, InterruptRequest, JupyterMessage,
     JupyterMessageContent, KernelInfoRequest, ReplyStatus, ShutdownRequest,
 };
-use settings::Settings as _;
 use std::{env::temp_dir, ops::Range, sync::Arc, time::Duration};
 use theme::ActiveTheme;
 use ui::{IconButtonShape, Tooltip, prelude::*};
@@ -151,18 +149,16 @@ impl EditorBlock {
             let editor_margins = cx.margins;
             let gutter = editor_margins.gutter;
 
+            execution_view.update(cx.app, |view, _| {
+                view.editor_gutter_width = Some(gutter.full_width());
+            });
+
             let block_id = cx.block_id;
             let on_close = on_close.clone();
 
             let rem_size = cx.window.rem_size();
 
             let text_line_height = text_style.line_height_in_pixels(rem_size);
-            let output_settings = ReplSettings::get_global(cx.app);
-            let output_max_height = if output_settings.output_max_height_lines > 0 {
-                Some(text_line_height * output_settings.output_max_height_lines as f32)
-            } else {
-                None
-            };
 
             let close_button = h_flex()
                 .flex_none()
@@ -216,9 +212,6 @@ impl EditorBlock {
                         .py(text_line_height / 2.)
                         .mr(editor_margins.right)
                         .pr_2()
-                        .when_some(output_max_height, |div, max_h| {
-                            div.max_h(max_h).overflow_y_scroll()
-                        })
                         .child(execution_view),
                 )
                 .into_any_element()
