@@ -877,12 +877,9 @@ impl AgentPanel {
             if was_enabled != is_enabled {
                 was_enabled = is_enabled;
                 if !is_enabled {
-                    if matches!(
-                        this.active_view,
-                        ActiveView::AgentThread { .. } | ActiveView::TextThread { .. }
-                    ) {
-                        this.active_view = ActiveView::Uninitialized;
-                    }
+                    this.active_view = ActiveView::Uninitialized;
+                    this.previous_view = None;
+                    this.background_threads.clear();
                     cx.emit(PanelEvent::Close);
                 }
                 cx.notify();
