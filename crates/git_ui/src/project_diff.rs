@@ -363,7 +363,7 @@ impl ProjectDiff {
             match branch_diff.read(cx).diff_base() {
                 DiffBase::Head => {}
                 DiffBase::Merge { .. } => diff_display_editor.set_render_diff_hunk_controls(
-                    Arc::new(|_, _, _, _, _, _, _, _| gpui::Empty.into_any_element()),
+                    Arc::new(|_, _, _, _, _, _, _, _, _| gpui::Empty.into_any_element()),
                     cx,
                 ),
             }
