@@ -32,6 +32,8 @@ use gpui::{
 use gpui::{Pixels, Point, px};
 
 #[cfg(any(feature = "wayland", feature = "x11"))]
+pub(crate) const DEFAULT_FONT_FAMILY: &str = "IBM Plex Sans";
+
 pub(crate) const SCROLL_LINES: f32 = 3.0;
 
 // Values match the defaults on GTK.
@@ -124,9 +126,37 @@ impl LinuxCommon {
         let (main_sender, main_receiver) = PriorityQueueCalloopReceiver::new();
 
         #[cfg(any(feature = "wayland", feature = "x11"))]
-        let text_system = Arc::new(crate::linux::CosmicTextSystem::new("IBM Plex Sans"));
+        let text_system = Arc::new(crate::linux::CosmicTextSystem::new(DEFAULT_FONT_FAMILY));
         #[cfg(not(any(feature = "wayland", feature = "x11")))]
         let text_system = Arc::new(gpui::NoopTextSystem::new());
+
+        let callbacks = PlatformHandlers::default();
+
+        let dispatcher = Arc::new(LinuxDispatcher::new(main_sender));
+
+        let background_executor = BackgroundExecutor::new(dispatcher.clone());
+
+        let common = LinuxCommon {
+            background_executor,
+            foreground_executor: ForegroundExecutor::new(dispatcher),
+            text_system,
+            appearance: WindowAppearance::Light,
+            auto_hide_scrollbars: false,
+            callbacks,
+            signal,
+            menus: Vec::new(),
+        };
+
+        (common, main_receiver)
+    }
+
+    /// Like `new()`, but accepts a pre-built text system (e.g. one loaded on a background thread
+    /// to overlap with other initialization work).
+    pub fn new_with_text_system(
+        signal: LoopSignal,
+        text_system: Arc<dyn PlatformTextSystem>,
+    ) -> (Self, PriorityQueueCalloopReceiver<RunnableVariant>) {
+        let (main_sender, main_receiver) = PriorityQueueCalloopReceiver::new();
 
         let callbacks = PlatformHandlers::default();
 
