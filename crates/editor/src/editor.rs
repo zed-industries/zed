@@ -5092,6 +5092,11 @@ impl Editor {
             return;
         }
 
+        if self.mode.is_single_line() {
+            cx.propagate();
+            return;
+        }
+
         self.hide_mouse_cursor(HideMouseCursorOrigin::TypingAction, cx);
         self.transact(window, cx, |this, window, cx| {
             let (edits_with_flags, selection_info): (Vec<_>, Vec<_>) = {
@@ -5317,6 +5322,11 @@ impl Editor {
             return;
         }
 
+        if self.mode.is_single_line() {
+            cx.propagate();
+            return;
+        }
+
         self.hide_mouse_cursor(HideMouseCursorOrigin::TypingAction, cx);
 
         let buffer = self.buffer.read(cx);
@@ -5385,6 +5395,11 @@ impl Editor {
 
     pub fn newline_below(&mut self, _: &NewlineBelow, window: &mut Window, cx: &mut Context<Self>) {
         if self.read_only(cx) {
+            return;
+        }
+
+        if self.mode.is_single_line() {
+            cx.propagate();
             return;
         }
 
