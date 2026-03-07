@@ -2359,39 +2359,72 @@ impl DisplaySnapshot {
         {
             let start_line_indent = self.line_indent_for_buffer_row(buffer_row);
             let max_point = self.buffer_snapshot().max_point();
-            let mut end = None;
+            let mut closing_row = None;
 
             for row in (buffer_row.0 + 1)..=max_point.row {
                 let line_indent = self.line_indent_for_buffer_row(MultiBufferRow(row));
                 if !line_indent.is_line_blank()
                     && line_indent.raw_len() <= start_line_indent.raw_len()
                 {
-                    let prev_row = row - 1;
-                    end = Some(Point::new(
-                        prev_row,
-                        self.buffer_snapshot().line_len(MultiBufferRow(prev_row)),
-                    ));
+                    closing_row = Some(row);
                     break;
                 }
             }
 
-            let mut row_before_line_breaks = end.unwrap_or(max_point);
-            while row_before_line_breaks.row > start.row
-                && self
-                    .buffer_snapshot()
-                    .is_line_blank(MultiBufferRow(row_before_line_breaks.row))
-            {
-                row_before_line_breaks.row -= 1;
-            }
-
-            row_before_line_breaks = Point::new(
-                row_before_line_breaks.row,
-                self.buffer_snapshot()
-                    .line_len(MultiBufferRow(row_before_line_breaks.row)),
-            );
+            let end = if let Some(row) = closing_row {
+                let mut col = 0u32;
+                let mut found_closing_delimiter = false;
+                let mut chars = self.buffer_snapshot().chars_at(Point::new(row, 0));
+                while let Some(ch) = chars.next() {
+                    if ch == '\n' {
+                        break;
+                    }
+                    if !ch.is_whitespace() {
+                        found_closing_delimiter = matches!(ch, '}' | ')' | ']')
+                            || (ch == '<' && chars.next() == Some('/'));
+                        break;
+                    }
+                    col += ch.len_utf8() as u32;
+                }
+                if found_closing_delimiter {
+                    // Include newline and whitespace before closing delimiter,
+                    // so it appears on the same display line as the fold placeholder
+                    Point::new(row, col)
+                } else {
+                    let prev_row = row - 1;
+                    let mut end = Point::new(
+                        prev_row,
+                        self.buffer_snapshot().line_len(MultiBufferRow(prev_row)),
+                    );
+                    while end.row > start.row
+                        && self
+                            .buffer_snapshot()
+                            .is_line_blank(MultiBufferRow(end.row))
+                    {
+                        end.row -= 1;
+                    }
+                    Point::new(
+                        end.row,
+                        self.buffer_snapshot().line_len(MultiBufferRow(end.row)),
+                    )
+                }
+            } else {
+                let mut end = max_point;
+                while end.row > start.row
+                    && self
+                        .buffer_snapshot()
+                        .is_line_blank(MultiBufferRow(end.row))
+                {
+                    end.row -= 1;
+                }
+                Point::new(
+                    end.row,
+                    self.buffer_snapshot().line_len(MultiBufferRow(end.row)),
+                )
+            };
 
             Some(Crease::Inline {
-                range: start..row_before_line_breaks,
+                range: start..end,
                 placeholder: self.fold_placeholder.clone(),
                 render_toggle: None,
                 render_trailer: None,
