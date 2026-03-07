@@ -62,6 +62,7 @@ pub fn init(cx: &mut App) {
         git_panel::register(workspace);
         repository_selector::register(workspace);
         git_picker::register(workspace);
+        conflict_view::register_conflict_notification(workspace, cx);
 
         let project = workspace.project().read(cx);
         if project.is_read_only(cx) {
