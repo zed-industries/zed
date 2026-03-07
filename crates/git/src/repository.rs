@@ -695,9 +695,11 @@ pub enum LogSource {
     All,
     Branch(SharedString),
     Sha(Oid),
+    File(RepoPath),
 }
 
 impl LogSource {
+    // todo! clean this up
     fn get_arg(&self) -> Result<&str> {
         match self {
             LogSource::All => Ok("--all"),
@@ -705,6 +707,7 @@ impl LogSource {
             LogSource::Sha(oid) => {
                 str::from_utf8(oid.as_bytes()).context("Failed to build str from sha")
             }
+            LogSource::File(_) => Ok("--follow"),
         }
     }
 }
@@ -2725,17 +2728,25 @@ impl GitRepository for RealGitRepository {
         async move {
             let git = git_binary?;
 
-            let mut command = git.build_command([
+            // todo!: should we include no optional locks here?
+            let mut git_log_command = vec![
                 "log",
                 GRAPH_COMMIT_FORMAT,
                 log_order.as_arg(),
                 log_source.get_arg()?,
-            ]);
+            ];
+
+            if let LogSource::File(file_path) = &log_source {
+                git_log_command.extend(["--", file_path.as_unix_str()]);
+            }
+
+            let mut command = git.build_command(git_log_command);
             command.stdout(Stdio::piped());
-            command.stderr(Stdio::null());
+            command.stderr(Stdio::piped());
 
             let mut child = command.spawn()?;
             let stdout = child.stdout.take().context("failed to get stdout")?;
+            let stderr = child.stderr.take().context("failed to get stderr")?;
             let mut reader = BufReader::new(stdout);
 
             let mut line_buffer = String::new();
@@ -2770,7 +2781,20 @@ impl GitRepository for RealGitRepository {
                 }
             }
 
-            child.status().await?;
+            let status = child.status().await?;
+            if !status.success() {
+                let mut stderr_output = String::new();
+                let _ = BufReader::new(stderr)
+                    .read_to_string(&mut stderr_output)
+                    .await;
+
+                if stderr_output.is_empty() {
+                    anyhow::bail!("git log command failed with {}", status);
+                } else {
+                    anyhow::bail!("git log command failed with {}: {}", status, stderr_output);
+                }
+            }
+
             Ok(())
         }
         .boxed()
